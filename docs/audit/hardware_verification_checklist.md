@@ -1875,13 +1875,46 @@ not verify, one log line per suppressed chirp). Compile is CI's. Owner: U1.
     Then C sends a chirp; dismiss it on B and D within a minute, and on E
     three minutes after it went out.
   - Expected: B's chirp reads `"suppressed":false` on A after the first two
-    dismissals and `true` after the third, and leaves the list within 30 s;
+    dismissals and is gone from the list at the first read after the third
+    (since F269; before it, it read `true` and left within 30 s);
     A's `GET /api/logs` holds one `chirp: community-suppressed` line for it;
     C's chirp still reads `"suppressed":false` after all three (the third
     vote came after the window; before F233 it counted). Tables of 18 rows
     and more, where no chirp could be suppressed before F233, take nineteen
     boards and are the host test's.
   - Artifact: `docs/audit/repro/F233/suppress-window/`.
+
+## canary-wap Chirp: a suppressed chirp stops at once, and its frame is not stored again (F269, F270) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_suppress_vote()` takes a chirp out of the recent table at the vote
+that suppresses it; `handle_witness()` refuses a frame whose nonce the
+two-half nonce filter or a recent row holds; the filter's halves turn every
+`NONCE_FILTER_HALF_MS`, 331 s, `mesh_network.h`). Host-tested
+(`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, witnesses,
+votes, confirmations and relays; a frame 30 s ahead heard 1 ms before each
+second from 1 to 700 s after boot, refused at the last millisecond of its
+window). Compile is CI's. Owner: U1.
+
+- [ ] **After the suppressing vote nothing relays, lists or confirms the chirp; the frame heard again is refused**
+  - Setup: the five boards of the F233 row, A to E, Chirp on for at least
+    ten minutes on each, each with a GPS fix; a sniffer for ESP-NOW
+    broadcasts on A's channel, to see what A sends and to replay a frame.
+  - Repro: B sends an infrastructure chirp (Power outage). Dismiss it on C,
+    D and E within two minutes (three of four rows: suppressed on A). Then
+    confirm it on C and D with `POST /api/chirp/confirm` (their dashboards
+    hide a chirp they dismissed), and on A `curl -s -X POST /api/chirp/confirm -d
+    '{"nonce":"<its nonce>"}'` with the nonce read from A's list before the
+    third dismissal. Then, within five minutes of B's send, replay B's frame
+    to A from the sniffer capture (or let C relay it, if C validated it).
+  - Expected: A's `GET /api/chirp/recent` drops the chirp at the first read
+    after the third dismissal; the confirmations make A send no relay (no
+    hop-1 witness frame from A); A's confirm answers 404
+    `not_found` and sends no ACK; the replayed frame adds no row to A's list.
+    Before F269 A listed it `"suppressed":true`, relayed it after the second
+    confirmation, and sent an ACK for the local confirm; before F270 a frame
+    replayed just after A's 5-minute filter reset came back unsuppressed.
+  - Artifact: `docs/audit/repro/F269/suppressed-stops/`.
 
 ## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 

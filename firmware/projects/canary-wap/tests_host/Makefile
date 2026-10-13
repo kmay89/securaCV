@@ -1179,9 +1179,12 @@ clean: clean-chirp-commands
 # and signed suppress votes. A chirp is suppressed once its distinct voters
 # are more than half of the nearby rows and at least three, counting votes
 # heard within 120 s of its arrival: at every table size from 3 to 32 rows
-# (from 18 on it never was), a repeated voter, votes across the window, a
-# second copy of one chirp, votes that do not verify, and one log line for
-# each suppressed chirp.
+# (from 18 on it never was), a repeated voter, votes across the window,
+# votes that do not verify, and one log line for each suppressed chirp. And
+# what a suppressed chirp does (F269): it leaves the recent table at the
+# vote, so no confirmation validates or relays it and a local confirm sends
+# nothing; and one nonce, one chirp (F270): the same frame heard again, or
+# relayed, is refused while it is fresh, and while a row holds its nonce.
 CHIRP_SUP_BIN = test_chirp_suppress_wap
 CHIRP_SUP_SRC = test_chirp_suppress_wap.cpp
 

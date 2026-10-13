@@ -378,9 +378,11 @@ On the canary-wap (sweep F233):
   threshold at every table size.
 - A vote heard more than `SUPPRESS_WINDOW_MS` after the chirp arrived here
   is dropped and takes no slot; so is one heard before the chirp it names
-  (nothing keeps it for later). When the same chirp is held twice (a copy
-  heard again after the nonce filter's reset, below), a vote counts at the
-  first copy whose window is still open.
+  (nothing keeps it for later). A chirp is held once (§5.3), so its window
+  is the one its first arrival opened: the same frame heard again opens no
+  second one. (Until sweep F270 a frame heard again after the nonce
+  filter's reset took a second row, and a vote counted at the first copy
+  whose window was still open.)
 - A vote counts only when its signature verifies over the chirp's nonce and
   the voter's key, and the frame's session id derives from that key.
   `test_chirp_suppress_wap.cpp` sends a flipped signature, a foreign session
@@ -395,19 +397,26 @@ On the canary-wap (sweep F233):
   session id that derives from its key, not a presence row.
 
 **Behavior when suppressed**:
-- The chirp is hidden from the receiver's UI. (On the canary-wap it is not,
-  until the next prune: `GET /api/chirp/recent` lists it with `suppressed:
-  true` and `status: "suppressed"`, the dashboard's chirp list reads neither
-  and still offers Confirm on it, and a local confirm of it broadcasts a
-  signed ACK.)
-- The receiver no longer relays the chirp. (The canary-wap drops a
-  suppressed chirp from its recent table at the next prune, at most 30 s
-  later; until then a confirmation that validates it still relays it, as
-  `handle_ack()` does not read `suppressed`. The nonce filter is cleared
-  whole every `CHIRP_TTL_MS` (5 min), as long as the freshness window, so
-  the same signed frame heard again after a reset is stored anew,
-  unsuppressed and with no votes, while it is still fresh.)
+- The chirp is hidden from the receiver's UI. (The canary-wap takes it out
+  of its recent table at the vote that suppresses it, sweep F269: `GET
+  /api/chirp/recent` does not list it from the loop task's pass that
+  handled the vote, so the dashboard never shows it, and a local confirm or
+  dismiss of it is refused as `not_found` and sends nothing. Before F269 it
+  stayed until the next prune, up to 30 s: listed with `suppressed: true`
+  and `status: "suppressed"`, which the dashboard's chirp list read neither
+  of, still offering Confirm, and a local confirm broadcast a signed ACK. The
+  route keeps both keys; `suppressed` now always reads false.)
+- The receiver no longer relays the chirp. (On the canary-wap a
+  confirmation finds no row and neither validates nor relays it; before
+  F269 the confirmations that reached it in those 30 s validated it and
+  relayed it at hop 1. Its nonce stays in the nonce filter for longer than
+  the frame stays fresh, §5.3, so the same signed frame heard again, or a
+  neighbor's relay of it, is refused rather than stored anew with no votes,
+  sweep F270; the filter was cleared whole every `CHIRP_TTL_MS`, 5 min, as
+  long as the freshness window, and a frame heard just after a reset was
+  stored again.)
 - The receiver does not echo further suppress votes (they're not needed).
+  (On the canary-wap a later vote finds no row and counts nowhere.)
 - The suppression itself is logged to the health log, once per chirp at the
   vote that suppresses it (the canary-wap logged the line again at every
   later vote until F233's review), but does not generate further wire
@@ -715,14 +724,45 @@ Devices do NOT relay if:
 ### 5.3 Deduplication
 
 ```
-recent_nonces = sliding_window(last_100_nonces)
-if (chirp.nonce in recent_nonces) {
+if (chirp.nonce in nonce_filter or chirp.nonce in recent_chirps) {
   drop_duplicate()
 } else {
-  recent_nonces.add(chirp.nonce)
+  nonce_filter.add(chirp.nonce)
   process_chirp()
 }
 ```
+
+A nonce is one chirp: a receiver must refuse a witness whose nonce it has
+seen for at least as long as the frame could still be accepted. A frame is
+fresh while its timestamp is at most 30 s ahead of the receiver's wall
+clock and at most 300 s behind it (`CHIRP_TTL_MS`), so one first heard at
+the earliest moment it is accepted stays acceptable for 330 s more.
+
+On the canary-wap (sweep F270) the filter is a Bloom filter in two halves of
+4 KB (32,768 bits, 4 hashes) each. A nonce goes into the current half; every
+`NONCE_FILTER_HALF_MS` (331 s: the 330 s and one more second for the whole
+seconds the wall clock counts in, `mesh_network.h`) the older half is
+cleared and becomes current, and a lookup reads both, so a nonce is held at
+least 331 s and at most 662 s. A witness whose nonce a row of the recent
+table holds is refused too: a row lives up to `DEFAULT_DISPLAY_MS` (30
+min), longer than the filter, and with no wall clock set a frame has no
+freshness window to end it. At n nonces in a half, a half's false-positive
+rate is (1 - e^(-4n/32768))^4: about 0.02 % at 1,000 and 2.4 % at 4,096 (a
+frame every 81 ms for a whole half); a lookup reads two halves, so up to
+about twice that, and a false positive drops a new witness as a repeat.
+`test_chirp_suppress_wap.cpp` holds a frame 30 s ahead, heard 1 ms before
+each whole second from 1 to 700 s after boot, to refusal at the last
+millisecond of its window.
+
+Before F270 the filter was one 4 KB half cleared whole every
+`CHIRP_TTL_MS`, as long as the freshness window: a frame heard just before
+a reset was stored again just after it, still fresh, as a second row of a
+chirp still held, or, for a suppressed chirp, anew with no votes.
+
+With no wall clock set, a witness is stored with an unverifiable timestamp
+and has no freshness window: once its row has left the table (dismissed,
+suppressed, displaced or past its 30 min) and the filter has turned twice,
+the same frame is stored again.
 
 ## 6. Privacy Guarantees
 
@@ -1093,16 +1133,18 @@ are allocated once by `init()`, in PSRAM where the board has it.
 |-----------|----------|
 | Session identity | 112 bytes |
 | Recent chirps | 16 * 964 = 15,424 bytes |
-| Nonce dedup (Bloom filter) | 4,096 bytes |
+| Nonce dedup (Bloom filter, two halves) | 2 * 4,096 = 8,192 bytes |
 | Nearby (presence) table | 32 * 48 = 1,536 bytes |
 | Per-key witness rate table | 32 * 40 = 1,280 bytes |
 | Self-test seen table | 32 * 40 = 1,280 bytes |
 | Route views (two copies and a scratch) | 3,404 bytes |
-| **Total** | ~27 KB |
+| **Total** | ~31 KB |
 
 A recent chirp holds its suppress set of 17 keys (§2.5.6); sizing that set to
-the fullest table added 288 bytes to each, 4,608 in all (sweep F233). This
-table said ~3.5 KB, sized for a 128-byte chirp and a 100-entry nonce list.
+the fullest table added 288 bytes to each, 4,608 in all (sweep F233). The
+nonce filter's second half (§5.3) added 4,096 bytes (sweep F270; the total
+was ~27 KB). This table said ~3.5 KB, sized for a 128-byte chirp and a
+100-entry nonce list.
 
 ## 13. Relationship to Opera
 

@@ -1916,9 +1916,11 @@ void test_a_disable_ends_the_mute() {
   std::printf("PASS a_disable_ends_the_mute\n");
 }
 
-// A chirp this device sent, as handle_witness() stores it when a neighbor's
-// relay of it arrives after the nonce filter's 5-minute reset: this
-// session's own pubkey as the origin.
+// A chirp this device sent, as handle_witness() would store it if a
+// neighbor's relay of it arrived once the nonce filter had forgotten it (it
+// was cleared whole every 5 minutes before sweep F270; it now holds a nonce
+// past the freshness window, so only a wall clock stepped back between the
+// send and the relay lets one in): this session's own pubkey as the origin.
 void own_chirp(const uint8_t nonce[8]) {
   cc::ReceivedChirp c;
   memset(&c, 0, sizeof(c));
