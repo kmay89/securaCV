@@ -423,9 +423,17 @@ jobs:
     # files anywhere in it (CI.md, "What a path filter must cover"). The cost
     # is a four-file fetch and one Python run.
     #
-    # Renaming a linked heading on purpose: open a mirror PR on a branch of
-    # the same name that updates the link (the mirror's link step passes it
-    # with a notice), merge that, then re-run this job.
+    # Renaming or moving something the store page links, on purpose: keep
+    # the old name alive in the same PR (an `<a id="old-slug"></a>` on the
+    # line above the renamed heading, which the checker accepts as GitHub
+    # does, or the old file left in place), so this job passes against the
+    # mirror's main as it stands. After it merges, move the link in a mirror
+    # PR (its link step checks this repository's main, which has both
+    # names), then drop the alias once the mirror's main links the new one.
+    # Monorepo first, mirror second: the order the mirror's own link step
+    # asks for. Without the alias no order stays green: whichever PR merges
+    # first, the live store page is broken and this job fails on every
+    # other PR and main push until the second one merges.
     name: HACS store page links land in this tree
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -442,8 +450,10 @@ jobs:
         # Fetches README.md, AGENTS.md, CLAUDE.md and
         # .github/scripts/lint_readme.py from the mirror's main over
         # raw.githubusercontent.com (public, no credentials, three tries),
-        # then runs the checker with -I against this checkout. A checker
-        # with no --source mode (the mirror's main before
-        # securacv-homeassistant#28 merged, 2026-10-13) is not run: the
-        # script says so in a warning annotation instead.
+        # then runs the checker with -I against this checkout. Fails
+        # closed: exit 0 counts only with the checker's own "links into
+        # kmay89/securaCV OK — <n> resolve" line; a file that cannot be
+        # fetched or is empty, or a checker that exits 0 without that line
+        # (one older than securacv-homeassistant#28, a truncated
+        # download), is exit 2.
         run: python3 scripts/check_hacs_store_links.py
