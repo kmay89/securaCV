@@ -2,6 +2,141 @@
 
 ## [Unreleased]
 
+### canary-wap's receipt and port 80's redirect name it by its `.local` name on the home network and its dashboard saves the recovery kit, the Lab reads the WAP's flags from its sketch and the fleet figures find a WAP by the type it publishes, the display's RS-485 and CAN drivers get their caller, the Lab app's monitor takes commands and each bench prints its own chip's ROM, CI compiles Hub Core for Windows, lints the Lab's scripts and runs the camera wizard on jq 1.6, the spelling lint holds the website's word families, and the website and the HACS mirror close three items in their own PRs (#1802, wave 17)
+
+- **canary-wap: the receipt and port 80's redirect name the WAP by its
+  `.local` name over the home network, and the dashboard saves the recovery
+  kit (sweep F255, F257).** The provisioning receipt's `base_url` named the
+  setup network's `192.168.4.1` for every bearer and BOOT-tap request, and
+  port 80's redirect to https sent every caller there, even over the home
+  network after the join, where that address reaches nothing and soon stops
+  existing (once the setup network dropped, the redirect could name
+  `0.0.0.0`). Both now name the `.local` name whenever the WAP is on the home
+  Wi-Fi and the request did not come over its setup network
+  (`receipt_authority.h`, fed by the request socket's own address). A WAP set
+  up through the Bluetooth door, which never runs the setup wizard's
+  close-out, now gets the same **Save my recovery kit** on its dashboard:
+  offered after a BOOT-tap sign-in, and under Settings, Device, Recovery kit
+  for a browser already signed in; saved by one builder shared with the wizard
+  and never sent anywhere. **Host-tested** (`test_receipt_authority.cpp`, 263
+  checks; `recovery_kit.test.js`, 28 tests); the firmware compile is CI's; not
+  run on a device. Filed: F289 (any host on the home network can reach the
+  receipt with the landing page's session, read from code; needs a
+  maintainer's call) and A88.
+- **The Lab reads the WAP from its sketch; `firmware/configs/canary-wap/` is
+  gone (sweep F258, A76).** The Workshop's WAP flavor is now `build_config.h`'s
+  FULL profile resolved for the XIAO ESP32-S3, held to the C preprocessor by a
+  host test, so the buzzer option points at `FEATURE_AUDIBLE_CHIRP`, the GPS
+  option at no flag (the GNSS UART opens in every profile), and the tamper
+  option keeps its caveat: off in every shipped profile until the pin is
+  bench-validated. The item assumed the WAP publishes `"canary"`; it puts
+  `"canary-wap"` on the fleet's wire (mDNS and MQTT) and keeps `"canary"` only
+  as its `DEVICE_TYPE` constant. The fleet figures now resolve the WAP by the
+  wire type, read from every place the sketch publishes it and refused if any
+  site is not a plain literal, so a display's figure lookup matches a WAP peer
+  (the old `canary_wap` rows never did). The directory no build compiled is
+  deleted and the config-flag guard's skip list is empty. The emulator stops
+  passing `-DCONFIG_CANARY_DISPLAY`, which nothing reads; every preprocessed
+  unit is byte-identical without it, so A76 alone moves no dist byte. The
+  figure table moves the canary-display-dash bundle; CI's pinned emsdk
+  rebuilds it on the branch, and the rebuilt dist was not run here. Until
+  then the Dist drift check fails on that bundle and skips the wasm job's
+  later steps, while the page logic tests pass on the committed dist (no test
+  or probe reads the bundle's figure table). **Host-tested**;
+  `FleetFigures.swift` is compiled by CI only; not bench-tested. Filed: F294
+  (a decision: one device type or two), A89 and C19.
+- **Canary Display: the dev playground's RS-485 and CAN stations go through
+  the production drivers (sweep F253).** In the `canary-display-dash-rs485`
+  and `-dash-can` envs the playground's RS-485 probe and CAN station now call
+  `canary::io`'s drivers. Both envs now also set `-DFEATURE_DEVMODE=1`, as
+  dash-b does, so the playground, the drivers' caller, compiles there (Settings
+  gains the dev-mode doorway; they still boot the fleet face), and a repo test
+  fails any env that turns a driver on without that caller. The other
+  playground builds keep the stations' own transport, and the wire is the same
+  either way, held by a host test that builds the real playground and drivers
+  three ways against fakes. The drivers' never-called heartbeat helpers are
+  gone, and the 4.3B bench checklist now walks the stations instead of boot
+  lines that never printed. **Host-tested**; the ESP32 compiles are CI's; not
+  bench-tested; the emulator dist does not move. Filed: F290-F293.
+- **The Lab app's post-flash monitor takes commands, and each Lab bench prints
+  its own chip's ROM (sweep A67, A59).** The Lab app's receipt card had a
+  read-only serial monitor; it now carries the Flasher's command row: the
+  browser flasher's own eight single-key chips (handed over, not copied) and a
+  "type a command" box in the Flasher's words, each sending its text plus a
+  newline through `serial_monitor_send`, which the Lab's desktop build
+  registers again (the Flasher's wrapper, word for word). The row works only
+  while the monitor runs, and a refused send says why. The Lab's bench printed
+  the ESP32-S3's ROM banner on every card, so the Nightlight's twin (an
+  ESP32-C3 with BOOT on GPIO9) printed an S3 banner. Each bench block now names
+  its chip and BOOT strap, and the bench prints that chip's banner, quoted from
+  a cited esp-idf v5.4 source, except the ESP32-S3's two download-mode lines,
+  kept from before and marked as not re-sourced. No source we could fetch
+  quotes the C3's software-reset or download-mode banner, so the Nightlight's
+  bench prints a note instead of inventing one. The bench's honesty ribbon now
+  says per board which lines are quoted and which lights are hardwired.
+  **Host-tested** (node tests, and `bench_probe.mjs` in local Chromium); the
+  Lab's Rust change is compiled by CI, not here; not tried in the app by hand;
+  not bench-tested. Filed: A83-A86.
+- **CI closes three gaps the 2026-10 cleanup left open (sweep A68, CI12,
+  HA32).** Hub Core compiles `desktop/hub-core` and `desktop/hub-io` on
+  `windows-latest` (`cargo check --all-targets`; the Windows writer stays
+  staged for A9). A new Lab assets lint workflow runs the repo's pinned ESLint
+  (10.11.0) with only `no-unused-vars` and the module source type over the
+  Lab's 78 first-party scripts, reading no config file and obeying no disable
+  comment; it found 24 unused bindings in 10 files (19 catch clauses that
+  never read their error, 5 parameters), now removed with no behavior change.
+  The camera wizard's jq parity cases, run_lib's tests and the config render
+  check run on the sha256-pinned jq-1.6 release binary, the jq the app's
+  Alpine 3.18 image ships, and `discover_cameras.sh` pipes its payload through
+  `printf` instead of `echo`, whose escapes the runner's dash read and the
+  app's busybox did not. Compile-checked against the GNU Windows target and
+  host-tested; the Windows job, `lab-lint.yml` and the jq download step have
+  not run in CI yet; nothing runs on Windows. Filed: A87, HA34 and CI16.
+- **The spelling lint holds the website's word families, and the tree passes
+  them (sweep CI9).** `scripts/lint_spelling.py` builds its British forms from
+  the same US-stem families as the website's spelling test, pinned to the
+  website commit they came from. Before it reads a file it proves that every
+  built form, every word-list entry and the shipped form in capitals is
+  caught, and that no US form or look-alike is. It agrees with the website's
+  regex on every token in this tree, reports every hit on a line, and runs in
+  about 4 s instead of 31. The 29 lines it found in 28 files are fixed:
+  comments and docs, the evidence viewer's manifest message (all three copies,
+  one of them the Home Assistant integration's, so the HACS mirror needs a
+  carry after this merges), the house mark's SVG description and four
+  enclosure comments whose geometry is unchanged (98 previews rendered and
+  shared; no STL committed). The website's carried `canary_fit_coupon.scad`
+  follows with the weekly carry. **Host-tested**. Filed: CI13-CI15.
+- **The website's Lab playground files are carried, not hand-copied (sweep
+  W31, with the website PR securacv_website#227).** `scripts/carry_to_site.py`
+  gains a `playground` carry that writes the website's `js/playground-data.js`
+  (`canary-local/devices/playground.json` as an ES module) and
+  `js/playground-sim.js` / `js/mode-sim.js` (the upstream sims, whole) under
+  CARRIED headers, checking every source before it writes, so the weekly carry
+  job can refresh them and `fw_version` stops falling behind a firmware
+  release. Pinned by `scripts/tests/test_carry_to_site.py`, which holds the
+  written bytes to the upstream files. The website half (`CARRY_PATHS`, the
+  headers, `tests/carry-claims.test.mjs`, the `docs/LAYOUT.md` row) is in the
+  website PR, still open, which merges after this one. The same PR lifts the
+  dark ink on panels the night theme darkens, with a guard for the class
+  (W22), and fixes four cleanup leftovers: the flasher's "checks the write"
+  wording, the ID card's public key, the "apple tv" search and two dead night
+  overrides (W23). **Host-tested** in node and Chromium. Filed: W32-W34.
+- **HACS mirror: the store page's links into the monorepo are checked (sweep
+  HA31, in the mirror PR securacv-homeassistant#28).** The mirror's
+  `lint_readme.py` gains `--source <monorepo-checkout>`. It resolves every URL
+  the store page and the mirror's agent briefs write into this repository
+  against a checkout of `main`: links, code and the one-command installer
+  alike, and files, directories, GitHub-computed heading anchors and line
+  anchors. The mirror's `mirror-freshness.yml` runs it weekly and on
+  store-page PRs as its own step, so a renamed heading or a moved
+  `scripts/install.sh` fails that step without raising the "mirror has
+  drifted" issue. The mirror PR is still open and has not run on GitHub
+  Actions yet. **Host-tested**. Filed: HA35.
+
+Nothing in wave 17 is bench-tested, and no running Home Assistant was seen.
+One carried Home Assistant file changes (`www/securacv-evidence-viewer.html`,
+CI9's one-word fix), so the HACS mirror needs a carry after #1802 merges.
+
 ### canary-wap refuses a control byte in a device name and holds every JSON text it spells with printf, reads an MQTT setting of its full length back, suppresses a chirp by more than half at every table size and lets Start Advertising and Pair bring a refused Bluetooth stack up; the route lists and FEATURES.md say what each tree serves, the canary mark's hop owns the bird and the nightlight's tumble wears its Startle, the LVGL 9.5 harness renders the C6 and the splash tail, and the Lab turns a running glass (#1802, wave 16)
 
 - **canary-wap: a device name holding a control byte is refused, the JSON
