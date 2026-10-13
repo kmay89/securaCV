@@ -14,7 +14,7 @@
 //! household_checker roster approve --data-dir D --proposal DIGEST (--admin-key FILE | --approval-file F | --holder-proof-file F)
 //! household_checker roster apply --data-dir D --proposal DIGEST [--physical-confirm DIGEST8]
 //! household_checker card provision --data-dir D --kek K --handle H [--key-hex HEX]
-//! household_checker pair --data-dir D
+//! household_checker pair --data-dir D [--reset]
 //! household_checker serve --data-dir D --kek K [--bind ADDR] [--allow-lan-plaintext] [--home-ttl SECS]
 //! household_checker client keygen --out FILE
 //! household_checker client command --key FILE --handle H --token-file F --purpose away|home|night
@@ -540,6 +540,11 @@ fn cmd_card(a: &Args) -> Result<i32> {
 
 fn cmd_pair(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
+    if a.has("reset") {
+        let n = d.reset_bearers()?;
+        eprintln!("unpaired {n} client(s); pair each again to use the LAN API");
+        return Ok(0);
+    }
     let t = d.add_bearer()?;
     println!("{}", t.as_str());
     Ok(0)

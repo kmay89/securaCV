@@ -128,6 +128,7 @@ household_checker roster approve --data-dir D --proposal <digest> --admin-key ~/
 household_checker roster apply --data-dir D --proposal <digest> --physical-confirm <first 8 hex of digest>
 
 # 4. Pair a LAN client (prints a bearer token once) and serve on loopback.
+#    At most 32 clients; `pair --reset` unpairs every one of them.
 household_checker pair --data-dir D > ~/hk-token
 household_checker serve --data-dir D --kek /etc/securacv/household.kek   # 127.0.0.1:8787
 

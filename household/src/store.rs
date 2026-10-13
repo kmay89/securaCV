@@ -42,6 +42,9 @@ pub const SEAM_FILE: &str = "household_posture.bin";
 pub const MAX_JSON_BYTES: usize = 256 * 1024;
 /// Longest roster chain loaded.
 pub const MAX_CHAIN: usize = 100_000;
+/// Most paired LAN clients. Far below what `bearers.json` can hold under
+/// [`MAX_JSON_BYTES`], so the file can always be read back.
+pub const MAX_BEARERS: usize = 32;
 
 /// Write `bytes` to `path` atomically with mode 0600.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -67,8 +70,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         f.sync_all().map_err(Error::io("sync a temp file"))?;
         drop(f);
         std::fs::rename(&tmp, path).map_err(Error::io("rename into place"))?;
-        if let Ok(d) = std::fs::File::open(dir) {
-            let _ = d.sync_all();
+        // The rename is only durable once the directory entry is: a write
+        // whose directory sync failed is reported as failed, so a caller never
+        // acknowledges a seq, roster or high-water update a power cut can undo.
+        #[cfg(unix)]
+        {
+            let d = std::fs::File::open(dir).map_err(Error::io("open the data directory"))?;
+            d.sync_all().map_err(Error::io("sync the data directory"))?;
         }
         Ok(())
     })();
@@ -424,10 +432,22 @@ impl DataDir {
         let token =
             Zeroizing::new(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&raw[..]));
         let mut hashes = self.bearer_hashes()?;
+        if hashes.len() >= MAX_BEARERS {
+            return Err(Error::Invalid(
+                "the paired-client limit is reached; `pair --reset` unpairs every client",
+            ));
+        }
         hashes.push(Sha256::digest(token.as_bytes()).into());
         let list: Vec<String> = hashes.iter().map(|h| hex::encode(h)).collect();
         write_json(&self.path("bearers.json"), &json!({"tokens": list}))?;
         Ok(token)
+    }
+
+    /// Unpair every LAN client; returns how many were removed.
+    pub fn reset_bearers(&self) -> Result<usize> {
+        let n = self.bearer_hashes()?.len();
+        write_json(&self.path("bearers.json"), &json!({"tokens": []}))?;
+        Ok(n)
     }
 
     /// The stored bearer hashes.
@@ -497,6 +517,21 @@ pub(crate) mod tests {
         assert_eq!(d.last_seq().unwrap(), 0);
         d.save_seq(77).unwrap();
         assert_eq!(d.last_seq().unwrap(), 77);
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[test]
+    fn bearer_list_is_capped_and_resettable() {
+        let p = tmpdir("bearer-cap");
+        let d = DataDir::create(&p).unwrap();
+        for _ in 0..MAX_BEARERS {
+            d.add_bearer().unwrap();
+        }
+        assert!(d.add_bearer().is_err(), "the cap refuses, it never evicts");
+        assert_eq!(d.bearer_hashes().unwrap().len(), MAX_BEARERS);
+        assert_eq!(d.reset_bearers().unwrap(), MAX_BEARERS);
+        assert!(d.bearer_hashes().unwrap().is_empty());
+        assert!(d.add_bearer().is_ok());
         std::fs::remove_dir_all(&p).unwrap();
     }
 
