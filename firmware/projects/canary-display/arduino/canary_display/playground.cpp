@@ -361,8 +361,8 @@ void action_tof_cycle_trip() {
 // rs485 and -dash-can envs, which carry this bench through FEATURE_DEVMODE),
 // the stations go through them: canary::io::rs485_begin + rs485_read_holding
 // own Serial1, canary::io::can_begin + can_transmit + can_receive own the
-// TWAI controller, so those envs compile real call sites and the bench walks
-// the driver a fielded build would. Elsewhere (the playground, dash-b and
+// TWAI controller, so those envs compile real call sites and a bench run
+// exercises the production driver. Elsewhere (the playground, dash-b and
 // dash-modes envs) the drivers are not compiled, and the stations bring up
 // the thin transport below on the SAME host-tested pure cores
 // (canary/io/modbus_rtu.h, canary/io/can_frame.h) — the "minimal in-repo
