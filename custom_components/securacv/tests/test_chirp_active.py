@@ -2,8 +2,10 @@
 
 The canary-wap is the one firmware that publishes `<prefix>/<id>/chirp`:
 ``csi_mqtt::publish_chirp_state()`` sends ``{"state":"<word>"}`` and nothing
-else, retained, about every 30 s on a build with the mesh feature, where the
-word is ``chirp_channel::state_name()`` of the channel's shown state. The
+else, retained, on a build with the mesh feature, every 30 s on mains or a
+normal battery (stretched to 2 or 4 min in the battery saver and low power
+modes), where the word is ``chirp_channel::state_name()`` of the channel's
+shown state, passed by the one caller in ``canary_wap.ino``. The
 sensor used to read ``enabled`` and ``ready`` (fields of the WAP's REST
 status, never of this topic), so it read off whatever the channel did, with
 seven attributes no firmware sends. It now reads ``state``.
@@ -11,12 +13,15 @@ seven attributes no firmware sends. It now reads ``state``.
 What each word reads as is a decision (binary_sensor.CHIRP_STATE_IS_ON): on
 while the channel is on with a session (``active``, ``cooldown``, ``muted``,
 ``listening``), off while it is ``disabled`` or ``initializing``, unknown for
-any other word. The tests below write that decision out independently of the
-table, so a change to either is a visible edit.
+any other word (the lookup is exact: ``ACTIVE`` is another word), and unknown
+until the first publish is read. The tests below write that decision out
+independently of the table, so a change to either is a visible edit.
 
 The monorepo-only tests read the body and the words from the firmware
-source, so they fail when the firmware changes its shape or adds a state the
-table does not name, not only when Home Assistant changes; they also hold
+source, and the argument the sketch's one caller passes, so they fail when
+the firmware changes its shape, adds a state the table does not name or
+publishes some other word, not only when Home Assistant changes (python.yml
+runs this suite on an edit to any of the three files); they also hold
 ``WAP_CHIRP_ACTIVE``, the literal every other chirp test feeds, to what the
 firmware renders. The HACS mirror carries no firmware source, so they skip
 there and the literal cases still run.
@@ -44,9 +49,10 @@ _WAP_DIR = (
 )
 _WAP_MQTT = _WAP_DIR / "csi_mqtt.cpp"
 _WAP_CHIRP = _WAP_DIR / "chirp_channel.cpp"
+_WAP_SKETCH = _WAP_DIR / "canary_wap.ino"
 
 monorepo_only = pytest.mark.skipif(
-    not (_WAP_MQTT.is_file() and _WAP_CHIRP.is_file()),
+    not (_WAP_MQTT.is_file() and _WAP_CHIRP.is_file() and _WAP_SKETCH.is_file()),
     reason="monorepo-only: the HACS mirror carries no firmware source",
 )
 
@@ -148,6 +154,41 @@ def test_the_table_names_every_word_but_unknown() -> None:
 
 
 @monorepo_only
+def test_the_sketch_publishes_state_name_of_the_shown_state() -> None:
+    """The table reads state_name()'s words only if that is what is sent:
+    the sketch's one caller passes state_name() of get_status().state (the
+    shown state), not a word of its own (an NFPA-72 mapping, say)."""
+    # Line comments out (the sketch's own comment names the call's topic).
+    text = re.sub(r"//[^\n]*", "", _WAP_SKETCH.read_text(encoding="utf-8"))
+    calls = []
+    for m in re.finditer(r"\bpublish_chirp_state\s*\(", text):
+        depth, i = 1, m.end()
+        while depth:
+            assert i < len(text), "unbalanced publish_chirp_state( call"
+            depth += {"(": 1, ")": -1}.get(text[i], 0)
+            i += 1
+        calls.append(text[m.end():i - 1])
+    assert len(calls) == 1, f"canary_wap.ino calls publish_chirp_state() {len(calls)} times"
+    arg = re.sub(r"\s+", "", calls[0])
+    assert arg == "chirp_channel::state_name(chirp_channel::get_status().state)", (
+        f"the chirp topic now carries {arg!r}: decide what the sensor reads it as"
+    )
+
+
+@monorepo_only
+def test_python_yml_runs_this_suite_on_each_firmware_file_it_reads() -> None:
+    """A firmware-only edit (a new Chirp state, say) still runs these tests."""
+    workflow = _WAP_DIR.parents[4] / ".github" / "workflows" / "python.yml"
+    if not workflow.is_file():
+        pytest.skip("no python.yml beside this tree")
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    for source in (_WAP_MQTT, _WAP_CHIRP, _WAP_SKETCH):
+        rel = source.relative_to(_WAP_DIR.parents[4]).as_posix()
+        listed = [ln for ln in lines if ln.strip() == f"- '{rel}'"]
+        assert len(listed) == 2, f"python.yml's push and pull_request paths must list {rel}"
+
+
+@monorepo_only
 def test_each_firmware_word_reads_as_decided() -> None:
     for word in sorted(_state_name_words()):
         sensor = _sensor()
@@ -158,6 +199,21 @@ def test_each_firmware_word_reads_as_decided() -> None:
 
 
 # ─── the literal cases (these run in the HACS mirror too) ──────────────
+
+
+def test_the_sensor_is_unknown_until_a_state_is_read() -> None:
+    """Off is a claim (the channel is disabled); before any publish, and
+    after bodies that carry no string `state`, the sensor says nothing."""
+    sensor = _sensor()
+    assert sensor._attr_is_on is None
+    for payload in (
+        '{"enabled": true, "ready": true}',
+        '{"state": 3}',
+        '{"state": true}',
+    ):
+        sensor._handle_message(_msg(payload))
+        assert sensor._attr_is_on is None, payload
+    assert sensor.writes == []
 
 
 def test_an_active_channel_reads_on() -> None:
@@ -189,7 +245,7 @@ def test_disabled_reads_off_and_follows_the_channel_back_on() -> None:
 def test_a_word_the_table_does_not_know_reads_unknown_not_off() -> None:
     sensor = _sensor()
     sensor._handle_message(_msg(WAP_CHIRP_ACTIVE))
-    for word in ("unknown", "Normal", "alarm", ""):
+    for word in ("unknown", "Normal", "alarm", "", "ACTIVE", " active", "Disabled"):
         sensor._handle_message(_msg(json.dumps({"state": word})))
         assert sensor._attr_is_on is None, word
         assert sensor._attr_extra_state_attributes["channel_state"] == word
@@ -202,6 +258,8 @@ def test_a_body_without_a_string_state_leaves_the_sensor_alone() -> None:
     for payload in (
         '{"enabled": true, "ready": true, "session_id": "abc"}',
         '{"state": 3}',
+        '{"state": true}',
+        '{"state": false}',
         '{"state": null}',
         '{"state": ["active"]}',
     ):

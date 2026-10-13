@@ -128,16 +128,21 @@ TRANSPORT_SENSORS: dict[str, str] = {
 
 # What each word on the `chirp` topic reads as on the Chirp Active sensor.
 # The canary-wap is the one firmware that publishes the topic:
-# csi_mqtt::publish_chirp_state() sends `{"state": "<word>"}` (retained,
-# about every 30 s on a build with the mesh feature), and the word is
-# chirp_channel::state_name() of the channel's shown state. The words that
-# read on are a channel that is on with a session: `active`; `cooldown`, an
+# csi_mqtt::publish_chirp_state() sends `{"state": "<word>"}` (retained, on a
+# build with the mesh feature, every 30 s on mains or a normal battery and
+# stretched to 2 or 4 min in the battery saver and low power modes), and the
+# word is chirp_channel::state_name() of the channel's shown state. The words
+# that read on are a channel that is on with a session: `active`; `cooldown`, an
 # active channel whose own send timer runs (shown, never stored); `muted`, a
 # channel that drops incoming chirps for the mute's window while its
 # presence beacon and an owner's send still go out (spec §7.1); and
 # `listening`, which state_name() can name though the canary-wap never
 # enters it. `disabled` and `initializing` (no session yet) read off. Any
-# other word, state_name()'s own `unknown` among them, reads unknown, not off.
+# other word, state_name()'s own `unknown` among them, reads unknown, not off;
+# the lookup is exact (state_name() sends lowercase literals), so `ACTIVE` or
+# ` active` is another word. chirp_channel::is_active(), which nothing calls,
+# counts only `active` and `listening`; this sensor reads "the channel is on"
+# on purpose, and `channel_state` says which word it was.
 # test_chirp_active.py holds this table to state_name()'s words.
 CHIRP_STATE_IS_ON: dict[str, bool] = {
     "active": True,
@@ -1309,7 +1314,7 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
                 self._device_id,
             )
             return
-        self._attr_is_on = CHIRP_STATE_IS_ON.get(word.strip().lower())
+        self._attr_is_on = CHIRP_STATE_IS_ON.get(word)
         self._attr_extra_state_attributes = {
             "channel_state": word,
             **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
