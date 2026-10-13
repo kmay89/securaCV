@@ -560,6 +560,28 @@ test("a board carrying two products says so", () => {
   assert.ok(row && /, true \}/.test(row), `the 7-inch row must set the flag: ${row}`);
 });
 
+test("every drawn board serves the device type its builds publish", async () => {
+  // `serves` is how a caller asks which product a board is when the figure's
+  // title names only one. It was derived from each env's firmware/configs/
+  // include, so the WAP's four envs, which build the sketch tree and include no
+  // config, left board:seeed_xiao_esp32s3 serving nothing (sweep A89). The
+  // sketch's row in TREE_TYPES now keys those envs, through the project whose
+  // src_dir holds the row's sources, so the board serves the type the sketch
+  // puts on the wire.
+  for (const m of led.hardware.mapped) {
+    assert.ok(m.serves.length > 0,
+      `${m.hardware} is drawn and built by ${m.builds.join(", ")}, so it serves a device type`);
+  }
+  const { walkTrees } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const [tree] = walkTrees(REPO);
+  const xiao = led2hw.get("board:seeed_xiao_esp32s3");
+  assert.ok(xiao, "the WAP's board resolves to a figure");
+  assert.strictEqual(xiao.figure, "device.canary-wap");
+  assert.deepStrictEqual(xiao.serves, [tree.device_type],
+    "the WAP's board serves the one type the sketch publishes");
+  assert.ok(xiao.builds.every((b) => b.startsWith("canary-wap-")), `${xiao.builds}`);
+});
+
 test("nothing a figure draws falls outside the frame it declares", () => {
   // The contact shadow used to be laid out AFTER the fit, so it could land
   // outside the viewBox and be clipped — a round display shadow reached

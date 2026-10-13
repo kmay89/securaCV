@@ -770,7 +770,66 @@ const mappedConfigRows = configRows.filter((r) => r.fig);
 /* ── hardware: the exact lookup, from the pins each build compiles ────── */
 
 const envs = walkEnvs();
+treeConfigsOfEnvs(envs);
 const envByName = new Map(envs.map((e) => [e.env, e]));
+
+/* A TREE_TYPES row (the WAP's sketch) has no firmware/configs/ flavor, so the
+ * envs that build it include no configs/ header and resolved `config: null`,
+ * and the board they compile served nothing in the hardware table
+ * (board:seeed_xiao_esp32s3 read `serves: []`, sweep A89). Which envs build a
+ * sketch is not typed here: each firmware/projects/<p>/platformio.ini names
+ * its src_dir and the env files it pulls in (`extra_configs`), and an env
+ * defined in one of them compiles that src_dir. So an env whose project's
+ * src_dir holds every source a TREE_TYPES row reads compiles that row, and is
+ * keyed `<family>/<flavor>` like a config. Refused, not guessed: a row no
+ * project (or two) compiles, a row no env builds, an env file two projects
+ * pull in, and an env that also includes a configs/ flavor. */
+function treeConfigsOfEnvs(list, rows = TREE_TYPES) {
+  const projects = [];
+  const base = join(ROOT, 'firmware/projects');
+  for (const p of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+    const ini = join(base, p.name, 'platformio.ini');
+    if (!existsSync(ini)) continue;
+    const pio = (readFileSync(ini, 'utf8').match(/^\[platformio\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m) || [])[1] || '';
+    const src = (pio.match(/^src_dir\s*=\s*(\S+)/m) || [])[1] || 'src';
+    const extra = pio.match(/^extra_configs\s*=[ \t]*(.*)\n((?:[ \t]+\S.*(?:\n|$))*)/m);
+    const named = extra ? [extra[1], ...extra[2].split('\n')] : [];
+    const rel = (f) => join(base, p.name, f).slice(ROOT.length + 1);
+    projects.push({
+      project: `firmware/projects/${p.name}`,
+      src: rel(src),
+      files: new Set([rel('platformio.ini'), ...named.map((s) => s.replace(/;.*$/, '').trim())
+        .filter(Boolean).map(rel)]),
+    });
+  }
+  for (const row of rows) {
+    const key = `${row.family}/${row.flavor}`;
+    const homes = projects.filter((p) => row.sources.every((s) => s.file.startsWith(`${p.src}/`)));
+    if (homes.length !== 1) {
+      throw new Error(`figures: TREE_TYPES row ${key} reads ${row.sources.map((s) => s.file).join(', ')}, `
+        + `which ${homes.length ? `${homes.length} projects (${homes.map((h) => h.project).join(', ')})`
+          : 'no firmware/projects/<p>/platformio.ini src_dir'} compile. A row is one sketch tree.`);
+    }
+    const [home] = homes;
+    const built = list.filter((e) => home.files.has(e.file));
+    if (!built.length) {
+      throw new Error(`figures: no env builds ${home.project}'s src_dir ${home.src}, which TREE_TYPES `
+        + `row ${key} reads; nothing compiles the row.`);
+    }
+    for (const e of built) {
+      const owners = projects.filter((p) => p.files.has(e.file)).map((p) => p.project);
+      if (owners.length > 1) {
+        throw new Error(`figures: env ${e.env} is defined in ${e.file}, which ${owners.join(' and ')} `
+          + 'all pull in, so it builds more than one src_dir; define it in one project\'s files.');
+      }
+      if (e.config && e.config !== key) {
+        throw new Error(`figures: env ${e.env} builds the ${key} sketch (${home.src}) and includes `
+          + `configs/${e.config} too; one build cannot publish both.`);
+      }
+      e.config = key;
+    }
+  }
+}
 
 /* ── the device manifests: which figure draws which board ────────────────
  * devices/<slug>/device.json is the join between this ledger and the rest
