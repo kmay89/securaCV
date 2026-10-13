@@ -962,11 +962,12 @@ run-daily-summary: $(DAILY_BIN)
 run: run-daily-summary
 
 # Compile-only checks for sources no firmware build compiles, so they cannot
-# rot unseen (audit, 2026-10-09; firmware/scripts/
-# check_common_build_reachability.py waives the header on this basis):
+# rot unseen (audit, 2026-10-09):
 #   - common/chirp/chirp_channel.h, the ratified C-ABI Chirp API the ACTIVE
 #     tree's port will implement, as C and as C++ (`-include` of /dev/null,
-#     so `#pragma once` is not in the main file);
+#     so `#pragma once` is not in the main file). Its values are held to the
+#     canary-wap reference by canary-wap's test_chirp_protocol_invariants.cpp
+#     (sweep F272); this check is what keeps it valid C;
 #   - examples/modules/stub_door_opens.cpp, the template a third-party CSI
 #     module starts from, against the CSI library's host stubs.
 # Nothing to run: each passes by compiling under -Werror.
