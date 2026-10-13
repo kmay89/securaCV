@@ -224,7 +224,12 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     file looked at (from loop() it is NimBLE's init on the loop task; since
     wave 16's verify a reference too, so `&bluetooth_api::bring_up` taken
     into a function pointer and called through it is refused, in
-    `bluetooth_api.h` as anywhere else); every such guard (the
+    `bluetooth_api.h` as anywhere else), and no file of the sketch,
+    `bluetooth_api.h` among them, names the namespace another way
+    (`namespace x = bluetooth_api;` or `using namespace bluetooth_api;`:
+    since the second verify, as through either `x::bring_up` is read by
+    neither pattern; a name built by token pasting is a lexical limit, not
+    held); every such guard (the
     settings POST's too, BV1) answers through
     `send_bring_up_refused(req, `, which is exactly a 503 with
     `bring_up_starting_error()` while `bluetooth_channel::bring_up_starting()`
@@ -1724,6 +1729,11 @@ def check_channel_handlers(ns: str, api: str, api_src: str, errors: list[str]) -
             check_settings_blocks(api, h, code[span[0]:span[1]], kept[span[0]:span[1]], fields, errors)
 
 
+# Another name for bluetooth_api (the second verify, wave 16).
+BT_API_OTHER_NAME = (r"\bnamespace\s+\w+\s*=\s*(?:::\s*)?bluetooth_api\b"
+                     r"|\busing\s+namespace\s+(?:::\s*)?bluetooth_api\b")
+
+
 def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
                              files: dict[str, str] | None = None) -> None:
     """Rule C3's bring-up part (F235 and its review): what a tap's bring-up
@@ -1777,6 +1787,20 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
                           "guards: anywhere else it is NimBLE's init on a task that never needed it (from "
                           "loop(), past the loop task's watchdog) (F235; references since wave 16's verify)")
             break
+    # And nothing names the namespace another way (the second verify, wave
+    # 16): through `namespace x = bluetooth_api;`, or a namespace saying
+    # `using namespace bluetooth_api;`, bring_up is spelled `x::bring_up`,
+    # which neither pattern above reads.
+    named = [(BT_API, code)] + [(path, blank_comments_and_strings(src))
+                                for path, src in (files or {}).items() if path != BT_API]
+    for path, blanked in named:
+        hit = re.search(BT_API_OTHER_NAME, blanked)
+        if hit:
+            where = enclosing_function(named_bodies(blanked), hit.start())
+            errors.append(f"{path}: {where or 'file scope'}() says `{' '.join(hit.group(0).split())}` — a "
+                          "namespace alias or using-directive for bluetooth_api spells its names `x::name`, "
+                          "where this rule cannot see a bring_up; name them `bluetooth_api::` (F235; the "
+                          "second verify, wave 16)")
     # Start Advertising and Pair leave the stack to the boot bring-up (the
     # F235 review).
     body = body_of(code, SIG_WAITS_FOR_BOOT, f"{BT_API}: waits_for_boot_bring_up()", errors)
@@ -4521,6 +4545,21 @@ MUTATIONS: list[tuple[str, Mutation]] = [
          "static bool bring_up() { return false; }\nvoid loop() {\n  (void)bluetooth_api::bring_up();")),
     ("the sketch's loop() calls bluetooth_api::bring_up() through a function pointer (wave 16's verify)",
      on("ino", SIG_INO_LOOP, r"^", "\n  { bool (*bu)() = &bluetooth_api::bring_up; (void)bu(); }")),
+    # The second verify (wave 16): a name for the namespace that is not
+    # `bluetooth_api`, or a namespace that brings its names in, spells
+    # bring_up as `x::bring_up`, which neither pattern reads.
+    ("the sketch's loop() calls bring_up() through a namespace alias",
+     on("ino", SIG_INO_LOOP, r"^", "\n  { namespace ba = bluetooth_api; (void)ba::bring_up(); }")),
+    ("the sketch aliases bluetooth_api at file scope and loop() calls bring_up() through it",
+     lambda s: on("ino", SIG_INO_LOOP, r"^", "\n  (void)scv_bt::bring_up();")(
+         raw("ino", '#include "bluetooth_api.h"', '#include "bluetooth_api.h"\nnamespace scv_bt = ::bluetooth_api;')(s))),
+    ("the sketch's loop() calls bring_up() through a namespace that brings bluetooth_api's names in",
+     lambda s: on("ino", SIG_INO_LOOP, r"^", "\n  (void)scv_btx::bring_up();")(
+         raw("ino", '#include "bluetooth_api.h"',
+             '#include "bluetooth_api.h"\nnamespace scv_btx { using namespace bluetooth_api; }')(s))),
+    ("the Bluetooth status route calls bring_up() through a namespace alias",
+     on_other(BT_API, api_handler("handle_bluetooth_status"), r"^",
+              "\n  { namespace self = ::bluetooth_api; (void)self::bring_up(); }")),
     ("the sketch's loop() takes bring_up's address under a using-directive",
      on("ino", SIG_INO_LOOP, r"^", "\n  { using namespace bluetooth_api; bool (*bu)() = &bring_up; (void)bu(); }")),
     ("a bluetooth_api.h route takes bring_up's address and calls through it",
