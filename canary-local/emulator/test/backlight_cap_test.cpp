@@ -48,9 +48,13 @@ int g_checks = 0;
 }  // namespace
 
 extern "C" uint32_t millis(void) { return 0; }
-extern "C" void emu_native_em_js(const char* name) {
-  if (strcmp(name, "js_backlight_apply") == 0) g_backlight_calls++;
-}
+// The page's side of the HAL's EM_JS calls (test/native/emscripten.h makes
+// each a plain declaration the test defines, sweep A64): the backlight call
+// is counted, the shape and flush calls are not this test's to read. A call
+// the HAL adds fails the link here too, naming it.
+extern "C" void js_display_ready(int, int, int, int) {}
+extern "C" void js_flush(int, int, int, int, int) {}
+extern "C" void js_backlight_apply(int, int) { g_backlight_calls++; }
 void EmuSerial::write_str(const char*) {}
 EmuSerial Serial;
 namespace canary {

@@ -3,7 +3,8 @@
 // display HAL (src/emu_hal_display.cpp) with g++. Two macros: KEEPALIVE
 // keeps nothing alive a hosted link would drop, and an EM_JS function (a
 // call into the page) becomes a plain C declaration that
-// glass_turn_test.cpp defines with the same signature, so the test plays
+// glass_turn_test.cpp (and backlight_cap_test.cpp, which links the same HAL
+// object) defines with the same signature, so the test plays
 // the page and reads every argument the HAL hands it: js_display_ready's
 // shape AND the quarter turns it carries (sweep A64; the JS body has no
 // meaning here). A call the HAL adds without a definition in the test fails
