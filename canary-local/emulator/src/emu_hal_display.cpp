@@ -9,7 +9,8 @@
 // 3D device's screen. Backlight intent (day PWM ladder, 13-bit night
 // floor) is forwarded to JS so the on-screen glass really dims, clipped at
 // the board's own ceiling where its HAL has one (the nightlight's 50%,
-// sweep A61).
+// sweep A61), and on the expander board the night floor stepped to the byte
+// the board writes (sweep A79).
 //
 // A turned glass (F184): the panel keeps scanning its native landscape and
 // LVGL hands every flush in that frame, already turned by its software
@@ -118,10 +119,10 @@ volatile int g_night_duty13 = -1;       // 0..8191 when night profile owns it
 // clips the same byte at the same place, so its glow and the bench's
 // backlight row read what the glass would. The LEDC boards' HALs apply no
 // such ceiling, and neither does this one for them: there the level is
-// passed on as asked, as before. (What the expander does to the night floor
-// below the cap — the 13-bit duty compressed to 256 steps, >>5 and never to
-// zero — is the board's too, and is not modeled here: a dim duty passes
-// through as asked.)
+// passed on as asked, as before. Below the cap the expander also steps the
+// night floor: its 13-bit duty becomes one byte (>> 5, never zero while a
+// glow was asked for), so the twin holds that byte too (capped_night below,
+// sweep A79).
 #if defined(TFT_USE_EXIO) && TFT_USE_EXIO
 #ifndef CD_BL_MAX_PCT
 #define CD_BL_MAX_PCT 100  // display_1in47.cpp's default: no ceiling
@@ -139,17 +140,24 @@ int capped_level(uint8_t level) {
   return level > kBacklightCap8 ? kBacklightCap8 : level;
 }
 
-// The night floor's 13-bit duty as the board writes it, in the same 13-bit
-// terms: on the expander the duty becomes the byte duty13 >> 5 and that byte
-// is clipped at the cap, so every duty from ((cap + 1) << 5) - 1 up writes
-// the cap's byte — 4095 for the nightlight's 127 — and the twin holds the
-// duty there; every duty under it passes through as asked. With no cap
-// (100%) that ceiling is 8191, the night profile's own full scale; a board
-// without the expander is passed on as asked, as before.
+// The night floor's 13-bit duty as the board writes it (sweep A79), in the
+// same 13-bit terms. display_1in47.cpp's backlight_night_set() clamps the
+// duty to the night scale (8191) and compresses it to one expander byte,
+// duty13 >> 5, raised to 1 when a glow was asked for (a calibrated floor must
+// never go dark); exio_backlight() then clips that byte at the cap. The twin
+// holds the duty that byte stands for, byte << 5: the glass's night floor
+// has the board's steps (32 duties apart, cap + 1 of them), a glow asked
+// under 32 glows at the first step rather than dimmer, a duty on a step
+// passes as asked, and one the board clips is held at the cap's byte — 4064
+// for the nightlight's 127, 8160 with no cap. A board without the expander
+// is passed on as asked, as before.
 int capped_night(uint16_t duty13) {
 #if defined(TFT_USE_EXIO) && TFT_USE_EXIO
-  constexpr int kCeiling13 = ((kBacklightCap8 + 1) << 5) - 1;
-  return duty13 > kCeiling13 ? kCeiling13 : duty13;
+  const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX
+  int byte = duty >> 5;
+  if (byte == 0 && duty > 0) byte = 1;
+  if (byte > kBacklightCap8) byte = kBacklightCap8;
+  return byte << 5;
 #else
   return duty13;
 #endif

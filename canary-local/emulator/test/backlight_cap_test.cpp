@@ -12,19 +12,20 @@
 // compressed to a byte (clamped to 8191, >> 5, never rounded to zero while a
 // glow was asked for). board_byte_*() below are those two paths, restated
 // here and held to the board's source by bench.test.js. For every level and
-// every night duty this holds the twin to them:
+// every night duty 0..9000 this holds the twin to them:
 //   * day: the level the twin applies (emu_backlight_level, what the page
 //     glows at) is the byte the board writes;
-//   * night: the duty the twin applies writes the board's byte when the
-//     board compresses it the same way, and is exactly the duty asked
-//     whenever the board's byte is not clipped (a ceiling, not a scale: the
-//     calibrated night floor passes through). Above that the twin's OWN
-//     duty is held, not only the byte the board would make of it: it is
-//     the ceiling ((cap + 1) << 5) - 1, the largest duty the board's >> 5
-//     leaves at the cap's byte, so a twin that clamps only to the 13-bit
-//     scale, or stops a duty past the ceiling, fails here (comparing bytes
-//     alone let both through: the board's own clip, applied to the twin's
-//     duty, hid a twin that never clipped);
+//   * night (sweep A79): the duty the twin applies is the byte the board
+//     writes for the duty asked, on the 13-bit scale (byte << 5). So the
+//     twin's night floor has the board's steps, 32 duties apart, and no more
+//     of them than the cap's byte allows plus dark; a glow asked under 32
+//     glows at the first step, never dark and never dimmer than the glass;
+//     a duty on a step passes as asked; and a duty the board clips is held
+//     at the cap's step. The twin's OWN duty is held, not only the byte the
+//     board would make of it: comparing bytes alone passes a twin that never
+//     clipped (the board's own clip, applied to the twin's duty, hides it,
+//     A61's review) and one that never steps (>> 5 of an unstepped duty is
+//     the same byte);
 //   * emu_backlight_cap_pct() names the ceiling: CD_BL_MAX_PCT on the
 //     expander board, 100 on a board with none.
 // In the dash config (no expander, no ceiling) every level and duty passes
@@ -119,15 +120,11 @@ unsigned board_unclipped_night(unsigned duty13) {
   if (d8 == 0 && duty13 > 0) d8 = 1;
   return d8;
 }
-// The largest 13-bit duty whose byte (>> 5) the board does not clip past
-// the cap: every duty from here up writes the cap's byte. 8191 with no cap.
-constexpr unsigned kNightCeiling13 = ((kCap + 1u) << 5) - 1u;
-// The duty the twin is to hold for a night duty asked: on the 13-bit scale
-// (the board clamps to NIGHT_DUTY_MAX first), and at most the ceiling.
-unsigned twin_night(unsigned duty13) {
-  if (duty13 > 8191) duty13 = 8191;
-  return duty13 > kNightCeiling13 ? kNightCeiling13 : duty13;
-}
+// The duty the twin is to hold for a night duty asked (sweep A79): the byte
+// the board writes for it, on the 13-bit scale. The cap's step is the
+// highest: kCap << 5 (4064 for the nightlight's 127; 8160 with no cap).
+unsigned twin_night(unsigned duty13) { return board_byte_night(duty13) << 5; }
+constexpr unsigned kNightTop13 = kCap << 5;
 }  // namespace
 
 int main() {
@@ -154,6 +151,8 @@ int main() {
   // The night floor, every duty the profile can ask (and past its scale on
   // the expander board, which clamps it).
   int night_clipped = 0;
+  int night_stepped = 0;           // duties the expander's byte moves off the duty asked
+  static bool step_seen[8192];     // the night duties the twin applied
   const unsigned top = kExpander ? 9000u : 8191u;
   for (unsigned duty = 0; duty <= top; ++duty) {
     const int calls = g_backlight_calls;
@@ -161,26 +160,35 @@ int main() {
     const int got = emu_backlight_night_duty();
     CHECK(g_backlight_calls == calls + 1, "night: backlight_night_set(%u) told the page %d times", duty,
           g_backlight_calls - calls);
+    CHECK(got >= 0 && got <= 8191, "night: backlight_night_set(%u) applies %d, off the 13-bit scale", duty, got);
+    if (got < 0 || got > 8191) continue;
+    step_seen[got] = true;
     if (!kExpander) {
       CHECK(got == (int)duty, "night: backlight_night_set(%u) applies %d, not the duty asked", duty, got);
       continue;
     }
-    CHECK(got >= 0 && got <= 8191, "night: backlight_night_set(%u) applies %d, off the 13-bit scale", duty, got);
     CHECK(board_byte_night((unsigned)got) == board_byte_night(duty),
           "night: backlight_night_set(%u) applies %d, which the board writes as byte %u; it writes %u for the duty asked",
           duty, got, board_byte_night((unsigned)got), board_byte_night(duty));
-    if (board_unclipped_night(duty) <= kCap && duty <= 8191) {
-      CHECK(got == (int)duty, "night: backlight_night_set(%u) applies %d; the board does not clip this duty", duty, got);
-    } else {
-      night_clipped++;
-    }
-    // The twin's own duty, not only the board's byte of it: the ceiling.
+    // The twin's own duty, not only the board's byte of it: the step that
+    // byte stands for, so neither an unstepped duty nor one past the cap
+    // hides behind the board's own >> 5 and clip.
     CHECK(got == (int)twin_night(duty),
-          "night: backlight_night_set(%u) applies %d, not %u (the 13-bit duty held at the ceiling %u, the largest "
-          "the board's >> 5 leaves at the cap's byte %u)",
-          duty, got, twin_night(duty), kNightCeiling13, kCap);
+          "night: backlight_night_set(%u) applies %d, not %u (the board's byte %u, << 5)", duty, got,
+          twin_night(duty), board_byte_night(duty));
+    CHECK((got & 31) == 0, "night: backlight_night_set(%u) applies %d, between two of the expander's steps", duty, got);
+    CHECK(duty == 0 || got > 0, "night: backlight_night_set(%u) goes dark; the board raises a glow asked to byte 1", duty);
     CHECK(((unsigned)got >> 5) <= kCap, "night: backlight_night_set(%u) applies %d, whose byte %u is past the cap's %u",
           duty, got, (unsigned)got >> 5, kCap);
+    if (board_unclipped_night(duty) > kCap || duty > 8191) {
+      night_clipped++;
+    } else if (got != (int)duty) {
+      night_stepped++;
+    } else {
+      // A duty the board neither clips nor steps passes as asked: one on a
+      // step (the calibrated floor's whole duties of 32 pass through).
+      CHECK((duty & 31) == 0, "night: backlight_night_set(%u) passes between two steps unchanged", duty);
+    }
   }
 
   if (kExpander && kCapPct < 100) {
@@ -191,17 +199,37 @@ int main() {
     canary::hal::backlight_night_set(8191);
     CHECK(board_byte_night((unsigned)emu_backlight_night_duty()) == kCap,
           "a full night duty glows past the cap (%d)", emu_backlight_night_duty());
-    CHECK(emu_backlight_night_duty() == (int)kNightCeiling13 && kNightCeiling13 < 8191,
-          "a full night duty applies %d, not the ceiling %u", emu_backlight_night_duty(), kNightCeiling13);
+    CHECK(emu_backlight_night_duty() == (int)kNightTop13 && kNightTop13 < 8191,
+          "a full night duty applies %d, not the cap's step %u", emu_backlight_night_duty(), kNightTop13);
     CHECK(day_clipped == (int)(255 - kCap) && night_clipped > 0,
           "the cap clipped %d day levels (want %u) and %d night duties", day_clipped, 255 - kCap, night_clipped);
-  } else {
+  } else if (!kExpander) {
     CHECK(day_clipped == 0 && night_clipped == 0, "no ceiling, yet %d day levels and %d night duties were clipped",
           day_clipped, night_clipped);
   }
+  // The night floor's steps (sweep A79): on the expander, dark and one step
+  // per byte up to the cap's, 32 duties apart, the dimmest glow at 32, the
+  // brightest at the cap's step; and the twin stepped duties the glass steps.
+  int steps = 0;
+  int lowest_glow = -1;
+  for (int d = 0; d <= 8191; ++d) {
+    if (!step_seen[d]) continue;
+    steps++;
+    if (d > 0 && lowest_glow < 0) lowest_glow = d;
+  }
+  if (kExpander) {
+    CHECK(steps == (int)kCap + 1 && lowest_glow == 32 && step_seen[kNightTop13] && night_stepped > 0,
+          "the expander's night floor has %d steps (want %u: dark and bytes 1..%u), its dimmest glow at %d (want "
+          "32), %s its cap's step %u, and %d duties stepped",
+          steps, kCap + 1, kCap, lowest_glow, step_seen[kNightTop13] ? "reaching" : "never reaching", kNightTop13,
+          night_stepped);
+  } else {
+    CHECK(steps == 8192 && night_stepped == 0, "no expander, yet the night floor has %d of 8192 duties (%d stepped)",
+          steps, night_stepped);
+  }
 
-  printf("%d checks, %d failed (%d day levels and %d night duties clipped)\n", g_checks, g_fail, day_clipped,
-         night_clipped);
+  printf("%d checks, %d failed (%d day levels clipped; %d night duties clipped, %d stepped, %d steps)\n", g_checks,
+         g_fail, day_clipped, night_clipped, night_stepped, steps);
   if (g_fail) {
     printf("BACKLIGHT CAP TEST FAILED\n");
     return 1;

@@ -116,6 +116,13 @@ test("bench facts cite files that still say them; the Nightlight's says what its
   assert.ok(cites("canary-local/emulator/src/emu_hal_display.cpp"), "the bench cites the twin's HAL for what it does");
   assert.match(b.backlight.note, /twin's display HAL clips it at the same register byte/, "the note says the twin clips");
   assert.match(b.backlight.note, /built before it set the level as asked/, "...and what an older emulator did");
+  // ...and steps the night floor to the expander's byte as the board writes it
+  // (sweep A79), citing the board's compression and the twin's step
+  assert.match(b.backlight.note, /twin's HAL steps the night floor to that byte too/, "the note says the twin steps the night floor");
+  assert.ok(b.sources.some((x) => x.file === "firmware/projects/canary-display/src/hal/display_1in47.cpp" &&
+    x.quote === "uint8_t d8 = (uint8_t)(duty13 >> 5);"), "the bench cites the board's night byte");
+  assert.ok(b.sources.some((x) => x.file === "canary-local/emulator/src/emu_hal_display.cpp" && x.quote === "return byte << 5;"),
+    "...and the twin's step");
   // and the Lab shows it: the bench's backlight row reads the cap off the
   // profile and the twin's own cap off the emulator, and says which
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
@@ -129,14 +136,16 @@ test("bench facts cite files that still say them; the Nightlight's says what its
 });
 
 // Sweep A61: the twin's display HAL clips the backlight where the board's
-// does. The behavior is held natively — emulator/test/backlight_cap_test.cpp,
+// does; sweep A79: on the expander board it also steps the night floor to
+// the byte the board writes (duty >> 5, never dark while a glow is asked
+// for). The behavior is held natively — emulator/test/backlight_cap_test.cpp,
 // which glass_turn.sh builds against the real emu_hal_display.cpp in the
 // nightlight's config and the dash's, holds every day level and every night
 // duty to the C3-LCD-1.47's expander path — so this holds what that test
 // leans on: its restatement of the board's path is the board's source, the
 // script runs it in both configs, and the page says what the emulator in use
 // does (backlightCapNote, run as app.js ships it).
-test("A61: the twin clips the Nightlight's backlight where the board's HAL does, and the bench row says which", () => {
+test("A61, A79: the twin clips the Nightlight's backlight and steps its night floor where the board's HAL does, and the bench row says which", () => {
   const REPO = join(ROOT, "..");
   const board = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_1in47.cpp"), "utf8");
   const native = readFileSync(join(ROOT, "emulator/test/backlight_cap_test.cpp"), "utf8");
@@ -156,12 +165,24 @@ test("A61: the twin clips the Nightlight's backlight where the board's HAL does,
                       "if (duty13 > 8191) duty13 = 8191;", "unsigned d8 = duty13 >> 5;", "if (d8 == 0 && duty13 > 0) d8 = 1;"]) {
     assert.ok(native.includes(line), `backlight_cap_test.cpp no longer restates ${JSON.stringify(line)}`);
   }
-  // ...and it holds the twin's own night duty at the ceiling, not only the
-  // byte the board would make of it (a byte compare passes a twin that never
-  // clips: the board's clip, applied to the twin's duty, hides it)
-  assert.ok(native.includes("constexpr unsigned kNightCeiling13 = ((kCap + 1u) << 5) - 1u;") &&
-    native.includes("CHECK(got == (int)twin_night(duty),") && native.includes("CHECK(((unsigned)got >> 5) <= kCap,"),
-  "backlight_cap_test.cpp holds the night duty the twin applies to the ceiling");
+  // ...and it holds the twin's own night duty to the board's byte for it, on
+  // the 13-bit scale (sweep A79), not only the byte the board would make of
+  // it: a byte compare passes a twin that never clips (the board's clip,
+  // applied to the twin's duty, hides it) and one that never steps (>> 5 of
+  // an unstepped duty is the same byte). It counts the steps too.
+  assert.ok(native.includes("unsigned twin_night(unsigned duty13) { return board_byte_night(duty13) << 5; }") &&
+    native.includes("CHECK(got == (int)twin_night(duty),") && native.includes("CHECK((got & 31) == 0,") &&
+    native.includes("CHECK(((unsigned)got >> 5) <= kCap,") &&
+    native.includes("CHECK(steps == (int)kCap + 1 && lowest_glow == 32 && step_seen[kNightTop13] && night_stepped > 0,"),
+  "backlight_cap_test.cpp holds the night duty the twin applies to the board's byte, step by step");
+  // the twin's night step, as the board's backlight_night_set() makes the
+  // byte, on the expander board alone
+  const nightBody = /int capped_night\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(hal)?.[1] || "";
+  assert.strictEqual(nightBody, "#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n" +
+    "  const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX\n" +
+    "  int byte = duty >> 5;\n  if (byte == 0 && duty > 0) byte = 1;\n" +
+    "  if (byte > kBacklightCap8) byte = kBacklightCap8;\n  return byte << 5;\n#else\n  return duty13;\n#endif",
+  "the twin steps the night floor to the expander's byte on the expander board, and passes it elsewhere");
   // the twin's HAL: the board's gate, the board's byte, both sinks through it,
   // and the binding the page asks
   assert.ok(hal.includes("#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100"));

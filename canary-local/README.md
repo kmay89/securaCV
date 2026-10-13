@@ -923,11 +923,13 @@ fails on byte drift.
   the nightlight's R90 and R270). Beside it,
   `backlight_cap_test.cpp` holds the same HAL's backlight to the board's
   (sweep A61): built in the nightlight's config, every day level is clipped
-  at the byte the C3-LCD-1.47's expander path clips it to, every night
-  duty past that byte is held at 4095, the largest duty it allows (the
-  twin's own duty is checked, not only the byte the board would make of
-  it), and every dimmer one passes through; in the dash's config every one
-  passes through as asked. With no argument
+  at the byte the C3-LCD-1.47's expander path clips it to, and every night
+  duty is the byte that path writes for it, on the 13-bit scale (A79:
+  `duty >> 5`, raised to 1 when a glow was asked for, clipped at the cap,
+  then `<< 5`): 128 steps 32 apart from dark to 4064, so a glow under 32
+  shows at 32 and a duty past the cap's byte at 4064 (the twin's own duty is
+  checked, not only the byte the board would make of it); in the dash's
+  config every one passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
