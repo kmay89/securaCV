@@ -27,8 +27,8 @@ outputs.
   [`firmware/envs/platformio/canary-display.ini`](../../firmware/envs/platformio/canary-display.ini);
   the flavor set is in [`firmware/flavors.json`](../../firmware/flavors.json).
 - A serial monitor at the console baud. The features below announce themselves
-  with tagged lines (`[FIELD]`, `[RS485]`, `[CAN]`) — those lines are the
-  pass signals.
+  with tagged lines (`[FIELD]`, `[RS485]`, `[CAN]`) and, in the playground,
+  `PG1 <ms> EVT <station> ...` lines — those lines are the pass signals.
 - The safest way to exercise the isolated I/O and I²C sensors interactively is
   the **dev playground** (`-DFEATURE_PLAYGROUND=1`, or Settings → "dev mode" on
   a `dash-b` unit) — see [`dev_playground_43b.md`](./dev_playground_43b.md). Use
@@ -78,17 +78,27 @@ boots the fleet face — `field_io_loop` runs every pass).
 ## 2. RS485 / Modbus RTU
 
 **Build/flash:** `pio run -e canary-display-dash-rs485 -t upload` (sets
-`-DFEATURE_RS485=1`). **Note:** RS485 shares GPIO43/44 with the CH343 USB-UART
-console — keep logging on the native USB CDC; expect UART programming to fight a
-live bus.
+`-DFEATURE_RS485=1` and `-DFEATURE_DEVMODE=1`). The image boots the fleet face
+and leaves the bus alone; the driver's caller is the dev playground's **RS485**
+station. Open **Settings → "dev mode" → enter** (the unit reboots into the
+network-silent bench), tap the **RS485** station and **PROBE**. In this env the
+probe reads through the production transport — `canary::io::rs485_begin` and
+`rs485_read_holding` in `src/io/rs485.cpp` — so this checklist validates the
+driver itself (the plain playground and `dash-b` builds bring up their own thin
+transport with the same wire behavior). Long-press the glass for 3 s to leave
+dev mode. **Note:** RS485 shares GPIO43/44 with the CH343 USB-UART console —
+keep logging on the native USB CDC; expect UART programming to fight a live
+bus.
 
 **Wire:** terminal `A`/`B` (RS485 A/B) to a Modbus RTU **slave** — a real meter,
 or a USB-RS485 dongle running a slave sim answering **slave 1, holding register
 0** at **9600 8N1** (`RS485_BAUD_DEFAULT`). Match A↔A / B↔B.
 
-**Pass:** at boot, `[RS485] up on A/B (TX=44 RX=43) @ 9600 8N1`; then every ~5 s,
-`[RS485] probe slave 1 reg 0 = <n> (0x....)`. A quiet bus logs
-`[RS485] probe slave 1: no reply (nothing on the bus?)`.
+**Pass:** the first PROBE prints `[RS485] up on A/B (TX=44 RX=43) @ 9600 8N1`
+once; each PROBE then prints `PG1 <ms> EVT rs485 slave=1 reg=0 val=<n> crc=ok`
+and the station shows the value. A quiet bus — or anything other than one good
+register back within the 300 ms reply window (a bad CRC, another slave, a
+Modbus exception) — prints `PG1 <ms> EVT rs485 slave=1 reply=none`.
 
 **Fail → fix:** no reply with a known-good slave → **swap A/B** (or the
 TX/RX orientation) and re-test; the `pins.h` RS485 orientation note is
@@ -101,22 +111,36 @@ orientation VERIFY note and (optionally) raise the default baud.
 ## 3. CAN / TWAI
 
 **Build/flash:** `pio run -e canary-display-dash-can -t upload` (sets
-`-DFEATURE_CAN=1`, pulls `<driver/twai.h>`).
+`-DFEATURE_CAN=1` and `-DFEATURE_DEVMODE=1`, pulls `<driver/twai.h>`). As in
+§2, the image boots the fleet face; the driver's caller is the playground's
+**CAN bus** station: **Settings → "dev mode" → enter**, tap the station and
+**SEND FRAME**. In this env the station brings the controller up and sends
+through `canary::io::can_begin` / `can_transmit`, and drains received frames
+through `can_receive` (`src/io/can_bus.cpp`).
 
-**Wire:** terminal `H`/`L` (CANH/CANL) onto a CAN bus at **500 kbit/s**
-(`CAN_BITRATE_DEFAULT`) — another node or a USB-CAN adapter. The bus needs
-**120 Ω termination at both ends**; the board's on-board terminator jumper is
-**OFF by default** — enable it only if this board is a bus end.
+**Wire:** terminal `H`/`L` (CANH/CANL) onto a CAN bus at **500 kbit/s** — the
+rate the station asks for — with another node or a USB-CAN adapter. The bus
+needs **120 Ω termination at both ends**; the board's on-board terminator
+jumper is **OFF by default** — enable it only if this board is a bus end.
 
-**Pass:** at boot, `[CAN] up on H/L (TX=15 RX=16) @ 500000 bit/s`; received
-frames log as `[CAN] id=0x... ext=0 rtr=0 dlc=N data=...`. Force enough TX error
-(e.g. transmit with no other node/termination) and confirm self-heal:
-`[CAN] bus-off - initiating recovery` → `[CAN] recovered - restarted`.
+**Pass:** the first SEND FRAME prints `[CAN] up on H/L (TX=15 RX=16) @ 500000
+bit/s` once, then `PG1 <ms> EVT can tx id=0x100 dlc=8 ok`. That `ok` means the
+TWAI driver queued the frame (`twai_transmit` returned `ESP_OK`), not that a node
+acknowledged it; a send the driver refuses (the transmit queue still full after
+50 ms, or the controller not running) prints
+`PG1 <ms> EVT can tx=fail (bus quiet? need another node/ack)`. Received frames
+print `PG1 <ms> EVT can rx id=0x... ext=0 rtr=0 dlc=N data=...` (up to 8 every
+100 ms) and count on the station. Nothing recovers a controller that has gone
+**bus-off** in this build: once it has, every later send fails until a reboot.
 
-**Fail → fix:** no frames / immediate bus-off → check **termination** (both ends,
-and/or the jumper), confirm the far end is 500 kbit/s, and verify H/L aren't
-swapped. Retire the CAN timing/terminator VERIFY notes in `pins.h` once frames
-flow cleanly; if your bus runs another standard rate, change `CAN_BITRATE_DEFAULT`.
+**Fail → fix:** no frames / sends failing from the first tap → check
+**termination** (both ends, and/or the jumper), confirm the far end is 500
+kbit/s, and verify H/L aren't swapped; reboot after a bus-off. Retire the CAN
+timing/terminator VERIFY notes in `pins.h` once frames flow cleanly. For another
+standard rate, change the rate the station passes to `can_begin` in
+`src/playground/playground.cpp` (and the inline transport's timing preset next
+to it, which the plain playground build uses); `pins.h`'s `CAN_BITRATE_DEFAULT`
+is not read by any code.
 
 ---
 

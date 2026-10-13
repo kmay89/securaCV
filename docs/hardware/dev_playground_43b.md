@@ -29,6 +29,16 @@ There are two builds that reach this bench, both dash-flavor + 4.3B only
 Both share the same `canary::playground` code and the `PG1` serial protocol
 below; `FEATURE_DEVMODE` only adds the Settings doorway and the exit.
 
+Two more envs carry the same doorway: **`canary-display-dash-rs485`** and
+**`canary-display-dash-can`** add `-DFEATURE_DEVMODE=1` to the production
+fieldbus driver they compile (`FEATURE_RS485` / `FEATURE_CAN`). In those builds
+the RS485 / CAN bus station goes through that driver (`src/io/rs485.cpp`,
+`src/io/can_bus.cpp`) instead of the station's own thin transport, and prints
+the driver's one-time bring-up line (`[RS485] up on A/B ...`,
+`[CAN] up on H/L ...`) beside the usual `PG1` lines; what goes out on the wire
+is the same. That is how the bench checklist validates the drivers
+([`board_43b_activation_bench.md`](./board_43b_activation_bench.md) §2–§3).
+
 > The bench is the first citizen of a larger **mode system** (fleet / bench /
 > demo / debug / arcade) — see [`display_modes.md`](./display_modes.md) for
 > the registry that generalizes the `devmode` latch (the legacy bool stays

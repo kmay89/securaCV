@@ -90,9 +90,15 @@ mirrored in the others breaks the build. In dependency order:
   that *are* in `FIRMWARE_SRCS`, rebuild with `canary-local/emulator/build.sh all`
   — `emcc`/`em++` 3.1.6, `apt install emscripten` on ubuntu-latest — and confirm
   `dist/*.js` are byte-identical or commit the rebuild.)
-- **The playground env has no `FEATURE_RS485`/`FEATURE_CAN`.** `rs485`/`can`
-  stations INLINE `Serial1`/TWAI using the pure cores `canary/io/modbus_rtu.h`
-  and `canary/io/can_frame.h` rather than the gated production drivers.
+- **The playground env has no `FEATURE_RS485`/`FEATURE_CAN`.** There the
+  `rs485`/`can` stations INLINE `Serial1`/TWAI using the pure cores
+  `canary/io/modbus_rtu.h` and `canary/io/can_frame.h`. Under `FEATURE_RS485` /
+  `FEATURE_CAN` (the `dash-rs485` / `dash-can` envs, which also set
+  `FEATURE_DEVMODE`) the same stations call the production drivers
+  (`canary::io::rs485_*`, `canary::io::can_*`) instead, with the same wire
+  behavior. `tests_host/test_fieldbus_glue.cpp` builds `playground.cpp` both
+  ways and holds them to one trace — run `make -C
+  firmware/projects/canary-display/tests_host` after touching either path.
 - **Website carry is a copy, not an import.** `playground-data.js` /
   `playground-sim.js` are hand-carried; re-carry them whenever `playground.json`
   or the sim changes (step 7). The `showroom.js ← assembly.json` pattern is the

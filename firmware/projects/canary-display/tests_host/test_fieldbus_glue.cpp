@@ -189,7 +189,7 @@ static const std::vector<uint8_t> kProbeRequest = {0x01, 0x03, 0x00, 0x00, 0x00,
 
 // A Modbus slave on the far end: answers every well-formed read-holding frame
 // addressed to `slave` with `values`, `after_ms` after the request went out.
-static void slave_answers(uint8_t slave, std::vector<uint16_t> values, uint32_t after_ms) {
+static void slave_answers(uint8_t slave, const std::vector<uint16_t>& values, uint32_t after_ms) {
   Serial1.on_frame = [slave, values, after_ms](const std::vector<uint8_t>& req) {
     if (req.size() != 8 || req[0] != slave || req[1] != 0x03) return;
     std::vector<uint8_t> body = {slave, 0x03, (uint8_t)(values.size() * 2)};
