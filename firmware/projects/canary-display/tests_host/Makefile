@@ -487,7 +487,11 @@ clean: clean-io-cores
 # Every build is held to the same wire trace (request bytes, UART and TWAI
 # configuration, reply window, test frame, drain, PG1 lines); the driver builds
 # also check the station went through the driver and drive the driver API
-# directly. Hooked into `run` and `clean` by prerequisite.
+# directly. Hooked into `run` and `clean` by prerequisite. Which env each build
+# stands for is checked, not just stated: scripts/tests/test_display_fieldbus_envs.py
+# reads this plan (`make -n -B`) and canary-display.ini and requires each build's
+# feature flags, config dir and pins board to be an env's, and every env that
+# turns a driver on to have a build with exactly its own.
 FIELDBUS_SRC = test_fieldbus_glue.cpp ../src/playground/playground.cpp \
   ../src/io/rs485.cpp ../src/io/can_bus.cpp
 FIELDBUS_DEPS = $(FIELDBUS_SRC) fake_fieldbus/Arduino.h fake_fieldbus/Wire.h \
