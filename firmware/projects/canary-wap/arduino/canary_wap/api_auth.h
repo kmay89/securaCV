@@ -29,6 +29,15 @@
 // the long-lived API token when they click Settings.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
 
+// The same store, narrowed to the sessions minted beside a served
+// provisioning receipt (a BOOT tap or a setup-door claim; cv_session_store.h
+// Origin::OWNER). The landing page at / mints a session for any caller on
+// the network (the Trust-on-LAN posture), so a route that answers a
+// credential — the bearer token, the SoftAP password — takes only this one
+// in place of the bearer (api_auth_check_credential*, sweep F289). Weak and
+// absent means no session answers a credential.
+extern bool cv_session_validate_owner(httpd_req_t* req) __attribute__((weak));
+
 // ═══════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════
@@ -145,17 +154,9 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // Returns true if authenticated, false if response already sent (401/403/429).
 // The caller should return ESP_OK immediately if this returns false.
 
-static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
-  // A valid session cookie authenticates the request, but it must NOT
-  // reset the Bearer-token failure lockout. Otherwise an attacker who
-  // happens to hold (or can mint) a session cookie could clear the
-  // consecutive_failures backoff between token guesses, neutralizing the
-  // brute-force protection. Only a successful Bearer token comparison
-  // calls auth_record_success() (see below).
-  if (cv_session_validate && cv_session_validate(req)) {
-    return true;
-  }
-
+// The Authorization header alone, with the lockout: what api_auth_check
+// asks after a session, and api_auth_check_credential after an owner's.
+static bool api_auth_check_header(httpd_req_t* req, const char* expected_token) {
   // ── Check lockout ──
   if (auth_is_locked_out()) {
     uint32_t remaining = g_auth.lockout_until_ms - millis();
@@ -241,17 +242,39 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
   return true;
 }
 
+static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
+  // A valid session cookie authenticates the request, but it must NOT
+  // reset the Bearer-token failure lockout. Otherwise an attacker who
+  // happens to hold (or can mint) a session cookie could clear the
+  // consecutive_failures backoff between token guesses, neutralizing the
+  // brute-force protection. Only a successful Bearer token comparison
+  // calls auth_record_success() (api_auth_check_header).
+  if (cv_session_validate && cv_session_validate(req)) {
+    return true;
+  }
+  return api_auth_check_header(req, expected_token);
+}
+
+// For a route that answers a credential (sweep F289): the bearer token in
+// the Authorization header, or a session minted beside a served receipt —
+// never a session the landing page minted, which any host on the network
+// can get. Same responses and lockout as api_auth_check; a landing session
+// with no header is a plain 401 (no strike), which brings the dashboard's
+// sign-in back, whose BOOT tap mints an owner's session.
+static bool api_auth_check_credential(httpd_req_t* req, const char* expected_token) {
+  if (cv_session_validate_owner && cv_session_validate_owner(req)) {
+    return true;
+  }
+  return api_auth_check_header(req, expected_token);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // OPTIONAL AUTH CHECK — Returns true if valid token present
 // ═══════════════════════════════════════════════════════════════════
 
-// Like api_auth_check but does NOT send error response on failure.
-// Used for endpoints that allow both authenticated and unauthenticated access
-// (e.g., provisioning-receipt).
-
-static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
-  if (cv_session_validate && cv_session_validate(req)) return true;
-
+// The bearer token in the Authorization header, and nothing else: no
+// cookie, no response sent, no lockout counted.
+static bool api_auth_bearer_header_ok(httpd_req_t* req, const char* expected_token) {
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
@@ -270,6 +293,26 @@ static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token
   if (token_len != expected_len) return false;
 
   return constant_time_compare(token, expected_token, expected_len);
+}
+
+// Like api_auth_check but does NOT send error response on failure: any
+// live session, or the bearer header. For a caller that enforces on its
+// own (the CSI and MQTT routes' guards, the QR scan's status poll). Not for
+// a route that answers a credential: that is api_auth_check_credential_
+// optional below.
+static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
+  if (cv_session_validate && cv_session_validate(req)) return true;
+  return api_auth_bearer_header_ok(req, expected_token);
+}
+
+// The silent form of api_auth_check_credential, for GET
+// /api/provisioning-receipt's first grant (sweep F289): the bearer header,
+// or a session minted beside a served receipt. A landing session falls
+// through to the setup-door claim and the BOOT tap, exactly as a request
+// with no session does.
+static bool api_auth_check_credential_optional(httpd_req_t* req, const char* expected_token) {
+  if (api_auth_bearer_header_ok(req, expected_token)) return true;
+  return cv_session_validate_owner && cv_session_validate_owner(req);
 }
 
 // ═══════════════════════════════════════════════════════════════════

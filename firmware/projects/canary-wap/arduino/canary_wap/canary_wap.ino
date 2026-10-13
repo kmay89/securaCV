@@ -3572,7 +3572,11 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   //   2. ?cv_pair=<hex> query param present → consume the one-shot
   //      pair token, mint a fresh session, set the cookie, and 302
   //      redirect to "/" so the URL is clean and the cookie is in
-  //      effect for subsequent requests.
+  //      effect for subsequent requests. The landing page hands that
+  //      token to any caller that reaches the device (on the home
+  //      network too, once the WAP has joined it), so the session is
+  //      minted LANDING: the dashboard runs on it, and no route that
+  //      answers a credential takes it (sweep F289).
   //   3. Neither cookie nor pair param → render the "Welcome / Open
   //      dashboard" landing page (csi_integration::send_pair_landing),
   //      which mints a new pair token and offers a one-tap link.
@@ -3634,8 +3638,12 @@ static esp_err_t handle_ui(httpd_req_t* req) {
     if (httpd_query_key_value(qs, "cv_pair", pair_hex, sizeof(pair_hex)) == ESP_OK
         && csi_integration::pair_token_consume(pair_hex)) {
       char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-      if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
-        // 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
+      // LANDING: the pair token came from the landing page, which mints one
+      // for any caller, so this session runs the dashboard and answers no
+      // credential (sweep F289; cv_session_store.h).
+      if (csi_integration::session_issue(session_hex, sizeof(session_hex),
+                                         cv_session::Origin::LANDING)) {
+        // 86400 = 24 h, matching cv_session::TTL_MS (cv_session_store.h).
         // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
         // SameSite=Strict: cross-origin requests can't carry it (CSRF).
         // Path=/: covers /, /tune, /api/*.
@@ -7917,7 +7925,9 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  * Canary Vision companion app's "Scan pairing QR" fallback.
  *
  * The payload carries the API token, so this endpoint demands the same
- * auth as the receipt's Bearer path — the QR is something an already-
+ * auth as the receipt's first grant (api_auth_check_credential: the bearer
+ * header, or a session a BOOT tap or a setup-door claim minted, never the
+ * landing page's; sweep F289) — the QR is something an already-
  * authenticated operator deliberately shows to their own phone, never an
  * anonymous read. Only the fields the app's scanner consumes are encoded:
  * {device_id, base_url, token}, plus tls_cert_fp on a TLS-enabled device —
@@ -7929,7 +7939,9 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  */
 static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   g_health.http_requests++;
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  // The bearer, or a session minted beside a served receipt; never the
+  // landing page's (sweep F289): this answer is the API token.
+  if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;
 
   // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
   // to the AP address while the device is still in setup mode.
@@ -8666,8 +8678,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // front of this route there); the WAP sketch has no Host guard on this
   // route and does not ask it.
 
-  // 1. A valid Bearer token always serves (for SAP re-sync).
-  if (api_auth_check_optional(req, g_device.api_token_str)) {
+  // 1. A valid Bearer token in the Authorization header always serves (for
+  //    SAP re-sync), and so does a session minted beside a receipt this
+  //    route served before (OWNER: a BOOT tap or a claim, whose response
+  //    already carried the token). A session the landing page minted does
+  //    NOT: the landing hands a pair token to any caller on the network, so
+  //    such a session falls through to the claim and the tap like a request
+  //    with none (sweep F289).
+  if (api_auth_check_credential_optional(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
@@ -8724,8 +8742,11 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The claim matched, or the gate was open (and is now closed) — serve the
   // receipt with the same session cookie either way: the phone that
   // provisioned over the door is as present as the hand on the BOOT button.
+  // OWNER: this response carries the bearer token, so the session minted
+  // with it stands in for the bearer on grant 1 (sweep F289).
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-  if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
+  if (csi_integration::session_issue(session_hex, sizeof(session_hex),
+                                     cv_session::Origin::OWNER)) {
     char cookie_hdr[160];
     int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
       "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
