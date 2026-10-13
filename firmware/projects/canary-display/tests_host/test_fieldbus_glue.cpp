@@ -567,6 +567,13 @@ static void rs485_driver_reports_parse_faults() {
     Serial1.inject(with_crc({0x09, 0x03, 0x02, 0x12, 0x34}), 5);
   };
   CHECK(io::rs485_read_holding(1, 0, 1, r, 1, 100) == mb::ERR_ADDR);
+  // A reply cut short never completes: the exchange times out.
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    std::vector<uint8_t> b = with_crc({0x01, 0x03, 0x02, 0x12, 0x34});
+    b.resize(4);
+    Serial1.inject(b, 5);
+  };
+  CHECK(io::rs485_read_holding(1, 0, 1, r, 1, 100) == io::RS485_ERR_TIMEOUT);
 }
 #endif
 
@@ -677,7 +684,7 @@ int main() {
   fails += run("rs485 driver refuses bad arguments", rs485_driver_refuses_bad_arguments);
   fails += run("rs485 driver reads several registers", rs485_driver_reads_several_registers);
   fails += run("rs485 driver honors its timeout and yields", rs485_driver_honors_its_timeout);
-  fails += run("rs485 driver reports parse faults", rs485_driver_reports_parse_faults);
+  fails += run("rs485 driver reports parse faults and a cut-short reply", rs485_driver_reports_parse_faults);
 #endif
 #if defined(FEATURE_CAN) && FEATURE_CAN
   fails += run("can driver refuses an unsupported bitrate", can_driver_refuses_unsupported_bitrate);
