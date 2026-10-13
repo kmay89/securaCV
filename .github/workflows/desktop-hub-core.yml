@@ -148,24 +148,31 @@ jobs:
             exit 1
           fi
 
-  # The Windows branches of the hub writer, compiled where they run (sweep
-  # A68). The matrix above is Linux only, so `cfg(windows)` code —
-  # hub-core's hub_enumerate_windows.rs, hub-io's staged \\.\PhysicalDriveN
-  # writer in write.rs — and the Windows view of every test target were
-  # compiled by no workflow: the 2026-10 cleanup found hub-core's own tests
-  # did not build off Linux until it fixed an import. This job compiles them
-  # and enables nothing: the Windows writer stays staged until A9's VM or
-  # hardware pass, and nothing here runs, flashes or ships a Windows build.
-  # Same toolchain as the matrix above (the runner image's rustup stable, no
-  # pin of its own), the same cache shape and the workflow's path filters.
-  # `check`, not `test`: the FAT round-trip tests need dosfstools/mtools and
-  # the loopback HTTP tests are Linux facts already proven above; what only
-  # Windows can say is whether the Windows code compiles.
+  # The Windows branches of the hub writer, compiled, linted and tested where
+  # they run (sweeps A68, A87). The matrix above is Linux only, so
+  # `cfg(windows)` code — hub-core's hub_enumerate_windows.rs, hub-io's
+  # staged \\.\PhysicalDriveN writer in write.rs — and the Windows view of
+  # every test target were compiled by no workflow: the 2026-10 cleanup found
+  # hub-core's own tests did not build off Linux until it fixed an import.
+  # This job compiles them, holds them to clippy with warnings as errors (a
+  # Windows-only warning, such as an unused `cfg(windows)` import, is
+  # invisible to the Linux clippy), and runs `cargo test`, so
+  # hub_enumerate_windows.rs's pure judgments run on the OS they judge. It
+  # enables nothing: the Windows writer stays staged until A9's VM or hardware
+  # pass, `write_backend_available()` still answers false here (a test holds
+  # it to that), and nothing here flashes or ships a Windows build. Same
+  # toolchain as the matrix above (the runner image's rustup stable, no pin of
+  # its own), the same cache shape and the workflow's path filters.
+  # hub-core's FAT round-trip tests (tests/fat_against_dosfstools.rs) print
+  # SKIP(tooling) and return here: dosfstools and mtools are Linux tools, and
+  # the matrix above is the job that proves those tests really ran.
   windows-check:
-    name: cargo check on Windows (${{ matrix.crate }})
+    name: cargo check, clippy and test on Windows (${{ matrix.crate }})
     runs-on: windows-latest
-    # A cold check builds hub-io's C dependencies (liblzma, ring) with MSVC;
-    # a few minutes healthy, so this is the circuit breaker, not a race.
+    # A cold check built hub-io in under a minute on its first run (#1802);
+    # clippy and the test build add the rest of the dependency graph's codegen
+    # (liblzma and ring through MSVC). The timeout is the circuit breaker, not
+    # a race.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -175,7 +182,23 @@ jobs:
       run:
         working-directory: desktop/${{ matrix.crate }}
     steps:
+      - name: Check out with the repository's line endings
+        # Git for Windows installs with core.autocrlf=true, which turns text
+        # into CRLF on checkout, and nothing in .gitattributes says otherwise.
+        # hub-io's provision.rs embeds repo files with include_str! (which,
+        # unlike Rust source, keeps their bytes as checked out), and
+        # embedded_bytes_match_python_manifest_pins hashes four of them against
+        # pins taken over the committed LF bytes: a CRLF checkout would fail it
+        # here alone, over bytes no build ships. Set before the checkout, from
+        # the runner's temp directory (the default working-directory does not
+        # exist until the checkout makes it).
+        working-directory: ${{ runner.temp }}
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
+      - name: Install clippy
+        # Same as the matrix above: ask for the component rather than trust
+        # that the image's toolchain carries it.
+        run: rustup component add clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         # One entry per crate, as in the matrix above; rust-cache keys on the
         # job and the runner OS too, so these never share an entry with Linux.
@@ -184,6 +207,10 @@ jobs:
           key: ${{ matrix.crate }}
       - name: cargo check --all-targets (Windows branches compile)
         run: cargo check --all-targets
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
 
   # Self-contained pure modules that live inside the release-only tauri crate
   # (desktop/src-tauri) but depend on nothing but `std`, so `rustc --test` runs
