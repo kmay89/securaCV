@@ -260,7 +260,8 @@ inline bool bring_up() {
 
 // A tap whose bring_up() left the stack down (sweep F235), before anything
 // is submitted: while another task's init() holds its latch (the boot
-// worker's, or an earlier tap's) or has just brought the stack up, 503
+// worker's: these routes are served by one esp_http_server task, so no
+// other tap runs meanwhile) or has just brought the stack up, 503
 // "Bluetooth is still starting; try again in a moment" (GET /api/bluetooth
 // reads "initializing" meanwhile); otherwise init()'s refusal by name (the
 // heap guard's measured RAM, NimBLE's init, the server), send_bt_error()'s

@@ -505,7 +505,13 @@ inline std::vector<PasskeyAnswer> passkey_answers;
 inline bool nimble_up = false;
 // When set, NimBLEDevice::init() fails as NimBLE-Arduino 2.x's does when the
 // controller or host cannot come up (it answers false and the stack stays
-// down): a boot bring-up that failed (sweep F235). The test clears it.
+// down): a boot bring-up that failed (sweep F235). The test clears it, and
+// the next init() succeeds: the kind of failure NimBLE-Arduino 2.5.0 leaves
+// nothing behind for (NimBLEDevice.cpp: nvs_flash_init() or
+// esp_bt_controller_init() failing). A failure after the controller's init
+// (esp_bt_controller_enable(), esp_nimble_hci_init()) leaves the controller
+// initialized, so on a device every later init() fails until a reboot; that
+// sticky kind is not modeled here.
 inline bool nimble_init_fails = false;
 inline std::unique_ptr<NimBLEServer> server;
 inline NimBLEAdvertising advertising;

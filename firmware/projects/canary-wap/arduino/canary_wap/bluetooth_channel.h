@@ -302,9 +302,10 @@ const char* init_fail_reason();
 // Any task, after a tap's bring_up() answered false (sweep F235): whether
 // that was another task's bring-up, not a refusal. init() admits one caller
 // at a time and turns the others away at once, so a tap made while the boot
-// worker's init() runs (or an earlier tap's) gets false with nothing
-// refused; true then, and also when that bring-up has finished with the
-// stack up since. False means init() refused, and init_fail_reason() names
+// worker's init() runs gets false with nothing refused; true then, and also
+// when that bring-up has finished with the stack up since. These routes are
+// served by one esp_http_server task, so no other tap is inside init() then.
+// False means init() refused, and init_fail_reason() names
 // why (the heap guard, NimBLE's init, the server). The tap answers
 // bring_up_starting_error() with a 503 for the first and the refusal for
 // the second; it submits nothing either way.

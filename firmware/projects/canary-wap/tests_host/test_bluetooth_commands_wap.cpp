@@ -2653,7 +2653,14 @@ void test_a_tap_brings_the_stack_up_whatever_the_setting() {
     }
     CHECK(host_sim::count("nimble_init", "httpd") == 2 && !bc::is_initialized());
     CHECK(bc::g_commands.queued() == 0 && host_sim::count("adv_start") == 0);
-    // NimBLE comes up: the next tap brings the stack up, then its command runs.
+    // NimBLE comes up: the next tap brings the stack up, then its command
+    // runs. A host model: the stand-in's failure is the kind NimBLE-Arduino
+    // 2.5.0 can retry (nvs_flash_init() or esp_bt_controller_init() failing
+    // leaves nothing behind). One past the controller's init
+    // (esp_bt_controller_enable(), esp_nimble_hci_init()) leaves the
+    // controller initialized and every later init() failing until a reboot;
+    // the stand-in does not model that, and the bench row holds only the
+    // heap guard's refusal recovering.
     host_sim::nimble_init_fails = false;
     Tap t = tap(first);
     CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)));
@@ -2696,15 +2703,16 @@ void test_a_tap_brings_the_stack_up_whatever_the_setting() {
 }
 
 // A tap made while another task's init() holds its latch (sweep F235): the
-// boot worker's, or an earlier tap's. init() turns it away at once, with
-// nothing refused, so the tap answers 503 "Bluetooth is still starting; try
-// again in a moment" and submits nothing, and GET /api/bluetooth reads
-// "initializing" meanwhile; once that bring-up is done the tap's command
-// runs. Before, Start Advertising and Pair (saved on) submitted to the stack
-// that was not up yet and answered "Failed to start ...", and Enable and a
-// settings POST turning Bluetooth on answered "Failed to enable Bluetooth"
-// and "Bluetooth init failed", all with 200: a failure, for a stack that was
-// seconds from up.
+// boot worker's. init() turns it away at once, with nothing refused, so the
+// tap answers 503 "Bluetooth is still starting; try again in a moment" and
+// submits nothing, and GET /api/bluetooth reads "initializing" meanwhile;
+// once that bring-up is done the tap's command runs. Before, Start
+// Advertising and Pair (saved on) submitted to the stack that was not up
+// yet and answered "Failed to start ...", and Enable and a settings POST
+// turning Bluetooth on answered "Failed to enable Bluetooth" and "Bluetooth
+// init failed", all with 200: a failure, for a stack that was seconds from
+// up. (Start Advertising and Pair on a device saved on answer it through
+// send_boot_bring_up_pending() since F235's review, before any bring-up.)
 void test_a_tap_while_the_stack_comes_up_says_so() {
   const Handler enable = bluetooth_api::handle_bluetooth_enable;
   const Handler settings = bluetooth_api::handle_bluetooth_settings_set;
@@ -2742,7 +2750,10 @@ void test_a_tap_while_the_stack_comes_up_says_so() {
   CHECK(host_sim::advertising.isAdvertising() && bc::g_pairing.state == bc::PAIR_INITIATED);
 
   // Inside an earlier tap's init() (saved off: Start Advertising brings the
-  // stack up on the HTTP task), a second tap.
+  // stack up on the HTTP task), a second tap. A device cannot produce this:
+  // its REST routes are served by one esp_http_server task, which the first
+  // tap's init() holds. Played here only to hold that the answer is the
+  // latch's, whoever holds it.
   boot(/*bring_up=*/false);
   saved_off_and_loaded();
   Tap inner;

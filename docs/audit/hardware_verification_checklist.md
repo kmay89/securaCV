@@ -1394,7 +1394,7 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
-## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers (F190, F167, F189, F196 Bluetooth half) — on-device verification
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up (F190, F167, F189, F196 Bluetooth half, F235) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
@@ -1416,16 +1416,25 @@ room, and never deletes a bond to make room;
 the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
-(`send_doc()`: every answer serialized at its own measured length).
+(`send_doc()`: every answer serialized at its own measured length;
+Start Advertising and Pair bring the stack up on the HTTP task whenever it
+is down, `bring_up()`, but on a device saved on only once the sketch's boot
+bring-up is over, `waits_for_boot_bring_up()`, which `canary_wap.ino`'s
+finalize stage ends with `bluetooth_channel::boot_bring_up_finished()`
+after the Scout's own NimBLE init; before it, and while another bring-up
+runs, they answer 503, `send_boot_bring_up_pending()` /
+`send_bring_up_refused()`).
 Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
 stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
 store, its full-store event at a Pairing Request, its default evictions
 (the oldest bond; for a CCCD the oldest but the writer's) and an
 advertising start that walks the server's services; the bring-up worker,
 the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
-held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6
-and BV7; a phone's real pairing, NimBLE's real stores and the real
-bring-up worker are not something a host test can run. Compile is CI's.
+held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6,
+BV7 and C3; a phone's real pairing, NimBLE's real stores, the real
+bring-up worker and the real join window are not something a host test can
+run (the stand-in's NimBLE init failure is the retryable kind; one past the
+controller's init stays failed on a device until a reboot). Compile is CI's.
 Owner: U1.
 
 - [ ] **Pairing mode reads pairing**
@@ -1511,6 +1520,38 @@ Owner: U1.
   - Expected: every answer parses as one JSON document with nothing after
     it; the name reads back as set.
   - Artifact: `docs/audit/repro/F196/bt-answers/`.
+- [ ] **Start Advertising and Pair wait for the boot bring-up, then bring a refused stack up (F235)**
+  - Setup: one canary-wap flashed with the default FULL profile, Bluetooth
+    saved on (the default), Wi-Fi credentials stored; a serial console at
+    boot; the web UI's Bluetooth tab open; a phone with a BLE scanner (nRF
+    Connect); for the second part, a boot state that leaves the internal
+    heap under the bring-up guard's floor, if one can be arranged.
+  - Repro: (a) reboot and, from the SoftAP or the LAN, tap Start
+    Advertising and then Pair before the boot log's `BLE bring-up
+    finalized` line (the join window, up to 5 min with the SoftAP up);
+    repeat once while the log shows `Initializing Bluetooth Low Energy`;
+    then boot into safe mode and tap both again. (b) After a refused boot
+    bring-up (`GET /api/bluetooth` names `init_fail_reason`), tap Start
+    Advertising twice; free the heap if the setup allows and tap Start
+    Advertising, timing how long a second browser tab's `GET /api/status`
+    waits meanwhile; then tap Pair.
+  - Expected: (a) each early tap answers 503 `Bluetooth has not started
+    yet; it starts after Wi-Fi setup (never in safe mode)`, or `Bluetooth
+    is still starting; try again in a moment` while the boot bring-up
+    runs, and the web UI alerts that text; the scanner sees no WAP
+    advertising before the `finalized` line (before the F235 review one
+    tap there brought NimBLE up on the HTTP task and advertised at once);
+    the boot log shows `[OK] Bluetooth initialized`, never `Bluetooth init
+    failed` with no reason after such a tap; in safe mode no tap ever
+    brings Bluetooth up. (b) each tap while refused answers the refusal by
+    name (the heap guard's measured RAM) with no crash or watchdog reset;
+    once the heap allows, the tap brings Bluetooth up and advertises
+    (before F235 every tap answered `Failed to start advertising` and the
+    stack stayed down until Enable), the Bluetooth card's subtitle goes
+    back to `BLE connectivity` without a reload, and the other tab's
+    request waits for that bring-up (seconds), as it does behind an
+    Enable tap; the Pair tap after it starts pairing mode.
+  - Artifact: `docs/audit/repro/F235/tap-brings-up/`.
 
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
 
