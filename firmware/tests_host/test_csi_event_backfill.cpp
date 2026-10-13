@@ -44,7 +44,9 @@
 #include <vector>
 
 #include "csi_event_backfill.h"
+#include "csi_event_wire.h"   // the events body a backfilled row publishes as (F264)
 #include "../common/mqtt/mqtt_offline_queue.h"
+#include "../projects/canary-wap/tests_host/json_strict.h"
 
 using namespace csi_event_backfill;
 
@@ -135,6 +137,11 @@ struct World : Port {
   std::vector<Wire> wire;
   int sends = 0;                   // publishes this pass (live + backfill)
   uint32_t unbuildable_id = 0;
+  // Build each published row's events body with the real builder
+  // (csi_event_wire.h, as both hosts do) and hold it to a strict JSON
+  // reader (sweep F264): a body Home Assistant could not parse is counted.
+  bool build_bodies = false;
+  int bodies_not_json = 0;
   int fail_next_sends = 0;         // the link is up but the next N publishes fail
   int refused_queue_busy = 0;      // live publishes refused: offline queue not drained
   int refused_send_failed = 0;     // live publishes that failed on an up link
@@ -230,6 +237,15 @@ struct World : Port {
     }
     ++sends;
     handed_over(rec.event_id);
+    if (build_bodies) {
+      char body[768];
+      const csi_event_wire::Signer unsigned_signer = {nullptr, 1, "", ""};
+      const size_t n = csi_event_wire::build_event_body(
+          body, sizeof(body), rec.event_id, rec.module_id, rec.type_name, rec.category,
+          rec.privacy, &rec.values, rec.first_seen_ms, rec.bundled_count, replay, unsigned_signer);
+      json_strict::Value v;
+      if (n == 0 || !json_strict::parse(std::string(body, n), &v)) ++bodies_not_json;
+    }
     wire.push_back({false, rec.event_id, backfill});
     ha.receive(rec.event_id, replay, backfill);
     return Sent::kYes;
@@ -870,6 +886,103 @@ static int test_a_forged_card_id_is_never_sent_or_credited() {
   v.nvs_ok = false;
   open_card(v, r, b);
   CHECK(r.watermark() < b.next);
+  return 0;
+}
+
+// Sweep F264: a card line edited to hold a backslash or a control byte in
+// a string field (the item's probe: a state of `occ\`, one holding 0x01)
+// parsed, and the backfill signed and published it as an events body Home
+// Assistant's parser refuses. parse() now refuses such a line, and the walk
+// treats it as it treats a torn or foreign line: skipped and counted
+// (Stats::skipped), never sent, never credited, never retried, and never a
+// stall for the rows behind it. The watermark passes its id only when a row
+// after it is sent; the delivery ceiling is written only for rows sent; the
+// allocator's floor never reads the card.
+static bool edit_state(World& w, uint32_t id, const std::string& state) {
+  const std::string head = "{\"id\":" + std::to_string(id) + ",";
+  const size_t at = w.log.find(head);
+  if (at == std::string::npos) return false;
+  const std::string key = "\"state\":\"";
+  const size_t from = w.log.find(key, at) + key.size();
+  const size_t to = w.log.find('"', from);
+  w.log.replace(from, to - from, state);
+  return true;
+}
+
+static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
+  World w; Allocator a;
+  w.build_bodies = true;
+  Planner p;
+  a.boot();
+  p.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, p, a);
+  {
+    Host h{w, p, a};
+    for (int i = 0; i < 3; ++i) h.tick(1);    // live: 1..3
+    w.connected = false;
+    for (int i = 0; i < 6; ++i) h.tick(1);    // held on the card: 4..9
+  }
+  // The card goes to a computer and comes back (a remount): rows 5 and 7
+  // edited there.
+  p.card_close();
+  CHECK(edit_state(w, 5, "occ\\"));
+  CHECK(edit_state(w, 7, std::string("oc\x01" "c")));
+  const uint32_t floor_before = a.nvs_floor;
+  Planner& q = p;
+  open_card(w, q, a);
+  CHECK(q.pending());
+  Host h{w, q, a};
+  w.connected = true;
+  CHECK(h.drain() < 1000);
+  CHECK(!q.pending());
+  CHECK(w.bodies_not_json == 0);               // every body HA got parses
+  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0);
+  CHECK(each_once(w.ha, 4, 4) && each_once(w.ha, 6, 6) && each_once(w.ha, 8, 9));
+  CHECK(w.ha.refused.empty() && strictly_rising(w.ha.accepted));
+  // Skipped: the three delivered lines the walk passes on its way (it
+  // starts over after the remount) and the two refused ones.
+  if (q.stats().skipped != 5 || q.stats().replayed != 4) {
+    std::fprintf(stderr, "skipped %u replayed %u\n", (unsigned)q.stats().skipped,
+                 (unsigned)q.stats().replayed);
+  }
+  CHECK(q.stats().skipped == 3 + 2 && q.stats().replayed == 4);
+  CHECK(q.stats().untrusted == 0 && q.stats().unsendable == 0);
+  CHECK(q.watermark() == 9);                   // past them: rows after them went
+  CHECK(a.nvs_floor == floor_before);          // the card moves no floor
+  // Never retried: more passes read nothing more and send nothing.
+  const size_t accepted = w.ha.accepted.size();
+  for (int i = 0; i < 5; ++i) h.tick();
+  CHECK(w.ha.accepted.size() == accepted && q.stats().skipped == 5);
+
+  // The refused line is the last on the card: nothing after it moves the
+  // walk, so it must step past it itself. The watermark stays below its id
+  // (it was never sent), nothing is pending, and the next row goes live,
+  // not held behind it.
+  w.connected = false;
+  for (int i = 0; i < 2; ++i) h.tick(1);      // held: 10, 11
+  CHECK(edit_state(w, 11, "occ\\"));
+  w.connected = true;
+  CHECK(h.drain() < 1000);
+  CHECK(!q.pending());
+  CHECK(each_once(w.ha, 10, 10) && times_accepted(w.ha, 11) == 0);
+  CHECK(q.stats().skipped == 6);
+  CHECK(q.watermark() == 10);
+  const uint32_t live_before = q.stats().live;
+  h.tick(1);                                    // 12: live
+  CHECK(q.stats().live == live_before + 1 && each_once(w.ha, 12, 12));
+  CHECK(w.bodies_not_json == 0 && w.ha.refused.empty());
+
+  // A reboot: the tail scan takes no id from the refused line, and nothing
+  // is sent again.
+  Planner r;
+  a.boot();
+  r.begin(w.nvs_ceiling, a.stored, w);
+  open_card(w, r, a);
+  Host h2{w, r, a};
+  const size_t before_reboot = w.ha.accepted.size();
+  CHECK(h2.drain() < 1000);
+  CHECK(w.ha.accepted.size() == before_reboot);
+  CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0 && times_accepted(w.ha, 11) == 0);
   return 0;
 }
 
@@ -1818,6 +1931,7 @@ int main() {
   RUN(test_short_read_mid_file_is_retried_not_stepped_over);
   RUN(test_a_bad_sector_mid_row_gives_up_once);
   RUN(test_isolated_failures_while_skipping_delivered_rows);
+  RUN(test_a_line_no_writer_could_spell_is_skipped_not_sent);
   std::printf("test_csi_event_backfill: %d checks passed\n", g_checks);
   return 0;
 }
