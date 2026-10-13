@@ -29,7 +29,11 @@ redirections dropped, `env`, `exec`, `command`, `time` and `VAR=value`
 skipped) that starts with the marker or a compiler name is a compile; a
 command that names the marker and is not one fails, so a compile is never
 passed unread. It runs each compile's preprocessor (`-E`, the compile's own
-flags and defines) once per source file, and reads the line markers: in each translation unit, arduino_globals.h must be entered before
+flags and defines, less the flags that write a dependency file, which would
+land in this directory) once per source file, and reads the line markers; a
+command that only lists dependencies (`-M`, `-MM`: the Makefile's with_deps
+writing $@.d after a compile of several sources) compiles nothing and is
+passed over. In each translation unit, arduino_globals.h must be entered before
 the first line of any file in the sketch folder (arduino/canary_wap: its
 headers, its .cpp files a suite compiles or #includes, and the code a suite
 cuts out of canary_wap.ino or a sketch header, whose `#line` names the
@@ -43,7 +47,8 @@ the plan, or a tests_host/test_*.cpp no compile in the full plan preprocesses
 
 The self-test (on by default; --no-self-test skips it) guards the guard:
 synthetic preprocessor output for each rule, recipe lines the shell splitter
-must read (or refuse), and mutated copies of the Makefile (the forced include
+must read (or refuse), compile lines whose dependency flags it must drop (or
+whose dependency listing it must pass over), and mutated copies of the Makefile (the forced include
 dropped, its `override` dropped, a recipe that does not pass CXXFLAGS, a tsan
 build without the include, one behind `cd . &&`, a command that names the
 compiler and is not a compile) that the check must fail on, next to the
@@ -211,9 +216,24 @@ def plan(makefile: str, targets: list[str]) -> list[list[str]]:
     return cmds
 
 
+# The dependency-file flags every compile carries (the Makefile's DEPFLAGS,
+# sweep F286) and the ones its with_deps listing adds: dropped from the
+# preprocessor run, where -MMD with no -o would write <source>.d into this
+# directory (over a suite's own test_*.d when the names meet), and -MM would
+# print a dependency list instead of the text this check reads.
+DEP_FLAGS = {"-MD", "-MMD", "-MP", "-MG"}
+DEP_FLAGS_WITH_ARG = {"-MF", "-MT", "-MQ"}
+# A command that only lists dependencies (with_deps' second half) compiles
+# nothing: the compile beside it reads the same sources.
+DEP_LISTING = {"-M", "-MM"}
+
+
 def split_command(toks: list[str]) -> tuple[list[str], list[str], list[str], str]:
-    """(compiler, preprocessor flags, sources, output) of one compile command."""
+    """(compiler, preprocessor flags, sources, output) of one compile command;
+    no sources for a command that only lists dependencies (-M, -MM)."""
     cxx = real_cxx() if toks[0] == SENTINEL else [toks[0]]
+    if any(t in DEP_LISTING for t in toks[1:]):
+        return cxx, [], [], ""
     flags: list[str] = []
     sources: list[str] = []
     output = ""
@@ -223,6 +243,12 @@ def split_command(toks: list[str]) -> tuple[list[str], list[str], list[str], str
         if t == "-o" and i + 1 < len(toks):
             output = toks[i + 1]
             i += 2
+            continue
+        if t in DEP_FLAGS_WITH_ARG and i + 1 < len(toks):
+            i += 2
+            continue
+        if t in DEP_FLAGS or t[:3] in DEP_FLAGS_WITH_ARG:
+            i += 1
             continue
         if SOURCE.search(t) and not t.startswith("-"):
             sources.append(t)
@@ -310,8 +336,12 @@ def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dic
     if not cmds:
         raise CheckError(f"make -n -B {' '.join(targets)} printed no compile command")
     jobs = []
+    listings = 0
     for toks in cmds:
         cxx, flags, sources, output = split_command(toks)
+        if not sources and any(t in DEP_LISTING for t in toks[1:]):
+            listings += 1
+            continue
         if not sources:
             raise CheckError(f"a compile with no source it can read: {' '.join(toks)}")
         for src in sources:
@@ -351,7 +381,7 @@ def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dic
                 if os.path.realpath(os.path.join(HERE, name)) not in read_sources:
                     problems.append(f"{name}: no compile in `make -n -B {' '.join(targets)}` "
                                     "preprocesses it, so this check cannot read it")
-    stats = {"commands": len(cmds), "units": len(jobs), "units_with_sketch": units_with_sketch,
+    stats = {"commands": len(cmds) - listings, "units": len(jobs), "units_with_sketch": units_with_sketch,
              "sketch_files": sketch_files}
     return problems, stats
 
@@ -420,6 +450,19 @@ def line_cases() -> list[tuple[str, str, int | None]]:
         ("a run, no compile", "./test_x 2>&1 | grep -q 'ALL .* PASSED'", 0),
         ("the compiler handed to another command", f"echo {c} -o t t.cpp", None),
         ("the compiler inside a word", f"sh -c '{c} -o t t.cpp'", None),
+    ]
+
+
+def split_cases() -> list[tuple[str, str, list[str] | None]]:
+    """(name, a printed compile, the preprocessor flags it must yield; None:
+    a dependency listing, which yields no source)."""
+    c = SENTINEL
+    return [
+        ("the dependency-file flags dropped", f"{c} -std=c++17 -MMD -MP -I x -o t t.cpp",
+         ["-std=c++17", "-I", "x"]),
+        ("-MF, -MT and -MQ dropped with their argument",
+         f"{c} -MD -MF t.d -MT t -MQ t -MFu.d -DX=1 -o t t.cpp", ["-DX=1"]),
+        ("a dependency listing (with_deps), no compile", f"{c} -MP -I x a.cpp b.cpp -MM -MT t", None),
     ]
 
 
@@ -497,6 +540,12 @@ def self_test() -> list[str]:
             problems.append(f"self-test: line case '{name}': {got} compiles read, {want} expected")
         elif any(w in ("2", ">&", "1", "|", "tee", "log") for cmd in words for w in cmd[1:]):
             problems.append(f"self-test: line case '{name}' kept shell words in a compile: {words}")
+    for name, line, want in split_cases():
+        toks = shell_tokens(line)
+        _cxx, flags, sources, _out = split_command(toks)
+        got = None if not sources else flags
+        if got != want:
+            problems.append(f"self-test: split case '{name}': flags {got}, {want} expected")
     for name, text, must_pass in parser_cases():
         found, _ = analyze(text)
         if must_pass and found:
@@ -551,7 +600,7 @@ def main(argv: list[str]) -> int:
           f"the sketch folder ({len(headers)} headers), each after arduino_globals.h"
           + ("" if "--no-self-test" in argv else
              f"; self-test: {len(parser_cases())} parser cases, {len(line_cases())} recipe-line cases, "
-             f"{len(MUTATIONS)} Makefile cases"))
+             f"{len(split_cases())} compile-split cases, {len(MUTATIONS)} Makefile cases"))
     if "--list" in argv:
         for f in files:
             print(f"  {f}")

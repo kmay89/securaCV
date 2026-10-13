@@ -28,11 +28,30 @@ SRC_DIR   = ../arduino/canary_wap
 # $(ARDUINO_GLOBALS) itself. check_arduino_globals.py (run by `run`) holds
 # every compile to it by what the preprocessor reads, planned as this file
 # stands and with CXXFLAGS given on make's command line. A change to
-# arduino_globals.h rebuilds only the four suites that list it as a
-# prerequisite (fleet-scan cache, identity JSON, JSON writer, device name);
-# for the rest, `make -B`.
+# arduino_globals.h rebuilds every suite, as a change to any header a compile
+# reads does (DEPFLAGS, below).
 ARDUINO_GLOBALS = -include arduino_globals.h
 override CXXFLAGS += $(ARDUINO_GLOBALS)
+
+# Every compile writes the headers it read beside its binary (sweep F286):
+# -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
+# deleted one is no error, and the `-include` at the end of this file reads
+# them back. So an edit to any header a suite compiles, the forced
+# arduino_globals.h among them, rebuilds that suite whether or not its rule
+# lists the header, and a new rule needs nothing more. One command that
+# compiles several sources writes that one file once per source, each over
+# the last (GCC and clang alike), so such a recipe runs as
+# $(call with_deps,<the compile>): the compile, then the same flags and
+# sources with -MM in place of its output, which writes $@.d again with every
+# source's headers. A comma in the compile goes through a variable, as
+# $(call) splits on commas. A recipe that does not pass CXXFLAGS passes
+# $(DEPFLAGS) itself (the tsan builds, which run every time, need none). A
+# binary built before this Makefile wrote dependency files has none: `make
+# clean` once. scripts/tests/test_vision_core_make_deps.py builds every suite
+# and holds each compile's headers, by `g++ -MM`, to what make reads.
+DEPFLAGS = -MMD -MP
+override CXXFLAGS += $(DEPFLAGS)
+with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
 
 # $(call run_marked,<suite>[ <args>][,<marker>]) runs ./<suite> and holds it
 # to the check firmware.yml's old inline steps made: a non-zero exit fails,
@@ -259,7 +278,7 @@ WITNESS_PAGE_SRC = test_witness_page.cpp
 WITNESS_PAGE_FIXTURE = ../../../../spec/fixtures/witness_page_v1.json
 
 $(BIN): $(SOURCES) $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(SOURCES))
 
 $(CHIRP_INV_BIN): $(CHIRP_INV_SRC) $(CHIRP_HARNESS_DEPS) ../../../common/chirp/chirp_channel.h ../../../common/core/types.h
 	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_INV_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
@@ -322,8 +341,8 @@ EVLOAD_LIB = $(SRC_DIR)/csi_event_log.cpp $(SRC_DIR)/csi_event.cpp \
 
 $(EVLOAD_BIN): $(EVLOAD_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
-	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVLOAD_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-load clean-evlog-load
 run-evlog-load: $(EVLOAD_BIN)
@@ -344,8 +363,8 @@ EVDISMISS_SRC = test_csi_event_log_dismiss.cpp
 
 $(EVDISMISS_BIN): $(EVDISMISS_SRC) $(EVLOAD_LIB) $(SRC_DIR)/csi_event_log.h $(SRC_DIR)/csi_event.h \
                   $(SRC_DIR)/csi_event_log_line.h $(SRC_DIR)/csi_event_id_floor.h $(wildcard stubs/sd_fake/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
-	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-variable -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EVDISMISS_SRC) $(EVLOAD_LIB))
 
 .PHONY: run-evlog-dismiss clean-evlog-dismiss
 run-evlog-dismiss: $(EVDISMISS_BIN)
@@ -376,8 +395,8 @@ $(EGRESS_BIN): $(EGRESS_SRC) $(EGRESS_LIB) $(SRC_DIR)/csi_event_egress.h $(SRC_D
                $(wildcard $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/loop_command_ring.h) \
                $(SRC_DIR)/csi_event_wire.h json_strict.h \
                $(wildcard stubs/egress/*.h stubs/egress/freertos/*.h stubs/sd_fake/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
-	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	  -I stubs/egress -I stubs/sd_fake -I $(SRC_DIR) -o $@ $(EGRESS_SRC) $(EGRESS_LIB))
 
 .PHONY: run-wap-egress clean-wap-egress
 run-wap-egress: $(EGRESS_BIN)
@@ -517,7 +536,7 @@ $(WRITER_LISTED): $(SRC_DIR)/canary_wap.ino ../../../tests_host/cut_functions.aw
 $(WRITER_BIN): $(WRITER_SRC) $(WRITER_LISTED) json_strict.h browser_utf8.h arduino_globals.h \
                $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/identity_json.h $(SRC_DIR)/fleet_scan_cache.h \
                $(SRC_DIR)/canary_wap.ino
-	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address -fno-omit-frame-pointer \
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror $(DEPFLAGS) -fsanitize=address -fno-omit-frame-pointer \
 	  -I $(SRC_DIR) -I . -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(WRITER_SRC)
 
 .PHONY: run-wap-json-writer clean-wap-json-writer
@@ -624,9 +643,9 @@ $(MODBOOT_BIN): $(MODBOOT_SRC) $(MODBOOT_LIB) $(SRC_DIR)/csi_module.h $(SRC_DIR)
                 $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_bundler.h $(SRC_DIR)/csi_integration.cpp \
                 $(SRC_DIR)/acoustic_events_module.cpp $(SRC_DIR)/vault_events_module.cpp $(SRC_DIR)/ble_scout.cpp \
                 $(wildcard stubs/module_boot/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
-	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB)
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(MODBOOT_SRC) $(MODBOOT_LIB))
 
 .PHONY: run-wap-module-boot clean-wap-module-boot
 run-wap-module-boot: $(MODBOOT_BIN)
@@ -658,9 +677,9 @@ $(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DI
                 $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
                 $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
                 $(wildcard stubs/module_boot/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
-	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB)
+	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB))
 
 .PHONY: run-wap-tune-lab clean-wap-tune-lab
 run-wap-tune-lab: $(TUNELAB_BIN)
@@ -700,9 +719,9 @@ $(DAILY_BIN): $(DAILY_SRC) $(DAILY_INC) $(MODBOOT_LIB) $(SRC_DIR)/csi_settings_n
               $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/meta_daily_summary.h \
               $(SRC_DIR)/csi_event.h $(SRC_DIR)/csi_event_wire.h $(SRC_DIR)/tz_rule.h \
               $(wildcard stubs/module_boot/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	  -I stubs/module_boot -I $(SRC_DIR) -I . -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
-	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB)
+	  -o $@ $(DAILY_SRC) $(MODBOOT_LIB))
 
 .PHONY: run-wap-daily-summary clean-wap-daily-summary
 run-wap-daily-summary: $(DAILY_BIN)
@@ -791,10 +810,10 @@ DPBUDGET_SRC = test_dp_budget.cpp
 $(DPBUDGET_BIN): $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp $(SRC_DIR)/dp.h $(SRC_DIR)/health_log.h \
                  $(SRC_DIR)/rf_presence.cpp $(SRC_DIR)/rf_presence_api.h beacon_source_scan.h \
                  $(wildcard stubs/dp/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/dp -I $(SRC_DIR) \
 	  -DRF_PRESENCE_CPP='"$(abspath $(SRC_DIR))/rf_presence.cpp"' \
 	  -DRF_PRESENCE_API_H='"$(abspath $(SRC_DIR))/rf_presence_api.h"' \
-	  -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp
+	  -o $@ $(DPBUDGET_SRC) $(SRC_DIR)/dp.cpp)
 
 .PHONY: run-dp-budget clean-dp-budget
 run-dp-budget: $(DPBUDGET_BIN)
@@ -811,7 +830,7 @@ $(OPERA_SEC_BIN): $(OPERA_SEC_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(OPERA_SEC_SRC)
 
 $(DEVSIG_BIN): $(DEVSIG_SOURCES)
-	$(CXX) $(CXXFLAGS) -o $@ $(DEVSIG_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -o $@ $(DEVSIG_SOURCES))
 
 $(CAPTIVE_DNS_BIN): $(CAPTIVE_DNS_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(CAPTIVE_DNS_SRC)
@@ -832,25 +851,25 @@ $(GNSS_TIME_BIN): $(GNSS_TIME_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(GNSS_TIME_SRC)
 
 $(AUDIO_BIN): $(AUDIO_SOURCES)
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/audio -I $(SRC_DIR) -o $@ $(AUDIO_SOURCES))
 
 $(CSI_FEAT_BIN): $(CSI_FEAT_SOURCES)
-	$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES))
 
 $(WCA_BIN): $(WCA_SOURCES)
-	$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -o $@ $(WCA_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(SRC_DIR) -o $@ $(WCA_SOURCES))
 
 $(FLEET_BEACON_BIN): $(FLEET_BEACON_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(FLEET_BEACON_SRC)
 
 $(EVDRIVE_BIN): $(EVDRIVE_SOURCES)
-	$(CXX) $(CXXFLAGS) -o $@ $(EVDRIVE_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -o $@ $(EVDRIVE_SOURCES))
 
 $(EVVERIFY_BIN): $(EVVERIFY_SOURCES)
-	$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(EVVERIFY_SOURCES) -lcrypto)
 
 $(BLEOTA_BIN): $(BLEOTA_SOURCES)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(BLEOTA_SOURCES) -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -DSECURACV_OTA_HOST_BUILD -I $(SRC_DIR) -o $@ $(BLEOTA_SOURCES) -lcrypto)
 
 $(WITNESS_PAGE_BIN): $(WITNESS_PAGE_SRC) $(SRC_DIR)/witness_page.h
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations -I $(SRC_DIR) -o $@ $(WITNESS_PAGE_SRC) -lcrypto
@@ -904,7 +923,7 @@ CSI_TRAFFIC_SOURCES = test_csi_traffic.cpp \
                       $(SRC_DIR)/csi_traffic.cpp
 
 $(CSI_TRAFFIC_BIN): $(CSI_TRAFFIC_SOURCES)
-	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(CSI_TRAFFIC_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(CSI_TRAFFIC_SOURCES))
 
 # system.integrity tamper watcher (tamper_events_module): the transition
 # rules through the REAL chokepoint + bundler — clean boot silent, reset
@@ -920,7 +939,7 @@ TAMPER_SOURCES = test_tamper_events_logic.cpp \
                  $(SRC_DIR)/tamper_events_module.cpp
 
 $(TAMPER_BIN): $(TAMPER_SOURCES)
-	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -Wno-unused-parameter -I $(SRC_DIR) -o $@ $(TAMPER_SOURCES))
 
 run: $(BIN) $(CHIRP_INV_BIN) $(CHIRP_SEC_BIN) $(BEACON_ORIG_BIN) $(BEACON_SOLO_BIN) $(BEACON_TAMPER_BIN) $(OPERA_SEC_BIN) $(DEVSIG_BIN) $(CAPTIVE_DNS_BIN) $(CAPTIVE_PROBE_BIN) $(DEVPSEUDO_BIN) $(DEVPSEUDO_COMMON_BIN) $(GPS_COARSEN_BIN) $(GNSS_TIME_BIN) $(AUDIO_BIN) $(CSI_FEAT_BIN) $(WCA_BIN) $(FLEET_BEACON_BIN) $(EVDRIVE_BIN) $(EVVERIFY_BIN) $(BLEOTA_BIN) $(HELPQR_BIN) $(STATUSTIER_BIN) $(CSI_SUBC_BIN) $(CSI_COMPAT_BINS) $(CSI_TRAFFIC_BIN) $(TAMPER_BIN) $(WITNESS_PAGE_BIN)
 	./$(BIN)
@@ -1012,10 +1031,10 @@ REVOC_STAGED_BIN = test_mesh_revocation_staged
 REVOC_STAGED_SRC = ../../../canary/lib/securacv_mesh/test_mesh_revocation.cpp
 
 $(REVOC_WAP_BIN): $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp $(SRC_DIR)/mesh_network.cpp beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.cpp
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(REVOC_WAP_SRC) $(SRC_DIR)/mesh_revocation.cpp)
 
 $(REVOC_STAGED_BIN): $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.h $(SRC_DIR)/mesh_revocation.cpp
-	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.cpp
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -o $@ $(REVOC_STAGED_SRC) $(SRC_DIR)/mesh_revocation.cpp)
 
 .PHONY: run-revocation clean-revocation
 run-revocation: $(REVOC_WAP_BIN) $(REVOC_STAGED_BIN)
@@ -1101,7 +1120,7 @@ MESH_ADDR_LINK = $(SRC_DIR)/airtime_governor.cpp $(SRC_DIR)/mesh_channel_policy.
                  $(SRC_DIR)/mesh_crypto.cpp
 
 $(MESH_ADDR_BIN): $(MESH_ADDR_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_ADDR_SRC) $(MESH_ADDR_LINK) -lcrypto)
 
 .PHONY: run-mesh-address clean-mesh-address
 run-mesh-address: $(MESH_ADDR_BIN)
@@ -1122,7 +1141,7 @@ MESH_LIVE_BIN = test_mesh_liveness_wap
 MESH_LIVE_SRC = test_mesh_liveness_wap.cpp
 
 $(MESH_LIVE_BIN): $(MESH_LIVE_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(MESH_ADDR_LINK)
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_LIVE_SRC) $(MESH_ADDR_LINK) -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_LIVE_SRC) $(MESH_ADDR_LINK) -lcrypto)
 
 .PHONY: run-mesh-liveness clean-mesh-liveness
 run-mesh-liveness: $(MESH_LIVE_BIN)
@@ -1143,7 +1162,7 @@ MESH_CMD_BIN = test_mesh_commands_wap
 MESH_CMD_SRC = test_mesh_commands_wap.cpp
 
 $(MESH_CMD_BIN): $(MESH_CMD_SRC) mesh_net_sim.h $(SRC_DIR)/csi_module_settings_nvs.h $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/mesh_network.h $(SRC_DIR)/mesh_network.cpp $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/http_status_line.h $(MESH_ADDR_LINK)
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_CMD_SRC) $(MESH_ADDR_LINK) -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I stubs/pair_crypto -I $(SRC_DIR) -DMESH_NETWORK_CPP='"$(abspath $(SRC_DIR))/mesh_network.cpp"' -o $@ $(MESH_CMD_SRC) $(MESH_ADDR_LINK) -lcrypto)
 
 .PHONY: run-mesh-commands clean-mesh-commands
 run-mesh-commands: $(MESH_CMD_BIN)
@@ -1169,7 +1188,7 @@ CHIRP_CMD_BIN = test_chirp_commands_wap
 CHIRP_CMD_SRC = test_chirp_commands_wap.cpp
 
 $(CHIRP_CMD_BIN): $(CHIRP_CMD_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/airtime_governor.cpp
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_CMD_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_CMD_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto)
 
 .PHONY: run-chirp-commands clean-chirp-commands
 run-chirp-commands: $(CHIRP_CMD_BIN)
@@ -1195,7 +1214,7 @@ CHIRP_SUP_BIN = test_chirp_suppress_wap
 CHIRP_SUP_SRC = test_chirp_suppress_wap.cpp
 
 $(CHIRP_SUP_BIN): $(CHIRP_SUP_SRC) $(wildcard stubs/mesh_net/*.h stubs/mesh_net/freertos/*.h stubs/mesh_net/mbedtls/*.h) $(SRC_DIR)/chirp_channel.cpp $(SRC_DIR)/mesh_network.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_snapshot.h $(SRC_DIR)/airtime_governor.cpp
-	$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_SUP_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -I stubs/mesh_net -I $(SRC_DIR) -DCHIRP_CHANNEL_CPP='"$(abspath $(SRC_DIR))/chirp_channel.cpp"' -o $@ $(CHIRP_SUP_SRC) $(SRC_DIR)/airtime_governor.cpp -lcrypto)
 
 .PHONY: run-chirp-suppress clean-chirp-suppress
 run-chirp-suppress: $(CHIRP_SUP_BIN)
@@ -1226,7 +1245,9 @@ clean: clean-chirp-suppress
 BT_CMD_BIN = test_bluetooth_commands_wap
 BT_CMD_SRC = test_bluetooth_commands_wap.cpp
 
-BT_CMD_DEPS = $(BT_CMD_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h) $(SRC_DIR)/bluetooth_channel.cpp $(SRC_DIR)/bluetooth_channel.h $(SRC_DIR)/bluetooth_api.h $(SRC_DIR)/api_auth.h $(SRC_DIR)/loop_command_ring.h $(SRC_DIR)/loop_event_queue.h $(SRC_DIR)/http_status_line.h $(SRC_DIR)/ble_standard_profiles.h $(SRC_DIR)/bt_defaults.h $(SRC_DIR)/ble_heap_guard.h $(SRC_DIR)/ble_server_dispatch.h $(SRC_DIR)/ble_opera.h $(SRC_DIR)/ble_config.h $(SRC_DIR)/fleet_beacon.h $(SRC_DIR)/ble_improv.h $(SRC_DIR)/provisioning_logic.h
+# The headers and bluetooth_channel.cpp it reads come from its own compile
+# (DEPFLAGS): the list kept here by hand missed a dozen (sweep F286).
+BT_CMD_DEPS = $(BT_CMD_SRC)
 
 $(BT_CMD_BIN): $(BT_CMD_DEPS)
 	$(CXX) $(CXXFLAGS) -Werror -pthread -I stubs/bt -I $(SRC_DIR) -DBLUETOOTH_CHANNEL_CPP='"$(abspath $(SRC_DIR))/bluetooth_channel.cpp"' -o $@ $(BT_CMD_SRC)
@@ -1308,9 +1329,9 @@ endif
 $(MQTT_REINIT_BIN): $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h $(SRC_DIR)/csi_module_settings_nvs.h \
                   $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/http_body_reader.h \
                   json_strict.h mqtt_test_hooks.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -include mqtt_test_hooks.h $(MQTT_REINIT_HEAP) \
-	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp
+	  -I stubs/mqtt -I $(SRC_DIR) -o $@ $(MQTT_REINIT_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
 .PHONY: run-mqtt-reinit clean-mqtt-reinit
 run-mqtt-reinit: $(MQTT_REINIT_BIN)
@@ -1335,9 +1356,9 @@ HA_IDS_SRC = test_ha_discovery_ids.cpp
 $(HA_IDS_BIN): $(HA_IDS_SRC) beacon_source_scan.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
                $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
                $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
 	  -I stubs/mqtt -I $(SRC_DIR) -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
-	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp
+	  -o $@ $(HA_IDS_SRC) $(SRC_DIR)/csi_mqtt.cpp)
 
 .PHONY: run-ha-discovery-ids clean-ha-discovery-ids
 run-ha-discovery-ids: $(HA_IDS_BIN)
@@ -1443,7 +1464,7 @@ PROBE_AIR_SOURCES = test_csi_probe_airtime.cpp \
                     $(SRC_DIR)/airtime_governor.cpp
 
 $(PROBE_AIR_BIN): $(PROBE_AIR_SOURCES) $(SRC_DIR)/probe_airtime.h $(SRC_DIR)/csi_probe.h $(SRC_DIR)/airtime_governor.h $(SRC_DIR)/csi_integration.cpp beacon_source_scan.h
-	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -DCSI_INTEGRATION_CPP='"$(abspath $(SRC_DIR))/csi_integration.cpp"' -o $@ $(PROBE_AIR_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) -DCSI_INTEGRATION_CPP='"$(abspath $(SRC_DIR))/csi_integration.cpp"' -o $@ $(PROBE_AIR_SOURCES))
 
 .PHONY: run-probe-airtime clean-probe-airtime
 run-probe-airtime: $(PROBE_AIR_BIN)
@@ -1471,7 +1492,7 @@ $(CSI_WJ_BIN): $(CSI_WJ_SRC) $(SRC_DIR)/csi_wander_jitter.h
 	$(CXX) $(CXXFLAGS) -Werror -I $(SRC_DIR) -o $@ $(CSI_WJ_SRC)
 
 $(CSI_FEAT_WJ_BIN): $(CSI_FEAT_SOURCES) $(SRC_DIR)/csi_wander_jitter.h
-	$(CXX) $(CXXFLAGS) -Werror -DCSI_WANDER_JITTER=1 -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -DCSI_WANDER_JITTER=1 -I stubs/csi -I $(SRC_DIR) -o $@ $(CSI_FEAT_SOURCES))
 
 # The flag-off build includes the header too (isqrt_u32 lives there).
 $(CSI_FEAT_BIN): $(SRC_DIR)/csi_wander_jitter.h
@@ -1740,10 +1761,10 @@ MQTTID_DEPS = $(MQTTID_SRC) beacon_source_scan.h $(SRC_DIR)/mqtt_identity.h \
 
 # The pins read both files at run time, so they re-run on every `make`.
 $(MQTTID_BIN): $(MQTTID_DEPS)
-	$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -DCSI_TEST_HOST_BUILD -I $(SRC_DIR) \
 	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' \
 	  -DCSI_MQTT_CPP='"$(abspath $(SRC_DIR))/csi_mqtt.cpp"' \
-	  -o $@ $(MQTTID_SRC) $(SRC_DIR)/device_signature.cpp -lcrypto
+	  -o $@ $(MQTTID_SRC) $(SRC_DIR)/device_signature.cpp -lcrypto)
 
 .PHONY: run-mqtt-identity clean-mqtt-identity
 run-mqtt-identity: $(MQTTID_BIN)
@@ -1768,3 +1789,12 @@ run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC)
 	python3 check_arduino_globals.py
 
 run: run-arduino-globals
+
+# What each suite's compile read (DEPFLAGS, at the top): last, so that no rule
+# in them can become the default goal. Hooked into `clean` by prerequisite so
+# it adds no hunk to its list.
+-include $(wildcard test_*.d)
+.PHONY: clean-deps
+clean-deps:
+	rm -f test_*.d
+clean: clean-deps
