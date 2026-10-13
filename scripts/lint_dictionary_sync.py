@@ -832,6 +832,7 @@ def _check_integrity_kinds(tv: dict, const_py: str) -> None:
 # reason as rust_fn_body: several impls here share method names.
 
 _ATT_RS = "src/relay/attention.rs"
+_HK_POSTURE_RS = "household/src/posture.rs"
 _ATT_FIXTURE = "spec/fixtures/attention_v1.json"
 _SENTINEL_H = "firmware/common/fusion/sentinel_fusion.h"
 _SENTINEL_CPP = "firmware/common/fusion/sentinel_fusion.cpp"
@@ -998,6 +999,22 @@ def _check_attention(d: dict) -> None:
                 f"dictionary {p['wire']!r} — the posture byte of a signed statement")
     if [p["id"] for p in postures if p["wire"] is None] != ["unset"]:
         err("[drift] household_posture: exactly `unset` must have no wire byte (it is never signed)")
+
+    # The household crate signs the statements, so its enum is the signed
+    # subset (everything but `unset`) and its as_byte() is the wire byte.
+    hk = read(_HK_POSTURE_RS)
+    if hk:
+        signed = [p for p in postures if p["wire"] is not None]
+        compare(f"HouseholdPosture ({_HK_POSTURE_RS}) vs dictionary household_posture (signed values)",
+                [p["rust_variant"] for p in signed],
+                rust_enum_variants(hk, "HouseholdPosture", _HK_POSTURE_RS))
+        hk_wire = rust_variant_arms(rust_impl_fn_body(hk, "HouseholdPosture", "as_byte", _HK_POSTURE_RS),
+                                    "HouseholdPosture", r"(0x[0-9A-Fa-f]+|\d+)")
+        for p in signed:
+            arm = hk_wire.get(p["rust_variant"])
+            if arm is None or int(arm, 0) != p["wire"]:
+                err(f"[drift] {_HK_POSTURE_RS} HouseholdPosture::{p['rust_variant']}.as_byte(): "
+                    f"code {arm!r} vs dictionary {p['wire']!r} — the signed statement's posture byte")
 
     # Tiers: declaration order IS the ladder (derive(Ord)), so it must equal rank order.
     tiers = sorted(att["tiers"], key=lambda t: t["rank"])

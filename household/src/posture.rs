@@ -185,7 +185,14 @@ impl Statement {
         out
     }
 
-    /// Whether this statement is current at `now_unix`.
+    /// Whether this statement is current at `now_unix` (rule 5).
+    ///
+    /// [`verify`] is for a statement the witness has not accepted yet: it
+    /// rejects any `seq` at or below the last accepted one, so it must not be
+    /// re-run on a byte-identical re-read of the held statement (spec §3.2).
+    /// For the held statement the witness keeps calling this on its own
+    /// trusted clock (and treats "no clock" as not current), so a held `home`
+    /// stops counting at its lapse even if no newer statement ever arrives.
     pub fn is_current(&self, now_unix: u64) -> bool {
         now_unix < self.not_after
     }
@@ -437,6 +444,21 @@ mod tests {
             effective_posture(&b, &HH, &vk(), None, Some(st.not_after + 3600)),
             HouseholdPosture::Away
         );
+    }
+
+    #[test]
+    fn held_statement_lapses_on_the_witness_clock() {
+        let (st, b) = home(5);
+        // Accepted once…
+        let held = verify(&b, &HH, &vk(), None, Some(st.issued_at)).unwrap();
+        // …a byte-identical re-read is not new: verify refuses it on seq…
+        assert_eq!(
+            verify(&b, &HH, &vk(), Some(held.seq), Some(st.issued_at)),
+            Err(Reject::Seq)
+        );
+        // …so the witness re-checks the held one, which lapses on its own.
+        assert!(held.is_current(st.not_after - 1));
+        assert!(!held.is_current(st.not_after));
     }
 
     #[test]
