@@ -575,9 +575,24 @@ BV7. No advertising start while the sketch's bring-up worker registers GATT
      `ble_bringup_finalize_if_done()` as its last call into the channel, the
      Scout or ble_manager (after `ble_scout::ble_scout_init();`, whose
      `nimble_scan_init()` runs `NimBLEDevice::init()` on the loop task when
-     the stack is down), and by nothing else. That a start waits for the
-     worker, over a stand-in whose advertising start walks the services, is
-     `test_bluetooth_commands_wap.cpp`'s.
+     the stack is down), and by nothing else. And each runs every time it is
+     reached (the verifier's escapes, wave 16; `unconditional_in()`,
+     `pp_guards()`): the gate's `bringup_worker_finished();` and
+     `boot_bring_up_finished();` are statements of the one `if
+     (xTaskCreate(ble_bringup_task, ...) != pdPASS) {` block itself, no
+     condition, branch, inner block or `return`/`goto` ahead of them there,
+     compiled under the gate's `#if FEATURE_BLE || FEATURE_BLUETOOTH ||
+     FEATURE_BLE_SCAN` with `#if FEATURE_BLUETOOTH` alone inside it (run
+     after a create that worked, the first lets an advertising start walk
+     the worker's services and the second lets a tap's `init()` run beside
+     the worker's inits and the Scout's: B1); the finalize stage has no
+     `return` or `goto` after its head, and its mark is a statement of its
+     body's own under `#if FEATURE_BLUETOOTH` alone (skipped on one result, a
+     device saved on answered every Start Advertising and Pair tap 503 "has
+     not started yet" until a reboot: F235's own symptom). That a start
+     waits for the worker, over a stand-in whose advertising start walks the
+     services, is `test_bluetooth_commands_wap.cpp`'s; the sketch itself is
+     not compiled on the host, so this rule is what holds its two marks.
 
 BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
      Advertising and Pair handlers decided whether to bring the stack up
@@ -3262,6 +3277,65 @@ INO_FINALIZE_STACK_CALL = r"\b(?:bluetooth_channel|ble_scout|ble_manager)\s*::\s
 INO_WORKER_CREATE = "xTaskCreate(ble_bringup_task,"
 INO_FINALIZE_HEAD = ("if(g_ble_bringup_finalized||!__atomic_load_n(&g_ble_bringup_done,__ATOMIC_ACQUIRE)){return;}"
                      "g_ble_bringup_finalized=true;")
+# The failed create's block (the verifier's escapes, wave 16): its calls run
+# only when no worker was created.
+INO_FAILED_CREATE = r"\bif\s*\(\s*xTaskCreate\s*\(\s*ble_bringup_task\s*,[^;{}]*?\)\s*!=\s*pdPASS\s*\)\s*\{"
+INO_FINALIZE_HEAD_END = r"\bg_ble_bringup_finalized\s*=\s*true\s*;"
+# The preprocessor conditionals each call sits under, as pp_guards() spells
+# them: the gate's whole body is `#if FEATURE_BLE || FEATURE_BLUETOOTH ||
+# FEATURE_BLE_SCAN` (the finalize stage is defined under the same, at file
+# scope), and each channel call is under `#if FEATURE_BLUETOOTH` and nothing
+# else: on a build with Bluetooth, it is compiled in.
+INO_BLE_GUARD = "if FEATURE_BLE || FEATURE_BLUETOOTH || FEATURE_BLE_SCAN"
+INO_BT_GUARD = "if FEATURE_BLUETOOTH"
+PP_CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b([^\n]*)", re.M)
+
+
+def pp_guards(code: str, start: int, pos: int) -> tuple[str, ...] | None:
+    """The preprocessor conditionals open at `pos` in blanked `code`, counted
+    from `start`: each `#if X` as `if X` (`ifdef X`, `ifndef X`), whitespace
+    squeezed, and a branch an `#elif` or `#else` took over as `... | elif Y`
+    or `... | else`. None when one closes or turns a conditional opened
+    before `start`."""
+    stack: list[str] = []
+    for m in PP_CONDITIONAL.finditer(code, start, pos):
+        kind, rest = m.group(1), " ".join(m.group(2).split())
+        if kind in ("if", "ifdef", "ifndef"):
+            stack.append(f"{kind} {rest}")
+        elif not stack:
+            return None
+        elif kind == "endif":
+            stack.pop()
+        else:
+            stack[-1] = f"{stack[-1]} | {kind} {rest}".rstrip()
+    return tuple(stack)
+
+
+def unconditional_in(code: str, start: int, pos: int) -> str | None:
+    """Why the statement at `pos` of blanked `code` may not run each time
+    control passes `start`, the start of the block (or body) holding it, or
+    None: it must sit at the block's own brace depth, start a statement (after
+    `;`, `}` or the block's start: not after `if (...)`, `else`, `do` or a
+    label) and have no `return` or `goto` ahead of it in the block. The
+    preprocessor is pp_guards()'s; its lines are left out here."""
+    region = PP_CONDITIONAL.sub(lambda m: " " * len(m.group(0)), code[start:pos])
+    depth = 0
+    for ch in region:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                return "it lies outside the block"
+    if depth:
+        return f"it sits {depth} brace level(s) inside the block, in a block of its own"
+    before = region.rstrip()
+    if before and before[-1] not in ";}":
+        return f"it is not a statement of its own (it follows `{before[-12:].strip()}`): a condition or a branch controls it"
+    jump = re.search(r"\b(?:return|goto)\b", region)
+    if jump:
+        return f"a `{jump.group(0)}` ahead of it in the block can leave before it runs"
+    return None
 
 
 def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> None:
@@ -3330,6 +3404,38 @@ def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> 
                           f"`{INO_BOOT_FINISHED}` once, right after the failed create's "
                           f"`{INO_WORKER_FINISHED}` — no worker, no finalize stage: the boot bring-up is "
                           "over, and Start Advertising and Pair may bring the stack up (F235's review)")
+        # Both calls inside the failed create's block, each run every time
+        # the block is (the verifier's escapes, wave 16): after a create that
+        # worked, the first lets an advertising start walk the services the
+        # worker is adding (F167), and the second lets a tap run init() beside
+        # the worker's inits and the Scout's (F235's review, B1).
+        blocks = list(re.finditer(INO_FAILED_CREATE, disc))
+        if len(blocks) != 1:
+            errors.append(f"{INO}: ble_discovery_start_if_due() creates the worker in one `if "
+                          "(xTaskCreate(ble_bringup_task, ...) != pdPASS) {` whose block is the failed "
+                          f"create's (found {len(blocks)}) (the F167 review, F235's review)")
+        else:
+            open_at = blocks[0].end() - 1
+            close_at = close_brace(disc, open_at)
+            for call, why in ((INO_WORKER_FINISHED, "no worker: the advertising hold ends (the F167 review)"),
+                              (INO_BOOT_FINISHED, "no worker, no finalize stage: the boot bring-up is over "
+                                                  "(F235's review)")):
+                at = [m.start() for m in re.finditer(r"\b" + re.escape(call[:-3]).replace(r"::", r"\s*::\s*")
+                                                     + r"\s*\(\s*\)\s*;", disc)]
+                inside = [a for a in at if open_at < a < close_at]
+                problem = None
+                if len(at) != 1 or len(inside) != 1:
+                    problem = "it is not called exactly once, inside that block"
+                else:
+                    problem = unconditional_in(disc, open_at + 1, inside[0])
+                    guards = pp_guards(disc, 0, inside[0])
+                    if problem is None and guards != (INO_BLE_GUARD, INO_BT_GUARD):
+                        problem = (f"it is compiled under {' / '.join(guards or ('an unbalanced #if',))}, not "
+                                   f"the gate's `#{INO_BLE_GUARD}` with `#{INO_BT_GUARD}` alone inside it")
+                if problem:
+                    errors.append(f"{INO}: ble_discovery_start_if_due() calls `{call}` once, as a statement "
+                                  "of the failed create's block (`if (xTaskCreate(ble_bringup_task, ...) != "
+                                  f"pdPASS) {{`) that runs whenever the block does — {why}; here {problem}")
     fin_body = body_of(ino, SIG_INO_FINALIZE, f"{INO}: ble_bringup_finalize_if_done()", errors)
     if fin_body is not None:
         sq = squash(fin_body)
@@ -3348,6 +3454,35 @@ def check_bluetooth_bringup_worker(files: dict[str, str], errors: list[str]) -> 
                           "ble_manager — after `ble_scout::ble_scout_init();`, whose nimble_scan_init() runs "
                           "NimBLEDevice::init() on the loop task when the stack is down: a Start Advertising "
                           "or Pair tap's init() on the HTTP task must not run beside it (F235's review)")
+        else:
+            # And it runs on every finalize, whatever the worker's result
+            # (the verifier's escapes, wave 16): a finalize that skipped it
+            # left a device saved on answering every Start Advertising and
+            # Pair tap 503 "has not started yet" until a reboot, F235's own
+            # symptom. No exit after the head, the mark a statement of the
+            # body's own, under `#if FEATURE_BLUETOOTH` alone.
+            head = re.search(INO_FINALIZE_HEAD_END, fin_body)
+            mark = stack_calls[-1].start()
+            problem = None
+            if head is None:
+                problem = "its head's `g_ble_bringup_finalized = true;` is missing"
+            else:
+                jump = re.search(r"\b(?:return|goto)\b", fin_body[head.end():])
+                if jump:
+                    problem = f"a `{jump.group(0)}` after its head can leave before it runs"
+                else:
+                    problem = unconditional_in(fin_body, head.end(), mark)
+            guards = pp_guards(fin_body, 0, mark)
+            if problem is None and guards != (INO_BT_GUARD,):
+                problem = (f"it is compiled under {' / '.join(guards or ('an unbalanced #if',))}, not "
+                           f"`#{INO_BT_GUARD}` alone")
+            if problem:
+                errors.append(f"{INO}: ble_bringup_finalize_if_done() runs `{INO_BOOT_FINISHED}` on every "
+                              "finalize, whatever the worker's result: a statement of the body's own (no "
+                              f"condition, branch or block around it), under `#{INO_BT_GUARD}` alone, and no "
+                              "`return` or `goto` after the head — a finalize that skips it leaves a device "
+                              "saved on answering every Start Advertising and Pair tap 503 until a reboot "
+                              f"(F235's review); here {problem}")
     for call, allowed in (("bringup_worker_started", ("ble_discovery_start_if_due",)),
                           ("bringup_worker_finished", ("ble_discovery_start_if_due",
                                                        "ble_bringup_finalize_if_done")),
@@ -4003,6 +4138,45 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("ino", SIG_INO_LOOP, r"^", "\n  bluetooth_channel::boot_bring_up_finished();")),
     ("stop_advertising() marks the boot bring-up tried",
      on_other(BT_CPP, SIG_BT_STOP_ADV, r"$", "\n  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);\n")),
+    # The verifier's escapes (wave 16): each mark always runs where it is
+    # reached, or sits in the failed create's block.
+    ("the gate marks the boot bring-up over after any create, not only a failed one",
+     lambda s: on("ino", SIG_INO_DISCOVERY_START, r"(\(out of memory\)\", nullptr\);\s*\})",
+                  r"\1\n  #if FEATURE_BLUETOOTH\n  bluetooth_channel::boot_bring_up_finished();\n  #endif")(
+         on("ino", SIG_INO_DISCOVERY_START, r"\n[ \t]*bluetooth_channel::boot_bring_up_finished\(\);[^\n]*", "")(s))),
+    ("the gate tells the channel its worker finished after any create, not only a failed one",
+     lambda s: on("ino", SIG_INO_DISCOVERY_START, r"(\(out of memory\)\", nullptr\);\s*\})",
+                  r"\1\n  #if FEATURE_BLUETOOTH\n  bluetooth_channel::bringup_worker_finished();\n  #endif")(
+         on("ino", SIG_INO_DISCOVERY_START, r"\n[ \t]*bluetooth_channel::bringup_worker_finished\(\);[^\n]*", "")(s))),
+    ("a failed create returns before it marks the boot bring-up over",
+     on("ino", SIG_INO_DISCOVERY_START, r"(!= pdPASS\) \{)", r"\1\n    if (g_wifi_ap_only) return;")),
+    ("a failed create marks the boot bring-up over only under a condition",
+     on("ino", SIG_INO_DISCOVERY_START, r"(bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"if (g_wifi_ap_only) \1")),
+    ("a failed create marks the boot bring-up over under FEATURE_BLE",
+     on("ino", SIG_INO_DISCOVERY_START,
+        r"#if FEATURE_BLUETOOTH(\s*bluetooth_channel::bringup_worker_finished\(\);)", r"#if FEATURE_BLE\1")),
+    ("the finalize stage returns early, before the Scout and the mark, when ble_manager failed",
+     on("ino", SIG_INO_FINALIZE, r"(\n[ \t]*#if FEATURE_BLE_SCAN\n)", r"\n  if (g_ble_mgr_result == -1) return;\1")),
+    ("the finalize stage jumps past the mark",
+     lambda s: on("ino", SIG_INO_FINALIZE, r"(\n[ \t]*log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,\s*\"BLE bring-up finalized)",
+                  r"\nfinalized:\1")(
+         on("ino", SIG_INO_FINALIZE, r"(\n[ \t]*#if FEATURE_BLE_SCAN\n)", r"\n  if (g_ble_mgr_result == -1) goto finalized;\1")(s))),
+    ("the finalize stage marks the boot bring-up over only when ble_manager came up",
+     on("ino", SIG_INO_FINALIZE, r"(bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"if (g_ble_mgr_result == 1) \1")),
+    ("the finalize stage marks the boot bring-up over in a block only ble_manager's success enters",
+     on("ino", SIG_INO_FINALIZE, r"(bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"if (g_ble_mgr_result == 1) { \1 }")),
+    ("the finalize stage marks the boot bring-up over in an else only ble_manager's success reaches",
+     on("ino", SIG_INO_FINALIZE, r"(bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"if (g_ble_mgr_result != 1) {} else \1")),
+    ("the finalize stage marks the boot bring-up over under FEATURE_BLE",
+     on("ino", SIG_INO_FINALIZE, r"#if FEATURE_BLUETOOTH(\s*bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"#if FEATURE_BLE\1")),
+    ("the finalize stage marks the boot bring-up over in an #else branch",
+     on("ino", SIG_INO_FINALIZE, r"#if FEATURE_BLUETOOTH(\s*bluetooth_channel::boot_bring_up_finished\(\);)",
+        r"#if FEATURE_BLUETOOTH\n  #else\1")),
     # Rule BV4, init()'s latch (the F235 review): bring_up_starting() reads the
     # latch first because init() clears it only as it returns.
     ("init() clears its latch before the stack is published",
