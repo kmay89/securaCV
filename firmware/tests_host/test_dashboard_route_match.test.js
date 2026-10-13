@@ -155,20 +155,24 @@ test("the matcher answers the cases F214 turned on", () => {
 // registration is an entry or falls under a family, and a registration under
 // an #if has a covering entry that names each macro of it on its line or in
 // its section's heading.
-test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
-  const table = R.wapTable();
-  const text = readFileSync(join(R.WAP_DIR, "wap_server.h"), "utf8");
+// The list as it is read: every line under a section heading that names an
+// HTTP method before a path is an entry, whatever its indentation, or the
+// read fails closed (an entry spelled so the reader skipped it would pass
+// both directions unseen; F237's review found two such spellings).
+const WAP_METHODS = "GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD";
+function checkWapList(table, text) {
   const a = text.indexOf(" * HTTP routes, as canary_wap.ino registers them");
   const b = text.indexOf("*/", a);
   assert.ok(a >= 0 && b > a, "wap_server.h holds the route list");
   const entries = [];
+  const unread = [];
   let heading = "";
   for (const line of text.slice(a, b).split("\n")) {
-    if (/^ \* ── /.test(line)) { heading = line; continue; }
-    const m = line.match(/^ \* (GET|POST|DELETE|OPTIONS|PUT|\*)\s+(\/\S*)/);
+    if (/^\s*\*\s+── /.test(line)) { heading = line; continue; }
+    const m = line.match(new RegExp(`^\\s*\\*\\s+(${WAP_METHODS}|\\*)\\s+(\\/\\S*)`));
     if (m) entries.push({ method: m[1], path: m[2], line, heading });
+    else if (heading && new RegExp(`\\b(${WAP_METHODS})\\s+\\/`).test(line)) unread.push(line.trim());
   }
-  assert.ok(entries.length > 60, `the list was read (${entries.length} entries)`);
   const specific = entries.filter((e) => e.method !== "*");
   const family = entries.filter((e) => e.method === "*");
   // Every specific entry reaches the registration it means.
@@ -191,7 +195,6 @@ test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
   // Every family entry covers something, and which registrations it covers.
   const famHits = family.map((e) => R.match(table.map((g) => [e.path, g.uri])));
   family.forEach((e, k) => { if (!famHits[k].some(Boolean)) wrong.push(`* ${e.path}: matches no registration`); });
-  assert.deepStrictEqual(wrong, [], "every entry in wap_server.h's list is served");
   // Every registration is covered, and a gated one by an entry naming its gate.
   const uncovered = [];
   const unnamed = [];
@@ -203,8 +206,36 @@ test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
       unnamed.push(`${g.method} ${g.uri}: ${macros.join(", ")}`);
     }
   });
-  assert.deepStrictEqual(uncovered, [], "every registration is in wap_server.h's list");
-  assert.deepStrictEqual(unnamed, [], "a gated registration's list entry names its #if");
+  return { entries, unread, wrong, uncovered, unnamed };
+}
+
+test("canary-wap: wap_server.h's route list is the route table (F237)", () => {
+  const got = checkWapList(R.wapTable(), readFileSync(join(R.WAP_DIR, "wap_server.h"), "utf8"));
+  assert.ok(got.entries.length > 60, `the list was read (${got.entries.length} entries)`);
+  assert.deepStrictEqual(got.unread, [], "every line under a heading that names a method is read as an entry");
+  assert.deepStrictEqual(got.wrong, [], "every entry in wap_server.h's list is served");
+  assert.deepStrictEqual(got.uncovered, [], "every registration is in wap_server.h's list");
+  assert.deepStrictEqual(got.unnamed, [], "a gated registration's list entry names its #if");
+});
+
+// The reader above, on the spellings F237's review slipped past an earlier
+// version of it: a phantom route indented by two spaces, a PATCH or HEAD
+// entry, and a method word the entry pattern cannot read. Each must fail.
+test("canary-wap: the wap_server.h list reader refuses an entry it would once have skipped (F237)", () => {
+  const table = R.wapTable();
+  const text = readFileSync(join(R.WAP_DIR, "wap_server.h"), "utf8");
+  const anchor = text.indexOf("\n", text.indexOf(" * GET    /api/chain"));
+  assert.ok(anchor > 0, "the list still names GET /api/chain");
+  const withLine = (l) => text.slice(0, anchor + 1) + l + "\n" + text.slice(anchor + 1);
+  for (const [line, why] of [
+    [" *  GET   /api/health                     - a phantom, indented two spaces", "two-space indent"],
+    [" * PATCH  /api/identity                   - a phantom PATCH", "PATCH"],
+    [" * HEAD   /api/witness/stats              - a phantom HEAD", "HEAD"],
+    [" * -      GET /api/gps                    - a method the entry pattern cannot read", "unread"],
+  ]) {
+    const got = checkWapList(table, withLine(line));
+    assert.ok(got.wrong.length + got.unread.length > 0, `${why}: refused (wrong ${got.wrong}, unread ${got.unread})`);
+  }
 });
 
 // firmware/FEATURES.md's REST API table (sweep F240): one canary-wap column
