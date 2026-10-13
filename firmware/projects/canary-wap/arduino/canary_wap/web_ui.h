@@ -5110,10 +5110,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // When init was refused/failed, say WHY in the subtitle instead of
       // presenting a dead-looking panel ("internal RAM too fragmented…").
+      // Once a bring-up succeeds the reason is cleared, and the subtitle goes
+      // back to the card's own line: a tap of Start Advertising or Pair can
+      // bring a refused stack up within the page's session (sweep F235), and
+      // the refusal used to stay on screen until a reload.
       const subtitle = document.getElementById('btSubtitle');
       if (subtitle && data.init_fail_reason) {
         subtitle.textContent = 'Radio off — ' + data.init_fail_reason;
         badge.className = 'badge warning'; text.textContent = 'Off';
+      } else if (subtitle) {
+        subtitle.textContent = 'BLE connectivity';
       }
 
       // Live connection panel (Find My-like card)

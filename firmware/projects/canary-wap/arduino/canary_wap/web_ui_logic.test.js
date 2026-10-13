@@ -285,3 +285,73 @@ describe('the Chirp mute and unmute buttons', () => {
     assert.equal(r.note, 'Duration must be 15, 30, 60, or 120 minutes');
   });
 });
+
+// The Bluetooth card after a tap brings a refused stack up (sweep F235):
+// refreshBtStatus() put "Radio off — <reason>" in the card's subtitle while
+// GET /api/bluetooth named a refusal, and nothing put the card's own line
+// back once a bring-up cleared it, so the card read "Advertising" under the
+// old refusal until a reload. refreshBtStatus() is the page's glue, lifted
+// out of web_ui.h whole and run against stand-ins for api(), the page's
+// elements and the poll timer.
+describe('the Bluetooth card after a refused stack comes up', () => {
+  function cardMarkupSubtitle() {
+    const src = fs.readFileSync(UI, 'utf8');
+    const m = src.match(/id="btSubtitle">([^<]*)</);
+    if (!m) throw new Error('btSubtitle not found in web_ui.h markup');
+    return m[1];
+  }
+  function bluetoothPage() {
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) {
+        els.set(id, { id, textContent: '', innerHTML: '', className: '', checked: false,
+                      style: {}, dataset: {} });
+      }
+      return els.get(id);
+    };
+    return { el, document: { getElementById: el } };
+  }
+  async function refreshWith(page, answer) {
+    const sandbox = {
+      WebUiLogic: L,
+      api: async () => answer,
+      document: page.document,
+      window: {},
+      setInterval: () => 1,
+      clearInterval: () => {},
+      distancePretty: () => '',
+      rssiBarCount: () => 0,
+    };
+    vm.runInNewContext(`${glueFunction('refreshBtStatus')}\nglobalThis.__run = refreshBtStatus;`, sandbox);
+    await sandbox.__run();
+  }
+  const base = { enabled: true, device_name: 'Canary', tx_power: 9, paired_count: 0, scanned_count: 0,
+                 connected: false };
+  it('names the refusal while there is one', async () => {
+    const page = bluetoothPage();
+    page.el('btSubtitle').textContent = cardMarkupSubtitle();
+    await refreshWith(page, { ...base, state: 'disabled', advertising: false,
+                              init_fail_reason: 'Not started: internal RAM too low' });
+    assert.equal(page.el('btSubtitle').textContent, 'Radio off — Not started: internal RAM too low');
+    assert.equal(page.el('btStateText').textContent, 'Off');
+  });
+  it('puts the card\'s own line back once a bring-up clears it', async () => {
+    const page = bluetoothPage();
+    page.el('btSubtitle').textContent = cardMarkupSubtitle();
+    await refreshWith(page, { ...base, state: 'disabled', advertising: false,
+                              init_fail_reason: 'Not started: internal RAM too low' });
+    // The owner taps Start Advertising and the stack comes up: no reason now.
+    await refreshWith(page, { ...base, state: 'advertising', advertising: true });
+    assert.equal(page.el('btSubtitle').textContent, cardMarkupSubtitle());
+    assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+    assert.equal(page.el('btStateText').textContent, 'Advertising');
+    assert.equal(page.el('btStateBadge').className, 'badge info');
+  });
+  it('puts it back after a refresh that found no backend, too', async () => {
+    const page = bluetoothPage();
+    await refreshWith(page, null);                    // a failed request: "not registered"
+    assert.match(page.el('btSubtitle').textContent, /not registered/);
+    await refreshWith(page, { ...base, state: 'idle', advertising: false });
+    assert.equal(page.el('btSubtitle').textContent, 'BLE connectivity');
+  });
+});
