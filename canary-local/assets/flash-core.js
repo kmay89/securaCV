@@ -1873,6 +1873,24 @@ export function requiresLiveReceipt(product) {
   return !product || product.serial_receipt !== false;
 }
 
+// ── the serial monitor's commands: the product's own (sweep A86) ────────────
+// Every monitor offers the commands of the firmware on the board as one-tap
+// chips beside a "type a command" box: products[].monitor in the generated
+// catalog ({ kind, cmds: [[command, label], …], placeholder }), held to the
+// firmware's own command handler by gen_flash.py's monitor_block(). A board
+// whose product is not known (an unidentified firmware, a local file, a
+// backup) gets the catalog's monitor_unknown — no chips — never another
+// firmware's. The browser flasher's monitor and the Lab app's receipt card
+// call this; desktop/src/app.js monitorVocabulary is the same rule
+// (desktop_parity.test.js runs both over every product).
+export function monitorVocabulary(catalog, product) {
+  const own = product && product.monitor;
+  if (own && Array.isArray(own.cmds) && typeof own.placeholder === "string") return own;
+  const unknown = catalog && catalog.monitor_unknown;
+  if (unknown && Array.isArray(unknown.cmds) && typeof unknown.placeholder === "string") return unknown;
+  return { kind: "unknown", cmds: [], placeholder: "type a command" };
+}
+
 // The catalog's post-flash "first flight" (products[].hatch, authored once in
 // gen_flash.py's HATCH_MOMENTS): kicker + title + body + ordered steps.
 // Returns null when the product carries no usable hatch data (a local file,

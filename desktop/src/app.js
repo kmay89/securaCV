@@ -5238,31 +5238,56 @@ async function restartMonitorAtBaud(baud, opts = {}) {
   await startMonitor({ baud, manualBaud: opts.manual, tried: opts.tried });
 }
 
-// The firmware's single-key vocabulary, copied verbatim from the browser
-// flasher (canary-local/assets/flash.js, MONITOR_CMDS). The desktop exposed
-// only `j` as a button, so every other command had to be typed blind by
-// someone who already knew that `i` is identity and `b` is battery.
-const MONITOR_CMDS = [
-  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
-  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
-];
+// The serial monitor's commands are the firmware's own (sweep A86): the
+// product's `monitor` record in the embedded flash.json ({ kind, cmds:
+// [[command, label], …], placeholder }), which gen_flash.py holds to that
+// firmware's command handler — single keys for the Canary, the WAP and
+// Vision, the tuning console's words for Sense, none for a display. The
+// browser flasher's monitor and the Lab app's receipt card read the same
+// record through flash-core.js monitorVocabulary, this function's twin
+// (desktop_parity.test.js runs both over every product). A product not known
+// gets the catalog's monitor_unknown: no chips, and a box that says why.
+function monitorVocabulary(catalog, product) {
+  const own = product && product.monitor;
+  if (own && Array.isArray(own.cmds) && typeof own.placeholder === "string") return own;
+  const unknown = catalog && catalog.monitor_unknown;
+  if (unknown && Array.isArray(unknown.cmds) && typeof unknown.placeholder === "string") return unknown;
+  return { kind: "unknown", cmds: [], placeholder: "type a command" };
+}
+
+// The product whose firmware the monitor is watching: the last host flash
+// wins, else the chosen product card — the radar suite's and the field
+// bench's rule. A local file or a backup names no catalog product: null.
+function monitorProductOnBench() {
+  const flashedId = state.vision && state.vision.hostFlash && state.vision.hostFlash.product_id;
+  const id = flashedId || (state.product && state.product.id);
+  return (id && ((state.catalog && state.catalog.products) || []).find((p) => p.id === id)) || null;
+}
 
 function renderMonitorCmds() {
   const host = $("monitor-cmds");
   if (!host) return;
   host.innerHTML = "";
-  for (const [ch, label] of MONITOR_CMDS) {
+  const product = monitorProductOnBench();
+  const vocab = monitorVocabulary(state.catalog, product);
+  const input = $("monitor-cmd");
+  if (input) input.placeholder = vocab.placeholder;
+  // "Print receipt (j)" asks for the self-manifest: shown only where the
+  // firmware answers j (the catalog's serial_receipt, derived from it).
+  const receiptBtn = $("monitor-manifest");
+  if (receiptBtn) receiptBtn.classList.toggle("hidden", !requiresLiveReceipt(product));
+  for (const [cmd, label] of vocab.cmds) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "btn btn-ghost btn-small";
-    b.dataset.cmd = ch;
-    b.textContent = `${label} (${ch})`;
+    b.dataset.cmd = cmd;
+    b.textContent = `${label} (${cmd})`;
     b.disabled = !state.monitoring;
     // The backend does not auto-append a newline (so "No line ending" is
     // honored on the free-text form), so send one here — the firmware's
     // command parser reads a line.
     b.addEventListener("click", () =>
-      invoke("serial_monitor_send", { command: ch + "\n" }).catch((e) =>
+      invoke("serial_monitor_send", { command: cmd + "\n" }).catch((e) =>
         setStatus("monitor-status", String(e), "err")));
     host.appendChild(b);
   }
@@ -5279,6 +5304,7 @@ async function startMonitor(opts) {
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   renderWapField();  // …and the field bench on a WAP
+  renderMonitorCmds(); // …and the command chips of the firmware on the bench
   renderSelfCheck(null); // a fresh session earns its own chips
   setMonitorButtons(true);
   // The speed to open at: an explicit one from a baud hop, else whatever the

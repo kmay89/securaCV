@@ -199,14 +199,12 @@ const requiresLiveReceipt = (product) => !product || product.serial_receipt !== 
 /** Mount the native bench. `renderWifiFields(box, product)` is flash.js's own
     Wi-Fi / broker form — the browser's form, reused, so a Canary set up here
     gets exactly the fields (and the saved network) it gets in the browser.
-    `monitorCmds` is flash.js's MONITOR_CMDS, handed over the same way: the
-    single-key chips the post-flash monitor offers, one table for both benches
-    (and desktop_parity.test.js holds the Flasher's copy to it). Its labels
-    follow the WAP sketch's menu; other firmwares answer some of those keys
-    differently or not at all (the flagship Canary's t/w/m, Vision's j/h only),
-    the same table the browser flasher and the Flasher show for every
-    product. */
-export async function mountNativeBench(mount, { catalog, renderWifiFields, monitorCmds = [] }) {
+    The post-flash monitor's command chips are the flashed product's own, from
+    the `catalog` handed in (products[].monitor through flash-core.js
+    monitorVocabulary — sweep A86): the record the browser flasher's monitor
+    and the Flasher read too, held to each firmware's command handler by
+    gen_flash.py. */
+export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   const st = {
     ports: [], port: null, portInfo: null, chip: null, flashBytes: null, mac: null,
     macCheck: null, detecting: false, failedPort: null, busy: false,
@@ -691,12 +689,15 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
     }));
     // Talk back to the firmware's console: the Flasher's command row (its
     // monitor chips and command box, desktop/src/app.js renderMonitorCmds and
-    // #monitor-cmd-form), in its words. Each chip sends its key and the box
-    // sends what was typed, each with the newline the firmware's command
-    // parser reads (the engine sends exactly what it is handed and appends
-    // nothing). A refused send is said in the status line, as the Flasher says
-    // it, never dropped. No line-ending picker: the Flasher's is for raw
-    // keystrokes, and this box is the browser flasher's, newline only.
+    // #monitor-cmd-form), in its words. The chips are the flashed product's
+    // own commands (sweep A86) and the box's placeholder says what that
+    // firmware reads — single keys, the tuning console's words, or nothing.
+    // Each chip sends its command and the box sends what was typed, each with
+    // the newline the firmware's command parser reads (the engine sends
+    // exactly what it is handed and appends nothing). A refused send is said
+    // in the status line, as the Flasher says it, never dropped. No
+    // line-ending picker: the Flasher's is for raw keystrokes, and this box is
+    // the browser flasher's, newline only.
     const sendCommand = async (command) => {
       if (!st.monitoring) return false;
       try {
@@ -707,19 +708,20 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields, monit
         return false;
       }
     };
+    const vocab = core.monitorVocabulary(catalog, product);
     const chips = el("div", "flash-mon-chips");
-    for (const [ch, label] of monitorCmds) {
-      const b = el("button", "ghost small", `${label} (${ch})`);
+    for (const [cmd, label] of vocab.cmds) {
+      const b = el("button", "ghost small", `${label} (${cmd})`);
       b.type = "button";
-      b.dataset.cmd = ch;
-      b.addEventListener("click", () => { sendCommand(ch + "\n"); });
+      b.dataset.cmd = cmd;
+      b.addEventListener("click", () => { sendCommand(cmd + "\n"); });
       chips.append(b);
       monitorControls.push(b);
     }
     const inRow = el("div", "flash-mon-input");
     const input = el("input");
     input.type = "text";
-    input.placeholder = "type a command — the firmware answers single keys; h shows its menu";
+    input.placeholder = vocab.placeholder;
     input.setAttribute("aria-label", "Serial command");
     input.maxLength = 128;
     const sendBtn = el("button", "primary small", "Send");

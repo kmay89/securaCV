@@ -208,6 +208,11 @@ on:
       # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
       - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
+      # desktop_parity.test.js and the tools tests hold each flash.json
+      # product's monitor chips to the command handler that answers them
+      # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
+      # and the display's are under globs above)
+      - "firmware/canary/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -433,6 +438,11 @@ on:
       # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
       - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
+      # desktop_parity.test.js and the tools tests hold each flash.json
+      # product's monitor chips to the command handler that answers them
+      # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
+      # and the display's are under globs above)
+      - "firmware/canary/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
