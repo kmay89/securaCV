@@ -166,6 +166,13 @@ final class DeviceAPITests: XCTestCase {
         let movedPlain = plain.rebased(onto: discovered, discoveredAs: "wap-ab12")
         XCTAssertEqual(movedPlain.baseURL.absoluteString, "http://192.168.1.31")
         XCTAssertNil(movedPlain.tlsCertFingerprint)
+        // Even a host off the network: the kit is this device's, so it goes
+        // where this device answers — the token never leaves the LAN, and an
+        // https kit is still held to its own pin there.
+        let offNet = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://securacv.example:8443","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
+        let movedOffNet = offNet.rebased(onto: discovered, discoveredAs: "wap-ab12")
+        XCTAssertEqual(movedOffNet.baseURL.absoluteString, "https://192.168.1.31:8443")
+        XCTAssertTrue(DeviceAPI.isPrivate(movedOffNet.baseURL))
         // A kit already naming where the device answers is unchanged.
         let current = try decodeKit(#"{"device_id":"wap-ab12","base_url":"https://canary-kitchen.local","token":"cv_x","tls_cert_fp":"\#(fixtureFP)"}"#)
         XCTAssertEqual(current.rebased(onto: DeviceAPI.url(forDiscoveredHost: "canary-kitchen"), discoveredAs: "wap-ab12")
