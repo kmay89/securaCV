@@ -1545,5 +1545,110 @@ def test_go2rtc_shell_transform_matches_the_reference(label):
         assert row["url"] not in ("", "null")
 
 
+# run.sh's own camera pick, run as written: standalone mode merges the
+# configured cameras with discover_cameras.sh's rows (unique_by(.name), which
+# sorts by name), takes the first as the primary camera and exits when its
+# zone fails zone:[a-z0-9_-]{1,64}. A stream named "" sorted first, so one
+# stray go2rtc stream stopped the app at start (sweep HA34). The block is
+# lifted out of run.sh from its first line to the comment that ends it, the
+# discovery script's install path swapped for this tree's copy (run under
+# sh, as its #!/bin/sh would), and bashio stubbed: three options and the log.
+_RUN_SH = _MODULE_PATH.parent / "run.sh"
+_PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
+_PICK_END = "    # Build configuration file\n"
+_PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
+_PICK_STUBS = r"""set -euo pipefail
+bashio::config() {
+    case "$1" in
+        go2rtc_discovery) printf '%s\n' true ;;
+        go2rtc_url) printf '%s\n' "http://127.0.0.1:9" ;;
+        cameras) printf '%s\n' "$TEST_CAMERAS" ;;
+        *) echo "run.sh read an option this test does not stub: $1" >&2; exit 97 ;;
+    esac
+}
+bashio::config.has_value() {
+    case "$1" in
+        cameras) [ -n "$TEST_CAMERAS" ] && [ "$TEST_CAMERAS" != null ] ;;
+        *) echo "run.sh asked about an option this test does not stub: $1" >&2; exit 97 ;;
+    esac
+}
+bashio::log.info() { printf 'info: %s\n' "$*" >&2; }
+bashio::log.warning() { printf 'warning: %s\n' "$*" >&2; }
+bashio::log.error() { printf 'error: %s\n' "$*" >&2; }
+"""
+_PICK_REPORT = "printf '%s\\n' \"$CAMERA_NAME\" \"$CAMERA_ZONE\" \"$CAMERA_URL\"\n"
+
+
+def _run_sh_camera_pick(streams, cameras=()):
+    """Run run.sh's standalone camera pick on a go2rtc payload (and the
+    configured `cameras` option). Returns (exit code, [name, zone, url] of the
+    primary camera when it got that far, stderr)."""
+    if shutil.which("jq") is None:
+        if os.environ.get("CI"):
+            pytest.fail("jq is not installed: run.sh's camera pick cannot run")
+        pytest.skip("jq is not installed")
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not installed")
+    text = _RUN_SH.read_text(encoding="utf-8")
+    assert text.count(_PICK_START) == 1 and text.count(_PICK_END) == 1, (
+        "run.sh's standalone camera block moved; update this test"
+    )
+    block = text[text.index(_PICK_START):text.index(_PICK_END)]
+    assert block.count(_PICK_DISCOVER) == 1, "run.sh no longer runs discover_cameras.sh once"
+    assert block.count('jq -s \'add | unique_by(.name)\'') == 1, "run.sh's merge moved"
+    block = block.replace(_PICK_DISCOVER, 'sh "$TEST_DISCOVER_SH" "$GO2RTC_URL"')
+    env = {
+        **os.environ,
+        "GO2RTC_STREAMS_JSON": json.dumps(streams),
+        "TEST_CAMERAS": json.dumps(list(cameras)),
+        "TEST_DISCOVER_SH": str(_DISCOVER_SH),
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PICK_STUBS + block + _PICK_REPORT],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    primary = out.stdout.splitlines() if out.returncode == 0 else []
+    return out.returncode, primary, out.stderr
+
+
+def test_run_sh_never_takes_a_nameless_stream_as_the_primary_camera():
+    streams = {
+        "": {"producers": [{"url": "rtsp://10.0.0.1/empty"}]},
+        "Front Door": {"producers": [{"url": "rtsp://10.0.0.1/front"}]},
+    }
+    code, primary, err = _run_sh_camera_pick(streams)
+    assert code == 0, err
+    assert primary == ["Front Door", "zone:front_door", "rtsp://10.0.0.1/front"], err
+    assert "Invalid zone_id" not in err
+
+
+def test_run_sh_keeps_a_configured_camera_first_beside_a_nameless_stream():
+    configured = [{"name": "porch", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"}]
+    code, primary, err = _run_sh_camera_pick(
+        {"": {"producers": ["rtsp://10.0.0.1/empty"]}}, configured
+    )
+    assert code == 0, err
+    assert primary == ["porch", "zone:porch", "rtsp://10.0.0.2/p"], err
+
+
+def test_run_sh_with_only_a_nameless_stream_says_no_cameras():
+    """Nothing usable is discovered, so run.sh says so; it never reaches the
+    zone check with a row it cannot use."""
+    code, primary, err = _run_sh_camera_pick({"": {"producers": ["rtsp://10.0.0.1/e"]}})
+    assert code == 1 and primary == []
+    assert "No cameras configured!" in err
+    assert "Invalid zone_id" not in err
+
+
+@pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))
+def test_run_sh_primary_zone_is_valid_for_every_parity_payload(label):
+    code, primary, err = _run_sh_camera_pick(_GO2RTC_PARITY_PAYLOADS[label])
+    assert "Invalid zone_id" not in err, err
+    if code == 0:
+        assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", primary[1]), primary
+    else:
+        assert code == 1 and "No cameras configured!" in err, err
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
