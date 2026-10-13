@@ -511,6 +511,72 @@ clean-receipt-authority:
 run: run-receipt-authority
 clean: clean-receipt-authority
 
+# Who may read the WAP's credentials (sweep F289): the REAL api_auth.h,
+# cv_session_store.h and claim_ticket.h, csi_integration.cpp's session glue
+# (the Cookie read, the lookup, the owner check, the mint, the encoder and
+# the weak hooks' definitions) and canary_wap.ino's handle_ui(),
+# handle_provisioning_receipt(), handle_pairing_qr() and secure_zero(), each
+# cut verbatim (firmware/tests_host/cut_functions.awk), over stubs/receipt.
+# A session the landing page minted gets the receipt's BOOT-tap refusal and
+# the QR's 401 with neither secret; a bearer header, a setup-door claim and a
+# tap serve, and the session a claim or a tap minted serves alone.
+# (-Wno-ignored-qualifiers: api_auth.h's constant_time_compare() casts each
+# byte to `volatile uint8_t`, a qualifier g++ -Wextra reports as ignored on a
+# value; this suite compiles the line as the device has it.)
+RSESS_BIN    = test_receipt_session
+RSESS_SRC    = test_receipt_session.cpp
+RSESS_STORE  = test_receipt_session_store.inc
+RSESS_HEX    = test_receipt_session_hex.inc
+RSESS_CHECK  = test_receipt_session_check.inc
+RSESS_HOOKS  = test_receipt_session_hooks.inc
+RSESS_ISSUE  = test_receipt_session_issue.inc
+RSESS_SKETCH = test_receipt_session_sketch.inc
+RSESS_INCS   = $(RSESS_STORE) $(RSESS_HEX) $(RSESS_CHECK) $(RSESS_HOOKS) $(RSESS_ISSUE) $(RSESS_SKETCH)
+RSESS_CUT    = ../../../tests_host/cut_functions.awk
+RSESS_CSI    = $(SRC_DIR)/csi_integration.cpp
+
+$(RSESS_STORE): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	@test "$$(grep -cE '^cv_session::Store g_sessions = \{\};$$' $(RSESS_CSI))" = 1 || { \
+	  echo "csi_integration.cpp: no single g_sessions line for the session store" >&2; exit 1; }
+	@grep -nE '^cv_session::Store g_sessions = \{\};$$' $(RSESS_CSI) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(RSESS_CSI)"\n\2|' > $@.tmp
+	awk -v 'sigs=bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {|bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {|const cv_session::Slot* session_of(httpd_req_t* req) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) >> $@.tmp && mv $@.tmp $@
+
+$(RSESS_HEX): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	awk -v 'sigs=void hex_encode(const uint8_t* in, size_t len, char* out) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) > $@.tmp && mv $@.tmp $@
+
+$(RSESS_CHECK): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	awk -v 'sigs=bool session_validate_cookie(httpd_req_t* req) {|bool session_validate_owner_cookie(httpd_req_t* req) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) > $@.tmp && mv $@.tmp $@
+
+$(RSESS_HOOKS): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	awk -v 'sigs=bool cv_session_validate(httpd_req_t* req) {|bool cv_session_validate_owner(httpd_req_t* req) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) > $@.tmp && mv $@.tmp $@
+
+$(RSESS_ISSUE): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	awk -v 'sigs=bool session_issue(char* hex_out, size_t out_cap, cv_session::Origin origin) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) > $@.tmp && mv $@.tmp $@
+
+$(RSESS_SKETCH): $(SRC_DIR)/canary_wap.ino $(RSESS_CUT) Makefile
+	awk -v 'sigs=static void secure_zero(void* p, size_t n) {|static esp_err_t handle_ui(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	  -f $(RSESS_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(RSESS_BIN): $(RSESS_SRC) $(RSESS_INCS) arduino_globals.h $(SRC_DIR)/api_auth.h $(SRC_DIR)/auth_logic.h \
+              $(SRC_DIR)/cv_session_store.h $(SRC_DIR)/claim_ticket.h $(SRC_DIR)/receipt_authority.h \
+              $(wildcard stubs/receipt/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-ignored-qualifiers -I stubs/receipt -I $(SRC_DIR) -I . -o $@ $(RSESS_SRC)
+
+.PHONY: run-receipt-session clean-receipt-session
+run-receipt-session: $(RSESS_BIN)
+	$(call run_marked,$(RSESS_BIN))
+clean-receipt-session:
+	rm -f $(RSESS_BIN) $(RSESS_INCS)
+
+run: run-receipt-session
+clean: clean-receipt-session
+
 # The writer's bounds (sweep F230): the REAL wap_json_writer.h, identity_json.h
 # and fleet_scan_cache.h, with a string grown where a live global can change
 # under a build: between escaped()'s measure and its copy (and str()'s), and
