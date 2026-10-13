@@ -21,7 +21,9 @@
 # The pin is sketch.yaml's dash-core3 profile ("- lvgl (9.5.0)", the exact
 # release firmware.yml's core-3 build installs); every profile that names a
 # 9.x LVGL must name the same one, and the PlatformIO dash env must ask for
-# it (lvgl/lvgl@^<pin>) with lv_conf.h found the way this build finds it
+# exactly it (lvgl/lvgl@<pin>; a caret or any other range is refused, F247:
+# it would let `pio run` build a later 9.x than this renders) with lv_conf.h
+# found the way this build finds it
 # (-DLV_CONF_INCLUDE_SIMPLE, -I include/, not CD_LEAN_BUILD). The Arduino
 # sketch's lv_conf.h copy must equal include/lv_conf.h. The native build
 # defines no ESP_PLATFORM, so LVGL never reads the core's sdkconfig.h; the
@@ -66,10 +68,19 @@ pin="$(profile_lvgl dash-core3)"
 nines="$(sed -n 's/^[[:space:]]*- lvgl (\(9\.[0-9.]*\))[[:space:]]*$/\1/p' "$SKETCH" | sort -u | paste -sd' ')"
 [[ "$nines" == "$pin" ]] ||
   die "sketch.yaml's profiles name LVGL 9 releases '$nines'; every one must be the dash-core3 pin $pin"
+# A PlatformIO env asks for exactly the pin (F247): `lvgl/lvgl@^9.5.0` admits
+# any 9.x, and v9.6.0 is tagged, so a caret (or ~, >=, a bare name) lets the
+# release `pio run` builds be a LVGL this script never rendered.
+require_exact_lvgl() {  # require_exact_lvgl <what> <ini lines>
+  local asks
+  asks="$({ grep -E '^[[:space:]]*lvgl/lvgl([@[:space:]].*)?$' <<<"$2" || true; } |
+    sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | paste -sd' ')"
+  [[ "$asks" == "lvgl/lvgl@$pin" ]] ||
+    die "$1 asks for '${asks:-no lvgl/lvgl}', not exactly lvgl/lvgl@$pin (sketch.yaml's pin): a range such as ^$pin lets pio build a later 9.x than this renders"
+}
 dash_env="$(awk '/^\[env:canary-display-dash\][[:space:]]*$/ { p = 1; next } /^\[/ { p = 0 } p' "$INI")"
 [[ -n "$dash_env" ]] || die "$INI has no [env:canary-display-dash]"
-grep -Eq "^[[:space:]]*lvgl/lvgl@\\^${pin//./\\.}[[:space:]]*$" <<<"$dash_env" ||
-  die "the PlatformIO dash env does not ask for lvgl/lvgl@^$pin (sketch.yaml's pin)"
+require_exact_lvgl "the PlatformIO dash env" "$dash_env"
 grep -Eq '^[[:space:]]*-DLV_CONF_INCLUDE_SIMPLE[[:space:]]*$' <<<"$dash_env" ||
   die "the PlatformIO dash env no longer finds lv_conf.h by -DLV_CONF_INCLUDE_SIMPLE"
 grep -Eq '^[[:space:]]*-I\$\{PROJECT_DIR\}/include[[:space:]]*$' <<<"$dash_env" ||
@@ -91,8 +102,7 @@ c6_env="$(env_block env:canary-display-nightstand-c6)"
 [[ -n "$c6_env" ]] || die "$INI has no [env:canary-display-nightstand-c6]"
 grep -Eq '^extends[[:space:]]*=[[:space:]]*canary_display_c6_core3[[:space:]]*$' <<<"$c6_env" ||
   die "the nightstand-c6 env no longer extends canary_display_c6_core3"
-grep -Eq "^[[:space:]]*lvgl/lvgl@\\^${pin//./\\.}[[:space:]]*$" <<<"$(env_block canary_display_c6_core3)" ||
-  die "canary_display_c6_core3 does not ask for lvgl/lvgl@^$pin (sketch.yaml's pin)"
+require_exact_lvgl "canary_display_c6_core3" "$(env_block canary_display_c6_core3)"
 for flag in '-DCD_LEAN_BUILD=1' '-DLV_CONF_INCLUDE_SIMPLE' \
             '-I${PROJECT_DIR}/include' \
             '-I${PROJECT_DIR}/../../configs/canary-display/nightstand' \

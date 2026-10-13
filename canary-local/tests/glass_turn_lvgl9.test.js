@@ -14,8 +14,9 @@
 // builds a stand-in checkout from the fake's own quotes; no LVGL needed).
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { existsSync, readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { dirname, join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const ROOT = join(__dirname, "..");      // canary-local/
@@ -27,6 +28,20 @@ const SCRIPT = "canary-local/emulator/test/glass_turn_lvgl9.sh";
 function profileLvgl(sketch, profile) {
   const body = new RegExp(`\\n  ${profile}:\\n([\\s\\S]*?)(?=\\n  [A-Za-z0-9_-]+:\\n|$)`).exec(sketch)?.[1] || "";
   return /^\s*- lvgl \(([0-9.]+)\)\s*$/m.exec(body)?.[1] || null;
+}
+
+// The lvgl/lvgl lines one .ini block asks for, trimmed (a comment is not one).
+function lvglAsks(block) {
+  return block.split("\n").filter((l) => /^\s*lvgl\/lvgl(?:[@\s]|$)/.test(l)).map((l) => l.trim());
+}
+
+// One [section] of an .ini, up to the next.
+function iniBlock(ini, section) {
+  const at = ini.indexOf(`\n[${section}]\n`);
+  if (at < 0) return "";
+  const rest = ini.slice(at + section.length + 4);
+  const end = rest.search(/\n\[/);
+  return end < 0 ? rest : rest.slice(0, end);
 }
 
 // The wasm job's steps, each from its "      - " line to the next.
@@ -104,7 +119,8 @@ test("the pin (F225): the script reads sketch.yaml's dash-core3 LVGL, fetches th
   assert.deepStrictEqual(nines, [pin], "every profile that names an LVGL 9 names the same one");
   const ini = read(join(REPO, "firmware/envs/platformio/canary-display.ini"));
   const dash = /\n\[env:canary-display-dash\]\n([\s\S]*?)(?=\n\[)/.exec(ini)?.[1] || "";
-  assert.ok(dash.includes(`lvgl/lvgl@^${pin}`) && dash.includes("-DLV_CONF_INCLUDE_SIMPLE") &&
+  assert.deepStrictEqual(lvglAsks(dash), [`lvgl/lvgl@${pin}`], "the PlatformIO dash env asks for exactly that release (F247)");
+  assert.ok(dash.includes("-DLV_CONF_INCLUDE_SIMPLE") &&
     dash.includes("-I${PROJECT_DIR}/include") && !dash.includes("CD_LEAN_BUILD"),
   "the PlatformIO dash env builds that release with include/lv_conf.h, not lean");
   // The fake quotes that release (a pin bump makes its quotes be re-read).
@@ -114,6 +130,52 @@ test("the pin (F225): the script reads sketch.yaml's dash-core3 LVGL, fetches th
   // The checkout is ignored by git and skipped by every tree walker (a
   // directory named third_party).
   assert.match(read(join(ROOT, "emulator/.gitignore")), /^third_party\/$/m);
+});
+
+test("the pin is exact (F247): both PlatformIO LVGL 9 rows ask for exactly sketch.yaml's release, and the script refuses a range", () => {
+  const SKETCH = "firmware/projects/canary-display/arduino/canary_display/sketch.yaml";
+  const INI = "firmware/envs/platformio/canary-display.ini";
+  const pin = profileLvgl(read(join(REPO, SKETCH)), "dash-core3");
+  const ini = read(join(REPO, INI));
+  // The two rows the LVGL 9 releases build from: the dash env (dash7 and
+  // nightstand7 inherit it) and nightstand-c6's core-3 base. A caret admits
+  // any 9.x and v9.6.0 is tagged, so `pio run` would build a LVGL no check
+  // renders; the 8.4 rows are another line and stay carets.
+  for (const section of ["env:canary-display-dash", "canary_display_c6_core3"]) {
+    assert.deepStrictEqual(lvglAsks(iniBlock(ini, section)), [`lvgl/lvgl@${pin}`], `[${section}] asks for exactly LVGL ${pin}`);
+  }
+  const nines = [...ini.matchAll(/^\s*lvgl\/lvgl\s*@\s*(\S*9\.\S*)\s*$/gm)].map((m) => m[1]);
+  assert.ok(nines.length >= 2 && nines.every((v) => v === pin), `every LVGL 9 row in the .ini is exactly ${pin}: ${nines}`);
+  // The script, run on a copy of the files its env checks read, with an
+  // LVGL directory that does not exist: the exact pin gets past every check
+  // to the library, and a caret in either row stops it there, naming the row.
+  const tmp = mkdtempSync(join(tmpdir(), "glass-turn-lvgl9-pin-"));
+  try {
+    for (const rel of [SCRIPT, SKETCH, INI, "firmware/projects/canary-display/include/lv_conf.h",
+      "firmware/projects/canary-display/arduino/canary_display/lv_conf.h", "firmware/common/identity/device_pseudonym.h"]) {
+      mkdirSync(join(tmp, dirname(rel)), { recursive: true });
+      copyFileSync(join(REPO, rel), join(tmp, rel));
+    }
+    const run = (iniText) => {
+      writeFileSync(join(tmp, INI), iniText);
+      return spawnSync("bash", [join(tmp, SCRIPT), join(tmp, "no-lvgl-here")], { encoding: "utf8" });
+    };
+    const exact = run(ini);
+    assert.strictEqual(exact.status, 2, exact.stderr);
+    assert.match(exact.stderr, /no LVGL 9 checkout at /, "the exact pins pass every env check");
+    const row = `    lvgl/lvgl@${pin}\n`;
+    const first = ini.indexOf(row);
+    const last = ini.lastIndexOf(row);
+    assert.ok(first >= 0 && last > first, "two exact rows to plant a caret in");
+    const caret = (at) => `${ini.slice(0, at)}    lvgl/lvgl@^${pin}\n${ini.slice(at + row.length)}`;
+    for (const [at, who] of [[first, "the PlatformIO dash env"], [last, "canary_display_c6_core3"]]) {
+      const r = run(caret(at));
+      assert.strictEqual(r.status, 2, r.stderr);
+      assert.ok(r.stderr.includes(`${who} asks for 'lvgl/lvgl@^${pin}', not exactly lvgl/lvgl@${pin}`), r.stderr);
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("nightstand-c6 (F248): the script builds the same test in the lean C6 config, against LVGL built lean, and every suite runs", () => {
