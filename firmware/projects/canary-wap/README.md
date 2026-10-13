@@ -229,7 +229,9 @@ does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
 dashboard at `https://canary-<suffix>.local/settings` then saves that
 receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
 pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
-**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
+**Device**, **Recovery kit** when signed in by a tap or a token; sweep F257.
+A browser that only opened the landing page at `/` holds a session the
+receipt does not take: its save asks for the tap; sweep F289.) The route decides bearer (or the session a served receipt minted) → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
@@ -335,7 +337,13 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie.
+as a bearer header or the dashboard's session cookie. The landing page at
+`/` hands a session to any caller that reaches the WAP (on the home network
+too, once it has joined), so the two routes that answer a credential,
+`/api/pairing-qr` and `/api/provisioning-receipt`, take the bearer header or
+only the session a BOOT tap or a setup-door claim minted beside a served
+receipt; a landing-page session gets `401` from the QR and the BOOT-tap
+refusal from the receipt (sweep F289, `cv_session_store.h`).
 
 ```json
 {

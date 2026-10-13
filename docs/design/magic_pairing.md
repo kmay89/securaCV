@@ -432,7 +432,14 @@ asks no Host question on this route today** (it has no `auth_gate`; its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
 that order, with the same single-use claim and the same unspent tap. Adding
 the Host row to the WAP is a separate change, not a claim this document
-makes.
+makes. On the WAP, row 2 is the bearer in the `Authorization` header or a
+dashboard session minted beside a receipt this route served (a BOOT tap's or
+a claim's, whose answer already carried the token); a session the landing
+page at `/` minted, which any caller that reaches the WAP can get, is not row
+2 and falls to rows 3 and 4 like a request with none (sweep F289:
+`cv_session_store.h` stores each session's origin when it is minted,
+`api_auth.h`'s `api_auth_check_credential_optional()` reads it;
+`tests_host/test_receipt_session.cpp`).
 
 ---
 
@@ -674,9 +681,12 @@ this door, which never runs the wizard's close-out, has a kit to save. On
 the dashboard (`https://canary-<suffix>.local/settings` once set up; port
 80 redirects there) a browser that is signed out chooses **Use BOOT Tap
 Once**, and the tap that signs it in offers **Save my recovery kit** in the
-wizard's words; one already signed in (a session cookie from the landing
-page, a tap or a claim, or a token) saves it from **Settings**, **Device**,
-**Recovery kit** without a tap. A kit saved on the setup network names the
+wizard's words; one signed in by a tap or a claim (their session cookie) or
+by a token saves it from **Settings**, **Device**, **Recovery kit** without a
+tap. One that only opened the landing page at `/` runs the dashboard on the
+landing's session, which the receipt does not take (F289): its Settings save
+brings the sign-in back, and **Use BOOT Tap Once** offers the kit. A kit
+saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -851,10 +861,17 @@ cannot speak to.
       `https://canary-<suffix>.local/settings`, before and after the AP
       drops.
 - [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**,
-      and a signed-in dashboard saves it from **Settings**, **Device**,
-      **Recovery kit**; the saved `canary-recovery-kit.json` is the
-      receipt, and it pairs the WAP from its row under **Ready to pair** in
-      the iPhone app; a sign-in whose tap never came offers nothing.
+      and a dashboard signed in by that tap saves it from **Settings**,
+      **Device**, **Recovery kit**; the saved `canary-recovery-kit.json` is
+      the receipt, and it pairs the WAP from its row under **Ready to pair**
+      in the iPhone app; a sign-in whose tap never came offers nothing.
+- [ ] From a second host on the home network that only opened the landing
+      page at `/` (its "Open dashboard" link), `GET
+      /api/provisioning-receipt` answers the BOOT-tap refusal (`403`) and
+      `GET /api/pairing-qr` answers `401`, neither carrying the token or
+      the AP password; after a BOOT tap the same browser's receipt fetch
+      serves, and the session that tap set serves both again with no tap
+      (F289).
 - [ ] The iPhone ends up paired from one tap; the `tls_cert_fp` pin holds
       on a TLS-enabled unit; a phone that takes three minutes to spend the
       claim still finds the WAP up (the reboot is held while the claim is
@@ -906,6 +923,7 @@ cannot speak to.
 | The hub hand-off's store (Sense, Vision) | `include/canary/runtime_config.h` (`set_mqtt_credentials`), the `store_hub` hook in each `main.cpp` | CI-compiled; bench |
 | The receipt's four-grant order | [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h) (`receipt_decide`) | `firmware/tests_host/test_provisioning_gate.cpp` |
 | Which address the WAP's receipt and port-80 redirect name (pure) | [`firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h`](../../firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h) | `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp` |
+| Which sessions stand in for the WAP's bearer on the receipt and the pairing QR: a BOOT tap's or a claim's, never the landing page's (pure store; F289) | [`firmware/projects/canary-wap/arduino/canary_wap/cv_session_store.h`](../../firmware/projects/canary-wap/arduino/canary_wap/cv_session_store.h), `api_auth.h` (`api_auth_check_credential*`) | `firmware/projects/canary-wap/tests_host/test_receipt_session.cpp`; `check_route_security.py` |
 | The WAP's recovery kit, one builder for the wizard and the dashboard (BOOT-tap offer and Settings) | `RECOVERY_KIT` in `companion_pwa.h` and `web_ui.h` (same lines) | `firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js` |
 | The beacon's setup bit | [`firmware/common/fleet_link/fleet_beacon.h`](../../firmware/common/fleet_link/fleet_beacon.h) (`FLEET_BEACON_FLAG_SETUP_OPEN`) | the beacon tests |
 | Sense / Vision flag and window | `include/canary/config.h` (`FEATURE_IMPROV`, `IMPROV_FIRST_BOOT_WINDOW_MS`) | the per-board `-DFEATURE_IMPROV=0` CI veto |

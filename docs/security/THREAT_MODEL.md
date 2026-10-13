@@ -188,6 +188,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | mDNS | Local network only: the device's own AP, or the home LAN once joined (`_securacv._tcp`) |
 | Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. The `canary (PIO)` passphrase is 8 characters, the WPA2 floor; widening it is a separate decision because it is re-derived every boot and would change every provisioned device's password |
 | HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 from the first boot after setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
+| canary-wap dashboard session (`cv_session`) | The landing page at `/` hands a one-time pair token to any caller that reaches the WAP — on its SoftAP and, once it has joined the home Wi-Fi, on the home network — and `/?cv_pair=` turns it into a 24-hour HttpOnly, SameSite=Strict session: the deliberate Trust-on-LAN posture the 2026-07 firmware audit named (MEDIUM). Such a session runs the dashboard and every route that answers no credential (camera preview, records, config, reboot, Wi-Fi changes among them). It never stands in for the BOOT tap on a route that answers a credential (sweep F289, #1802): each session carries where it came from, stored with it when it is minted and never read from the request (`cv_session_store.h`), and `GET /api/provisioning-receipt` (the bearer token, the SoftAP password, the recovery kit) and `GET /api/pairing-qr` (the token) take only the bearer header or the session minted beside a receipt a BOOT tap or a setup-door claim served, whose answer already carried the token. A landing session there is refused as a request with no credential is: the receipt falls to the claim and the tap, the QR answers `401`. No route answers the home Wi-Fi password, the MQTT password (`password_set` only) or the TLS private key. `check_route_security.py` fails the build on a new answer of the token or the SoftAP password behind a gate that takes any session. Host-tested (`test_receipt_session.cpp`), not run on a device |
 | MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on the flagship's release images the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API. CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker |
 | Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port is open only where the product needs it: the SecuraCV app ships its 8799 host port disabled (the integration reaches the kernel over the Supervisor's internal network); the Docker sidecar binds every interface and publishes 8799 from the first start so Home Assistant can pair (`SECURACV_API_BIND=all`, the default, which also exports the kernel's cleartext acknowledgment — never relaxing the token on any other route; `loopback` is the opt-out), and there the roll-call serves only the kernel's own row unless `SECURACV_FLEET_ROLLCALL=1` — who is home is the owner's to opt into, never a side effect of pairing. What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
 | Viewer credential (`GET /api/sealed-log`, the Witness Wall) | A second, narrower bearer credential beside the rotating capability token, because a TV cannot re-read a token file: minted by the operator (`witness_api mint-viewer-token`, printed once as a pairing receipt that also carries the kernel's verifying key for the Wall to pin), long-lived until revoked by id, and honored on exactly one route — the non-queryable, size-capped, signed sealed-log tail (Invariant VII bounds what it reads). Presented on any other path or method it is an invalid token that counts toward the per-address lockout, and a good viewer read never clears that count (only a capability-token success does), so the narrower credential cannot reset the lockout that guards the wider one; `?token=` is refused for it as for every token. At rest only its sha256 (`viewer_tokens.json`, `0600`, beside the capability token), compared in constant time and re-read per request, so a revocation lands on the next poll. Whoever holds it reads the coarse sealed record (event types, zones, 10-minute buckets) — the reason it is a credential and not an open read like the roll-call — and over plaintext HTTP it can be sniffed on the LAN like the capability token; TLS stays the owner's opt-in (`api-tls`). What the Wall's "Verified" proves is *authorship* — every served entry signed by the pinned key and linked from the served anchor — not that the tail is *current* or *complete*: the served `checkpoint_head` is unsigned and the document carries no signed time or high-water mark, so a captured genuine document replayed later, or a genuine one cut short at either end, still walks clean against the pin, and the Wall keeps no last-walked head across polls. A signed head (or high-water mark) in the document is the roadmap item that closes it; not built |
@@ -383,7 +384,8 @@ compelled.
 
 **Attack:** Adversary in WiFi range attempts to access device.
 
-**Result:** Device runs its own AP — it is not on a shared network.
+**Result:** Device runs its own AP — it is not on a shared network (a
+canary-wap that has joined the home Wi-Fi is: Scenario 12).
 Adversary must know the AP password (device-unique, derived from
 fingerprint). Even if connected: API auth required (on the flagship a peer
 on its own AP is handed the page token, so there the AP password is the
@@ -427,6 +429,32 @@ kernel's key.
 **PASS if:** No credential is minted without the owner's code; the sealed
 record is never readable without a credential; the plaintext exposure is
 stated, bounded to coarse claims, and revocable.
+
+### Scenario 12: Adversary on a canary-wap's home network
+
+**Attack:** A host on the same home network as a canary-wap that has joined
+it (a compromised gadget, a guest's laptop) opens the WAP's landing page at
+`/`, follows its "Open dashboard" link and, holding that session, asks for
+the provisioning receipt or the pairing QR, to take the bearer token and the
+SoftAP password.
+
+**Result:** The landing page mints its pair token for any caller, so the host
+gets a dashboard session: the Trust-on-LAN posture the 2026-07 firmware
+audit named (MEDIUM, deliberate), with what the dashboard reaches (the camera
+preview where the build has one, records, settings, reboot). The session
+carries its origin (`LANDING`), set when it was minted. The receipt and the
+QR take only the bearer header or a session minted beside a receipt a BOOT
+tap or a setup-door claim served (sweep F289), so the host gets the BOOT-tap
+refusal (`403`) from the receipt and `401` from the QR, with neither secret.
+Before F289 both answered it. What it can still do: race the owner's tap
+(the gate admits one consumer, whoever polls first after the press; the
+WAP's receipt route asks no `Host` question, unlike the flagship's), and
+hold the admin surface the posture grants. Host-tested; not run on a device
+(U1).
+
+**PASS if:** No session the landing page minted answers the bearer token,
+the SoftAP password or any other credential; the owner's tap, a setup-door
+claim and the bearer still do.
 
 ### Scenario 4: Adversary physically seizes device
 

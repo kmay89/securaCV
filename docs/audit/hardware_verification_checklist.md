@@ -2509,6 +2509,52 @@ not run on a device. Owner: U1.
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
 
+## canary-wap: a landing-page session reads no credential (F289) — on-device verification
+
+Code: `cv_session_store.h` (each session's origin, stored when it is minted),
+`api_auth.h` (`api_auth_check_credential()` and
+`api_auth_check_credential_optional()`), `csi_integration.cpp`'s session
+glue, and in `canary_wap.ino` `handle_ui()`'s `/?cv_pair=` exchange (mints a
+landing session), `handle_provisioning_receipt()` (first grant: the bearer
+header or a session a tap or a claim minted; mints that session) and
+`handle_pairing_qr()`. Host-tested
+(`tests_host/test_receipt_session.cpp`: those functions cut verbatim from
+the firmware over the real `api_auth.h` and session store;
+`check_route_security.py`'s credential rule); the compile is CI's; not run
+on a device. Owner: U1.
+
+- [ ] **A second host on the home network gets a dashboard from the landing page, and neither the token nor the SoftAP password from it**
+  - Setup: a canary-wap on this firmware, set up and joined to the home
+    Wi-Fi; a laptop on the home network that has never signed in to it (a
+    private window, and `curl` with a cookie jar); the API token; the
+    owner's hand on BOOT.
+  - Repro: in the private window open `https://canary-<suffix>.local/` and
+    follow **Open dashboard**; open `/settings` and choose **Settings**,
+    **Device**, **Recovery kit**, **Save my recovery kit**, then **Show QR**
+    on the pairing card. With curl: `curl -sk -c jar
+    https://canary-<suffix>.local/`, take the `cv_pair` value from the
+    answer, `curl -sk -b jar -c jar
+    "https://canary-<suffix>.local/?cv_pair=<value>"`, then `curl -sk -b jar
+    https://canary-<suffix>.local/api/provisioning-receipt` and `curl -sk
+    -b jar -o qr.svg -w '%{http_code}'
+    https://canary-<suffix>.local/api/pairing-qr`, and `curl -sk -b jar
+    https://canary-<suffix>.local/api/status`. Then short-tap BOOT and, within
+    30 s, repeat the receipt request with the same jar; save the
+    `Set-Cookie` it answers into a second jar and request the receipt and
+    the QR with that one (no tap). Last, the receipt with `-H
+    "Authorization: Bearer <token>"` and no cookie.
+  - Expected: the landing session runs the dashboard and `/api/status`
+    answers `200`; the kit save and **Show QR** bring the sign-in back
+    and save or show nothing; curl's receipt is `403
+    {"error":"physical_confirmation_required",...}` and the QR `401`, and
+    neither body holds the token or `ap_password` (before F289 both
+    answered with them). After the tap the receipt is `200` with a
+    `Set-Cookie`, and that cookie alone serves the receipt and the QR again
+    with no second tap; the landing jar is still refused; the bearer header
+    serves without a cookie. The health log shows one "Provisioning
+    receipt served via HTTPS" for the tap.
+  - Artifact: `docs/audit/repro/F289/landing-session/`.
+
 ## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification
 
 Code: `receipt_authority.h`, and `request_local_ipv4()` / `request_reach()`

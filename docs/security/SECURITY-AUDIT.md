@@ -200,7 +200,7 @@ This second audit pass focused on **subtle side-channel attacks, OOM/DoS vectors
 - **Constant-time comparison**: `volatile uint8_t` XOR accumulator pattern. Correct implementation.
 - **Exponential backoff**: 2^n × 2000ms base, capped at 300s. Failure window auto-resets after 60s clean.
 - **Token redaction**: Only 8-char prefix logged, never full token.
-- **Optional auth**: `api_auth_check_optional` for provisioning-receipt endpoint returns bool without sending error response. *(2026-09: the canary (PIO) tree gained the same endpoint — `auth_check_optional`, else one BOOT tap taken atomically, else 403 — and stopped injecting the bearer token into `/` and `/setup` for home-LAN callers; see [`firmware/canary/CONSOLIDATION.md`](../../firmware/canary/CONSOLIDATION.md) gap #11.)*
+- **Optional auth**: `api_auth_check_optional` returns bool without sending error response. *(2026-10, sweep F289: the provisioning-receipt endpoint's first grant is now `api_auth_check_credential_optional`, the bearer header or a session a BOOT tap or a setup-door claim minted; `api_auth_check_optional` takes any session, the landing page's included, and no longer gates a route that answers a credential.)* *(2026-09: the canary (PIO) tree gained the same endpoint — `auth_check_optional`, else one BOOT tap taken atomically, else 403 — and stopped injecting the bearer token into `/` and `/setup` for home-LAN callers; see [`firmware/canary/CONSOLIDATION.md`](../../firmware/canary/CONSOLIDATION.md) gap #11.)*
 - **Buffer bounds**: Auth header capped at 128 bytes, preventing stack overflow.
 
 ### Supply Chain

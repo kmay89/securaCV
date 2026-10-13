@@ -299,7 +299,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | `GET /` (web dashboard) | ✅ Full PROGMEM UI | ✅ the Sensing dashboard (`csi_dashboard_html.h`); the tabbed admin dashboard is `GET /admin` | ✅ |
 | `GET /api/status` | ✅ Full JSON | ✅ | ✅ |
 | `GET /api/device-info` | ✅ | ✅ (public) | ❌ |
-| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ✅ (BOOT button or bearer token) | ⚠️ (bearer or one BOOT tap; code landed and CI-compiled, ✅ after the U1 bench pass) |
+| `GET /api/provisioning-receipt` | ✅ (BOOT button gated) | ✅ (a bearer header or the session a BOOT tap or setup-door claim minted, else the claim, else the BOOT button; the landing page's session is none of them since sweep F289, host-tested, not bench-tested) | ⚠️ (bearer or one BOOT tap; code landed and CI-compiled, ✅ after the U1 bench pass) |
 | `GET /api/system` (sys metrics) | ✅ | ✅ (`FEATURE_SYS_MONITOR`) | ❌ |
 | `GET /api/chain` | ✅ | ✅ | ✅ |
 | `GET /api/logs` | ✅ | ✅ | ✅ |

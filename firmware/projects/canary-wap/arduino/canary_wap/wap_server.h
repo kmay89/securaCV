@@ -20,7 +20,9 @@
  * - Bearer token authentication on protected endpoints
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
- * - Physical BOOT button required for provisioning receipt
+ * - Physical BOOT button (or a setup-door claim, or the bearer) required for
+ *   the provisioning receipt; the landing page's session never stands in
+ *   for it (sweep F289)
  * - No sensitive data in URLs (POST for actions, Authorization header for tokens)
  * - CORS restricted to same-origin
  * - Rate limiting on sensitive endpoints
@@ -114,6 +116,7 @@ struct RateLimitEntry {
  *
  * ── Pages ──
  * GET    /                                - Sensing dashboard (csi_dashboard_html.h); the pair landing without a session
+ *                                           (its /?cv_pair= session runs the dashboard, never a credential route)
  * GET    /sense                           - 301 to /
  * GET    /admin                           - Tabbed admin dashboard (web_ui.h)
  * GET    /settings                        - The admin dashboard, for its Settings tab
@@ -135,8 +138,11 @@ struct RateLimitEntry {
  * ── Device, chain, records ──
  * GET    /api/device/enroll               - Public key card, JSON (public)
  * GET    /api/device-info                 - Non-sensitive device metadata (public)
- * GET    /api/provisioning-receipt        - Provisioning receipt (physical BOOT button or Bearer token)
- * GET    /api/pairing-qr                  - SVG QR of the pairing receipt (carries the API token)
+ * GET    /api/provisioning-receipt        - Provisioning receipt: a Bearer header or a session a BOOT tap or a
+ *                                           setup-door claim minted, else a setup-door claim, else the BOOT tap;
+ *                                           a landing-page session is none of them (sweep F289)
+ * GET    /api/pairing-qr                  - SVG QR of the pairing receipt (carries the API token): a Bearer header
+ *                                           or a tap's or claim's session, never a landing-page one (sweep F289)
  * GET    /api/help-qr                     - SVG QR deep link to the Help Desk for the current verdict (public)
  * GET    /api/status                      - Device status JSON
  * GET    /api/system                      - System metrics (FEATURE_SYS_MONITOR)
