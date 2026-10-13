@@ -1625,6 +1625,102 @@ test("F243: the shell turns a running glass through the binding, names each refu
   assert.ok(!m.calls.some((c) => c[0] === "emu_request_rotation"), "an old dist is never asked");
 });
 
+// Sweep A80: the Lab's Nightlight card could stage a turn only before power-on.
+// Its Try it view now offers a control that turns the running glass through
+// requestRotation(), shown only where the twin itself says its glass turns at
+// runtime (turnsAtRuntime(): the binding is there and answers an out-of-range
+// ask with 0, not the -1 of a flavor with no mailbox; request_rotation_test.cpp
+// holds both answers, and that the refused ask writes nothing, against the
+// real emu_main.cpp). The probe half is bench_probe.mjs.
+test("A80: the shell says whether a glass turns while it runs, asking the binding a turn it refuses", async () => {
+  const { CanaryEmulator } = await shell();
+  const fake = (answer) => {
+    const calls = [];
+    const factory = async () => ({
+      cwrap: (name) => (...args) => { calls.push([name, ...args]); return name === "emu_request_rotation" ? answer : 0; },
+      _emu_request_rotation: answer === undefined ? undefined : () => answer,
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "null",
+    });
+    return { calls, factory, canvas: { getContext: () => ({}), addEventListener: () => {} } };
+  };
+  for (const [answer, turns, why] of [[0, true, "the nightlight's mailbox refuses -1"], [-1, false, "a flavor with no mailbox"],
+    [undefined, false, "a dist built before the binding"]]) {
+    const m = fake(answer);
+    const emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+    await emu.start({});
+    assert.strictEqual(await emu.turnsAtRuntime(), turns, why);
+    const asked = m.calls.filter((c) => c[0] === "emu_request_rotation");
+    assert.deepStrictEqual(asked, answer === undefined ? [] : [["emu_request_rotation", -1]],
+      `${why}: asked once, with a turn the binding refuses before it writes anything`);
+    emu.retire();
+    assert.strictEqual(await emu.turnsAtRuntime(), turns, `${why}: the answer is the flavor's, retired or not`);
+  }
+  const unborn = new CanaryEmulator(fake(0).factory, { canvas: fake(0).canvas });
+  assert.strictEqual(await unborn.turnsAtRuntime(), false, "no module yet, no control");
+  // ...and the native test holds the binding's two answers to a refused ask
+  const rr = read(join(ROOT, "emulator/test/request_rotation_test.cpp"));
+  assert.ok(rr.includes("for (int bad : {-1, 4, 5, 255, 256, -256}) {") && rr.includes('CHECK(nightlight_take_rotation_request() == 2, "a refused ask disturbed the queued rotation");') &&
+    rr.includes("for (int r : {0, 1, 2, 3, -1, 4}) {"), "request_rotation_test.cpp refuses -1 without writing, and answers -1 on a flavor with no mailbox");
+});
+
+test("A80: the Nightlight's Try it view turns the running glass through the mailbox, and only where the twin turns", async () => {
+  const app = read(join(ROOT, "assets/app.js"));
+  // GLASS_TURNS and turnGlass(), run as app.js ships them
+  const at = (name) => {
+    const i = app.indexOf(name);
+    assert.ok(i >= 0, `app.js has ${name}`);
+    return i;
+  };
+  const block = (start, open) => {
+    let depth = 0;
+    for (let k = app.indexOf(open, start); k < app.length; k++) {
+      if (app[k] === open) depth++;
+      else if (app[k] === (open === "{" ? "}" : "]") && --depth === 0) return app.slice(start, k + 1);
+    }
+    return "";
+  };
+  const turnsSrc = block(at("const GLASS_TURNS = ["), "[");
+  const fnSrc = block(at("async function turnGlass("), "{");
+  const { GLASS_TURNS, turnGlass } = new Function(`${turnsSrc};\n${fnSrc}\nreturn { GLASS_TURNS, turnGlass };`)();
+  // the four turns are io/orientation.h's Orient, by value and by the edge it names
+  const orient = read(join(REPO, "firmware/projects/canary-display/include/canary/io/orientation.h"));
+  const body = /enum class Orient : uint8_t \{([\s\S]*?)\n\};/.exec(orient)?.[1] || "";
+  const values = Object.fromEntries([...body.matchAll(/\b(R\d+) = (\d)/g)].map((m) => [m[1], Number(m[2])]));
+  assert.deepStrictEqual(values, { R0: 0, R90: 1, R180: 2, R270: 3 }, "orientation.h's Orient, read");
+  assert.match(body, /R90 = 1,\s+\/\/ turned a quarter clockwise, onto its right edge/);
+  assert.match(body, /R270 = 3,\s+\/\/ turned a quarter counter-clockwise, onto its left edge/);
+  assert.deepStrictEqual(GLASS_TURNS.map((t) => [t.rot, t.label]),
+    [[values.R0, "upright"], [values.R90, "on its right edge"], [values.R180, "upside down"], [values.R270, "on its left edge"]]);
+  // a turn goes to the mailbox once, and says so; a refusal is said, not thrown
+  const asked = [];
+  const said = [];
+  const ok = { requestRotation: async (r) => { asked.push(r); } };
+  assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
+  assert.deepStrictEqual(asked, [1]);
+  assert.match(said.pop(), /^asked for turned a quarter clockwise, onto its right edge: the firmware turns the panel/);
+  const refused = { requestRotation: async () => { throw new Error("the firmware refused rotation 3 (a running unit, 0..3)"); } };
+  assert.strictEqual(await turnGlass(refused, GLASS_TURNS[3], (l) => said.push(l)), false);
+  assert.strictEqual(said.pop(), "the glass did not turn: the firmware refused rotation 3 (a running unit, 0..3)");
+  // the view: the control only where the twin says its glass turns, one chip
+  // per turn through turnGlass, lit by the turn the HAL announced, in the page
+  const tv = block(at("function tryView(ctx, noteLine) {"), "{");
+  assert.ok(tv.includes("const turns = await ctx.emu.turnsAtRuntime();") && tv.includes("if (!turns) return;"),
+    "gated on the twin's own answer");
+  assert.ok(/while \(!ctx\.emu\?\.c\) \{[\s\S]*?if \(!turnWrap\.isConnected\) return;\s*\}/.test(tv),
+    "a twin still loading is asked once its bindings are there, a closed tab never");
+  assert.ok(tv.includes('turnWrap.dataset.turns = turns ? "yes" : "no";'), "the rail carries the answer the probe reads");
+  assert.ok(tv.includes("for (const t of GLASS_TURNS) {") &&
+    tv.includes("const b = mk(t.label, () => turnGlass(ctx.emu, t, (line) => { noteLine.textContent = line; }));"),
+  "one chip per turn, through turnGlass on the live emulator");
+  assert.ok(tv.includes("const now = ctx.emu?.glassTurn;") && tv.includes('b.classList.toggle("on", Number(b.dataset.rot) === now);'),
+    "the lit chip is the turn the HAL announced");
+  assert.ok(/wrap\.append\([\s\S]*?styleWrap,\s*turnWrap,\s*grid,/.test(tv), "the control is on the Try it bench");
+  // the shell's glassTurn is the announced turn
+  const sh = read(join(ROOT, "emulator/web/emu-shell.js"));
+  assert.ok(sh.includes("this.glassTurn = Number.isInteger(turn) && turn >= 0 && turn <= 3 ? turn : null;"));
+});
+
 test("F243: the probe's runtime turn is read from the sources, and its judges fail what they should", async () => {
   const { runtimeTurns, readTurnedSources } = await import("./turned_glass.mjs");
   const { turnedAtRuntime, perchAfterTurn } = await import("./onboard_glass.mjs");

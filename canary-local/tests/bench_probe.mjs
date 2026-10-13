@@ -6,7 +6,13 @@
 // Nightlight's card (sweep A54): its twin boots, Try it shows the firmware's
 // Character ring, and its bench is the C3-LCD-1.47's (USB the only power, no
 // battery or switch, no lights listed, the backlight cap stated, and on a dist
-// built since sweep A61 the twin clipping its backlight there too).
+// built since sweep A61 the twin clipping its backlight there too), and its
+// Try it bench turns the running glass through the firmware's rotation
+// mailbox (sweep A80; the watch's, with no mailbox, offers no turn).
+//
+// CI runs this probe on the COMMITTED dist, before the wasm job's in-job
+// rebuild (canary-local.yml), so a step that needs a binding the committed
+// bytes lack skips by name (BENCH_PROBE_SKIP[...]) instead of failing.
 //
 //   node canary-local/tests/bench_probe.mjs [--shots DIR]
 //
@@ -20,6 +26,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lookup } from "./probe_server.mjs";
+import { readTurnedSources, runtimeTurns } from "./turned_glass.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MIME = {
@@ -65,6 +72,16 @@ const NL_BUNDLE = await readFile(join(ROOT, "canary-local/emulator/dist/canary-d
 const TWIN_CLIPS = NL_BUNDLE.includes("_emu_backlight_cap_pct");
 const NL_CAP_PCT = 50;                          // the bench block's cap_pct (bench.test.js holds it to config.h)
 const NL_CAP_BYTE = Math.floor((255 * NL_CAP_PCT) / 100);
+
+// Sweep A80: the Nightlight's Try it bench turns the running glass through
+// the firmware's rotation mailbox, on a dist that carries the binding (F243).
+// The turns and the shapes they give are read from the sources (turned_glass:
+// io/orientation.h's Orient, the pin map's panel), never typed here: the
+// side turn stands the panel on its edge, the upright one is its own shape.
+const NL_TURNS = NL_BUNDLE.includes("_emu_request_rotation");
+const [NL_RT] = runtimeTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc)));
+const NL_SIDE = { rot: NL_RT.from.rotation, glass: NL_RT.from.glass };     // Orient::R90
+const NL_UPRIGHT = { rot: NL_RT.to.rotation, glass: NL_RT.to.glass };      // Orient::R0
 
 const server = createServer(async (req, res) => {
   const path = lookup(SERVABLE, req.url);   // decodes inside its own try: /%E0 is a 404 (A52)
@@ -119,6 +136,13 @@ const waitSings = async (above) => {
     .catch(async () => fail(`firmware never booted again (past ${above} boots)`));
 };
 const chip = (label) => page.locator(".bench-chip", { hasText: label }).first();
+// What the Try it view heard from the twin about turning its glass (A80):
+// "yes", "no", or null if it never heard.
+const turnAnswer = async (who) =>
+  page
+    .waitForSelector(".turn-rail[data-turns]", { state: "attached", timeout: 15000 })   // an empty rail is not "visible"
+    .then(() => page.getAttribute(".turn-rail", "data-turns"))
+    .catch(() => fail(`${who}'s Try it never heard from the twin whether its glass turns`));
 const shade = () =>
   page.evaluate(() => {
     const s = document.querySelector(".glass-shade");
@@ -192,6 +216,9 @@ if (await shade()) await fail("glass still shaded after power restore");
 // must be in place before setup() reads it, or the Character resets.)
 await openTab("Try it");
 await page.waitForSelector(".style-chip.on", { timeout: 15000 });
+// the watch's firmware has no rotation mailbox (A80): no turn is offered
+if ((await turnAnswer("the watch")) !== "no" || (await page.locator(".turn-row").count()))
+  await fail("the watch's Try it offers to turn a glass its firmware cannot turn at runtime");
 const target = page.locator(".style-chip:not(.on)").first();
 const targetId = await target.getAttribute("data-id");
 await target.click();
@@ -270,6 +297,51 @@ if (!(await serial()).includes("ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021
 await openTab("Try it");
 await page.waitForSelector(".style-chip.on", { timeout: 15000 })
   .catch(() => fail("the Nightlight's Try it never showed the firmware's Character ring"));
+// ── Turn the Nightlight's glass while it runs (sweep A80) ──
+// On the committed dist, before CI's rebuild: a dist with the binding offers
+// the four turns, and a chip turns the glass through the mailbox — the canvas
+// takes the turned shape and the lit chip is the turn the HAL announced; the
+// glass is stood back upright before the bench steps below. A dist without
+// the binding offers no turn, and the step says so by name.
+{
+  const answer = await turnAnswer("the Nightlight");
+  if (!NL_TURNS) {
+    if (answer !== "no" || (await page.locator(".turn-row").count()))
+      await fail("the Nightlight's Try it offers a turn on a dist without emu_request_rotation");
+    console.log("BENCH_PROBE_SKIP[nightlight turn]: this nightlight dist has no emu_request_rotation " +
+      "(built before sweep F243), so its Try it offers no turn; the step runs once CI's rebuilt dist carries the binding");
+  } else {
+    if (answer !== "yes") await fail("the Nightlight's Try it offers no turn, on a dist with emu_request_rotation");
+    const chips = await page.locator(".turn-row .turn-chip").count();
+    if (chips !== 4) await fail(`the Nightlight's Try it offers ${chips} turns, not Orient's four`);
+    const turned = (to) =>
+      page
+        .waitForFunction(({ rot, w, h }) => {
+          const g = document.querySelector("canvas.glass");
+          const on = [...document.querySelectorAll(".turn-chip.on")].map((b) => b.dataset.rot);
+          return g && g.width === w && g.height === h && on.length === 1 && on[0] === String(rot);
+        }, { rot: to.rot, w: to.glass.w, h: to.glass.h }, { timeout: 15000 })
+        .then(() => true)
+        .catch(() => false);
+    if (!(await turned(NL_UPRIGHT)))
+      await fail(`the Nightlight did not boot upright on its card (a ${NL_UPRIGHT.glass.w}x${NL_UPRIGHT.glass.h} glass, the upright chip lit)`);
+    for (const to of [NL_SIDE, NL_UPRIGHT]) {
+      await page.locator(`.turn-chip[data-rot="${to.rot}"]`).click();
+      if (!(await turned(to))) {
+        const now = await page.evaluate(() => {
+          const g = document.querySelector("canvas.glass");
+          return `${g?.width}x${g?.height}, lit ${[...document.querySelectorAll(".turn-chip.on")].map((b) => b.dataset.rot).join(",") || "none"}`;
+        });
+        await fail(`a turn to rotation ${to.rot} never gave the ${to.glass.w}x${to.glass.h} glass with its chip lit (now ${now})`);
+      }
+      const said = await page.locator(".note").first().textContent();
+      if (!/^asked for .*: the firmware turns the panel on its next pass/.test(said || ""))
+        await fail(`the turn to rotation ${to.rot} was not said in the note line: ${said}`);
+    }
+    console.log(`bench_probe: the Nightlight's Try it turned the running glass ${NL_UPRIGHT.glass.w}x${NL_UPRIGHT.glass.h} → ` +
+      `${NL_SIDE.glass.w}x${NL_SIDE.glass.h} (rotation ${NL_SIDE.rot}) and back (rotation ${NL_UPRIGHT.rot})`);
+  }
+}
 await openTab("Bench");
 await page
   .waitForFunction(
@@ -360,5 +432,6 @@ if (errors.length) {
   console.error("BENCH_PROBE_FAIL: page errors:\n" + errors.slice(0, 8).join("\n"));
   process.exit(1);
 }
-console.log("BENCH_PROBE_OK power-pull, ride-through, brown-down, download-mode all behaved; the Nightlight twin booted on its card, USB its only power");
+console.log("BENCH_PROBE_OK power-pull, ride-through, brown-down, download-mode all behaved; the Nightlight twin booted on its card, USB its only power" +
+  (NL_TURNS ? ", its glass turned from Try it" : ""));
 process.exit(0);

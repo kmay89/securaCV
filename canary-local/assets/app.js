@@ -113,6 +113,34 @@ function backlightCapNote(boardCap, twinCap) {
   return ` · the board caps it at ${boardCap}% duty, this twin at ${twin}%`;
 }
 
+// The Nightlight's quarter turns (sweep A80), as io/orientation.h's Orient
+// names them: the value is the rotation the firmware's mailbox takes (0..3,
+// Arduino_GFX numbering) and the quarter turns its HAL announces with the
+// glass's shape, each the turn the device has made from upright, clockwise
+// as its front is seen.
+const GLASS_TURNS = [
+  { rot: 0, label: "upright", says: "upright, USB down" },
+  { rot: 1, label: "on its right edge", says: "turned a quarter clockwise, onto its right edge" },
+  { rot: 2, label: "upside down", says: "upside down, USB up" },
+  { rot: 3, label: "on its left edge", says: "turned a quarter counter-clockwise, onto its left edge" },
+];
+
+// Turn a running glass by hand (sweep A80): through the firmware's own
+// rotation mailbox (emu-shell's requestRotation, emu_request_rotation), the
+// one the app's orientation picker writes, so the firmware's loop applies it
+// on its one path: the panel turned, the face rebuilt, the companion tumbling
+// in. A refusal is said, never thrown into the page.
+async function turnGlass(emu, turn, say) {
+  try {
+    await emu.requestRotation(turn.rot);
+  } catch (e) {
+    say(`the glass did not turn: ${(e && e.message) || e}`);
+    return false;
+  }
+  say(`asked for ${turn.says}: the firmware turns the panel on its next pass, and the companion tumbles in`);
+  return true;
+}
+
 // the finish picker rides in the hero, above the fineprint line
 function mountFinishPicker() {
   const hero = $("#hero");
@@ -863,6 +891,46 @@ function tryView(ctx, noteLine) {
     storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
   }
 
+  // ── Turn the glass while it runs (sweep A80) ──
+  // Only where the running firmware has the rotation mailbox and the dist
+  // the binding (the Nightlight's, since F243): asked of the twin itself, so
+  // a dist built before the binding, or a flavor without the mailbox, shows
+  // no control at all. Each turn goes through the mailbox the app's
+  // orientation picker writes; the lit chip is the turn the HAL last
+  // announced with the glass's shape. A tab opened while the twin is still
+  // loading its module asks once the bindings are there, and not at all
+  // once the tab has closed; the rail carries the answer (data-turns).
+  const turnWrap = el("div", "style-rail turn-rail");
+  (async () => {
+    while (!ctx.emu?.c) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!turnWrap.isConnected) return;
+    }
+    const turns = await ctx.emu.turnsAtRuntime();
+    turnWrap.dataset.turns = turns ? "yes" : "no";
+    if (!turns) return;
+    const row = el("div", "try-grid turn-row");
+    for (const t of GLASS_TURNS) {
+      const b = mk(t.label, () => turnGlass(ctx.emu, t, (line) => { noteLine.textContent = line; }));
+      b.classList.add("turn-chip");
+      b.dataset.rot = String(t.rot);
+      row.append(b);
+    }
+    const lit = () => {
+      const now = ctx.emu?.glassTurn;
+      for (const b of row.children) b.classList.toggle("on", Number(b.dataset.rot) === now);
+    };
+    lit();
+    const timer = setInterval(() => (turnWrap.isConnected ? lit() : clearInterval(timer)), 400);
+    turnWrap.append(
+      el("h4", null, "Turn the glass"),
+      el("p", "muted",
+        "Stand it on another edge, the way the app's orientation picker turns it: the request goes to " +
+        "the firmware's own rotation mailbox, and its loop turns the panel, rebuilds the face in the " +
+        "new shape and lets the companion tumble in. The lit chip is the turn the glass last announced."),
+      row);
+  })();
+
   const grid = el("div", "try-grid");
   grid.append(
     storyBtn,
@@ -886,6 +954,7 @@ function tryView(ctx, noteLine) {
       "Drag the device. Touch its glass: tap pages, hold to acknowledge. " +
       "Then break the household on purpose — the glass must never lie about it."),
     styleWrap,
+    turnWrap,
     grid,
     setupWrap,
     noteLine

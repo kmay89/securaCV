@@ -151,6 +151,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 .ondevice { border-left: 3px solid var(--canary-deep); padding: 6px 10px; background: #191712; border-radius: 0 8px 8px 0; color: #d8cfae; font-size: 14px; }
 
 .try-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.turn-chip.on { border-color: var(--canary); color: var(--canary); }
 
 .log {
   background: #050507; border: 1px solid #222; border-radius: 12px; padding: 10px 12px;

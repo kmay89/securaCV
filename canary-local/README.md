@@ -1034,7 +1034,17 @@ fails on byte drift.
   backlight row names the 50% cap the board's HAL enforces, and on a dist
   built since sweep A61, whose display HAL clips there too, says the twin
   clips at it and reads no level past its byte, where an older dist's row
-  says the twin does not). A bench block that names no `power.battery` is a board with no
+  says the twin does not). Its Try it bench turns the running glass (sweep
+  A80): on a dist with the `emu_request_rotation` binding it offers
+  `io/orientation.h`'s four turns, each chip asks the firmware's rotation
+  mailbox through `emu-shell.js`'s `requestRotation()`, and the probe watches
+  the canvas take the side shape and come back upright with the lit chip the
+  turn the HAL announced (the shapes and turns read from the sources by
+  `turned_glass.mjs`); on a dist without the binding no turn is offered and
+  the step prints `BENCH_PROBE_SKIP[nightlight turn]`. The watch's Try it
+  offers no turn: its firmware has no mailbox. CI runs this probe on the
+  committed dist, before the wasm job's in-job rebuild, so the turn step
+  reads the bytes a bare checkout serves. A bench block that names no `power.battery` is a board with no
   battery path (the Nightlight, the Nightstand stick): its battery chip is
   inert and reads "none on this board", `BenchPower` refuses to fit a cell
   there, and the troubleshooter leaves out every step that stages one

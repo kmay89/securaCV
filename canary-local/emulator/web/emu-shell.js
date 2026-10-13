@@ -537,6 +537,17 @@ export class CanaryEmulator {
     if (answer !== 1) throw new Error(`the firmware refused rotation ${rot} (a running unit, 0..3)`);
   }
 
+  /** Whether this glass can be turned while it runs (sweep A80): the dist
+   *  carries the binding (F243) and the flavor's firmware has the rotation
+   *  mailbox. Asked with a turn outside 0..3, which the binding refuses
+   *  before it writes anything: -1 back names a flavor with no mailbox,
+   *  0 the refused value (the nightlight's answer, powered or not). The
+   *  answer is the flavor's, so a retired instance gives it too. */
+  async turnsAtRuntime() {
+    if (!this.c?.requestRotation) return false;
+    return (await this.c.requestRotation(-1)) !== -1;
+  }
+
   /** The phone asks the AP to associate: 1 joined · 0 no such network ·
    *  -1 wrong key · -2 AP full (the radio's answer, not the page's). */
   phoneJoin(ssid, pass) {
