@@ -2517,9 +2517,12 @@ Code: `cv_session_store.h` (each session's origin, stored when it is minted),
 glue, and in `canary_wap.ino` `handle_ui()`'s `/?cv_pair=` exchange (mints a
 landing session), `handle_provisioning_receipt()` (first grant: the bearer
 header or a session a tap or a claim minted; mints that session) and
-`handle_pairing_qr()`. Host-tested
+`handle_pairing_qr()`; `csi_mqtt.cpp`'s `handle_config_post()` (a save
+that keeps the stored broker password and moves it takes the bearer
+header or an owner session). Host-tested
 (`tests_host/test_receipt_session.cpp`: those functions cut verbatim from
 the firmware over the real `api_auth.h` and session store;
+`tests_host/test_mqtt_reinit.cpp` over the real `csi_mqtt.cpp`;
 `check_route_security.py`'s credential rule); the compile is CI's; not run
 on a device. Owner: U1.
 
@@ -2554,6 +2557,36 @@ on a device. Owner: U1.
     serves without a cookie. The health log shows one "Provisioning
     receipt served via HTTPS" for the tap.
   - Artifact: `docs/audit/repro/F289/landing-session/`.
+- [ ] **The same landing session cannot send the broker password to a broker it names**
+  - Setup: the unit above with Home Assistant set up (a broker, a user and a
+    password saved, `password_set` true in `GET /api/mqtt/config`); the
+    landing jar and the tap jar from the row above; on the second host a
+    listener (`nc -l 1883`).
+  - Repro: `curl -sk -b <landing jar> -H 'Content-Type: application/json'
+    -d '{"host":"<second host IP>","tls_mode":0}'
+    https://canary-<suffix>.local/api/mqtt/config`; then the same with the
+    tap jar and a body that also carries `"password":"wrong"`; last, the
+    landing jar with the broker's own host and only `"prefix":"securacv"`
+    changed.
+  - Expected: the landing jar's re-point answers `403
+    {"error":"password_needed",...}`, the listener hears nothing, and
+    `GET /api/mqtt/config` still names the old broker; the **/mqtt** page,
+    signed in from the landing page, shows "Save failed. type the broker
+    password again ..." for the same change. The tap jar's save (with its own
+    password) answers `200` and the listener hears a CONNECT whose password
+    is `wrong`, never the stored one. The prefix-only save answers `200`.
+    Put the real broker back afterwards.
+  - Artifact: `docs/audit/repro/F289/broker-repoint/`.
+- [ ] **On a TLS unit the session cookies are `Secure`**
+  - Setup: a unit serving its dashboard over HTTPS (the boot log's
+    "[HTTPS]" line).
+  - Repro: `curl -sk -D - -o /dev/null
+    "https://canary-<suffix>.local/?cv_pair=<value>"` (a fresh `cv_pair` from
+    the landing page), and the tap's receipt answer from the row above.
+  - Expected: both `Set-Cookie` lines end `HttpOnly; SameSite=Strict;
+    Path=/; Max-Age=86400; Secure`; on a unit with TLS off (or after the
+    "falling back to HTTP" line) they carry no `Secure`.
+  - Artifact: `docs/audit/repro/F289/cookie-attributes/`.
 
 ## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification
 

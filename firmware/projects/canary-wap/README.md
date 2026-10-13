@@ -323,7 +323,7 @@ make help               # Show all targets
 | `/api/fleet` | GET/OPTIONS | The coarse fleet roll-call (name, online, chain verdict); the one `/api/` row here that answers without a token ([`DISCOVERY.md`](../../../tvos/discovery/DISCOVERY.md)) |
 | `/api/identify` | POST | Blink + chirp so you can find the unit (`duration_ms`, default ~15 s) |
 | `/api/pairing-qr` | GET | The pairing receipt as a QR: device id, base URL and token, plus `tls_cert_fp` on a TLS-enabled device |
-| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above) |
+| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above); a save that moves the stored password to a new broker, user or encryption takes the bearer or a tap's or claim's session (sweep F289) |
 | `/api/settings` | GET/POST | Presence preset, sensitivity, pet mode, quiet hours, privacy ceiling, `filter_foreign` and the household time zone ([`csi_developer_api.md`](../../../docs/csi_developer_api.md)) |
 
 The table is the common subset, not the whole surface: the sketch registers
@@ -343,7 +343,12 @@ too, once it has joined), so the two routes that answer a credential,
 `/api/pairing-qr` and `/api/provisioning-receipt`, take the bearer header or
 only the session a BOOT tap or a setup-door claim minted beside a served
 receipt; a landing-page session gets `401` from the QR and the BOOT-tap
-refusal from the receipt (sweep F289, `cv_session_store.h`).
+refusal from the receipt (sweep F289, `cv_session_store.h`). The broker
+password is write-only, but the bridge sends it to whatever broker is
+saved, so a `POST /api/mqtt/config` that keeps the stored password and
+moves it (a new host, port, user, TLS mode or CA) takes the same two; a
+landing-page session gets `403 password_needed` and saves nothing, and
+typing the password again saves the change.
 
 ```json
 {
