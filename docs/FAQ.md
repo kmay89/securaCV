@@ -64,7 +64,9 @@ object classes the system can emit are `Person`, `Vehicle`, `Animal`, `Package`
 (plus `Unknown`, for a detection the backend could not class) — not `Face`,
 not `LicensePlate`. This is Invariant II, and adding any of it is a rejected
 pull request, not a configuration change.
-→ [`spec/invariants.md`](../spec/invariants.md)
+→ [`spec/invariants.md`](../spec/invariants.md) · why not even a Face ID-style
+"recognize only my family," and what the research recommends instead:
+[Face ID without a face at the camera](research/face_id_without_faces.md)
 
 ### Can someone watch a live feed of my house?
 
