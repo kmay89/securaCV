@@ -342,7 +342,7 @@
       "mpn": "L76K",
       "mfr": "Quectel/Seeed",
       "usd": 15.9,
-      "notes": "UART 9600 on D6/D7 (GPIO43/44); FEATURE_GNSS",
+      "notes": "UART 9600 on D6/D7 (GPIO43/44); no build flag: the WAP sketch opens this UART at every boot and probes for the module (skipped in safe mode)",
       "orderable": true
      },
      {
