@@ -42,6 +42,7 @@ a word this repo actually contains that a careless rule would corrupt:
 So the patterns below are anchored to whole words or explicit suffix sets,
 never bare substrings.
 """
+import functools
 import re
 import sys
 from pathlib import Path
@@ -89,9 +90,12 @@ SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
 # This file names the banned forms, so it cannot police itself.
 SKIP_FILES = {"lint_spelling.py"}
 
-# The website's tests/copy-honesty.test.mjs holds the same families for that repo — keep them aligned.
-BANNED = re.compile(
-    r"\b("
+# THE WORD LIST. The website's tests/copy-honesty.test.mjs (UK_WORD_LIST)
+# holds the same words, letter for letter, and the generated families below
+# come from the same file — keep the two repos aligned, because a file carried
+# from here to there (scad/cad-dims.json, scad/colorways.json,
+# onboarding-spec.json, the carried .scad sources) is held to both.
+WORD_LIST = (
     # NOT colou?r — the optional u matches "colored", which is the CORRECT
     # US spelling. That typo made this linter flag ~8 already-correct files on
     # its first run. Spell the British forms out; never make the u optional.
@@ -152,9 +156,126 @@ BANNED = re.compile(
     r"|stabilise|stabilised|stabilising"
     r"|sanitise|sanitised|sanitising"
     r"|programme|programmes"
-    r")\b",
-    re.IGNORECASE,
 )
+
+# THE FAMILIES. The list above is a list, not a rule, so a form nobody typed
+# ships. One did, on the website: a page wrote "better-" plus the British past
+# tense of "travel", and the list held only that verb's -ing form. So the
+# website generates its families from US words — the right spelling, which is
+# safe to write anywhere — and each family's rule makes every inflection at
+# once. This is a port of those families (tests/copy-honesty.test.mjs,
+# website origin/main 32fa634, 2026-10-10): the same stems, the same prefixes,
+# the same suffix sets. Until it was here, a file carried to the website could
+# pass this lint and fail that test on the carry PR (sweep item CI9).
+#
+# Adding a word means adding its US spelling to the family it belongs to — in
+# both repos. self_test() below proves every form a family builds is caught
+# and every US form it is built from is not.
+
+# The British form doubles the final l before a suffix; the US form does not.
+# Only verbs whose last syllable is unstressed — "control", "annul", "compel"
+# double in both dialects and are deliberately absent.
+DOUBLE_L = ["travel", "signal", "dial", "model", "label", "level", "cancel",
+            "bevel", "fuel", "channel", "tunnel", "total", "counsel", "equal",
+            "panel", "swivel", "ravel", "rival", "pedal", "shovel", "jewel",
+            "grovel", "initial", "libel", "marvel", "pencil", "quarrel",
+            "spiral", "stencil", "enamel", "funnel", "kennel", "pummel",
+            "revel", "tassel", "towel", "chisel", "gravel", "barrel",
+            "snorkel"]
+DOUBLE_L_PREFIXES = ["mis", "re", "un", "pre"]
+DOUBLE_L_SUFFIXES = ["ed", "ing", "er", "ers", "or", "ors"]
+
+# -or nouns; the British spelling inserts a u, and everything built on it
+# (plurals, -ed, -ful, -less, -able, -ite, -hood, -way) keeps the u, so the
+# rule takes any word ending after it. "glamour" is absent: US English keeps
+# the u in that one.
+OR_NOUNS = ["color", "behavior", "neighbor", "honor", "odor", "labor", "favor",
+            "flavor", "humor", "rumor", "harbor", "armor", "vapor", "endeavor",
+            "parlor", "rigor", "vigor", "valor", "savor", "savior", "candor",
+            "fervor", "ardor", "tumor", "splendor", "rancor", "clamor",
+            "demeanor"]
+OR_PREFIXES = ["dis", "un", "mis"]
+# What the self-test builds on each noun; the rule itself takes any ending.
+OR_SUFFIXES = ["", "s", "ed", "ing", "ful", "less", "able", "ite", "hood",
+               "way", "ation", "ize"]
+
+# -ize verbs; the British spelling swaps the z for an s in every form,
+# -ization and -izable included. -ist and -ism are the same in both dialects
+# (specialist, optimism) and are not suffixes here.
+IZE_VERBS = ["organize", "recognize", "realize", "normalize", "optimize",
+             "specialize", "generalize", "characterize", "initialize",
+             "customize", "serialize", "synchronize", "standardize",
+             "minimize", "maximize", "summarize", "prioritize", "utilize",
+             "finalize", "visualize", "authorize", "categorize", "emphasize",
+             "harmonize", "memorize", "stabilize", "sanitize", "randomize",
+             "equalize", "apologize", "civilize", "anodize", "localize",
+             "personalize", "polarize", "modernize", "digitize", "energize",
+             "neutralize", "mobilize", "capitalize", "criticize", "monetize",
+             "centralize", "symbolize", "sympathize", "socialize", "formalize",
+             "legalize", "theorize", "tokenize", "quantize", "virtualize",
+             "materialize", "penalize", "vaporize", "sterilize", "publicize",
+             "scrutinize", "jeopardize", "itemize", "idealize", "privatize",
+             "rationalize", "trivialize", "weaponize", "containerize",
+             "parameterize", "hypothesize", "magnetize", "pressurize",
+             "sensitize", "subsidize", "terrorize", "globalize", "humanize",
+             "dramatize", "economize", "empathize", "familiarize", "fantasize",
+             "homogenize", "immunize", "italicize", "legitimize", "liberalize",
+             "regularize", "vocalize", "galvanize", "motorize", "unionize"]
+IZE_PREFIXES = ["de", "re", "un", "non", "over", "under", "mis", "pre"]
+IZE_SUFFIXES = ["e", "ed", "es", "ing", "ation", "ations", "er", "ers", "able"]
+
+# -yze verbs, the same swap. Not "-yses": that is the plural of analysis.
+YZE_VERBS = ["analyze", "paralyze", "catalyze", "dialyze"]
+YZE_SUFFIXES = ["e", "ed", "ing", "er", "ers"]
+
+# -er nouns the British spelling ends in -re, with the compounds a page would
+# plausibly build on them. Suffixes are listed, not wildcarded: the stem of
+# one of these nouns starts a Spanish hat.
+ER_NOUNS = ["center", "meter", "fiber", "theater", "liter", "caliber", "saber",
+            "somber", "specter", "luster", "meager", "miter", "scepter"]
+ER_PREFIXES = ["epi", "milli", "centi", "kilo", "micro", "nano"]
+ER_SUFFIXES = ["", "s", "d", "piece", "pieces", "line", "lines", "glass",
+               "fold", "point", "points"]
+
+# -se nouns the British spelling ends in -ce.
+SE_NOUNS = ["defense", "offense", "pretense", "license"]
+SE_SUFFIXES = ["e", "es", "ed"]
+
+
+def _alt(words):
+    return "|".join(words)
+
+
+def _stems(words, us_ending):
+    """Each US word with its US ending cut off: the part both dialects share."""
+    assert all(w.endswith(us_ending) for w in words), us_ending
+    return [w[: len(w) - len(us_ending)] for w in words]
+
+
+FAMILIES = [
+    rf"(?:{_alt(DOUBLE_L_PREFIXES)})?(?:{_alt(DOUBLE_L)})l"
+    rf"(?:{_alt(DOUBLE_L_SUFFIXES)})",
+    rf"(?:{_alt(OR_PREFIXES)})?(?:{_alt(_stems(OR_NOUNS, 'or'))})our\w*",
+    rf"(?:{_alt(IZE_PREFIXES)})?(?:{_alt(_stems(IZE_VERBS, 'ize'))})is"
+    rf"(?:{_alt(IZE_SUFFIXES)})",
+    rf"(?:{_alt(_stems(YZE_VERBS, 'yze'))})ys(?:{_alt(YZE_SUFFIXES)})",
+    rf"(?:{_alt(ER_PREFIXES)})?(?:{_alt(_stems(ER_NOUNS, 'er'))})re"
+    rf"(?:{_alt(s for s in ER_SUFFIXES if s)})?",
+    rf"(?:{_alt(_stems(SE_NOUNS, 'se'))})c(?:{_alt(SE_SUFFIXES)})",
+    # single words whose inflections the list missed
+    r"catalogu(?:e|es|ed|ing|er|ers)",
+    r"grey(?:s|ed|er|est|ing|ish|ness|scale|scales)?",
+    r"mould(?:s|ed|ing|ings|er|y)?",
+    r"practis(?:e|ed|es|ing)",
+    r"sceptic\w*",
+]
+
+# re.ASCII: \b and \w mean what they mean in the website's JavaScript regex
+# (no u flag), so a word beside a non-ASCII letter is judged the same in both
+# repos. On this tree the two flags find the same lines; the website's is the
+# reading a carried file must pass.
+BANNED = re.compile(rf"\b({WORD_LIST}|{'|'.join(FAMILIES)})\b",
+                    re.IGNORECASE | re.ASCII)
 # Present in the tree, correct, and destroyed by a careless rule. Asserted so
 # a future edit to BANNED that starts eating them fails loudly here.
 # FIXED THIRD-PARTY API NAMES, masked out before the ban runs.
@@ -181,7 +302,115 @@ ALLOW = ["characteristic", "realistic", "optimistic", "optimism", "initialism",
          "color", "colors", "colored", "coloring", "center", "centered",
          "meter", "gray", "labeled", "canceled", "modeled", "license",
          "analyze", "analyzed", "recognize", "organize", "optimize",
-         "initialize", "catalog", "judgment", "honor", "defense", "story"]
+         "initialize", "catalog", "judgment", "honor", "defense", "story",
+         # the words the generated families come closest to — the website's
+         # US_AND_SHARED list, carried with the families. Each is correct in
+         # both dialects (or is the US form), and each sits one careless
+         # suffix or stem away from a family rule.
+         "programmed", "cancellation", "controlled", "annulled", "compelled",
+         "totally", "initially", "equally", "rigorous", "humorous", "odorous",
+         "contour", "detour", "glamour", "greyhound", "calibrate", "Polaris",
+         "organism", "specialist", "terrorist", "economist", "advertise",
+         "expertise", "exercise", "franchise", "comprise", "premise",
+         "compromise", "paradise", "massacre", "mediocre", "genre", "acre",
+         "sombrero", "centrifuge", "catalyst", "dialysis", "paralysis",
+         "analyst", "analytics", "licensed", "jewelry", "dialog"]
+
+
+def family_pairs():
+    """Every (US form, British form) pair the families are built to tell apart.
+
+    Each family, both ways, over every prefix and every suffix it names: the
+    British form must be caught and the US form it was made from must not be.
+    The British forms are BUILT here from the US stems, never typed — the same
+    construction the rules use, which is the point: a stem added to a family
+    is tested in every inflection the moment it is added.
+    """
+    pairs = []
+    for p in [""] + DOUBLE_L_PREFIXES:
+        for w in DOUBLE_L:
+            for suf in DOUBLE_L_SUFFIXES:
+                pairs.append((p + w + suf, p + w + "l" + suf))
+    for p in [""] + OR_PREFIXES:
+        for stem in _stems(OR_NOUNS, "or"):
+            for suf in OR_SUFFIXES:
+                pairs.append((p + stem + "or" + suf, p + stem + "our" + suf))
+    for p in [""] + IZE_PREFIXES:
+        for stem in _stems(IZE_VERBS, "ize"):
+            for suf in IZE_SUFFIXES:
+                pairs.append((p + stem + "iz" + suf, p + stem + "is" + suf))
+    for stem in _stems(YZE_VERBS, "yze"):
+        for suf in YZE_SUFFIXES:
+            pairs.append((stem + "yz" + suf, stem + "ys" + suf))
+    us_er = {"": "er", "s": "ers", "d": "ered"}
+    for p in [""] + ER_PREFIXES:
+        for stem in _stems(ER_NOUNS, "er"):
+            for suf in ER_SUFFIXES:
+                pairs.append((p + stem + us_er.get(suf, "er" + suf),
+                              p + stem + "re" + suf))
+    for stem in _stems(SE_NOUNS, "se"):
+        for suf in SE_SUFFIXES:
+            pairs.append((stem + "s" + suf, stem + "c" + suf))
+    # the single-word rules, each with the US word it stands against
+    for us, uk, sufs in (
+            ("catalog", "catalogue", ["", "s", "ed", "ing", "er", "ers"]),
+            ("gray", "grey", ["", "s", "ed", "er", "est", "ing", "ish", "ness",
+                              "scale", "scales"]),
+            ("mold", "mould", ["", "s", "ed", "ing", "ings", "er", "y"]),
+            ("skeptic", "sceptic", ["", "s", "al", "ism", "ally"])):
+        for suf in sufs:
+            # the British form drops its final e before a vowel suffix
+            drop_e = uk.endswith("e") and suf[:1] in ("e", "i")
+            uk_form = (uk[:-1] if drop_e else uk) + suf
+            pairs.append((us + suf, uk_form))
+    for suf in ["e", "es", "ed", "ing"]:
+        pairs.append(("practic" + suf, "practis" + suf))
+    return pairs
+
+
+def self_test():
+    """(missed, eaten): British forms a family no longer catches, and correct
+    words — US forms and ALLOW — the ban now matches. Both must be empty."""
+    pairs = family_pairs()
+    missed = [uk for _, uk in pairs if not BANNED.search(uk)]
+    # The one that shipped on the website: a compound adjective on a past
+    # tense the word list had only in its -ing form.
+    shipped = "a better-" + DOUBLE_L[0] + "led route"
+    if not BANNED.search(shipped):
+        missed.append(shipped)
+    eaten = [w for w in [us for us, _ in pairs] + ALLOW if BANNED.search(w)]
+    return missed, eaten
+
+
+# Every alternative in BANNED is word characters only, anchored by \b at both
+# ends, so a match is always one whole run of word characters: a line has a
+# banned form exactly when one of its \w+ runs fullmatches BANNED. Testing
+# each distinct run once, cached, gives the same answer as searching every
+# line, at a fraction of the cost — the families made BANNED twice as long,
+# and a search tries every alternative at every word boundary of every line.
+WORD = re.compile(r"\w+", re.ASCII)
+
+
+def non_word_literals(pattern=None):
+    """What is left of BANNED's pattern once its regex syntax is removed,
+    when that is not letters alone. banned_words() is exact only while every
+    alternative is word characters; an alternative with a hyphen, a space or
+    an apostrophe in it would be split across two runs and never seen, so
+    main() refuses to run on such a pattern instead of passing everything."""
+    residue = re.sub(r"\\[bw]|[()|?:*]", "", BANNED.pattern if pattern is None
+                     else pattern)
+    return sorted(set(re.sub(r"[A-Za-z]", "", residue)))
+
+
+@functools.lru_cache(maxsize=None)
+def _is_banned(token):
+    return BANNED.fullmatch(token) is not None
+
+
+def banned_words(line):
+    """The banned forms in one line, in order (the same set BANNED.search
+    would find, one at a time)."""
+    return [t for t in WORD.findall(line) if _is_banned(t)]
 
 
 def walk(paths):
@@ -199,6 +428,29 @@ def walk(paths):
 
 
 def main() -> int:
+    # The guard on the guard, FIRST and before a single file is read: if
+    # BANNED ever starts matching a word that is correct English, or a family
+    # stops catching a form it is built to catch, say so here rather than in
+    # a corrupted commit or a green run that checked nothing.
+    missed, eaten = self_test()
+    if eaten:
+        print("lint_spelling.py: the BANNED pattern now matches words that are "
+              f"CORRECT English: {', '.join(eaten[:20])}.\n"
+              "  Anchor the offending alternative to whole words — see this "
+              "file's header for what each of these cost.", file=sys.stderr)
+        return 2
+    if missed:
+        print("lint_spelling.py: a family rule no longer catches the British "
+              f"form it is built to catch: {', '.join(missed[:20])}.",
+              file=sys.stderr)
+        return 2
+    odd = non_word_literals()
+    if odd:
+        print("lint_spelling.py: BANNED has an alternative with characters "
+              f"other than letters ({' '.join(map(repr, odd))}); the word-run "
+              "check cannot see it. Spell the form as letters only.",
+              file=sys.stderr)
+        return 2
     paths = sys.argv[1:] or [ROOT]
     offenders = []
     for f in walk(paths):
@@ -213,21 +465,11 @@ def main() -> int:
             probe = line
             for pat in exempt:
                 probe = re.sub(pat, lambda m: "\x00" * len(m.group(0)), probe)
-            m = BANNED.search(probe)
-            if m:
+            for word in banned_words(probe):
                 # A file outside this repo (the HACS mirror's README, as both
                 # mirror briefs document) is named as given, not a traceback.
                 where = f.relative_to(ROOT) if f.is_relative_to(ROOT) else f
-                offenders.append(f"{where}:{i}: {m.group(0)}")
-    # The guard on the guard: if BANNED ever starts matching a word that is
-    # correct English, say so here rather than in a corrupted commit.
-    self_harm = [w for w in ALLOW if BANNED.search(w)]
-    if self_harm:
-        print("lint_spelling.py: the BANNED pattern now matches words that are "
-              f"CORRECT English: {', '.join(self_harm)}.\n"
-              "  Anchor the offending alternative to whole words — see this "
-              "file's header for what each of these cost.", file=sys.stderr)
-        return 2
+                offenders.append(f"{where}:{i}: {word}")
     if offenders:
         print(f"lint_spelling.py: {len(offenders)} British spelling(s) — this "
               "repo is US English (AGENTS.md rule 3b):", file=sys.stderr)
