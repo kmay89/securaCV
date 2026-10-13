@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:50e24ada-2ca7-56d6-bb17-d051bfb35498",
+  "serialNumber": "urn:uuid:35197a63-2936-5636-83d2-ddfcd6ed3b27",
   "version": 1,
   "metadata": {
     "tools": {
@@ -990,7 +990,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "platformio (platform_core3); sketch.yaml (canary_wap/xiao_sense)"
+          "value": "arduino-cli (csi_module_disable_matrix.yml:build-with-module-disabled); arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (flasher-release.yml:factory-images); arduino-cli (ram_audit.yml:ram-audit); platformio (platform_core3); sketch.yaml (canary_wap/xiao_sense)"
         },
         {
           "name": "securacv:declared_in",
@@ -1014,7 +1014,7 @@
       "properties": [
         {
           "name": "securacv:build_paths",
-          "value": "arduino-cli (csi_module_disable_matrix.yml:build-with-module-disabled); arduino-cli (firmware-release.yml:build-sign-release); arduino-cli (firmware.yml:build-arduino-cli); arduino-cli (flasher-release.yml:factory-images); arduino-cli (ram_audit.yml:ram-audit)"
+          "value": "arduino-cli (firmware.yml:build-arduino-cli)"
         }
       ]
     },
@@ -1288,6 +1288,37 @@
       "properties": [
         {
           "name": "securacv:envs",
+          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
+        },
+        {
+          "name": "securacv:exact_pin",
+          "value": "true"
+        },
+        {
+          "name": "securacv:resolved",
+          "value": "at build time — PlatformIO keeps no lockfile"
+        },
+        {
+          "name": "securacv:version_spec",
+          "value": "9.5.0"
+        }
+      ],
+      "group": "lvgl",
+      "version": "9.5.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
+        }
+      ],
+      "bom-ref": "lib:lvgl/lvgl@9.5.0"
+    },
+    {
+      "type": "library",
+      "name": "lvgl",
+      "properties": [
+        {
+          "name": "securacv:envs",
           "value": "canary-display:canary-display-amoled241,canary-display:canary-display-nightlight-c3,canary-display:canary-display-nightstand-s3,canary-display:canary-display-touch169,canary-display:canary-display-watch,canary-display:canary-display-watch-modes"
         },
         {
@@ -1311,36 +1342,6 @@
         }
       ],
       "bom-ref": "lib:lvgl/lvgl@^8.4.0"
-    },
-    {
-      "type": "library",
-      "name": "lvgl",
-      "properties": [
-        {
-          "name": "securacv:envs",
-          "value": "canary-display:canary-display-dash,canary-display:canary-display-dash-b,canary-display:canary-display-dash-ble5,canary-display:canary-display-dash-can,canary-display:canary-display-dash-espnow,canary-display:canary-display-dash-mic,canary-display:canary-display-dash-modes,canary-display:canary-display-dash-rs485,canary-display:canary-display-dash-rtc,canary-display:canary-display-dash-sd,canary-display:canary-display-dash-vault,canary-display:canary-display-dash7,canary-display:canary-display-nightstand-c6,canary-display:canary-display-nightstand7,canary-display:canary-display-playground"
-        },
-        {
-          "name": "securacv:exact_pin",
-          "value": "false"
-        },
-        {
-          "name": "securacv:resolved",
-          "value": "at build time — PlatformIO keeps no lockfile"
-        },
-        {
-          "name": "securacv:version_spec",
-          "value": "^9.5.0"
-        }
-      ],
-      "group": "lvgl",
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://registry.platformio.org/libraries/lvgl/lvgl"
-        }
-      ],
-      "bom-ref": "lib:lvgl/lvgl@^9.5.0"
     },
     {
       "type": "library",
@@ -1871,11 +1872,11 @@
       "dependsOn": []
     },
     {
-      "ref": "lib:lvgl/lvgl@^8.4.0",
+      "ref": "lib:lvgl/lvgl@9.5.0",
       "dependsOn": []
     },
     {
-      "ref": "lib:lvgl/lvgl@^9.5.0",
+      "ref": "lib:lvgl/lvgl@^8.4.0",
       "dependsOn": []
     },
     {
@@ -1957,8 +1958,8 @@
         "lib:h2zero/NimBLE-Arduino@^1.4.1",
         "lib:h2zero/NimBLE-Arduino@^2.5.0",
         "lib:knolleary/PubSubClient@^2.8",
+        "lib:lvgl/lvgl@9.5.0",
         "lib:lvgl/lvgl@^8.4.0",
-        "lib:lvgl/lvgl@^9.5.0",
         "lib:moononournation/GFX Library for Arduino@1.4.9",
         "lib:moononournation/GFX Library for Arduino@1.6.6",
         "lib:rweather/Crypto@^0.4.0",
@@ -2031,6 +2032,7 @@
       "dependsOn": [
         "framework:arduino-esp32@2.0.17",
         "framework:arduino-esp32@3.3.10",
+        "framework:arduino-esp32@3.3.8",
         "framework:arduino-esp32@latest",
         "product:canary",
         "product:canary-display",
