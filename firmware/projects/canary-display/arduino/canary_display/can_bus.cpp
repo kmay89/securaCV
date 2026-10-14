@@ -139,6 +139,14 @@ int can_recover() {
   }
 }
 
+bool can_bus_off() {
+  if (!s_ready) return false;
+  twai_status_info_t status;
+  if (twai_get_status_info(&status) != ESP_OK) return false;
+  return status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING ||
+         (status.state == TWAI_STATE_STOPPED && s_recovering);
+}
+
 }  // namespace io
 }  // namespace canary
 

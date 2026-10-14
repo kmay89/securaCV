@@ -78,5 +78,13 @@ enum : int {
 // "[CAN] bus-off - initiating recovery" and "[CAN] recovered - restarted".
 int can_recover();
 
+// True while the controller is out of service because of a bus-off: it reads
+// BUS_OFF or RECOVERING, or STOPPED after a recovery this driver started and
+// has not restarted yet. False when it is running, before can_begin(), and
+// when the status cannot be read. It only reads the status: no recovery step,
+// no log line. The station asks it after a refused send, to tell a bus-off
+// apart from a bus with no other node to acknowledge.
+bool can_bus_off();
+
 }  // namespace io
 }  // namespace canary

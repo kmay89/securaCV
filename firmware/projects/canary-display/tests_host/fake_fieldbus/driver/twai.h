@@ -19,6 +19,14 @@
 // when a driver is already installed. One tick is one millisecond, as on the
 // S3 Arduino builds (CONFIG_FREERTOS_HZ=1000).
 //
+// Bus-off recovery follows the IDF's state machine as far as the display's
+// code can see it: twai_initiate_recovery() is refused outside BUS_OFF and
+// otherwise moves the controller to RECOVERING; the controller itself finishes
+// a recovery (RECOVERING -> STOPPED), which a test plays by setting
+// fake_twai::state; and twai_start() empties the receive queue, as both IDF
+// versions' twai_start() resets its RX and TX queues, so a frame still queued
+// when the controller is restarted is lost.
+//
 // The `fake_twai` namespace holds what the calls recorded and what the next
 // ones answer.
 #pragma once
@@ -140,6 +148,7 @@ inline twai_filter_config_t f = {};
 inline esp_err_t install_answer = ESP_OK;  // what the next install answers
 inline esp_err_t start_answer = ESP_OK;
 inline esp_err_t transmit_answer = ESP_OK; // when running
+inline esp_err_t initiate_answer = ESP_OK; // when bus-off
 inline std::vector<Sent> sent;
 inline std::vector<TickType_t> receive_ticks;
 inline std::deque<twai_message_t> inbox;    // frames the bus has delivered
@@ -175,6 +184,7 @@ inline esp_err_t twai_start(void) {
   }
   fake_twai::starts++;
   if (fake_twai::start_answer != ESP_OK) return fake_twai::start_answer;
+  fake_twai::inbox.clear();  // the IDF resets the RX queue on start
   fake_twai::state = TWAI_STATE_RUNNING;
   return ESP_OK;
 }
@@ -213,7 +223,8 @@ inline esp_err_t twai_initiate_recovery(void) {
   if (!fake_twai::installed || fake_twai::state != TWAI_STATE_BUS_OFF) {
     return ESP_ERR_INVALID_STATE;
   }
-  fake_twai::recoveries++;
+  fake_twai::recoveries++;  // every initiate that reached a bus-off controller
+  if (fake_twai::initiate_answer != ESP_OK) return fake_twai::initiate_answer;
   fake_twai::state = TWAI_STATE_RECOVERING;
   return ESP_OK;
 }

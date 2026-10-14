@@ -372,11 +372,12 @@ void action_tof_cycle_trip() {
 // reply is in (seven bytes, or the five of a CRC-good exception, which the
 // station names: "slave=1 exception=<code>"), stale bytes drained first;
 // TWAI in normal mode at 500 kbit/s with an accept-all filter, one 0x100 test
-// frame with a 50 ms queue wait (sent only on a SEND tap), up to 8 frames
-// drained per 100 ms pass without waiting, and after each drain one step of
-// the controller's standard bus-off recovery (initiate once per bus-off, wait
-// while it recovers, restart it once it has: "bus=off recovery=started",
-// "bus=on recovered"). tests_host/
+// frame with a 50 ms queue wait (sent only on a SEND tap; one refused while
+// the controller is bus-off says "tx=fail bus=off (recovering)"), up to 8
+// frames drained per 100 ms pass without waiting, and after each drain one
+// step of the controller's standard bus-off recovery (initiate once per
+// bus-off, wait while it recovers, restart it once it has: "bus=off
+// recovery=started", "bus=on recovered"). tests_host/
 // test_fieldbus_glue.cpp drives both builds of this file and holds them to
 // that one trace. The driver path adds one console line per bus the first
 // time it comes up ("[RS485] up on A/B ..." / "[CAN] up on H/L ..."), and
@@ -421,6 +422,13 @@ static void can_keep_running() {
 }
 #else
 static bool s_can_recovering = false;  // a recovery started here, not yet restarted
+// The inline twin of can_bus_off(): out of service because of a bus-off.
+static bool can_is_bus_off() {
+  twai_status_info_t st = {};
+  if (twai_get_status_info(&st) != ESP_OK) return false;
+  return st.state == TWAI_STATE_BUS_OFF || st.state == TWAI_STATE_RECOVERING ||
+         (st.state == TWAI_STATE_STOPPED && s_can_recovering);
+}
 static void can_keep_running() {
   twai_status_info_t st = {};
   if (twai_get_status_info(&st) != ESP_OK) return;
@@ -535,18 +543,25 @@ void action_can_send() {
   f.id = 0x100;
   f.dlc = 8;
   for (uint8_t i = 0; i < f.dlc; i++) f.data[i] = (uint8_t)(0xC0 + i);
+  // A refused send names a bus-off (the controller is recovering from it and
+  // takes no frames until the drain restarts it) apart from a bus where no
+  // other node acknowledges; the tap takes no recovery step either way.
 #if defined(FEATURE_CAN) && FEATURE_CAN
   const bool sent = canary::io::can_transmit(f, 50) == canary::io::CAN_OK;
+  const bool bus_off = !sent && canary::io::can_bus_off();
 #else
   twai_message_t m = {};
   m.identifier = f.id;
   m.data_length_code = f.dlc;
   for (uint8_t i = 0; i < f.dlc; i++) m.data[i] = f.data[i];
   const bool sent = twai_transmit(&m, pdMS_TO_TICKS(50)) == ESP_OK;
+  const bool bus_off = !sent && can_is_bus_off();
 #endif
   if (sent) {
     g.can.tx++;
     say_evt("can", "tx id=0x%03lX dlc=8 ok", (unsigned long)f.id);
+  } else if (bus_off) {
+    say_evt("can", "tx=fail bus=off (recovering)");
   } else {
     say_evt("can", "tx=fail (bus quiet? need another node/ack)");
   }
