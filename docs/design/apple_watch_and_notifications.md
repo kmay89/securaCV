@@ -57,7 +57,8 @@ cloud cameras — by construction there are no pixels to stream
 (`iphone_companion_app.md` §7, Invariant I). This doc scopes the version of
 that expectation we *can* meet better than anyone: **live truth** (who's
 where, what fired, is the chain intact, is every device provably alive)
-delivered calmly, everywhere, without a cloud.
+delivered calmly on every surface: on the home network without a cloud, and
+off it only Critical, as a content-free poke through the relay (§1.1, §6).
 
 ---
 

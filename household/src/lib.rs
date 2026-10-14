@@ -19,8 +19,10 @@
 //!   the OS RNG, all discarded on every roster epoch change.
 //! - [`verify`]: the `es256` and `fido2-es256` credential verifiers.
 //! - [`ntag424`]: the reader side of NTAG 424 DNA `AuthenticateEV2First`.
-//! - [`secrets`]: card keys sealed with XChaCha20-Poly1305 under a
-//!   key-encryption key kept outside the data directory.
+//! - [`secrets`]: the card keys (`cards.sealed`) and the hub's two signing
+//!   keys, posture and roster (`hub_keys.sealed`), sealed with
+//!   XChaCha20-Poly1305 under keys derived from one key-encryption key kept
+//!   outside the data directory.
 //! - [`checker`]: the state machine tying those together, with the per-door
 //!   rejection limiter ([`ratelimit`]).
 //! - [`server`]: the bounded LAN API (`POST /v1/challenge`, `POST

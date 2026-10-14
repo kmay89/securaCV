@@ -274,7 +274,9 @@ nothing that witnesses. **Not built**; the spec is its contract.
 **Household posture** — The household's mode, `away`, `home` or `night`, and
 the only thing a household key may change. `home` lets indoor witnesses sense
 tamper only, may be set only by an *intent* credential (one that needed its
-holder's own user verification), and lapses on its own within 24 hours; a
+holder's own user verification), and lapses on its own: at most 24 hours
+after it is issued (12 by default), and a witness counts it for at most
+24 hours 5 minutes of its own clock, whatever the hub's clock said; a
 card or fob may set only `away` or `night`. It travels as a signed 112-byte
 statement, and a witness that cannot verify one against its pinned hub key
 behaves as `away`. Always "household posture," never bare "posture," which

@@ -13,7 +13,7 @@ authors = ["Errer Labs"]
 license = "Apache-2.0"
 repository = "https://github.com/kmay89/securaCV"
 edition = "2021"
-# aes 0.9.3 sets the floor (sha2 0.11.1 needs 1.88). Not enforced by CI yet.
+# aes 0.9.3 sets the floor (sha2 0.11.1 needs 1.88); household.yml's msrv job checks it on 1.89.
 rust-version = "1.89"
 publish = false
 

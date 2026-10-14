@@ -19,8 +19,10 @@
 //!
 //! A missing or wrong token is refused before anything is counted: it never
 //! reaches the request cap or the door limiter, so a client with no token
-//! cannot crowd paired clients out or start a cooldown. Nor does a body that
-//! does not parse. Only a response to a live challenge is counted
+//! cannot use up the request cap or start a cooldown (it can still take
+//! connection slots, below). A paired client's body that does not parse is
+//! charged to the request cap but never reaches the door limiter. Only a
+//! response is counted toward a cooldown, from the challenge lookup on
 //! ([`crate::ratelimit`]), and even then a cooldown refuses only `home`.
 //!
 //! Patterned on the kernel's `src/api/mod.rs`: a request is at most
@@ -97,9 +99,11 @@ pub fn stderr_log() -> LogSink {
 /// 1918), IPv4 link-local, or an IPv6 unique-local or link-local address
 /// (IPv4-mapped IPv6 counts as its IPv4 address). Everything else is
 /// refused, the shared address space 100.64.0.0/10 (Tailscale, carrier NAT)
-/// included, so a key does nothing from outside the home network even on a
-/// LAN bind. A home LAN reached only over public IPv6 addresses is refused
-/// too: bind an IPv4 LAN address.
+/// included, so from outside the home network a key does nothing even on a
+/// LAN bind. That is enforced by peer address: a strong default, not a
+/// cryptographic guarantee, since a proxy, VPN or ingress that re-originates
+/// traffic from a private or loopback address defeats it. A home LAN reached
+/// only over public IPv6 addresses is refused too: bind an IPv4 LAN address.
 pub fn is_home_network(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
@@ -160,8 +164,8 @@ pub struct Reload {
 
 /// Something that can report roster, card and pairing changes.
 pub trait ReloadSource: Send {
-    /// Check for changes. A part that failed is reported again on the next
-    /// poll until it loads.
+    /// Check for changes. A part that failed to load is reported again on the
+    /// next poll until it loads.
     fn poll(&mut self) -> Reload;
 }
 
@@ -750,8 +754,10 @@ type Stamp = (Option<String>, Option<FileStamp>, Option<FileStamp>);
 /// Reloads the roster chain, the sealed card store and the pairings from a
 /// data directory when their files change. Each part loads on its own: a
 /// card store or pairing file that fails never holds up a roster change (a
-/// revocation), and a part that fails is retried on every poll until it
-/// loads.
+/// revocation), and a part that fails to load is retried on every poll until
+/// it loads. A roster that loads but the checker refuses is not retried (its
+/// files have not changed): the checker stays stale for `home` until the
+/// chain changes again.
 pub struct DirReload {
     dir: crate::store::DataDir,
     kek: crate::secrets::Kek,

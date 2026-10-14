@@ -24,7 +24,9 @@
 //!
 //! The KEK opens the sealed hub keys and card keys, so the commands that sign
 //! or touch those take `--kek`: `init`, `roster genesis`, `roster apply`,
-//! `card provision` and `serve`. The rest read only public material.
+//! `card provision` and `serve`. The rest open no sealed material (some read
+//! or write the caller's own key file: an admin key, a client key, a bearer
+//! token).
 //!
 //! Nothing this program logs names a handle, a credential id or a tap.
 

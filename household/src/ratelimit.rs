@@ -8,9 +8,10 @@
 //!
 //! There are two lanes per door ([`Lane`]), so junk taps on a card reader
 //! never cool down the phones answering at the same door, and the other way
-//! round. Only a response to a live challenge counts: a missing or wrong
-//! bearer token, or a body that does not parse, never reaches the limiter, so
-//! a client with no token cannot start a cooldown (spec §4.3).
+//! round. Only a response counts, from the challenge lookup on (answering an
+//! unknown, used, expired or another session's challenge counts): a missing
+//! or wrong bearer token, or a body that does not parse, never reaches the
+//! limiter, so a client with no token cannot start a cooldown (spec §4.3).
 //!
 //! A cooldown never blocks raising sensing. The checker lets `away` and
 //! `night` through a cooling signature lane and refuses only `home`

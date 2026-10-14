@@ -377,8 +377,9 @@ The KEK is a file of 64 hex characters. The checker refuses a KEK path
 inside the data directory, and (on Unix) a KEK file that group or others
 have any permission on. There is no passphrase option. Only the commands
 that open sealed material take `--kek`: `init`, `roster genesis`,
-`roster apply`, `card provision` and `serve`; every other command reads
-public material only.
+`roster apply`, `card provision` and `serve`; every other command opens no
+sealed material (some read or write the caller's own key file: an admin key,
+a client key, a bearer token).
 `card provision` opens the hub keys first, which proves the KEK belongs to
 this household, so a card key is never sealed under a KEK the server cannot
 open.
@@ -394,9 +395,11 @@ sign `home`, skipping principle 4 entirely, and a forged statement with a huge
 posture key and re-pairing every witness. A hub compromise means both:
 re-keying every card, and a new posture key with every witness re-paired.
 
-Applying a roster change (`roster apply`) removes every sealed card key whose
+Applying a roster change (`roster apply`) first discards every pending
+proposal the new epoch made stale, then removes every sealed card key whose
 handle is neither a card member of the applied roster nor a card member of a
-pending proposal, and reports how many it removed (`card_keys_removed`), so
+proposal still pending (so a key provisioned for a card in a discarded
+proposal goes too), and reports how many it removed (`card_keys_removed`), so
 the hub does not keep a revoked card's key, the only thing that can recognize
 or clone that card. `card provision` reads a card key from a file
 (`--key-file`), never from the command line, where it would land in shell
@@ -704,6 +707,9 @@ lists what that RFC must settle:
 - a credential check driving Canary sensing, read against Free Signals
   Invariant D ("no integration with access control");
 - how a witness receives and pins the statement, and how posture-driven
-  traffic changes are paced (Invariant III); and
+  traffic changes are paced (Invariant III);
 - whether Home Assistant may show the household posture at all, since its
-  recorder would keep an exact-time diary of every change.
+  recorder would keep an exact-time diary of every change; and
+- whether the change time the hub itself reveals is acceptable: the
+  statement's minute, the seam's and `seq.json`'s modification times, and
+  any live reader's polling precision (§6.2).

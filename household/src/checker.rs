@@ -14,10 +14,11 @@
 //! 2. The challenge is taken (single use) and must be unexpired, from the
 //!    same session and door, and from the current roster epoch.
 //! 3. The handle must name a current member of the **current** roster.
-//!    Every response runs exactly one P-256 verification, against a dummy
-//!    key when the handle is unknown, expired, a card, or does not match the
-//!    binding the request used, so the time taken does not say whether the
-//!    handle exists.
+//!    Every response that reaches the credential check with a DER signature
+//!    runs exactly one P-256 verification, against a dummy key when the
+//!    handle is unknown, expired, a card, or does not match the binding the
+//!    request used, so the time taken does not say whether the handle exists.
+//!    A signature that is not DER runs none, whatever the handle.
 //! 4. The credential must verify over the challenge under its own binding:
 //!    `es256` over `msg`; `fido2-es256` with `clientDataHash = SHA-256(msg)`
 //!    and UV required when the credential is `intent`; cards through
@@ -331,11 +332,12 @@ impl Checker {
     /// Check a response against the member its handle names, if any.
     ///
     /// Every path runs exactly one P-256 verification over input of the same
-    /// shape: against the member's key when the member is current, is not a
-    /// card, and every check but the signature passes for the binding the
-    /// request used; against the dummy key otherwise. The result is read only
-    /// after that verification, so the time taken does not say whether the
-    /// handle exists, is current, or is enrolled with another binding.
+    /// shape (when the signature is DER; one that is not runs none, whatever
+    /// the handle): against the member's key when the member is current, is
+    /// not a card, and every check but the signature passes for the binding
+    /// the request used; against the dummy key otherwise. The result is read
+    /// only after that verification, so the time taken does not say whether
+    /// the handle exists, is current, or is enrolled with another binding.
     fn check_response(
         &self,
         member: Option<&MemberEntry>,

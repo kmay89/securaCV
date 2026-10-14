@@ -23,9 +23,10 @@
 //!
 //! - the output seam holds the current statement only. Its `issued_at` and
 //!   `not_after`, and `seq.json`'s `last_seq` (whose value `>> 10` is that
-//!   minute), state the minute of the last posture change, and both files'
-//!   modification times state its second. That change was a command, a
-//!   lapse or a restart. It is the time of the last act, not a history;
+//!   minute), state the minute of the last posture change or `home`
+//!   renewal, and both files' modification times state its second. That was
+//!   a command (a renewed `home` included), a lapse or a restart. It is the
+//!   time of the last act, not a history;
 //! - a proposal's `proposed_at` (an admin act, needed for the 24-hour rule),
 //!   deleted when the proposal is applied.
 //!

@@ -136,10 +136,12 @@ it.
 the same `401` with the same body, whether the token was missing or wrong, the
 request cap was reached, the body did not parse, `home` was refused, the
 challenge was used, the handle was unknown, the signature was bad or the class
-was not allowed. (Only a request that is too large, is not well-formed HTTP or
-uses the wrong method gets another status, `413`, `400` or `405`, before its
-token is read.) Every command that reaches the credential check runs exactly
-one P-256 signature check, against a dummy key when the handle is unknown,
+was not allowed. (Only a request that is too large, is not well-formed HTTP,
+or names an unknown path or the wrong method gets another status, `413`,
+`400`, `404` or `405`, before its token is read.) Every command that reaches
+the credential check with a DER signature runs exactly one P-256 signature
+check (one whose signature is not DER runs none, whatever the handle),
+against a dummy key when the handle is unknown,
 expired, a card, or does not match the binding the request used (an `es256`
 response for a FIDO2 member or the other way round, the wrong `rp_id`, no UP,
 or no UV from an `intent` member). So neither the response nor the time it
@@ -257,7 +259,9 @@ More subcommands:
   previous state, is retried on every poll, and is logged once; a roster
   that fails also refuses `home` until one verifies (above).
 - Only `init`, `roster genesis`, `roster apply`, `card provision` and `serve`
-  take `--kek`. Every other command reads public material only.
+  take `--kek`. Every other command opens no sealed material (some read or
+  write the caller's own key file: an admin key, a client key, a bearer
+  token).
 
 ### The output seam
 
