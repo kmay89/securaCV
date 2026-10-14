@@ -23,8 +23,14 @@
  * api_auth_check_credential*); every other route takes either, as before.
  *
  * Pure: no Arduino, no IDF. The caller supplies the clock and the random
- * bytes (csi_integration.cpp: millis() and esp_fill_random()), so the host
- * suite (tests_host/test_receipt_session.cpp) runs this exact store.
+ * bytes (csi_integration.cpp: session_now_ms() and esp_fill_random()), so
+ * the host suite (tests_host/test_receipt_session.cpp) runs this exact store.
+ *
+ * The clock is milliseconds since boot in 64 bits (esp_timer_get_time() /
+ * 1000), never millis(): millis() is 32 bits on both Arduino-ESP32 cores and
+ * wraps every 2^32 ms (49.7 days), and a slot's age taken across the wrap
+ * reads young again, so a session past its 24 h would answer once more, for
+ * a day, every 49.7 days of uptime (sweep F289's review).
  *
  * Threading: the store is the httpd worker's (handlers are serialized
  * behind one ESP-IDF httpd task), as it always was.
@@ -43,7 +49,7 @@ namespace cv_session {
  * signed in at once. 24 h TTL matches typical "remember me" UX and caps
  * the post-compromise window without forcing daily re-pairing. */
 constexpr size_t   SLOTS       = 8;
-constexpr uint32_t TTL_MS      = 24UL * 60UL * 60UL * 1000UL;  /* 24 h */
+constexpr uint64_t TTL_MS      = 24ULL * 60ULL * 60ULL * 1000ULL;  /* 24 h */
 constexpr size_t   TOK_BYTES   = 32;                           /* 256-bit entropy */
 constexpr size_t   TOK_HEX_LEN = TOK_BYTES * 2;                /* 64 hex chars */
 
@@ -60,7 +66,7 @@ enum class Origin : uint8_t {
 
 struct Slot {
   bool     active;
-  uint32_t issued_ms;
+  uint64_t issued_ms;   /* the 64-bit clock at mint */
   Origin   origin;
   uint8_t  token[TOK_BYTES];
 };
@@ -79,7 +85,7 @@ inline bool token_eq(const uint8_t* a, const uint8_t* b, size_t n) {
 /* The slot a new session goes into: an empty or expired one, else the
  * oldest. A determined caller can churn issuances and bump a live session
  * (the owner signs in again); that trade-off is unchanged by F289. */
-inline Slot* pick_for_issuance(Store& st, uint32_t now) {
+inline Slot* pick_for_issuance(Store& st, uint64_t now) {
   for (size_t i = 0; i < SLOTS; ++i) {
     Slot& s = st.slots[i];
     if (!s.active || (now - s.issued_ms) >= TTL_MS) return &s;
@@ -95,7 +101,7 @@ inline Slot* pick_for_issuance(Store& st, uint32_t now) {
 
 /* Store `fresh` (the caller's random bytes) as a session minted now, with
  * the origin of the code path that minted it. */
-inline void issue(Store& st, uint32_t now, const uint8_t fresh[TOK_BYTES], Origin origin) {
+inline void issue(Store& st, uint64_t now, const uint8_t fresh[TOK_BYTES], Origin origin) {
   Slot* s = pick_for_issuance(st, now);
   memcpy(s->token, fresh, TOK_BYTES);
   s->issued_ms = now;
@@ -104,7 +110,7 @@ inline void issue(Store& st, uint32_t now, const uint8_t fresh[TOK_BYTES], Origi
 }
 
 /* The live session `token` names, or nullptr (none, or expired). */
-inline const Slot* find(const Store& st, uint32_t now, const uint8_t token[TOK_BYTES]) {
+inline const Slot* find(const Store& st, uint64_t now, const uint8_t token[TOK_BYTES]) {
   for (size_t i = 0; i < SLOTS; ++i) {
     const Slot& s = st.slots[i];
     if (!s.active) continue;

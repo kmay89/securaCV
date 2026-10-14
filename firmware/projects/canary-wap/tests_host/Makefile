@@ -513,8 +513,10 @@ clean: clean-receipt-authority
 
 # Who may read the WAP's credentials (sweep F289): the REAL api_auth.h,
 # cv_session_store.h and claim_ticket.h, csi_integration.cpp's session glue
-# (the Cookie read, the lookup, the owner check, the mint, the encoder and
-# the weak hooks' definitions) and canary_wap.ino's handle_ui(),
+# (the 64-bit clock, the Cookie read, the lookup, the owner check, the mint,
+# the encoder and the weak hooks' definitions) and its pair-token slots (the
+# landing's tokens: the table, its issue, check and spend), and
+# canary_wap.ino's handle_ui(),
 # handle_provisioning_receipt(), handle_pairing_qr() and secure_zero(), each
 # cut verbatim (firmware/tests_host/cut_functions.awk), over stubs/receipt.
 # A session the landing page minted gets the receipt's BOOT-tap refusal and
@@ -531,7 +533,10 @@ RSESS_CHECK  = test_receipt_session_check.inc
 RSESS_HOOKS  = test_receipt_session_hooks.inc
 RSESS_ISSUE  = test_receipt_session_issue.inc
 RSESS_SKETCH = test_receipt_session_sketch.inc
-RSESS_INCS   = $(RSESS_STORE) $(RSESS_HEX) $(RSESS_CHECK) $(RSESS_HOOKS) $(RSESS_ISSUE) $(RSESS_SKETCH)
+RSESS_PAIR   = test_receipt_session_pair.inc
+RSESS_PAIRAPI = test_receipt_session_pairapi.inc
+RSESS_INCS   = $(RSESS_STORE) $(RSESS_HEX) $(RSESS_CHECK) $(RSESS_HOOKS) $(RSESS_ISSUE) $(RSESS_SKETCH) \
+               $(RSESS_PAIR) $(RSESS_PAIRAPI)
 RSESS_CUT    = ../../../tests_host/cut_functions.awk
 RSESS_CSI    = $(SRC_DIR)/csi_integration.cpp
 
@@ -540,8 +545,30 @@ $(RSESS_STORE): $(RSESS_CSI) $(RSESS_CUT) Makefile
 	  echo "csi_integration.cpp: no single g_sessions line for the session store" >&2; exit 1; }
 	@grep -nE '^cv_session::Store g_sessions = \{\};$$' $(RSESS_CSI) | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(RSESS_CSI)"\n\2|' > $@.tmp
-	awk -v 'sigs=bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {|bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {|const cv_session::Slot* session_of(httpd_req_t* req) {' \
+	awk -v 'sigs=uint64_t session_now_ms() {|bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {|bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {|const cv_session::Slot* session_of(httpd_req_t* req) {' \
 	  -f $(RSESS_CUT) $(RSESS_CSI) >> $@.tmp && mv $@.tmp $@
+
+# The pair-token table: its four constants and its one table line (grep, each
+# exactly as many as the file has), the slot struct (sed, to its "};"), and
+# the compare, the pick and the lookup (the cutter).
+$(RSESS_PAIR): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	@test "$$(grep -cE '^constexpr [a-z0-9_]+ +PAIR_' $(RSESS_CSI))" = 4 || { \
+	  echo "csi_integration.cpp: not the four PAIR_ constants the pair-token cut expects" >&2; exit 1; }
+	@test "$$(grep -cE '^PairSlot g_pair_slots\[PAIR_SLOTS\] = \{\};$$' $(RSESS_CSI))" = 1 || { \
+	  echo "csi_integration.cpp: no single g_pair_slots line" >&2; exit 1; }
+	@test "$$(grep -cE '^struct PairSlot \{$$' $(RSESS_CSI))" = 1 || { \
+	  echo "csi_integration.cpp: no single struct PairSlot" >&2; exit 1; }
+	@grep -nE '^constexpr [a-z0-9_]+ +PAIR_' $(RSESS_CSI) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(RSESS_CSI)"\n\2|' > $@.tmp
+	@sed -n '/^struct PairSlot {$$/,/^};$$/p' $(RSESS_CSI) >> $@.tmp
+	@grep -nE '^PairSlot g_pair_slots\[PAIR_SLOTS\] = \{\};$$' $(RSESS_CSI) | \
+	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(RSESS_CSI)"\n\2|' >> $@.tmp
+	awk -v 'sigs=bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {|PairSlot* pick_slot_for_issuance() {|PairSlot* find_slot(const uint8_t* token) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) >> $@.tmp && mv $@.tmp $@
+
+$(RSESS_PAIRAPI): $(RSESS_CSI) $(RSESS_CUT) Makefile
+	awk -v 'sigs=bool pair_token_issue(char* hex_out, size_t out_cap) {|bool pair_token_valid(const char* hex) {|bool pair_token_consume(const char* hex) {' \
+	  -f $(RSESS_CUT) $(RSESS_CSI) > $@.tmp && mv $@.tmp $@
 
 $(RSESS_HEX): $(RSESS_CSI) $(RSESS_CUT) Makefile
 	awk -v 'sigs=void hex_encode(const uint8_t* in, size_t len, char* out) {' \

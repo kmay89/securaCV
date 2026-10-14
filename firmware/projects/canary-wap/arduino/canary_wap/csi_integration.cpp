@@ -42,6 +42,7 @@
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <esp_random.h>           // esp_fill_random() — pairing token entropy
+#include <esp_timer.h>            // esp_timer_get_time() — the session and pair-token clock
 #include <string.h>
 #include <stdlib.h>
 
@@ -1530,6 +1531,14 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
   return handle_tune_post_coefficients(req);
 }
 
+/* The pairing tokens' and the sessions' clock: milliseconds since boot, in
+ * 64 bits (sweep F289's review). Arduino-ESP32's millis() is 32 bits on both
+ * cores and wraps every 2^32 ms (49.7 days), and an age taken across the
+ * wrap reads young again: a session or a pair token past its TTL would
+ * answer once more, for a whole TTL, every 49.7 days of uptime. esp_timer
+ * counts microseconds since boot in 64 bits and does not wrap. */
+uint64_t session_now_ms() { return (uint64_t)(esp_timer_get_time() / 1000); }
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING TOKEN STORE — Tier 5 #11
  *
@@ -1549,14 +1558,14 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t   PAIR_SLOTS        = 4;
-constexpr uint32_t PAIR_TTL_MS       = 10UL * 60UL * 1000UL;  /* 10 min */
+constexpr uint64_t PAIR_TTL_MS       = 10ULL * 60ULL * 1000ULL;  /* 10 min */
 constexpr size_t   PAIR_TOK_BYTES    = 32;                    /* 256-bit entropy */
 constexpr size_t   PAIR_TOK_HEX_LEN  = PAIR_TOK_BYTES * 2;    /* 64 hex chars */
 
 struct PairSlot {
   bool     used;
   bool     active;
-  uint32_t issued_ms;
+  uint64_t issued_ms;          /* session_now_ms() at issue */
   uint8_t  token[PAIR_TOK_BYTES];
 };
 PairSlot g_pair_slots[PAIR_SLOTS] = {};
@@ -1592,7 +1601,7 @@ bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {
 }
 
 PairSlot* pick_slot_for_issuance() {
-  const uint32_t now = millis();
+  const uint64_t now = session_now_ms();
   /* Pass 1: prefer a used or expired slot. */
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
@@ -1609,7 +1618,7 @@ PairSlot* pick_slot_for_issuance() {
 }
 
 PairSlot* find_slot(const uint8_t* token) {
-  const uint32_t now = millis();
+  const uint64_t now = session_now_ms();
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
     if (!s.active || s.used) continue;
@@ -1637,7 +1646,8 @@ PairSlot* find_slot(const uint8_t* token) {
  * The store, its slots and the origin each session is minted with (the
  * landing page's, or a served receipt's) live in cv_session_store.h, pure
  * and host-tested (tests_host/test_receipt_session.cpp, sweep F289); what
- * is left here reads the clock, the RNG and the request's Cookie header.
+ * is left here reads the clock (session_now_ms(), 64-bit), the RNG and the
+ * request's Cookie header.
  *
  * Threading: HTTP handlers serialize behind one ESP-IDF httpd worker, so
  * no portMUX needed; matches the pair-slot store above. ────────────── */
@@ -1667,7 +1677,7 @@ const cv_session::Slot* session_of(httpd_req_t* req) {
   if (!read_session_cookie_hex(req, hex)) return nullptr;
   uint8_t raw[cv_session::TOK_BYTES];
   if (!hex_decode_to(hex, raw, cv_session::TOK_BYTES)) return nullptr;
-  return cv_session::find(g_sessions, millis(), raw);
+  return cv_session::find(g_sessions, session_now_ms(), raw);
 }
 
 }  /* namespace (anonymous) */
@@ -1706,7 +1716,7 @@ bool session_issue(char* hex_out, size_t out_cap, cv_session::Origin origin) {
   if (!hex_out || out_cap < cv_session::TOK_HEX_LEN + 1) return false;
   uint8_t fresh[cv_session::TOK_BYTES];
   esp_fill_random(fresh, cv_session::TOK_BYTES);
-  cv_session::issue(g_sessions, millis(), fresh, origin);
+  cv_session::issue(g_sessions, session_now_ms(), fresh, origin);
   hex_encode(fresh, cv_session::TOK_BYTES, hex_out);
   memset(fresh, 0, sizeof(fresh));
   return true;
@@ -2542,7 +2552,7 @@ bool pair_token_issue(char* hex_out, size_t out_cap) {
   PairSlot* s = pick_slot_for_issuance();
   if (!s) return false;
   esp_fill_random(s->token, PAIR_TOK_BYTES);
-  s->issued_ms = millis();
+  s->issued_ms = session_now_ms();
   s->used      = false;
   s->active    = true;
   hex_encode(s->token, PAIR_TOK_BYTES, hex_out);

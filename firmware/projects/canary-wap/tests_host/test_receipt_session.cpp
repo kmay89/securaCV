@@ -6,12 +6,14 @@
 // cv_session_store.h (the session store and each session's origin),
 // claim_ticket.h (the setup-door claim), and, cut verbatim out of the
 // firmware by firmware/tests_host/cut_functions.awk, csi_integration.cpp's
-// session glue (the Cookie read, the lookup, the owner check, the mint and
-// the two trampolines api_auth.h's weak hooks resolve to) and canary_wap.ino's
+// session glue (the 64-bit clock, the Cookie read, the lookup, the owner
+// check, the mint and the two trampolines api_auth.h's weak hooks resolve to),
+// its pair-token slots (the landing's one-shot tokens) and canary_wap.ino's
 // handle_ui() (the landing page's /?cv_pair= exchange, which mints a
 // session), handle_provisioning_receipt() (the grant order), handle_pairing_qr()
-// and secure_zero(). Faked: the clock, the RNG, the pair-token slots behind
-// the landing, the BOOT tap's gate, the receipt and QR writers (each records
+// and secure_zero(). Faked: the clock (one 64-bit count that millis() reads
+// the low 32 bits of, as on the device, and esp_timer the whole of), the
+// RNG, the landing page's HTML, the BOOT tap's gate, the receipt and QR writers (each records
 // what it was asked to answer and puts the token and the AP password in the
 // body, as the real ones do), and the rest of the sketch's world.
 //
@@ -27,6 +29,7 @@
 
 #include "Arduino.h"          // stubs/receipt
 #include "esp_http_server.h"  // stubs/receipt
+#include "esp_timer.h"        // stubs/receipt
 
 #include "receipt_authority.h"
 #include "claim_ticket.h"
@@ -141,25 +144,12 @@ namespace csi_integration {
 constexpr size_t PAIR_TOKEN_HEX_LEN     = 64;
 constexpr size_t SESSION_COOKIE_HEX_LEN = cv_session::TOK_HEX_LEN;
 
-// The landing's pair tokens (csi_integration.cpp's slots, reduced to what
-// handle_ui asks): issued to any caller, spent once by /?cv_pair=.
-static std::string g_pair_issued;
-static bool g_pair_spent = true;
-static int  g_pair_serial = 0;
-bool pair_token_issue(char* hex_out, size_t out_cap) {
-  char buf[PAIR_TOKEN_HEX_LEN + 1];
-  std::snprintf(buf, sizeof(buf), "%064x", ++g_pair_serial);
-  if (out_cap < sizeof(buf)) return false;
-  std::memcpy(hex_out, buf, sizeof(buf));
-  g_pair_issued = buf;
-  g_pair_spent = false;
-  return true;
-}
-bool pair_token_consume(const char* hex) {
-  if (g_pair_spent || g_pair_issued != hex) return false;
-  g_pair_spent = true;
-  return true;
-}
+// The landing's pair tokens are csi_integration.cpp's own slots, cut below:
+// issued to any caller, spent once by /?cv_pair=.
+bool pair_token_issue(char* hex_out, size_t out_cap);
+bool pair_token_consume(const char* hex);
+void hex_encode(const uint8_t* in, size_t len, char* out);
+// The landing page itself (csi_integration.cpp's template, reduced to its link).
 bool send_pair_landing(httpd_req_t* req) {
   char hex[PAIR_TOKEN_HEX_LEN + 1];
   if (!pair_token_issue(hex, sizeof(hex))) return false;
@@ -172,11 +162,13 @@ bool send_pair_landing(httpd_req_t* req) {
 
 // ── the firmware, cut verbatim ────────────────────────────────────────────
 
-// csi_integration.cpp: the hex decoder, the store and its lookup (its
-// anonymous namespace), the checks (namespace csi_integration), the weak
-// hooks' definitions (file scope), the mint and the encoder.
+// csi_integration.cpp: the clock, the hex decoder, the store and its lookup,
+// the pair-token table (its anonymous namespace), the checks (namespace
+// csi_integration), the weak hooks' definitions (file scope), the mint, the
+// encoder and the pair-token API.
 namespace {
 #include "test_receipt_session_store.inc"
+#include "test_receipt_session_pair.inc"
 }  // namespace
 namespace csi_integration {
 #include "test_receipt_session_hex.inc"
@@ -185,6 +177,7 @@ namespace csi_integration {
 #include "test_receipt_session_hooks.inc"
 namespace csi_integration {
 #include "test_receipt_session_issue.inc"
+#include "test_receipt_session_pairapi.inc"
 }  // namespace csi_integration
 
 // canary_wap.ino: the landing's exchange, the receipt's grants, the QR.
@@ -267,6 +260,7 @@ void reset_world() {
   std::snprintf(g_device.device_id, sizeof(g_device.device_id), "%s", "canary-ab12");
   std::snprintf(g_device.mdns_hostname, sizeof(g_device.mdns_hostname), "%s", "canary-ab12");
   std::memset(&g_sessions, 0, sizeof(g_sessions));
+  std::memset(&g_pair_slots, 0, sizeof(g_pair_slots));
   std::memset(&g_auth, 0, sizeof(g_auth));
   canary::net::claim_ticket::wipe(g_improv_claim);
   g_tap_open = false;
@@ -551,7 +545,7 @@ void test_credential_checks() {
 // not yet past the TTL.
 void test_forged_zero_cookie() {
   reset_world();
-  const uint32_t saved_now = stub_receipt::now_ms;
+  const uint64_t saved_now = stub_receipt::now_ms;
   stub_receipt::now_ms = 60000;   // a minute after boot
   const std::string zeros(cv_session::TOK_HEX_LEN, '0');
   const std::string hdr = "cv_session=" + zeros;
@@ -672,6 +666,74 @@ void test_cookie_attributes() {
   g_tls_enabled = false;
 }
 
+// A session's 24 h hold across millis()'s wrap (sweep F289's second review).
+// millis() is 32 bits and wraps every 2^32 ms (49.7 days of uptime); the
+// store used to take a slot's age from it, so a slot nothing cleared read
+// young again a whole wrap later, and an owner's cookie past its 24 h opened
+// the receipt and the QR once more, for a day, with no tap. The session clock
+// is 64-bit now (session_now_ms()). Arranged as the review's probe was: a
+// landing session in slot 0, the tap's owner session in slot 1.
+void test_session_ends_across_the_millis_wrap() {
+  reset_world();
+  const std::string landing = landing_session();
+  g_tap_open = true;
+  const Reply tapped = call(handle_provisioning_receipt, "", "", "");
+  CHECK(tapped.status == "200 OK");
+  const std::string owner = tapped.set_cookie;
+  const uint64_t minted = stub_receipt::now_ms;
+  CHECK(owner_session("cv_session=" + owner));
+  CHECK(g_sessions.slots[1].active && g_sessions.slots[1].origin == cv_session::Origin::OWNER);
+
+  stub_receipt::now_ms = minted + cv_session::TTL_MS;          // a day on: past its 24 h
+  CHECK(!owner_session("cv_session=" + owner));
+  CHECK(call(handle_provisioning_receipt, "", owner, "").status == "403 Forbidden");
+
+  // A wrap and a minute after the mint. The 32-bit age reads one minute.
+  stub_receipt::now_ms = minted + (1ULL << 32) + 60000;
+  CHECK((uint32_t)(millis() - (uint32_t)minted) == 60000u);
+  CHECK(!any_session("cv_session=" + owner));
+  CHECK(!owner_session("cv_session=" + owner));
+  CHECK(!any_session("cv_session=" + landing));
+  const Reply receipt = call(handle_provisioning_receipt, "", owner, "");
+  CHECK(receipt.status == "403 Forbidden" && !carries_secret(receipt));
+  const Reply qr = call(handle_pairing_qr, "", owner, "");
+  CHECK(qr.status == "401 Unauthorized" && !carries_secret(qr));
+  CHECK(g_receipts == 1 && g_qrs == 0);
+
+  // And a fresh mint after the wrap holds its 24 h and then ends.
+  g_tap_open = true;
+  const std::string after = call(handle_provisioning_receipt, "", "", "").set_cookie;
+  CHECK(owner_session("cv_session=" + after));
+  stub_receipt::now_ms += cv_session::TTL_MS - 1;
+  CHECK(owner_session("cv_session=" + after));
+  stub_receipt::now_ms += 1;
+  CHECK(!owner_session("cv_session=" + after));
+}
+
+// The landing's pair token across the same wrap: issued, never spent, past
+// its ten minutes, then a wrap and a minute after its issue. The exchange
+// mints nothing at either time (it used to mint a landing session after the
+// wrap, from a token the page showed 49.7 days before).
+void test_pair_token_ends_across_the_millis_wrap() {
+  reset_world();
+  const Reply page = call(handle_ui, "", "", "");
+  const size_t at = page.body.find("cv_pair=");
+  CHECK(at != std::string::npos);
+  const std::string pair = page.body.substr(at + 8, csi_integration::PAIR_TOKEN_HEX_LEN);
+  const uint64_t issued = stub_receipt::now_ms;
+  CHECK(csi_integration::pair_token_valid(pair.c_str()));
+
+  stub_receipt::now_ms = issued + 10ULL * 60ULL * 1000ULL;      // its ten minutes are up
+  CHECK(!csi_integration::pair_token_valid(pair.c_str()));
+  stub_receipt::now_ms = issued + (1ULL << 32) + 60000;          // a wrap and a minute on
+  CHECK(!csi_integration::pair_token_valid(pair.c_str()));
+  const Reply exchanged = call(handle_ui, "cv_pair=" + pair, "", "");
+  CHECK(exchanged.status != "302 Found" && exchanged.set_cookie.empty());
+  size_t live = 0;
+  for (const auto& s : g_sessions.slots) live += s.active;
+  CHECK(live == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -693,6 +755,8 @@ int main() {
   test_every_cookie_digit_counts();
   test_cookie_anywhere_in_the_header();
   test_cookie_attributes();
+  test_session_ends_across_the_millis_wrap();
+  test_pair_token_ends_across_the_millis_wrap();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
