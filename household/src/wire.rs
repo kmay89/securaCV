@@ -10,10 +10,10 @@
 //! the LAN API. `epoch` is the roster epoch the challenge was issued under and
 //! `n_h` is 32 bytes from the hub's OS RNG, used once.
 //!
-//! Note on length: the field list above sums to **72** bytes. The v0 draft
-//! (and the naming decisions it was built from) states 88; that total does
-//! not match its own fields. This module follows the fields, and
-//! [`MSG_LEN`] is pinned by a test so a change to either is deliberate.
+//! Note on length: the field list above sums to **72** bytes, which is what
+//! the spec (`spec/household_keys_v0.md` §4.1) states. An earlier draft said
+//! 88, which did not match its own fields. [`MSG_LEN`] is pinned by a test,
+//! so a change to the layout is deliberate.
 
 use crate::posture::HouseholdPosture;
 use crate::{Error, Result};

@@ -8,16 +8,18 @@
 //! | `es256` / `enclave` | ECDSA P-256 SHA-256 over `"securacv-hk-admin-v1\0" ‖ d`, DER |
 //! | `es256` / `fido2`   | an assertion with `clientDataHash = SHA-256("securacv-hk-admin-v1\0" ‖ d)`, UV required |
 //!
-//! A member's own credential may revoke that member ("revoke by holder").
-//! The draft leaves that message open; this crate uses its own domain,
-//! `"securacv-hk-revoke-v1\0" ‖ d`, signed `es256` directly or as a FIDO2
-//! assertion over `SHA-256` of it (UP required, UV not). Cards revoke only
-//! through an admin in v0.
+//! A member's own credential may revoke that member ("revoke by holder"),
+//! over its own domain, `"securacv-hk-revoke-v1\0" ‖ d`, signed `es256`
+//! directly or as a FIDO2 assertion over `SHA-256` of it (UP required, UV
+//! not), as the spec (`spec/household_keys_v0.md` §5.2) states. Cards revoke
+//! only through an admin in v0. The hub countersigns every accepted roster
+//! with Ed25519 over `"securacv-hk-hub-roster-v1\0" ‖ d` (spec §5.1).
 //!
 //! Approvals are counted by **distinct admin handle**. One admin is one
 //! person, decided at the enrollment ceremony; the hub never infers distinct
 //! people from distinct key bytes (and [`crate::roster::Roster::validate`]
-//! refuses one key under two handles).
+//! refuses one key under two handles, and one credential as both an admin
+//! and a member).
 
 use crate::roster::{AdminAlg, AdminEntry, AdminKind, Handle, MemberAlg, MemberEntry};
 use crate::{hex, verify, Error, Result};

@@ -23,9 +23,8 @@ here has been on a bench or had an external security review:
   rules, single-use challenges, the `es256` and `fido2-es256` checks, the
   NTAG 424 DNA `AuthenticateEV2First` reader state machine (checked against
   NXP AN12196's worked examples), the sealed card-key and hub-key stores
-  (§5.4), the posture statement
-  with every witness-side check (§3.2), the output seam (§6.2) and the LAN API
-  (§6.1);
+  (§5.4), the posture statement with every witness-side check (§3.2), the
+  output seam (§6.2) and the LAN API (§6.1);
 - the attention engine, [`src/relay/attention.rs`](../src/relay/attention.rs),
   with its vocabulary in `spec/witness_dictionary.json` and its conformance
   vectors in [`fixtures/attention_v1.json`](fixtures/attention_v1.json) (§7).
@@ -158,12 +157,23 @@ clock steps back far enough to put it in the future.
 
 ### 3.3 Lapse
 
-`HOME_MAX_SECS` is 86 400 (24 h) in v0. The hub issues `home` with
-`not_after = issued_at + home_ttl`, where `home_ttl <= HOME_MAX_SECS` is an
-operator setting (default 43 200, 12 h). Renewal is another intent act. When a
-`home` statement lapses, the hub issues a fresh `away` statement. Witnesses
-that miss it fall to `away` on their own clock anyway. The hub also starts in
-`away` after every restart.
+`HOME_MAX_SECS` is 86 400 (24 h) and `MAX_SKEW_SECS` is 300 (5 min) in v0.
+The hub issues `home` with `not_after = issued_at + home_ttl`, where
+`home_ttl <= HOME_MAX_SECS` is an operator setting (default 43 200, 12 h).
+Renewal is another intent act. When a `home` statement lapses, the hub issues
+a fresh `away` statement. Witnesses that miss it fall to `away` on their own
+clock anyway. The hub also starts in `away` after every restart.
+
+Rules 6 and 7 bound a `home` statement on each witness's own clock: it counts
+for at most `HOME_MAX_SECS + MAX_SKEW_SECS` (24 h 5 min) of that clock,
+whatever the hub's clock said when it signed. The hub's lapse check applies
+the same held-statement test (§3.2) on the hub's own clock, so a `home` also
+lapses at once if the hub clock steps back more than `MAX_SKEW_SECS` behind
+its `issued_at`. A hub clock more than 5 minutes ahead of a witness (give or
+take the minute floor on `issued_at`) makes that witness refuse its
+statements (it behaves as `away`, the fail-safe); a hub clock behind makes
+`home` lapse early. Plain NTP is unauthenticated, so the hub SHOULD take its
+time from an authenticated source (for example chrony with NTS).
 
 ## 4. Challenges and credential bindings
 
@@ -222,9 +232,27 @@ For cards:
 
 ### 4.3 Rate limits
 
-Five rejected responses at one door within ten minutes start a 60-second
-cooldown for that door. The LAN API is one door. Rejections are counted in
-RAM, per door, never per credential.
+Rejections are counted per door and per lane. A door has two lanes:
+**signature** (`es256` and `fido2-es256`: a phone, watch, fob or FIDO2 key,
+over the LAN API or relayed by a satellite) and **card** (`aes128-ev2`). Five
+rejected responses on one lane of one door within ten minutes start a
+60-second cooldown for that lane, so junk on one lane never cools the other.
+The LAN API is one door (`door_id` = 16 zero bytes).
+
+- Only a response to a live challenge counts: the challenge take and every
+  check after it. A request without a paired token, or whose body does not
+  parse, never reaches the limiter (§6.1), so a client with no token cannot
+  start a cooldown. A refusal caused by a cooldown, or by a stale roster
+  (§6.1), is not counted either.
+- A cooldown refuses only `home`, both the challenge and the command. `away`
+  and `night` still go through on a cooling signature lane, so a denial of
+  service cannot hold a house in `home` through the cooldown.
+- The card lane carries `away` and `night` only, and it stays closed while it
+  cools: every trial `AuthenticateEV2First` (§4.2) touches a real card's
+  failed-authentication counter.
+- A cooldown that has ended is forgotten, and its count starts over.
+- Counts are kept in RAM only, per door and lane, never per credential or
+  handle.
 
 ## 5. The roster
 
@@ -292,6 +320,15 @@ One admin is one person, decided at an enrollment ceremony. The hub never
 infers distinct people from distinct key bytes, and refuses one key under two
 handles. A card cannot sign, so in v0 a card is revoked only by an admin.
 
+One credential (the same public key, or the same FIDO2 credential id) is
+never both an admin and a member: the roster is refused. A FIDO2
+authenticator signs whatever `clientDataHash` the relaying device hands it,
+so a credential in both lists would let a compromised relay turn an ordinary
+door touch into an admin approval. Distinct credentials on one authenticator
+are still only as safe as the device relaying them, so an admin credential
+belongs on an authenticator kept for admin approvals, approved through a
+device the admin trusts.
+
 ### 5.3 Change rules
 
 | Change | Requires |
@@ -306,13 +343,59 @@ there is no button yet. The 24-hour pending period is enforced, but nothing
 announces a pending change to every admin yet: `household_checker roster
 pending` lists it.
 
+`roster genesis` defaults to `threshold` 1. With `threshold` 1, one admin's
+approval is all any change needs (an add also needs the confirm at the hub),
+including removing every other admin once the 24-hour pending period has
+passed, and nothing announces that pending change beyond `roster pending`.
+So "one stolen admin key cannot take over" holds only with `threshold` 2 or
+more. The trade-off: with exactly two admins and `threshold` 2, losing one
+admin key leaves no way to remove it, because removing an admin needs two
+current admins. So `threshold` 2 wants at least three admins.
+
 ### 5.4 Secrets and backups
 
-Card keys, and only card keys, are secret: they are clone-capable material.
-They live in the checker's data directory, sealed with XChaCha20-Poly1305
-under a key-encryption key that is **not** in that directory (a separate file
-or a passphrase). The directory is excluded from backups. A hub compromise
-means re-keying every card. Every other roster field is public-key material.
+Two files in the checker's data directory are secret. Both are sealed with
+XChaCha20-Poly1305 under keys derived (HKDF-SHA256, salt = the household id)
+from one key-encryption key (KEK):
+
+| File | Magic | HKDF info | Holds |
+|---|---|---|---|
+| `cards.sealed` | `SCVK` | `securacv-hk-cards-v1` | the card keys, which are clone-capable |
+| `hub_keys.sealed` | `SCVH` | `securacv-hk-hub-keys-v1` | the hub posture key and the hub roster key |
+
+The posture key is the key every witness pins (§3.2 rule 3), and it alone
+decides whether indoor witnesses sense. The roster key countersigns every
+accepted roster (§5.1). Their public halves are in plaintext
+`hub_keys.json`. No roster field is secret.
+
+The KEK is a file of 64 hex characters. The checker refuses a KEK path
+inside the data directory, and (on Unix) a KEK file readable by group or
+others. There is no passphrase option. Only the commands that open sealed
+material take `--kek`: `init`, `roster genesis`, `roster apply`,
+`card provision` and `serve`; every other command reads public material only.
+`card provision` opens the hub keys first, which proves the KEK belongs to
+this household, so a card key is never sealed under a KEK the server cannot
+open.
+
+Sealing protects a copy of the data directory (a backup, a tarball). It does
+not protect a disk image that also holds the KEK file. Excluding the data
+directory from backups, and keeping the KEK out of any backup that holds the
+directory, is the operator's job: v0 does not, and cannot, enforce it.
+
+A leaked card key means re-keying that card. A leaked posture key lets anyone
+sign `home`, skipping principle 4 entirely, and a forged statement with a huge
+`seq` would lock out every genuine one (§3.2 rule 4), so recovery is a new
+posture key and re-pairing every witness. A hub compromise means both:
+re-keying every card, and a new posture key with every witness re-paired.
+
+Applying a roster change (`roster apply`) removes every sealed card key whose
+handle is neither a card member of the applied roster nor a card member of a
+pending proposal, and reports how many it removed (`card_keys_removed`), so
+the hub does not keep a revoked card's key, the only thing that can recognize
+or clone that card. `card provision` reads a card key from a file
+(`--key-file`), never from the command line, where it would land in shell
+history and in `/proc` (`--key-hex` is refused); without one it generates a
+random key and prints it once.
 
 ### 5.5 Rollback
 
@@ -328,9 +411,29 @@ directory from a backup rolls it back with the roster.
 
 Served by `household_checker serve`. It binds loopback (`127.0.0.1:8787`) by
 default, and a LAN bind is explicit: the checker refuses any non-loopback
-address unless the operator passes `--allow-lan-plaintext`. v0 has no
-in-process TLS, so a LAN bind SHOULD sit behind TLS (a TLS-terminating proxy on
-the hub). Without it, everything below crosses the LAN in cleartext.
+address unless the operator passes `--allow-lan-plaintext`.
+
+**On any bind, it answers only peers on the home network.** A connection from
+any other peer address is closed at accept, without a response. The home
+network is loopback; IPv4 private (RFC 1918) and link-local; IPv6
+unique-local (`fc00::/7`) and link-local (`fe80::/10`); and the IPv4-mapped
+IPv6 forms of those. Everything else is refused, including `100.64.0.0/10`
+(the shared address space Tailscale and carrier NAT use) and public IPv6
+addresses, so on a home LAN that uses public IPv6 addresses, bind an IPv4 LAN
+address. A proxy, VPN or ingress that re-originates traffic from a private or
+loopback address defeats the filter, so the LAN API MUST NOT sit behind one
+that accepts peers from elsewhere. "A key does nothing from outside the home
+network" is therefore enforced by peer address: a strong default, not a
+cryptographic guarantee.
+
+v0 has no in-process TLS, so a LAN bind SHOULD sit behind TLS (a
+TLS-terminating proxy on the hub, which must itself accept home-network peers
+only, since every request it forwards arrives from its own address). Without
+it, every request crosses the LAN in cleartext, including each client's bearer
+token (stable per client) and, in a `/v1/command` body, the member handle. A
+passive listener on the LAN can therefore link acts to a device and to a
+member, and can replay a sniffed token to read the posture. A signature still
+has to come from an enrolled key.
 
 | Method | Path | Body | Result |
 |---|---|---|---|
@@ -344,19 +447,54 @@ the hub). Without it, everything below crosses the LAN in cleartext.
   household posture without a response from an enrolled credential to a live
   challenge. Nothing else (a token, an Apple Home write, a Home Assistant
   call, an MQTT word) can change it.
-- **A session token binds challenges, and grants nothing on its own.** v0
-  names a LAN session by a client token that `household_checker pair` mints
-  for one client (`Authorization: Bearer …`). The token's SHA-256 is the
-  session a challenge is bound to (§4.1). It belongs to the checker; it is not
-  the kernel API's paired bearer.
+- **A session token binds challenges and reads the posture; it cannot change
+  it.** v0 names a LAN session by a client token that `household_checker
+  pair` mints for one client (`Authorization: Bearer …`), at most 32 paired
+  clients. The token's SHA-256 is the session a challenge is bound to (§4.1).
+  A token cannot change the household posture, but it does read it:
+  `GET /v1/posture` gives its holder the posture word, `not_after` and the
+  signed statement (`issued_at` to the minute, and `seq`). `household_checker
+  pair --reset` unpairs every client, and takes effect while the server runs.
+  There is no per-token unpair: tokens are deliberately not linked to
+  members, so revoking a member does not unpair its device, and after a
+  revoke `roster apply` tells the operator to run `pair --reset` and pair the
+  clients they keep again. The token belongs to the checker; it is not the
+  kernel API's paired bearer.
 - **Every rejection is the same `401` with the same body**, whether the token
-  was wrong, the door was cooling down, the challenge was used, the handle was
-  unknown, the signature was bad or the class was not allowed. No response
-  says whether a handle exists.
+  was missing or wrong, the request cap was reached, the body did not parse,
+  `home` was refused during a cooldown (§4.3) or while the roster is stale
+  (below), the challenge was used, the handle was unknown, the signature was
+  bad or the class was not allowed. No response says whether a handle exists,
+  and neither does the time a refusal takes: every command that reaches the
+  credential check runs exactly one P-256 check, against a dummy key when the
+  handle is unknown, expired, a card, or does not match the binding the
+  request used (an `es256` response for a FIDO2 member or the other way round,
+  a wrong `rp_id`, no UV from an `intent` FIDO2 member). A test asserts this by
+  counting the checks, not by timing them.
+- **A request without a paired token is refused before anything is
+  counted**: it is charged neither to the request cap nor to the door limiter,
+  so a client with no token cannot crowd out paired clients or start a
+  cooldown. A body that does not parse never reaches the door limiter either.
 - The server is bounded like the kernel API: 8 KiB per request, a 4 KiB
-  body, one request per connection, a 5-second connection budget and a global
-  request-rate cap. It is single-threaded.
-- It logs startup, shutdown and storage failures, and nothing per request.
+  body, one request per connection, no chunked bodies, and a cap of 600
+  requests a minute for all paired clients together, charged only after the
+  token matches. Each connection is served on its own thread: at most 16 at
+  once, and at most 4 from one peer address; a connection over either cap is
+  closed at accept. Every connection has an absolute 5-second budget, and
+  each read and write timeout is cut to what is left of it (at most 3 s each).
+  A LAN host with many addresses can still take every slot. Any network
+  denial of service against the LAN API holds the current posture; if that
+  is `home`, it stays until it lapses at `home_ttl`, so a short `home_ttl`
+  limits it.
+- **It reloads while it runs.** The roster chain, the sealed card store and
+  the pairings reload independently. A part that fails to load keeps its
+  previous state, is retried on every poll, and is logged once. If the roster
+  chain changed but does not load or pass its checks (§5.1, §5.5), the roster
+  is **stale**: `home` is refused until a roster passes them, and `away` and
+  `night` are still checked against the last roster that did, because raising
+  sensing is safe whoever asks.
+- It logs startup, shutdown, reload trouble and storage failures, and nothing
+  per request: no handle, credential id or peer address.
 
 ### 6.2 Output seam
 
@@ -366,6 +504,21 @@ serves the same bytes. A reader MUST read at most 112 bytes, run every check
 in §3.2, and behave as `away` on any failure. v0 publishes nothing over MQTT.
 An unsigned broker word would let any broker writer quiet a house, and a
 retained topic would tell every subscriber the exact time of each change.
+
+An accepted `away` or `night` that does not change the current posture
+publishes nothing: no new `seq`, and the seam is not rewritten, so the seam
+does not reveal a tap that changed nothing. `home` is always reissued,
+because that renews its lapse.
+
+The seam holds the current statement only, not a history, but the data
+directory states the time of the last posture change: the seam's `issued_at`
+and `not_after`, and `seq.json`'s `last_seq` (whose value `>> 10` is that
+minute), give the minute, and both files' modification times give the
+second. That change was
+a command, a lapse or a restart. Any live reader of the seam or of
+`GET /v1/posture` learns each change time to its own polling precision.
+Whether that is acceptable is for the posture RFC (§9) to decide, beside
+whether Home Assistant may show the household posture at all.
 
 ### 6.3 Key satellite (not built)
 
@@ -516,7 +669,8 @@ replays the same file before it claims to follow these rules.
   credential or a quieting signal.
 - **No MQTT, no in-process TLS** (§6.1, §6.2).
 - **No door locks.** Locks and Aliro wallets are a separate device class.
-- **No journal of posture changes.** The checker records none, and logs no
+- **No journal of posture changes.** The checker records none (the data
+  directory states the time of the last change only, §6.2), and logs no
   per-request line.
 - **Nothing on a public chain.**
 
