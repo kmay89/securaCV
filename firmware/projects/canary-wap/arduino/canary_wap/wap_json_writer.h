@@ -33,6 +33,11 @@
  *    ArduinoJson writes as they are, and a text that does not fit is cut on
  *    a character boundary, never inside one. raw_control() is the one test
  *    of which bytes, for str(), the replace_controls writer and it.
+ *  - shows_as() and listed_by_shown() read that text backwards, the way a
+ *    page shows it: a page posts back the SSID a list showed it, U+FFFD and
+ *    all, and the device joins the listed network that text names by the
+ *    network's own bytes (the F262 review: a network whose name held a
+ *    control byte was listed but could not be joined from the list).
  *  - Every write is whole or not at all: a write that does not fit before the
  *    reserve sets `overflow` and writes nothing, and every write after it is
  *    refused too, so the text is always a run of whole writes followed by a
@@ -142,6 +147,93 @@ inline bool replaced_text(char* out, size_t cap, const char* s) {
   }
   out[len] = '\0';
   return true;
+}
+
+/* The next character of a string at `p` (not its NUL) as a page shows the
+ * text replaced_text() wrote for it, and posts it back: a browser reads an
+ * answer through fetch().json() or a TextDecoder, which decode UTF-8 the
+ * WHATWG way, each ill-formed sequence's maximal subpart (a byte no
+ * sequence starts with, or a lead byte and the continuation bytes it took
+ * before one it could not) becoming one U+FFFD, and JSON.stringify() and
+ * the request encode what it read as UTF-8 again. `*text` and the return
+ * value are the bytes posted back for it: U+FFFD's three for a
+ * raw_control() byte (replaced_text() wrote U+FFFD) or an ill-formed
+ * subpart (the browser read U+FFFD), the character's own bytes otherwise.
+ * `*span` is the bytes of the string it takes. */
+inline size_t shown_piece(const unsigned char* p, const unsigned char** text, size_t* span) {
+  const unsigned char c = p[0];
+  size_t need = 0;                          /* continuation bytes the lead byte wants */
+  unsigned char lo = 0x80, hi = 0xBF;       /* the first one's range (WHATWG's bounds) */
+  if (c >= 0xC2 && c <= 0xDF) {
+    need = 1;
+  } else if (c >= 0xE0 && c <= 0xEF) {
+    need = 2;
+    if (c == 0xE0) lo = 0xA0;               /* no overlong form */
+    if (c == 0xED) hi = 0x9F;               /* no surrogate */
+  } else if (c >= 0xF0 && c <= 0xF4) {
+    need = 3;
+    if (c == 0xF0) lo = 0x90;               /* no overlong form */
+    if (c == 0xF4) hi = 0x8F;               /* nothing past U+10FFFF */
+  }
+  bool whole = c < 0x80 ? !raw_control(c) : need > 0;
+  size_t n = 1;
+  while (whole && n <= need) {
+    if (p[n] < lo || p[n] > hi) {           /* the string's NUL ends it too */
+      whole = false;
+      break;
+    }
+    lo = 0x80;
+    hi = 0xBF;
+    ++n;
+  }
+  *span = n;
+  *text = whole ? p : (const unsigned char*)kReplacement;
+  return whole ? n : kReplacementLen;
+}
+
+/* True when a page that read replaced_text()'s whole text of `raw` posts
+ * back exactly `shown` (NULL is ""): the inverse a post of a listed name is
+ * read through (the F262 review: GET /api/wifi/scan, GET /api/wifi and the
+ * BLE provisioning list show a network's control bytes as U+FFFD, and a
+ * browser shows any byte that is not UTF-8 the same way; the wizard, the
+ * dashboard and the phone post back the text they were shown, which no
+ * access point broadcasts, and the join needs the network's own bytes).
+ * Reads at most strlen(shown) + 1 bytes of `shown`. */
+inline bool shows_as(const char* raw, const char* shown) {
+  const unsigned char* s = (const unsigned char*)(shown ? shown : "");
+  for (const unsigned char* p = (const unsigned char*)(raw ? raw : ""); *p;) {
+    const unsigned char* text;
+    size_t span;
+    const size_t len = shown_piece(p, &text, &span);
+    for (size_t k = 0; k < len; ++k) {
+      if (s[k] != text[k]) return false;   /* a NUL in `shown` differs here */
+    }
+    s += len;
+    p += span;
+  }
+  return *s == '\0';
+}
+
+/* Which of `count` listed strings a posted text names: the first whose bytes
+ * are the posted text's own (a name that holds U+FFFD itself is its own
+ * network), else the first a page shows as the posted text (shows_as(): two
+ * names that differ only in bytes a page shows as U+FFFD show as one, and
+ * the first listed, the strongest in a scan's order, is the one meant),
+ * else -1. `at(i)` gives the i-th listed string (NULL is skipped). A posted
+ * text no listed string shows as names nothing, and the caller keeps it as
+ * posted (a name typed by hand, a hidden network). */
+template <typename At>
+inline int listed_by_shown(const char* posted, int count, At at) {
+  if (posted == nullptr) return -1;
+  for (int i = 0; i < count; ++i) {
+    const char* raw = at(i);
+    if (raw != nullptr && strcmp(raw, posted) == 0) return i;
+  }
+  for (int i = 0; i < count; ++i) {
+    const char* raw = at(i);
+    if (raw != nullptr && shows_as(raw, posted)) return i;
+  }
+  return -1;
 }
 
 /* The bytes str() spends on `s`, its two quotes included (NULL is ""). */

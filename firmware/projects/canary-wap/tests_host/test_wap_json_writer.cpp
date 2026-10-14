@@ -31,6 +31,14 @@
 // raw_control()) fails 245 checks, cutting by bytes rather than characters
 // 20, and testing the room one byte too late aborts under ASan with a
 // heap-buffer-overflow.
+//
+// And shows_as() and listed_by_shown(), that text read backwards (the F262
+// review): what a page posts back for a listed SSID, after a browser decoded
+// the answer (browser_utf8(), the WHATWG decoder, checked against Node's
+// TextDecoder), names the listed network, which is joined by its own bytes.
+// Reading the post byte for byte, as replaced_text() alone writes it, fails
+// 1846 checks (every name a browser shows a byte of as U+FFFD), and each of
+// the decoder's four range bounds dropped fails 41 to 85.
 
 // Arduino.h's global names first, as in the sketch's translation unit.
 #include "arduino_globals.h"
@@ -605,6 +613,215 @@ void test_replaced_text_cuts_on_a_character_boundary() {
   CHECK(wap_json::replaced_text(four, sizeof(four), nullptr) && four[0] == '\0');
 }
 
+// The list's text read backwards (the F262 review). GET /api/wifi/scan,
+// GET /api/wifi and the BLE provisioning list show a network's control
+// bytes as U+FFFD, a browser shows any byte that is not UTF-8 the same way,
+// and the wizard, the dashboard and the phone post back the text they were
+// shown (the answer decoded, JSON.parse, JSON.stringify of the same string,
+// encoded as UTF-8 again): that text names the listed network, which is
+// joined by its own bytes.
+//
+// What a browser's UTF-8 decoder reads (the WHATWG Encoding Standard's
+// "UTF-8 decoder", which fetch().json() and TextDecoder run), written back
+// out as UTF-8: each ill-formed sequence's maximal subpart as U+FFFD.
+std::string browser_utf8(const std::string& in) {
+  std::string out;
+  uint32_t cp = 0;
+  int needed = 0, seen = 0;
+  unsigned lower = 0x80, upper = 0xBF;
+  auto put = [&](uint32_t c) {
+    if (c < 0x80) {
+      out.push_back((char)c);
+    } else if (c < 0x800) {
+      out.push_back((char)(0xC0 | (c >> 6)));
+      out.push_back((char)(0x80 | (c & 0x3F)));
+    } else if (c < 0x10000) {
+      out.push_back((char)(0xE0 | (c >> 12)));
+      out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
+      out.push_back((char)(0x80 | (c & 0x3F)));
+    } else {
+      out.push_back((char)(0xF0 | (c >> 18)));
+      out.push_back((char)(0x80 | ((c >> 12) & 0x3F)));
+      out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
+      out.push_back((char)(0x80 | (c & 0x3F)));
+    }
+  };
+  for (size_t i = 0; i < in.size();) {
+    const unsigned b = (unsigned char)in[i];
+    if (needed == 0) {
+      ++i;
+      if (b <= 0x7F) { put(b); }
+      else if (b >= 0xC2 && b <= 0xDF) { needed = 1; cp = b & 0x1F; }
+      else if (b >= 0xE0 && b <= 0xEF) {
+        if (b == 0xE0) lower = 0xA0;
+        if (b == 0xED) upper = 0x9F;
+        needed = 2; cp = b & 0xF;
+      } else if (b >= 0xF0 && b <= 0xF4) {
+        if (b == 0xF0) lower = 0x90;
+        if (b == 0xF4) upper = 0x8F;
+        needed = 3; cp = b & 0x7;
+      } else { put(0xFFFD); }
+      continue;
+    }
+    if (b < lower || b > upper) {        // the byte is read again (not consumed)
+      cp = 0; needed = 0; seen = 0; lower = 0x80; upper = 0xBF;
+      put(0xFFFD);
+      continue;
+    }
+    ++i;
+    lower = 0x80; upper = 0xBF;
+    cp = (cp << 6) | (b & 0x3F);
+    if (++seen == needed) {
+      put(cp);
+      cp = 0; needed = 0; seen = 0;
+    }
+  }
+  if (needed != 0) put(0xFFFD);          // the stream ended inside a sequence
+  return out;
+}
+
+// What a page posts back for the SSID `raw` it was shown: replaced_text()'s
+// whole text, written by ArduinoJson into `{"ssid":...}`, the answer's
+// bytes decoded as a browser decodes them (fetch().json(), a TextDecoder),
+// JSON.parse, and the string encoded as UTF-8 again (JSON.stringify writes
+// \b \f \n \r \t as escapes ArduinoJson reads back to the bytes, and every
+// other character as it is). browser_utf8() above was checked against
+// Node 22's TextDecoder on 200 000 seeded byte strings, every one equal.
+std::string posted_back(const std::string& raw) {
+  Exact e(wap_json::replaced_cap(raw.size()));
+  CHECK(wap_json::replaced_text(e.buf, e.cap, raw.c_str()));
+  json_strict::Value v;
+  if (!json_strict::parse(browser_utf8("{\"ssid\":" + arduinojson_spelling(e.buf) + "}"), &v)) {
+    return std::string("\x01unparsed");
+  }
+  const json_strict::Value* got = v.get("ssid");
+  return got != nullptr && got->kind == json_strict::Value::String ? got->text : std::string("\x01none");
+}
+
+// True when no byte of `s` is a character a browser reads as U+FFFD or
+// replaced_text() writes as one: the post is then the name's own bytes.
+bool posts_itself(const std::string& s) {
+  return browser_utf8(expected_text(s)) == s;
+}
+
+// Every byte value at three places in a name comes back to the network's
+// bytes: a control byte replaced_text() wrote as U+FFFD, a byte a browser
+// reads as U+FFFD (0x80 to 0xFF alone are never UTF-8), and every other byte
+// as it is; the 32-byte name of 0x01 (96 bytes of text, past the 32 a join
+// takes) comes back to its 32 bytes; and 400 seeded names of 1 to 32
+// arbitrary bytes, and 400 more drawn from the bytes UTF-8 turns on (lead
+// bytes, continuation bytes, the overlong, surrogate and past-U+10FFFF
+// bounds), are each found among the others. Without listed_by_shown() the
+// post is the text itself, which no listed network has.
+void test_a_listed_name_is_read_back_to_its_own_bytes() {
+  for (int b = 1; b < 256; ++b) {
+    for (int at = 0; at < 3; ++at) {
+      std::string raw = "kitchen";
+      if (at == 0) raw.insert(raw.begin(), (char)b);
+      else if (at == 1) raw.insert(3, 1, (char)b);
+      else raw.push_back((char)b);
+      const std::vector<std::string> list = {"Shed", raw, "Attic"};
+      const std::string posted = posted_back(raw);
+      const int i = wap_json::listed_by_shown(posted.c_str(), (int)list.size(),
+                                              [&](int k) { return list[k].c_str(); });
+      CHECK(i == 1);
+      CHECK(wap_json::shows_as(raw.c_str(), posted.c_str()));
+      // The post differs from the network's bytes exactly when the list or
+      // the browser replaced one.
+      CHECK((posted != raw) == (wap_json::raw_control((unsigned char)b) || b >= 0x80));
+      CHECK((posted != raw) == !posts_itself(raw));
+    }
+  }
+  const std::string ones(32, '\x01');
+  const std::vector<std::string> list = {ones};
+  const std::string posted = posted_back(ones);
+  CHECK(posted.size() == 96);
+  CHECK(wap_json::listed_by_shown(posted.c_str(), 1, [&](int k) { return list[k].c_str(); }) == 0);
+  // A name in Latin-1 (a browser shows its 0xE9 as U+FFFD) and one with a
+  // lead byte cut short of its sequence, each with a control byte too.
+  for (const std::string& raw : {std::string("Caf\xE9\x01"), std::string("\xE2\x82\x01" "x"),
+                                std::string("\xF0\x9F\x98\x80\x1F"), std::string("\xED\xA0\x80")}) {
+    const std::vector<std::string> one = {"Shed", raw};
+    const std::string p = posted_back(raw);
+    CHECK(p != raw);
+    CHECK(wap_json::listed_by_shown(p.c_str(), 2, [&](int k) { return one[k].c_str(); }) == 1);
+  }
+  const unsigned char pool[] = {0x01, 0x1F, 0x09, 0x0A, 0x41, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF,
+                                0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1,
+                                0xF3, 0xF4, 0xF5, 0xFF, 0xBD, 0x85};
+  uint32_t seed = 0x0dd5eedu;
+  for (int set = 0; set < 2; ++set) {
+    std::vector<std::string> names;
+    for (int k = 0; k < 400; ++k) {
+      std::string s;
+      seed = seed * 1103515245u + 12345u;
+      const size_t n = 1 + (seed >> 16) % 32;
+      for (size_t i = 0; i < n; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        s.push_back(set == 0 ? (char)(1 + (seed >> 16) % 255) : (char)pool[(seed >> 16) % sizeof(pool)]);
+      }
+      names.push_back(s);
+    }
+    for (size_t k = 0; k < names.size(); ++k) {
+      const std::string p = posted_back(names[k]);
+      CHECK(wap_json::shows_as(names[k].c_str(), p.c_str()));
+      const int i = wap_json::listed_by_shown(p.c_str(), (int)names.size(),
+                                              [&](int j) { return names[j].c_str(); });
+      // The first listed name a page shows as the same text: this one, unless
+      // an earlier one shows the same (two names that differ only in bytes a
+      // page shows as U+FFFD), or one is the text itself.
+      CHECK(i >= 0 && (names[i] == p || (i <= (int)k && posted_back(names[i]) == p)));
+    }
+  }
+}
+
+// What a post names when the list holds more than one candidate: a name
+// whose own bytes are the posted text wins (a network that holds U+FFFD
+// itself), then the first listed that shows as it; a text no listed name
+// shows as names none (the caller keeps it as posted), and so does a text
+// that is a listed name's shown text cut short or run on.
+void test_listed_by_shown_prefers_a_name_that_is_its_own_text() {
+  const std::string shown = "kit\xEF\xBF\xBD" "chen";
+  {
+    const std::vector<std::string> list = {"kit\x01" "chen", shown, "kit\x02" "chen"};
+    CHECK(wap_json::listed_by_shown(shown.c_str(), 3, [&](int k) { return list[k].c_str(); }) == 1);
+  }
+  {
+    const std::vector<std::string> list = {"Shed", "kit\x02" "chen", "kit\x01" "chen", "kit\xFF" "chen"};
+    CHECK(wap_json::listed_by_shown(shown.c_str(), 4, [&](int k) { return list[k].c_str(); }) == 1);
+  }
+  {
+    const std::vector<std::string> list = {"kit\x01" "chen"};
+    auto at = [&](int k) { return list[k].c_str(); };
+    CHECK(wap_json::listed_by_shown("kitchen", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown("kit\xEF\xBF\xBD" "che", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown("kit\xEF\xBF\xBD" "chens", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown("kit\xEF\xBF" "chen", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown("kit\x01" "chen\x01", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown("", 1, at) == -1);
+    CHECK(wap_json::listed_by_shown(nullptr, 1, at) == -1);
+    CHECK(wap_json::listed_by_shown(shown.c_str(), 0, at) == -1);
+  }
+  // A NULL row is skipped; \t, \n and the like are not replaced, so a name
+  // holding one is its own text; a valid sequence is its own text too.
+  const char* rows[] = {nullptr, "a\tb", "Caf\xC3\xA9"};
+  CHECK(wap_json::listed_by_shown("a\tb", 3, [&](int k) { return rows[k]; }) == 1);
+  CHECK(wap_json::listed_by_shown("Caf\xC3\xA9", 3, [&](int k) { return rows[k]; }) == 2);
+  CHECK(wap_json::listed_by_shown("Caf\xEF\xBF\xBD", 3, [&](int k) { return rows[k]; }) == -1);
+  CHECK(wap_json::shows_as("", "") && !wap_json::shows_as("", "x") && !wap_json::shows_as("x", ""));
+  CHECK(wap_json::shows_as(nullptr, nullptr) && wap_json::shows_as("\x01", "\xEF\xBF\xBD"));
+  // One U+FFFD per maximal subpart, as the WHATWG decoder reads it: E2 82
+  // cut short is one, F0 alone before ASCII one, ED A0 (a surrogate's start)
+  // two, and C0 AF (an overlong form) two.
+  CHECK(wap_json::shows_as("\xE2\x82" "A", "\xEF\xBF\xBD" "A"));
+  CHECK(!wap_json::shows_as("\xE2\x82" "A", "\xEF\xBF\xBD\xEF\xBF\xBD" "A"));
+  CHECK(wap_json::shows_as("\xF0" "A", "\xEF\xBF\xBD" "A"));
+  CHECK(wap_json::shows_as("\xED\xA0", "\xEF\xBF\xBD\xEF\xBF\xBD"));
+  CHECK(wap_json::shows_as("\xC0\xAF", "\xEF\xBF\xBD\xEF\xBF\xBD"));
+  CHECK(wap_json::shows_as("\xF4\x8F\xBF\xBF", "\xF4\x8F\xBF\xBF"));
+  CHECK(wap_json::shows_as("\xF4\x90\x80\x80", "\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"));
+}
+
 }  // namespace
 
 int main() {
@@ -618,6 +835,8 @@ int main() {
   test_replaced_text_writes_each_control_byte_as_u_fffd();
   test_replaced_text_keeps_a_32_byte_ssid_whole();
   test_replaced_text_cuts_on_a_character_boundary();
+  test_a_listed_name_is_read_back_to_its_own_bytes();
+  test_listed_by_shown_prefers_a_name_that_is_its_own_text();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
