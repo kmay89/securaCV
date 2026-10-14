@@ -1080,8 +1080,8 @@ def rust_device_word_arms(body: str, what: str) -> tuple[list[tuple[str, str]], 
     i, end = 3, len(toks) - 1
     while i < end:
         arm_at = i
-        shape = (f"every arm must be `\"word\" => EventClass::X,` (or `\"a\" | \"b\" => ...`), "
-                 f"then `_ => EventClass::X`")
+        shape = ("every arm must be `\"word\" => EventClass::X,` (or `\"a\" | \"b\" => ...`), "
+                 "then `_ => EventClass::X`")
         if fallback is not None:
             err(f"[parse] {where}: an arm after the `_ =>` fallback: `{_tok_line(body, toks, i)}`")
             return None
