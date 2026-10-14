@@ -208,6 +208,7 @@ CI:           firmware.yml "Regression guard", via regression_check.sh
 
 from __future__ import annotations
 
+import bisect
 import functools
 import re
 import sys
@@ -2697,9 +2698,23 @@ def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
     errors: list[str] = []
     used: set[tuple[str, str]] = set()
 
+    # Each file's functions and line breaks, once: where() runs for every keyed value and printf
+    # argument in the sketch, and the self-test runs the whole check once per mutation.
+    fns_in: dict[str, list[Fn]] = {}
+    for fs in idx.fns.values():
+        for f in fs:
+            if f.body:
+                fns_in.setdefault(f.file, []).append(f)
+    newlines: dict[str, list[int]] = {}
+
     def where(name: str, code: str, at: int) -> tuple[str, Fn | None]:
-        fn = fn_containing(idx, name, at)
-        return f"{name}:{code.count(chr(10), 0, at) + 1}: {fn.name if fn else '?'}()", fn
+        fn = None
+        for f in fns_in.get(name, ()):
+            if f.body[0] <= at < f.body[1] and (fn is None or f.body[0] > fn.body[0]):
+                fn = f
+        if name not in newlines:
+            newlines[name] = [m.start() for m in re.finditer("\n", code)]
+        return f"{name}:{bisect.bisect_left(newlines[name], at) + 1}: {fn.name if fn else '?'}()", fn
 
     alias_cache: dict[tuple[str, int], set[str]] = {}
 
