@@ -181,6 +181,7 @@ struct Read {
 };
 
 Read g_read;
+int g_power_on_reads = 0;  // splashes read at power-on (main() needs one)
 
 // The tail: the plain square splash.cpp turns under the bubble.
 lv_obj_t* find_tail(lv_obj_t* scr) {
@@ -391,6 +392,7 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
   // starts as the previous splash's ration left it. Printed for that one:
   // when each reaction the mark let through was drawn.
   if (first && R.t0 == 0) {
+    g_power_on_reads++;
     int at = 0, until = -1;
     bool wordless = true;
     for (uint8_t k = 0; k < canary::story::kHello.n; ++k) {
@@ -540,6 +542,12 @@ int main() {
   // turn); canvases() keeps one of each.
   CHECK(mine >= (kBuild == 0 ? 1 : kBuild == 1 ? 6 : 2),
         "only %d canvases for this build", mine);
+  // The F279 read runs on the process's first splash only, and only when
+  // that one is a first meeting at tick 0: a reorder of the plays above
+  // would skip it without a word, so it must have run exactly once.
+  CHECK(g_power_on_reads == 1,
+        "the first meeting at power-on was read %d times (one is owed: the "
+        "first play must be a first meeting at tick 0)", g_power_on_reads);
   std::printf("  %d canvases, %d of them (x ladder) with a moved first-meeting "
               "seat\n", mine, moved);
   if (g_fail == 0) {
