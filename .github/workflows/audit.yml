@@ -100,7 +100,7 @@ jobs:
       # crate whose Cargo.lock is gitignored, so there is nothing to audit and
       # `cargo audit -f desktop/hub-core/Cargo.lock` would fail to load the file.
       - name: Audit shipped desktop / tvOS lockfiles
-        if: ${{ !cancelled() }}
+        if: ${{ success() || failure() }}
         run: |
           rc=0
           for lock in \
@@ -120,7 +120,7 @@ jobs:
       # concluded, so its result is always produced and a desktop advisory
       # never stands in for it (or hides one in it).
       - name: Audit the household-key checker lockfile
-        if: ${{ !cancelled() }}
+        if: ${{ success() || failure() }}
         run: cargo audit -f household/Cargo.lock
 
   cargo-deny:
