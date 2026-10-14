@@ -84,13 +84,15 @@ jobs:
 
   unused-css:
     # No class or id selector in canary-local/assets/*.css that no page
-    # (canary-local/*.html) or first-party script (canary-local/assets/*.js,
-    # *.mjs)
-    # names (sweep CI16). Classes a script builds at run time (`wire-${dir}`,
-    # "flash-map-" + kind) are read from the scripts: a built prefix plus a
-    # value the pages or scripts name counts as used. A name built from data
-    # the scripts transform is listed in the tool's ALLOW with where it is
-    # built, and an entry that is no longer needed fails the job. The tool runs
+    # (canary-local/*.html) or first-party script (canary-local/assets/*.js
+    # and *.mjs) names (sweep CI16). Classes a script builds at run time
+    # (`wire-${dir}`, "flash-map-" + kind) are read from the scripts: a built
+    # prefix plus a value the pages or scripts name counts as used. A name
+    # built from data the scripts transform is listed in the tool's ALLOW
+    # with where it is built, and an entry that is no longer needed fails the
+    # job. Strings and comments are read in one pass, and a sheet the pass
+    # cannot read (a string or comment that never closes, a stray brace, an
+    # escaped selector) fails the job rather than being skipped. The tool runs
     # its own probes first and refuses to pass the stylesheets if one comes
     # out wrong. Node only, no install: plain fs reads.
     name: Unused CSS selectors (canary-local/assets)
