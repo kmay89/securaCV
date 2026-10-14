@@ -17,8 +17,8 @@
 // ---- vocabulary presentation -------------------------------------------
 
 const EVENT_TYPE_META = {
-  boundary_crossing_object_large: { label: 'Large object crossed boundary', family: 'move' },
-  boundary_crossing_object_small: { label: 'Small object crossed boundary', family: 'move' },
+  boundary_crossing_object_large: { label: 'Person or vehicle', family: 'move' },
+  boundary_crossing_object_small: { label: 'Animal or small object', family: 'move' },
   acoustic_impulse_in_zone: { label: 'Acoustic impulse in zone', family: 'sound' },
   presence_in_restricted_zone: { label: 'Presence in restricted zone', family: 'touch' },
   vehicle_presence_after_hours: { label: 'Vehicle presence after hours', family: 'touch' },

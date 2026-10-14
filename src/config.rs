@@ -78,8 +78,132 @@ fn config_string(value: Option<String>, default: &str) -> String {
 /// token path, no default — a kernel that persists no token has no secret
 /// directory to put a second one in.
 fn default_viewer_token_path(token_path: Option<&Path>) -> Option<PathBuf> {
+    default_sibling_path(token_path, crate::api::VIEWER_TOKEN_FILE_NAME)
+}
+
+/// A file that lives beside the capability token when nothing names it
+/// (the viewer set, the paired set, the pairing code): same directory, same
+/// "no token path, no default" rule.
+fn default_sibling_path(token_path: Option<&Path>, name: &str) -> Option<PathBuf> {
     let dir = token_path?.parent()?;
-    Some(dir.join(crate::api::VIEWER_TOKEN_FILE_NAME))
+    Some(dir.join(name))
+}
+
+/// The event API's credential and exposure settings beyond the capability
+/// token itself: where the paired-bearer set and the pairing-code file live
+/// (`crate::api::pairing`), how long an issued code is redeemable, and what
+/// the open `/api/fleet` discloses. One struct for both daemons' configs —
+/// one `api` block, one set of keys, one set of environment names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiAccessSettings {
+    /// `api.paired_token_path` / `WITNESS_API_PAIRED_TOKEN_PATH`: the
+    /// paired-bearer set. Defaults to `paired_tokens.json` beside the
+    /// capability token; `None` (no token path) turns pairing off.
+    pub paired_token_path: Option<PathBuf>,
+    /// `api.pairing_code_path` / `WITNESS_API_PAIRING_CODE_PATH`: where
+    /// `issue-pairing-code` writes and `POST /api/pair` reads. Defaults to
+    /// `pairing_code` beside the capability token.
+    pub pairing_code_path: Option<PathBuf>,
+    /// `api.pairing_ttl_secs` / `WITNESS_API_PAIRING_TTL_SECS`: how long an
+    /// issued code lives (600 s unless `issue-pairing-code --ttl-secs`
+    /// says otherwise for one code).
+    pub pairing_ttl_secs: u64,
+    /// `api.fleet_rollcall` / `WITNESS_API_FLEET_ROLLCALL`: `full` (the
+    /// kernel plus every Canary the bridge heard) or `self` (the kernel's
+    /// own row only — what a sidecar with a published port serves).
+    pub fleet_rollcall: crate::api::FleetRollcall,
+}
+
+impl Default for ApiAccessSettings {
+    fn default() -> Self {
+        Self {
+            paired_token_path: None,
+            pairing_code_path: None,
+            pairing_ttl_secs: crate::api::pairing::DEFAULT_PAIRING_TTL_SECS,
+            fleet_rollcall: crate::api::FleetRollcall::Full,
+        }
+    }
+}
+
+impl ApiAccessSettings {
+    fn from_file(api: Option<&ApiConfigFile>) -> Result<Self> {
+        let mut settings = Self::default();
+        if let Some(api) = api {
+            settings.paired_token_path = api.paired_token_path.clone();
+            settings.pairing_code_path = api.pairing_code_path.clone();
+            if let Some(ttl) = api.pairing_ttl_secs {
+                settings.pairing_ttl_secs = ttl;
+            }
+            if let Some(word) = &api.fleet_rollcall {
+                settings.fleet_rollcall = crate::api::FleetRollcall::parse(word)
+                    .map_err(|e| anyhow!("api.fleet_rollcall: {e}"))?;
+            }
+        }
+        Ok(settings)
+    }
+
+    fn apply_env(&mut self) -> Result<()> {
+        if let Ok(path) = std::env::var("WITNESS_API_PAIRED_TOKEN_PATH") {
+            if !path.trim().is_empty() {
+                self.paired_token_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(path) = std::env::var("WITNESS_API_PAIRING_CODE_PATH") {
+            if !path.trim().is_empty() {
+                self.pairing_code_path = Some(PathBuf::from(path));
+            }
+        }
+        if let Ok(raw) = std::env::var("WITNESS_API_PAIRING_TTL_SECS") {
+            if !raw.trim().is_empty() {
+                self.pairing_ttl_secs = raw.trim().parse().map_err(|_| {
+                    anyhow!("WITNESS_API_PAIRING_TTL_SECS must be a positive integer")
+                })?;
+            }
+        }
+        if let Ok(word) = std::env::var("WITNESS_API_FLEET_ROLLCALL") {
+            if !word.trim().is_empty() {
+                self.fleet_rollcall = crate::api::FleetRollcall::parse(&word)
+                    .map_err(|e| anyhow!("WITNESS_API_FLEET_ROLLCALL: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Unnamed files sit beside the capability token (the one directory the
+    /// operator already keeps a kernel-written secret in). No token path,
+    /// no default — and then no pairing.
+    fn fill_defaults(&mut self, token_path: Option<&Path>) {
+        if self.paired_token_path.is_none() {
+            self.paired_token_path =
+                default_sibling_path(token_path, crate::api::pairing::PAIRED_TOKEN_FILE_NAME);
+        }
+        if self.pairing_code_path.is_none() {
+            self.pairing_code_path =
+                default_sibling_path(token_path, crate::api::pairing::PAIRING_CODE_FILE_NAME);
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.pairing_ttl_secs == 0 {
+            return Err(anyhow!("api.pairing_ttl_secs must be greater than zero"));
+        }
+        if self.paired_token_path.is_some() != self.pairing_code_path.is_some() {
+            return Err(anyhow!(
+                "api.paired_token_path and api.pairing_code_path go together: a kernel that \
+                 redeems a pairing code must have somewhere to keep the bearer it mints \
+                 (set api.token_path and both default beside it, or set both explicitly)"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The pairing files the API server takes, when pairing is on.
+    pub fn pairing_paths(&self) -> Option<crate::api::PairingPaths> {
+        Some(crate::api::PairingPaths {
+            code_path: self.pairing_code_path.clone()?,
+            tokens_path: self.paired_token_path.clone()?,
+        })
+    }
 }
 
 fn config_u32(value: Option<u32>, default: u32) -> u32 {
@@ -124,6 +248,10 @@ struct ApiConfigFile {
     rate_limit_per_minute: Option<u32>,
     fleet_peers_path: Option<PathBuf>,
     viewer_token_path: Option<PathBuf>,
+    paired_token_path: Option<PathBuf>,
+    pairing_code_path: Option<PathBuf>,
+    pairing_ttl_secs: Option<u64>,
+    fleet_rollcall: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -278,6 +406,8 @@ pub struct WitnessdConfig {
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
+    /// Pairing files, pairing-code TTL and the `/api/fleet` roll-call mode.
+    pub api_access: ApiAccessSettings,
     pub ingest: IngestSettings,
     pub rtsp: RtspSettings,
     pub file: FileSettings,
@@ -315,6 +445,8 @@ pub struct WitnessApiConfig {
     /// Per-IP request cap for the event API (0 disables). See
     /// [`crate::api::DEFAULT_API_RATE_LIMIT_PER_MINUTE`].
     pub api_rate_limit_per_minute: u32,
+    /// Pairing files, pairing-code TTL and the `/api/fleet` roll-call mode.
+    pub api_access: ApiAccessSettings,
     pub sensitive_zones: Vec<String>,
     pub retention: Duration,
 }
@@ -478,6 +610,7 @@ impl WitnessdConfig {
             .api
             .as_ref()
             .and_then(|api| api.viewer_token_path.clone());
+        let api_access = ApiAccessSettings::from_file(file.api.as_ref())?;
         let api_token_path = file.api.and_then(|api| api.token_path);
         let ingest_config = file.ingest.unwrap_or_default();
         let ingest_backend = ingest_config
@@ -674,6 +807,7 @@ impl WitnessdConfig {
             api_fleet_peers_path,
             api_viewer_token_path,
             api_rate_limit_per_minute,
+            api_access,
             ingest,
             rtsp,
             file: file_source,
@@ -714,6 +848,9 @@ impl WitnessdConfig {
         if self.api_viewer_token_path.is_none() {
             self.api_viewer_token_path = default_viewer_token_path(self.api_token_path.as_deref());
         }
+        self.api_access.apply_env()?;
+        self.api_access
+            .fill_defaults(self.api_token_path.as_deref());
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
             if !raw.trim().is_empty() {
                 self.api_rate_limit_per_minute = raw.trim().parse().map_err(|_| {
@@ -858,6 +995,7 @@ impl WitnessdConfig {
     }
 
     fn validate(&mut self) -> Result<()> {
+        self.api_access.validate()?;
         crate::validate_zone_id(&self.zones.module_zone_id)?;
         self.zones.module_zone_id = self.zones.module_zone_id.to_lowercase();
 
@@ -1075,6 +1213,7 @@ impl WitnessApiConfig {
             .api
             .as_ref()
             .and_then(|api| api.viewer_token_path.clone());
+        let api_access = ApiAccessSettings::from_file(file.api.as_ref())?;
         let api_token_path = file.api.and_then(|api| api.token_path);
         let sensitive_zones = file
             .zones
@@ -1093,6 +1232,7 @@ impl WitnessApiConfig {
             api_fleet_peers_path,
             api_viewer_token_path,
             api_rate_limit_per_minute,
+            api_access,
             sensitive_zones,
             retention,
         })
@@ -1122,6 +1262,9 @@ impl WitnessApiConfig {
         if self.api_viewer_token_path.is_none() {
             self.api_viewer_token_path = default_viewer_token_path(self.api_token_path.as_deref());
         }
+        self.api_access.apply_env()?;
+        self.api_access
+            .fill_defaults(self.api_token_path.as_deref());
         if let Ok(raw) = std::env::var("WITNESS_API_RATE_LIMIT_PER_MINUTE") {
             if !raw.trim().is_empty() {
                 self.api_rate_limit_per_minute = raw.trim().parse().map_err(|_| {
@@ -1145,6 +1288,7 @@ impl WitnessApiConfig {
     }
 
     fn validate(&mut self) -> Result<()> {
+        self.api_access.validate()?;
         let policy = crate::ZonePolicy::new(self.sensitive_zones.clone())?;
         self.sensitive_zones = policy.sensitive_zones;
 
@@ -1287,6 +1431,78 @@ mod tests {
             Some(PathBuf::from("/data").join(crate::api::VIEWER_TOKEN_FILE_NAME))
         );
         assert_eq!(default_viewer_token_path(None), None);
+    }
+
+    #[test]
+    fn api_access_keys_parse_in_both_api_blocks_and_default_beside_the_token() {
+        // deny_unknown_fields: every key must be accepted by BOTH binaries'
+        // api block, or a config naming it is a startup error.
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("config.json");
+        write_file(
+            &path,
+            r#"{"api":{"token_path":"/data/api_token","paired_token_path":"/secrets/paired.json","pairing_code_path":"/secrets/code","pairing_ttl_secs":120,"fleet_rollcall":"self"}}"#,
+        );
+        let file: WitnessApiConfigFile = read_config_file(&path).expect("witness_api config");
+        let api = WitnessApiConfig::from_file(file).expect("witness_api config should parse");
+        let file: WitnessdConfigFile = read_config_file(&path).expect("witnessd config");
+        let daemon = WitnessdConfig::from_file(file).expect("witnessd config should parse");
+        for access in [&api.api_access, &daemon.api_access] {
+            assert_eq!(
+                access.paired_token_path,
+                Some(PathBuf::from("/secrets/paired.json"))
+            );
+            assert_eq!(
+                access.pairing_code_path,
+                Some(PathBuf::from("/secrets/code"))
+            );
+            assert_eq!(access.pairing_ttl_secs, 120);
+            assert_eq!(access.fleet_rollcall, crate::api::FleetRollcall::SelfOnly);
+            let paths = access.pairing_paths().expect("both paths configured");
+            assert_eq!(paths.code_path, PathBuf::from("/secrets/code"));
+            assert_eq!(paths.tokens_path, PathBuf::from("/secrets/paired.json"));
+        }
+
+        // Unnamed, both sit beside the capability token; no token path, no
+        // default, no pairing.
+        let mut access = ApiAccessSettings::default();
+        assert_eq!(access.fleet_rollcall, crate::api::FleetRollcall::Full);
+        assert_eq!(
+            access.pairing_ttl_secs,
+            crate::api::pairing::DEFAULT_PAIRING_TTL_SECS
+        );
+        access.fill_defaults(Some(Path::new("/data/api_token")));
+        assert_eq!(
+            access.paired_token_path,
+            Some(PathBuf::from("/data").join(crate::api::pairing::PAIRED_TOKEN_FILE_NAME))
+        );
+        assert_eq!(
+            access.pairing_code_path,
+            Some(PathBuf::from("/data").join(crate::api::pairing::PAIRING_CODE_FILE_NAME))
+        );
+        access.validate().expect("both set validates");
+        let mut none = ApiAccessSettings::default();
+        none.fill_defaults(None);
+        assert_eq!(none.pairing_paths(), None);
+        none.validate().expect("neither set validates");
+
+        // A lone half is refused: a redeemable code with nowhere to keep
+        // the bearer is a misconfiguration, not a mode.
+        let half = ApiAccessSettings {
+            pairing_code_path: Some(PathBuf::from("/secrets/code")),
+            ..ApiAccessSettings::default()
+        };
+        assert!(half.validate().is_err());
+        let zero_ttl = ApiAccessSettings {
+            pairing_ttl_secs: 0,
+            ..ApiAccessSettings::default()
+        };
+        assert!(zero_ttl.validate().is_err());
+
+        // An unknown roll-call word is a startup error, in either block.
+        write_file(&path, r#"{"api":{"fleet_rollcall":"everyone"}}"#);
+        let file: WitnessApiConfigFile = read_config_file(&path).expect("parse");
+        assert!(WitnessApiConfig::from_file(file).is_err());
     }
 
     #[test]

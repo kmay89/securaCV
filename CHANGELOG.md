@@ -2,6 +2,420 @@
 
 ## [Unreleased]
 
+### The verified witness log for Frigate and Home Assistant: the SecuraCV app installs the integration on one click, a Docker sidecar pairs with one 6-digit code, every Frigate event lands as Sealed ✓ and earns Verified ✓ from Home Assistant's own chain walk, and one tap exports a signed evidence pack anyone can check offline
+
+The product is one device in Home Assistant — **SecuraCV** — with the chain's
+state, one witness event entity per camera, a daily digest, notifications
+with proof attached, and a one-tap evidence export. Three ways in, nothing
+to type on Home Assistant OS, one code on Docker. The spec in its final form
+is [`docs/design/ha_frigate_product.md`](docs/design/ha_frigate_product.md);
+the user guides are [`docs/homeassistant_setup.md`](docs/homeassistant_setup.md)
+and [`docs/frigate_integration.md`](docs/frigate_integration.md).
+
+**Review fixes before release**
+
+- Two kernels on one broker leave each other alone: every bridge connects
+  with the client id `<bridge>-<device id>` (`MQTT_CLIENT_ID` still
+  overrides it) instead of its bare name, so a second sidecar, or the app
+  beside one, no longer replaces the first one's broker session every few
+  seconds.
+- `docker stop` always exits 0, and the clean exit it asks for is bounded:
+  the publisher's eventloop never blocks on its own request queue (the
+  re-asserts after a reconnect are queued without blocking and kept for the
+  next event while the queue is full — a ConnAck landing on a shutdown used
+  to deadlock it until Docker's SIGKILL), its last publishes and the
+  disconnect are capped at 2 s and 5 s, a poll-loop publish gives up the
+  moment a shutdown is requested, and the sidecar's entrypoint ends anything
+  still running after `SECURACV_STOP_GRACE_SECS` (default 8 s). The sidecar
+  e2e now also proves both daemons log their own clean stop and that a
+  second sidecar on the same broker does not flap the first.
+- Every copy of one sealed event is one event: the kernel's export view
+  re-draws a bucket start by ±0/60/120 s on every fetch, and the
+  integration now keys dedupe, the verified-entry index and the HTTP
+  backstop's newer-than test on the canonical (grid) bucket, so a row
+  reads Verified ✓ after the walk covers it whatever the draw was, and the
+  5-minute backstop never re-fires a pushed event (the card still shows the
+  wire's own window).
+- The app's AppArmor profile names the device seed file
+  (`/config/witness.ed25519.seed`) and the storage-health state beside the
+  database; a standalone-mode install no longer crash-loops on the
+  profile.
+- A witness key change is never "Verification failed":
+  `binary_sensor.securacv_chain_valid` reads unknown with `key_mismatch`,
+  `trust_reason: kernel_key_mismatch` and an `error` naming Settings →
+  Repairs; rows stay Sealed ✓; the dashboard header and the daily digest
+  say *Witness key changed — confirm it in Settings → Repairs*.
+- `sensor.securacv_chain_length` is the walk head `seq` once a walk has run
+  (else the kernel's row count, `source` says which) and drops its
+  `total_increasing` state class — statistics no longer see a reset on
+  every restart or retention prune.
+- An announced `api.host` must be a bare hostname, IPv4 or bracketed IPv6
+  (no port, path, query, fragment or user info can reach the pairing URL);
+  an unsigned announce never moves an unpinned entry's topic prefix or
+  reloads it; a code redeemed on the wrong kernel during reauth has its
+  token revoked; concurrent evidence exports are serialized so no index
+  row is lost.
+- The discovered cards are named as Home Assistant shows them: *SecuraCV
+  app*, and *SecuraCV sidecar `pwk_…`* / *SecuraCV sidecar at `<address>`*
+  (the `pair` card, the compose comments and the guides agree); the
+  Automatic flow's final screen names the missing MQTT integration when
+  Home Assistant has none.
+- Hassfest: no translation string reads as HTML (`<docker host>`, `<id>`,
+  `<zone>` are gone) and the fixable `tofu_mismatch` issue carries its
+  explanation in the fix flow's confirm step, as the strings schema
+  requires; `tests/ha/test_hassfest_subset.py` applies hassfest's rules.
+- The Frigate sentinel sweeps match whole JSON values (`cargo test
+  frigate_mqtt_e2e`) and whole tokens (`docker/sidecar/ci_e2e.sh`), never
+  digit substrings, so a wall-clock bucket start that happens to contain
+  "777" is not a leak; the sidecar's sweep reads the whole events view
+  through the kernel API from inside the container (the database is
+  SQLCipher-encrypted) and sweeps the export bundle too.
+- A row is Verified ✓ only when the integration's walk verified ITS entry:
+  the wire's `seq` names the sealed-log row (C5), and two entries sharing
+  one `(event_type, zone_id, bucket)` key — a dog and a cat in one zone in
+  one bucket — no longer let the second read Verified on the first's
+  signature; a row without `seq` is Verified only once a walk that began
+  after its bucket closed reached the kernel's head.
+- The paired-token set is bounded at 32: `POST /api/pair` answers the right
+  code `403 paired_token_limit` without consuming it (a wrong guess is still
+  the constant 401), the pair form shows the remedy (`docker exec securacv
+  unpair`), and the same code pairs once a token is revoked — a set that
+  grew past the file's 64 KiB read bound would have refused every paired
+  client at once.
+- `event_mqtt_bridge` starts its publish cursor one bucket back (the
+  kernel's bucket, `--bucket-size-secs`, which both launchers now pass) and
+  never republishes the whole retained log on a restart;
+  `--replay-from-genesis` / `REPLAY_FROM_GENESIS=1` keeps the old start as a
+  migration tool. The integration fires an event entity (and so the
+  blueprints) only for a row whose bucket started within the last two bucket
+  sizes; an older row — a replay, a backstop catching up after an outage —
+  updates the last-event sensor and fires nothing. The per-zone `count`
+  topic counts from the bridge's start.
+
+**Breaking changes**
+
+- **Home Assistant 2026.5.0 or newer** (`hacs.json`, the app's
+  `homeassistant:`, every blueprint's `min_version`); the floor was 2024.4.1.
+- **The app is "SecuraCV" in the App Store.** The slug
+  `privacy_witness_kernel` is unchanged, so installs upgrade in place;
+  "Privacy Witness Kernel" survives as the kernel device's model name.
+  `privacy_witness_kernel/build.yaml` is gone (the Dockerfile pins the
+  official base images); the app's Lovelace YAML generator is gone (it named
+  the `pwk_*` ids the integration withdraws); the wizard's pattern-break and
+  integrity toggles are gone; `POST /api/preflight/install` answers 404 (the
+  app holds no Supervisor role and installs nothing for you — "Install it
+  for me" is a my.home-assistant.io link).
+- **Entity ids `pwk_*` → `securacv_*`.** Once the integration claims the
+  kernel, the bridge's MQTT-discovery entities withdraw:
+  `sensor.pwk_last_event` → `sensor.securacv_last_event`,
+  `sensor.pwk_daily_digest` → `sensor.securacv_daily_digest`,
+  `binary_sensor.pwk_chain_problem` → `binary_sensor.securacv_chain_valid`
+  (**on** now means the chain verified), `button.pwk_verify_now` →
+  `button.securacv_verify_now`, `sensor.pwk_<zone>_events` →
+  `event.securacv_<zone>`. Settings → Repairs lists the table once where the
+  old ids existed; the blueprints and the dashboard already use the new ones.
+- **Frigate alerts mode is exclusive.** `frigate.enable_reviews` /
+  `--enable-reviews` / `FRIGATE_ENABLE_REVIEWS` now subscribes to
+  `<prefix>/reviews` **instead of** `<prefix>/events` and seals only
+  `alert`-severity review items (once each, at the message that made them
+  an alert, confidence 1.0, one per camera and window); it used to add
+  reviews beside events. The `label:sub_label` fold is gone (the sealed
+  label is the base class; `package:amazon` no longer exists); an event with
+  an unknown `type` is rejected instead of sealed; the flat legacy review
+  shape Frigate never published is no longer accepted; `face` and
+  `license_plate` seal nothing even when allowlisted.
+- **The Docker sidecar binds every interface and publishes 8799 by default**
+  (`SECURACV_API_BIND=all`; `loopback` is the opt-out — delete the `ports:`
+  block with it). `SECURACV_API_LAN_POLICY` / `WITNESS_API_LAN_POLICY` do not
+  exist. `doctor` is split: `docker exec securacv doctor` runs the setup
+  checks a fresh install passes, `doctor --live` adds the 30 s Frigate
+  listen; `docker compose run --rm securacv doctor` still runs but only its
+  broker checks mean anything. `VERIFY_INTERVAL_SECS` defaults to 3600 (was
+  86400) and the app's `verify_interval_hours` to 1 (was 24).
+- **Removed files:** `homeassistant/automations/securacv_daily_digest.yaml`,
+  `securacv_integrity_failure.yaml`, `securacv_battery_health.yaml` and
+  `securacv_pattern_break.yaml` (blueprints now: `securacv_daily_digest`,
+  `securacv_alerts`, `canary_battery_health`, `securacv_pattern_break`),
+  `homeassistant/lovelace/securacv-canary-dashboard.yaml`.
+  `securacv-dashboard.yaml` is now the one-block strategy dashboard;
+  `securacv-dashboard-plain.yaml` is the stock-cards version.
+- **Integration flow and storage:** a kernel entry's unique id is
+  `kernel_<device_id>` (entry version 3 migrates legacy `hassio` / URL /
+  `mqtt_securacv` ids once the kernel's identity answers); the kernel-key
+  TOFU persistent notification is replaced by the fixable Repairs issue
+  `tofu_mismatch`; the error keys `pairing_code_expired` and
+  `kernel_not_paired` are gone (the kernel answers one constant `401`).
+- **Kernel API:** `/events/latest` and `/digest` no longer log export
+  receipts (they are state reads); `/api/pair`'s 404 `no_pairing_code`
+  distinction does not exist — every refusal is the identical `401
+  invalid_pairing_code`.
+
+**The kernel and its bridges (Rust)**
+
+- `frigate_bridge` parses Frigate 0.13–0.17 through tolerant deserializers:
+  every identity field (`sub_label` in any shape, `recognized_license_plate*`,
+  `attributes`, `path_data`, boxes, speeds, ids, times, thumbnails, the 0.17
+  GenAI review fields, any unknown key) is parsed to nothing and never fails
+  the message — a recognized face or plate no longer drops the event, it is
+  stripped. The discard lists are exported as data; fixtures carry a
+  sentinel in every discarded field and the tests prove none reaches the
+  claim, the sealed payload, the API, MQTT, the log or the export. Camera
+  allowlists are compared as slugs (`Front Door` matches `front_door`).
+- In Frigate mode `frigate_bridge` owns the chain's housekeeping: boot-time
+  tail verification with a report-but-not-append **safe mode**, `start` /
+  `shutdown_clean` lifecycle records with `PowerLoss` detection, one
+  heartbeat per bucket, a retention pass at start and hourly that prunes and
+  checkpoints, and a daily checkpoint timer that runs that same pass (a
+  head checkpoint whose cutoff rows are not pruned would break every
+  verifier's walk, so none was built). New flags `--mqtt-topic-prefix`,
+  `--ha-device-id`, `--retention-check-interval-secs`,
+  `--checkpoint-interval-secs`; `SECURACV_HWM_PATH` honored. Retained
+  `witness/frigate_link` says whether Frigate was heard and in which
+  ten-minute window, so a quiet night and a silent Frigate read differently.
+- `witness_api` gains pairing: `POST /api/pair` (6-digit code, 600 s, five
+  attempts spent durably before each refusal, single-use, constant `401`,
+  per-address strikes), `DELETE /api/pair/<id>` (capability token for any
+  id, a paired token for its own), paired bearers with the capability
+  token's rights and their own receipts (`auth_mode: paired` + `token_id`,
+  a trailing optional field every verifier tolerates), `GET /api/identity`,
+  `POST /api/sign-announce`, `GET /api/sealed-log?from_seq=` (entries carry
+  `seq`; `head {seq, entry_hash}`), `GET /events?since_bucket=` (a
+  receipt-less cursor), a 90 s grace for the capability token rotated out
+  last, `WITNESS_API_FLEET_ROLLCALL=full|self`, the storage sampler so
+  `/status` answers in Frigate mode, the CLI `issue-pairing-code` /
+  `list-paired-tokens` / `revoke-paired-token`, and a bounded body drain so a
+  refused client sees its `400`/`401` instead of a reset.
+- `event_mqtt_bridge` publishes a retained, kernel-signed **announcement**
+  (`witness/<id>/announce`; `api.host` only when `--announce-api-host` is
+  set) and clears it on a clean shutdown, honors the integration's **claim**
+  (`witness/claim/<id>`, 24 h freshness) by withdrawing its discovery configs
+  and says so on `witness/claim_state`, publishes one event payload on every
+  event topic (`verified_bucket_start/size`, `verified_ok` as the kernel's
+  self-report, `device_id`, `seq`; `ruleset_hash` is off the wire), and
+  polls `/events?since_bucket=` so its polling adds zero receipts.
+
+**The Home Assistant integration**
+
+- Per-entry state on `entry.runtime_data`; a push coordinator over the
+  kernel's retained topics with a five-minute HTTP backstop; the kernel's key
+  pinned only over authenticated HTTP (`/api/pair` or `/api/identity`) and
+  announcements verified against it; discovery of the app (Supervisor) and
+  of a sidecar (the signed announce → `announce_confirm` → `pair`); the
+  **Automatic** path that creates the MQTT-only entry and raises
+  `no_kernel_found` when neither answers; reauth and reconfigure; Repairs
+  for `no_kernel_found`, `kernel_unreachable` (after 15 min),
+  `tofu_mismatch` (fixable: compare fingerprints, then rotate),
+  `storage_replace`, `entities_migrated` (once, only where `pwk_*` entities
+  existed), `mqtt_subscribe_failed`; diagnostics as projections swept by
+  `async_redact_data`.
+- **Verified means the integration checked:** an own, incremental chain walk
+  (`GET /api/sealed-log?from_seq=`) recomputes every hash and checks every
+  Ed25519 signature against the pinned key — a port of
+  `viewer/verify_core.js`, held to the same fixture — on Verify now,
+  `securacv.verify`, every 15 minutes, 60 s after the chain goes idle. Rows
+  read Sealed ✓ / Verified ✓ / Failed ⚠; a key change is a Repairs issue,
+  never Failed; the kernel's self-check is `kernel_reported_chain_ok` only.
+- New platforms and entities: one **witness event entity per camera**
+  (`event.securacv_<zone>`, fired on live events only), a **Chain
+  verification** event, a per-Canary **Tamper events** entity; **Verify now**
+  and **Export evidence** buttons; **Chain Valid**, **Chain Length**, **Daily
+  digest**, **Frigate link**, **Kernel key fingerprint** on the kernel
+  device; the two Frigate classes labeled *Person or vehicle* / *Animal or
+  small object*; icons from `icons.json` alone; a Canary's per-transport
+  sensors diagnostic and disabled by default.
+- New actions `securacv.verify` and `securacv.export_evidence`
+  (`window_hours` 1–720); one **evidence pack** zip per export under
+  `<config>/securacv/evidence` (bundle verbatim, offline viewer, README,
+  `WITNESS_KEY.txt`), keep-N through the `evidence_keep` option (default 20),
+  served only by an authenticated view through 24-hour signed links, listed
+  under **Media → SecuraCV evidence**.
+- The one-time **SecuraCV: add the dashboard** notification; removal
+  withdraws the claim, revokes the paired token, deletes the trust and
+  verify stores and the entry's notifications, and leaves evidence packs.
+
+**The frontend, the blueprints and the viewer**
+
+- The **SecuraCV dashboard strategy** (`custom:securacv`; Settings →
+  Dashboards → Add dashboard → SecuraCV): header, Today, Cameras, Last 24
+  hours, Health, Canaries, with honest empty and degraded states. The
+  timeline card renders exactly three kernel badges, the contract's header
+  copy, tap → more-info and a per-row **Export** action.
+- Blueprints v2: **witness notification with proof** (wait up to 90 s for
+  the seal, Open Frigate and Export evidence actions, optional Frigate
+  thumbnail, never a name or plate), a digest that **always sends**, every
+  notifying blueprint on a **Phone** device selector, `canary_battery_health`
+  and `securacv_pattern_break` as blueprints, `min_version` 2026.5.0 on all
+  ten, import badges in `docs/blueprints/README.md`.
+- The offline viewer accepts the **evidence pack zip** directly (central
+  directory, `DecompressionStream`, CRC check) and verifies paired export
+  receipts; `viewer/README.md` is written for the recipient.
+
+**The app (add-on)**
+
+- s6 services with finish scripts and a Supervisor watchdog on
+  `/api/health`; `homeassistant: "2026.5.0"`, typed `map:` entries, a custom
+  AppArmor profile, pinned official base images, icon and logo. A
+  Frigate-aware wizard (cameras read from Frigate's config, no RTSP screen,
+  retention 7 / 30 / 365 days, what to seal, re-run keeps the key),
+  my.home-assistant.io links instead of Supervisor installs, no
+  `hassio_role`. The integration is **carried in the image** and installed
+  on the done screen's click (**Install the integration and restart Home
+  Assistant**); app starts update only the app's own marked, unedited copy
+  and ask for a restart with a notification — never a HACS copy, never a
+  downgrade, never an automatic restart (`install_integration` turns it
+  off). Blueprints ship in the image; the discovery payload carries
+  `token_file`, `mqtt_topic_prefix` and `device_id`.
+
+**The Docker sidecar**
+
+- `docker exec securacv pair` (the four-line card with the code and the key
+  fingerprint), `unpair [<id>]`, `doctor [--live]`; `SECURACV_ANNOUNCE_HOST`
+  (prefill Home Assistant's kernel URL; off by default — a host is a network
+  identifier) and `SECURACV_FLEET_ROLLCALL` (the roll-call lists the kernel
+  alone unless set); `docker stop` is forwarded so the bridge clears its
+  announcement. `ci_e2e.sh` replays ten Frigate fixtures with 326 sentinels
+  into an events-mode and an alerts-mode sidecar, drives the pairing posture
+  over the published port, counts receipts, checks the announce contract,
+  `doctor` and the clean shutdown.
+
+**Docs**
+
+- `docs/homeassistant_setup.md` rewritten around the three ways in with the
+  exact screens, what Sealed ✓ / Verified ✓ / Failed ⚠ mean, the dashboard,
+  the full entity catalog (the Lab's Hub page is generated from it), the
+  actions, configuration parameters, removal, known limitations,
+  troubleshooting and the kernel API (pairing, identity, the cursors, the
+  constant `401`, the token files); `docs/frigate_integration.md` rewritten
+  (what the bridge keeps and discards, events vs alerts mode, the sidecar
+  and its published port, `doctor`, the housekeeping, the Frigate link,
+  receipts); the new `docs/design/ha_frigate_product.md`; the security
+  disclosures in `SECURITY_MODEL.md` and `THREAT_MODEL.md` (the published
+  port, the pairing bound, the plaintext paired bearer, the announcement,
+  the app's no-role posture and the carried integration, diagnostics, the
+  evidence view); glossary entries for the new nouns; the quality scale's
+  `docs-*` rules marked done.
+
+**Deferred:** TLS for the sidecar (an `api-tls` build whose certificate
+fingerprint `pair` prints and Home Assistant pins). Until it lands the
+paired bearer crosses the LAN as plaintext HTTP, which the security model,
+the compose quickstarts and the setup guide all state.
+
+## [2.4.16] - 2026-10-10
+
+### release: the 2.4.16 train and every app that moved (iOS 0.7.0, tvOS 0.3.0, Flasher 0.12.0, Lab 0.3.0, kernel / HA / add-on 0.8.0)
+
+- **Firmware 2.4.16** — the seven version strings and `fw_train`. Everything
+  under [Unreleased] since `fw-v2.4.15` ships in it: MQTT over TLS for Sense
+  and Vision, BLE OTA v2, the Bluetooth setup door ("magic pairing") on
+  Sense, Vision and the WAP, the Doorbell chime, and the cleanup below. The
+  emulator dist, `flash.json` and the firmware SBOM move with it.
+- **iOS 0.7.0** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
+  inherits it): the add-a-Canary rework and the Watch parity below. No
+  synced CloudKit record changed since `ios-v0.6.0`, so no schema promotion
+  is owed before this one. One trade-off a human should know about: the away
+  subscription belongs to the iCloud account, so setting every rule on one
+  device to *On Wi-Fi only* deletes it for the account's other devices too
+  until one with an *Anywhere* rule next opens (the Alerts footer says so).
+- **tvOS 0.3.0** — the first tvOS entry here since `tvos-v0.2.4`: viewer-token
+  pairing with a pinned key, the sealed-log day timeline, and the hub's own
+  row named as the witness kernel.
+- **Flasher 0.12.0** and **Lab 0.3.0** — see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`.
+- **Kernel, HA integration and add-on 0.8.0** — the first bump since 0.7.0
+  (2026-08-21), so add-on installs are offered the kernel and add-on work
+  since; `homeassistant.json`, `hub_image.json` and `start.json` regenerated.
+
+### Cross-platform cleanup: the iPhone setup reads what it hears, the two flashers say the same things, the Lab keeps its links and sheds its dead weight, the kernel's legacy detector API is gone, flags that switched nothing are deleted, and the Watch and Wall catch up with the iPhone
+
+- **iOS.** A new Canary brought near the iPhone slides up a card showing
+  what it is; Continue does the rest, and the success card names and
+  confirms that exact device. A fresh install offers *Find my Canary*, and
+  iOS asks for Bluetooth and Local Network access only after that tap. Your
+  home Wi-Fi is asked for once and fills in every way of adding a Canary
+  (*Update fleet Wi-Fi* keeps it current); a setup-network join lists the
+  networks the Canary itself can see, and scanning a display's QR starts
+  the join. Errors name the cause and a next step (wrong password, a
+  5 GHz-only network, out of range, a phone off Wi-Fi while pairing a WAP),
+  and Bluetooth or Local Network off or denied says why with *Open
+  Settings*. A WAP that joined but did not pair shows under *Ready to pair*
+  on the Fleet tab: add it from its recovery kit, or try again while its
+  one-time key is live. The Scan QR button shows on new installs; a Canary
+  broadcasting alert or degraded state over Bluetooth alone reads as
+  needing a look. Away alerts turn off for real when every rule is *On
+  Wi-Fi only*; *Forget this phone's snapshot key* tells your Canaries to
+  stop sealing to it; the alert heartbeat says *Alert delivery confirmed*
+  ("verified" stays with checked signatures), and the widgets show it when
+  alerts cannot get through. The hub's Canary password can be copied for
+  the Flasher on a Mac (Universal Clipboard; it clears after two minutes).
+- **Apple Watch and Apple TV.** Acknowledge an alert with a swipe on the
+  wrist and it clears everywhere; each Canary shows its picture, product
+  name, hub status and the radar's room words; mirrored alerts get their own
+  layout; complications show when alerts cannot reach you; *Check the
+  Fleet* works from Siri, Shortcuts and the Ultra Action button; Chirp is
+  offered only for a Canary that can chirp. The Witness Wall names the
+  hub's own row as the SecuraCV witness kernel, shown as software.
+- **Flasher (desktop).** After a flash, *Prove it, two ways*: each board's
+  live proof plus its emulated twin in the browser Lab. The WAP gets a
+  field bench in the serial monitor (presence verdicts, a device count —
+  never an identity — and the CSI stir meter). A recognized board's
+  self-check score, temperature and tamper flag show before you flash, as in
+  the browser. Full-flash backups are named `canary-<mac6>[-<stamp>]-backup.bin`,
+  the browser's scheme (older backup names still restore). The birth
+  certificate takes its name from the board's own key. A confirmed write,
+  checksum or card read-back says *confirmed*, *checked* or *read back*;
+  "verified" is kept for the Ed25519 release signature. Linux: the udev
+  rule covers the CP210x, CH340 and CH9102 bridges and keeps ModemManager
+  off the port, and writing a Pi hub card says up front that a normal
+  account cannot write a raw disk, with a per-card fix (INSTALL.md, *Write
+  a Pi hub card (Linux)*).
+- **Lab.** Broker TLS options are offered only when the pinned firmware
+  release carries TLS (the form names the release that brings it). Inside
+  the Lab app, *Test it over Bluetooth* says where the check runs (the
+  iPhone app, or the browser Lab in Chrome or Edge). *SecuraCV everywhere*
+  opens the family map; old Lab addresses for pages that moved to
+  securacv.com go to those pages; the Witness Wall's back link returns to
+  its bench; the header's Help link opens securacv.com/help. A malformed
+  `fleet.html` / `choose.html` link no longer throws. The print estimate
+  drops a slice button that could only say no; the site map drops a test
+  fixture (a 404) and a template. The Lab app no longer bundles page tests,
+  Python generators or shell scripts, its native interface is trimmed to
+  the commands its pages call, and its Linux udev rule matches the
+  Flasher's. The Workshop no longer lists proof QR, chain verify and night
+  blackout as Display switches — none controlled anything. Publishing a Lab
+  draft attaches the SBOMs, and *Update everything* no longer rebuilds a
+  version already waiting as a draft.
+- **Kernel.** `witness_kernel::DetectorBackend` at the crate root now names
+  the detection trait every backend implements; the legacy `Detector`,
+  `StubDetector`, `CpuDetector`, `StubFrameSource` and frame.rs `Frame` are
+  removed, as are the unused `stub-frame-source` Cargo feature (synthetic
+  frames come from `stub://` URLs) and the direct `libseccomp-sys`
+  dependency. CI runs the ONNX (`backend-tract`) detector tests instead of
+  only compiling them.
+- **Firmware.** The canary's full image no longer sets six flags that
+  turned nothing on (Bluetooth, system monitor, Wi-Fi presence, audible
+  chirp, RF presence, chirp), and a "disabled for security" flag that
+  controlled nothing is replaced by the flags that keep BLE out of the dev,
+  release and secure images. The WAP's docs and its missing-NimBLE error no
+  longer recommend the MINIMAL profile (no CI job builds it; it now warns).
+  The `csi_minimal` sample prints breathing as the dashboard does (strongest
+  bin). CI compiles the canary's `dev_ha`, `minimal` and `usb-onboard` envs
+  and the CSI sample, and fails a config `FEATURE_*` flag or a shared header
+  no compiled code uses (`firmware/scripts/check_config_feature_flags.py`,
+  run from `scripts/lint_feature_flags.sh` on every PR). Firmware releases
+  now carry the Rust, Node and firmware SBOMs (CycloneDX) as release
+  assets; Flasher releases carry them again and build on Node 22.
+- **Home Assistant.** The Lovelace timeline and aim cards reload whenever a
+  card file changes (the cache key follows the file, not the integration
+  version). The add-on's go2rtc discovery keeps every valid camera when one
+  stream is malformed and never creates a camera at URL `null`. The setup
+  guide says what the firmware rollback and the Ed25519 signature check
+  actually do, and its event-count example reads the real `/digest`
+  endpoint.
+- **Docs.** `docs/tvos/README.md` marks each Witness Wall feature as in the
+  app, emulator only or design only (the screensaver, break-glass, Incident
+  capture, dispute pack, multi-site board and digests are not in the native
+  app). `tv/gen_tv_html.py` gained `--check`, which firmware CI now runs.
+
 ### Magic pairing follow-up: the first-boot window survives a software restart, a BOOT tap on an installed witness raises the portal its join needs, and the WAP's door is bounded by what its sketch actually does
 
 Follow-up to the Bluetooth setup door (below) from the adversarial review

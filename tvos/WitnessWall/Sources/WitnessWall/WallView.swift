@@ -514,12 +514,12 @@ extension FleetSnapshot.Device {
         return online ? "Online · reports record ok" : "Offline"
     }
 
+    /// The hub sentence, in the words every glance surface uses
+    /// (Shared/DeviceGlanceCopy — compiled here and on the watch). Empty for
+    /// a connected hub or a device that never said; callers gate on
+    /// `hubState.needsAttention`.
     var wallHubLine: String {
-        switch hubState {
-        case .absent: return "No hub yet — it works on its own"
-        case .down:   return "Can't reach its hub"
-        case .ok, .unknown: return ""
-        }
+        DeviceGlanceCopy.hubLine(hubState) ?? ""
     }
 
     /// The coarse wellbeing line — the sense line's room story and the camera
@@ -527,46 +527,16 @@ extension FleetSnapshot.Device {
     /// vocabulary (Present/Clear, a count that tops out at 2+, a breathing
     /// rhythm sensed-or-not). Nil when the row carries none of the keys, and
     /// the caller then draws NOTHING: absence is "cannot say", never an
-    /// empty calm room (tvos/discovery/DISCOVERY.md).
+    /// empty calm room (tvos/discovery/DISCOVERY.md). The sentence itself is
+    /// Shared/DeviceGlanceCopy's, so the wrist says the room the same way;
+    /// the seeing word folds through its four-word switch, and any word
+    /// outside the vocabulary renders as nothing, never as a guess.
     var wallWellbeingLine: String? {
-        var parts: [String] = []
-        if let present = radarPresent {
-            parts.append(present ? "someone present" : "room clear")
-        }
-        if let count = radarOccupants {
-            // The radar's contract is 0 / 1 / 2-meaning-2-or-more — it
-            // deliberately cannot count a crowd, so neither may this label
-            // (the phone's Witness.occupantsLabel rule).
-            parts.append(count >= 2 ? "2+ in the room" : "\(count) in the room")
-        }
-        if let held = breathing {
-            // "Sensed", never a vital-signs claim — the lock is a rhythm the
-            // radar can currently hold, nothing more. Same words as the
-            // phone's Wellbeing section.
-            parts.append(held ? "breathing rhythm sensed" : "breathing rhythm not sensed")
-        }
-        if let seen = wallSeeingPhrase {
-            parts.append(seeingScore.map { "\(seen) · \($0)%" } ?? seen)
-        }
-        guard let first = parts.first else { return nil }
-        parts[0] = first.prefix(1).uppercased() + String(first.dropFirst())
-        return parts.joined(separator: " · ")
-    }
-
-    /// The seeing word folded to a phrase — for exactly the four words the
-    /// fleet vocabulary holds (person/vehicle/animal/package; Invariant II
-    /// ends the list). The Wall compiles no SeenClass enum, so this switch IS
-    /// the fold: silence and any word outside the vocabulary render as
-    /// nothing, never as a guess — the same nil the phone's tolerant
-    /// decoders answer for a stranger's word.
-    private var wallSeeingPhrase: String? {
-        switch seeing {
-        case "person": return "seeing a person"
-        case "vehicle": return "seeing a vehicle"
-        case "animal": return "seeing an animal"
-        case "package": return "seeing a package"
-        default: return nil
-        }
+        DeviceGlanceCopy.wellbeingLine(present: radarPresent,
+                                       occupants: radarOccupants,
+                                       breathing: breathing,
+                                       seeing: seeing,
+                                       seeingScore: seeingScore)
     }
 }
 
@@ -589,10 +559,21 @@ struct DeviceCard: View {
                 // one that doesn't falls back to the same honest marker rather
                 // than to a different one. This card used to carry no figure
                 // at all: a dot stood in for the hardware.
-                DeviceFigureIcon(device.deviceType,
-                                 published: device.product,
-                                 hardware: device.hw,
-                                 size: hero ? 46 : 34)
+                if DeviceNaming.isSoftware(published: device.product) {
+                    // The hub's own kernel row — software, so a server
+                    // symbol rather than the generic bird of an unknown
+                    // device.
+                    Image(systemName: "server.rack")
+                        .font(hero ? Font.title : Font.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: hero ? 46 : 34, height: hero ? 46 : 34)
+                        .accessibilityLabel("Witness kernel")
+                } else {
+                    DeviceFigureIcon(device.deviceType,
+                                     published: device.product,
+                                     hardware: device.hw,
+                                     size: hero ? 46 : 34)
+                }
                 Text(device.name)
                     .font(hero ? .title.weight(.bold) : .title2.weight(.semibold))
                     .foregroundStyle(skin.ink)

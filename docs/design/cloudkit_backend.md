@@ -447,7 +447,11 @@ Concretely, not in the abstract:
   a reach it doesn't have.
 - **Opt-out is as real as opt-in.** Deleting the subscription ends the away path
   outright. Signing out of iCloud ends the sync. Local alerts keep working
-  through both.
+  through both. The subscription belongs to the iCloud account, not to one
+  iPhone (`AwayArming` in `AwayPush.swift`), so turning away alerts off on one
+  device pauses them on the account's other devices until one with an
+  Anywhere rule next opens the app; whether that trade-off stands is open
+  (A70 in the [sweep backlog](../audit/repo_todo_sweep_2026-09.md)).
 - **If SecuraCV disappears tomorrow, nothing of yours disappears with it.** We
   hold nothing, so there is nothing to shut down, sell, or lose. Your records
   are in your account and your log is on your hardware.

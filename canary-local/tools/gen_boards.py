@@ -186,7 +186,9 @@ def _ws43b_term_x(i):
 def ws43b_anchors():
     """The 16 terminal anchors (raw model mm) on the screw row — boards.json's
     pads map and pinout anchors read from the same geometry the builder lays
-    down, so a flag can never point at empty space."""
+    down, so a flag can never point at empty space. The config's coordinates
+    are typed out, so procedural_anchor_problems() holds them to this on every
+    build and every --check."""
     return {name: [round(_ws43b_term_x(i), 3), -13.0, round(WS43B_TZ + 2.6, 3)]
             for i, (name, _grp) in enumerate(WS43B_TERMS)}
 
@@ -321,6 +323,32 @@ def build_waveshare_4_3b():
 
 
 PROCEDURAL_BUILDERS = {"waveshare_4_3b": build_waveshare_4_3b}
+# A procedural board's terminals are where its builder put them, so its config
+# pads (and every pinout anchor) must be exactly those points. Pure Python, no
+# tessellation stack: --check runs it too.
+PROCEDURAL_ANCHORS = {"waveshare_4_3b": ws43b_anchors}
+
+
+def procedural_anchor_problems(b):
+    """Every way a procedural board's typed-out pads / pinout anchors disagree
+    with the geometry its builder lays down. Empty for a board with no
+    PROCEDURAL_ANCHORS entry (vendor-STEP boards read theirs off the mesh)."""
+    anchors_of = PROCEDURAL_ANCHORS.get(b.get("builder")) if b.get("source") == "procedural" else None
+    if anchors_of is None:
+        return []
+    want = anchors_of()
+    have = {k: v for k, v in (b.get("pads") or {}).items() if not k.startswith("_")}
+    bad = [f"{b['id']}.pads[{k!r}]: config says {have.get(k)}, {b['builder']} lays it at {want.get(k)}"
+           " — the pads are the builder's terminals; fix boards.config.json"
+           for k in sorted(set(want) | set(have)) if have.get(k) != want.get(k)]
+    on_board = {tuple(v) for v in want.values()}
+    for row in b.get("pinout", []):
+        pts = row.get("anchors") or ([row["anchor"]] if row.get("anchor") else [])
+        for pt in pts:
+            if tuple(pt) not in on_board:
+                bad.append(f"{b['id']}: pinout row {row.get('label') or row.get('name')!r} anchors {pt},"
+                           f" which is no terminal {b['builder']} lays down")
+    return bad
 
 
 def build_procedural(cfg):
@@ -459,6 +487,7 @@ def check(cfg_path=CFG, out_json=OUT_JSON, repo=REPO):
             bad.append(f"{b['id']}: boards.json row lacks {[k for k in GEOMETRY_FACTS if facts[k] is None]}"
                        " — run the generator")
             continue
+        bad.extend(procedural_anchor_problems(b))
         want = record(b, facts, rel)
         boards[b["id"]] = want
         for key in sorted(set(want) | set(got)):
@@ -492,6 +521,9 @@ def main():
         die(f"building the GLBs needs the tessellation stack ({_MISSING}); "
             "pip install cascadio trimesh numpy shapely manifold3d — or run --check")
     cfg = json.loads(CFG.read_text())
+    off = [p for b in cfg["boards"] for p in procedural_anchor_problems(b)]
+    if off:
+        die("\n".join(off))
     OUT_GLB_DIR.mkdir(parents=True, exist_ok=True)
     boards = {}
     for b in cfg["boards"]:

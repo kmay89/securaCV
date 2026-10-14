@@ -73,7 +73,8 @@ ND = 3  # decimals written (the page is a viewer; 1 µm is below every tolerance
 # XIAO S3 Sense: the PCB solid spans x -8.67..12.28 (20.95 ≈ brd_l 21),
 # z -15.00..2.78 (17.78, brd_xiao_w_measured), y -0.25..1.00; USB-C at -X,
 # components +Y (boards.json `pads`). Round display: PCB y -1.8..-0.2, the
-# back-side stack to -6.8 (disp_back 5.0), the trim ring to +3.2.
+# back-side stack to -6.8 (a 5.0 socket zone — the bench unit's reads 9.04:
+# the case derives disp_back from its measured stack_t), the glass to +3.2.
 BOARDS = {
     "seeed_xiao_esp32s3_sense": {"center": [3.208, 6.730, -6.111], "datum": [1.805, -0.250, -6.111]},
     "seeed_round_display_xiao": {"center": [0.000, -1.800, 0.000], "datum": [0.000, -1.800, 0.000]},
@@ -83,8 +84,11 @@ BOARDS = {
 # committed GLB with glb.js, and the socket rows' pad islands below, so a
 # regenerated board model cannot leave these behind silently.)
 # the round display's XIAO socket: the two header rows span raw GLB x
-# 0.55..18.9 (pad islands, same mesh), so the XIAO rides centered at 9.725
-DISPLAY_SOCKET_X = 9.725
+# 0.55..18.9 (pad islands, same mesh), so the XIAO rides centered 9.725 off
+# the disc center. The pose reads that number from the board registry
+# (brd_round_disp_socket_x(), canary_board_lib.scad — the case's own source
+# for its USB slot and end-stop), not from a constant here: one value, so a
+# corrected offset moves the case and the Lab's pose together.
 
 
 DEVICES = {
@@ -201,10 +205,11 @@ DEVICES = {
             "stand": "world",
             "drum": [],
             # the XIAO pins into the display's back socket, whose header rows
-            # sit DISPLAY_SOCKET_X off the disc center (raw GLB x 0.55..18.9):
-            # face down on its USB shell, PCB top at z_xiao0 + xiao_t, its USB
-            # end toward the rim at usb_ang (the builder draws USB at -X, 180°)
-            "xiao": [("T", f"[{DISPLAY_SOCKET_X}*cos(usb_ang), {DISPLAY_SOCKET_X}*sin(usb_ang), z_xiao0 + xiao_t]"),
+            # sit brd_round_disp_socket_x() off the disc center (raw GLB x
+            # 0.55..18.9): face down on its USB shell, PCB top at z_xiao0 +
+            # xiao_t, its USB end toward the rim at usb_ang (the builder draws
+            # USB at -X, 180°)
+            "xiao": [("T", "[brd_round_disp_socket_x()*cos(usb_ang), brd_round_disp_socket_x()*sin(usb_ang), z_xiao0 + xiao_t]"),
                      ("R", [0, 0, "usb_ang - 180"]), ("R", [180, 0, 0])],
             # the display PCB's back face at z_pcb, glass out along the drum
             # axis, its socket rows (raw +X) spun onto the USB azimuth

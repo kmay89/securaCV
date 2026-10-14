@@ -1,9 +1,12 @@
 /**
  * @file config.h
- * @brief Mobile configuration for Canary WAP
+ * @brief Canary WAP "mobile" descriptor read by the Lab's tooling. NOT COMPILED.
  *
- * Optimized configuration for mobile/portable use with extended
- * battery life and reduced power consumption.
+ * See ../default/config.h: no build includes this file, so none of the power
+ * overrides below reaches a device. [env:canary-wap-mobile]
+ * (firmware/envs/platformio/canary-wap.ini) builds the sketch's
+ * BUILD_PROFILE_DEV (no camera, mesh or Opera discovery) from build_config.h;
+ * that is the whole difference from canary-wap-default.
  */
 
 #pragma once

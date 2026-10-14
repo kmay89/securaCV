@@ -103,6 +103,10 @@ const state = {
   localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
   update: null,      // pending self-update, if any
   announcedUpdate: null, // last update version logged, so routine re-checks stay quiet
+  // "Ask it for its self-check" ran since the last write: whatever manifest
+  // comes back answers that question, never stands in for a boot receipt —
+  // a stale hostFlash from the board flashed before must not adopt it.
+  selfCheckAsked: false,
   vision: {
     hostFlash: null,
     hostBoot: null,
@@ -887,6 +891,8 @@ async function boot() {
   $("health-check-btn").addEventListener("click", onHealthCheck);
   updateLocalFlashUi();
   $("monitor-start").addEventListener("click", startMonitor);
+  $("ble-check-open").addEventListener("click", openBleCheck);
+  $("prove-ble").addEventListener("click", openBleCheck);
   $("monitor-stop").addEventListener("click", stopMonitor);
   $("monitor-manifest").addEventListener("click", () =>
     // The backend no longer auto-appends a newline (so "No line ending" is
@@ -980,6 +986,7 @@ async function boot() {
 
   await listen("serial:log", (ev) => {
     feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
+    feedWapField(ev.payload);  // the field bench reads the WAP's [wap] lines
     appendConsole("serial-console", ev.payload);
     // Does this decode as text at the speed we opened? If not, walk the baud
     // list (parity: the browser monitor's pump(), same words).
@@ -999,6 +1006,15 @@ async function boot() {
     }
   });
   await listen("serial:receipt", (ev) => {
+    // The self-check chips speak for whatever the board just said about
+    // itself — before a flash (askSelfCheck) as much as after one.
+    renderSelfCheck(ev.payload && ev.payload.manifest);
+    // A boot receipt belongs to an image this app just wrote: a manifest the
+    // resident firmware gives before any flash must not stand in for one —
+    // nor a self-check asked of whatever board is on the cable now, which
+    // need not be the one hostFlash describes (flash one, plug in the next,
+    // ask it), so its device id would land on the wrong fleet-book row.
+    if (!state.vision.hostFlash || state.selfCheckAsked) return;
     state.vision.hostBoot = ev.payload;
     renderReceipts();
     maybeHatch();
@@ -2601,7 +2617,7 @@ function efuseStopFindings() {
 
 function renderEfuseScan(out, scan) {
   if (!scan || !scan.supported) {
-    out.textContent = `No verified fuse table for ${scan && scan.chip ? scan.chip : "this chip"} — ` +
+    out.textContent = `No confirmed fuse table for ${scan && scan.chip ? scan.chip : "this chip"} — ` +
       "not checked. (Same answer the browser flasher gives: it refuses to guess bit offsets.)";
     return;
   }
@@ -2725,6 +2741,21 @@ function renderPassport() {
     box.appendChild(d);
   }
 
+  // The board's own voice before anything is written (parity: the browser's
+  // connect-page startVoice and its self-check chips). Only for firmware we
+  // recognize — a foreign image has no `j` to answer. The chips land in the
+  // serial monitor (renderSelfCheck), where the board's words already go.
+  if (r.product && !r.blank && !r.unknown) {
+    const ask = document.createElement("button");
+    ask.type = "button";
+    ask.className = "btn btn-small btn-ghost pp-ask";
+    ask.textContent = "Ask it for its self-check →";
+    ask.title = "Starts the serial monitor without resetting the board and asks for its " +
+      "self-manifest: the self-check score, its temperature and any tamper flag. Nothing is written.";
+    ask.addEventListener("click", askSelfCheck);
+    box.appendChild(ask);
+  }
+
   // The same board, met twice: the fleet book already knows this MAC. Says so
   // before the flash, so a reflash is a choice rather than a surprise.
   const known = state.mac && bookAll()[String(state.mac).toLowerCase()];
@@ -2773,6 +2804,7 @@ function renderPassport() {
 function onDisconnect() {
   stopMonitor();
   stopBenchQuiet(); // the module (and its port) just went away
+  renderSelfCheck(null); // the chips spoke for the board that just left
   state.port = null;
   state.portInfo = null;
   state.portKind = null;
@@ -3256,7 +3288,7 @@ function onProductChosen(p, ver) {
   });
   $("wifi-ssid").required = usbSecrets;
   $("provision-note").textContent = usbSecrets
-    ? "The verified release image is generic. These values are written directly into this board's settings partition and never logged."
+    ? "The official release image is generic. These values are written directly into this board's settings partition and never logged."
     : broker
     ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged."
     : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
@@ -3524,11 +3556,13 @@ async function onFlash() {
         "I'll recognize the module and offer its model below."
       : "";
     if (requiresLiveReceipt(product)) {
-      setStatus("flash-result", "Firmware write verified. Watching the live boot for its device receipt…" + moduleNext, "ok");
+      setStatus("flash-result", "Firmware written, and espflash confirmed the write on the chip. Watching the live boot for its device receipt…" + moduleNext, "ok");
+      renderProveRow(product);
       state.busy = false;
       await startMonitor({ postFlash: true });
     } else {
-      setStatus("flash-result", "Firmware write verified. Flashing is complete. ✓" + moduleNext, "ok");
+      setStatus("flash-result", "Firmware written, and espflash confirmed the write on the chip. Flashing is complete. ✓" + moduleNext, "ok");
+      renderProveRow(product);
       maybeHatch();
       // The serial monitor should just work — start it automatically so the
       // live boot log is right there, no "Start" click. It reconnects on its
@@ -3688,6 +3722,16 @@ const MQTT_TLS_PLAIN_ONLY_NOTE =
   "This flavor is built plain-only (its OTA slot budget — CANARY_MQTT_PLAIN_ONLY), so " +
   "only Plain is offered: a provisioned TLS mode would be refused at boot with that " +
   "reason on its log, never downgraded to plain.";
+// The other reason Plain can be all there is: the sources honor TLS but the
+// PINNED release predates it (catalog `broker_tls_from`, the train it arrives
+// with — gen_flash.py CAPABILITY_TRAINS). That image has no TLS transport and
+// never reads the mode, so it would connect plain whatever was seeded; the
+// plain-only build's reason above would be false for it. Same words in the
+// browser flasher (flash.js mqttTlsTrainNote).
+const mqttTlsTrainNote = (from) =>
+  `Broker encryption arrives with firmware ${from}, and the release this installs ` +
+  "predates it, so only Plain is offered: that image never reads a TLS mode and " +
+  "would connect plain whatever was set here.";
 function tlsRowsRefresh(product = state.product) {
   const broker = !!product && product.broker_nvs === true;
   const tlsOk = broker && product.broker_tls === true;
@@ -3711,7 +3755,8 @@ function tlsRowsRefresh(product = state.product) {
     tlsParked = null;
   }
   const mode = Number(sel.value) || MQTT_TLS.plain;
-  $("mqtt-tls-note").textContent = tlsOk ? MQTT_TLS_NOTE : MQTT_TLS_PLAIN_ONLY_NOTE;
+  $("mqtt-tls-note").textContent = tlsOk ? MQTT_TLS_NOTE
+    : product && product.broker_tls_from ? mqttTlsTrainNote(product.broker_tls_from) : MQTT_TLS_PLAIN_ONLY_NOTE;
   $("mqtt-ca-row").classList.toggle("hidden", !(broker && mode === MQTT_TLS.ca));
   $("mqtt-fp-row").classList.toggle("hidden", !(broker && mode === MQTT_TLS.fingerprint));
   $("mqtt-ca").required = broker && mode === MQTT_TLS.ca;
@@ -3915,7 +3960,7 @@ async function onFlashModule() {
     const hostNext = state.vision.hostFlash ? "" :
       " Board 1 of 2 done — the XIAO host still needs the Canary Vision firmware: " +
       "move the cable to the XIAO's own USB-C port and pick Canary Vision above.";
-    setStatus("flash-result", "Vision module verified, burned, answered AT, and ran one inference. ✓" + hostNext, "ok");
+    setStatus("flash-result", "Vision module: model checked and burned, AT answered, one inference run. ✓" + hostNext, "ok");
     renderModulePreview(receipt);
     renderReceipts(true);
     maybeHatch();
@@ -4290,13 +4335,16 @@ async function onRescueBackup() {
   // 1 s port watcher is otherwise free to swap in a different board while the
   // dialog sits open, and the write must land on the board the user is looking
   // at — never whatever got plugged in mid-dialog.
-  const port = state.port, chip = state.chip, flashBytes = state.flashBytes;
+  const port = state.port, mac = state.mac, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
   let out = null;
   try {
     out = await window.__TAURI__.dialog.save({
-      defaultPath: `securacv-${chip}-backup.bin`.replace(/[^\w.-]+/g, "-"),
+      // The browser Lab's name (flash.js takeBackup) and the engine's
+      // (rescue::backup_filename): the restore panels on both flashers tell
+      // the user to look for canary-…-backup.bin.
+      defaultPath: `canary-${macStamp(mac || "")}-backup.bin`,
       filters: [{ name: "Flash backup", extensions: ["bin"] }],
     });
   } catch (e) {
@@ -4533,8 +4581,16 @@ function appendSaveReport(box, r) {
   box.append(rowDiv);
 }
 
+// The MAC's last six hex digits, lowercased, or "canary" — the browser's
+// macStamp (flash.js) to the character, so a backup or report saved by either
+// flasher carries the same name; flash-engine rescue::backup_filename too.
+function macStamp(mac = state.mac) {
+  const hex = (mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase();
+  return hex || "canary";
+}
+
 async function onSaveHealthReport(r) {
-  const stamp = (r.mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase() || "canary";
+  const stamp = macStamp(r.mac || "");
   let out = null;
   try {
     out = await window.__TAURI__.dialog.save({
@@ -4661,7 +4717,7 @@ async function onFlashLocalFile() {
     renderReceipts();
     setStatus(
       "local-result",
-      `Write verified. ${file.name} is on the board — local-file ` +
+      `Write confirmed. ${file.name} is on the board — local-file ` +
       `(fingerprint only), SHA-256 ${receipt.installed_sha256.slice(0, 16)}….`,
       "ok"
     );
@@ -4829,6 +4885,274 @@ function feedSenseTune(chunk) {
   for (const line of lines) onSenseTuneLine(line);
 }
 
+// ── the WAP field bench: the room's WiFi, felt, off the same console ────────
+// Mirror of the browser flasher's field bench (flash.js phaseWapBench, its
+// parser flash-core.js parseWapLine): the WAP prints one `[wap] <event>
+// devices=<n> confidence=<word> dwell=<word> stir=<0-100>` line per
+// transition — the same coarse vocabulary it publishes, never a MAC, never a
+// raw signal. Rides the serial monitor like the radar suite above; the
+// browser's animated field is left out, the verdict and the stir meter are
+// the bench. tests/desktop_parity.test.js holds the parser and the decay to
+// the browser's.
+function parseWapLine(line) {
+  const m = /\[wap\]\s+(\w+)\s+devices=(\d+)\s+confidence=(\w+)\s+dwell=(\w+)\s+stir=(\d+)/
+    .exec(String(line || "").trim());
+  if (!m) return null;
+  return {
+    kind: "wap",
+    event: m[1],
+    devices: Number(m[2]),
+    confidence: m[3],
+    dwell: m[4],
+    stir: Math.min(100, Number(m[5])),
+    present: /started|sustained|dwell/i.test(m[1]),
+    departed: /departed|ended|clear/i.test(m[1]),
+  };
+}
+
+const wapField = {
+  active: false, tail: "", timer: 0, lastTick: 0,
+  present: false, devices: 0, confidence: null, dwell: null,
+  stir: 0, lastEvent: null, lastSeenMs: 0,
+};
+
+function wapProductOnBench() {
+  // Same rule as the radar suite: the last host flash wins, else the card.
+  const flashedId = state.vision && state.vision.hostFlash && state.vision.hostFlash.product_id;
+  const id = flashedId || (state.product && state.product.id);
+  const p = id && ((state.catalog && state.catalog.products) || []).find((x) => x.id === id);
+  return p && p.role === "wap" ? p : null;
+}
+
+function renderWapField() {
+  const wrap = $("wap-field");
+  clearInterval(wapField.timer);
+  Object.assign(wapField, {
+    active: !!wapProductOnBench(), tail: "", timer: 0, lastTick: Date.now(),
+    present: false, devices: 0, confidence: null, dwell: null,
+    stir: 0, lastEvent: null, lastSeenMs: 0,
+  });
+  wrap.classList.toggle("hidden", !wapField.active);
+  if (!wapField.active) return;
+  paintWapField();
+  // The stir reading is informative, so it drains at a fixed ~9 points a
+  // second (the browser's rate), measured, not per tick.
+  wapField.timer = setInterval(() => {
+    if (!wapField.active) { clearInterval(wapField.timer); return; }
+    const now = Date.now();
+    const dt = Math.min(1, Math.max(0, (now - wapField.lastTick) / 1000));
+    wapField.lastTick = now;
+    wapField.stir = Math.max(0, wapField.stir - 9 * dt);
+    paintWapField();
+  }, 250);
+}
+
+function paintWapField() {
+  const f = wapField;
+  $("wap-field-status").textContent = f.present
+    ? `● someone stirs the field — ${f.devices} device${f.devices === 1 ? "" : "s"} heard` +
+      `${f.confidence ? ` · ${f.confidence} confidence` : ""}${f.dwell ? ` · ${f.dwell}` : ""}`
+    : f.lastEvent ? "○ the field is calm again"
+    : "◌ listening for the field…";
+  $("wap-field-status").classList.toggle("is-present", f.present);
+  const fill = $("wap-field-fill");
+  fill.style.width = Math.round(f.stir) + "%";
+  fill.dataset.level = f.stir >= 55 ? "ok" : f.stir >= 25 ? "soft" : "faint";
+  const stale = f.lastSeenMs && Date.now() - f.lastSeenMs > 30000;
+  $("wap-field-stale").classList.toggle("hidden", !stale);
+}
+
+function feedWapField(chunk) {
+  if (!wapField.active) return;
+  wapField.tail += String(chunk);
+  const lines = wapField.tail.split("\n");
+  wapField.tail = lines.pop() || "";
+  if (wapField.tail.length > 512) wapField.tail = ""; // never hoard a runaway line
+  for (const line of lines) {
+    const ev = parseWapLine(line);
+    if (!ev) continue;
+    wapField.lastSeenMs = Date.now();
+    wapField.lastEvent = ev.event;
+    wapField.devices = ev.devices;
+    wapField.confidence = ev.confidence;
+    wapField.dwell = ev.dwell;
+    wapField.stir = Math.max(wapField.stir, ev.stir);
+    if (ev.present) wapField.present = true;
+    if (ev.departed) wapField.present = false;
+    paintWapField();
+  }
+}
+
+// ── the self-check chips: what the board says about itself ──────────────────
+// Parity with the browser flasher's connect-page voice (flash.js startVoice):
+// whenever the board's own self-manifest (`j`) arrives — before a flash, when
+// "Ask it for its self-check" starts the monitor on a recognized board, or in
+// the post-flash receipt — the same three chips: the self-check score, the
+// die temperature (≥ 70 °C says "give it air") and a raised tamper flag.
+// healthVerdict is flash-core.js's, thresholds and fail-safe included;
+// tests/desktop_parity.test.js holds the two equal.
+function healthVerdict(health) {
+  // Fail safe on anything that isn't a real 0-100 score — null, NaN, a negative,
+  // or an out-of-range value from a firmware bug / corrupted serial line. None of
+  // those may read as a pass; they are "pending" (self-test unknown).
+  if (typeof health !== "number" || !Number.isFinite(health) || health < 0 || health > 100) {
+    return { level: "pending", icon: "…", label: "Self-check pending" };
+  }
+  if (health >= 80) return { level: "ok",   icon: "✓", label: "Self-check passed" };
+  if (health >= 50) return { level: "warn", icon: "⚠", label: "Up, with minor warnings" };
+  return { level: "attn", icon: "⚠", label: "Needs attention" };
+}
+
+function renderSelfCheck(m) {
+  const box = $("selfcheck-chips");
+  box.textContent = "";
+  box.classList.toggle("hidden", !m);
+  if (!m) return;
+  const chip = (cls, label, value) => {
+    const c = document.createElement("span");
+    c.className = "selfcheck-chip" + (cls ? " " + cls : "");
+    const b = document.createElement("strong");
+    b.textContent = label;
+    c.append(b, document.createTextNode(value));
+    box.append(c);
+  };
+  const hv = healthVerdict(m.health);
+  const scored = typeof m.health === "number" && Number.isFinite(m.health);
+  chip(hv.level === "ok" ? "is-ok" : "is-warn", "Self-check ", scored ? `${hv.icon} ${m.health}/100` : hv.label);
+  if (typeof m.temp_c === "number" && Number.isFinite(m.temp_c) &&
+      m.temp_c > -40 && m.temp_c < 150) {
+    const warm = m.temp_c >= 70;
+    chip(warm ? "is-warn" : "", "Heat ", `${Math.round(m.temp_c)} °C${warm ? " — give it air" : ""}`);
+  }
+  if (m.tamper) chip("is-warn", "", "tamper flag raised");
+}
+
+// The board's voice before anything is written: start the monitor as a
+// pure observer (no reset — watching a running board must never restart
+// it) and ask for the self-manifest twice, like the browser's startVoice
+// (0.9 s, then 2.6 s for a board still finishing its boot). onFlash stops
+// the monitor before espflash touches the port, so this never holds it.
+async function askSelfCheck() {
+  if (state.busy) return;
+  state.selfCheckAsked = true; // the answer is a self-check, not a boot receipt
+  if (!state.monitoring) await startMonitor();
+  if (!state.monitoring) return;
+  const ask = () => {
+    if (state.monitoring) invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
+  };
+  setTimeout(ask, 900);
+  setTimeout(ask, 2600);
+  $("serial-monitor").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ── prove it, two ways — the catalog's prove block, after the flash ─────────
+// Parity with the browser's done card (flash.js phaseDone): every product's
+// catalog entry carries `prove` — one real proof over the cable or the glass
+// (`real.kind`: monitor, glass, bench-radar, bench-field, bench-camera) and
+// one emulated twin in the browser Lab (`emulated.href`, a page under
+// canary-local/). The Lab is served from the repo's GitHub Pages site, named
+// from the catalog's own `repo`, never a typed URL.
+function labUrl(page) {
+  const repo = state.catalog && state.catalog.repo;
+  const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String(repo || ""));
+  return m ? `https://${m[1]}.github.io/${m[2]}/canary-local/${page}` : null;
+}
+
+function proveSpecFor(product) {
+  const p = product && ((state.catalog && state.catalog.products) || []).find((x) => x.id === product.id);
+  return (p && p.prove) || null;
+}
+
+// The read-only Bluetooth console runs on the AP-provisioned Canaries and the
+// WAP (the browser offers its check for exactly these). This window has no
+// Bluetooth of its own, so the check is a pointer — to the iPhone app, or to
+// the browser Lab in a Chromium browser — never a dead end.
+function bleCheckable(product) {
+  return !!product && (product.role === "wap" || product.provisioning === "ap");
+}
+const BLE_CHECK_NOTE =
+  "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
+  "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
+  "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
+  "the SecuraCV iPhone app (its App Store release is still pending), or in the " +
+  "browser Lab in Chrome or Edge on this computer.";
+function openBleCheck() {
+  const url = labUrl("flash.html");
+  if (url) openExternal(url);
+}
+
+function hideProveRow() {
+  $("prove-row").classList.add("hidden");
+}
+
+// Where the desktop's proof is not the browser's: the radar's stream reaches
+// this app as console lines beside the tuning panel, not the browser's drawn
+// bench of presence, bands and vitals — so it says what it shows instead of
+// borrowing the browser's promise. Every other kind is drawn here as the
+// catalog describes it.
+const DESKTOP_PROVE_REAL = {
+  "bench-radar": {
+    label: "👋 Feel it sense — its live lines and the radar's knobs →",
+    how: "The serial monitor streams the radar's presence lines live off the USB console, " +
+      "and the tuning panel beside it sets every reflex. The browser Lab's radar bench " +
+      "draws the same lines as presence, bands and vitals.",
+  },
+};
+
+function renderProveRow(product) {
+  const spec = proveSpecFor(product);
+  const row = $("prove-row");
+  if (!spec) { row.classList.add("hidden"); return; }
+  row.classList.remove("hidden");
+  const real = $("prove-real");
+  const shown = DESKTOP_PROVE_REAL[spec.real.kind] || spec.real;
+  real.textContent = shown.label;
+  real.title = shown.how;
+  real.onclick = () => proveReal(product, spec.real.kind);
+  $("prove-how").textContent = shown.how;
+  const twin = $("prove-twin");
+  const twinUrl = spec.emulated && labUrl(spec.emulated.href);
+  twin.classList.toggle("hidden", !twinUrl);
+  if (twinUrl) {
+    twin.textContent = spec.emulated.label + " ↗";
+    twin.title = spec.emulated.how;
+    twin.onclick = () => openExternal(twinUrl);
+  }
+  const ble = bleCheckable(product) && !!labUrl("flash.html");
+  $("prove-ble").classList.toggle("hidden", !ble);
+  $("prove-ble-note").classList.toggle("hidden", !ble);
+  if (ble) $("prove-ble-note").textContent = BLE_CHECK_NOTE;
+}
+
+async function proveReal(product, kind) {
+  if (kind === "bench-camera") {
+    // The camera bench lives on the MODULE's own USB-C port; the watcher
+    // recognizes the module there and opens its flow and bench by itself.
+    $("prove-how").textContent =
+      "The camera bench is on the camera module's own USB-C port (the wide one by the " +
+      "Grove socket): move the cable there and this app recognizes the module, and its " +
+      "live bench — boxes, the confidence meter and the two on-module dials — starts " +
+      "from the module section.";
+    return;
+  }
+  if (!state.monitoring) await startMonitor();
+  if (!state.monitoring) return;
+  if (kind === "bench-radar" && !$("sense-tune").classList.contains("hidden")) {
+    $("sense-tune").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  if (kind === "bench-field" && !$("wap-field").classList.contains("hidden")) {
+    $("wap-field").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  // "monitor" and "glass": the console is the honest window either way —
+  // ask a receipt-speaking firmware for its self-manifest on the way.
+  if (product && product.serial_receipt !== false) {
+    invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
+  }
+  $("serial-monitor").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 // ── serial monitor + earned receipts ────────────────────────────────────────
 // ── console speed, and recovering from the wrong one ────────────────────────
 // Copied from the browser flasher's core (flash-core.js CONSOLE_BAUDS /
@@ -4954,6 +5278,8 @@ async function startMonitor(opts) {
   clearBootDiagnosis(); // a fresh boot gets a fresh verdict
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
+  renderWapField();  // …and the field bench on a WAP
+  renderSelfCheck(null); // a fresh session earns its own chips
   setMonitorButtons(true);
   // The speed to open at: an explicit one from a baud hop, else whatever the
   // selector holds, else the catalog's. Arm a fresh judge for this attach so
@@ -5033,6 +5359,7 @@ function resetOutcome() {
   // sent the user back to reflash a module that was already done, and the
   // two-board hatch could never fire).
   if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
+  state.selfCheckAsked = false; // the next manifest may be this write's receipt
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
   if (con) con.textContent = "";
@@ -5042,6 +5369,11 @@ function resetOutcome() {
   $("sense-tune").classList.add("hidden");
   senseTune.active = false;
   clearTimeout(senseTune.timer);
+  $("wap-field").classList.add("hidden");
+  wapField.active = false;
+  clearInterval(wapField.timer);
+  renderSelfCheck(null);
+  hideProveRow();
 }
 
 // The flash consoles relay espflash verbatim — including its progress bar,
@@ -5100,7 +5432,7 @@ const OP_STAGES = [
   // ever stream), so its bar sweeps; a backup's first streamed frame takes
   // the bar over immediately.
   ["→ reading ", null, "indet"],
-  ["→ resolving", "Resolving the verified release…", "indet"],
+  ["→ resolving", "Resolving the pinned release…", "indet"],
   ["→ downloading", "Downloading the signed image…", "zero"],
   // Coarse words only — a specific number would read like a benchmark
   // nobody ran; erase time grows with the die and varies by vendor.
@@ -5109,7 +5441,9 @@ const OP_STAGES = [
   ["✓ chip erased", "Chip erased ✓", null],
   ["bytes staged", "Writing firmware to the board…", "zero"],
   ["→ writing ", null, "zero"],
-  ["✓ chip write verified", "Write verified ✓", "full"],
+  // espflash's read-back confirms the write; "verified" is the Ed25519
+  // signature's word alone (AGENTS.md rule 4), and the engine says so too.
+  ["✓ chip write confirmed", "Write confirmed on the chip ✓", "full"],
   ["✓ backup saved", "Backup saved ✓", "full"],
   ["✓ written — the board is rebooting", "Written ✓ — the board is rebooting", "full"],
   ["✓ health check complete", "Health check complete ✓", "full"],
@@ -5657,7 +5991,10 @@ function showHatchCard(product) {
     // already in hand here — so the certificate is derived from the key
     // rather than rolled, and matches the one the iPhone will show for this
     // same Canary. Without this the derived path was unreachable and both
-    // apps quietly went back to naming the bird twice.
+    // apps quietly went back to naming the bird twice. (`boot` must be read
+    // here: unqualified, the name resolved to the app's own boot() function,
+    // whose .manifest is undefined — so every certificate was rolled.)
+    const boot = state.vision.hostBoot;
     const bootFp = (boot && boot.manifest && boot.manifest.pubkey_fp) || "";
     const cert = mintCertificate(product, undefined, bootFp); // a real birth certificate, once
     renderCertificate(cert);
@@ -5988,7 +6325,7 @@ const HUB_STAGE_PILL = {
   download: "Download",
   decompress: "Unpack",
   write: "Write",
-  verify: "Verify",
+  verify: "Read back",
   seed: "Settings",
 };
 
@@ -6628,9 +6965,16 @@ async function hubPreflight() {
         `⚠ Only ${freeGb} GB free for staging — the image needs ~6 GB of room. ` +
         "Free some space first, or the flash may stop partway.";
     } else {
+      // Linux has no authopen, so nothing prompts: a normal account can't
+      // open the raw disk, and the write stops with "no permission to write
+      // /dev/…" (hub-io write.rs names the grant). Say so before the
+      // download, not after it.
       line.textContent =
         hub.platform === "macos"
           ? "Heads up: when the write starts, macOS asks for Touch ID or your password — a prompt from “authopen”, Apple's built-in disk-writing helper. That's expected; approve it and the flash continues."
+          : hub.platform === "linux"
+          ? "Heads up: on Linux an account outside the disk group can't write a raw disk, and nothing will prompt for a password. " +
+            "If the write stops with “no permission”, run the one line it shows (sudo chown \"$USER\" /dev/…, for that card only) and type ERASE again — INSTALL.md, “Write a Pi hub card (Linux)”."
           : "";
     }
   } catch (_) {
@@ -7190,7 +7534,7 @@ async function hubFlash() {
     });
     hub.done = true;
     hub.lastReceipt = receipt;
-    setStatus("hub-result", "Done — written, read back, and verified.", "ok");
+    setStatus("hub-result", "Done — written, and every byte read back and matched.", "ok");
     logEvent("ok", "Home Assistant hub written to " + target.model);
     // The hub belongs in the fleet book too — it's the meeting point every
     // Canary's broker field defaults to, and its row answers "is it up?".
@@ -7246,13 +7590,19 @@ function hubShowHatch(receipt) {
   // the card is touched, so reaching this screen without it means none was
   // asked for. There is no "seeded but maybe not" state left to explain.
   const wifiLine = receipt.wifi_seeded
-    ? " Your Wi-Fi went into the image before the write, so it's covered by the same verification."
+    ? " Your Wi-Fi went into the image before the write, so the same read-back covers it."
     : " Plug in ethernet before you power it on.";
   const acctLine = receipt.account_note ? " " + receipt.account_note : "";
   const provLine = receipt.provision_note ? " " + receipt.provision_note : "";
-  const cacheLine = receipt.used_cache ? " (reused your verified local copy — no re-download.)" : "";
+  // The same two checksums hub.rs names: the repo pin when the plan has one,
+  // else Home Assistant's published one — never "pinned" for an unpinned plan.
+  const cacheLine = receipt.used_cache
+    ? " (reused your local copy — it matched " +
+      (hub.plan && hub.plan.pinned ? "this release's pinned checksum" : "Home Assistant's published checksum") +
+      ", so no re-download.)"
+    : "";
   // Shown whenever present. Advice rather than a warning now: nothing is
-  // written to the card after the verified write, so a card that wouldn't
+  // written to the card after the read-back, so a card that wouldn't
   // auto-eject has nothing pending to lose.
   const ejectLine = receipt.eject_note ? " ⚠ " + receipt.eject_note : "";
   $("hub-hatch-body").textContent =

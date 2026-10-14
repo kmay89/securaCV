@@ -817,7 +817,9 @@ export const DEV_FLASH_MANIFEST_URL =
 export function releaseTagFromManifestUrl(url) {
   const m = /\/releases\/download\/([^/]+)\//.exec(String(url || ""));
   if (!m) return null;
-  const tag = decodeURIComponent(m[1]);
+  // The active manifest URL can be a visitor-typed ?manifest= override, so a
+  // malformed escape (…/download/%E0/…) names no release instead of throwing.
+  let tag; try { tag = decodeURIComponent(m[1]); } catch { return null; }
   return /^fw-v/.test(tag) ? tag : null;
 }
 
@@ -1386,33 +1388,35 @@ export function smartPick(catalog, opts = {}) {
              `updated in place.` };
     }
   }
+  // The size filter is productsForBoard's — the tested function IS the
+  // shipped one (it used to be copied inline here, so its tests covered a
+  // twin). It answers the whole chip set when the size is unknown or matches
+  // nothing, so "fewer than the chip set" means the size narrowed the field.
   const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
-  if (mb) {
-    const sized = byChip.filter((p) => p.flash_mb === mb);
-    if (sized.length && sized.length < byChip.length) {
-      // Deliberately NOT tier-ordered. Sorting a proven board to the front
-      // here looks like caution and isn't: these candidates are different
-      // BOARDS, and the products differ in pins, so preferring a `verified`
-      // entry would hand a generic C3 DevKit owner the XIAO image — right
-      // tier, wrong pins. An unproven image built for the board in hand
-      // beats a proven one built for a different board. The tier is stated
-      // on every card instead, where it informs the choice without making it.
-      const p = sized[0];
-      // Chip + flash size narrows the field; it does not always NAME the
-      // board. When the survivors span more than one family, several
-      // different products fit the silicon equally well, and "that looks
-      // like a <board>" would be a guess wearing the clothes of a
-      // measurement. Say which it is.
-      const families = new Set(sized.map((x) => x.family));
-      const why = families.size > 1
-        ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
-          `one board matches that exactly, so this is a starting point, not ` +
-          `an identification: ${p.name} is first in the list below — check ` +
-          `the others if yours is a different board.`
-        : `Your board reads as an ${label} with ${mb} MB flash — that ` +
-          `looks like a ${p.board_label}. Recommended: ${p.name}.`;
-      return { product: p, kind: "board", why };
-    }
+  const sized = productsForBoard(catalog, chip, flashBytes);
+  if (sized.length < byChip.length) {
+    // Deliberately NOT tier-ordered. Sorting a proven board to the front
+    // here looks like caution and isn't: these candidates are different
+    // BOARDS, and the products differ in pins, so preferring a `verified`
+    // entry would hand a generic C3 DevKit owner the XIAO image — right
+    // tier, wrong pins. An unproven image built for the board in hand
+    // beats a proven one built for a different board. The tier is stated
+    // on every card instead, where it informs the choice without making it.
+    const p = sized[0];
+    // Chip + flash size narrows the field; it does not always NAME the
+    // board. When the survivors span more than one family, several
+    // different products fit the silicon equally well, and "that looks
+    // like a <board>" would be a guess wearing the clothes of a
+    // measurement. Say which it is.
+    const families = new Set(sized.map((x) => x.family));
+    const why = families.size > 1
+      ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
+        `one board matches that exactly, so this is a starting point, not ` +
+        `an identification: ${p.name} is first in the list below — check ` +
+        `the others if yours is a different board.`
+      : `Your board reads as an ${label} with ${mb} MB flash — that ` +
+        `looks like a ${p.board_label}. Recommended: ${p.name}.`;
+    return { product: p, kind: "board", why };
   }
   const p = recommendedProduct(catalog, chip);
   return p ? { product: p, kind: "chip",
@@ -2112,7 +2116,7 @@ export function installVerdict({ current, currentProduct, product, version }) {
   };
 }
 
-// ── roles: what a board IS, in one word — and what it does, in another ──────
+// ── roles: what a board IS, in one word ─────────────────────────────────────
 // The same loose id sniff postFlashNextStep always used, promoted to a named
 // helper (and taught about displays) so every surface agrees on the answer.
 export function productRole(productOrId) {
@@ -2122,11 +2126,6 @@ export function productRole(productOrId) {
   if (/vision/.test(id)) return "vision";
   if (/wap/.test(id)) return "wap";
   return "canary";
-}
-
-// The one-word verb for the role — a display SHOWS, everything else SENSES.
-export function roleVerb(role) {
-  return role === "display" ? "shows" : "senses";
 }
 
 // A firmware project name read off a bare board → does it look like one of

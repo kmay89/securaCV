@@ -21,13 +21,11 @@ from .test_mqtt_payload_hardening import _hass, _msg, ENTRY, HomeAssistant  # no
 
 from .. import valid_device_id  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
-from ..const import DOMAIN  # noqa: E402
 from ..device_trust import TrustVerdict  # noqa: E402
 
 
 def _entry_data() -> dict:
     return {
-        "trust_store": object(),   # only its presence matters to _trust_store_for
         "verify": {},
         "replay": {},
         "mismatch_notified": set(),
@@ -60,8 +58,8 @@ def test_a_backwards_chain_length_is_a_replay_but_equal_is_not() -> None:
     assert not v.trusted and v.reason == "replay"
     assert "length=4" in v.detail and "length=5" in v.detail
     # The stored verify view says so, and the mark did not move backwards.
-    assert hass.data[DOMAIN]["e1"]["verify"]["canary01"]["reason"] == "replay"
-    assert hass.data[DOMAIN]["e1"]["replay"]["canary01"]["length"] == 5
+    assert ENTRY.runtime_data.verify["canary01"]["reason"] == "replay"
+    assert ENTRY.runtime_data.replay["canary01"]["length"] == 5
     # Progress is accepted again.
     v = sensor_platform._verify_and_record(hass, ENTRY, "canary01", {"length": 6}, verify_chain)
     assert v.trusted
@@ -89,7 +87,7 @@ def test_untrusted_and_counterless_publishes_pass_through_unchanged() -> None:
     verify_chain = _named(lambda ts, d, p: _trusted(), "verify_chain")
     assert sensor_platform._verify_and_record(hass, ENTRY, "a", {"length": "abc"}, verify_chain).trusted
     assert sensor_platform._verify_and_record(hass, ENTRY, "a", {}, verify_chain).trusted
-    assert "length" not in hass.data[DOMAIN]["e1"]["replay"].get("a", {})
+    assert "length" not in ENTRY.runtime_data.replay.get("a", {})
 
 
 def test_a_fresh_tofu_pin_resets_the_marks() -> None:

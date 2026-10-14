@@ -11,7 +11,7 @@
 // of canary.local.
 import {
   WALL_H, SLAB_T, FLOORS, ROOMS, DIVIDERS, DIVIDER_H,
-  SENSE_COPY, PLACEMENTS, WALK,
+  PLACEMENTS, WALK,
   placementInfo, chooserHash, fleetSummary,
 } from "./house-data.js";
 
@@ -74,16 +74,6 @@ function planRing(cx, cy, z, r, attrs, cls) {
   const g = el("g", { transform: `translate(${sx},${sy})` }, cls);
   g.append(el("ellipse", { cx: 0, cy: 0, rx: (r * UX * 1.414).toFixed(1), ry: (r * UY * 1.414).toFixed(1), ...attrs }));
   return g;
-}
-
-// A wedge (sector) in the floor plane: center, aim degrees, half-angle,
-// radius — projected point-by-point so it sits properly in iso.
-function planWedge(cx, cy, z, aim, half, r, attrs, cls) {
-  const p = [px(cx, cy, z)];
-  for (let a = aim - half; a <= aim + half; a += 6) {
-    p.push(px(cx + r * Math.cos(rad(a)), cy + r * Math.sin(rad(a)), z));
-  }
-  return el("polygon", { points: p.map((q) => q.join(",")).join(" "), ...attrs }, cls);
 }
 
 // An arc (stroke only) in the floor plane.

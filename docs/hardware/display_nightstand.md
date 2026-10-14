@@ -20,7 +20,7 @@ only — are this category's *wishlist*. The nightstand wave closes the gap.
 
 | Feature | Flag | Watch | Dash |
 |---|---|---|---|
-| True night blackout + dim red tap-to-peek | `FEATURE_NIGHT_BLACKOUT` | seed only | seed only |
+| True night blackout + dim red tap-to-peek | (runtime setting; boots DIM) | settings | settings |
 | Bedroom comfort words (temp/humidity) | `FEATURE_COMFORT_WORDS` | on | on |
 | Hub weather line (morning) | `FEATURE_HUB_WEATHER` | on | on |
 | On-device sunrise/sunset | (with `CD_LAT`/`CD_LON` in secrets.h) | on | on |
@@ -32,8 +32,10 @@ only — are this category's *wishlist*. The nightstand wave closes the gap.
 > bleed reversed the default — "off" leaves an LCD glowing gray, worse than
 > a calibrated dim glow. Screen-at-night (glow vs. off + tap-to-peek) is now
 > a **runtime choice** on the on-glass settings surface, with a per-panel
-> calibrated night floor; `FEATURE_NIGHT_BLACKOUT` only seeds the first-boot
-> default. See `display_settings.md`.
+> calibrated night floor; every flavor boots with night DIM
+> (`glass_settings.cpp`) and "off" is a settings choice. (The
+> `FEATURE_NIGHT_BLACKOUT` flag once said to seed that default was read by no
+> source, and was removed on 2026-10-09.) See `display_settings.md`.
 
 When "go dark" is chosen and everything is quiet with links up, the
 backlight goes to **0**. A tap peeks the red-shifted clock plus the bedroom

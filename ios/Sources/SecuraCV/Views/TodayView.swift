@@ -10,7 +10,10 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject var store: FleetStore
-    @State private var showingSetup = false
+    /// Which walkthrough the Set up sheet opens on — the sheet's item, so
+    /// the choice and the presentation are one value (a separate Bool can
+    /// present before SwiftUI has read the new target).
+    @State private var setupTarget: SetupTarget?
 
     var body: some View {
         NavigationStack {
@@ -24,9 +27,14 @@ struct TodayView: View {
                     // is in range: the card, before anything else.
                     NearbyCanaryCard()
                     // Nothing real yet: the first thing a newcomer needs is
-                    // not a timeline, it is the way in. One card, one door.
-                    if store.witnesses.allSatisfy({ $0.id.hasPrefix(DemoFleet.idPrefix) }) {
-                        SetupInviteCard { showingSetup = true }
+                    // not a timeline, it is the way in. One card, one door —
+                    // and on a fresh install that door is the consent the
+                    // nearby card needs, so the AirPods moment can happen
+                    // the first time instead of only after a Fleet-tab visit.
+                    if let card = FirstRunCard.decide(consent: store.discoveryConsent,
+                                                      hasRealFleet: store.hasRealFleet,
+                                                      hearsNearby: !store.nearbyCanaries.isEmpty) {
+                        FirstCanaryCard(state: card) { setupTarget = $0 }
                     }
                     HeartbeatCard()
                     if store.timeline.isEmpty {
@@ -45,7 +53,7 @@ struct TodayView: View {
             .refreshable { await store.refreshOnce() }
             .navigationTitle(store.fleetName)
             .background(backdrop.ignoresSafeArea())
-            .sheet(isPresented: $showingSetup) { SetupView() }
+            .sheet(item: $setupTarget) { SetupView(initial: $0) }
         }
     }
 
@@ -149,21 +157,49 @@ struct EmptyTimeline: View {
     }
 }
 
-/// The way in, for a phone with no real fleet yet: both walkthroughs behind
-/// one calm card. It names what the phone itself does, and only that.
-struct SetupInviteCard: View {
-    var open: () -> Void
+/// The way in, for a phone with no real fleet yet (FirstRunCard decides
+/// which face it shows). Adding a Canary leads; the hub is the second door.
+/// It names what the phone itself does, and only that.
+struct FirstCanaryCard: View {
+    let state: FirstRunCard
+    var open: (SetupTarget) -> Void
+    @EnvironmentObject var store: FleetStore
+
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: Theme.m) {
                 CanaryPerchView(height: 48)
-                VStack(alignment: .leading, spacing: Theme.xs) {
-                    Text("Start here").font(.headline)
-                    Text("Set up a hub on a Raspberry Pi — this phone finishes Home Assistant for you, no wizard — and give your first Canary its Wi-Fi.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Set up", action: open)
-                        .buttonStyle(.borderedProminent)
+                VStack(alignment: .leading, spacing: Theme.s) {
+                    Text(state == .invite ? "Start here" : "Add your first Canary").font(.headline)
+                    switch state {
+                    case .ask:
+                        Text("Plug it in near this phone. SecuraCV listens for it over Bluetooth and your Wi-Fi — nothing leaves your home. iOS asks for both next.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Find my Canary") { store.setDiscoveryConsent(true) }
+                            .buttonStyle(.borderedProminent)
+                        HStack(spacing: Theme.m) {
+                            Button("Not now") { store.setDiscoveryConsent(false) }
+                            Button("Set up a hub instead") { open(.hub) }
+                        }
+                        .font(.footnote)
+                    case .listening:
+                        ListeningRow(text: "Listening — power it on within a few meters of this phone.",
+                                     advice: store.bluetoothAdvice)
+                        HStack(spacing: Theme.m) {
+                            Button("Other ways to add one") { open(.canary) }
+                            Button("Set up a hub") { open(.hub) }
+                        }
+                        .font(.footnote)
+                    case .invite:
+                        Text("Give your first Canary your Wi-Fi — or set up a hub on a Raspberry Pi, which this phone finishes for you.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Add a Canary") { open(.canary) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Set up a hub") { open(.hub) }
+                            .font(.footnote)
+                    }
                 }
             }
         }

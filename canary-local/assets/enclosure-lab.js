@@ -48,18 +48,18 @@ const PREVIEW_BASE = "enclosures/preview/";
 const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LAYER_MM = 0.2; // README §Suggested print settings
 
-// "⚡ slice for exact time" with no slicer engine present. Deliberately not
-// vendored (assets/vendor/kiri/README.md, "Status"): the person reading the
-// note is printing a case, not maintaining the Lab, so the note says what they
-// get and the how-to-vendor pointer goes to the console for whoever is.
-export const SLICER_ABSENT_NOTE =
-  "Exact toolpath time needs the optional slicer engine, which this copy of " +
-  "the Lab doesn't include — the modeled estimate stands.";
+// No slicer engine present, which is every shipped copy: it is deliberately
+// not vendored (assets/vendor/kiri/README.md, "Status"). The card then offers
+// no "⚡ slice for exact time" at all — a button whose only possible answer was
+// "this copy doesn't include it" was a dead end on a card meant to be short —
+// and the how-to-vendor pointer goes to the console, once, for whoever is
+// maintaining the Lab rather than printing a case.
 export const SLICER_ABSENT_CONSOLE =
-  "enclosure lab: Kiri:Moto is not vendored, so ⚡ slice for exact time keeps " +
-  "the modeled estimate. Vendoring it is a deliberate decision (it needs " +
-  "cross-origin isolation for the whole Lab) — see " +
+  "enclosure lab: Kiri:Moto is not vendored, so the print estimate offers no " +
+  "⚡ slice for exact time and the modeled estimate stands. Vendoring it is a " +
+  "deliberate decision (it needs cross-origin isolation for the whole Lab) — see " +
   "canary-local/assets/vendor/kiri/README.md and canary-local/tools/vendor_kiri.sh.";
+let slicerAbsentLogged = false;
 
 const PART_COLORS = [
   [0.36, 0.62, 0.64],   // teal (the enclosure previews' own palette)
@@ -795,10 +795,10 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     card.append(totals);
 
     // ── optional: hand the ONE soft number (time) to a real slicer ──
-    // Present always; it upgrades the estimated time to a true toolpath time
-    // IFF the Kiri:Moto engine is vendored (assets/vendor/kiri). Offline and
-    // fail-closed: if it isn't there, or anything goes wrong, the estimate
-    // stands and the note says so.
+    // Offered only when the Kiri:Moto engine is vendored (assets/vendor/kiri):
+    // the row and the provenance sentence that points at it join the card once
+    // slicerAvailable() says so. Offline and fail-closed: if anything goes wrong
+    // mid-slice, the estimate stands and the note says so.
     const setTile = (tile, v, l) => {
       tile.querySelector("b").textContent = v;
       tile.querySelector("i").textContent = l;
@@ -807,17 +807,10 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     const sliceBtn = el("button", "est-slice-btn", "⚡ slice for exact time");
     const sliceNote = el("span", "muted est-slice-note");
     sliceRow.append(sliceBtn, sliceNote);
-    card.append(sliceRow);
     sliceBtn.addEventListener("click", async () => {
       sliceBtn.disabled = true;
       sliceNote.textContent = "slicing…";
       try {
-        if (!(await slicerAvailable())) {
-          sliceNote.textContent = SLICER_ABSENT_NOTE;
-          console.info(SLICER_ABSENT_CONSOLE);
-          sliceBtn.disabled = false;
-          return;
-        }
         let totalS = 0, sliced = 0;
         for (let i = 0; i < lab.metas.length; i++) {
           const m = lab.metas[i];
@@ -943,16 +936,24 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     card.append(build);
 
     // provenance — the whole point: say what's measured vs modeled.
-    card.append(el("p", "muted est-prov",
+    const prov = el("p", "muted est-prov",
       "Measured: filament mass, length and cost come from these STLs' own solid " +
       "volume × the catalog's documented density — the same method behind the " +
       "README mass budget, so the grams are checkable, not guessed. Modeled: " +
       "print time and energy are a transparent physical model for your rig " +
       "(volumetric flow → time; average duty-cycle power → energy), carrying " +
-      "the ± band shown. For a true toolpath time, hit ⚡ slice for exact time — " +
-      "the button hands the geometry to the optional offline Kiri:Moto slicer " +
-      "when this copy of the Lab includes it and upgrades the time in place; " +
-      "otherwise the estimate stands."));
+      "the ± band shown.");
+    card.append(prov);
+    slicerAvailable().then((ok) => {
+      if (!ok) {
+        if (!slicerAbsentLogged) { slicerAbsentLogged = true; console.info(SLICER_ABSENT_CONSOLE); }
+        return;
+      }
+      totals.after(sliceRow);
+      prov.append(" For a true toolpath time, hit ⚡ slice for exact time — the " +
+        "button hands the geometry to the offline Kiri:Moto slicer and upgrades " +
+        "the time in place.");
+    });
 
     // hand off to the bench: the print's done, now build it
     stage2.hidden = true;

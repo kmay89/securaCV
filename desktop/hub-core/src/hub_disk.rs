@@ -12,10 +12,11 @@
 //! pure, host-tested decision layer *before* the risky boot-path wiring
 //! (`firmware/common/health/boot_policy.h`), the decision of *what is a legal
 //! write target* lives here — pure, exhaustively unit-tested, and settled
-//! before a single byte is written. The destructive write itself is a separate,
-//! hardware-validated step (a later change); its one hard contract is that it
-//! MUST call [`classify`] and refuse anything that is not
-//! [`Eligibility::Eligible`].
+//! before a single byte is written. The destructive write itself is a separate
+//! step (the Flasher's `hub.rs` over `hub-io`'s writer); its one hard contract
+//! is that it MUST call [`classify`] and refuse anything that is not
+//! [`Eligibility::Eligible`] — [`crate::hub_flash::authorize_write`] re-checks
+//! it, so a refused disk cannot reach the write.
 //!
 //! **What counts as a legal target.** A hub disk must be *external to this
 //! computer*: a removable SD card / USB stick, or an external / ejectable
@@ -29,8 +30,10 @@
 //! This module has no Tauri, no serial, no I/O in its decision path: it reasons
 //! over already-observed facts about a disk. Enumerating the disks — and, per
 //! platform, deciding which is the system disk and which non-removable disks are
-//! *external* — is the enumerator's job in a follow-up change; [`from_sysblock`]
-//! is the pure half of that, kept here so it can be tested the same way.
+//! *external* — is the enumerators' job: [`crate::hub_enumerate`] (Linux sysfs,
+//! which feeds [`from_sysblock`]), [`crate::hub_enumerate_macos`] and
+//! [`crate::hub_enumerate_windows`]. [`from_sysblock`] stays here so it can be
+//! tested the same way.
 
 /// 1024³ — disk sizes are quoted in binary gibibytes throughout this module.
 /// (Human display in [`fmt_bytes`] uses the same base, so a "32 GB" card, which
@@ -255,6 +258,8 @@ pub fn classify(disk: &TargetDisk) -> Eligibility {
 
 /// A disk paired with its verdict, ready for the UI: eligible ones become the
 /// picker rows, refused ones become the "N devices hidden — here's why" line.
+/// The Flasher's picker is fed by [`judge_all`] and splits on the verdict
+/// itself, so the refused disks can be explained rather than vanish.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Judged {
     pub disk: TargetDisk,
@@ -272,16 +277,8 @@ pub fn judge_all(disks: Vec<TargetDisk>) -> Vec<Judged> {
         .collect()
 }
 
-/// Just the disks it is safe to write to. This is what the picker offers.
-pub fn eligible_targets(disks: Vec<TargetDisk>) -> Vec<Judged> {
-    judge_all(disks)
-        .into_iter()
-        .filter(|j| j.eligibility.is_eligible())
-        .collect()
-}
-
 /// Parse the raw reads of one Linux `/sys/block/<name>` entry into a
-/// [`TargetDisk`]. Pure on purpose: the platform enumerator (a later change)
+/// [`TargetDisk`]. Pure on purpose: the Linux enumerator ([`crate::hub_enumerate`])
 /// does the file I/O and the system-disk / external resolution, then hands the
 /// strings here, so the parsing is testable without real hardware.
 ///
@@ -562,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn eligible_targets_keeps_safe_disks_incl_external_ssd_and_preserves_order() {
+    fn the_eligible_verdicts_keep_safe_disks_incl_external_ssd_and_preserve_order() {
         let disks = vec![
             good_card(), // eligible (removable)
             TargetDisk {
@@ -583,8 +580,13 @@ mod tests {
                 ..good_card()
             }, // eligible: external SSD/NVMe
         ];
-        let kept = eligible_targets(disks);
-        let paths: Vec<_> = kept.iter().map(|j| j.disk.path.as_str()).collect();
+        // The picker's split (app.js keeps `eligible`, explains the rest).
+        let judged = judge_all(disks);
+        let paths: Vec<_> = judged
+            .iter()
+            .filter(|j| j.eligibility.is_eligible())
+            .map(|j| j.disk.path.as_str())
+            .collect();
         assert_eq!(paths, vec!["/dev/sdb", "/dev/nvme1n1"]);
     }
 

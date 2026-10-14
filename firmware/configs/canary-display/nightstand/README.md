@@ -24,7 +24,10 @@ dirty-region); the S3 has room to double-buffer and animate richly.
 - Design + bring-up: `docs/hardware/display_nightstand_line.md`
 
 Differences from `watch`: portrait 172×320 (not a 240 round), no touch, plus
-the WS2812 ambient beacon and the honest dark-when-safe night behavior
-(`FEATURE_NIGHT_BLACKOUT` seeded on). Shared modal surfaces (settings,
+the WS2812 ambient beacon and the honest dark-when-safe night behavior,
+which is a runtime setting: like every flavor it boots with night DIM
+(`glass_settings.cpp`), and "off" is one tap away in settings. (The
+`FEATURE_NIGHT_BLACKOUT` flag once said to seed it on was read by no source,
+and was removed on 2026-10-09.) Shared modal surfaces (settings,
 commissioning, onboarding, splash) render in the watch's small-portrait
 style until they get a portrait-native polish pass.

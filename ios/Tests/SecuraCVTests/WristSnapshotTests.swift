@@ -120,15 +120,140 @@ final class WristSnapshotTests: XCTestCase {
         XCTAssertEqual(row.badge, .unknown)
     }
 
+    // MARK: - additive growth: what the device is, chirp, room, hub
+
+    /// One row exactly as a phone from before these fields would send it.
+    private let olderPhoneRow = #"""
+    {"id":"canary-a3f7","name":"Porch","severityRaw":0,"linkRaw":1,"badgeRaw":3,
+     "tamper":false,"isMuted":false,"batteryPct":80}
+    """#
+
+    func testAnOlderPhonesRowStillDecodesAndClaimsNothingNew() throws {
+        let row = try WristSync.makeDecoder().decode(WristWitness.self,
+                                                     from: Data(olderPhoneRow.utf8))
+        XCTAssertNil(row.canIdentify, "no answer is no Chirp button, never a failing one")
+        XCTAssertNil(row.publishedType)
+        XCTAssertNil(row.hardware)
+        XCTAssertEqual(row.deviceType, .unknown, "the generic marker, never a guess")
+        XCTAssertEqual(row.hub, .unknown, "a hub nobody reported draws nothing")
+        XCTAssertNil(DeviceGlanceCopy.hubLine(row.hub))
+        XCTAssertNil(DeviceGlanceCopy.wellbeingLine(present: row.radarPresent,
+                                                    occupants: row.radarOccupants,
+                                                    breathing: row.breathingLock),
+                     "absence is 'cannot say', never an empty calm room")
+    }
+
+    func testANewRowRoundTripsWhatItIsAndWhetherItCanChirp() throws {
+        var row = WristSnapshot.sample(now: now).witnesses[0]
+        row.canIdentify = true
+        row.publishedType = "canary-wap"
+        row.hubRaw = HubState.absent.rawValue
+        row.radarPresent = true
+        row.radarOccupants = 3
+        row.breathingLock = false
+        let data = try WristSync.makeEncoder().encode(row)
+        let back = try WristSync.makeDecoder().decode(WristWitness.self, from: data)
+        XCTAssertEqual(back, row)
+        XCTAssertEqual(back.canIdentify, true)
+        XCTAssertEqual(back.deviceType, .wap)
+        XCTAssertEqual(back.hub, .absent)
+        XCTAssertEqual(DeviceGlanceCopy.hubLine(back.hub), "No hub yet — it works on its own")
+        XCTAssertEqual(DeviceGlanceCopy.wellbeingLine(present: back.radarPresent,
+                                                      occupants: back.radarOccupants,
+                                                      breathing: back.breathingLock),
+                       "Someone present · 2+ in the room · breathing rhythm not sensed")
+    }
+
+    func testAnOlderPhonesMoodNumberIsIgnored() throws {
+        // `anxiety` once rode the wire and nothing on the wrist read it; a
+        // phone that still sends it must not break this watch.
+        let data = try WristSync.makeEncoder().encode(WristSnapshot.sample(now: now))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json["anxiety"] = 9
+        let decoded = try WristSync.makeDecoder().decode(
+            WristSnapshot.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded, WristSnapshot.sample(now: now))
+    }
+
+    func testTheAckVerbIsPinned() {
+        // Both ends compile this file, so the strings can't drift between
+        // them — but an older build on the OTHER side keeps the old spelling
+        // forever, so the spelling itself is the contract.
+        XCTAssertEqual(WristSync.commandAck, "ack")
+        XCTAssertEqual(WristSync.ackIDKey, "id")
+        XCTAssertEqual(WristSync.messageCommandKey, "cmd")
+    }
+
+    @MainActor
+    func testThePhoneAndTheWristNameTheWitnessCategoryOnce() {
+        // The watch's custom long-look is registered for this id; the phone
+        // stamps it on every witness alert. A respelling on either side
+        // would silently drop the wrist back to the generic layout.
+        XCTAssertEqual(AlertCenter.witnessCategoryID, NotificationIDs.witnessCategory)
+        XCTAssertEqual(NotificationIDs.witnessCategory, "SECURACV_WITNESS")
+    }
+
+    // MARK: - the dead-man's-switch outranks green rows, on every glance
+
+    func testAQuietFleetOverAFailedPathRaisesThePathAlarm() {
+        var snap = WristSnapshot.sample(now: now)
+        snap.severityRaw = Severity.ok.rawValue
+        for state in [WristHeartbeatState.failed, .dark] {
+            snap.heartbeatRaw = state.rawValue
+            XCTAssertTrue(snap.pathAlarm, "\(state)")
+            XCTAssertEqual(snap.glanceSymbol, state.sfSymbol)
+            XCTAssertEqual(snap.glanceRole, state.role)
+        }
+    }
+
+    func testAQuietFleetOverAWorkingPathIsJustQuiet() {
+        var snap = WristSnapshot.sample(now: now)
+        snap.severityRaw = Severity.ok.rawValue
+        for state in [WristHeartbeatState.alive, .testing, .unknown] {
+            snap.heartbeatRaw = state.rawValue
+            XCTAssertFalse(snap.pathAlarm, "\(state)")
+            XCTAssertEqual(snap.glanceSymbol, Severity.ok.sfSymbol)
+        }
+    }
+
+    func testARealAlarmKeepsItsOwnGlyphOverADarkPath() {
+        var snap = WristSnapshot.sample(now: now)
+        snap.severityRaw = Severity.alert.rawValue
+        snap.heartbeatRaw = WristHeartbeatState.dark.rawValue
+        XCTAssertFalse(snap.pathAlarm)
+        XCTAssertEqual(snap.glanceSymbol, Severity.alert.sfSymbol)
+        XCTAssertEqual(snap.glanceRole, Severity.alert.role)
+    }
+
+    func testARoomWordAloneDoesNotRedrawTheComplications() {
+        let before = WristSnapshot.sample(now: now)
+        var after = before
+        after.witnesses[0].radarPresent = true
+        after.witnesses[1].isMuted = true
+        after.sentAt = now
+        XCTAssertTrue(after.drawsSameGlance(as: before),
+                      "nothing a complication draws moved — no reload budget spent")
+        after.severityRaw = Severity.alert.rawValue
+        XCTAssertFalse(after.drawsSameGlance(as: before))
+        var pathDown = before
+        pathDown.severityRaw = Severity.ok.rawValue
+        var later = pathDown
+        pathDown.heartbeatRaw = WristHeartbeatState.dark.rawValue
+        later.heartbeatRaw = WristHeartbeatState.dark.rawValue
+        later.lastVerifiedAt = now.addingTimeInterval(-7_200)
+        XCTAssertFalse(later.drawsSameGlance(as: pathDown),
+                       "while the path is down its age IS the glance")
+    }
+
     // MARK: - heartbeat wording (one sentence, both surfaces)
 
     func testHeartbeatSummaryMatchesThePhoneWordingExactly() {
         XCTAssertEqual(HeartbeatCopy.summary(state: .unknown, secondsSinceVerified: nil),
-                       "Not yet verified")
+                       "Alert delivery not tested yet")
         XCTAssertEqual(HeartbeatCopy.summary(state: .alive, secondsSinceVerified: 30),
-                       "Delivery verified just now")
+                       "Alert delivery confirmed just now")
         XCTAssertEqual(HeartbeatCopy.summary(state: .alive, secondsSinceVerified: 600),
-                       "Delivery verified 10 min ago")
+                       "Alert delivery confirmed 10 min ago")
         XCTAssertEqual(HeartbeatCopy.summary(state: .testing, secondsSinceVerified: nil),
                        "Testing the whole path…")
         XCTAssertEqual(HeartbeatCopy.summary(state: .dark, secondsSinceVerified: 1_800),
@@ -138,14 +263,29 @@ final class WristSnapshotTests: XCTestCase {
                        "Test failed: relay unreachable")
     }
 
+    func testDeliveryWordingNeverBorrowsVerified() {
+        // "Verified" is reserved for an Ed25519 signature checked against a
+        // pinned key (AGENTS.md rule 4). A notification iOS accepted is a
+        // confirmed delivery, and every heartbeat sentence says so.
+        for state in [WristHeartbeatState.unknown, .alive, .testing, .dark, .failed] {
+            for source in [WristBeatSource?.none, .pathVerified, .fleetCheckIn] {
+                for ago in [Int?.none, 30, 7_200] {
+                    let line = HeartbeatCopy.summary(state: state, secondsSinceVerified: ago,
+                                                     source: source)
+                    XCTAssertFalse(line.lowercased().contains("verified"), line)
+                }
+            }
+        }
+    }
+
     func testSnapshotRendersItsOwnAgoFromTheAbsoluteDate() {
         var snapshot = WristSnapshot.sample(now: now)
         snapshot.heartbeatRaw = WristHeartbeatState.alive.rawValue
         snapshot.lastVerifiedAt = now.addingTimeInterval(-600)
-        XCTAssertEqual(snapshot.heartbeatSummary(now: now), "Delivery verified 10 min ago")
+        XCTAssertEqual(snapshot.heartbeatSummary(now: now), "Alert delivery confirmed 10 min ago")
         // A skewed watch clock must clamp, never show a negative age.
         snapshot.lastVerifiedAt = now.addingTimeInterval(120)
-        XCTAssertEqual(snapshot.heartbeatSummary(now: now), "Delivery verified just now")
+        XCTAssertEqual(snapshot.heartbeatSummary(now: now), "Alert delivery confirmed just now")
     }
 
     // MARK: - the sample's own honesty

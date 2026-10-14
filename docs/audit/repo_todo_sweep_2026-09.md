@@ -72,7 +72,7 @@ items below.
   `securacv_website/store-README.md` "One-time setup". Un-gates: W1 — the two
   already-FCC-clear parts SKUs could sell today.
 
-Two smaller one-time human acts, same flavor:
+Smaller one-time human acts, same flavor:
 
 - [ ] **U6 [human] Set `MIRROR_PAT` in the monorepo secrets.** Until then the
   HACS mirror refresh is inert-but-green
@@ -105,9 +105,55 @@ Two smaller one-time human acts, same flavor:
   WAP firmware, the kernel bridge, the kernel wizard and docs; nothing under
   `custom_components/securacv` moves since `41d53091`). Until the secret is
   set, every `main` change to the carried set needs that again.
+  #1762's carried files (waves 9-15, 12 files) followed by hand in
+  securacv-homeassistant#24 (`034089c`, 2026-10-07), after which
+  `check_mirror_sync.py` reported 66 files matching. The 2026-10 cleanup's
+  carried edits (`__init__.py`, `const.py`, `device_trust.py`, `intent.py`,
+  `voice.py`, `tests/test_frontend_registration.py`, and the release bump)
+  ride the mirror branch of the same name
+  (`claude/repo-cleanup-cross-platform-64k76f`), in sync at 66 files on
+  2026-10-10; merge the monorepo PR first. The secret: a fine-grained PAT
+  scoped to `kmay89/securacv-homeassistant` only (Contents, Pull requests and
+  Issues read/write), saved as the repository secret `MIRROR_PAT` here; then
+  dispatch Actions → "homeassistant mirror" on `main`, confirm it reports the
+  mirror already matching or opens a `bot/mirror-sync` PR, and close #1637.
 - [ ] **U7 [human] Open the staged home-assistant/brands submission.**
   `brands/home-assistant/README.md` says "not submitted"; it is the only route
   to an integration icon on HA < 2026.3.
+- [ ] **U8 [human] Let the hub-freshness workflow open its PR.**
+  `homeassistant-freshness.yml` refreshes the hub's upstream snapshot (since
+  the 2026-10 cleanup it also reruns `gen_hub_seed.py`,
+  `gen_hub_provision_bundle.py` and `gen_start.py`, in canary-local.yml's
+  drift order) and pushes with `secrets.FRESHNESS_PAT || github.token`. The
+  default token does not get to open the pull request here, so the newer
+  snapshot sits on `bot/homeassistant-freshness` and #1662 stays open. Add the
+  `FRESHNESS_PAT` secret (fine-grained, this repo, contents and pull-requests
+  write; the workflow's comment says why a PAT also lets the PR's own checks
+  run) or enable "Allow GitHub Actions to create and approve pull requests",
+  re-run the workflow, merge its PR and close #1662.
+- [ ] **U9 [human] Delete the four stale Lab draft releases.** `app-v0.1.1`,
+  `app-v0.1.2`, `app-v0.2.0` and `app-v0.2.1` are drafts older than the
+  published `app-v0.2.4` (listed by the releases API on 2026-10-10). Since the
+  2026-10 cleanup the release planner ignores them (`release-everything.yml`'s
+  `drafts` job), but nothing deletes them. Deleting a release is destructive,
+  so it is a human's act: remove the four from the Releases page.
+- [ ] **U10 [human] Give the HACS mirror a description and topics.**
+  `kmay89/securacv-homeassistant` has no repository description and no topics
+  (checked 2026-10-10); the HACS store listing reads both, and the
+  hacs/default submission checks the topics, which is why the mirror's
+  `validate.yml` hacs job carries `ignore: topics`. An admin runs
+  `gh repo edit kmay89/securacv-homeassistant --description "…" --add-topic …`
+  (the 2026-10 audit's draft: "SecuraCV for Home Assistant (HACS): signed
+  witness events from Canary devices and the Privacy Witness Kernel, never
+  footage, never identity. Developed in kmay89/securaCV.", topics
+  `home-assistant`, `homeassistant`, `hacs`, `hacs-integration`,
+  `homeassistant-integration`, `home-automation`, `mqtt`, `privacy`,
+  `local-first`), then deletes the `ignore: topics` line and its comment and
+  confirms Validate is green on `main`. Two mirror chores fit the same visit:
+  issue #13 ("HACS mirror has drifted") should close itself on the first
+  `main` push after the 2026-10 cleanup lands (mirror-freshness's new close
+  step), so close it by hand if it does not; and Dependabot PR #25 wants a
+  rebase so the new `lint` job runs on it.
 
 ---
 
@@ -899,6 +945,85 @@ so — see D2 below.)
   the device-id host. `scripts/tests/test_wap_name_examples.py`'s last source
   exemption is dropped, and the test fails on the old comment. A firmware
   change: host-tested, compile-tested by CI, not bench-tested.
+- [ ] **F251 [code+human] The flagship `firmware/canary` has no Bluetooth
+  setup door.** Magic pairing (the Improv-over-BLE door,
+  `docs/design/magic_pairing.md`) is built on Sense, Vision and the WAP's FULL
+  profile. Six files promise the flagship's door "in a follow-up"
+  (`magic_pairing.md`'s header, §5 table and flagship paragraph,
+  `docs/GLOSSARY.md`'s "Bluetooth setup door", `docs/ble_protocol.md`
+  §13.7, `docs/design/onboarding_shared_module.md`, `firmware/FEATURES.md`'s
+  door row, `firmware/common/network/claim_ticket.h`'s header; all but
+  `claim_ticket.h` now link here), and `firmware/canary` has no Improv code
+  (`git grep -il improv -- firmware/canary` is empty). The iPhone already maps
+  a `Canary-XXXX` advert to the WAP family (`ios/Shared/NearbyCanary.swift`:
+  "the flagship build pairs like a WAP"), but `ios/Shared/SetupGuide.swift`'s
+  `CanaryFamily` has no flagship case. Work: link
+  `common/network/improv_core.h`, `improv_ble.{h,cpp}` and
+  `provisioning_gate.h` (and `claim_ticket.h`, if it pairs like a WAP as the
+  iOS parser assumes) into `firmware/canary/platformio.ini` under
+  `FEATURE_IMPROV`, started after the NimBLE stack owner
+  `ble_status_stack_begin()`; decide which envs carry it (today only
+  `[env:full]` links NimBLE); advertise the `Canary-XXXX` name; decide whether
+  the walkthrough gets a flagship family with `hasBluetoothDoor` (and a
+  `SetupGuideTests` row) or the WAP page fits; fill the flagship column of
+  `magic_pairing.md` §5 and add its rows to §9. The design ties it to the
+  flagship's portal migration (`onboarding_shared_module.md`, Phase 4 item 2).
+  Bench (U1): the §9 rows on a XIAO ESP32-S3. Found by the 2026-10 cleanup
+  audit.
+- [ ] **F254 [code+human] After magic pairing, a Sense or Vision still needs
+  its hub (MQTT) settings from a flasher.** The Bluetooth door hands over
+  Wi-Fi only: Improv carries an SSID and a password, and Sense and Vision
+  answer an empty URL and appear on the LAN (`magic_pairing.md` §5, "After the
+  join"). Their broker host, port and login are NVS keys (`mqtt_host` and its
+  neighbors) that the flashers' broker block writes, so a phone-only setup
+  ends with a device on Wi-Fi that reports to no hub. The 2026-10 cleanup made
+  the iPhone say so (`SetupGuide.swift`'s `hubNote`; the walkthrough copies
+  the hub login with a two-minute clipboard expiry and points at the Flasher's
+  MQTT fields) and did not close it. Work: a companion GATT characteristic
+  beside Improv on Sense and Vision that takes the broker host, port and login
+  right after a proven join, only while the door is open and only on an
+  encrypted link, with the Wi-Fi write's caps and refusals; the phone's
+  `MagicPairPlan` sequencing; host tests on both ends; and its wire in
+  `magic_pairing.md` §3 and rows in §9. Bench (U1). Found by the 2026-10
+  cleanup's iOS package.
+- [ ] **F255 [code] canary-wap's receipt answers with the SoftAP address after
+  it has joined the home Wi-Fi.** `send_provisioning_receipt()`
+  (`canary_wap.ino`) builds `base_url` from `WiFi.softAPIP()` for the bearer
+  and BOOT-tap grants and uses the `.local` name only for a spent setup-door
+  claim (`via_claim`). A receipt fetched over the home LAN while the STA is
+  connected therefore points its reader at 192.168.4.1, which is gone once the
+  SoftAP drops. Use the `.local` authority whenever the STA holds an address
+  and the request did not arrive on the SoftAP (compare the request socket's
+  local address with `WiFi.softAPIP()`), with a `tests_host` case per grant.
+  The iPhone already moves a 192.168.4.1 receipt onto the host it discovered
+  (`DeviceAPI`'s `rebased(onto:)`, 2026-10 cleanup), so older firmware keeps
+  working there; other readers of the receipt get no such help. Found by the
+  2026-10 cleanup's iOS package.
+- [ ] **F256 [code+decision] canary-wap does not advertise its TLS certificate
+  fingerprint over mDNS.** Its `_securacv._tcp` TXT set (`MDNS.addServiceTxt`
+  in `canary_wap.ino`) carries `device_id`, `fw`, `host`, `name`, `model` and
+  the broker keys, not the fingerprint it already computes
+  (`g_tls_cert_fp_hex`, served in the receipt as `tls_cert_fp`). So the iPhone
+  has no way to pin an https WAP it found on the LAN before it holds a
+  receipt, and since the 2026-10 cleanup the app deliberately offers no "tap
+  BOOT, then Continue" pairing over the LAN and no copy promises one. Adding a
+  TXT key (`tls_fp`, say) is a decision first: an mDNS record is
+  unauthenticated, so a fingerprint learned from it is trust on first use, not
+  a pin. Decide whether that is acceptable for a pairing the BOOT tap already
+  gates; then add the key, the app's LAN BOOT-tap path and their tests.
+  Related: F62, the same trust question for the flagship's `tls`/`secure_port`
+  advert in the desktop clients. Found by the 2026-10 cleanup's iOS package.
+- [ ] **F257 [code] A WAP set up through the Bluetooth door is never offered
+  its recovery kit.** canary-wap offers `canary-recovery-kit.json` only in the
+  `/companion` wizard's close-out (`companion_pwa.h`), which the
+  Bluetooth-door path skips, and the dashboard's BOOT-tap flow takes the token
+  without offering a "Save kit". The iPhone's recovery-kit path (`PairView`),
+  and the `403`-on-claim fallback that sends a WAP to "Ready to pair" with its
+  kit (`magic_pairing.md` §9, iOS rows), therefore reach only a WAP whose
+  owner saved a kit some other way. Offer the kit on the dashboard after a
+  BOOT tap, as the wizard's close-out does, with the wizard's wording and a
+  test beside `wizard_logic.test.js`. Found by the 2026-10 cleanup's iOS
+  package.
 
 ### Parity & sub-projects
 
@@ -6385,7 +6510,7 @@ so — see D2 below.)
   stays disabled through a failed start's own cancels is not pinned (from the
   review). Host-tested (node); not run against a Canary (U1: the F214/F217
   row).
-- [ ] **F237 [code] canary-wap's `wap_server.h` lists eight routes nothing
+- [x] **F237 [code] canary-wap's `wap_server.h` lists eight routes nothing
   registers.** Its endpoint comment names GET `/api/health`, `/api/identity`,
   `/api/witness/<seq>`, `/api/witness/stats`, `/api/logs/unacked`, `/api/gps`,
   `/api/time` and `/api/export/download`. None is in the route table
@@ -6393,6 +6518,9 @@ so — see D2 below.)
   404 or 405 for each), and neither dashboard calls them. Correct the list to
   the table, or hold it to the table in `test_dashboard_route_match.test.js`.
   Found by F214 (#1762).
+  *Done (2026-10 cleanup):* the eight phantom routes are gone from
+  `wap_server.h`'s endpoint comment, and `test_dashboard_route_match.test.js`
+  now holds every route that comment lists to the route table.
 - [ ] **F238 [code] The route-match test reads only the two main dashboards.**
   `test_dashboard_route_match.test.js` holds the requests of the PlatformIO
   dashboard (`securacv_webui.cpp`) and canary-wap's `web_ui.h`. canary-wap's
@@ -8120,7 +8248,7 @@ so — see D2 below.)
   both opt-in Vision parity scenarios must pass by hand. A firmware change:
   host-tested, compile-tested by CI, not bench-tested. Found here, by the
   review: F249 (an incremental host build misses a pipeline change).
-- [ ] **F249 [code] An incremental host build misses a `detection_pipeline.h`
+- [x] **F249 [code] An incremental host build misses a `detection_pipeline.h`
   change in the Vision core bindings test.** `firmware/tests_host/Makefile`'s
   `VISCORE_HDR` lists the FSM headers, `config.h`, the shim headers and the
   emscripten stub, but `vision_core_bindings.cpp` also includes
@@ -8129,6 +8257,75 @@ so — see D2 below.)
   `test_vision_core_bindings`. CI builds fresh, so it is unaffected. Add
   `$(VISION_PIPE_HDR)` to `VISCORE_HDR`. Pre-existing. Found by F221's review
   (#1762).
+  *Done (2026-10 cleanup):* `VISCORE_HDR` lists `$(VISION_PIPE_HDR)`.
+- [ ] **F252 [code+decision] canary-wap's rf-sensing wizard is unreachable:
+  the Phase 12 routes were never built.** The Phase 10 setup wizard
+  (`wizard.h` / `wizard.cpp` in
+  `firmware/projects/canary-wap/arduino/canary_wap/`) compiles into the
+  sketch, but nine of its public functions have no caller outside
+  `wizard.cpp`: `set_zone_name`, `get_zone_name`, `start_pairing`,
+  `finish_pairing`, `restart_training`, `always_ignore_last_decision`,
+  `set_context`, `get_status` and `get_status_for_export`. Only
+  `init`/`deinit`/`tick` (from `rf_presence.cpp`) and the Phase 11 conformance
+  self-test, which restores the state it changes, call into it, so on a device
+  the wizard never leaves `WIZ_UNCONFIGURED`, and the six modules' noised
+  `*_for_export` paths (`dp.h`) are reachable only through the uncalled
+  `get_status_for_export`. `rf_presence_api.h` registers only
+  `/api/rf/{status,settings,conformance,enable,disable,rotate}`; the
+  `/api/rf/wizard/*`, `/api/rf/notify/*` and `/api/rf/self-test` routes of
+  `docs/rf_sensing_phase12_http_routes.md` §4 (Draft v0.1, 2026-04-25:
+  "Implementation is a follow-up PR") do not exist. `wizard.h`, `dp.h` and
+  that doc's status line say so since the 2026-10 cleanup. Decide, then do
+  one: (a) build the spec, a `rf_wizard_api.h` beside `rf_presence_api.h`
+  registering the §4 routes behind `auth_gated<>`, the handler-count constant
+  in `canary_wap.ino` raised, the SPA wiring and the gzip asset regen, keeping
+  the spec's §8 acceptance list; or (b) delete the nine functions and the
+  `*_for_export` functions of the notify, baseline, household, familiar and
+  federated modules, keep `dp.h` only if something else draws through it, and
+  mark the Phase 12 doc withdrawn. Checks:
+  `firmware/scripts/regression_check.sh`, the canary-wap builds,
+  `make -C firmware/tests_host` and `test_dashboard_route_match.test.js`.
+  Found by the 2026-10 cleanup audit.
+- [ ] **F253 [code] The display's RS-485 and CAN drivers have no caller.**
+  `firmware/projects/canary-display/src/io/rs485.cpp` and `can_bus.cpp`
+  compile in two CI envs (`canary-display-dash-rs485` and `-dash-can`,
+  compile-verification envs in `firmware/flavors.json`), but nothing calls
+  `rs485_begin`, `rs485_loop`, `rs485_read_holding`, `can_begin`,
+  `can_transmit`, `can_receive` or `can_loop`, and `canary/io/rs485.h` and
+  `can_bus.h` are included only by their own `.cpp` files. The playground
+  (`src/playground/playground.cpp`) brings up its own thin transport for the
+  same buses (`Serial1.begin` in `rs485_begin_once`, `twai_driver_install` in
+  `can_begin_once`). Both headers say "NO CALLER YET" since the 2026-10
+  cleanup. Under `#if FEATURE_RS485` / `#if FEATURE_CAN`, route the
+  playground's RS-485 probe and CAN bring-up through `canary::io::rs485_begin`
+  with `rs485_read_holding`, and `can_begin` with `can_transmit`, so one transport
+  exists and the compile envs exercise real call sites; or delete the drivers
+  and their envs. No dist impact (the emulator compiles neither). Then
+  `./setup.sh regen` and `firmware/scripts/check_display_arduino_sync.sh`.
+  Found by the 2026-10 cleanup audit.
+- [ ] **F258 [code] The WAP's flags still live in
+  `firmware/configs/canary-wap/`, which no build compiles.** The sketch takes
+  its flags from `build_config.h`'s profiles, and since the 2026-10 cleanup
+  `setup.sh` no longer stages the directory, but two Lab generators still read
+  it: `canary-local/tools/gen_enclosures.py`
+  (`"canary-wap": ("canary-wap", ["default", "mobile"])`) for the workshop's
+  firmware flavors, and `canary-local/tools/figures/gen_figures.mjs`'s
+  `CONFIG_FIGURE` rows `canary-wap/default` and `canary-wap/mobile`, whose
+  `DEVICE_TYPE`s (`canary_wap`, `canary_wap_mobile`) are not what the WAP
+  publishes (`canary_wap.ino` sends `"canary"`) and still reach `figures.json`
+  and `fleet_figures.h`, a display dist input. In order: (1)
+  `gen_enclosures.py` reads the WAP's flags from `build_config.h`'s
+  `BUILD_PROFILE_FULL` block, with the default XIAO ESP32-S3's `HW_HAS_*`, as
+  one "full" flavor (`opt_buzzer` → `FEATURE_AUDIBLE_CHIRP`; `opt_gps` → none,
+  since GNSS is unconditional in the sketch); (2)
+  `canary-local/tests/workshop.test.js`'s GPS-option test follows; (3)
+  `gen_figures.mjs` maps the WAP from the sketch; (4) delete
+  `firmware/configs/canary-wap/`, its two rows in
+  `firmware/configs/README.md`, and `canary-wap` from `SKIPPED_PROJECTS` in
+  `firmware/scripts/check_config_feature_flags.py` (a stale entry fails that
+  guard). Regenerate in CLAUDE.md's order: the figures move `fleet_figures.h`,
+  so a display `setup.sh regen` and a dist rebuild follow. Found by the
+  2026-10 cleanup audit.
 
 ---
 
@@ -9716,12 +9913,15 @@ so — see D2 below.)
   the twin's glow and its bench backlight row can read brighter than the
   glass. The bench says so for now. Applying the cap where the board does
   would make the twin match; it moves the dist. Found by A54 (#1762).
-- [ ] **A62 [code] `fleet.html` turns a malformed deep link into a page
+- [x] **A62 [code] `fleet.html` turns a malformed deep link into a page
   error.** `canary-local/assets/app.js` reads its card with a bare
   `decodeURIComponent(location.hash.slice(1))`, so `fleet.html#%E0` throws
   `URIError` once the cards have rendered, instead of quietly opening nothing.
   Decode inside a `try`, as `probe_server.mjs`'s `lookup()` does. Found by A52
   (#1762).
+  *Done (2026-10 cleanup):* `app.js`'s `deepLinkId()` decodes inside a `try`
+  (a malformed hash opens nothing) and `chooser.js` guards its prefill the
+  same way; `canary_local.test.js` pins both.
 - [x] **A63 [code] `onboard_probe.mjs`'s nightlight walk fails a read now and
   then.** In 31 local walks of `--flavor nightlight` (20 on the wave-15 Lab
   files, 11 with the base `harness.js`, `emu-shell.js` and
@@ -9770,6 +9970,149 @@ so — see D2 below.)
   the nightlight's `Orient::R90` and `R270`. Today `scene_figures.test.js`
   pins the HAL's source for this, and `boot_probe.mjs` holds it in a browser
   only once the dist is rebuilt. Found by A56's review (#1762).
+- [ ] **A65 [code+human] The iPhone's Fleet Wi-Fi Bluetooth rescue lane cannot
+  reach a WAP.** The Fleet Wi-Fi rollout offers a "Bluetooth rescue" for a
+  Canary the router change stranded (`FleetWiFiRollout.swift`'s did-not-return
+  copy, `FleetWiFiSheet.swift`, `BLEConsole.swift`'s "Wi-Fi provisioning over
+  BLE (the rescue path)"), but `BLEConsole` connects only to a peripheral
+  advertising the console service `8fc1cee0-b162-4401-9607-c8ac21383e90`,
+  which a WAP does not advertise, and the WAP's snapshot reads need a PIN
+  confirmation. So the lane never fills. Either connect on the person's tap to
+  the advertised SCV service (`a1b2c3d4-e5f6-7890-abcd-ef0123456001`,
+  `ble_config.h`) and discover the console service by UUID once connected, or
+  remove the lane and every sentence that offers it. Needs a WAP on a bench to
+  settle (U1). Found by the 2026-10 cleanup's iOS package.
+- [ ] **A66 [code+human] AccessorySetupKit spike for the nearby card.** On iOS
+  18, AccessorySetupKit shows a system picker for a matched accessory and
+  grants Bluetooth access to that device alone, in place of the app-wide
+  Bluetooth prompt the nearby card needs today. Spike it behind
+  `#available(iOS 18, *)`: one `ASPickerDisplayItem` per family with the
+  Improv service UUID and the `Sense-` / `Vision-` / `WAP-` name prefixes, the
+  Info.plist keys it requires, and `scripts/lint_apple_plists.py` support for
+  them. Bench first whether the app's unfiltered fleet-beacon scan still hears
+  devices the picker never approved, since that scan is how the Fleet tab
+  hears every Canary. Found by the 2026-10 cleanup's iOS package.
+- [ ] **A67 [code] The Lab app's post-flash monitor has no command row.** The
+  Flasher's monitor sends commands (`desktop/src/app.js`,
+  `invoke("serial_monitor_send", …)`) and the browser flasher has its
+  `MONITOR_CMDS` chips (`canary-local/assets/flash.js`), but the Lab app's
+  native monitor (`canary-local/assets/flash-native.js`, `renderReceipt`) only
+  reads; the 2026-10 cleanup removed the Lab's `flash::serial_monitor_send`
+  registration rather than keep a command no page called. Add the row: the
+  `MONITOR_CMDS` chips plus a "type a command" input calling
+  `invoke("serial_monitor_send", { command: text + "\n" })`, disabled with the
+  monitor. In the same change re-add `flash::serial_monitor_send` to
+  `desktop-lab/src-tauri/src/lib.rs`'s desktop `generate_handler!` and to
+  `flash.rs` (from `desktop/src-tauri/src/serial_monitor.rs`), and put it back
+  in `canary-local/tests/desktop_parity.test.js`'s `FLASH_COMMANDS`;
+  `lab_bundle.test.js`'s caller/registration guard then holds both directions.
+- [ ] **A68 [code] No CI compiles hub-core or hub-io for Windows.** A9's CI
+  half. `desktop-hub-core.yml` runs only on `ubuntu-latest`, so the Windows
+  branches of `desktop/hub-core` (`hub_enumerate_windows.rs`) and
+  `desktop/hub-io` (the staged `\\.\PhysicalDriveN` writer in `write.rs`) are
+  compiled by no workflow; the 2026-10 cleanup found hub-core's own tests did
+  not compile off Linux until it fixed an import
+  (`cargo check --all-targets --target x86_64-pc-windows-gnu`; hub-io was
+  not checked there, since its `lzma-sys` needs a C cross-compiler that
+  machine lacked). Add a
+  `windows-latest` job running `cargo check --all-targets` in both crates. It
+  enables nothing: the Windows writer stays staged until A9's VM or hardware
+  pass.
+- [ ] **A69 [code+human] Writing a hub card on Linux needs a disk-group
+  account or root.** `desktop/hub-io/src/write.rs`'s `open_target` opens the
+  raw device directly, so a normal desktop account gets `PermissionDenied`;
+  since the 2026-10 cleanup the Flasher warns before the download and names
+  the per-card grant (`sudo chown "$USER" <path>`). Linux's counterpart of
+  macOS's `authopen` is UDisks2's `Block.OpenDevice` (or `OpenForRestore`)
+  over the system bus, which raises a polkit prompt; the `dbus` crate is
+  already in the Flasher's `Cargo.lock` through `keyring`. Add it as the
+  fallback when the direct open is refused, then change the preflight copy.
+  Validate on a real GNOME and a real KDE session first (L effort).
+- [ ] **A70 [decision, its bench gated by U3] One away-alert subscription
+  serves the whole iCloud account.** The away path
+  (`ios/Sources/SecuraCV/Native/AwayPush.swift`) saves one
+  `CKQuerySubscription` with the fixed id `securacv-witness-wake-v1` in the
+  private database, and since the 2026-10 cleanup turning the last Anywhere
+  rule off deletes it, so opt-out is real. The code treats that subscription
+  as the account's, not the device's (`AwayArming.decide`'s comment): one
+  iPhone's opt-out pauses away alerts on the account's other devices until one
+  with an Anywhere rule next opens the app and saves it again, and a device
+  that never armed the path leaves it alone to limit that. Separately,
+  `publishWake` is gated on this device's own `subscribed`, so a resident
+  iPhone whose rules are all "On Wi-Fi only" stops posting wakes for the
+  household's other devices. Decide whether the trade-off stands (it is now
+  stated in `docs/design/cloudkit_backend.md`'s opt-out line) or the design
+  moves to per-device subscription ids and a publish switch of its own. Bench
+  first, on a signed build (A8) with two iPhones on one Apple ID: whether the
+  id is in fact one per account, and what the second phone receives after the
+  first opts out. Found by the 2026-10 cleanup's Apple package.
+- [ ] **A71 [code, gated by U1 and U3] Tell both flashers' done cards about
+  the Bluetooth door once it ships.** When the Improv door has passed its
+  bench rows (`magic_pairing.md` §9) and the iPhone app is out of
+  store-pending, add a `ble_setup` row to `canary-local/tools/gen_flash.py`'s
+  `CAPABILITY_TRAINS` (evidence `firmware/common/network/improv_ble.h`, the
+  train that first ships it) and a provisioning note rendered on both done
+  cards (the browser's `flash.js`, the desktop's `app.js`), with a
+  `desktop_parity.test.js` assertion. Until then neither flasher mentions the
+  door, which is right.
+- [ ] **A72 [code] The Witness Wall does not show a device's birth day.**
+  Firmware serves `born_day` and `born_exact` in its self-report
+  (`firmware/common/fleet_selfreport/fleet_selfreport.h`), and
+  `tvos/discovery/DISCOVERY.md` documents them since the 2026-10 cleanup, but
+  the Wall ignores them. A "Born" line on `DeviceDetailView` needs
+  witness-core's fleet normalizer (`tvos/witness-core/src/fleet.rs`),
+  `FleetSnapshot.Device` decoding and a new vector in
+  `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, which
+  `scripts/carry_to_site.py` carries into the website's tests, so it lands as
+  one cross-repo change.
+- [ ] **A73 [decision] Build or drop the watch's per-witness day strip and
+  reason log.** `docs/design/apple_watch_and_notifications.md` §3.3 specifies
+  a 24-bucket day strip and a reason log per witness on the wrist. The 2026-10
+  cleanup built the rest of the wrist's parity with the iPhone and listed
+  these two as open in the RFC's header. Decide whether they ship or leave the
+  RFC.
+- [ ] **A74 [human] Try the 2026-10 watch surfaces on a real Apple Watch.**
+  Each was built and hand-reviewed in the 2026-10 cleanup, and CI's macOS job
+  is what compiles it; none has been on a wrist: the custom long-look for
+  `SECURACV_WITNESS` notifications mirrored from the iPhone, with Acknowledge
+  and Mute still underneath; a storm-summary alert (`AlertStorm.threadID`)
+  falling back to the plain words; the Alerts page's leading Acknowledge swipe
+  on rows that are `NavigationLink`s; Check the Fleet in Siri, Shortcuts and
+  the Ultra's Action button picker. (`apple_watch_and_notifications.md` §8 W1
+  says the long-look is untried.)
+- [ ] **A75 [code] Two iPhone setup leftovers from the 2026-10 review.** (1)
+  `NearbySetupSheet` (`Views/Components/NearbyCanaryCard.swift`) and
+  `SetupView` still read the Keychain in a `@State` initial value
+  (`HouseholdWiFiStore.load()`), which runs on every struct init; the review
+  moved the same read in `CanarySetupView` out of the initializer because its
+  parent re-renders constantly during the scan, and left these two. (2) The
+  nearby-offer overlay can show dimmed behind the "+" sheet's `.medium`
+  detent. Neither is a compile defect.
+- [ ] **A76 [code] The emulator still passes a marker flag nothing reads.**
+  The 2026-10 cleanup deleted the unread `CONFIG_CANARY_*` marker `-D`s from
+  the PlatformIO envs, but `canary-local/emulator/build.sh` and
+  `canary-local/emulator/test/{glass_turn,glass_turn_lvgl9,runtime_turn}.sh`
+  still pass `-DCONFIG_CANARY_DISPLAY`, which no source reads. Drop it.
+  `build.sh` is a dist input, so do it beside a dist rebuild and let the Dist
+  drift check show the bytes do not move.
+- [ ] **A77 [human] Run one real `.deb` self-update on Ubuntu 22.04.** Since
+  the 2026-10 cleanup the desktop apps' install docs and release bodies say
+  the `.deb` updates itself and asks for a password: tauri-plugin-updater
+  2.13.1's `install_deb` runs `pkexec dpkg -i` (falling back to zenity or
+  kdialog, then sudo), and the published manifest carries a `linux-x86_64-deb`
+  entry. That is read from the plugin's source, not seen. Install an older
+  Flasher `.deb` (and an older Lab `.deb`) on Ubuntu 22.04, let it update, and
+  confirm the prompt and the result.
+- [ ] **A78 [decision] Serve the enclosure generator scripts from the Lab site
+  and app, or prune them.** `pages.yml` copies `docs/hardware/enclosure` into
+  the published Lab site unpruned (`cp -rL`), so its 12 `.py` files and
+  `render.sh` are served, and the Lab app's bundle carries them too
+  (`desktop-lab/frontend-stage.json`). To drop them: a
+  `find _site/docs/hardware/enclosure … -delete` line in `pages.yml`'s
+  "Assemble site" step and the matching `pruneExt` entry
+  (`{"docs/hardware/enclosure": [".py", ".sh"]}`); `lab_bundle.test.js`
+  already parses every `find` line there and will demand the pair. A
+  maintainer's call.
 
 ---
 
@@ -10509,7 +10852,7 @@ so — see D2 below.)
   `publish_mic_discovery`'s) would have to grow (`test_ha_discovery_ids.cpp`
   holds them). Decide between sending both and saying in the docs that the ids
   need 2025.10. Found in HA16 and its review (#1762).
-- [ ] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
+- [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
   reads an entity no publisher creates.** It reads
   `sensor.pwk_boundary_crossing_count`; the kernel bridge makes
   `sensor.pwk_<zone>_events`, `sensor.pwk_last_event` and
@@ -10517,6 +10860,24 @@ so — see D2 below.)
   Its slug example also names a zone the kernel refuses (`Front Door`;
   `validate_zone_id` takes only `zone:` and `[a-z0-9_-]`, so `zone:back-gate`
   becomes `back_gate`). Found in HA16 and its review (#1762).
+  *Done (2026-10 cleanup):* the example now asks the app's `/digest`
+  endpoint (MQTT Discovery is the only source of the per-zone counts), and
+  the slug example is `zone:back-gate` → `back_gate`.
+- [ ] **HA31 [code] The HACS store page can break silently when a monorepo
+  heading moves.** The mirror's `lint_readme.py` does not check the store
+  page's links into `kmay89/securaCV` docs; all 13 resolved on 2026-10-09, but
+  a renamed heading upstream would break the HACS page with no red check. Add
+  a `--source <monorepo>` mode that resolves each link and anchor against a
+  monorepo checkout, run weekly with `docs/` added to mirror-freshness's
+  sparse checkout, as its own step so a broken link does not raise the "mirror
+  has drifted" issue. Found by the 2026-10 cleanup's mirror package.
+- [ ] **HA32 [code] `discover_cameras.sh` has never run under the add-on's
+  jq.** Its jq rewrite (2026-10 cleanup,
+  `privacy_witness_kernel/discover_cameras.sh`) is written for jq 1.6, and its
+  parity cases pass under the runner's jq 1.7 (`pwk-wizard-tests.yml`); the
+  add-on runs Alpine 3.18's jq 1.6, and the non-ASCII `gsub` and slice cases
+  have never run there. Run the parity cases once inside the add-on image, or
+  give that CI step a jq 1.6.
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
@@ -10526,8 +10887,10 @@ so — see D2 below.)
   followed in securacv-homeassistant#19 and PR #1727's in #20 (2026-10-01),
   byte-identical again (U6). PR #1761 added one carried test (F46's
   `tests/test_replay_one_id_space.py`), carried by hand in
-  securacv-homeassistant#21 (2026-10-02). Its health
-  items are U6 and U7 above, plus the three monorepo-fixture tests its CI
+  securacv-homeassistant#21 (2026-10-02). #1762's carried files (waves
+  9-15, 12 files) followed by hand in securacv-homeassistant#24 (`034089c`,
+  2026-10-07; `check_mirror_sync.py`: 66 files match). Its health
+  items are U6, U7 and U10 above, plus the three monorepo-fixture tests its CI
   deselects, which is by design. A few more tests skip themselves there
   because they read firmware sources the mirror does not carry.)*
 
@@ -10584,7 +10947,7 @@ so — see D2 below.)
   previews were looked at: how the two read on a GPU or in phone AR is not
   proven. What the work surfaced and did not fix is W17. (website PR #202;
   upstream #1703)
-- [ ] **W5 [code] Blender hero bake** — milestone 1 landed (website PR #201):
+- [x] **W5 [code] Blender hero bake** — milestone 1 landed (website PR #201):
   `blender/bake_hero.py` produces output now. On Blender 4.0 it died at
   `transform_apply`, its weighted-normal modifier was inert without auto
   smooth, and an STL in the enclosure frame would have exported lying on its
@@ -10601,6 +10964,9 @@ so — see D2 below.)
   `/view-in-room` copy. Baking needs Blender 4.0+ with numpy (tested on 4.0.2)
   on a workstation; CI never runs Blender. What remains (the AO bake,
   colorways and a page opt-in) is milestone 2: W12.
+  *Done (website #203, as W12):* milestone 2 landed (W12's note); the GPU
+  half is W13. Ticked in the 2026-10 cleanup, which found this line
+  still open.
 - [ ] **W6 [code, paired with U4/U5 work] Supplier quotes are placeholders** —
   5 rows in `suppliers.json` marked `"status": "placeholder"`. When real RFQs
   land, also invert `tests/quote-compare.edge.test.mjs` ("honesty flag" test
@@ -10642,8 +11008,12 @@ so — see D2 below.)
   opt-in) to a WebGPU rewrite. Building it, and judging the micro-wear map on
   a GPU, is W13.
 - [ ] **W10 [human] Tizen TV package has `REPLACEME` app IDs**
-  (`tv/tizen/config.xml`) — needs Samsung Seller Office issuance before any
-  submission.
+  (`tv/config.xml`; it was `tv/tizen/config.xml` before the manifests moved)
+  — needs Samsung Seller Office issuance before any submission. The same
+  human, with the vendor SDKs: run `tizen build-web -- tv/` and
+  `ares-package tv/` once to confirm the moved manifests still package (both
+  will also pick up `tv/README.md` and `tv/cast/` unless excluded), and settle
+  W24's store wording first.
 - [ ] **W11 [code] Advisory Claude review workflow is inert** if
   `ANTHROPIC_API_KEY` is unset — the code half is done in both repos. Each
   `claude-review.yml` header now states the intended state (on for every
@@ -10858,6 +11228,116 @@ so — see D2 below.)
   vectors to `tv/vendor/PROVENANCE.txt` with the sha256 the hand pin held
   (the file itself was byte-identical); the provenance test now requires
   that pin, and the hand pin and its test are gone. 705 site tests pass.
+- [ ] **W22 [code] Dark ink on panels the night theme darkens, on six pages.**
+  These rules fix a dark text color on a background token that `css/site.css`
+  darkens at night, so the text goes dark on dark: `compare.html` `.category`
+  and `store.html` `.batchnote` (`#6b5500` on `--canary-soft`), the
+  `.noscript-note` on `how-it-works.html` and `vault.html` (`#7c4a03` on
+  `--caution-bg`), `ideas.html` `.noob` (`#14603f` on `--moss-soft`), and
+  `playground.html` `.pill.honest` and `.btn.on` (`#7a5b06` on
+  `--canary-soft`). The fix is the pattern `checkup.html`, `canary.html` and
+  `fleet.html` use (a `:root` ink token plus a page night block;
+  `builder.html`'s `#error` already has its night overrides). Then give
+  `tests/dark-mode.test.mjs` the guard for this class (refuse a dark literal,
+  luminance under about 0.2, in a rule whose background is a token the night
+  theme darkens) and have it read inline `style="…"` attributes too: it reads
+  only `<style>` blocks, which is how `checkup.html`'s inline `color:#065f46`
+  passed. Found by the 2026-10 cleanup's site review.
+- [ ] **W23 [code] Four small website leftovers from the 2026-10 cleanup.**
+  (1) `js/help.js`'s flasher door note says the Flasher "backs up before it
+  writes and verifies after"; say it checks the write after ("verified" is
+  kept for an Ed25519 signature checked against a pinned key). (2)
+  `onboarding-spec.json`'s `l` serial command says the ID card shows "its
+  secret identity turned into a little picture", while `canary.html` now says,
+  correctly, that the shape is drawn from the public key; say "its public
+  key", then regenerate the byte-pinned `js/onboarding-spec.js` as
+  `docs/LAYOUT.md` says. (3) The site search ranks the Apple TV emulator
+  (`/witness-wall`) above the Apple TV app page for "apple tv" (the
+  title-prefix bonus; checked 2026-10-10); an `INTENTS` row in
+  `js/canary-search.js`
+  (`{ title: 'Apple TV app', href: '/apple-tv', words: 'apple tv tvos app witness wall native' }`)
+  and an `['apple tv', '/apple-tv']` probe in `tests/site-map.test.mjs` fix it
+  and hold it. (4) `css/site.css`'s two `.announce-badge` night overrides
+  style nothing since the homepage's hero pill was cut.
+- [ ] **W24 [decision] The TV app's store text says "verified record".**
+  `tv/appinfo.json`'s `appDescription`, `tv/config.xml`'s `<description>` and
+  `tv/README.md`'s opening line call the Wall "a calm, always-on view of your
+  Canaries' verified record", and `tv/app.js` and the README say the emulator
+  simulates one. `verify_core.js` checks an envelope against its own
+  `device_public_key` unless a trusted key is supplied, and on real hubs the
+  Wall is presence-only, so under the house rule ("verified" only for an
+  Ed25519 signature checked against a pinned key) the wording needs a human
+  call before any store submission (W10): keep the word only where a pinned
+  key is in fact used, or say "sealed", as the staged emulator labels in
+  `js/tv-emulator.js` do since the 2026-10 cleanup.
+- [ ] **W25 [code+decision] The kit cards live on both Compare and Store.**
+  Both pages carry the "2 of 4 designed Canaries shipped" count, and
+  `compare.html` keeps a `#kits` grid that the store repeats. Make `/store`
+  the single owner of the kit cards and the count, and cut the `#kits` grid to
+  one line that links there. It touches `tests/coming-soon.test.mjs` and
+  `tests/availability.test.mjs` (both key on `compare.html`'s badges), the
+  `/paths` "Get notified" door (`/compare#kits`) and `index.html`'s "2 of 4"
+  line, which links `/compare#kits`. An editorial call; the current text is
+  true. Found by the 2026-10 cleanup's site review.
+- [ ] **W26 [human, before U5's payment links] `privacy.html` names no
+  retention period for order records.** The page says what a store order
+  shares (Stripe takes the payment; name and shipping address go on the USPS
+  label), but its Data Retention section covers only contact messages
+  ("typically no longer than 2 years"). Before any `store.json` payment link
+  goes live: (1) state how long order records (name, shipping address, email)
+  are kept; (2) review the GDPR paragraph, whose only stated legal basis is
+  consent, since order data is usually processed to perform a contract; (3)
+  decide whether Stripe belongs under "Service providers … under strict
+  confidentiality agreements" or only under the "Store orders" bullet. Facts
+  and a legal call only the owner has.
+- [ ] **W27 [decision] The warrant canary has no stated refresh cadence.**
+  `transparency.html` reads "Statement current as of: July 24, 2026" and names
+  no schedule, so a reader cannot tell a lapsed statement from a current one.
+  Pick a cadence (the 2026-10 review's example: the first business day of each
+  quarter, and a statement older than 100 days is to be read as lapsed), say
+  it on the page, then re-affirm each statement and move the date. Only the
+  owner can re-affirm them.
+- [ ] **W28 [human] `terms-of-sale.html` describes a store that sells kits and
+  devices.** §1, §4, §6, §9 and the short version say "Kits are built and
+  tested in small weekly batches" and "We only sell devices whose firmware has
+  been released", and the short version promises "Anything dead on arrival is
+  replaced" while the §6 table's row reads "A board is dead on arrival". The
+  store sells printed enclosure sets only, behind the compliance gate (U4),
+  and the website's AGENTS.md rule 2 says to call them "enclosure sets," never
+  "kits." Rewrite the terms for what is sold, decide which dead-on-arrival
+  scope is meant and make both places say it, and consider stating the
+  compliance gate in §1. Legal text: the owner's call (with D12).
+- [ ] **W29 [decision] A one-trustee break-glass quorum is legal, and the site
+  copy assumes two or more.** `QuorumPolicy::validate`
+  (`src/break_glass/core.rs`), and so `break_glass policy set`, accepts a
+  threshold of 1 (it refuses only 0 and a threshold above the trustee count),
+  so a 1-of-N vault is a valid configuration. Much of the site assumes at
+  least two: `vault.html`'s deck and its "One approval doesn't." pillar, How
+  It Works' "requires approval from multiple trustees", and the glossary's
+  break-glass entry. Decide: the kernel refuses (or warns on) a threshold
+  below 2, or the copy says "the quorum you set". A product call across the
+  kernel and the site. Found by the 2026-10 cleanup's site review.
+- [ ] **W30 [human] The website's agent brief undercounts what a new page
+  needs.** `tests/site-map.test.mjs` now also requires a `PAGE_WORDS` line in
+  `js/canary-search.js` for every `SITE_MAP` route, but the website's
+  `AGENTS.md` rule 6 says "Adding a page means five things" and its
+  `CLAUDE.md` says "the five things adding a page requires". Update both
+  together (the `CLAUDE.md` edit is a human's, which is why the 2026-10
+  integrator left both), then run `node scripts/make-agent-entrypoints.mjs`.
+- [ ] **W31 [code] Three Lab playground files reach the website by hand.**
+  `js/playground-data.js`, `js/playground-sim.js` and `js/mode-sim.js` are
+  hand copies of the monorepo's `canary-local/devices/playground.json` and
+  `canary-local/assets/{playground,mode}-sim.js` (headed HAND-COPIED;
+  `tests/carry-claims.test.mjs`'s `HAND_COPIES` holds them to that), so every
+  firmware version bump leaves `playground-data.js`'s `fw_version` behind, and
+  an upstream fix (the 2026-10 `playground-sim.js` header and CAP1188 names)
+  waits for a re-copy. Add a `playground` carry to `scripts/carry_to_site.py`
+  (a header, then `export const PLAYGROUND = ` and `playground.json` with its
+  trailing newline replaced by `;\n`; the two sim files as a header plus the
+  upstream bytes), and in the same website PR add the three paths to
+  `CARRY_PATHS` in `update-everything.yml`, change their headers to CARRIED,
+  drop them from `HAND_COPIES`, and add the row to `docs/LAYOUT.md`'s carries
+  table. `carry-claims.test.mjs` fails until all of it lands together.
 
 ---
 
@@ -11269,6 +11749,15 @@ major, by theme") — work its themes, then tick here.
   from a file the owner picks, the device keeping no copy. Read from
   `handle_tune_get_preset()`, `tune_post()` and `tune_ui.h`. The Lab's own
   footer now calls the file plain, unsigned JSON.
+- [ ] **D12 [human] Name the governing state in the terms.** The website's
+  live `terms.html` §9 says the terms are governed by "the state in which
+  Errer Labs operates", and the monorepo's `TERMS.md` (a services-terms
+  template whose bracketed items are "decisions for you and your lawyer")
+  still reads `[your state]` in §10, among seven such placeholders. Name the
+  state in `terms.html` and bump its "Last updated"; fill `TERMS.md`'s
+  placeholders when the template is finished; and decide whether
+  `terms-of-sale.html` needs the same clause (W28). A legal fact only the
+  owner has.
 
 ---
 
@@ -11430,6 +11919,90 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   returns 141, `logs_have` finds the notice, and a line that is not there
   still reads as missing. `bash -n` and shellcheck are clean. CI-only: the
   e2e runs in docker-sidecar.yml.
+- [x] **CI6 [code] A committed test binary, and no gate on compiled files.**
+  #1776 committed `firmware/tests_host/test_doorbell_audio`, a hand-built
+  x86-64 ELF beside its source; the Makefile builds that test into `build/`,
+  so the committed copy ran only on its builder's machine, and no gate looked
+  at it. *Done (#1781):* the binary is `git rm`ed;
+  `scripts/lint_no_binaries.py` reads the magic bytes of every tracked file
+  and names native code (ELF, Mach-O thin and universal, PE, ar), with
+  `scripts/tests/test_lint_no_binaries.py`; `lint.yml` runs it unfiltered; one
+  `.gitignore` pattern covers an extensionless `test_*` under any firmware
+  `tests_host/`. Recorded here by the 2026-10 cleanup (wave 16 had not ticked
+  it).
+- [x] **CI7 [code] The desktop hub commands used an address they had not
+  checked.** `main` was red at `cargo check (src-tauri)` since #1778 (E0597 at
+  `desktop/src-tauri/src/hub.rs`): `local_hub_host()` returned a borrow that
+  `hub_probe_hub` moved into a `'static` worker. *Done (#1781):* it returns
+  the trimmed address as an owned `String`, and all three hub commands use
+  what it returns (two had handed their workers the untrimmed argument); two
+  unit tests in `hub.rs`. Recorded here by the 2026-10 cleanup.
+- [x] **CI8 [code] One iOS hub row kept whichever copy of its advert arrived
+  last.** `main`'s iOS job was red since #1778:
+  `HubDiscoveryRowsTests.testRowsPreferTheInternalAddressAndKeepTheUUIDAsIdentity`
+  failed because `HubDiscoveryRows.rows()` let a second copy of one Home
+  Assistant advert replace the first, dropping its `installation_type`. *Done
+  (#1781):* the first address that passes the private-host gate wins, as the
+  code's comment always said, and a version, installation type or location
+  name the kept copy lacks is filled from a later copy. Recorded here by the
+  2026-10 cleanup.
+- [ ] **CI9 [code] `scripts/lint_spelling.py` is narrower than the website's
+  spelling test it says it matches.** Its comment says the website's
+  `tests/copy-honesty.test.mjs` "holds the same families" and to keep them
+  aligned, but the website now generates its banned forms from US-stem
+  families this lint does not have. So a carried file (`scad/cad-dims.json`,
+  `scad/colorways.json`, `onboarding-spec.json`, the carried `.scad` sources)
+  can pass here and fail the website's test on a carry PR. Port the families
+  into `lint_spelling.py`, keeping `ALLOW` and the self-test that the ban
+  never matches a listed word, then fix what they find: about 18 hits outside
+  the lint at the 2026-10 site review's count, in `desktop/src/app.js`,
+  `docker/sidecar/verify_published_image.sh`, `viewer/template.html` and
+  `viewer/evidence_viewer.html` (check whether the second is generated from
+  the first), `docs/design/serial_console_theming.md`,
+  `docs/hardware/canary_peripheral_build_plan.md`,
+  `docs/hardware/display_discovery_and_resilience.md`,
+  `docs/hardware/enclosure/README.md`,
+  `docs/rf_sensing_phase12_http_routes.md`, `firmware/LESSONS_LEARNED.md`,
+  `firmware/common/fusion/README.md`, `gen_mark_svg.py` with its generated
+  `securacv_bird_glyph.svg`, and four enclosure `.scad` files
+  (`canary_c3_lcd147`, `canary_fit_coupon`, `canary_s3_lcd147`,
+  `canary_s3_lcd7`), which follow the `.scad` rules (`scripts/regen_cad.py`,
+  previews). The website's carried `scad/canary_fit_coupon.scad` then
+  refreshes through the carry. Do not spell the banned forms out in any doc
+  while doing it (AGENTS.md rule 3b).
+- [ ] **CI10 [code+decision] The kernel's release workflow has never run, and
+  the planner cannot reach it.** `release.yml` fires only on a pushed `v*`
+  tag, no `v*` release exists (releases API, 2026-10-10), and
+  `.github/release-targets.yml` has no kernel row, so "Update everything"
+  never plans a kernel release and `docs/RELEASE_BUTTONS.md` does not say how
+  one is cut, while the kernel's version in `Cargo.toml` keeps moving. Decide,
+  and record the choice in `RELEASE_BUTTONS.md`: (a) make it plannable:
+  `workflow_dispatch` with a `version` input and a first step that creates and
+  pushes `v${version}` (checkout and changelog extraction then read the input,
+  not `GITHUB_REF_NAME`), a `kernel` row in `release-targets.yml` (versioned;
+  version file `Cargo.toml`, regex `^version\s*=\s*"([0-9.]+)"`, tag prefix
+  `v`, workflow `release.yml` with `inputs: {version: "${version}"}`, watching
+  `src`, `Cargo.toml` and `Cargo.lock`), a `test_release_plan.py` case, and
+  `kernel` in `release-everything.yml`'s `only` choices (`release.yml` already
+  calls `sbom.yml`); or (b) say "not released yet" in `release-targets.yml`
+  and `RELEASE_BUTTONS.md`.
+- [ ] **CI11 [code+human] `ubuntu-latest` moves to Ubuntu 26.04 from
+  2026-10-19.** Only `enclosure.yml`'s render and fit jobs are pinned (to
+  `ubuntu-24.04`, for OpenSCAD 2021.01, in the 2026-10 cleanup). The jobs most
+  likely to notice a new image: `rust.yml`'s GStreamer, ffmpeg and mosquitto
+  apt jobs, `desktop-hub-core.yml` (three apt installs),
+  `desktop-lab-check.yml`, `ram_audit.yml` (two), every job that relies on the
+  image's `jq`, `gh` or `xvfb`, and the website's and the mirror's
+  `ubuntu-latest` jobs. Open one throwaway PR that runs a copy of each on
+  `ubuntu-26.04`, then fix or pin what breaks, with a reason comment per pin.
+  (`desktop-flasher-release.yml`'s Linux leg is already on `ubuntu-22.04`.)
+- [ ] **CI12 [code] No lint keeps dead code out of the Lab's browser assets.**
+  The 2026-10 cleanup removed unused functions, constants and CSS from
+  `canary-local/assets` by hand and left it clean (78 files, no
+  `no-unused-vars` finding). An `eslint --rule no-unused-vars` step over
+  `canary-local/assets` in `canary-local.yml` (a pinned ESLint, no
+  configuration beyond that rule and the module type) would keep it so.
+  Optional.
 
 ---
 

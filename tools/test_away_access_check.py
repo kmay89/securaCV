@@ -88,10 +88,10 @@ tcp   LISTEN 0      4096          0.0.0.0:554        0.0.0.0:*
 def test_ss_parsing() -> None:
     print("ss parsing")
     listeners = aac.parse_ss_listeners(SS_MODERN)
-    ports = sorted(l.port for l in listeners)
+    ports = sorted(ln.port for ln in listeners)
     check(ports == [1883, 5000, 5353, 8123, 8799], f"all five sockets parsed (got {ports})")
 
-    by_port = {l.port: l for l in listeners}
+    by_port = {ln.port: ln for ln in listeners}
     check(by_port[8123].address == "0.0.0.0", "wildcard bind address kept verbatim")
     check(by_port[8123].process == "hass", "process name extracted from users:(...)")
     check(by_port[8799].scope == "host", "loopback witness API is host-only")
@@ -103,11 +103,11 @@ def test_ss_parsing() -> None:
     )
 
     check(
-        [l.port for l in aac.parse_ss_listeners(SS_WITH_HEADER)] == [8123],
+        [ln.port for ln in aac.parse_ss_listeners(SS_WITH_HEADER)] == [8123],
         "a header line is skipped even though -H was requested",
     )
     check(
-        [l.port for l in aac.parse_ss_listeners(SS_NO_PROCESS)] == [554],
+        [ln.port for ln in aac.parse_ss_listeners(SS_NO_PROCESS)] == [554],
         "output with no process column still parses",
     )
     check(aac.parse_ss_listeners("") == [], "empty ss output is empty, not an error")

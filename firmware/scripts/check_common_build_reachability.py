@@ -77,11 +77,35 @@ one of the three routes this repo actually uses to compile shared code:
 A file reachable by none of these is dead weight at best and a link error
 waiting for the right build flavor at worst.
 
+THE HEADER PASS
+===============
+
+The three routes above are about translation units, so a header-only module
+passed this guard however dead it was. Sixteen headers under common/ (about
+3,860 lines: the whole hal/ "seam", core/types.h and ring_buffer.h,
+encoding/cbor.h, web/http_server.h, bluetooth/bluetooth_mgr.h,
+chirp/chirp_channel.h) were #included by no compiled source or test, while
+the docs presented them as live seams; hal_storage.h did not even parse as
+C++ (a parameter named `namespace`). Audit, 2026-10-09: the ones nothing
+needed were deleted.
+
+So every header under common/ must also be REACHED: an #include walk that
+starts at every tracked .c/.cc/.cpp/.ino/.mm in the repository (firmware,
+host tests, the emulator, the apps) must arrive at it, or it carries a
+HEADER_WAIVERS entry with the reason. The walk resolves an include relative to
+its file first and otherwise by path suffix, so it over-counts reachability
+(two headers with one name both count) and never under-counts it: a header it
+reports is one nothing includes, by any spelling.
+
 Run:  python3 firmware/scripts/check_common_build_reachability.py
 CI:   .github/workflows/firmware.yml (Regression Guards)
 """
 import json
+import os
+import re
+import subprocess
 import sys
+from collections import defaultdict, deque
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -98,6 +122,25 @@ PROJECTS = REPO / "firmware" / "projects"
 # since it landed, nothing ever included its header. It was deleted rather than
 # wired up, and its waiver left with it.)
 WAIVERS: dict[str, str] = {}
+
+# Headers under common/ that no compiled source or test includes, with the
+# reason each is kept. Same rule as WAIVERS: wire it up or delete it, and drop
+# the entry in the same PR (a stale entry fails the guard).
+HEADER_WAIVERS: dict[str, str] = {
+    "chirp/chirp_channel.h": (
+        "the ratified C-ABI Chirp API (AGENTS.md's Beacon/Chirp invariants, "
+        "PARITY_PLAN.md) for the ACTIVE tree's body port, which has not "
+        "landed; no build includes it yet. firmware/tests_host's Makefile "
+        "syntax-checks it as C and C++ so the contract keeps compiling."),
+    "core/types.h": (
+        "chirp/chirp_channel.h's base types (result_t and friends); goes "
+        "with it, or into it, when the port lands."),
+}
+
+SOURCE_EXTS = {".c", ".cc", ".cpp", ".ino", ".mm"}
+HEADER_EXTS = {".h", ".hpp"}
+INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^>"\n]+)[>"]', re.M)
+SKIP_DIRS = {".git", ".pio", "node_modules", "target", "build", "dist", "__pycache__"}
 
 
 def read(path: Path) -> str:
@@ -195,6 +238,92 @@ def staged_copy_names() -> set[str]:
     return names
 
 
+def repo_files() -> list[str]:
+    """Repo-relative paths of the C-family sources and headers on disk.
+
+    `git ls-files` when this is a checkout (what CI has), so build output and
+    vendored trees never count as includers; a plain walk otherwise. Untracked
+    files that are not ignored count too, so a new source or header behaves
+    the same locally before `git add` as it will in CI."""
+    wanted = SOURCE_EXTS | HEADER_EXTS
+    try:
+        raw = subprocess.run(["git", "ls-files", "-z", "--cached", "--others",
+                              "--exclude-standard"], cwd=REPO, check=True,
+                             capture_output=True).stdout.decode("utf-8", "replace")
+        paths = [p for p in raw.split("\0") if p]
+    except (OSError, subprocess.CalledProcessError):
+        paths = []
+        for root, dirs, names in os.walk(REPO):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            for n in names:
+                paths.append(os.path.relpath(os.path.join(root, n), REPO).replace(os.sep, "/"))
+    return [p for p in paths
+            if os.path.splitext(p)[1] in wanted and (REPO / p).is_file()]
+
+
+def unreached_common_headers() -> list[str]:
+    """common/-relative paths of headers no compiled source reaches."""
+    files = repo_files()
+    headers = {f for f in files if os.path.splitext(f)[1] in HEADER_EXTS}
+    by_suffix: dict[str, set[str]] = defaultdict(set)
+    for h in headers:
+        parts = h.split("/")
+        for k in range(1, len(parts) + 1):
+            by_suffix["/".join(parts[-k:])].add(h)
+
+    def resolve(src: str, spec: str) -> set[str]:
+        rel = os.path.normpath(os.path.join(os.path.dirname(src), spec)).replace(os.sep, "/")
+        if rel in headers:
+            return {rel}
+        tail = "/".join(p for p in spec.split("/") if p not in ("", ".", ".."))
+        return by_suffix.get(tail, set())
+
+    reached: set[str] = set()
+    queue = deque(f for f in files if os.path.splitext(f)[1] in SOURCE_EXTS)
+    while queue:
+        f = queue.popleft()
+        for spec in INCLUDE_RE.findall(read(REPO / f)):
+            for target in resolve(f, spec):
+                if target not in reached:
+                    reached.add(target)
+                    queue.append(target)
+
+    prefix = "firmware/common/"
+    return sorted(h[len(prefix):] for h in headers
+                  if h.startswith(prefix) and h not in reached)
+
+
+def header_pass() -> int:
+    unreached = unreached_common_headers()
+    stale = [w for w in HEADER_WAIVERS
+             if not (COMMON / w).is_file() or w not in unreached]
+    if stale:
+        for w in stale:
+            why = "no longer exists" if not (COMMON / w).is_file() else "is included now"
+            print(f"::error::Stale header waiver in {Path(__file__).name}: "
+                  f"'{w}' {why} — remove the HEADER_WAIVERS entry.")
+        return 1
+    dead = [h for h in unreached if h not in HEADER_WAIVERS]
+    for h in unreached:
+        if h in HEADER_WAIVERS:
+            print(f"  ~ waived header: {h}")
+            print(f"      {HEADER_WAIVERS[h]}")
+    if dead:
+        print("::error::Shared headers that NOTHING includes (no compiled source or")
+        print("         test reaches them through any #include chain):")
+        for rel in dead:
+            print(f"           firmware/common/{rel}")
+        print()
+        print("  A header nothing compiles cannot be trusted to describe anything:")
+        print("  hal/hal_storage.h sat here for months without parsing as C++.")
+        print("  Include it from the code that uses it, delete it, or add a")
+        print("  HEADER_WAIVERS entry saying why it stays.")
+        return 1
+    print("✓ common/ header reachability: every shared header is included by "
+          f"compiled code ({len(HEADER_WAIVERS)} waived).")
+    return 0
+
+
 def main() -> int:
     if not COMMON.is_dir():
         print(f"::error::{COMMON} not found")
@@ -282,7 +411,7 @@ def main() -> int:
 
     print(f"✓ common/ build reachability: {checked} shared .cpp files, "
           f"all compiled by a manifest, a build_src_filter, or a staged copy.")
-    return 0
+    return header_pass()
 
 
 if __name__ == "__main__":

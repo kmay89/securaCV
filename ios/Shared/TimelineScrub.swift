@@ -222,17 +222,6 @@ enum TimelineItem: Hashable, Sendable, Identifiable {
         case .record(let r, let i): return "rec-\(i)-\(r.t0)"
         }
     }
-
-    /// The time this item anchors to, for scrub sync. Day headers deliberately
-    /// return nil: a header's midnight can sit outside the covered domain, and
-    /// using it as an anchor collapses the viewport indicator.
-    var anchorTime: Int? {
-        switch self {
-        case .day: return nil
-        case .fold(let t0, _, _): return t0
-        case .record(let r, _): return r.t0
-        }
-    }
 }
 
 // MARK: - The model
@@ -250,10 +239,6 @@ struct TimelineModel: Sendable {
     var unparsed: Int = 0
 
     var isEmpty: Bool { records.isEmpty }
-
-    /// Records that light the minimap and the density strips. Heartbeats are
-    /// proof of life, not activity, so they never light a cell.
-    var visibleRecords: [TimelineRecord] { records.filter { $0.kind != .heartbeat } }
 }
 
 extension TimelineScrub {

@@ -1,0 +1,29 @@
+{
+  "before": null,
+  "after": {
+    "id": "SENTINEL_ID_013",
+    "camera": "backyard",
+    "frame_time": 77700101.5,
+    "snapshot_time": 77700104.5,
+    "label": "person",
+    "sub_label": null,
+    "top_score": 0.81,
+    "false_positive": false,
+    "start_time": 77700102.5,
+    "end_time": null,
+    "score": 0.77,
+    "box": [77700110, 77700111, 77700112, 77700113],
+    "area": 77700120,
+    "ratio": 7770.13,
+    "region": [77700114, 77700115, 77700116, 77700117],
+    "stationary": false,
+    "motionless_count": 77700130,
+    "position_changes": 77700131,
+    "current_zones": ["lawn"],
+    "entered_zones": ["lawn"],
+    "thumbnail": "SENTINEL_THUMBNAIL_BASE64_013",
+    "has_snapshot": true,
+    "has_clip": true
+  },
+  "type": "new"
+}

@@ -26,6 +26,26 @@ final class HubDiscoveryRowsTests: XCTestCase {
         XCTAssertEqual(rows.first?.installationType, "Home Assistant OS")
     }
 
+    func testEveryCopysFieldsReachTheRowWhicheverCopyCameFirst() {
+        // The location name, version and installation type ride whichever
+        // interface copy carried them; the first private address still wins.
+        let bare = (service: "homeassistant", txt: ["uuid": "abc",
+                                                    "internal_url": "http://192.168.1.20:8123"])
+        let full = (service: "homeassistant", txt: ["uuid": "abc", "location_name": "Home",
+                                                    "version": "2026.10.1",
+                                                    "installation_type": "Home Assistant OS",
+                                                    "internal_url": "http://10.0.0.20:8123"])
+        for (adverts, address) in [([bare, full], "http://192.168.1.20:8123"),
+                                   ([full, bare], "http://10.0.0.20:8123")] {
+            let rows = HubDiscoveryRows.rows(from: adverts)
+            XCTAssertEqual(rows.count, 1)
+            XCTAssertEqual(rows.first?.name, "Home")
+            XCTAssertEqual(rows.first?.version, "2026.10.1")
+            XCTAssertEqual(rows.first?.installationType, "Home Assistant OS")
+            XCTAssertEqual(rows.first?.baseURL?.absoluteString, address)
+        }
+    }
+
     func testInterfaceCopiesMergeWhicheverOrderTheyArrive() {
         // The copy with the gated address and the copy with the metadata
         // arrive in either order; the row carries both either way, and the

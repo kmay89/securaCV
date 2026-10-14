@@ -339,7 +339,7 @@ def top_level_statement(body: str, pos: int) -> bool:
             depth -= 1
     if depth != 0:
         return False
-    code = "\n".join(l for l in head.splitlines() if not l.strip().startswith("#")).rstrip()
+    code = "\n".join(ln for ln in head.splitlines() if not ln.strip().startswith("#")).rstrip()
     return code == "" or code[-1] in ";{}"
 
 

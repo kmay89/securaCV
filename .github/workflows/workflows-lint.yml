@@ -22,6 +22,24 @@ on:
       - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
+      # test_release_plan.py holds the tvos release watch to the sources the
+      # Wall compiles, read from here (CI.md: a filtered test lists every
+      # file it reads outside its own trees).
+      - 'tvos/WitnessWall/project.yml'
+      # ...and each desktop app's watch to what it links and embeds
+      # (RELEASE_LESSONS 2026-09-23 (c)): it reads every path-linked crate's
+      # Cargo.toml and src/, so a desktop-only PR that adds an unwatched
+      # embed or path dependency runs it too.
+      - 'desktop/src-tauri/Cargo.toml'
+      - 'desktop/src-tauri/src/**'
+      - 'desktop-lab/src-tauri/Cargo.toml'
+      - 'desktop-lab/src-tauri/src/**'
+      - 'desktop/hub-core/Cargo.toml'
+      - 'desktop/hub-core/src/**'
+      - 'desktop/hub-io/Cargo.toml'
+      - 'desktop/hub-io/src/**'
+      - 'desktop/flash-engine/Cargo.toml'
+      - 'desktop/flash-engine/src/**'
   pull_request:
     branches: [main]
     paths:
@@ -33,6 +51,24 @@ on:
       - '.github/CI.md'
       - '.github/actionlint.yaml'
       - '.github/actionlint.yml'
+      # test_release_plan.py holds the tvos release watch to the sources the
+      # Wall compiles, read from here (CI.md: a filtered test lists every
+      # file it reads outside its own trees).
+      - 'tvos/WitnessWall/project.yml'
+      # ...and each desktop app's watch to what it links and embeds
+      # (RELEASE_LESSONS 2026-09-23 (c)): it reads every path-linked crate's
+      # Cargo.toml and src/, so a desktop-only PR that adds an unwatched
+      # embed or path dependency runs it too.
+      - 'desktop/src-tauri/Cargo.toml'
+      - 'desktop/src-tauri/src/**'
+      - 'desktop-lab/src-tauri/Cargo.toml'
+      - 'desktop-lab/src-tauri/src/**'
+      - 'desktop/hub-core/Cargo.toml'
+      - 'desktop/hub-core/src/**'
+      - 'desktop/hub-io/Cargo.toml'
+      - 'desktop/hub-io/src/**'
+      - 'desktop/flash-engine/Cargo.toml'
+      - 'desktop/flash-engine/src/**'
 
 permissions:
   contents: read

@@ -275,12 +275,12 @@ CURATED = [
                  "lit button, hidden security screw. It ships sealed by "
                  "default — doorbells live outside.",
         "print_plan": "Print the Body, Face and Plate in ASA (a doorbell "
-                      "lives in the sun; PETG only under a deep porch roof) "
-                      "and the Gasket in TPU. Aiming down a porch or across a "
-                      "corner? Set the wedge angles before you print the "
-                      "Plate.",
-        "simple": ["part", "preset", "opt_seal", "opt_vent", "opt_led",
-                   "opt_tamper", "plate_wedge", "plate_wedge_x"],
+                      "lives in the sun; PETG only under a deep porch roof), "
+                      "the Gasket and the Plunger pair in TPU. Aiming down a "
+                      "porch or across a corner? Set the wedge angles before "
+                      "you print the Plate.",
+        "simple": ["part", "preset", "opt_seal", "opt_svc", "opt_vent",
+                   "opt_led", "opt_tamper", "plate_wedge", "plate_wedge_x"],
         "preset_param": "preset",
         "preset_controls": ["opt_seal", "opt_vent", "opt_led", "opt_tamper",
                             "opt_weep"],
@@ -291,15 +291,19 @@ CURATED = [
             "plate": "Wall plate",
             "gasket": "Gasket ring — print in TPU",
             "retainer": "Lens retainer ring",
+            "plunger": "Service plungers (R + B pair) — print in TPU",
         },
         "part_info": {
             "all": "Every part in place, for looking around — pick a single "
                    "part when you want an STL to print.",
-            "body": "The plate the module stack lives on: rails, clips and "
+            "body": "The plate the module stack lives on: one connected, "
+                    "vented cradle (two L-walls, a stop, no clip) with the "
                     "two screw posts for the module, the battery bay's fence, "
-                    "the cable exit. It nests inside the face's walls on the "
-                    "screws from the back, drops onto the wall plate's "
-                    "dovetail lugs and locks with the hidden screw.",
+                    "the cable exit, the speaker cradle and the two service "
+                    "plunger seats over the XIAO's R and B switches. It nests "
+                    "inside the face's walls on the screws from the back, "
+                    "drops onto the wall plate's dovetail lugs and locks with "
+                    "the hidden screw.",
             "face": "The one-piece show part — lens aperture, button hole, "
                     "side walls and posts, the gasket ledge inside — printed "
                     "face-down; the only seam is against the wall plate.",
@@ -311,10 +315,16 @@ CURATED = [
             "retainer": "The small ring that presses into the face behind "
                         "the lens disc and holds it against the lip. Print "
                         "it flat, bore down.",
+            "plunger": "The two soft buttons that poke the XIAO's reset and "
+                       "boot switches through the back plate, as one print on "
+                       "a sprue: heads down on the bed, stems up, 0.2 mm "
+                       "layers, 100% infill, slow, no supports; cut them apart "
+                       "with scissors. One dimple is R, two are B. Lift the "
+                       "body off its wall plate and press.",
         },
         "labels": {
             "part": "Part to print", "preset": "Quick preset",
-            "opt_seal": "Weather seal",
+            "opt_seal": "Weather seal", "opt_svc": "Service buttons (R / B)",
             "opt_vent": "GORE vent", "opt_led": "Extra light pipe",
             "opt_tamper": "Tamper magnet",
             "plate_wedge": "Aim down", "plate_wedge_x": "Aim left / right",
@@ -328,7 +338,7 @@ CURATED = [
         "choices": {
             "preset": {
                 "custom": "Custom — pick the options yourself",
-                "doorbell_weather": "Outdoor — sealed, vented and drained (the released build)",
+                "doorbell_weather": "Outdoor — sealed, breathing and draining through its weep (the released build)",
             },
         },
         "units": {"plate_wedge": "°", "plate_wedge_x": "°"},

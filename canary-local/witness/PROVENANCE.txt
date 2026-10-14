@@ -13,9 +13,9 @@ scripts/check_witness_emulator_sync.sh enforces that in CI).
   demo-fleet.json   <- demo-fleet.json    (byte-identical)
 
 Source sha256 at vendoring time:
-  witness-wall.html  0d34d6fae2cf0852f2a1089d6c09f32b63255246c3bfb2a1ec499f41e742019a
-  js/tv-emulator.js  425e9c80a7b917ee5170a4ec568bb81fc2138046d7afec563867a5cad19589d3
-  js/highlight.js    7b5b6bdc7439b0fa0daf1c02ef9fd640ab23920b393eb741a894b6910e935f9f
+  witness-wall.html  92f4db69c781323b5d349cd4cf4697a1226da18b61da4e5d2eb7bcfc1b208cc0
+  js/tv-emulator.js  9d039d73d7942d7ca32c997b6b68ac9a12d740fbe4bd9f79a58c316516e118f9
+  js/highlight.js    959bbbec02e837bcdd0e0647f851f6ebd708d67428acb8515cd0d60108524915
   demo-fleet.json    5a95c05cafb7c1c4be83c31114dd1de89895685ea9cc1b7065b0b3282b3cb6e6
 
 The host app drives the wall over postMessage (see tvos/EMBED_IN_APPS.md):

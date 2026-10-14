@@ -37,8 +37,8 @@ configs/
 | canary-sentinel | mailbox-lite | LITE tier (no radar, no CSI) |
 | canary-sentinel | perimeter-demo | HEAVY tier, the rigged demo |
 | canary-vision | default | Vision AI presence detection |
-| canary-wap | default | Full-featured WAP witness device |
-| canary-wap | mobile | Power-optimized portable device |
+| canary-wap | default | Lab descriptor of the FULL WAP; not compiled (see below) |
+| canary-wap | mobile | Lab descriptor; not compiled (`canary-wap-mobile` builds the sketch's DEV profile) |
 
 The canary-display, canary-sense, canary-sentinel and canary-vision configs
 are wired into PlatformIO builds via `-I` paths in
@@ -46,7 +46,11 @@ are wired into PlatformIO builds via `-I` paths in
 **not compiled by any build** — the WAP sketch's flags live in its
 `build_config.h` — but they are still consumed: the workshop-page generator
 (`canary-local/tools/gen_enclosures.py`) parses their `FEATURE_*` lines into
-`canary-local/devices/workshop.json`, which CI drift-gates.
+`canary-local/devices/workshop.json`, which CI drift-gates, and
+`canary-local/tools/figures/gen_figures.mjs` reads their
+`CONFIG_DEVICE_TYPE`. `firmware/scripts/check_config_feature_flags.py`
+skips them for that reason; every other config's `FEATURE_*` flag must be
+read by its project's sources.
 
 ## Configuration Rules
 

@@ -37,8 +37,10 @@ generator READS (its docstring, its imports), not from memory:
                             the emulator dist is upstream of the catalogs and only Actions can build it
   11  gen_flash             dist meta + manifests -> flash.json
   12  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
-  13  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
-  14  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
+  13  gen_print_files       --site DIR only: the in-development cases' print-ready STLs + their
+                            provenance manifest into the website's print/ (needs OpenSCAD)
+  14  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
+  15  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
 
 GEN_ENCLOSURES COMES BEFORE GEN_FIGURES because gen_figures.mjs reads
 canary-local/devices/catalog.json — each figure's catalog evidence (the
@@ -100,16 +102,21 @@ the same git status — and the run says so; nothing after step 1 moves a
 wrote it owed its previews to that run: git no longer sees it, and the
 "no case .scad changed" line means exactly that.
 
-OPENSCAD. Steps 3 and 4 and --previews are refused, before anything runs,
-when `openscad` is not on PATH. There is no Actions button that renders the
-STLs and pushes them back: the "Enclosure CAD" workflow (enclosure.yml)
-re-renders every part, re-measures the assembled envelopes and runs the fit
-gate on every push that touches docs/hardware/enclosure/** — it names the
-drift, it does not fix it. Install OpenSCAD 2021.01 (the version CI
-installs) and resume with --from render.
+OPENSCAD. Every step `--list` marks [openscad], and --previews, is refused
+before anything runs when OpenSCAD cannot be found: `$OPENSCAD` when it is
+set and not empty (the override render.sh and scad_probe.py honor too,
+documented in the enclosure README; on macOS the binary lives inside the
+.app), else `openscad` on PATH. The preview PNGs are drawn by that same
+binary, so they and the STLs never come from two different OpenSCADs.
+There is no Actions button that renders the STLs and pushes them back: the
+"Enclosure CAD" workflow (enclosure.yml) re-renders every part, re-measures
+the assembled envelopes and runs the fit gate on every push that touches
+docs/hardware/enclosure/** — it names the drift, it does not fix it.
+Install OpenSCAD 2021.01 (the version CI installs) and resume with --from
+render.
 
-Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at step 9
-for the dist rebuild (resume with --from gen_flash).
+Exit codes: 0 done · 1 a step failed or was refused · 3 stopped at
+setup_regen for the dist rebuild (resume with --from gen_flash).
 
 Unit-tested by scripts/tests/test_regen_cad.py with subprocess mocked: the
 order, the check mapping, the refusals and --from run there without
@@ -232,6 +239,16 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_builder_manifest.py", "--check"), "argv", False,
          "the curated .scad + deps + colorways -> builder_manifest.json (sha256 pins) "
          "[--site DIR: the website's scad/ carries, cad-dims.json, builder-data.js]"),
+    # The website's print-ready STLs for the in-development cases, with the
+    # manifest that says which commit and which .scad bytes they came from.
+    # Writes into the website checkout only, so it runs only under --site;
+    # its --check names a case that moved since its files were rendered.
+    Step("gen_print_files",
+         ("python3", f"{ENC_REL}/gen_print_files.py"), ".",
+         None, "argv", True,
+         "the in-development cases' parts (OpenSCAD, full quality) -> the website's print/*.stl "
+         "+ print/print-files.json (version, commit, scad sha256, per-file sha256) [--site DIR only]",
+         note="writes into the website checkout only; pass --site DIR to render or check it"),
     Step("gen_stamp",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), ".",
          ("python3", f"{ENC_REL}/gen_stamp.py", "--check"), "argv", False,
@@ -245,6 +262,8 @@ STEPS: tuple[Step, ...] = (
          report_only=True),
 )
 STEP_NAMES = tuple(s.name for s in STEPS)
+SITE_STEPS = ("gen_builder_manifest", "gen_print_files")   # take --site DIR
+SITE_ONLY_STEPS = ("gen_print_files",)                      # and do nothing without it
 STEP_BY_NAME = {s.name: s for s in STEPS}
 RESUME_AFTER_DIST = "gen_flash"
 
@@ -319,8 +338,17 @@ def _git_modified(paths: tuple[str, ...] | list[str], repo: Path | None = None) 
     return sorted(set(files))
 
 
+def openscad_bin() -> str:
+    """The OpenSCAD every step runs: $OPENSCAD when set, else `openscad` on
+    PATH — render.sh (`${OPENSCAD:-openscad}`) and scad_probe.py read the
+    same variable, so a step and the scripts it drives agree. Read at call
+    time, not import time, so the override set after import still counts."""
+    return os.environ.get("OPENSCAD") or "openscad"
+
+
 def openscad_available() -> bool:
-    return shutil.which("openscad") is not None
+    # shutil.which takes an absolute path as well as a bare name.
+    return shutil.which(openscad_bin()) is not None
 
 
 def _define(k: str, v) -> str:
@@ -346,12 +374,13 @@ def openscad_missing_message(needing: list[str] | tuple[str, ...]) -> str:
     who = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
     verb = "needs" if len(items) == 1 else "need"
     return (
-        f"regen_cad: {who} {verb} OpenSCAD and `openscad` is not on PATH — refused before anything ran.\n"
+        f"regen_cad: {who} {verb} OpenSCAD and `{openscad_bin()}` is not runnable — refused before anything ran.\n"
         f"  There is no Actions button that renders the STLs and pushes them back: {CAD_WORKFLOW}\n"
         f"  re-renders every part, re-measures the assembled envelopes (gen_assembled_dims.py --check)\n"
         f"  and runs the fit gate on every push touching {ENC_REL}/** — it names the drift, it does\n"
         f"  not fix it. Install OpenSCAD 2021.01 (the version CI installs: `sudo apt-get install\n"
-        f"  openscad`) and resume with: python3 scripts/regen_cad.py --from render"
+        f"  openscad`) or point OPENSCAD=/path/to/openscad at one off PATH, and resume with:\n"
+        f"  python3 scripts/regen_cad.py --from render"
     )
 
 
@@ -394,6 +423,10 @@ def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple
     """(ok, detail) for one step's check form. `site` reaches gen_builder_manifest only, as
     `gen_builder_manifest.py --site DIR --check` — the carries are regenerated
     in memory and a stale one is named; nothing is written in either tree."""
+    if step.name in SITE_ONLY_STEPS and site is None:
+        print(_hdr(i, step, ("(--site DIR only)",), "check"))
+        print(f"      skipped — {step.note}")
+        return True, ""
     if step.check_kind == "none":
         print(_hdr(i, step, ("(no check form)",), "check"))
         print(f"      skipped — {step.note}")
@@ -405,7 +438,7 @@ def run_check(step: Step, i: int, repo: Path, site: Path | None = None) -> tuple
         print(_hdr(i, step, step.check or (), "check"))
         return _check_by_diff(step, repo)
     argv = tuple(step.check or ())
-    if step.name == "gen_builder_manifest" and site is not None:
+    if step.name in SITE_STEPS and site is not None:
         argv = tuple(step.cmd) + ("--site", str(site), "--check")
     print(_hdr(i, step, argv, "check", step.check_cwd or step.cwd))
     r = _run(argv, cwd=repo / (step.check_cwd or step.cwd))
@@ -499,7 +532,11 @@ def run_setup_regen(step: Step, i: int, repo: Path) -> tuple[str, str]:
 
 def run_write(step: Step, i: int, repo: Path, site: Path | None) -> tuple[bool, str]:
     argv = tuple(step.cmd)
-    if step.name == "gen_builder_manifest" and site is not None:
+    if step.name in SITE_ONLY_STEPS and site is None:
+        print(_hdr(i, step, ("(--site DIR only)",), "run"))
+        print(f"      skipped — {step.note}")
+        return True, ""
+    if step.name in SITE_STEPS and site is not None:
         argv = argv + ("--site", str(site))
     print(_hdr(i, step, argv, "check" if step.report_only else "run"))
     r = _run(argv, cwd=repo / step.cwd)
@@ -551,7 +588,7 @@ def preview_argv(job: PreviewJob, out_dir: Path, xvfb: bool | None = None) -> li
     if xvfb is None:
         xvfb = not os.environ.get("DISPLAY") and shutil.which("xvfb-run") is not None
     argv = ["xvfb-run", "-a"] if xvfb else []
-    argv += ["openscad", "-o", str(out_dir / job.out), "--imgsize", "1400,1000", "--autocenter",
+    argv += [openscad_bin(), "-o", str(out_dir / job.out), "--imgsize", "1400,1000", "--autocenter",
              "--viewall", f"--camera=0,0,0,{job.rotx},0,{PREVIEW_ROTZ},120",
              "--colorscheme", "Tomorrow Night", "-D", _define("part", job.part)]
     for k, v in job.defines.items():
@@ -671,7 +708,8 @@ def main(argv: list[str] | None = None) -> int:
     # Refuse up front, before anything runs: an OpenSCAD step in range, or --previews.
     if not openscad_available():
         needing = [f"step {i} ({s.name})" for i, s in todo
-                   if s.needs_openscad and not (args.check and s.check_kind == "none")]
+                   if s.needs_openscad and not (args.check and s.check_kind == "none")
+                   and not (s.name in SITE_ONLY_STEPS and args.site is None)]
         if args.previews is not None:
             needing.append("--previews")
         if needing:

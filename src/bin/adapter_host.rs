@@ -99,6 +99,7 @@ fn apply_reload(config_path: &str, host: &mut AdapterHost, reloaders: &[Reloader
     }
     log::info!("config reloaded (min_confidence + adapter routes/filters)");
 }
+use witness_kernel::adapter::host::stats_log_interval_cycles;
 use witness_kernel::adapter::webhook::{
     self, RateLimit, WebhookAdapter, WebhookAuth, WebhookOptions,
 };
@@ -841,7 +842,7 @@ fn main() -> Result<()> {
         stats
     });
 
-    let log_every = (60 / file.poll_interval_secs.max(1)).max(1);
+    let log_every = stats_log_interval_cycles(poll);
     let mut cycle: u64 = 0;
     loop {
         if RELOAD_REQUESTED.swap(false, Ordering::SeqCst) {

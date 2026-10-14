@@ -6,7 +6,7 @@
   <meta name="description" content="Drive the SecuraCV Witness Wall on a simulated Apple TV, right in your browser — the tvOS focus engine, an on-screen remote, Home and Business editions, one-tap incident capture, break-glass by quorum, and the ambient witness screensaver.">
   <meta name="theme-color" content="#2563eb">
   <meta property="og:title" content="Witness Wall — Apple TV emulator — SecuraCV">
-  <meta property="og:description" content="Steer the verified record on a simulated Apple TV: focus engine, an on-screen remote, two editions, and the real interactions. No install.">
+  <meta property="og:description" content="Steer the signed record on a simulated Apple TV: focus engine, an on-screen remote, two editions, and the real interactions. No install.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://securacv.com/witness-wall">
   <meta property="og:image" content="https://securacv.com/share-card.jpg">
@@ -40,6 +40,7 @@
     .logo { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; }
     .logo img { width: 30px; height: 30px; object-fit: contain; }
     .logo span span { color: var(--text-muted); font-weight: 500; }
+    @media (max-width: 480px) { .logo span span { display: none; } }
     nav.main { display: flex; gap: 18px; align-items: center; font-size: 14.5px; font-weight: 500; }
     nav.main a { color: var(--text-secondary); } nav.main a:hover { color: var(--text); }
 
@@ -85,7 +86,6 @@
     .codeblock { display: none; margin-top: 12px; background: #0b1220; border: 1px solid #1e2b3f; border-radius: 12px; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #cdd6e6; white-space: pre; }
     .codeblock.show { display: block; }
     .hl-key { color: #79b8ff; } .hl-str { color: #9ecbff; } .hl-num { color: #f8c555; } .hl-bool { color: #ff9e64; } .hl-punct { color: #8a94a6; }
-    .hl-time { color: #7fd1a8; } .hl-hash { color: #c8a2ff; } .hl-ok { color: #6fdb7a; } .hl-kw { color: #f4c544; } .hl-line { display: block; }
     .tv:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
     .screen { position: absolute; inset: 0; padding: clamp(14px,2.4vw,26px); display: flex; flex-direction: column; }
     .topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 12px; border-bottom: 1px solid var(--tv-line); flex-wrap: wrap; }
@@ -375,8 +375,8 @@
     <section class="intro">
       <span class="eyebrow">Apple TV · emulator · drivable</span>
       <h1>Drive the <em>Witness Wall</em>, right here.</h1>
-      <p>The same idea as the Lab, for the living-room screen: a faithful Apple TV emulator you can steer with the arrow keys or the on-screen remote. Switch between three profiles — <b>Home</b>, <b>Business</b>, and <b>Apartment</b> — watch a show and take a doorbell over it, run a heavy monitoring board, or peek at your peephole from the couch. It's a preview of the experience; the app itself is still in design.</p>
-      <p>And the Wall itself — the real one, whose every on-screen check comes from a verifier actually running, never a hardcoded string — is a web app: <a href="https://securacv.com/tv/">open it in your browser</a>. The same app packages for Samsung and LG TVs and casts to a Chromecast.</p>
+      <p>Like the Lab, for the living-room screen: an Apple TV emulator you steer with the arrow keys or the on-screen remote. Try three profiles — <b>Home</b>, <b>Business</b> and <b>Apartment</b>: a doorbell over your show, a monitoring board, a peek through the peephole. The native Apple TV app is built and tested, but not on the App Store yet.</p>
+      <p>The real Wall is a web app that works today — <a href="https://securacv.com/tv/">open it in your browser</a>; it also packages for Samsung and LG TVs and casts to Chromecast. Its checks come from a verifier that actually runs, never a hardcoded string.</p>
       <p class="live-line" id="liveLine"><span class="live-dot demo" id="liveDot"></span><span id="liveText">Demo fleet — not connected to a kernel</span> · <a href="#connect">connect yours</a></p>
       <div class="skinbar" id="skinbar" role="group" aria-label="Screen skin">
         <span class="lbl">Skin</span>
@@ -491,7 +491,7 @@
       <div class="ap-head">
         <div>
           <div class="ap-title">Alerts <span class="opt">opt-in · off by default</span></div>
-          <p class="ap-sub">Coarse events only — a zone and a time, never a face. Flip it on and an alert slides in over whatever's on screen (try it during the screensaver). On a real Apple TV these show in-app and over the ambient screensaver; a HomeKit bridge carries them over other apps you're watching.</p>
+          <p class="ap-sub">Coarse events only — a zone and a time, never a face. Flip it on and an alert slides in over whatever's on screen (try it during the screensaver). On a real Apple TV they show in the app and over its screensaver; a HomeKit bridge carries them over other apps.</p>
         </div>
         <button class="ap-toggle" id="alertsToggle" role="switch" aria-checked="false"><span class="dotk" aria-hidden="true"></span><span class="lab">Alerts off</span></button>
       </div>
@@ -508,7 +508,7 @@
 
     <section class="connect-panel" id="connect" aria-label="Connect your fleet">
       <h2>Connect your fleet <span class="exp">experimental</span></h2>
-      <p class="cp-sub">This really fetches a kernel over HTTP and shows the Canaries it returns — in place of the demo fleet. Hit <b>Try a live demo kernel</b> to watch it work right here (a real fetch to a live endpoint), or point it at your own kernel's address to see your actual devices. A browser can't scan your LAN by itself, so you give it the address — and it keeps watching the three well-known ones (<code>canary.local:8099</code>, the kernel's own <code>canary.local:8799</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
+      <p class="cp-sub">This really fetches a kernel over HTTP and shows its Canaries in place of the demo fleet. Hit <b>Try a live demo kernel</b>, or enter your own kernel's address — a browser can't scan your LAN. It keeps watching the three well-known ones (<code>canary.local:8099</code>, the kernel's own <code>canary.local:8799</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
       <div class="cp-row">
         <button class="cp-btn golive" id="goLiveBtn" type="button" hidden>✨ Go live</button>
         <button class="cp-btn" id="liveDemoBtn" type="button">▶ Try a live demo kernel</button>
@@ -532,7 +532,7 @@
 
     <section class="foot-cta">
       <a class="btn primary" href="https://securacv.com/apple-tv">Read about the Witness Wall &amp; the two editions</a>
-      <p class="disclaimer">This is a browser emulator of the experience, honestly labeled — a concept in design, not a shipping App Store app. The witness kernel, the signed record, and the camera integrations it depicts are real; the Apple TV app is on the way.</p>
+      <p class="disclaimer">A browser emulator of the native app, which is built and tested but not on the App Store yet. Its checkmarks are staged; the witness kernel, the signed record and the camera integrations it depicts are real.</p>
       <p class="tm-note">The on-screen remote is a stylized depiction, modeled on the Apple TV remote. Apple, Apple TV, tvOS, Siri, App Store, and TestFlight are trademarks or service marks of Apple Inc., registered in the U.S. and other countries and regions. SecuraCV is an independent project by Errer Labs and is not affiliated with, endorsed, or sponsored by Apple Inc. All other trademarks are the property of their respective owners.</p>
     </section>
   </main>

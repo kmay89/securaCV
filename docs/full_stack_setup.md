@@ -61,8 +61,8 @@ your Wi-Fi, and verifies every byte it wrote.
 5. It downloads → verifies the checksum → writes → **reads every byte back** and
    re-hashes. A counterfeit card that lies about writes fails right here.
 
-**Working looks like:** "written and read back — the card verifiably holds the
-image", then the Wi-Fi seed step.
+**Working looks like:** "✓ written and read back — every byte on the card
+matches the image", then the Wi-Fi seed step.
 
 > **Gotcha (fixed):** on macOS, writes used to fail at
 > `couldn't sync the device before verification: Inappropriate ioctl for device

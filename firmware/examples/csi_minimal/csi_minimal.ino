@@ -61,10 +61,16 @@ static void on_csi_window(const csi_features_t* f, void* /*user*/) {
   /* See firmware/common/csi/src/csi_features.h for the full 32-dim layout.
    *   v[0..7]   amplitude variance
    *   v[8..11]  phase-Doppler (motion)
-   *   v[12..19] breathing FFT
+   *   v[12..19] breathing: eight Goertzel bins (0.10 + 0.05*i Hz). A breath
+   *             lands in ONE bin, so the scalar is the peak, through the
+   *             library's csi_breathing_peak() (csi_types.h), the reducer
+   *             every consumer uses, so "breathing = 40" here means what it
+   *             means on the dashboard. A band mean reads about 8x smaller
+   *             (a clean breath's mean is about 5, far under a 30-point
+   *             threshold).
    *   v[20..23] RSSI stats: mean, std, max, min  */
   const uint8_t motion    = reduce_band(f->v, 8, 12);
-  const uint8_t breathing = reduce_band(f->v, 12, 20);
+  const uint8_t breathing = csi_breathing_peak(f->v);
   const int8_t  rssi_mean = f->v[20];
 
   Serial.printf("t=%-4lu motion=%-3u breathing=%-3u rssi=%ddBm frames=%u\n",

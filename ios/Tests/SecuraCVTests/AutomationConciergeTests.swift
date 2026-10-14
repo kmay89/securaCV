@@ -99,6 +99,36 @@ final class AutomationConciergeTests: XCTestCase {
         XCTAssertEqual(defaults.stringArray(forKey: HomeKitBridge.authoredIDsKey), [])
     }
 
+    func testTheLadderAndTheAnchorsAreWiredNotJustTested() throws {
+        // Both were tested and never called: AppleHomeView re-made part of
+        // the ladder inline (no administrator rung, so a household member
+        // got a raw HomeKit error), and removing an automation left its
+        // anchor behind. Pin the wiring, not only the pure functions.
+        let ios = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        func source(_ rel: String) throws -> String {
+            let url = ios.appendingPathComponent(rel)
+            try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
+                              "ios checkout not visible from the test host")
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        let view = try source("Sources/SecuraCV/Views/AppleHomeView.swift")
+        XCTAssertTrue(view.contains("ConciergeReadiness.evaluate("))
+        XCTAssertTrue(view.contains("isAdministrator: home.isAdministrator()"))
+        let bridge = try source("Sources/SecuraCV/Native/HomeKitBridge.swift")
+        let removal = try XCTUnwrap(bridge.range(of: "func removeAutomation(id: UUID)"))
+        XCTAssertTrue(bridge[removal.upperBound...].prefix(1_600).contains("Self.forgetAuthored(id)"),
+                      "removing an automation must drop its anchor")
+    }
+
+    func testANonAdministratorIsToldWhyNotOfferedAButton() {
+        let r = ConciergeReadiness.evaluate(isEnabled: true, authorized: true,
+                                            isAdministrator: false, accessoryCount: 2,
+                                            sceneCount: 3, homeHubPresent: true)
+        XCTAssertEqual(r, .notAdministrator)
+        XCTAssertNotNil(r.note)
+    }
+
     func testClassScopedSignalsCollapseOntoMotion() {
         // Same collapse as hapCharacteristic: the class word is consent
         // metadata, not a different sensor.

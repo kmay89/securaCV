@@ -16,7 +16,7 @@
 // standing "demonstration, not a life-safety device" disclaimer.
 
 import {
-  MicSim, SENS, SENS_ORDER, SENS_DEFAULT_INDEX, sensName, dbOverFloor,
+  MicSim, SENS, SENS_ORDER, SENS_DEFAULT_INDEX, dbOverFloor,
   CADENCE, TRANSIENT, MIC_FACTS, eventWireName,
 } from "./mic-sim.js";
 
@@ -503,7 +503,6 @@ function releaseAudio() {
 }
 
 function renderLiveError(err) {
-  const card = $("#mic-card");
   const name = (err && err.name) || "";
   let msg;
   if (name === "NotAllowedError" || name === "SecurityError")

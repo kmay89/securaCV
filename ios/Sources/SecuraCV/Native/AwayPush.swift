@@ -20,8 +20,13 @@
 //     anyone, because nobody but the user is in the loop).
 //   * The record is CONTENT-FREE by construction: a coarse severity class and
 //     nothing else. No zone, no device name, no precise time (Invariant III).
-//     The NSE composes the sentence on the phone from the user's own data.
-//   * Per-install and revocable — deleting the subscription ends it (II).
+//     The NSE turns the class into its fixed sentence on the phone.
+//   * Revocable — deleting the subscription ends it (II). It is ONE
+//     subscription under a fixed id in the user's private database, so it
+//     belongs to the iCloud account, not to this install: deleting it stops
+//     wakes for every device on the account, and a device whose own rules
+//     still reach Anywhere saves it again the next time it opens
+//     (`follow(rules:)` at launch). The rules themselves stay on each device.
 //
 // WHO writes the wake: a device that is home and can see the fleet. iOS will
 // not run a socket in your pocket across town, so something on the LAN has to
@@ -86,6 +91,39 @@ extension WakeClass {
     }
 }
 
+/// What the away path should do for the rules the user has armed — decided
+/// in ONE place, so launch, the rules sheet and every rule edit agree.
+///
+/// This used to be one-directional: launch and the rules sheet could only
+/// ever ENABLE, and `AwayPush.disable()` had no caller. Switching every rule
+/// to "On Wi-Fi only" left the iCloud subscription standing, so wakes kept
+/// reaching a phone whose owner had opted out — the opposite of "opt-out is
+/// as real as opt-in" (docs/design/cloudkit_backend.md §5).
+enum AwayArming: Equatable {
+    /// Some armed rule wants to reach the user off the home network.
+    case arm
+    /// Nothing does, and a subscription may still exist: delete it.
+    case disarm
+    /// Nothing does, and nothing is standing — no network call needed.
+    case leave
+
+    /// The sentence `reach` carries while the path is off by choice.
+    static let offSentence = "Away alerts are off — no rule is set to Anywhere."
+
+    /// `mayBeSubscribed` is the device's own memory of having saved the
+    /// subscription (`AwayPush.mayBeSubscribed`). It is TRUE when unknown —
+    /// an install from before this memory existed may hold one — because
+    /// the failure directions are not symmetric: an extra delete pauses the
+    /// account's other devices until one with an Anywhere rule next opens
+    /// and saves it again, a skipped one keeps waking someone who said no.
+    /// Once known false, a device that never armed the path leaves it alone,
+    /// so it cannot cut a path another device of the account relies on.
+    static func decide(rules: [AlertRule], mayBeSubscribed: Bool) -> AwayArming {
+        if AlertRule.anyReachesAnywhere(rules: rules) { return .arm }
+        return mayBeSubscribed ? .disarm : .leave
+    }
+}
+
 @MainActor
 final class AwayPush: ObservableObject {
     static let shared = AwayPush()
@@ -100,7 +138,45 @@ final class AwayPush: ObservableObject {
 
     private var subscribed = false
 
+    /// Calls to `follow(rules:)` run one at a time, in order: a quick
+    /// Anywhere → On Wi-Fi only flip must not let the slower save land after
+    /// the delete and leave a subscription nobody wants.
+    private var lastFollow: Task<Void, Never>?
+
+    /// This device's memory of having saved the subscription — what lets a
+    /// relaunch with no away-reaching rule skip the network entirely.
+    /// Missing reads as TRUE (see `AwayArming.decide`); it turns false only
+    /// once iCloud confirms the subscription is gone.
+    private static let savedKey = "away_subscription_saved_v1"
+    static var mayBeSubscribed: Bool {
+        get { UserDefaults.standard.object(forKey: savedKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: savedKey) }
+    }
+
     private init() {}
+
+    /// Bring the away path in line with the armed rules: set it up when a
+    /// rule reaches Anywhere, tear it down when none does. The one entry
+    /// point for launch and the rules sheet (AwayArming decides).
+    func follow(rules: [AlertRule]) async {
+        let previous = lastFollow
+        let step = Task { @MainActor in
+            await previous?.value
+            switch AwayArming.decide(rules: rules, mayBeSubscribed: Self.mayBeSubscribed) {
+            case .arm:
+                // enable() is idempotent; skip the round trip when it is
+                // already standing.
+                if !self.reach.isReady { await self.enable() }
+            case .disarm:
+                await self.disable()
+            case .leave:
+                self.subscribed = false
+                self.reach = .unavailable(AwayArming.offSentence)
+            }
+        }
+        lastFollow = step
+        await step.value
+    }
 
     // MARK: - setup
 
@@ -126,6 +202,7 @@ final class AwayPush: ObservableObject {
         do {
             try await saveSubscription(in: container.privateCloudDatabase)
             subscribed = true
+            Self.mayBeSubscribed = true
             reach = .ready
         } catch {
             reach = .unavailable("iCloud couldn't set up away alerts. Open Alerts to retry.")
@@ -143,14 +220,30 @@ final class AwayPush: ObservableObject {
     }
 
     /// Turn the away path off: delete the subscription so no wake can be
-    /// delivered again. Opt-out has to be as real as opt-in (§5).
+    /// delivered again. Opt-out has to be as real as opt-in (§5). Called by
+    /// `follow(rules:)` when no armed rule reaches Anywhere.
+    ///
+    /// The saved-memory flag clears only when iCloud confirms the deletion
+    /// (or says there was nothing to delete); a failure — no network, signed
+    /// out — leaves it set, so the next launch tries again rather than
+    /// trusting a delete that never landed.
     func disable() async {
-        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
-        let db = CloudContainer.shared.privateCloudDatabase
-        _ = try? await db.deleteSubscription(withID: Self.subscriptionID)
-        #endif
         subscribed = false
-        reach = .unavailable("Away alerts are off.")
+        reach = .unavailable(AwayArming.offSentence)
+        #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
+        let container = CloudContainer.shared
+        guard (try? await container.accountStatus()) == .available else { return }
+        do {
+            _ = try await container.privateCloudDatabase.deleteSubscription(withID: Self.subscriptionID)
+            Self.mayBeSubscribed = false
+        } catch let error as CKError where error.code == .unknownItem {
+            Self.mayBeSubscribed = false
+        } catch {
+            // Left set on purpose: retried at the next launch.
+        }
+        #else
+        Self.mayBeSubscribed = false
+        #endif
     }
 
     #if canImport(CloudKit) && !SECURACV_NO_CLOUDKIT
@@ -163,7 +256,7 @@ final class AwayPush: ObservableObject {
         let info = CKSubscription.NotificationInfo()
         // A generic line so the LOCK SCREEN never leaks which Canary or what
         // happened before the phone is unlocked; the NSE replaces it with the
-        // real sentence, composed on-device from the user's own data.
+        // class's fixed sentence (WakeClass.line), composed on-device.
         info.title = "Your Canaries"
         info.alertBody = "Something needs your attention."
         info.soundName = "default"

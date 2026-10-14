@@ -50,7 +50,25 @@ enum DeviceNaming {
         // enclosure CAD), so it draws the honest no-picture card, but it
         // deserves its name rather than an identifier.
         "canary-sentinel": "Canary Sentinel",
+        // Published by the witness kernel itself as its own first row on
+        // GET /api/fleet (src/api/mod.rs `KERNEL_NAME`) — a real wire
+        // string, and the row a Wall pointed at a hub shows first. It is
+        // software, so it has no figure and never will (`isSoftware`).
+        DeviceNaming.kernelProduct: "SecuraCV witness kernel",
     ]
+
+    /// The product string the witness kernel publishes for its own row
+    /// (src/api/mod.rs `KERNEL_NAME`).
+    static let kernelProduct = "witness-kernel"
+
+    /// Is this row software rather than a device — the kernel's own row?
+    /// Such a row has no hardware to draw, so a surface shows a server
+    /// symbol and says why, instead of the "no honest picture of this
+    /// hardware yet" line that is only true of a device.
+    static func isSoftware(published: String?) -> Bool {
+        guard let raw = published, !raw.isEmpty else { return false }
+        return FleetFigure.canonicalDeviceType(raw) == kernelProduct
+    }
 
     /// The product name for a published device type, or nil when this build
     /// has never heard of it.

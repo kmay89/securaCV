@@ -8,11 +8,15 @@
 # release_pubkey). The flasher fails closed: once a real key is pinned, an
 # unsigned model manifest is refused (docs/browser_flasher.md § Trust model).
 #
-# Anti-rot: this fires AUTOMATICALLY on every published release, so the
-# flasher's `releases/latest/download/manifest-vision-model.json` never 404s
-# for a fresh release — the model rides the firmware train without anyone
-# remembering to press a button. workflow_dispatch stays for rebuilds /
-# pre-key publishing (attach to an existing tag on demand).
+# Anti-rot: firmware-release.yml DISPATCHES this for every release it
+# publishes and waits for the asset to land, so the flasher's
+# `releases/latest/download/manifest-vision-model.json` never 404s for a fresh
+# release — the model rides the firmware train without anyone remembering to
+# press a button. The `release: published` trigger covers only a release a
+# human publishes by hand: a release CI creates with the GITHUB_TOKEN fires no
+# workflow event (GitHub's recursion guard), which is why the chain exists.
+# workflow_dispatch also serves rebuilds / pre-key publishing (attach to an
+# existing tag on demand).
 #
 # Provenance & license: the source model is Seeed's SSCMA model zoo
 # "Person Detection (Swift-YOLO 192)" — MIT licensed, redistributable with

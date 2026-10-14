@@ -17,6 +17,10 @@ so importing it is side-effect free.
 import importlib.util
 import io
 import json
+import os
+import re
+import shutil
+import subprocess
 import time
 import urllib.error
 from pathlib import Path
@@ -394,6 +398,7 @@ def save_env(monkeypatch, tmp_path):
         serve_wizard, "set_addon_options", lambda opts: captured.update(options=opts)
     )
     monkeypatch.setattr(serve_wizard, "restart_addon", lambda: None)
+    monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: dict(captured.get("current") or {}))
     monkeypatch.setattr(
         serve_wizard, "_discover_mqtt",
         lambda: {"found": True, "host": "core-mosquitto", "port": 1883,
@@ -703,6 +708,7 @@ def test_public_status_options_drops_secrets():
 def test_handle_status_never_returns_seed(monkeypatch):
     monkeypatch.setattr(serve_wizard, "get_addon_options", lambda: _SECRET_OPTS)
     monkeypatch.setattr(serve_wizard, "DEVICE_KEY_FILE", Path("/nonexistent/key"))
+    monkeypatch.setattr(serve_wizard, "_supervisor_request", lambda *a, **k: ["mqtt"])
     handler = _bare_handler()
     result = handler._handle_status()
     assert result["ok"] is True
@@ -995,111 +1001,45 @@ def test_post_routes_with_query_string(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# /api/preflight/install — one-click prerequisite install. The target is a
-# fixed two-value enum; anything else must be refused BEFORE any Supervisor
-# request, and the accepted targets may only compose the known Supervisor
-# paths (the SSRF posture of the rest of the server: no browser-supplied
-# host, slug, or URL ever reaches the network).
+# "Install it for me" is a my.home-assistant.io link (D2): the wizard makes
+# NO Supervisor store/install/start calls, so the app needs no hassio_role and
+# a wizard bug can never install, start or stop another add-on.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "target",
-    [
-        "",  # missing
-        "core_ssh",  # arbitrary add-on slug
-        "http://evil.example/install",  # URL smuggling
-        "../addons/self/uninstall",  # path traversal
-        "mosquitto ",  # near miss must not fuzzy-match
-        None,
-        {"nested": "mosquitto"},
-    ],
-)
-def test_install_refuses_non_supervisor_targets(target, monkeypatch):
-    def _must_not_call(*a, **k):  # pragma: no cover - asserts it isn't reached
-        raise AssertionError("Supervisor request made for a refused target")
+_SERVER_SOURCE = _MODULE_PATH.read_text()
 
-    monkeypatch.setattr(serve_wizard, "_supervisor_request", _must_not_call)
+
+def test_server_never_calls_supervisor_store_or_addon_control():
+    assert "/store/" not in _SERVER_SOURCE
+    assert re.search(r"/addons/[^\"]*?/(start|stop|install|uninstall|restart)", _SERVER_SOURCE.replace("/addons/self/restart", "")) is None
+    # The one restart the wizard knows is Core's, through the core API proxy,
+    # and the Supervisor's own /core/restart (a role path) is never used.
+    assert "/core/restart" not in _SERVER_SOURCE
+    assert "/core/api/services/homeassistant/restart" in _SERVER_SOURCE
+
+
+def test_install_links_are_my_home_assistant_redirects():
+    links = serve_wizard.MY_HA_LINKS
+    assert links["mosquitto"].startswith("https://my.home-assistant.io/redirect/supervisor_addon/")
+    assert "addon=core_mosquitto" in links["mosquitto"]
+    assert links["frigate"].startswith("https://my.home-assistant.io/redirect/supervisor_addon/")
+    assert f"addon={serve_wizard.FRIGATE_ADDON_SLUG}" in links["frigate"]
+    assert "repository_url=https%3A%2F%2Fgithub.com%2Fblakeblackshear%2Ffrigate-hass-addons" in links["frigate"]
+    assert links["hacs"].startswith("https://my.home-assistant.io/redirect/hacs_repository/")
+    assert "repository=securacv-homeassistant" in links["hacs"]
+    assert links["dashboards"] == "https://my.home-assistant.io/redirect/lovelace_dashboards/"
+
+
+def test_preflight_install_endpoint_is_gone(monkeypatch):
     handler = _bare_handler()
-    result = handler._handle_preflight_install({"target": target})
-    assert result["ok"] is False
-    assert "unknown install target" in result["error"]
-
-
-def _capture_supervisor(calls, fail_paths=()):
-    def _fake(method, path, data=None, timeout=10):
-        calls.append({"method": method, "path": path, "data": data,
-                      "timeout": timeout})
-        if path in fail_paths:
-            raise RuntimeError(f"Supervisor API error 400: {path}")
-        return {}
-
-    return _fake
-
-
-def test_install_mosquitto_installs_then_starts(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        serve_wizard, "_supervisor_request", _capture_supervisor(calls)
-    )
-    handler = _bare_handler()
-    result = handler._handle_preflight_install({"target": "mosquitto"})
-
-    assert result["ok"] is True
-    assert [(c["method"], c["path"]) for c in calls] == [
-        ("POST", "/store/addons/core_mosquitto/install"),
-        ("POST", "/addons/core_mosquitto/start"),
-    ]
-    # Store installs pull images: the install call must carry a long timeout.
-    assert calls[0]["timeout"] >= 300
-    assert result["steps"] == ["installed core_mosquitto", "started core_mosquitto"]
-
-
-def test_install_frigate_registers_repo_then_installs_pinned_slug(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        serve_wizard, "_supervisor_request", _capture_supervisor(calls)
-    )
-    handler = _bare_handler()
-    result = handler._handle_preflight_install({"target": "frigate"})
-
-    assert result["ok"] is True
-    assert [(c["method"], c["path"]) for c in calls] == [
-        ("POST", "/store/repositories"),
-        ("POST", "/store/addons/ccab4aaf_frigate/install"),
-    ]
-    assert calls[0]["data"] == {
-        "repository": "https://github.com/blakeblackshear/frigate-hass-addons"
-    }
-    assert calls[1]["timeout"] >= 300
-
-
-def test_install_frigate_tolerates_repo_already_registered(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        serve_wizard, "_supervisor_request",
-        _capture_supervisor(calls, fail_paths=("/store/repositories",)),
-    )
-    handler = _bare_handler()
-    result = handler._handle_preflight_install({"target": "frigate"})
-    assert result["ok"] is True  # repo add is best-effort; install is the test
-    assert any("already present" in s for s in result["steps"])
-
-
-def test_install_mosquitto_reports_failure_honestly(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        serve_wizard, "_supervisor_request",
-        _capture_supervisor(calls, fail_paths=("/store/addons/core_mosquitto/install",)),
-    )
-    handler = _bare_handler()
-    result = handler._handle_preflight_install({"target": "mosquitto"})
-    assert result["ok"] is False
-    assert "error" in result
-    # No start attempt after a failed install.
-    assert [(c["method"], c["path"]) for c in calls] == [
-        ("POST", "/store/addons/core_mosquitto/install"),
-    ]
+    handler.path = "/api/preflight/install"
+    handler.headers = {"Content-Length": "2"}
+    handler.rfile = io.BytesIO(b"{}")
+    sent = {"json": None, "status": None}
+    handler._json_response = lambda data, status=200: sent.update(json=data, status=status)
+    handler.do_POST()
+    assert sent["status"] == 404
 
 
 # ---------------------------------------------------------------------------
@@ -1198,6 +1138,7 @@ def test_save_persists_prefs_and_reports_digest_result(save_env, monkeypatch, tm
         "cameras": [],
         "digest_enabled": True,
         "digest_time": "07:30",
+        # The retired toggles are ignored, not persisted: nothing consumed them.
         "pattern_alerts": True,
         "integrity_alerts": False,
     })
@@ -1206,8 +1147,6 @@ def test_save_persists_prefs_and_reports_digest_result(save_env, monkeypatch, tm
     assert prefs == {
         "digest_enabled": True,
         "digest_time": "07:30",
-        "pattern_alerts": True,
-        "integrity_alerts": False,
     }
     assert result["digest"]["created"] is True
 
@@ -1245,7 +1184,13 @@ _SERVICES_WITH_MOBILE_APP = [
 def digest_env(monkeypatch, tmp_path):
     """Blueprint file present + a mobile-app notify service discoverable."""
     blueprint = tmp_path / "securacv_daily_digest.yaml"
-    blueprint.write_text("blueprint: {}\n")
+    blueprint.write_text(
+        "blueprint:\n  name: SecuraCV Daily Digest\n  domain: automation\n"
+        "  input:\n    digest_sensor:\n      name: Digest sensor\n"
+        "    notify_service:\n      name: Notification service\n"
+        "    digest_time:\n      name: Delivery time\n"
+        "trigger: []\n"
+    )
     monkeypatch.setattr(serve_wizard, "DIGEST_BLUEPRINT_FILE", blueprint)
 
     calls = []
@@ -1294,7 +1239,13 @@ def test_digest_automation_skips_when_blueprint_missing(monkeypatch, tmp_path):
 
 def test_digest_automation_skips_without_mobile_app_notify(monkeypatch, tmp_path):
     blueprint = tmp_path / "securacv_daily_digest.yaml"
-    blueprint.write_text("blueprint: {}\n")
+    blueprint.write_text(
+        "blueprint:\n  name: SecuraCV Daily Digest\n  domain: automation\n"
+        "  input:\n    digest_sensor:\n      name: Digest sensor\n"
+        "    notify_service:\n      name: Notification service\n"
+        "    digest_time:\n      name: Delivery time\n"
+        "trigger: []\n"
+    )
     monkeypatch.setattr(serve_wizard, "DIGEST_BLUEPRINT_FILE", blueprint)
 
     posts = []
@@ -1407,10 +1358,10 @@ def test_frigate_dest_placeholder_legacy_config_is_replaceable(frigate_paths):
 
 
 # ---------------------------------------------------------------------------
-# go2rtc discovery transform (mirrors discover_cameras.sh): producers are
-# objects carrying "url" (legacy plain strings also accepted), streams with
-# no usable URL are skipped, and zone IDs are lowercased BEFORE the
-# character sweep so "FrontDoor" -> zone:frontdoor.
+# go2rtc discovery transform (the reference discover_cameras.sh is held to,
+# below): producers are objects carrying "url" (legacy plain strings also
+# accepted), streams with no usable URL are skipped, and zone IDs are
+# lowercased BEFORE the character sweep so "FrontDoor" -> zone:frontdoor.
 # ---------------------------------------------------------------------------
 
 
@@ -1438,6 +1389,93 @@ def test_go2rtc_transform_object_producers_and_zone_case():
 def test_go2rtc_transform_rejects_non_dict_payload():
     assert serve_wizard._go2rtc_streams_to_cameras(["not", "a", "dict"]) == []
     assert serve_wizard._go2rtc_streams_to_cameras(None) == []
+
+
+def test_go2rtc_transform_skips_malformed_rows_not_the_payload():
+    streams = {
+        "good": {"producers": [{"url": "rtsp://10.0.0.1/a"}]},
+        "odd": "oops",
+        "null_producer": {"producers": [None]},
+        "numeric_url": {"producers": [{"url": 554}]},
+        "string_producers": {"producers": "rtsp://10.0.0.2/b"},
+    }
+    cameras = serve_wizard._go2rtc_streams_to_cameras(streams)
+    assert [c["name"] for c in cameras] == ["good"]
+
+
+# discover_cameras.sh is what the add-on actually runs at every start
+# (go2rtc_discovery defaults to true); the function above is what the wizard
+# runs. They were two implementations with one test, and they disagreed: one
+# malformed stream made the shell's jq exit 5 (run.sh then fell back to "[]",
+# losing every good camera with it) and a null producer became a camera at
+# URL "null". Each payload here goes through both; the shell's rows,
+# projected to the fields the wizard returns, must equal the reference.
+_DISCOVER_SH = _MODULE_PATH.parent / "discover_cameras.sh"
+_GO2RTC_PARITY_PAYLOADS = {
+    "object producers, legacy strings, rtsp preference": {
+        "FrontDoor": {"producers": [{"url": "rtsp://10.0.0.9/stream"}]},
+        "no_producers": {"producers": []},
+        "no_urls": {"producers": [{"other": "field"}]},
+        "legacy_strings": {"producers": ["rtsp://10.0.0.8/s"]},
+        "prefers_rtsp": {"producers": [
+            {"url": "webrtc://10.0.0.7/x"},
+            {"url": "rtsp://10.0.0.7/s"},
+        ]},
+    },
+    "one malformed stream beside a good one": {
+        "good": {"producers": [{"url": "rtsp://1/a"}]},
+        "odd": "oops",
+    },
+    "null, numeric, empty and nested producers": {
+        "cam": {"producers": [None]},
+        "num": {"producers": [7, {"url": 554}, {"url": None}, ""]},
+        "nested": {"producers": [["rtsp://x/y"], {"url": {"u": "rtsp://x/z"}}]},
+        "mixed": {"producers": [None, {"url": ""}, "http://10.0.0.3/m"]},
+    },
+    "producers that are not a list, streams that are not objects": {
+        "as_string": {"producers": "rtsp://10.0.0.2/b"},
+        "as_object": {"producers": {"url": "rtsp://10.0.0.2/c"}},
+        "as_null": {"producers": None},
+        "bare_list": ["rtsp://10.0.0.2/d"],
+        "bare_null": None,
+        "ok": {"producers": ["rtsp://10.0.0.2/e"]},
+    },
+    "zone slugs: case, punctuation, non-ASCII, the 64 cap, sort order": {
+        "Zeta Cam": {"producers": ["rtsp://z/1"]},
+        "alpha.cam!": {"producers": ["rtsp://a/1"]},
+        "İstanbul Gate": {"producers": ["rtsp://i/1"]},
+        "Ünïcode-über": {"producers": ["rtsp://u/1"]},
+        "L" * 80: {"producers": ["rtsp://l/1"]},
+    },
+    "a list payload": ["not", "a", "dict"],
+    "a string payload": "oops",
+    "an empty object": {},
+}
+
+
+def _shell_go2rtc_rows(payload):
+    if shutil.which("jq") is None:
+        if os.environ.get("CI"):
+            pytest.fail("jq is not installed: discover_cameras.sh cannot be held to the reference")
+        pytest.skip("jq is not installed")
+    env = {**os.environ, "GO2RTC_STREAMS_JSON": json.dumps(payload)}
+    out = subprocess.run(
+        ["sh", str(_DISCOVER_SH), "http://127.0.0.1:9"],
+        env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, f"discover_cameras.sh exited {out.returncode}: {out.stderr}"
+    return json.loads(out.stdout)
+
+
+@pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))
+def test_go2rtc_shell_transform_matches_the_reference(label):
+    payload = _GO2RTC_PARITY_PAYLOADS[label]
+    rows = _shell_go2rtc_rows(payload)
+    projected = [{k: row[k] for k in ("name", "url", "zone_id")} for row in rows]
+    assert projected == serve_wizard._go2rtc_streams_to_cameras(payload)
+    for row in rows:
+        assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", row["zone_id"]), row
+        assert row["url"] not in ("", "null")
 
 
 if __name__ == "__main__":

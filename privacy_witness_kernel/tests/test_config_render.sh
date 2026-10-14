@@ -294,7 +294,11 @@ assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" '--fleet-peers-path "$FLEET_PEERS_F
 # (src/api/mod.rs), so the entrypoint must flip the address and the export
 # together, in one function, and export nothing in loopback mode. The
 # function is lifted from the script and run under each mode; the heredoc
-# below is then rendered with the address each mode produced.
+# below is then rendered with the address each mode produced. The default
+# (SECURACV_API_BIND unset) is `all` — the quickstart publishes 8799 from
+# the first start so Home Assistant can pair over the LAN (spec D3) — and
+# `loopback` is the opt-out.
+SIDECAR_ADDR_DEFAULT=""
 SIDECAR_ADDR_LOOPBACK=""
 SIDECAR_ADDR_ALL=""
 if shell_function "$ENTRYPOINT_SH" configure_api_bind > "$TMP/configure_api_bind.sh"; then
@@ -308,26 +312,30 @@ if shell_function "$ENTRYPOINT_SH" configure_api_bind > "$TMP/configure_api_bind
     assert_eq 0 "$(count_needle "$ENTRYPOINT_SH" '"addr": "127.0.0.1:8799"')" \
         "entrypoint.sh: no block hard-codes the loopback address any more"
 
-    # unset → loopback, nothing exported (the default posture, unchanged)
+    # unset → every interface AND the acknowledgment, together (the default
+    # posture: the published port Home Assistant pairs over)
     if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind); then
-        assert_eq "127.0.0.1:8799 unset" "$out" \
-            "entrypoint.sh: SECURACV_API_BIND unset → 127.0.0.1:8799, WITNESS_API_ALLOW_INSECURE not exported"
-        SIDECAR_ADDR_LOOPBACK="${out%% *}"
+        assert_eq "0.0.0.0:8799 1" "$out" \
+            "entrypoint.sh: SECURACV_API_BIND unset → 0.0.0.0:8799 AND WITNESS_API_ALLOW_INSECURE=1 exported (bind all is the default)"
+        SIDECAR_ADDR_DEFAULT="${out%% *}"
     else
         fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND unset"
     fi
-    # loopback spelled out → the same
+    # loopback spelled out → this container only, nothing exported (the opt-out)
     if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind SECURACV_API_BIND=loopback); then
         assert_eq "127.0.0.1:8799 unset" "$out" \
             "entrypoint.sh: SECURACV_API_BIND=loopback → 127.0.0.1:8799, nothing exported"
+        SIDECAR_ADDR_LOOPBACK="${out%% *}"
     else
         fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND=loopback"
     fi
-    # all → every interface AND the acknowledgment, together
+    # all spelled out → the same as unset
     if out=$(run_function "$TMP/configure_api_bind.sh" configure_api_bind SECURACV_API_BIND=all); then
         assert_eq "0.0.0.0:8799 1" "$out" \
             "entrypoint.sh: SECURACV_API_BIND=all → 0.0.0.0:8799 AND WITNESS_API_ALLOW_INSECURE=1 exported"
         SIDECAR_ADDR_ALL="${out%% *}"
+        assert_eq "$SIDECAR_ADDR_DEFAULT" "$SIDECAR_ADDR_ALL" \
+            "entrypoint.sh: SECURACV_API_BIND unset and =all bind the same address (all is the default)"
     else
         fail "entrypoint.sh: configure_api_bind failed with SECURACV_API_BIND=all"
     fi
@@ -343,11 +351,11 @@ fi
 
 if heredoc_body "$ENTRYPOINT_SH" 1 > "$TMP/sidecar.body"; then
     render "$TMP/sidecar.body" "$TMP/sidecar_off.json" \
-        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_LOOPBACK:-127.0.0.1:8799}" \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_DEFAULT:-0.0.0.0:8799}" \
         fleet_peers_api= retention_secs=604800
     assert_off_block "$TMP/sidecar_off.json" "entrypoint.sh block" "${WITNESS_API_TOP_KEYS[@]}"
     render "$TMP/sidecar.body" "$TMP/sidecar.json" \
-        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_LOOPBACK:-127.0.0.1:8799}" \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_DEFAULT:-0.0.0.0:8799}" \
         fleet_peers_api=", \"fleet_peers_path\": \"/data/fleet_peers.json\"" retention_secs=604800
     if jq -e . "$TMP/sidecar.json" > /dev/null 2>&1; then
         ok "entrypoint.sh block: renders as JSON"
@@ -357,27 +365,73 @@ if heredoc_body "$ENTRYPOINT_SH" 1 > "$TMP/sidecar.body"; then
             'entrypoint.sh block (ApiConfigFile)' "${API_KEYS[@]}"
         assert_eq "/data/fleet_peers.json" "$(jq -r '.api.fleet_peers_path' "$TMP/sidecar.json")" \
             "entrypoint.sh block: api.fleet_peers_path renders under /data"
-        assert_eq "127.0.0.1:8799" "$(jq -r '.api.addr' "$TMP/sidecar.json")" \
-            "entrypoint.sh block (SECURACV_API_BIND unset): the API binds loopback — the default is unchanged"
+        assert_eq "0.0.0.0:8799" "$(jq -r '.api.addr' "$TMP/sidecar.json")" \
+            "entrypoint.sh block (SECURACV_API_BIND unset): the API binds every interface — the published port is the default"
     else
         fail "entrypoint.sh block: rendered text is not JSON: $(cat "$TMP/sidecar.json")"
     fi
-    # The same block in `all` mode: only the address moves.
-    render "$TMP/sidecar.body" "$TMP/sidecar_all.json" \
-        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_ALL:-0.0.0.0:8799}" \
+    # The same block in `loopback` mode (the opt-out): only the address moves.
+    render "$TMP/sidecar.body" "$TMP/sidecar_loopback.json" \
+        DB_PATH=/data/witness.db TOKEN_FILE=/data/api_token API_ADDR="${SIDECAR_ADDR_LOOPBACK:-127.0.0.1:8799}" \
         fleet_peers_api=", \"fleet_peers_path\": \"/data/fleet_peers.json\"" retention_secs=604800
-    if jq -e . "$TMP/sidecar_all.json" > /dev/null 2>&1; then
-        assert_keys_accepted "$TMP/sidecar_all.json" '.api' \
-            'entrypoint.sh block (SECURACV_API_BIND=all, ApiConfigFile)' "${API_KEYS[@]}"
-        assert_eq "0.0.0.0:8799" "$(jq -r '.api.addr' "$TMP/sidecar_all.json")" \
-            "entrypoint.sh block (SECURACV_API_BIND=all): the API binds every interface on the same port"
-        assert_eq "true" "$(jq -rs '(.[0] | del(.api.addr)) == (.[1] | del(.api.addr))' "$TMP/sidecar.json" "$TMP/sidecar_all.json")" \
-            "entrypoint.sh block (SECURACV_API_BIND=all): nothing but api.addr differs from loopback mode"
+    if jq -e . "$TMP/sidecar_loopback.json" > /dev/null 2>&1; then
+        assert_keys_accepted "$TMP/sidecar_loopback.json" '.api' \
+            'entrypoint.sh block (SECURACV_API_BIND=loopback, ApiConfigFile)' "${API_KEYS[@]}"
+        assert_eq "127.0.0.1:8799" "$(jq -r '.api.addr' "$TMP/sidecar_loopback.json")" \
+            "entrypoint.sh block (SECURACV_API_BIND=loopback): the API binds this container only, on the same port"
+        assert_eq "true" "$(jq -rs '(.[0] | del(.api.addr)) == (.[1] | del(.api.addr))' "$TMP/sidecar.json" "$TMP/sidecar_loopback.json")" \
+            "entrypoint.sh block (SECURACV_API_BIND=loopback): nothing but api.addr differs from the default"
     else
-        fail "entrypoint.sh block (SECURACV_API_BIND=all): rendered text is not JSON: $(cat "$TMP/sidecar_all.json")"
+        fail "entrypoint.sh block (SECURACV_API_BIND=loopback): rendered text is not JSON: $(cat "$TMP/sidecar_loopback.json")"
     fi
 else
     fail "entrypoint.sh: could not find the kernel config heredoc"
+fi
+
+# ---- the sidecar's pairing receipt reader (contract C2) ---------------------
+# `pair` parses the one JSON line `witness_api issue-pairing-code` prints with
+# json_line_field (the image has no jq). The shared seam vector
+# tests/fixtures/ha_contract/pair.json carries that line, and the Rust CLI
+# test (tests/witness_api_pairing_cli.rs) holds the real binary's stdout to the
+# same keys in the same order — so the lifted reader runs here over the SAME
+# bytes, and the four-line card the delta spells out is pinned as the script's
+# printf formats.
+PAIR_FIXTURE="$HERE/../../tests/fixtures/ha_contract/pair.json"
+if [ ! -f "$PAIR_FIXTURE" ]; then
+    echo "skip: pairing seam vector not carried beside this checkout ($PAIR_FIXTURE)"
+elif shell_function "$ENTRYPOINT_SH" json_line_field > "$TMP/json_line_field.sh"; then
+    ok "entrypoint.sh: json_line_field is a top-level function (liftable, so this test runs the real reader)"
+    receipt=$(jq -r '.issue_pairing_code_stdout' "$PAIR_FIXTURE")
+    read_field() {
+        env -i PATH="$PATH" bash -u -c 'source "$1"; json_line_field "$2" "$3"' _ \
+            "$TMP/json_line_field.sh" "$receipt" "$1"
+    }
+    assert_eq "$(jq -r '.code' "$PAIR_FIXTURE")" "$(read_field pairing_code)" \
+        "entrypoint.sh: json_line_field reads pairing_code from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .expires' "$PAIR_FIXTURE")" \
+        "$(read_field expires)" \
+        "entrypoint.sh: json_line_field reads the integer expires from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .attempts' "$PAIR_FIXTURE")" \
+        "$(read_field attempts)" \
+        "entrypoint.sh: json_line_field reads attempts from the receipt vector"
+    assert_eq "$(jq -r '.issue_pairing_code_stdout | fromjson | .fingerprint' "$PAIR_FIXTURE")" \
+        "$(read_field fingerprint)" \
+        "entrypoint.sh: json_line_field reads the key fingerprint the card prints"
+    assert_eq "" "$(read_field no_such_field)" \
+        "entrypoint.sh: json_line_field prints nothing for an absent field"
+    # The card (delta C2), as the script's own printf formats: code line,
+    # fingerprint line, URL line, the Home Assistant instruction.
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'SecuraCV pairing code: %s   (valid %s minutes, %s attempts)\n'")" \
+        "entrypoint.sh: pair card line 1 is the contract's code line"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'Kernel key fingerprint: %s   (Home Assistant shows the same fingerprint before it pairs)\n'")" \
+        "entrypoint.sh: pair card line 2 is the contract's fingerprint line"
+    assert_eq 1 "$(count_needle "$ENTRYPOINT_SH" "printf 'Kernel URL to confirm in Home Assistant: http://%s:%s\n'")" \
+        "entrypoint.sh: pair card line 3 is the contract's URL line"
+    assert_eq "$(jq -r '.pair_card[3]' "$PAIR_FIXTURE")" \
+        "$(code_lines "$ENTRYPOINT_SH" | sed -n "s/^[[:space:]]*printf '\(In Home Assistant: .*\)\\\\n'$/\1/p" | head -n1)" \
+        "entrypoint.sh: pair card line 4 is the contract's Home Assistant instruction, verbatim"
+else
+    fail "entrypoint.sh: could not lift json_line_field (the receipt reader must be a top-level function)"
 fi
 
 # ----------------------------------------------------------------------------

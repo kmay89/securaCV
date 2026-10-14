@@ -44,7 +44,6 @@ from .. import device_trust  # noqa: E402
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
     CONF_SETUP_MODE,
-    DOMAIN,
     SETUP_MODE_MQTT,
 )
 from ..sensor import _verify_and_record  # noqa: E402
@@ -100,13 +99,13 @@ def _boot() -> HomeAssistant:
     async def _forward(entry, platforms):
         return True
 
-    hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=_forward)
+    hass.config_entries.add(ENTRY)
     assert run(async_setup_entry(hass, ENTRY)) is True
     return hass
 
 
 def _store(hass):
-    return hass.data[DOMAIN]["e1"]["trust_store"]
+    return ENTRY.runtime_data.trust_store
 
 
 def _body(hass, event_id: int, state: str = "present") -> dict:
@@ -132,7 +131,7 @@ def _send(hass, event_id: int):
 
 
 def _mark(hass) -> int | None:
-    return hass.data[DOMAIN]["e1"]["replay"].get(DEVICE, {}).get("event_id")
+    return ENTRY.runtime_data.replay.get(DEVICE, {}).get("event_id")
 
 
 def test_the_old_split_id_spaces_are_refused_by_the_real_gate(monkeypatch) -> None:

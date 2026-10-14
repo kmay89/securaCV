@@ -13,9 +13,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_URL, EntityCategory, PERCENTAGE, UnitOfTemperature
+from homeassistant.const import EntityCategory, PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -30,12 +31,9 @@ from .const import (
     TOPIC_HEALTH,
     TOPIC_STATUS,
     MANUFACTURER,
-    MODEL_KERNEL,
-    MODEL_CANARY,
     CRITICAL_BATTERY_THRESHOLD_PERCENT,
     WARNING_BATTERY_THRESHOLD_PERCENT,
     WARNING_MEMORY_THRESHOLD_BYTES,
-    DEFAULT_EVENT_ICON,
     DEVICE_TYPE_CANARY_SENSE,
     MODALITY_UNKNOWN,
     canonical_device_type,
@@ -44,7 +42,12 @@ from .const import (
     modality_metadata,
     normalize_attestation,
 )
+from .const import CONF_KERNEL_KEY_PINNED_BUCKET_START
+from .data import runtime_for
 from .device_trust import TrustStore, normalize_hex
+from .entity import SecuraCVKernelEntity, canary_device_info, canary_status_signal
+from .kernel_trust import kernel_key_fingerprint
+from .kernel_verify import kernel_device_id_of, witness_event_attributes
 from . import (
     async_record_verify,
     parse_mqtt_json,
@@ -80,13 +83,16 @@ from .signature import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The kernel entities are fed by one coordinator and the Canary entities by
+# their own MQTT subscriptions: nothing here polls, so parallel updates are
+# unlimited (the parallel-updates rule).
+PARALLEL_UPDATES = 0
+
 
 def _trust_store_for(hass: HomeAssistant, entry: ConfigEntry) -> TrustStore | None:
-    """Pull the per-entry TrustStore singleton out of hass.data."""
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if not entry_data:
-        return None
-    return entry_data.get("trust_store")
+    """Pull the per-entry TrustStore singleton out of the entry's runtime."""
+    runtime = runtime_for(entry)
+    return runtime.trust_store if runtime is not None else None
 
 
 # Which payload field is the monotonic counter for each signed kind. The
@@ -137,10 +143,10 @@ def _replay_gate(
         counter = int(raw)
     except (TypeError, ValueError):
         return verdict
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if not isinstance(entry_data, dict):
+    runtime = runtime_for(entry)
+    if runtime is None:
         return verdict
-    marks = entry_data.setdefault("replay", {}).setdefault(device_id, {})
+    marks = runtime.replay.setdefault(device_id, {})
     last = marks.get(field)
     if last is not None and counter < last:
         return TrustVerdict(
@@ -154,9 +160,7 @@ def _replay_gate(
             ),
         )
     marks[field] = counter
-    trust_store = entry_data.get("trust_store")
-    if isinstance(trust_store, TrustStore):
-        trust_store.note_counters(device_id, marks)
+    runtime.trust_store.note_counters(device_id, marks)
     return verdict
 
 
@@ -220,8 +224,8 @@ def _trust_attrs(
     binary_sensor tamper / transport / mesh / chirp family) stamp the
     same keys via ``unsigned_trust_attrs`` in __init__.py instead, so an
     unsigned publish and a verified one differ by value, not by absence."""
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    verify = entry_data.get("verify", {}).get(device_id)
+    runtime = runtime_for(entry)
+    verify = runtime.verify.get(device_id) if runtime is not None else None
     if not verify:
         return {"verified": False, "trust_reason": "no_pubkey"}
     return {
@@ -244,16 +248,11 @@ def _record_last_event(
     answer that omitted it would launder an unsigned or key-mismatched
     publish into "the latest witness event".
     """
-    domain_data = hass.data.get(DOMAIN)
-    if not isinstance(domain_data, dict):
+    runtime = runtime_for(entry)
+    if runtime is None:
         return
-    entry_data = domain_data.get(entry.entry_id)
-    if not isinstance(entry_data, dict):
-        return
-    devices = entry_data.get("devices")
-    if not isinstance(devices, dict):
-        return
-    verdict = entry_data.get("verify", {}).get(device_id)
+    devices = runtime.devices
+    verdict = runtime.verify.get(device_id)
     trusted: bool | None = None
     reason: str | None = None
     if isinstance(verdict, dict):
@@ -285,16 +284,10 @@ def _device_type_for(
     entities like the radar-link diagnostic. Returns None when the device hasn't
     published a parseable status with a device_type yet.
     """
-    domain_data = hass.data.get(DOMAIN)
-    if not isinstance(domain_data, dict):
+    runtime = runtime_for(entry)
+    if runtime is None:
         return None
-    entry_data = domain_data.get(entry.entry_id)
-    if not isinstance(entry_data, dict):
-        return None
-    devices = entry_data.get("devices")
-    if not isinstance(devices, dict):
-        return None
-    device = devices.get(device_id)
+    device = runtime.devices.get(device_id)
     if not isinstance(device, dict):
         return None
     status = device.get("status")
@@ -316,8 +309,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up SecuraCV sensors from a config entry."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = entry_data.get("coordinator")
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    coordinator = runtime.coordinator
 
     # The kernel HTTP-API sensor only exists when a kernel is configured
     # (SETUP_MODE_KERNEL / SETUP_MODE_BOTH). In SETUP_MODE_MQTT the
@@ -327,6 +322,9 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelLastEventSensor(coordinator, entry))
+        entities.append(SecuraCVKernelChainLengthSensor(coordinator, entry))
+        entities.append(SecuraCVKernelDailyDigestSensor(coordinator, entry))
+        entities.append(SecuraCVKernelFingerprintSensor(coordinator, entry))
         # Storage endurance & health diagnostics (kernel GET /status).
         # Older kernels without the endpoint simply leave these empty.
         entities.extend(
@@ -338,7 +336,7 @@ async def async_setup_entry(
                 SecuraCVKernelTemperatureSensor(coordinator, entry),
             ]
         )
-    adapter_stats_coordinator = entry_data.get("adapter_stats_coordinator")
+    adapter_stats_coordinator = runtime.adapter_stats_coordinator
     if adapter_stats_coordinator is not None:
         entities.append(
             SecuraCVAdapterStatsSensor(adapter_stats_coordinator, entry)
@@ -435,7 +433,10 @@ async def _setup_mqtt_sensors(
     # callables land in entry_data["unsub_mqtt"] so async_unload_entry
     # releases them — otherwise every reload leaks wildcard subscriptions
     # whose closures hold the previous entities_added/async_add_entities.
-    unsubs = hass.data[DOMAIN][entry.entry_id].setdefault("unsub_mqtt", [])
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    unsubs = runtime.unsub_mqtt
     for topic_suffix in [TOPIC_COUNTS, TOPIC_CHAIN, TOPIC_EVENTS, TOPIC_HEALTH, TOPIC_STATUS]:
         unsubs.append(
             await mqtt.async_subscribe(
@@ -450,72 +451,203 @@ async def _setup_mqtt_sensors(
 # Kernel Sensors (HTTP API-based)
 # =============================================================================
 
-class SecuraCVKernelLastEventSensor(CoordinatorEntity, SensorEntity):
-    """Sensor for latest event from the Privacy Witness Kernel (HTTP API)."""
+class SecuraCVKernelLastEventSensor(SecuraCVKernelEntity, SensorEntity):
+    """Sensor for the latest event from the Privacy Witness Kernel.
+
+    Fed by the bridge's retained ``witness/last_event`` (push) with the
+    HTTP ``/events/latest`` as the 5-minute backstop.
+    """
 
     # Entity names are looked up in translations/<lang>.json by translation
     # key (strings.json is the source copy); no entity here sets _attr_name,
     # which would bypass the translation. tests/test_entity_translations.py
     # holds every key to a strings.json entry and pins the rendered names.
     _attr_translation_key = "kernel_last_event"
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_latest_event"
+        super().__init__(coordinator, entry, "latest_event")
+
+    def _latest_event(self) -> dict[str, Any] | None:
+        # coordinator.data may be None before the first update under a stub.
+        data = self.coordinator.data
+        event = data.get("latest_event") if isinstance(data, dict) else None
+        return event if isinstance(event, dict) else None
 
     @property
-    def icon(self) -> str:
-        """Icon reflects the latest event type, so the dashboard reads at a glance."""
-        # coordinator.data may be None before the first successful update.
-        if self.coordinator.data and (event := self.coordinator.data.get("latest_event")):
+    def icon(self) -> str | None:
+        """Icon reflects the latest event type, so the dashboard reads at a glance.
+
+        None before the first event: the default then comes from icons.json
+        (the icon-translations rule), the one place every default lives.
+        """
+        if event := self._latest_event():
             return event_type_metadata(event.get("event_type"))["icon"]
-        return DEFAULT_EVENT_ICON
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for the kernel."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
-            manufacturer=MANUFACTURER,
-            model=MODEL_KERNEL,
-            name="SecuraCV Privacy Witness Kernel",
-            configuration_url=self._entry.data[CONF_URL],
-        )
+        return None
 
     @property
     def native_value(self) -> str | None:
         """Return the event type."""
-        if event := self.coordinator.data.get("latest_event"):
+        if event := self._latest_event():
             if (event_type := event.get("event_type")) is not None:
                 return str(event_type)
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return additional event attributes."""
-        if not (event := self.coordinator.data.get("latest_event")):
+        """The C5 attribute table, with the integration's D10 verdict.
+
+        `verification` / `verified` / `trust_reason` come from the
+        integration's own chain walk (kernel_verify); the kernel's self-report
+        is `kernel_reported_chain_ok`, never `verified`.
+        """
+        if not (event := self._latest_event()):
             return None
-        keys = (
-            "zone_id",
-            "time_bucket",
-            "confidence",
-            "kernel_version",
-            "ruleset_id",
-            # Track B provenance ("adapter" / "ha-bridged") stamped by the
-            # kernel export; absent on device/kernel-attested events. The
-            # timeline card renders it as a provenance chip.
-            "attestation",
+        runtime = runtime_for(self._entry)
+        return witness_event_attributes(
+            event,
+            runtime.verification if runtime is not None else None,
+            kernel_device_id=kernel_device_id_of(self._entry),
+            kernel_reported_chain_ok=self.coordinator.kernel_reported_chain_ok,
+            kernel_verified_bucket_start=self.coordinator.kernel_reported_verified_bucket_start,
         )
-        attrs = {key: event[key] for key in keys if key in event}
-        # Human-readable label for the coarse claim, for nicer dashboard display.
-        attrs["friendly_event"] = event_type_metadata(event.get("event_type"))["label"]
-        return attrs or None
 
 
-class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
+class SecuraCVKernelChainLengthSensor(SecuraCVKernelEntity, SensorEntity):
+    """The sealed log's head: the newest entry's sequence number.
+
+    One semantic, documented once: the state is the walk head `seq` (the
+    sealed_events row id of the newest entry the integration's last chain
+    walk saw, contract C11) as soon as a walk has run; before the first
+    walk it is `/api/identity`.chain_length, the kernel's own row COUNT,
+    and the `source` attribute says which. The two differ once retention
+    has pruned rows (COUNT shrinks, seq never does), so this is a plain
+    reading with NO state class: a `total_increasing` class would have
+    HA's long-term statistics read the switch from one measure to the
+    other — and a pruned COUNT — as a meter reset and inflate the sum on
+    every restart. Attributes carry the chain head hash, the kernel's own
+    count, the algorithm, the pinned key and whether it is pinned — what
+    the card's chain header reads.
+    """
+
+    _attr_translation_key = "chain_length"
+    _attr_native_unit_of_measurement = "blocks"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "chain_length")
+
+    def _state(self):
+        runtime = runtime_for(self._entry)
+        return runtime.verification if runtime is not None else None
+
+    def _head_seq(self) -> int | None:
+        state = self._state()
+        return state.head_seq if state is not None else None
+
+    @property
+    def native_value(self) -> int | None:
+        """The walk's head `seq` once known, else the kernel's reported count."""
+        head_seq = self._head_seq()
+        if head_seq is not None:
+            return head_seq
+        return self.coordinator.kernel_chain_length
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The head hash, which measure the state is, and the key the chain
+        is checked against."""
+        state = self._state()
+        head_hash = state.head_hash if state is not None else None
+        pinned = self.coordinator.pinned_key
+        head_seq = self._head_seq()
+        return {
+            "latest_hash": head_hash or self.coordinator.kernel_latest_hash,
+            # `walk_head`: the state is the sealed log's head seq from the
+            # integration's walk; `kernel_identity`: no walk yet, the state is
+            # the kernel's own row count (`kernel_chain_length` either way).
+            "source": "walk_head" if head_seq is not None else "kernel_identity",
+            "head_seq": head_seq,
+            "kernel_chain_length": self.coordinator.kernel_chain_length,
+            "algorithm": "ed25519",
+            "verifying_key": pinned,
+            "pinned": pinned is not None,
+            "verified_seq": state.verified_seq if state is not None else None,
+        }
+
+
+class SecuraCVKernelDailyDigestSensor(SecuraCVKernelEntity, SensorEntity):
+    """The kernel's daily digest: total events as state, the document as attributes.
+
+    Fed by the bridge's retained `witness/digest` (push) with `/digest` as
+    the backstop. Every key of the document rides along verbatim so the
+    digest blueprint reads counts per zone and per period from one place.
+    """
+
+    _attr_translation_key = "daily_digest"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "daily_digest")
+
+    def _digest(self) -> dict[str, Any] | None:
+        data = self.coordinator.data
+        digest = data.get("digest") if isinstance(data, dict) else None
+        return digest if isinstance(digest, dict) else None
+
+    @property
+    def native_value(self) -> int | None:
+        """`total_events`, when the digest has arrived."""
+        digest = self._digest()
+        if digest is None:
+            return None
+        total = digest.get("total_events")
+        if isinstance(total, bool) or not isinstance(total, int):
+            return None
+        return total
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """The digest document, verbatim."""
+        digest = self._digest()
+        return dict(digest) if digest else None
+
+
+class SecuraCVKernelFingerprintSensor(SecuraCVKernelEntity, SensorEntity):
+    """The pinned witness key's fingerprint — what to read out by phone.
+
+    Diagnostic. State is the eight hex characters `pair`, the app's panel
+    and `doctor` print; attributes carry the full verifying key and the
+    bucket the pin was taken in. A recipient of an evidence pack compares
+    this against WITNESS_KEY.txt to turn "self-attested" into "authorship
+    confirmed".
+    """
+
+    _attr_translation_key = "kernel_fingerprint"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "kernel_fingerprint")
+
+    @property
+    def native_value(self) -> str | None:
+        """The pinned key's fingerprint, or None before the pin."""
+        pinned = self.coordinator.pinned_key
+        return kernel_key_fingerprint(pinned) if pinned else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The full key and when it was pinned (a bucket start)."""
+        return {
+            "verifying_key": self.coordinator.pinned_key,
+            "pinned_bucket_start": self._entry.data.get(CONF_KERNEL_KEY_PINNED_BUCKET_START),
+            "key_mismatch": bool(getattr(self.coordinator, "key_mismatch", False)),
+        }
+
+
+class SecuraCVKernelStorageSensorBase(SecuraCVKernelEntity, SensorEntity):
     """Base for kernel storage endurance & health diagnostics.
 
     Data comes from the coordinator's `status` key (the kernel's token-gated
@@ -524,33 +656,21 @@ class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
     by reporting no state instead of erroring.
     """
 
-    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry, key: str) -> None:
         """Initialize the sensor; `key` is both the unique_id suffix and the
         translation key (strings.json entity.sensor.<key>.name)."""
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry, key)
         self._attr_translation_key = key
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{key}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for the kernel."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
-            manufacturer=MANUFACTURER,
-            model=MODEL_KERNEL,
-            name="SecuraCV Privacy Witness Kernel",
-            configuration_url=self._entry.data[CONF_URL],
-        )
 
     def _status_payload(self) -> dict[str, Any] | None:
         """The /status payload from the last coordinator refresh, if any."""
-        if not self.coordinator.data:
+        data = self.coordinator.data
+        if not isinstance(data, dict):
             return None
-        return self.coordinator.data.get("status")
+        status = data.get("status")
+        return status if isinstance(status, dict) else None
 
     def _storage(self) -> dict[str, Any] | None:
         return kernel_storage(self._status_payload())
@@ -559,7 +679,6 @@ class SecuraCVKernelStorageSensorBase(CoordinatorEntity, SensorEntity):
 class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
     """Overall SD-card / storage health status with full metrics attached."""
 
-    _attr_icon = "mdi:sd"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
@@ -586,7 +705,6 @@ class SecuraCVKernelStorageHealthSensor(SecuraCVKernelStorageSensorBase):
 class SecuraCVKernelStorageFreeSensor(SecuraCVKernelStorageSensorBase):
     """Free space on the filesystem holding the sealed log."""
 
-    _attr_icon = "mdi:harddisk"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
 
@@ -610,7 +728,6 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
     data): whole-device bytes written versus the configured TBW rating.
     """
 
-    _attr_icon = "mdi:sd"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
 
@@ -643,7 +760,6 @@ class SecuraCVKernelStorageWearSensor(SecuraCVKernelStorageSensorBase):
 class SecuraCVKernelStorageWriteRateSensor(SecuraCVKernelStorageSensorBase):
     """Whole-device write rate (MB/day) — the pace at which the card wears."""
 
-    _attr_icon = "mdi:database-arrow-down"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "MB/d"
 
@@ -702,7 +818,6 @@ class SecuraCVAdapterStatsSensor(CoordinatorEntity, SensorEntity):
     """
 
     _attr_translation_key = "adapter_stats"
-    _attr_icon = "mdi:hub"
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -786,19 +901,41 @@ class SecuraCVCanarySensorBase(SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"canary_{self._device_id}")},
-            manufacturer=MANUFACTURER,
-            model=MODEL_CANARY,
-            name=f"SecuraCV Canary {self._device_id}",
+        """The Canary device, linked to the kernel when the entry has one."""
+        return canary_device_info(self.hass, self._entry, self._device_id)
+
+    @property
+    def available(self) -> bool:
+        """Follow the device's own liveness (its status / last-will topics).
+
+        A Canary that has never said anything about its liveness is shown;
+        one whose last word was `offline` is unavailable until it is back.
+        """
+        runtime = runtime_for(self._entry)
+        if runtime is None:
+            return True
+        return runtime.devices.get(self._device_id, {}).get("online") is not False
+
+    async def async_added_to_hass(self) -> None:
+        """Re-render when the device's liveness moves (every subclass subscribes
+        to its own topics after calling this)."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                canary_status_signal(self._entry.entry_id, self._device_id),
+                self._async_liveness_changed,
+            )
         )
+
+    @callback
+    def _async_liveness_changed(self) -> None:
+        self.async_write_ha_state()
 
 
 class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
     """Sensor for total witness record count from a Canary device."""
 
-    _attr_icon = "mdi:counter"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "records"
 
@@ -808,6 +945,7 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -840,7 +978,6 @@ class SecuraCVCanaryWitnessCountSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
     """Sensor for hash chain length from a Canary device."""
 
-    _attr_icon = "mdi:link-variant"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "blocks"
 
@@ -850,6 +987,7 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -887,7 +1025,6 @@ class SecuraCVCanaryChainLengthSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
     """Sensor for last witness event from a Canary device."""
 
-    _attr_icon = "mdi:eye-outline"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -895,6 +1032,7 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -994,7 +1132,6 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
     docs/csi_developer_api.md.
     """
 
-    _attr_icon = "mdi:heart-pulse"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1010,6 +1147,7 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscriptions on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -1148,7 +1286,6 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
     that does not yet report the `sd` health object.
     """
 
-    _attr_icon = "mdi:sd"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
@@ -1159,6 +1296,7 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -1196,7 +1334,6 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
 class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
     """Sensor for GPS fix status from a Canary device."""
 
-    _attr_icon = "mdi:crosshairs-gps"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1204,6 +1341,7 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -1265,7 +1403,6 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
         }
     """
 
-    _attr_icon = "mdi:radar"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     # Treat the link as stale (vs. down) past this frame age. The radar streams
@@ -1279,6 +1416,7 @@ class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT when added; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,

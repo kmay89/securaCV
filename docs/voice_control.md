@@ -16,9 +16,11 @@ if you want the full contract; the short version binds everything below:
    then gone. Never journaled, sealed, or exported.
 3. **Everything is local.** The pipeline below is Home Assistant's own
    Wyoming stack running as apps on the hub.
-4. **Voice may ask; it may not act.** The SecuraCV intents are read-only by
-   construction — there is no sentence that arms, disarms, mutes, or unseals
-   anything, because a spoken word carries no signature.
+4. **Voice may ask; it may not lower the guard.** The SecuraCV intents are
+   queries, plus one action that only adds attention: voice can start a
+   bounded, self-expiring watch, never end one. There is no sentence that
+   arms, disarms, mutes, or unseals anything, because a spoken word carries
+   no signature.
 5. **No voice profiles, no "respond only to me."** That would be speaker
    recognition, which this project never implements.
 

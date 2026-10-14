@@ -93,6 +93,15 @@ struct FleetGlanceView: View {
                     Text("\(snap.healthy)/\(snap.total) healthy")
                         .font(.caption2).foregroundStyle(.secondary)
                         .monospacedDigit()
+                    // Green rows don't outrank a dark or failed delivery
+                    // path — the same rule the complications and the
+                    // spoken answer follow (WristSnapshot.pathAlarm).
+                    if snap.pathAlarm {
+                        Label(snap.heartbeatSummary(), systemImage: snap.glanceSymbol)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.color(snap.glanceRole))
+                            .lineLimit(2)
+                    }
                     if let line = snap.moodLine {
                         Text(line)
                             .font(.caption2)
@@ -135,6 +144,13 @@ struct WitnessGlanceRow: View {
     var body: some View {
         HStack(spacing: Theme.s) {
             SeverityPip(severity: witness.severity)
+            // What it IS, from the same resolver the phone and the Wall use
+            // (board, then published type, then the coarse family) — the
+            // generic marker for a row an older phone sent, never a guess.
+            DeviceFigureIcon(witness.deviceType,
+                             published: witness.publishedType,
+                             hardware: witness.hardware,
+                             size: 18)
             VStack(alignment: .leading, spacing: 0) {
                 Text(witness.name).font(.body).lineLimit(1)
                 Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)

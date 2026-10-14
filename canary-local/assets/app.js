@@ -37,6 +37,13 @@ const firstMeetingForgets = (nsKey) =>
   nsKey.startsWith("scv-hello/") ||
   nsKey === "securacv/wifi_ssid" || nsKey === "securacv/wifi_pass";
 
+// The device a fleet.html#<id> link names. A hand-typed or truncated link
+// (fleet.html#%E0) is not valid percent-encoding and decodeURIComponent throws
+// URIError on it, which at the end of boot() was an uncaught page error over a
+// page that had rendered fine. A malformed link opens nothing, the way
+// probe_server.mjs's lookup() refuses one (sweep A62).
+const deepLinkId = (hash) => { try { return decodeURIComponent(String(hash || "").slice(1)); } catch { return ""; } };
+
 const $ = (sel, el = document) => el.querySelector(sel);
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -87,7 +94,7 @@ async function main() {
     startFinishShowcase();
   }
   // Deep link from the chooser: fleet.html#<device-id> opens its sheet.
-  const target = decodeURIComponent(location.hash.slice(1));
+  const target = deepLinkId(location.hash);
   const dev = state.registry.devices.find((d) => d.id === target);
   if (dev) openSheet(dev);
 }
@@ -637,7 +644,6 @@ async function buildDisplaySheet(ctx, side, stage) {
     "Build it": () => buildBuildIt(state.build, dev),
     Specs: () => specsView(dev),
   };
-  let active = null;
   for (const name of Object.keys(views)) {
     const b = el("button", "tab", name);
     b.addEventListener("click", () => {
@@ -645,7 +651,6 @@ async function buildDisplaySheet(ctx, side, stage) {
       b.classList.add("on");
       panel.innerHTML = "";
       panel.append(views[name]());
-      active = name;
     });
     tabs.append(b);
   }

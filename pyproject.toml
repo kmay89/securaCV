@@ -1,7 +1,9 @@
 # Python tooling config for the SecuraCV Home Assistant integration.
-# Scope is deliberately the integration (custom_components/securacv); the rest
-# of the repo's Python (scripts, eval samples, firmware tooling) is not gated
-# here yet. CI runs: ruff check, mypy, and the integration pytest suite.
+# mypy and pytest are scoped to the integration (custom_components/securacv;
+# python.yml). ruff reads the [tool.ruff] settings below for the whole repo:
+# lint.yml's `ruff` job lints the integration and every tooling tree
+# (scripts, tools, canary-local/tools, the enclosure generators, the CI and
+# desktop scripts, the add-on, eval/, integrations/, firmware/scripts).
 # See docs/review/03-feature-flags-and-hygiene.md (HY-04/05).
 
 # Not a distributable package — this table exists so CI can read ONE floor
@@ -12,11 +14,14 @@
 # runner image happens to ship (.github/CI.md, R9). Raise the floor here and
 # every job follows.
 [project]
-# The interpreters the tooling has actually run on: 3.11 locally, 3.12 on the
-# ubuntu-24.04 image. setup-python (python-version-file: pyproject.toml) picks
-# the newest release INSIDE this range, so the ceiling is what keeps CI on an
-# interpreter the tests have seen; widen it after a green run on the new one.
-requires-python = ">=3.11,<3.13"
+# The interpreters the tooling has actually run on: 3.11 locally and in the
+# integration's stub-lane job, 3.12 on the ubuntu-24.04 image, 3.14 in the
+# real-Home-Assistant lane (python.yml `ha-lane`; Home Assistant 2026.5 and
+# later run on 3.14 only). setup-python (python-version-file: pyproject.toml)
+# picks the newest release INSIDE this range, so the ceiling is what keeps CI
+# on an interpreter the tests have seen; widen it after a green run on the new
+# one.
+requires-python = ">=3.11,<3.15"
 
 [tool.ruff]
 target-version = "py311"
@@ -32,8 +37,10 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.11"
-# Home Assistant is not installed in CI (the tests use lightweight stubs from
-# the repo-root conftest), so treat its imports as untyped rather than erroring.
+# The stub lane: Home Assistant is not installed in this job (the tests use
+# lightweight stubs from the repo-root conftest), so treat its imports as
+# untyped rather than erroring. The real-Home-Assistant lane runs mypy with
+# tests/ha/mypy.ini instead — the installed core, Python 3.14, nothing ignored.
 ignore_missing_imports = true
 files = ["custom_components/securacv"]
 warn_unused_ignores = true

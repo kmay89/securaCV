@@ -166,11 +166,18 @@ spoken answer keeps every honesty rule (an old snapshot states its age,
 sample data is labeled, a quiet hour can never silence tamper) — see
 `ios/README.md` "Ask, don't open" and `ios/Shared/GlanceAnswer.swift`.
 
-Pairing a device is a **guided, physical-presence flow**, reusing the existing
-Trust-on-Pair gate: the app finds the Canary over mDNS/BLE, tells you to
-**short-tap the BOOT button**, and receives the one-shot `{device_id, base_url,
-token, tls_cert_fp}` receipt. No account, no scan of a cloud registry — the
-device hands you its own key because you touched it. `tls_cert_fp` is the
+Pairing a device is a **guided, physical-presence flow**. As shipped it is
+the Bluetooth setup door ([magic pairing](magic_pairing.md) §6): a brand-new
+Canary near the phone raises one card on its own, one tap hands it the home
+Wi-Fi over an encrypted link, and a WAP hands back a one-time claim the phone
+spends on the home LAN for the one-shot `{device_id, base_url, token,
+tls_cert_fp}` receipt — the same receipt the Trust-on-Pair BOOT-tap gate
+serves, which the app also accepts as a WAP's saved recovery kit. (An
+earlier draft had the app itself say "short-tap the BOOT button" and poll
+for the receipt; that receipt names the setup network's address, gone once
+the device joins, so the app never shipped that flow and no screen promises
+it.) No account, no scan of a cloud registry — the device hands you its own
+key because you were standing next to it. `tls_cert_fp` is the
 SHA-256 of the Canary's self-signed TLS certificate; when `base_url` is https
 the app keeps it with the pairing and pins every connection to it
 (`DeviceAPI` / `PinnedTrustDelegate`), and refuses an https receipt that

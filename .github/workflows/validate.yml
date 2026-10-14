@@ -45,8 +45,7 @@ jobs:
           # (the validator looks for it in the tree before consulting
           # brands.home-assistant.io) — the same folder the HACS mirror has
           # validated with since 2026-08 and Home Assistant 2026.3+ serves.
-          # release.yml still ignores the check; drop it there once this has
-          # been seen green on main.
+          # release.yml runs it as well, with nothing ignored.
 
   validate-hassfest:
     name: Hassfest Validation
@@ -54,4 +53,4 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93 # master @ 2026-05-28
+      - uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3 # master @ 2026-05-28

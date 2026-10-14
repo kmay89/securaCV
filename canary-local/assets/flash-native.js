@@ -399,7 +399,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     devChk.type = "checkbox";
     devChk.checked = st.devChannel;
     dev.append(devChk, document.createTextNode(
-      " Dev channel — the rolling fw-dev-latest prerelease, cut ahead of stable and verified " +
+      " Dev channel — the rolling fw-dev-latest prerelease, cut ahead of stable and checked " +
       "exactly the same way (chip guard, SHA-256, the release signature)"));
     devChk.addEventListener("change", async () => {
       if (st.busy) { devChk.checked = st.devChannel; return; }
@@ -673,7 +673,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       });
     } catch (e) {
       st.monitoring = false;
-      status.textContent = `The write is verified, but the serial monitor didn’t start (${e}).`;
+      status.textContent = `The write landed${receipt.chip_write_verified ? " (espflash confirmed it on the chip)" : ""}, ` +
+        `but the serial monitor didn’t start (${e}).`;
     }
   };
 

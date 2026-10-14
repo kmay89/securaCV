@@ -9,7 +9,7 @@
           "setup_mode": "Setup mode"
         },
         "data_description": {
-          "setup_mode": "Automatic probes for a running Privacy Witness Kernel and enables MQTT for Canary devices. Pick a manual mode only if you need a non-default URL or topic prefix."
+          "setup_mode": "Automatic probes for a running witness kernel (the SecuraCV app, or a sidecar announcing itself on MQTT) and enables MQTT for Canary devices. Pick a manual mode only if you need a non-default URL or topic prefix."
         }
       },
       "confirm": {
@@ -18,7 +18,41 @@
       },
       "hassio_confirm": {
         "title": "Add SecuraCV",
-        "description": "The Privacy Witness Kernel add-on announced itself at {url}. Submit to connect to it and enable MQTT discovery for Canary devices — nothing else is needed."
+        "description": "The SecuraCV app announced its witness kernel. Submit to connect — nothing to type. Frigate events appear as sealed witness events within a minute of the next detection."
+      },
+      "announce_confirm": {
+        "title": "Add the SecuraCV sidecar",
+        "description": "A SecuraCV sidecar announced its witness kernel `{device_id}` (kernel {kernel_version}). Its key fingerprint is `{fingerprint}` — the same eight characters `docker exec securacv pair` prints. Submit to pair; the next step asks for the 6-digit code and confirms the kernel URL ({url})."
+      },
+      "pair": {
+        "title": "Pair with the SecuraCV sidecar",
+        "description": "On the Docker host run `docker exec securacv pair` and enter the 6-digit code it prints (valid 10 minutes). The kernel key fingerprint it prints beside the code must read `{fingerprint}` (kernel `{device_id}`). Home Assistant keeps its own paired key afterwards; revoke it any time with `docker exec securacv unpair` followed by the token id (`unpair` alone lists them).",
+        "data": {
+          "url": "Kernel URL",
+          "pairing_code": "Pairing code"
+        },
+        "data_description": {
+          "url": "Where Home Assistant reaches the sidecar's event API, usually http://DOCKER-HOST:8799 with the Docker host's LAN address in place of DOCKER-HOST. Pre-filled from the announcement or your MQTT broker's address — correct it if the sidecar runs elsewhere.",
+          "pairing_code": "The 6 digits `pair` printed. Each code is single-use and burns after five wrong tries."
+        }
+      },
+      "token_file": {
+        "title": "Witness Kernel token file",
+        "description": "This kernel hands out its rotating token through a file Home Assistant can read (the app writes /config/api_token). Enter the kernel URL and the token file path, or a static token for a kernel whose file Home Assistant cannot read.",
+        "data": {
+          "url": "Kernel URL",
+          "token_file": "API token file (recommended)",
+          "token": "Static API token (remote kernels only)",
+          "mqtt_topic_prefix": "Witness MQTT prefix",
+          "adapter_stats_url": "Adapter host stats URL (optional)"
+        },
+        "data_description": {
+          "url": "URL of the Privacy Witness Kernel Event API",
+          "token_file": "Path to the kernel's rotating token file; re-read automatically when the token rotates (default: /config/api_token)",
+          "token": "Bearer token pasted from the kernel's api_token file — goes stale within 10 minutes unless a token file is also set",
+          "mqtt_topic_prefix": "The prefix the kernel's MQTT bridge publishes under (default: witness)",
+          "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
+        }
       },
       "mqtt_config": {
         "title": "MQTT Configuration",
@@ -32,17 +66,19 @@
       },
       "kernel": {
         "title": "Witness Kernel Connection",
-        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant app, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read.",
+        "description": "Enter the connection details for your SecuraCV Privacy Witness Kernel.\n\nThe kernel runs as a Home Assistant app, Docker container, or standalone service. The kernel rotates its API token every 10 minutes, so prefer the token file (the app writes it to /config/api_token); use a static token only for kernels whose token file Home Assistant cannot read. A Docker sidecar is better added through its announcement (Settings → Devices & Services → SecuraCV discovered), which pairs with a 6-digit code instead.",
         "data": {
           "url": "Kernel URL",
           "token_file": "API token file (recommended)",
           "token": "Static API token (remote kernels only)",
+          "mqtt_topic_prefix": "Witness MQTT prefix",
           "adapter_stats_url": "Adapter host stats URL (optional)"
         },
         "data_description": {
-          "url": "URL of the Privacy Witness Kernel Event API (e.g., http://d0491a67-privacy-witness-kernel:8799 for the add-on)",
+          "url": "URL of the Privacy Witness Kernel Event API (e.g., http://d0491a67-privacy-witness-kernel:8799 for the app)",
           "token_file": "Path to the kernel's rotating token file; re-read automatically when the token rotates (default: /config/api_token)",
           "token": "Bearer token pasted from the kernel's api_token file — goes stale within 10 minutes unless a token file is also set",
+          "mqtt_topic_prefix": "The prefix the kernel's MQTT bridge publishes under (default: witness)",
           "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
         }
       },
@@ -54,6 +90,7 @@
           "token_file": "API token file (recommended)",
           "token": "Static API token (remote kernels only)",
           "mqtt_prefix": "MQTT topic prefix",
+          "mqtt_topic_prefix": "Witness MQTT prefix",
           "adapter_stats_url": "Adapter host stats URL (optional)"
         },
         "data_description": {
@@ -61,24 +98,111 @@
           "token_file": "Path to the kernel's rotating token file; re-read automatically when the token rotates (default: /config/api_token)",
           "token": "Bearer token pasted from the kernel's api_token file — goes stale within 10 minutes unless a token file is also set",
           "mqtt_prefix": "MQTT topic prefix for Canary devices (default: securacv)",
+          "mqtt_topic_prefix": "The prefix the kernel's MQTT bridge publishes under (default: witness)",
           "adapter_stats_url": "Read-only adapter_host stats endpoint, e.g. http://adapter-host:8799 — surfaces per-adapter health as a diagnostic sensor."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate SecuraCV",
+        "description": "The witness kernel rejected Home Assistant's credential. For a paired sidecar, run `docker exec securacv pair` on the Docker host and enter the new 6-digit code; for the app, check the token file path. The entry stays bound to the same kernel (fingerprint `{fingerprint}`).",
+        "data": {
+          "url": "Kernel URL",
+          "pairing_code": "Pairing code",
+          "token_file": "API token file (recommended)",
+          "token": "Static API token (remote kernels only)",
+          "mqtt_topic_prefix": "Witness MQTT prefix",
+          "adapter_stats_url": "Adapter host stats URL (optional)"
+        },
+        "data_description": {
+          "url": "Where Home Assistant reaches the kernel's event API.",
+          "pairing_code": "The 6 digits `pair` printed; single-use, valid 10 minutes.",
+          "token_file": "Path to the kernel's rotating token file (default: /config/api_token)",
+          "token": "A pasted capability token, for kernels whose file Home Assistant cannot read.",
+          "mqtt_topic_prefix": "The prefix the kernel's MQTT bridge publishes under (default: witness)",
+          "adapter_stats_url": "Read-only adapter_host stats endpoint (optional)."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure SecuraCV",
+        "description": "Change where Home Assistant reaches this witness kernel, how it authenticates, or the prefix its MQTT bridge publishes under. The entry stays bound to the same kernel (fingerprint `{fingerprint}`); a different kernel is a new entry.",
+        "data": {
+          "url": "Kernel URL",
+          "pairing_code": "Pairing code",
+          "token_file": "API token file (recommended)",
+          "token": "Static API token (remote kernels only)",
+          "mqtt_topic_prefix": "Witness MQTT prefix",
+          "adapter_stats_url": "Adapter host stats URL (optional)"
+        },
+        "data_description": {
+          "url": "Where Home Assistant reaches the kernel's event API.",
+          "pairing_code": "For a paired sidecar: a fresh code from `docker exec securacv pair`.",
+          "token_file": "Path to the kernel's rotating token file (default: /config/api_token)",
+          "token": "A pasted capability token, for kernels whose file Home Assistant cannot read.",
+          "mqtt_topic_prefix": "The prefix the kernel's MQTT bridge publishes under (default: witness)",
+          "adapter_stats_url": "Read-only adapter_host stats endpoint (optional)."
         }
       }
     },
     "error": {
       "cannot_connect": "Cannot connect to the Privacy Witness Kernel. Check the URL and ensure the kernel is running.",
       "invalid_auth": "Invalid API token. Check the token file path, or re-read the token from the kernel's api_token file.",
-      "token_required": "Provide an API token file path or a static token (the token file is recommended — the kernel rotates the token every 10 minutes)."
+      "token_required": "Provide an API token file path or a static token (the token file is recommended — the kernel rotates the token every 10 minutes).",
+      "invalid_pairing_code": "The code was not accepted. Run `docker exec securacv pair` again and enter the new code within 10 minutes.",
+      "paired_token_limit": "The kernel already holds its limit of 32 paired tokens, so nothing was paired and this code is still valid. On the Docker host run `docker exec securacv unpair` to list them, revoke one with `docker exec securacv unpair` followed by its id, then submit the same code again.",
+      "kernel_identity_unavailable": "The kernel answered but has no identity endpoint. Update the SecuraCV app or sidecar, then try again.",
+      "invalid_url": "Enter the kernel URL with its scheme, like http://192.168.1.20:8799."
     },
     "abort": {
       "already_configured": "This SecuraCV system is already configured.",
-      "invalid_discovery_info": "The discovery announcement was missing its connection details (host and port)."
+      "already_in_progress": "Configuration flow is already in progress.",
+      "invalid_discovery_info": "The discovery announcement was missing its connection details.",
+      "not_securacv_device": "This MQTT message is not a SecuraCV device announcement.",
+      "announce_signature_invalid": "The kernel announcement is not signed by the key Home Assistant pinned for that kernel, so it was ignored. If the kernel was reinstalled, resolve the key change under Settings → Repairs.",
+      "announce_key_mismatch": "The kernel's keys disagree: fingerprint `{received_fingerprint}` was received where `{pinned_fingerprint}` was expected. Nothing was changed. Compare both with the kernel's own printout (`docker exec securacv pair`, the app's panel, or `doctor`) before trying again.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Re-configuration was successful.",
+      "wrong_kernel": "That is a different witness kernel. Add it as a new entry instead of moving this one.",
+      "cannot_connect": "The announced witness kernel could not be identified yet; it will be offered again on the app's next start."
+    },
+    "create_entry": {
+      "no_kernel_found": "No witness kernel is running yet. SecuraCV is set up and will connect by itself when one appears.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}). Only Canary devices? Nothing to do — they appear as they report.",
+      "no_kernel_found_no_mqtt": "No witness kernel is running yet, and Home Assistant's MQTT integration is not set up; a sidecar can only be discovered once Home Assistant and the sidecar share a broker. SecuraCV is set up and connects by itself once that is in place.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}) and add the MQTT integration pointing at the same broker. Only Canary devices? Add the MQTT integration — they appear as they report."
     }
   },
   "issues": {
     "mqtt_subscribe_failed": {
       "title": "SecuraCV can't subscribe to MQTT",
       "description": "Home Assistant's MQTT integration isn't connected, so SecuraCV can't hear your Canary devices on `{prefix}/#`.\n\nTo fix it: install the Mosquitto broker add-on (Settings > Add-ons > Add-on store > Mosquitto broker), then add the MQTT integration (Settings > Devices & Services > Add Integration > MQTT) and point it at that broker. Then reload the SecuraCV integration — this issue clears itself once the subscription succeeds.\n\nError: {error}"
+    },
+    "no_kernel_found": {
+      "title": "No SecuraCV witness kernel found",
+      "description": "SecuraCV is set up for Canary devices only; no witness kernel is sealing Frigate events yet. It connects by itself when one appears.\n\nOn Home Assistant OS: [add the SecuraCV app repository]({addon_repo_url}) and install SecuraCV from the App Store. Running Frigate under Docker? [Follow the quickstart]({docker_quickstart_url}) and pair the sidecar from the card that appears here. Only Canary devices? Dismiss this — there is nothing to do."
+    },
+    "kernel_unreachable": {
+      "title": "SecuraCV can't reach the witness kernel",
+      "description": "Home Assistant has not been able to reach the witness kernel at {url} for 15 minutes. Check that the SecuraCV app or sidecar is running, and that the URL is right (Settings > Devices & Services > SecuraCV > Reconfigure). This clears itself as soon as the kernel answers again."
+    },
+    "tofu_mismatch": {
+      "title": "The witness kernel's key changed",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Confirm the kernel's new key",
+            "description": "The witness kernel at {url} now serves the key with fingerprint `{received_fingerprint}`; Home Assistant pinned `{pinned_fingerprint}`. This happens after a restore to new hardware or a reinstalled app or sidecar — or when something else answers at that address. Until you confirm the new key, kernel events show a key mismatch and are never shown as verified.\n\nBefore submitting, compare `{received_fingerprint}` with what the kernel itself prints: `docker exec securacv pair`, the app's panel, or `doctor`. Submit only if they match. The previous key stays recorded in the entry so earlier sealed logs remain attributable; the integration reloads and verifies against the new key."
+          }
+        },
+        "abort": {
+          "no_received_key": "This issue carries no key to confirm; it is raised again with the key on the next check."
+        }
+      }
+    },
+    "storage_replace": {
+      "title": "The witness kernel's storage should be replaced",
+      "description": "The kernel reports its storage at {wear_pct}% estimated wear or failing writes. Export your evidence first (the Export evidence button or the securacv.export_evidence action), then replace the card or disk; the sealed log lives in the app's or sidecar's data directory and moves with it."
+    },
+    "entities_migrated": {
+      "title": "SecuraCV replaced the app's pwk_* entities",
+      "description": "Now that the SecuraCV integration manages this witness kernel, the entities the app published through MQTT discovery have been withdrawn and replaced:\n\n- `sensor.pwk_last_event` → `sensor.securacv_last_event`\n- `sensor.pwk_daily_digest` → `sensor.securacv_daily_digest`\n- `binary_sensor.pwk_chain_problem` → `binary_sensor.securacv_chain_valid` (on means the chain is intact)\n- `button.pwk_verify_now` → `button.securacv_verify_now`\n- the per-zone sensors → one `event.securacv_` entity per camera, named after it (`event.securacv_front_door`, say)\n\nUpdate automations and dashboards that referenced the old ids; the SecuraCV dashboard strategy already uses the new ones. Dismiss this notice when done."
     }
   },
   "options": {
@@ -89,7 +213,8 @@
         "menu_options": {
           "pin": "Pin a device pubkey (manual)",
           "rotate": "Rotate a pinned device key",
-          "unpin": "Unpin a device"
+          "unpin": "Unpin a device",
+          "settings": "Evidence export settings"
         }
       },
       "pin": {
@@ -114,19 +239,30 @@
         "data": {
           "device_id": "Device ID"
         }
+      },
+      "settings": {
+        "title": "Evidence exports",
+        "description": "How many evidence packs to keep under the Home Assistant configuration directory (securacv/evidence). When a new export exceeds the limit, the oldest pack is removed and the export notification says so.",
+        "data": {
+          "evidence_keep": "Exports to keep (1–200)"
+        }
       }
     },
     "error": {
       "invalid_device_id": "Device ID can't be empty.",
       "invalid_pubkey_hex": "Public key must be exactly 64 hex characters (0-9, a-f, either case), with no spaces or trailing dots.",
       "device_not_pinned": "No pin exists for this device_id.",
-      "trust_store_unavailable": "The trust store isn't loaded for this entry — try reloading the integration."
+      "trust_store_unavailable": "The trust store isn't loaded for this entry — try reloading the integration.",
+      "invalid_evidence_keep": "Keep between 1 and 200 exports."
     }
   },
   "entity": {
     "sensor": {
       "kernel_last_event": {
         "name": "SecuraCV Last Event"
+      },
+      "kernel_fingerprint": {
+        "name": "Kernel key fingerprint"
       },
       "storage_health": {
         "name": "Storage Health"
@@ -166,6 +302,9 @@
       },
       "radar_link": {
         "name": "Radar Link"
+      },
+      "daily_digest": {
+        "name": "Daily digest"
       }
     },
     "binary_sensor": {
@@ -174,6 +313,9 @@
       },
       "storage_replace": {
         "name": "Storage Replacement Recommended"
+      },
+      "frigate_link": {
+        "name": "Frigate link"
       },
       "online": {
         "name": "Online"
@@ -250,6 +392,65 @@
       "chirp_active": {
         "name": "Chirp Active"
       }
+    },
+    "event": {
+      "witness": {
+        "name": "{zone}",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "boundary_crossing_object_large": "Person or vehicle",
+              "boundary_crossing_object_small": "Animal or small object",
+              "acoustic_impulse_in_zone": "Acoustic impulse in zone",
+              "presence_in_restricted_zone": "Presence in restricted zone",
+              "vehicle_presence_after_hours": "Vehicle presence after hours",
+              "contact_state_change": "Contact state change",
+              "object_removed_from_zone": "Object removed from zone",
+              "tamper_detected": "Tamper detected",
+              "vehicle_arrival_departure": "Vehicle arrival/departure"
+            }
+          }
+        }
+      },
+      "tamper_events": {
+        "name": "Tamper events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "power_loss": "Power Loss",
+              "sd_remove": "SD Removed",
+              "sd_error": "SD Error",
+              "gps_jamming": "GPS Jamming",
+              "motion": "Unexpected Motion",
+              "enclosure": "Enclosure Open",
+              "gpio": "GPIO Tamper",
+              "watchdog": "Watchdog Timeout",
+              "unexpected_reboot": "Unexpected Reboot",
+              "memory_critical": "Memory Critical"
+            }
+          }
+        }
+      },
+      "verification_events": {
+        "name": "Chain verification",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "chain_verified": "Chain verified",
+              "chain_verification_failed": "Chain verification failed",
+              "witness_key_changed": "Witness key changed"
+            }
+          }
+        }
+      }
+    },
+    "button": {
+      "verify_now": {
+        "name": "Verify now"
+      },
+      "export_evidence": {
+        "name": "Export evidence"
+      }
     }
   },
   "exceptions": {
@@ -279,6 +480,30 @@
     },
     "watch_ambiguous": {
       "message": "{watch} names {count} watches ({ids}); end it by id."
+    },
+    "no_kernel_entry": {
+      "message": "No SecuraCV entry with a witness kernel is loaded, so there is no sealed log to verify or export. Add the SecuraCV app or sidecar first."
+    },
+    "kernel_entry_ambiguous": {
+      "message": "{count} SecuraCV entries have a witness kernel; say which one with entry_id."
+    },
+    "entry_not_loaded": {
+      "message": "SecuraCV entry {entry_id} is not loaded or has no witness kernel."
+    },
+    "window_out_of_range": {
+      "message": "window_hours is {window_hours}; give a whole number of hours from {min_hours} to {max_hours}."
+    },
+    "kernel_unreachable": {
+      "message": "The witness kernel did not answer. Check that the SecuraCV app or sidecar is running, then try again."
+    },
+    "kernel_auth_failed": {
+      "message": "The witness kernel rejected Home Assistant's credential. Re-authenticate the SecuraCV entry under Settings → Devices & services."
+    },
+    "kernel_bad_response": {
+      "message": "The witness kernel answered with something other than the sealed log or the evidence bundle: {detail}."
+    },
+    "export_write_failed": {
+      "message": "The evidence pack could not be written under the configuration directory: {detail}."
     }
   },
   "services": {
@@ -317,6 +542,30 @@
     "list_watches": {
       "name": "List watches",
       "description": "Returns the watches currently running, each with its state, what it is bound to and how many days it has left. Response only."
+    },
+    "verify": {
+      "name": "Verify the witness chain",
+      "description": "Walks the kernel's sealed log now and checks every entry's hash link and Ed25519 signature against the key Home Assistant pinned when it connected. Only this walk earns an event its \"Verified\" mark; the kernel's own self-check never does. Returns the verdict, how many new entries verified and the bucket the walk ran in.",
+      "fields": {
+        "entry_id": {
+          "name": "Kernel",
+          "description": "Which SecuraCV entry to verify, when more than one has a witness kernel. The only one if left out."
+        }
+      }
+    },
+    "export_evidence": {
+      "name": "Export evidence",
+      "description": "Downloads the kernel's signed evidence bundle for the last N hours and writes ONE zip under the configuration directory (securacv/evidence, readable by Home Assistant only): the bundle verbatim, the offline viewer, a README for the recipient and the witness key. A persistent notification carries a download link valid 24 hours; the pack is also under Media → SecuraCV evidence. Nothing is added to, removed from or re-serialized in the bundle.",
+      "fields": {
+        "window_hours": {
+          "name": "Window",
+          "description": "How far back, in whole hours (1–720). 24 if left out."
+        },
+        "entry_id": {
+          "name": "Kernel",
+          "description": "Which SecuraCV entry to export from, when more than one has a witness kernel. The only one if left out."
+        }
+      }
     }
   }
 }

@@ -83,7 +83,9 @@ prove the chirp works. Add them once the basics sing — full list in the
    `firmware/projects/canary-wap/arduino/canary_wap/build_config.h`, select
    **`BUILD_PROFILE_DEV`** or **`BUILD_PROFILE_FULL`**.
    `FEATURE_AUDIBLE_CHIRP` is **on for DEV/FULL, off for MINIMAL** — a MINIMAL
-   build stays silent by design.
+   build stays silent by design. (No CI job builds MINIMAL, and selecting it
+   now prints a compile-time warning; DEV is not a BLE-free build either — it
+   compiles the NimBLE pairing channel.)
 2. **Build & upload** (PlatformIO or Arduino IDE) — see
    [`getting_started_canary.md`](../getting_started_canary.md) and
    [`esp32_s3_setup.md`](../esp32_s3_setup.md) for the toolchain.

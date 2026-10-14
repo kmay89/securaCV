@@ -67,6 +67,24 @@ enum FleetMerge {
         // Safety-positive only: never clear a tamper someone else reported.
         if b.tamper { w.tamper = true }
 
+        // The beacon's own alarm bits, under the same raise-only rule the
+        // ALERT chirp follows below — the display firmware treats
+        // TAMPER|ALERT|DEGRADED as alarming (fleet_view.h
+        // fleet_flags_alarming), and a Canary broadcasting an active alert
+        // over Bluetooth alone (no Wi-Fi) used to look calm here. Raise
+        // only, never downgrade a louder story already on the row, never
+        // clear on a missing flag (silence is not an all-clear). mic_muted
+        // and on-Wi-Fi are states, not cries, and stay unread.
+        if b.alertActive, w.lastEventSeverity < .alert {
+            w.lastEvent = "Alert reported over Bluetooth"
+            w.lastEventAt = sighting.lastHeard
+            w.lastEventSeverity = .alert
+        } else if b.degraded, w.lastEventSeverity < .warn {
+            w.lastEvent = "Reports degraded over Bluetooth"
+            w.lastEventAt = sighting.lastHeard
+            w.lastEventSeverity = .warn
+        }
+
         // Fill gaps; never replace a value a stronger tier already established.
         if w.batteryPct == nil { w.batteryPct = b.batteryPct }
 
@@ -205,6 +223,52 @@ enum FleetMerge {
             }
             fleet.append(provisionalWitness(from: sighting))
         }
+    }
+
+    // MARK: - discovered, not yet in the fleet
+
+    /// Split what the mDNS browse found into the rows the Fleet tab and the
+    /// "+" sheet may show, and how.
+    ///
+    /// * `pairable`: a WAP-class Canary (the only kind that hands this
+    ///   phone a key) that is not paired and not already a fleet row —
+    ///   the "Ready to pair" rows, each a real flow (PairView).
+    /// * `onNetwork`: everything else that is not already a fleet row — a
+    ///   Sense or Vision reports to the hub, not to this phone, so its row
+    ///   says it is on the network and offers nothing to tap (the old
+    ///   "· tap to pair" opened a screen with no action in it).
+    ///
+    /// "Already a fleet row" is matched three ways, because the halves of
+    /// the app name one device differently: the published `device_id`
+    /// (paired and polled rows), the host a `lan:<host>#<i>` self-report
+    /// row was read from, and — for a Sense or Vision that is ALSO heard
+    /// over Bluetooth — a beacon row whose advertised name carries the
+    /// same pseudonym as the host (NearbyCanaries.isSameDevice), so one
+    /// Canary does not show twice right after it joins.
+    static func discoveredRows(found: [DiscoveredCanary],
+                               fleet: [Witness],
+                               pairedIDs: Set<String>) -> (pairable: [DiscoveredCanary], onNetwork: [DiscoveredCanary]) {
+        let ids = Set(fleet.map(\.id))
+        let joinedHosts = Set(fleet.compactMap { w -> String? in
+            guard w.id.hasPrefix("lan:") else { return nil }
+            return w.id.dropFirst(4).split(separator: "#").first.map(String.init)
+        })
+        let heardSuffixes = fleet.compactMap { w -> String? in
+            guard w.id.hasPrefix("ble:") else { return nil }
+            return NearbyCanaries.parseName(w.name)?.suffix
+        }
+        var pairable: [DiscoveredCanary] = []
+        var onNetwork: [DiscoveredCanary] = []
+        for d in found {
+            if ids.contains(d.deviceID) || pairedIDs.contains(d.deviceID) { continue }
+            if let host = d.host, joinedHosts.contains(host) { continue }
+            if d.deviceType.isHTTPPairable {
+                pairable.append(d)
+            } else if !heardSuffixes.contains(where: { NearbyCanaries.isSameDevice(suffix: $0, host: d.host) }) {
+                onNetwork.append(d)
+            }
+        }
+        return (pairable, onNetwork)
     }
 
     // MARK: - /api/fleet self-report (tier 2)

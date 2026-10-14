@@ -30,7 +30,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { readFileSync, existsSync } = require("node:fs");
+const { readFileSync, existsSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 
 const CANARY = join(__dirname, "..");
@@ -179,6 +179,74 @@ test("every local link inside a framed bench is a place the shell can go", () =>
   assert.deepStrictEqual(offenders, [],
     "these links inside framed benches have no shell route, so following one would " +
     "leave the sidebar and toolbar describing the bench you left");
+});
+
+test("every shell view VALID_IDS admits renders as itself, not as the Overview", () => {
+  // The bug this pins: navigate() maps a route id to a view through a ternary
+  // chain that ends in "overview", and "family" had no link in it. VALID_IDS
+  // admitted it, renderContent() had a branch for it, the topbar had a title
+  // for it, and the sidebar's "SecuraCV everywhere" and site-map.html's
+  // lab.html#family both rendered the Overview — nothing in between said so.
+  const nav = shellJs.slice(shellJs.indexOf("function navigate("));
+  const chain = nav.slice(0, nav.indexOf("BY_SLUG.has(id)"));
+  assert.ok(chain.length > 0 && chain.length < nav.length,
+    "navigate() lost its `BY_SLUG.has(id)` bench test — this gate reads the chain before it");
+  const mapped = new Map([...chain.matchAll(/id === "([a-z-]+)" \? "([a-z-]+)"/g)].map((m) => [m[1], m[2]]));
+  const line = shellJs.match(/\n\s+VALID_IDS = \[(.*)\];/); // the assignment in boot(), not the `let`
+  assert.ok(line, "lab-shell.js lost its VALID_IDS literal");
+  const ids = [...line[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(ids.includes("family") && ids.includes("overview"), `VALID_IDS literals changed shape: ${ids}`);
+  const content = shellJs.slice(shellJs.indexOf("function renderContent("));
+  const contentBody = content.slice(0, content.indexOf("\n}\n"));
+  const topbar = shellJs.slice(shellJs.indexOf("function renderTopbar("));
+  const topbarBody = topbar.slice(0, topbar.indexOf("\n}\n"));
+  for (const id of ids) {
+    // "overview" is the chain's fallback, so it needs no link of its own.
+    const view = id === "overview" ? "overview" : mapped.get(id);
+    assert.ok(view, `navigate() maps "${id}" to no view, so it renders the Overview — ` +
+      `add \`id === "${id}" ? "${id}" :\` to its chain`);
+    assert.ok(contentBody.includes(`view === "${view}"`),
+      `renderContent() has no branch for the "${view}" view`);
+    if (view !== "overview") {
+      assert.ok(topbarBody.includes(`view === "${view}"`),
+        `renderTopbar() has no title for the "${view}" view, so the phone bar says "The Lab"`);
+    }
+  }
+});
+
+test("every lab.html#… link in a Lab page names a place the shell can show", () => {
+  // routeId() turns an unknown hash into the Overview, silently: witness-
+  // wall.html's "back to the Lab" pointed at lab.html#home, a STAGE id rather
+  // than a route, and landed on the Overview instead of its bench. A literal
+  // deep link has to be a shell view, a bench (or the onramp), a redirect
+  // source, or a site link the shell forwards (build_line.test.js holds those).
+  const routes = new Set(["overview", "start", "all", "family", "settings", manifest.onramp.slug]);
+  for (const stage of manifest.stages) {
+    const benches = stage.tracks ? stage.tracks.flatMap((t) => t.benches) : stage.benches || [];
+    for (const b of benches) routes.add(b.slug);
+    for (const x of stage.site || []) if (x.slug) routes.add(x.slug);
+  }
+  for (const from of Object.keys(manifest.redirects || {})) routes.add(from);
+  const SKIP = new Set(["tests", "node_modules", "third_party", ".build", "dist"]);
+  const pages = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(e.name)) continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(html|js)$/.test(e.name)) pages.push(p);
+    }
+  };
+  walk(CANARY);
+  const offenders = [];
+  for (const p of pages) {
+    // Quoted, so an href or a string literal, not a comment that says "lab.html#slug".
+    for (const m of read(p).matchAll(/["']lab\.html#([A-Za-z0-9_-]+)/g)) {
+      if (!routes.has(m[1])) offenders.push(`${p.slice(CANARY.length + 1)} → lab.html#${m[1]}`);
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "these deep links name no shell route, so each one opens the Overview instead");
 });
 
 test("the phone tab bar's height is one token, used by both sides", () => {

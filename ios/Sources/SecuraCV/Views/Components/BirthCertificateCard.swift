@@ -71,6 +71,14 @@ struct BirthCertificateCard: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
+                    // The certificate's fixed words, the same ones the
+                    // Flasher prints (HatchSpec is generated from the one
+                    // spec both read) — so a Canary's certificate reads the
+                    // same on every app it is opened in.
+                    Text(HatchSpec.intro)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text(certificate.name)
                         .font(.title3.weight(.semibold))
                     Text(certificate.lineage)
@@ -107,6 +115,14 @@ struct BirthCertificateCard: View {
                 if witness.chainLength > 0 {
                     CertificateRow(label: "Witnessed", value: "\(witness.chainLength) sealed events")
                 }
+
+                VStack(alignment: .leading, spacing: Theme.xxs) {
+                    Text(certificate.craft)
+                    Text(HatchSpec.foot)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
 
                 // The claim this card is really making, said plainly. It is
                 // also the reason there is no "rename" button here: the name

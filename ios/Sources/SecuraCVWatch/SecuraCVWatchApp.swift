@@ -1,11 +1,14 @@
 // SecuraCVWatchApp.swift — SecuraCV on your wrist (entry point).
 //
 // The RFC's 3-screen scope (§3.3) plus exactly one: fleet glance, ALERTS,
-// heartbeat, about. The fourth earns its place because the wrist was missing
-// an answer to "what needed me while I wasn't looking?" — the question a
-// watch is best at and the glance deliberately doesn't answer (it shows now,
-// not history). Still no pairing, no key custody, no video — phone territory
-// and invariants, respectively.
+// heartbeat, about — with witness detail and Find one level in, a custom
+// long-look for mirrored witness alerts (WitnessNotification.swift), and a
+// "Check the Fleet" App Intent (WristIntents.swift). The fourth page earns
+// its place because the wrist was missing an answer to "what needed me
+// while I wasn't looking?" — the question a watch is best at and the glance
+// deliberately doesn't answer (it shows now, not history). Still no
+// pairing, no key custody, no video — phone territory and invariants,
+// respectively.
 //
 // The phone's FleetStore stays the source of truth; this app renders the
 // WristSnapshot it sends and asks for freshness at the moments that matter
@@ -30,6 +33,11 @@ struct SecuraCVWatchApp: App {
             // the foreground asks the phone for current truth.
             if phase == .active { store.requestRefresh() }
         }
+
+        // The wrist's own long-look for the witness alerts the phone
+        // mirrors here — same category id on both sides (NotificationIDs).
+        WKNotificationScene(controller: WitnessNotificationController.self,
+                            category: NotificationIDs.witnessCategory)
     }
 }
 

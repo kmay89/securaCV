@@ -3,12 +3,12 @@
   "integration": {
     "domain": "securacv",
     "name": "SecuraCV",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "iot_class": "local_push",
-    "min_ha": "2024.4.1",
+    "min_ha": "2026.5.0",
     "source": "custom_components/securacv/manifest.json + hacs.json"
   },
-  "fw_train": "2.4.15",
+  "fw_train": "2.4.16",
   "upstream": {
     "haos_version": "18.1",
     "ha_version": "2026.7.2",
@@ -415,7 +415,7 @@
             "cmd": "mosquitto_sub -h localhost -v -C 4 -t 'securacv/+/status' -t 'securacv/+/health' -t 'securacv/+/chain' -t 'securacv/+/counts'",
             "out": [
               "securacv/canary-s3-4dC2/status {\"online\":true,\"device_type\":\"canary-wap\",\"csi_running\":true,\"wifi_connected\":true,\"rssi\":-58}",
-              "securacv/canary-s3-4dC2/health {\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
+              "securacv/canary-s3-4dC2/health {\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.16-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
               "securacv/canary-s3-4dC2/chain {\"v\":1,\"length\":312,\"latest_hash\":\"a1b2\u2026\",\"algorithm\":\"ed25519\",\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}",
               "securacv/canary-s3-4dC2/counts {\"v\":1,\"total\":312,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
             ],
@@ -517,6 +517,78 @@
   },
   "entity_catalog": [
     {
+      "name": "SecuraCV Last Event",
+      "desc": "the newest sealed event, with the full attribute table of a witness event below (`kernel_last_event`; retained `witness/last_event`)"
+    },
+    {
+      "name": "Chain Length",
+      "desc": "the sealed log's head: the newest entry's sequence number from the integration's last chain walk (`head.seq`), or the kernel's own row count from `/api/identity` until the first walk \u2014 `source` says which (`walk_head` / `kernel_identity`); the two differ once retention has pruned rows, so the sensor has no statistics class"
+    },
+    {
+      "name": "Daily digest",
+      "desc": "total sealed events over the kernel's rolling 24-hour window, with the whole `/digest` document as attributes: counts by event type, by zone and by coarse day period (`daily_digest`; retained `witness/digest`)"
+    },
+    {
+      "name": "Kernel key fingerprint",
+      "desc": "the first eight hex characters of sha256 over the pinned verifying key, the same eight `docker exec securacv pair`, the app's panel and `doctor` print, with `verifying_key`, `pinned_bucket_start` and `key_mismatch` (`kernel_fingerprint`; diagnostic)"
+    },
+    {
+      "name": "Storage Health",
+      "desc": "`healthy` / `warning` / `critical` for the kernel's database storage from `GET /status` (`storage_health`; diagnostic)"
+    },
+    {
+      "name": "Storage Free",
+      "desc": "free space of the database directory in percent (`storage_free_pct`; diagnostic)"
+    },
+    {
+      "name": "Storage Wear Estimate",
+      "desc": "estimated media wear in percent where the host exposes it, else unknown (`storage_wear_pct`; diagnostic)"
+    },
+    {
+      "name": "Storage Write Rate",
+      "desc": "megabytes written per day where known, else unknown (`storage_write_rate`; diagnostic)"
+    },
+    {
+      "name": "SoC Temperature",
+      "desc": "the kernel host's SoC temperature where the host exposes it (`soc_temperature`; diagnostic)"
+    },
+    {
+      "name": "SecuraCV Adapter Host",
+      "desc": "per-adapter health read from an optional adapter-host stats URL; created only when that URL is set (`adapter_stats`; diagnostic)"
+    },
+    {
+      "name": "Online",
+      "desc": "the kernel is reachable: the bridge's `witness/status` last-will topic says online, or the five-minute HTTP backstop answered (`kernel_online`; connectivity)"
+    },
+    {
+      "name": "Chain Valid",
+      "desc": "ON when the integration's own last chain walk verified the sealed log against the pinned key, OFF when it rejected it, unknown until the first walk and while the kernel serves a key other than the pinned one (`key_mismatch: true`, `trust_reason: kernel_key_mismatch`, `error` naming Settings \u2192 Repairs \u2014 a key change is never shown as a failure); attributes `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `head_seq`, `failed_seq`, `key_mismatch`, `trust_reason`, `verifying`, `last_trigger`, `kernel_reported_chain_ok`, `kernel_verified_bucket_start`, `error` (`chain_valid`)"
+    },
+    {
+      "name": "Frigate link",
+      "desc": "ON when `frigate_bridge` holds its broker connection AND Frigate was heard within the last hour, so a quiet night and a Frigate that stopped publishing read differently; attributes are the retained `witness/frigate_link` payload (`frigate_link`; connectivity, diagnostic)"
+    },
+    {
+      "name": "Storage Replacement Recommended",
+      "desc": "the kernel's `/status` recommends replacing its storage; Settings \u2192 Repairs says so too (`storage_replace`; problem)"
+    },
+    {
+      "name": "Witness events, one per camera",
+      "desc": "one event entity per camera or zone the kernel has sealed an event for, named after the zone (`event.securacv_front_door` for Frigate camera `front_door`), created on the first sealed event for that zone and restored on reload; its event types are the witness dictionary's ids (`boundary_crossing_object_large`, `boundary_crossing_object_small`, `presence_in_restricted_zone`, \u2026) and it fires only on live `witness/events` messages, never on a retained replay after a restart (`witness`)"
+    },
+    {
+      "name": "Chain verification",
+      "desc": "the integration's own chain walks: `chain_verified`, `chain_verification_failed` (also when the bridge's own `chain_problem` turns on, marked `kernel_reported: true`), and `witness_key_changed`; attributes `trigger`, `verified_seq`, `verified_entries`, `verified_bucket_start`, `verified_bucket_size`, `failed_seq`, `error` (`verification_events`)"
+    },
+    {
+      "name": "Verify now",
+      "desc": "run the integration's chain walk now; the same coroutine the `securacv.verify` action runs (`verify_now`; unavailable while the kernel is unreachable)"
+    },
+    {
+      "name": "Export evidence",
+      "desc": "write a signed evidence pack for the last 24 hours; the same as `securacv.export_evidence` with its defaults (`export_evidence`; unavailable while the kernel is unreachable)"
+    },
+    {
       "name": "Witness Count",
       "desc": "total witness records created (`witness_count`; signed `counts` topic)"
     },
@@ -614,27 +686,27 @@
     },
     {
       "name": "WiFi AP",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "WiFi Station",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "MQTT",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "Bluetooth",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "Mesh Network",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "Chirp Network",
-      "desc": "per-transport connectivity (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
+      "desc": "per-transport connectivity, diagnostic and **disabled by default** \u2014 enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it \u2014 see the [transport catalog](#transport-catalog))"
     },
     {
       "name": "Mesh Connected",
@@ -643,6 +715,10 @@
     {
       "name": "Chirp Active",
       "desc": "Chirp community network enabled and ready, with the session emoji and alert counters (`chirp_active`; `chirp` topic, unsigned)"
+    },
+    {
+      "name": "Tamper events",
+      "desc": "one event entity per Canary with the ten tamper types above as its event types; fires on the device's live `tamper` publishes, with `kind` and `device_id` (`tamper_events`)"
     },
     {
       "name": "Chain Sequence",

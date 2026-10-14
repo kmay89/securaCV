@@ -11,43 +11,51 @@
 //! `espflash` sidecar and the file dialogs — those are what a Mac /
 //! release-tag build validates end-to-end.
 
-/// A safe, descriptive backup filename: `securacv-backup-<chip>-<mac>-<stamp>.bin`.
-/// Every component is reduced to filename-safe characters so it can't produce a
-/// path separator or a surprise. Empty components are dropped from the middle.
-pub fn backup_filename(chip: &str, mac: &str, stamp: &str) -> String {
-    let safe = |s: &str| -> String {
-        let out: String = s
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        // collapse runs of '-' and trim them, so "AA::BB" -> "AA-BB", not "AA--BB"
-        let mut collapsed = String::with_capacity(out.len());
-        let mut prev_dash = false;
-        for c in out.chars() {
-            if c == '-' {
-                if !prev_dash {
-                    collapsed.push(c);
-                }
-                prev_dash = true;
-            } else {
-                collapsed.push(c);
-                prev_dash = false;
-            }
-        }
-        collapsed.trim_matches('-').to_string()
+/// The full-flash backup's filename, in the browser Lab's own scheme
+/// (flash.js `takeBackup`: `canary-${macStamp()}-backup.bin`) so a file saved
+/// by either flasher is the `canary-…-backup.bin` both restore panels tell the
+/// user to look for: `canary-<mac6>[-<stamp>]-backup.bin`.
+///
+/// `mac6` is the last six hex digits of the MAC, lowercased — the browser's
+/// `macStamp()` exactly, `canary` when no MAC was read. `stamp` is optional
+/// (the browser leaves it to the downloads folder to de-duplicate; the
+/// Flasher's automatic safety copies share one folder, so they carry the
+/// moment): reduced to filename-safe characters, so it can't produce a path
+/// separator or a surprise, and dropped when it comes out empty.
+pub fn backup_filename(mac: &str, stamp: &str) -> String {
+    let hex: String = mac
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let mac6 = if hex.is_empty() {
+        "canary"
+    } else {
+        &hex[hex.len().saturating_sub(6)..]
     };
-    let parts: Vec<String> = ["securacv-backup", chip, mac, stamp]
-        .iter()
-        .map(|p| safe(p))
-        .filter(|p| !p.is_empty())
+    let safe: String = stamp
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    format!("{}.bin", parts.join("-"))
+    // collapse runs of '-' and trim them, so "AA::BB" -> "AA-BB", not "AA--BB"
+    let mut stamp = String::with_capacity(safe.len());
+    for c in safe.chars() {
+        if !(c == '-' && stamp.ends_with('-')) {
+            stamp.push(c);
+        }
+    }
+    let stamp = stamp.trim_matches(|c| c == '-' || c == '.');
+    if stamp.is_empty() {
+        format!("canary-{mac6}-backup.bin")
+    } else {
+        format!("canary-{mac6}-{stamp}-backup.bin")
+    }
 }
 
 /// Validate a candidate restore/local image against the detected chip's flash
@@ -234,17 +242,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backup_filename_is_safe_and_descriptive() {
+    fn backup_filename_is_the_browsers_scheme_and_safe() {
+        // flash.js takeBackup: `canary-${macStamp()}-backup.bin`, macStamp =
+        // the MAC's last six hex digits, lowercased, or "canary".
         assert_eq!(
-            backup_filename("ESP32-S3", "AA:BB:CC:DD:EE:FF", "20260726-1200"),
-            "securacv-backup-ESP32-S3-AA-BB-CC-DD-EE-FF-20260726-1200.bin"
+            backup_filename("AA:BB:CC:DD:EE:FF", ""),
+            "canary-ddeeff-backup.bin"
         );
+        assert_eq!(backup_filename("", ""), "canary-canary-backup.bin");
+        assert_eq!(
+            backup_filename("aa-bb-cc-dd-ee-ff", "1789000000"),
+            "canary-ddeeff-1789000000-backup.bin"
+        );
+        // A MAC shorter than six digits keeps what it has.
+        assert_eq!(backup_filename("0:1", ""), "canary-01-backup.bin");
         // Path-separator / space attempts collapse to '-', never escape the name.
         assert_eq!(
-            backup_filename("es/p 32", "", "x"),
-            "securacv-backup-es-p-32-x.bin"
+            backup_filename("", "es/p 32"),
+            "canary-canary-es-p-32-backup.bin"
         );
-        assert!(!backup_filename("../etc", "m", "s").contains('/'));
+        assert!(!backup_filename("../etc", "../../x").contains('/'));
+        assert!(!backup_filename("", "../..").contains(".."));
     }
 
     #[test]

@@ -48,10 +48,11 @@
 #define FEATURE_BACKLIGHT_DIM       1   // LEDC PWM night dimming (board supports it)
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
-#define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
-#define FEATURE_PROOF_QR            1   // proof QR compiled (reachable once the
-                                        // BOOT-button gestures land — follow-up)
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_ACK_SYNC            1   // household ack-sync    (spec 2)
 #define FEATURE_PRESENCE_WAKE       1   // illumination ladder   (spec 3)
 #ifndef FEATURE_CHIME  // -D overridable so the emulator (not real hardware) can force the chime on
@@ -88,9 +89,11 @@
 // ── Nightstand wave (display_nightstand.md + display_nightstand_line.md) ──
 // This IS the bedside device the wave was written for: PWM backlight floor,
 // gentle wake, comfort words — plus the new ambient LED beacon.
-#define FEATURE_NIGHT_BLACKOUT      1   // first-boot seed: dark-when-safe at night
-                                        // (the honest two-channel night-light —
-                                        // the LED is a pure attention beacon)
+// Night is a runtime setting (glass_settings.cpp): every flavor boots DIM,
+// and "off" is one tap away in settings (the honest two-channel
+// night-light — the LED is a pure attention beacon). The
+// FEATURE_NIGHT_BLACKOUT "first-boot seed" that stood here was read by no
+// source; removed 2026-10-09.
 #define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep words
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (visual

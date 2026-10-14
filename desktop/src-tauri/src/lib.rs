@@ -491,7 +491,7 @@ async fn flash_local_file(
     if code == 0 {
         emit(
             &app,
-            "✓ chip write verified — your file is on the board.".into(),
+            "✓ chip write confirmed — your file is on the board.".into(),
         );
         Ok(FlashReceipt {
             target: "esp32-host",
@@ -640,11 +640,21 @@ async fn flash_vision_module(
         model.get("signature").and_then(Value::as_str),
         release_pubkey,
     )?;
-    emit_log(format!(
-        "✓ model verified: {} bytes · SHA-256 {}… ({model_verification})",
-        bytes.len(),
-        &sha[..16]
-    ));
+    // "Verified" only when the Ed25519 signature was checked (AGENTS.md
+    // rule 4); checksum-only means the SHA-256 matched the manifest, no more.
+    emit_log(if model_verification == "ed25519+sha256" {
+        format!(
+            "✓ model verified: {} bytes · SHA-256 {}… ({model_verification})",
+            bytes.len(),
+            &sha[..16]
+        )
+    } else {
+        format!(
+            "✓ model checked: {} bytes · SHA-256 {}… ({model_verification} — no release key is pinned, so no signature was checked)",
+            bytes.len(),
+            &sha[..16]
+        )
+    });
 
     let app_for_log = app.clone();
     let app_for_progress = app.clone();
@@ -764,7 +774,9 @@ async fn run_sidecar_streaming(
 /// named by the board's MAC + moment, created on demand. The frontend can't
 /// know the app-data dir, and the browser flasher's equivalent (an unasked
 /// download before every write) is the parity bar this path exists to meet —
-/// the reflash-with-no-undo gap was desktop-only.
+/// the reflash-with-no-undo gap was desktop-only. The name is the engine's
+/// `rescue::backup_filename` — the browser's `canary-…-backup.bin` scheme,
+/// with the moment in it because every safety copy shares this one folder.
 #[tauri::command]
 fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
     let dir = app
@@ -773,23 +785,12 @@ fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
         .map_err(|e| format!("no app data dir: {e}"))?
         .join("backups");
     std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
-    let safe_mac: String = mac
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     Ok(dir
-        .join(format!(
-            "canary-{}-{stamp}.bin",
-            if safe_mac.is_empty() {
-                "unknown".into()
-            } else {
-                safe_mac
-            }
-        ))
+        .join(rescue::backup_filename(&mac, &stamp.to_string()))
         .to_string_lossy()
         .to_string())
 }

@@ -235,6 +235,20 @@
                  renderAccessNotes(); hidden when no such board ships. -->
             <div id="access-notes"></div>
 
+            <!-- Already have a Canary running? Prove it's on over the air.
+                 Parity with the browser flasher's "Test it over Bluetooth"
+                 entry: this window has no Bluetooth of its own, so the check
+                 is a pointer to where it runs — never a dead end. -->
+            <details id="ble-check" class="hint">
+              <summary>Already have a Canary? Check it over Bluetooth</summary>
+              <p class="muted">A Canary keeps a read-only Bluetooth console alive even when
+                Wi-Fi is down — reading its live snapshot proves it’s on, healthy and
+                reachable, and writes nothing. This app’s window has no Bluetooth of its
+                own, so the check runs in the SecuraCV iPhone app (its App Store release is
+                still pending), or in the browser Lab in Chrome or Edge on this computer.</p>
+              <button id="ble-check-open" class="btn btn-small btn-ghost" type="button">Open the browser Bluetooth check ↗</button>
+            </details>
+
             <details id="download-mode" class="hint hidden">
               <summary>Found, but not identified?</summary>
               <p>Put it in <strong>download mode</strong>: hold <kbd>BOOT</kbd> (B),
@@ -342,8 +356,8 @@
             </div>
             <section id="module-flow" class="module-flow hidden">
               <h3>Grove Vision AI V2 module</h3>
-              <p class="muted">CH343 / WiseEye2 recognized. This writes the pinned, SHA-256-verified
-                person model to <span class="mono">0x400000</span>, then requires an AT response and one real inference.</p>
+              <p class="muted">CH343 / WiseEye2 recognized. This writes the pinned person model, checked
+                by SHA-256 before a byte is written, to <span class="mono">0x400000</span>, then requires an AT response and one real inference.</p>
               <div class="row">
                 <button id="module-flash-btn" class="btn btn-primary">Flash &amp; prove the Vision module</button>
                 <span id="module-progress" class="muted"></span>
@@ -408,7 +422,7 @@
               <div class="bar"><div id="flash-op-fill" class="bar-fill"></div></div>
             </div>
             <pre id="console" class="console hidden" aria-live="polite"></pre>
-            <!-- What this install touches, from the safety copy vs the verified
+            <!-- What this install touches, from the safety copy vs the checked
                  image. Filled by renderChangeMap() off the flash:changemap
                  event; absent when no safety copy was taken. -->
             <div id="change-map" class="change-map hidden"></div>
@@ -427,6 +441,21 @@
             <!-- This session's nursery — the batch flasher's working memory,
                  placed exactly where the next board gets plugged in. -->
             <div id="nursery-strip" class="nursery-strip hidden" aria-live="polite"></div>
+            <!-- Prove it, two ways (parity: the browser done card): the
+                 catalog's prove block names one real proof over the cable or
+                 the glass and one emulated twin in the browser Lab; the
+                 Bluetooth check rides along for the boards that run its
+                 console. Filled by renderProveRow() after a product flash. -->
+            <section id="prove-row" class="prove-row hidden" aria-live="polite">
+              <h3>Prove it, two ways</h3>
+              <div class="row">
+                <button id="prove-real" class="btn btn-primary" type="button">Watch it boot &amp; prove itself →</button>
+                <button id="prove-twin" class="btn btn-ghost hidden" type="button"></button>
+                <button id="prove-ble" class="btn btn-ghost hidden" type="button">Check over Bluetooth ↗</button>
+              </div>
+              <p id="prove-how" class="muted"></p>
+              <p id="prove-ble-note" class="muted hidden"></p>
+            </section>
 
             <section id="receipts" class="receipts hidden" aria-live="polite">
               <h3>Installation receipts</h3>
@@ -472,6 +501,29 @@
                   closing it changes nothing on the board.</p>
               </details>
               <p id="monitor-status" class="muted">Not connected.</p>
+              <!-- What the board says about itself, from its own self-manifest
+                   (`j`): the self-check score, the die temperature and a tamper
+                   flag. Same chips as the browser's connect page — filled by
+                   renderSelfCheck() before a flash or after one. -->
+              <div id="selfcheck-chips" class="selfcheck hidden" aria-live="polite"></div>
+              <!-- The WAP field bench (parity: the browser's phaseWapBench):
+                   its [wap] transition lines as a verdict and a stir meter.
+                   Shown by renderWapField() when a WAP is on the bench. -->
+              <div id="wap-field" class="wap-field hidden">
+                <div class="row wap-field-head">
+                  <h4>The field bench — the room’s WiFi, felt</h4>
+                  <span id="wap-field-status" class="wap-field-status muted" role="status">◌ listening for the field…</span>
+                </div>
+                <p class="muted">Its live verdict off this cable — the same coarse vocabulary it
+                  publishes: an event, a device count, a confidence word, a dwell class. Never a
+                  MAC, never a raw signal. Walk in with your phone, then without it: the stir
+                  meter still moves — the field feels the body, not the phone.</p>
+                <div class="bench-meter">
+                  <div class="bench-meter-track"><div id="wap-field-fill" class="bench-meter-fill"></div></div>
+                  <div class="muted">field stir — how much a body is moving the radio</div>
+                </div>
+                <p id="wap-field-stale" class="muted hidden">No field lines lately — the WAP only speaks on transitions; walk past it.</p>
+              </div>
 
               <!-- Radar tuning suite (Sense boards): every runtime knob, live
                    over the same monitor port. Sliders speak the firmware's USB
@@ -595,7 +647,7 @@
             <details class="hint" id="adv-dev">
               <summary>Dev channel — flash the rolling prerelease</summary>
               <p>Dev images come from the rolling <span class="mono">fw-dev-latest</span>
-                prerelease — cut ahead of stable, verified exactly the same way (chip
+                prerelease — cut ahead of stable, checked exactly the same way (chip
                 guard, SHA-256, and the release signature once the signing ceremony
                 lands). The toggle can only ever mean <span class="mono">fw-dev-latest</span>;
                 it is not a way to point at an arbitrary manifest.</p>
@@ -611,7 +663,7 @@
                 or one saved for an air-gapped setup). An app-only build won’t do: it
                 gets written at offset 0, where only a merged factory image belongs.
                 We can’t check a personal file’s signature, but the board still can’t
-                be bricked, and we verify the write against the chip.</p>
+                be bricked, and espflash checks the write against the chip.</p>
               <div class="row">
                 <button id="local-pick" class="btn btn-ghost btn-small">Choose a .bin…</button>
                 <span id="local-name" class="muted"></span>
@@ -706,7 +758,7 @@
             <div class="step-head"><span class="step-n">1</span><h2>What you're making</h2></div>
             <p class="muted">A <strong>Home Assistant hub</strong> for your Canaries: we download the
               official <span id="hub-os-label" class="mono">Home Assistant OS</span> image,
-              verify it <span id="hub-pin-state"></span>, write it to your card, read every byte
+              check it <span id="hub-pin-state"></span>, write it to your card, read every byte
               back to prove the write, and seed your Wi-Fi so the Pi joins your network on
               its own. <span id="hub-card-req"></span></p>
             <div id="hub-board-list" class="product-list" role="radiogroup" aria-label="Raspberry Pi model"></div>
@@ -875,7 +927,7 @@
 
             <section id="hub-hatch" class="hatch hidden" aria-live="polite">
               <p class="hatch-kicker">Hub ready</p>
-              <h3>The card verifiably holds Home Assistant.</h3>
+              <h3>The card holds Home Assistant, read back byte for byte.</h3>
               <p id="hub-hatch-body"></p>
               <ol id="hub-hatch-steps"></ol>
               <!-- First-boot companion: closes the loop across the silent 10–20 min. -->

@@ -167,13 +167,15 @@ loop:
 
 ### The one honesty problem this raised
 
-Feeding fleet liveness into the heartbeat nearly made the card lie. "Delivery
-verified" is a claim about **notifications reaching this phone**; a Canary
-answering on the LAN proves the *fleet* is up and proves nothing about APNs.
-So a beat carries its source (`WristBeatSource`), and the copy splits with it:
-a check-in says "your fleet checked in", only an accepted delivery says
-"delivery verified". The wrist gets the same split over an additive-optional
-field, so the watch can never overstate what the phone told it.
+Feeding fleet liveness into the heartbeat nearly made the card lie. "Alert
+delivery confirmed" is a claim about **notifications reaching this phone**; a
+Canary answering on the LAN proves the *fleet* is up and proves nothing about
+APNs. So a beat carries its source (`WristBeatSource`), and the copy splits
+with it: a check-in says "your fleet checked in", only an accepted delivery
+says "alert delivery confirmed" — never "verified", which this project keeps
+for an Ed25519 signature checked against a pinned key. The wrist gets the
+same split over an additive-optional field, so the watch can never overstate
+what the phone told it.
 
 The dead-man's-switch grew three guards. Two protect against crying wolf — a
 false "your fleet went dark" is how a real one gets ignored — and one against
@@ -189,8 +191,8 @@ the opposite failure, staying green through a real outage:
    in the background by design, so backgrounded time is not evidence.
    `noteListening()` restarts the window at every foreground.
 2. **Silence only counts if something was expected.** With nothing paired
-   there is no beat to miss, so the card says "not yet verified" instead of
-   alarming about a fleet the user hasn't bought yet.
+   there is no beat to miss, so the card says "Alert delivery not tested
+   yet" instead of alarming about a fleet the user hasn't bought yet.
 
 Two more honesty rules fell out of the same review, both worth stating because
 they generalize:
@@ -202,8 +204,8 @@ they generalize:
   means promising less.
 - **A live failure outlives a stale success.** Persisting verifications gave
   the card something old to fall back on, which meant "Test failed:
-  notifications are off" was overwritten by "Delivery verified 3 days ago" on
-  the very next refresh. A failed verdict now stands until the path actually
+  notifications are off" was overwritten by "Alert delivery confirmed 3 days
+  ago" on the very next refresh. A failed verdict now stands until the path actually
   works again — and a Canary checking in does not clear it, because it
   doesn't fix what broke.
 - **Quiet hours are enforced where they are known.** Focus can be published

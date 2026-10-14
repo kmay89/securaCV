@@ -2,7 +2,7 @@
 # who don't run MQTT yet.
 # Already have a broker? Use quickstart.compose.yml instead.
 #
-# Three steps, nothing else:
+# Nothing to edit here; four steps:
 #
 #   Step 1 — Start it.
 #     docker compose -f quickstart-with-broker.compose.yml up -d
@@ -18,8 +18,20 @@
 #          port: 1883
 #
 #   Step 3 — Check it.
-#     docker compose -f quickstart-with-broker.compose.yml run --rm securacv doctor
-#     (The doctor also listens for a real event — walk past a camera.)
+#     docker exec securacv doctor
+#     (setup checks that pass on a fresh install; add --live to also wait
+#     30 s for a real Frigate event — walk past a camera)
+#
+#   Step 4 — Pair Home Assistant.
+#     docker exec securacv pair
+#     prints a 6-digit code and the kernel key fingerprint. Home Assistant
+#     must use this same broker (see the bind note below if it runs on
+#     another machine); it then shows a "SecuraCV sidecar" card under
+#     Discovered within a minute of the start (titled with the kernel id, or
+#     with SECURACV_ANNOUNCE_HOST when you set it). Configure → compare the fingerprint →
+#     enter the code. Done: Frigate events arrive as sealed, signed witness
+#     events. Without Home Assistant the sealed log works exactly the same
+#     and `log_verify` proves it offline.
 #
 # A device signing key is generated on first start and persisted in the
 # securacv_data volume — back it up: it is what makes the sealed log
@@ -29,16 +41,19 @@
 #   - The broker port is bound to 127.0.0.1 (this host only). Containers on
 #     this compose network (the sidecar) and processes on this host can
 #     connect; other machines on your LAN cannot.
-#   - If Frigate runs on ANOTHER machine, you must (a) set a broker password
-#     and (b) widen the bind address. Both are one line in a `.env` file next
-#     to this compose file:
+#   - If Frigate or Home Assistant runs on ANOTHER machine, you must (a) set
+#     a broker password and (b) widen the bind address. Both are one line in
+#     a `.env` file next to this compose file:
 #
 #         SECURACV_MQTT_PASSWORD=pick-a-strong-password
 #         SECURACV_MQTT_BIND=0.0.0.0
 #
 #     Then `docker compose -f quickstart-with-broker.compose.yml up -d --force-recreate`
-#     and give Frigate the same credentials (user: securacv). Never expose the
-#     broker beyond localhost while it still allows anonymous connections.
+#     and give Frigate (and Home Assistant) the same credentials (user:
+#     securacv). Never expose the broker beyond localhost while it still
+#     allows anonymous connections.
+#   - The sidecar's API port 8799 IS published (see the ports block below
+#     for exactly what that opens); it is how Home Assistant pairs.
 
 services:
   mosquitto:
@@ -105,17 +120,37 @@ services:
       MQTT_USERNAME: "${SECURACV_MQTT_PASSWORD:+securacv}"
       MQTT_PASSWORD: "${SECURACV_MQTT_PASSWORD:-}"
       # FRIGATE_TOPIC_PREFIX: "frigate"
+      # FRIGATE_ENABLE_REVIEWS: "true"    # seal Frigate's review ALERTS instead of every tracked object (0.14+)
       # FRIGATE_LABELS: "person,car,dog,cat"
       # RETENTION_DAYS: "7"
-      # Witness Wall on your Apple TV: uncomment this AND the ports block
-      # below. The API then binds all interfaces inside the container
-      # (every data endpoint still needs the capability token; the fleet
-      # roll-call, GET /api/fleet — names, online state, coarse room words;
-      # no keys, no events — reads without one to anything on your LAN that
-      # can reach the published port). See docs/frigate_integration.md.
-      # SECURACV_API_BIND: "all"
-    # ports:
-    #   - "8799:8799"   # Witness Wall on your Apple TV; see docs/frigate_integration.md
+      # This docker host's LAN address. The announce then names it, so Home
+      # Assistant prefills the kernel URL instead of guessing your broker's
+      # host (you can still edit it there). It is a network identifier, so
+      # it is off by default and redacted in Home Assistant's diagnostics.
+      # SECURACV_ANNOUNCE_HOST: "192.168.1.20"
+      # Witness Wall on your Apple TV: GET /api/fleet then lists every Canary
+      # the sidecar hears on the broker (names, online state, coarse room
+      # words; no events, no keys). Off, it lists this kernel alone.
+      # SECURACV_FLEET_ROLLCALL: "1"
+      # Keep the API inside the container instead (no Home Assistant pairing,
+      # no Witness Wall): set this AND delete the ports block below.
+      # SECURACV_API_BIND: "loopback"
+    # Port 8799 is published from the first start so Home Assistant can pair
+    # over your LAN. What that opens to anyone who can reach this host:
+    #   GET  /health     liveness — nothing else
+    #   POST /api/pair   redeems the 6-digit code `pair` printed: five wrong
+    #                    guesses burn the code, every refusal is the same 401,
+    #                    a code lives 10 minutes and works once
+    #   GET  /api/fleet  this kernel's own row (name, online, chain verdict);
+    #                    every Canary only with SECURACV_FLEET_ROLLCALL above
+    # Every data route (/events, /digest, /export/bundle, /api/identity, the
+    # sealed log) needs a token: the rotating capability token, which never
+    # leaves the container, or the paired token Home Assistant earned (revoke
+    # it any time: docker exec securacv unpair <id>). The API is plaintext
+    # HTTP, so that token crosses your LAN unencrypted — keep this port on
+    # your own network and never forward it from the internet.
+    ports:
+      - "8799:8799"
     volumes:
       - securacv_data:/data
 

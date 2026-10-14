@@ -22,6 +22,35 @@ context lives in [CHANGELOG.md](../CHANGELOG.md); this file is only the
 
 ## Entries
 
+20261009: Flags, macros and one env that controlled nothing were removed.
+No device behaves differently: each was read by no source before it went.
+- `configs/canary-display/*/config.h`: `FEATURE_CHAIN_VERIFY`,
+  `FEATURE_PROOF_QR`, `FEATURE_NIGHT_BLACKOUT`. The trust engine compiles on
+  every flavor, the proof QR wherever its UI does (the watch glance and the
+  dash), and night is a runtime setting that boots DIM on every flavor
+  (`glass_settings.cpp`).
+- `firmware/canary`: `FEATURE_BLUETOOTH`, `FEATURE_SYS_MONITOR`,
+  `FEATURE_WIFI_PRESENCE`, `FEATURE_AUDIBLE_CHIRP`, `FEATURE_RF_PRESENCE` and
+  `FEATURE_CHIRP` (from `canary_config.h` and `[env:full]`), and
+  `VERIFY_INTERVAL_SEC` and `MQTT_TOPIC_PREFIX` (from `canary_config.h`).
+  BLE in this tree is `FEATURE_BLE_SCAN` / `FEATURE_BLE_STATUS` (with
+  `FEATURE_BLE` as the reported `ble` tag);
+  `provisioning/platformio_secure.ini` now sets those three to 0 where it
+  set the inert `FEATURE_BLUETOOTH=0`.
+- `[env:standalone]` (the release image under another name): build
+  `release`.
+- The `-DCONFIG_CANARY_*`, `-DCONFIG_DASH` / `_WATCH` / `_NIGHTSTAND` /
+  `_DEFAULT` / `_WELLBEING`, `-DSENTINEL_PRESET_*` and
+  `-DSECURACV_BUILD_SECURE` markers in `envs/platformio/*.ini` and
+  `platformio_secure.ini`: a flavor is its `config.h` on the `-I` path.
+- `canary/include/secure_defaults.h`'s `DEFAULT_*` macros (nothing
+  included the header); it is now a map of where each default is set.
+**Action:** if a `config_local.h`, a build flag or a script of yours sets
+any of these, delete it; it did nothing before and does nothing now. To
+turn on a feature they named, use the flag that gates its code (the
+comments where each stood say which). `firmware/scripts/check_config_feature_flags.py`
+now fails a config `FEATURE_*` flag that no source reads.
+
 20260723: `SD_SPI_FAST` default raised 4 MHz → 20 MHz
 (`canary/include/canary_config.h`; the dead board duplicates
 `SD_SPI_FREQ_FAST/SLOW` in `boards/xiao-esp32s3-sense/pins/pins.h` were

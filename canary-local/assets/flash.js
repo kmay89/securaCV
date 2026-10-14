@@ -34,7 +34,6 @@ import { mountBoardIdentity } from "./board-identity.js";
 import * as intake from "./intake.js";
 import { probeNative, mountNativeBench, renderNativeUnavailable } from "./flash-native.js";
 
-const GH = "https://github.com/kmay89/securaCV/blob/main/";
 const LESSON = "wap.html"; // the guided BOOT/RESET + PlatformIO/Arduino path
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -161,7 +160,7 @@ async function boot() {
   if (nativeSerial) {
     // The native bench, with the browser's own Wi-Fi / broker form.
     await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields });
-    mount.append(renderReassurance());
+    mount.append(renderReassurance({ nativeShell: true }));
     return;
   }
 
@@ -455,7 +454,11 @@ function setPhase(node) {
 }
 
 // ── the persistent "you can't mess up" strip (compact, below the flow) ──────
-function renderReassurance() {
+// `nativeShell`: inside the SecuraCV Lab app, whose OS webview has no Web
+// Bluetooth — the Bluetooth check is then a pointer to where it runs, the
+// same one the desktop Flasher gives, never the "use a Chromium browser"
+// dead end the in-page check would hit.
+function renderReassurance({ nativeShell = false } = {}) {
   const wrap = el("div", "flash-reassure-strip");
   const nb = state.catalog.no_brick;
 
@@ -494,13 +497,33 @@ function renderReassurance() {
   // time, not just after a flash.
   const bt = el("details", "flash-card flash-ble-entry");
   bt.append(el("summary", null, "🔵 Already have a Canary? Test it over Bluetooth →"));
-  bt.append(el("p", "muted",
-    "Skip the cable: connect to a running Canary’s Bluetooth console and read " +
-    "its live snapshot — proof it’s powered, healthy, and reachable even when " +
-    "WiFi is down. Chromium browser on a computer or Android."));
-  const btBtn = el("button", "ghost small", "Open the Bluetooth check");
-  btBtn.addEventListener("click", () => setPhase(phaseBluetoothCheck()));
-  bt.append(btBtn);
+  if (nativeShell) {
+    bt.append(el("p", "muted",
+      "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
+      "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
+      "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
+      "the SecuraCV iPhone app (its App Store release is still pending), or in the " +
+      "browser Lab in Chrome or Edge on this computer."));
+    // The way there, not just its name (the desktop Flasher's button, the same
+    // address): this page on the Lab's Pages site, named from the catalog's
+    // own repo. lab-nav.js hands an off-origin link to the OS browser.
+    const hosted = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(String(state.catalog.repo || ""));
+    if (hosted) {
+      const go = el("a", "ghost", "Open the browser Bluetooth check ↗");
+      go.href = `https://${hosted[1]}.github.io/${hosted[2]}/canary-local/flash.html`;
+      go.target = "_blank";
+      go.rel = "noopener";
+      bt.append(go);
+    }
+  } else {
+    bt.append(el("p", "muted",
+      "Skip the cable: connect to a running Canary’s Bluetooth console and read " +
+      "its live snapshot — proof it’s powered, healthy, and reachable even when " +
+      "WiFi is down. Chromium browser on a computer or Android."));
+    const btBtn = el("button", "ghost small", "Open the Bluetooth check");
+    btBtn.addEventListener("click", () => setPhase(phaseBluetoothCheck()));
+    bt.append(btBtn);
+  }
   wrap.append(bt);
 
   wrap.append(renderTrustCard());
@@ -934,7 +957,7 @@ function phaseConnect() {
       el("strong", null, "Building a Canary Vision? Load the camera module’s brain here"),
       el("span", "muted",
         "The Grove Vision AI V2’s person-detection model, burned from this page over the " +
-        "MODULE’s USB-C port — pinned, SHA-256-verified, with a live bench check after. " +
+        "MODULE’s USB-C port — pinned, checked by SHA-256 before it’s written, with a live bench check after. " +
         "No vendor site, no account, no choices to get wrong."));
     mod.addEventListener("click", () => setPhase(phaseModule({
       catalog: state.catalog,
@@ -1791,7 +1814,7 @@ function renderIntakeCard() {
     card.append(det);
   } else if (it.efuses && !it.efuses.supported) {
     card.append(el("p", "fineprint",
-      `We don't have a verified fuse map for ${state.chip}, so that check was ` +
+      `We don't have a confirmed fuse map for ${state.chip}, so that check was ` +
       "skipped rather than guessed at."));
   } else if (!it.efuses) {
     card.append(el("p", "fineprint",
@@ -2122,7 +2145,7 @@ function renderPicker() {
   const localP = el("p", "muted",
     "Install a firmware file from your computer (a .bin you built, or one for " +
     "an air-gapped setup). We can’t check a personal file’s signature, but " +
-    "the board still can’t be bricked, and we verify the write against the chip.");
+    "the board still can’t be bricked, and the write is checked against the chip.");
   const localHelp = helpDot("local_file");
   if (localHelp) localP.append(localHelp);
   local.append(localP);
@@ -3177,7 +3200,7 @@ function refreshManifestState() {
     // to prevent — the per-image line below reports the real verification.
     note.textContent = core.isRealPubkey(state.catalog.release_pubkey)
       ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Turn it off under Advanced to go back to release firmware."
-      : "DEV CHANNEL — these images come from the rolling dev prerelease, ahead of stable. No release signing key is in force yet, so they're verified by SHA-256 against the manifest, not by signature. Turn it off under Advanced to go back to release firmware.";
+      : "DEV CHANNEL — these images come from the rolling dev prerelease, ahead of stable. No release signing key is in force yet, so they're checked by SHA-256 against the manifest, not by signature. Turn it off under Advanced to go back to release firmware.";
     banner.append(note);
   }
   // The headline answer, before any list: should THIS board be updated?
@@ -3700,6 +3723,16 @@ const MQTT_TLS_PLAIN_ONLY_NOTE =
   "This flavor is built plain-only (its OTA slot budget — CANARY_MQTT_PLAIN_ONLY), so " +
   "only Plain is offered: a provisioned TLS mode would be refused at boot with that " +
   "reason on its log, never downgraded to plain.";
+// The other reason Plain can be all there is: the sources honor TLS but the
+// PINNED release predates it (catalog `broker_tls_from`, the train it arrives
+// with — gen_flash.py CAPABILITY_TRAINS). That image has no TLS transport and
+// never reads the mode, so it would connect plain whatever was seeded; the
+// plain-only build's reason above would be false for it. Same words in the
+// desktop Flasher (app.js mqttTlsTrainNote).
+const mqttTlsTrainNote = (from) =>
+  `Broker encryption arrives with firmware ${from}, and the release this installs ` +
+  "predates it, so only Plain is offered: that image never reads a TLS mode and " +
+  "would connect plain whatever was set here.";
 const MQTT_TLS_PORT_NUDGE =
   "TLS brokers usually listen on 8883 and this port is still 1883 — a plain " +
   "listener on a TLS mode fails as “the broker did not speak TLS on this port”. " +
@@ -3957,7 +3990,8 @@ function renderWifiFields(box, product) {
       tlsSel.append(o);
     }
     tlsSel.value = String(core.MQTT_TLS_MODES.plain);
-    const tlsNote = el("p", "fineprint", tlsOk ? MQTT_TLS_NOTE : MQTT_TLS_PLAIN_ONLY_NOTE);
+    const tlsNote = el("p", "fineprint", tlsOk ? MQTT_TLS_NOTE
+      : product.broker_tls_from ? mqttTlsTrainNote(product.broker_tls_from) : MQTT_TLS_PLAIN_ONLY_NOTE);
     const ca = el("textarea", "flash-mqtt-ca flash-hidden");
     ca.maxLength = MQTT_CA_MAX; ca.rows = 5; ca.spellcheck = false;
     ca.placeholder = MQTT_CA_PLACEHOLDER;
@@ -4339,7 +4373,9 @@ async function startFlash(opts) {
     });
     if (verifyPulseStop) verifyPulseStop();
 
-    box.stage("Verified — the chip holds exactly what we sent ✓");
+    // The chip's MD5 over the written range matched: the write is confirmed.
+    // "Verified" stays the Ed25519 signature's word (AGENTS.md rule 4).
+    box.stage("Confirmed — the chip holds exactly what we sent ✓");
     box.set(1, "");
     if (liveMap) liveMap.update(1);
 
@@ -4753,7 +4789,8 @@ function phaseDone(opts) {
   }
 
   // The receipts: for the skeptic who (rightly) wants proof, the exact
-  // numbers behind "verified" — nothing here is a vibe, it's all checkable.
+  // numbers behind every claim on this card — nothing here is a vibe, it's
+  // all checkable.
   if (opts.shaHex || opts.diff) {
     const rec = el("details", "flash-receipts");
     rec.append(el("summary", null, "show the receipts — every byte accounted for"));
@@ -4773,7 +4810,7 @@ function phaseDone(opts) {
       } else if (opts.shaSigned) {
         list.append(el("p", "fineprint",
           "This release isn't Ed25519-signed yet (the signing-key ceremony hasn't " +
-          "happened), so it was verified by checksum only."));
+          "happened), so it was checked by checksum only."));
       }
     }
     if (opts.bytesWritten) {
@@ -4792,10 +4829,6 @@ function phaseDone(opts) {
     rec.append(list);
     box.append(rec);
   }
-
-  // The radar wow: a freshly-hatched Sense proves itself on the live bench —
-  // presence, bands, and the wellbeing senses — not in a text console.
-  const doneRole = opts.product && !opts.isBackup ? core.productRole(opts.product.id) : null;
 
   // The session's progression, right where the next board gets plugged in.
   const rosterStrip = renderRosterStrip();
@@ -5070,7 +5103,7 @@ function phaseRescue() {
     "For a Canary that’s acting wrong and you just want it back to known-good. " +
     "Three steps: a safety copy is attempted first (a corrupted board may not " +
     "give one — the rescue continues anyway), the whole chip is wiped, and the " +
-    "newest signed firmware for your exact chip is written and verified. This " +
+    "newest signed firmware for your exact chip is written and read back. This " +
     "works the same for every future firmware release — the flasher always " +
     "fetches the latest signed image for the silicon in hand."));
 
@@ -6413,7 +6446,7 @@ function progressCard(title, subtitle) {
           if (activeRow) {
             label.textContent = `now writing: ${activeRow.label} — ${plainRegionName(activeRow)}`;
           } else if (frac >= 1) {
-            label.textContent = "every region written and verified ✓";
+            label.textContent = "every region written and read back ✓";
           }
         },
       };

@@ -2,8 +2,9 @@
 //
 // The iPhone side of the wrist pipeline (RFC
 // docs/design/apple_watch_and_notifications.md §3.2): pushes the shared
-// WristSnapshot over WatchConnectivity and answers the watch's two requests
-// (refresh, run the path self-test). Delivery is `updateApplicationContext` —
+// WristSnapshot over WatchConnectivity and answers the watch's requests
+// (refresh, run the path self-test, mute, acknowledge, chirp — the verbs in
+// WristSync). Delivery is `updateApplicationContext` —
 // latest-state-wins, queued by the system while the watch sleeps — so the
 // wrist converges on current truth without any bookkeeping of its own.
 //
@@ -146,6 +147,15 @@ extension WatchLink: WCSessionDelegate {
                 }
                 // Answer with the post-mute snapshot so the wrist row updates
                 // in the same breath as the tap.
+                self.replyWithCurrentSnapshot(replyHandler)
+            case WristSync.commandAck:
+                // The wrist acknowledged one witness's alert. Same verb the
+                // Alerts tab and the notification's Acknowledge action call,
+                // so an ack on the watch clears the alert everywhere (RFC
+                // §1.1 rule 4) — the wrist never keeps its own ack state.
+                if let id = message[WristSync.ackIDKey] as? String, !id.isEmpty {
+                    self.store?.acknowledgeAlert(for: id)
+                }
                 self.replyWithCurrentSnapshot(replyHandler)
             case WristSync.commandIdentify:
                 // The wrist asked one Canary to make itself known. The phone

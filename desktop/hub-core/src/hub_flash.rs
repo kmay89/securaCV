@@ -4,8 +4,9 @@
 //! irreversible thing the flasher does, so it must be *impossible* to reach
 //! without having (1) verified the image, (2) chosen a disk the safety gate
 //! accepts, and (3) had the operator confirm. Those preconditions are encoded in
-//! the type system: the write entry point (a later change, in the app) will take
-//! a [`WriteAuthorization`] by value, and the ONLY way to obtain one is
+//! the type system: the write entry point (`hub-io`'s `write_image`, driven by
+//! the Flasher's `hub.rs`) takes a [`WriteAuthorization`] by value, and the
+//! ONLY way to obtain one is
 //! [`authorize_write`] — which demands a [`VerifiedImage`] proof (bound to the
 //! plan's image), and re-checks the target through [`crate::hub_disk::classify`].
 //! "Write without verify + an eligible

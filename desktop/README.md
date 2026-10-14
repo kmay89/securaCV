@@ -5,8 +5,8 @@ native app. (In-window it brands itself **Flasher** — the sibling
 [`desktop-lab/`](../desktop-lab) app owns the name "SecuraCV Lab", and one
 name per surface is the rule.) It detects
 your ESP32 Canary over USB-C, downloads the official factory image from the
-project's GitHub release, verifies its size and SHA-256 (and its Ed25519
-signature when a non-placeholder release key is pinned), provisions the board,
+project's GitHub release, checks its size and SHA-256 (and verifies its
+Ed25519 signature when a non-placeholder release key is pinned), provisions the board,
 and writes it — with **no browser, no Web Serial, no PlatformIO, no terminal**.
 Like the web flasher, it reads the chip before exposing compatible images.
 
@@ -39,7 +39,7 @@ Rust-first.
 | Shell | **Tauri v2** | ~5–10 MB, uses the OS WebView, Rust backend — fits this repo |
 | Flash engine | **espflash** (sidecar) | native ESP flashing, no browser; stable CLI, not a fragile library binding |
 | Serial | `serialport` crate | OS-native enumeration, persistent monitor, and public device receipt capture |
-| Vision module | native WE2/XMODEM engine | verifies and burns the pinned model, then proves AT + inference |
+| Vision module | native WE2/XMODEM engine | checks and burns the pinned model, then proves AT + inference |
 | Front-end | plain HTML/CSS/JS in `src/` | no build step, mirrors the Lab's look |
 | Self-update | `tauri-plugin-updater` | checks GitHub releases, one-click update |
 | Catalog | `canary-local/devices/flash.json` | embedded fresh every build by `build.rs` (via `OUT_DIR`) — no committed copy to drift; the chip guard works offline |
@@ -54,7 +54,7 @@ Tauri commands over it and the tracked sidecar spawn (`src-tauri/src/host.rs`).
 The WE2 engine is `src-tauri/src/we2.rs`.
 
 For `usb-secrets` images, Wi-Fi and MQTT values are patched into the ESP32 NVS
-partition only after the untouched release image verifies. The broker block
+partition only after the untouched release image passes its checks. The broker block
 also carries the TLS mode with its CA certificate or SHA-256 fingerprint
 (`mqtt_tls` / `mqtt_ca` / `mqtt_fp` — the same keys the browser flasher
 seeds; `canary-local/tests/desktop_parity.test.js` pins the two forms equal,

@@ -190,8 +190,10 @@ pub enum Refusal {
 }
 
 impl Refusal {
-    /// One short operator-facing line. Used by the rear's diagnostics and by
-    /// the surface's log; never rendered on the front.
+    /// One short operator-facing line saying why the card was refused. Never
+    /// rendered on the front. No in-tree caller reads it yet: the surface drops
+    /// a refused card silently (the front's admitted-phrase pass and the rear's
+    /// wellbeing pass both skip it), so a refusal reaches no log today.
     pub fn reason(self) -> &'static str {
         match self {
             Refusal::SchemaVersion => "card schema version is not v1",

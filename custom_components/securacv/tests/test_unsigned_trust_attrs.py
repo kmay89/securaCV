@@ -13,7 +13,7 @@ exists. State logic is unchanged and the signed entities are untouched.
 from __future__ import annotations
 
 from .test_mqtt_payload_hardening import ENTRY, HomeAssistant, _entity, _hass, _msg
-from .conftest import run
+from .conftest import make_runtime, run
 
 from .. import binary_sensor as bs_platform
 from .. import sensor as sensor_platform
@@ -32,11 +32,8 @@ def _store_hass(pinned: bool) -> HomeAssistant:
     run(store.async_load())
     if pinned:
         run(store.async_pin("canary01", KEY))
-    hass.data = {
-        DOMAIN: {
-            "e1": {"trust_store": store, "verify": {}, "replay": {}, "mismatch_notified": set()}
-        }
-    }
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(hass, trust_store=store)
     return hass
 
 
@@ -65,7 +62,7 @@ def test_unsigned_slice_has_the_signed_slice_keys_and_never_says_verified() -> N
 
     # No entry slice / a placeholder store / a real store without a pin: no fingerprint.
     _assert_unsigned(unsigned_trust_attrs(_hass(), ENTRY, "canary01"))
-    _assert_unsigned(unsigned_trust_attrs(_hass({"trust_store": object()}), ENTRY, "canary01"))
+    _assert_unsigned(unsigned_trust_attrs(_hass({}), ENTRY, "canary01"))
     _assert_unsigned(unsigned_trust_attrs(_store_hass(pinned=False), ENTRY, "canary01"))
     # A pinned device: the row still says which identity it is enrolled under.
     _assert_unsigned(unsigned_trust_attrs(_store_hass(pinned=True), ENTRY, "canary01"), FP)

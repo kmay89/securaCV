@@ -1,4 +1,4 @@
-"""Assist intents — read-only voice answers about the fleet.
+"""Assist intents — voice answers about the fleet, and bounded watches.
 
 Home Assistant's ``intent`` component discovers this platform and calls
 ``async_setup_intents``. The handlers registered here answer the local
@@ -14,12 +14,15 @@ actually ask:
   - the rituals:    SecuracvGoodnight      "goodnight"
   - about itself:   SecuracvPrivacy        "are you listening to me?"
                     SecuracvHelp           "what can I ask you?"
+  - the watches:    SecuracvStartWatch     "keep an eye on the gate for two weeks"
+                    SecuracvListWatches    "what am I watching?"
 
-All are queries. There are deliberately no action intents: voice may ask
-about the fleet but cannot arm, disarm, mute, or otherwise change the
-security posture — a spoken word carries no signature, so those paths stay
-on authenticated surfaces (AGENTS.md rule 1; the voice contract in
-docs/research/whisper_local_voice.md §3.1). The sentences that trigger
+Apart from starting a watch — bounded, self-expiring attention that can
+only make you better informed (ending one stays on the securacv.end_watch
+action) — all are queries. None can arm, disarm, mute, unseal, or otherwise
+lower the security posture: a spoken word carries no signature, so those
+paths stay on authenticated surfaces (AGENTS.md rule 1; the voice contract
+in docs/research/whisper_local_voice.md §3.1). The sentences that trigger
 these intents ship in docs/voice_sentences_en.yaml for the user to copy
 into ``config/custom_sentences/en/``.
 

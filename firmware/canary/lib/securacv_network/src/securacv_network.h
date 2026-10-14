@@ -134,7 +134,6 @@ public:
   // HTTP_REDIRECT_PORT (connectivity probes + a redirect); otherwise one plain
   // server on port 80 serving every route, exactly as before.
   bool startHttpServer();
-  void stopHttpServer();
 
   // F15: load the self-signed ECDSA P-256 certificate from NVS, or generate
   // and store it on the first TLS-capable boot. Call before startHttpServer();

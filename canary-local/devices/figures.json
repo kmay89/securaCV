@@ -1154,14 +1154,14 @@
    "dims_source": "assembled-cad",
    "sketch_note": null,
    "envelope_mm": {
-    "w": 49,
-    "d": 23.19,
-    "h": 49
+    "w": 50.5,
+    "d": 27.63,
+    "h": 50.5
    },
    "assembled": {
     "placement": "bezel() seated frame: face underside on the drum rim, bezel at z = drum_h (the nubs' own datum, drum_z = drum_h + bezel_z)",
     "seams_fig_d": [
-     21
+     25.44
     ]
    },
    "traced_to": [],
@@ -1170,7 +1170,7 @@
     "depth_tol_mm": 4
    },
    "solids": 4,
-   "rev": "c673b27b",
+   "rev": "ba3c22d9",
    "svg": "canary-local/figures/device.canary-display-watch.svg",
    "glyph": "canary-local/figures/device.canary-display-watch.glyph.svg",
    "manifests": [
@@ -1966,7 +1966,7 @@
     },
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 9100,
+     "triangles": 11274,
      "mm": [
       48.7,
       166.4,
@@ -1975,7 +1975,7 @@
     },
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 19684,
+     "triangles": 19100,
      "mm": [
       51.5,
       169.2,
@@ -2223,7 +2223,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_body.stl",
-     "triangles": 9100,
+     "triangles": 11274,
      "mm": [
       48.7,
       166.4,
@@ -2309,7 +2309,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_face.stl",
-     "triangles": 19684,
+     "triangles": 19100,
      "mm": [
       51.5,
       169.2,

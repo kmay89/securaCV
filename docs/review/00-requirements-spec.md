@@ -173,7 +173,9 @@ Source of truth: `spec/invariants.md`. A re-implementation that violates any inv
 - **REQ-KRNL-030 (Implemented, feature-gated):** Ingest sources behind Cargo features:
   `ingest-file-ffmpeg` (mp4→frames, NV12→RGB24 via swscale), `rtsp-ffmpeg` / `rtsp-gstreamer`
   (two implementations — `src/ingest/rtsp.rs` and `src/ingest/rtsp_ffmpeg.rs`; see flag report
-  REQ-KRNL-073), `ingest-v4l2`, `ingest-esp32`, `stub-frame-source`.
+  REQ-KRNL-073), `ingest-v4l2`, `ingest-esp32`. Synthetic frames for tests need no feature: a
+  `stub://` value, given as the RTSP URL or as the file path, selects the in-tree synthetic
+  source (`src/ingest/rtsp.rs`, `src/ingest/file.rs`).
 - **REQ-KRNL-031 (Implemented):** Timestamps are coarsened **at capture** (`TimeBucket::now_10min`).
 - **REQ-KRNL-032 (Implemented):** End-to-end file roundtrip is exercised in CI against a committed
   mp4 fixture: `cargo run --features ingest-file-ffmpeg --bin ingest_run -- --video clip.mp4`.

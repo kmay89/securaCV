@@ -93,8 +93,8 @@ bool setup_init(void) {
 
   Preferences prefs;
   if (prefs.begin("securacv", true)) {
-    s_first_boot = !prefs.getBool("setup_ok", false);
-    prefs.getString("dev_name", s_device_name, sizeof(s_device_name));
+    s_first_boot = !prefs.getBool(NVS_KEY_SETUP_OK, false);
+    prefs.getString(NVS_KEY_DEV_NAME, s_device_name, sizeof(s_device_name));
     prefs.end();
   } else {
     s_first_boot = true;
@@ -123,7 +123,7 @@ void setup_mark_complete(void) {
   using namespace setup_wiz;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    prefs.putBool("setup_ok", true);
+    prefs.putBool(NVS_KEY_SETUP_OK, true);
     prefs.end();
   }
   s_first_boot = false;
@@ -178,7 +178,7 @@ void setup_check_timeout(void) {
     // Persist setup_ok so the device doesn't re-enter setup on reboot
     Preferences prefs;
     if (prefs.begin("securacv", false)) {
-      prefs.putBool("setup_ok", true);
+      prefs.putBool(NVS_KEY_SETUP_OK, true);
       prefs.end();
     }
     s_active = false;
@@ -217,7 +217,7 @@ bool setup_set_device_name(const char* name) {
   bool persisted = false;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    persisted = prefs.putString("dev_name", s_device_name) == strlen(s_device_name);
+    persisted = prefs.putString(NVS_KEY_DEV_NAME, s_device_name) == strlen(s_device_name);
     prefs.end();
   }
   log_health(persisted ? LOG_LEVEL_INFO : LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,

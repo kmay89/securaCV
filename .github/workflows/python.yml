@@ -11,7 +11,16 @@ on:
       - 'conftest.py'
       - 'pyproject.toml'
       - 'requirements_test.txt'
+      - 'requirements_test_ha.txt'
+      - 'tests/ha/**'
       - '.github/workflows/python.yml'
+      # The real-Home-Assistant lane (tests/ha) reads these outside its own
+      # trees: the sealed-log vector its chain walk is held to, every
+      # blueprint it renders through the core's blueprint helpers, and the
+      # HACS floor it checks against the manifest.
+      - 'tests/fixtures/envelope/sealed_log_document_vector.json'
+      - 'docs/blueprints/*.yaml'
+      - 'hacs.json'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
       # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
@@ -57,7 +66,16 @@ on:
       - 'conftest.py'
       - 'pyproject.toml'
       - 'requirements_test.txt'
+      - 'requirements_test_ha.txt'
+      - 'tests/ha/**'
       - '.github/workflows/python.yml'
+      # The real-Home-Assistant lane (tests/ha) reads these outside its own
+      # trees: the sealed-log vector its chain walk is held to, every
+      # blueprint it renders through the core's blueprint helpers, and the
+      # HACS floor it checks against the manifest.
+      - 'tests/fixtures/envelope/sealed_log_document_vector.json'
+      - 'docs/blueprints/*.yaml'
+      - 'hacs.json'
       # Firmware sources a test reads (test_wap_tamper_health.py builds the
       # WAP's MQTT health from them; test_fingerprint_case.py holds its
       # WAP-spelled fixture to the encoder canary_wap.ino spells its MQTT
@@ -132,13 +150,72 @@ jobs:
           pip install -r requirements_test.txt
 
       - name: Ruff (lint)
-        # The integration AND the repo tooling: canary-local/tools (the Lab's
-        # generators) and scripts/ (the lint gates) run on every PR but were
-        # never linted themselves — 82 findings at first run, all fixed.
-        run: ruff check custom_components/securacv canary-local/tools scripts
+        # The integration only. The repo's tooling (canary-local/tools,
+        # scripts/, tools/, …) is linted by lint.yml's `ruff` job, which is
+        # unfiltered: this workflow's path filter never saw a scripts-only
+        # PR, so a violation there merged green and turned red on the next
+        # unrelated Home Assistant PR. Same pin, same pyproject.toml config.
+        run: ruff check custom_components/securacv
 
       - name: Mypy (type-check)
         run: mypy
 
       - name: Pytest (integration suite)
         run: pytest custom_components/securacv/tests/ -q
+
+  ha-lane:
+    # The integration on a REAL Home Assistant core, two cells: the floor
+    # hacs.json declares and the current release (spec D12). The stub lane
+    # above proves the package imports and its logic on 3.11; this lane is
+    # what the user runs — the plugin's `hass`, `mqtt_mock`, `hass_client`
+    # and `aioclient_mock` fixtures, the registries, the HTTP views, the
+    # repairs API and the blueprint helpers.
+    name: real Home Assistant (${{ matrix.cell }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: floor
+            # Home Assistant 2026.5.0, the floor in hacs.json: the plugin
+            # release that pins it (its requirements name the core version).
+            plugin: pytest-homeassistant-custom-component==0.13.329
+          - cell: current
+            # requirements_test_ha.txt pins the current release; nothing to override.
+            plugin: ''
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        # Pinned above requires-python's ceiling on purpose: Home Assistant
+        # 2026.5 and later, and the pytest plugin that wraps it, run on 3.14
+        # only (their requires-python is >=3.14), so this lane uses the
+        # interpreter the core itself needs rather than the tooling floor.
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install the real Home Assistant test lane
+        # The floor cell swaps the plugin line for the floor pin; the plugin
+        # pins its own core, pytest and friends, so one line moves the cell.
+        run: |
+          python -m pip install --upgrade pip
+          if [ -n "${{ matrix.plugin }}" ]; then
+            grep -v '^pytest-homeassistant-custom-component==' requirements_test_ha.txt > /tmp/requirements_test_ha_floor.txt
+            pip install -r /tmp/requirements_test_ha_floor.txt "${{ matrix.plugin }}"
+          else
+            pip install -r requirements_test_ha.txt
+          fi
+          python -c "import homeassistant.const as c; print('Home Assistant', c.__version__)"
+
+      - name: Pytest (real Home Assistant)
+        # Its own ini and a conftest cutoff: neither the repo-root stub
+        # conftest nor the integration's stub-lane conftest is collected.
+        run: pytest -c tests/ha/pytest.ini --confcutdir=tests/ha tests/ha -q
+
+      - name: Mypy (the integration against the installed core, 3.14)
+        # tests/ha/mypy.ini: no ignore_missing_imports — every homeassistant.*
+        # import resolves and type-checks. Once per lane, on the current cell.
+        if: matrix.cell == 'current'
+        run: mypy --config-file tests/ha/mypy.ini --python-version 3.14

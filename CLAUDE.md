@@ -46,7 +46,7 @@
     `initialism`, `aria-labelledby`. The linter's `ALLOW` list asserts it.
   - See [`AGENTS.md`](AGENTS.md) rule 3b, the canonical statement.
 
-## Generated files — THIRTY-ODD, not a handful (derive the count, never type it)
+## Generated files — FORTY-ODD, not a handful (derive the count, never type it)
 
 Committed generators whose output CI regenerates and byte-diffs. Editing a
 source without re-running the right one leaves a gate to find it, and the
@@ -58,9 +58,17 @@ failure is often nowhere near the edit: a one-word spelling fix in
 Don't try to remember the list — derive it:
 
 ```sh
-grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-z_]+\.py|node [a-zA-Z0-9_/.-]*make-[a-z-]+\.mjs" \
+grep -rhoE "python3 [a-zA-Z0-9_/.-]*gen_[a-zA-Z0-9_]+\.py|node [a-zA-Z0-9_/.-]*(gen_[a-zA-Z0-9_]+|make-[a-z-]+)\.mjs" \
   .github/workflows/*.yml | sort -u
 ```
+
+(The digit class and the `gen_*.mjs` branch are load-bearing: without them
+the recipe missed `gen_witness_page_v1.py` and every node generator here —
+`gen_figures.mjs`, `gen_device_glbs.mjs` among them. A gate whose script is
+not named `gen_*` is not found by any name pattern — `viewer/build.mjs
+--check` and `eval/datasets/sample/generate.py --check` are two — so
+`grep -rhoE "[a-zA-Z0-9_/.-]+\.(py|mjs) [^|;&]*--check"
+.github/workflows/*.yml | sort -u` is the cross-check.)
 
 The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 (any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
@@ -164,6 +172,10 @@ devices/<slug>/device.json cad.params
       (with --site it also carries the website's upstream-contract.json BACK as
        canary-local/devices/site_contract.json — the runtime paths the site fetches from
        this tree; scripts/tests/test_site_contract.py holds every one to the tree)
+  → gen_print_files.py --site <website-checkout>   (only with --site: the in-development
+       cases' print-ready STLs + print/print-files.json — version, commit, the .scad's
+       sha256, each file's sha256 — into the website; its --check and the website's
+       tests/print-files.test.mjs both fail on a case edited after its last render)
   → gen_stamp.py --check, gen_mark_svg.py --check (report-only; a STAMP_REV bump is a human's call)
   → in the website repo, after the carry: its make-*-glb.mjs (the AR models re-read cad-dims.json)
 ```

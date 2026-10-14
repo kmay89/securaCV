@@ -23,6 +23,14 @@
 // code on the manufacturer payload is strictly more reliable and is the only
 // way to hear the boards that run no GATT console at all.
 //
+// NO MANAGER UNTIL ASKED: creating a CBCentralManager is what makes iOS show
+// its Bluetooth permission alert, so this object creates none at init — the
+// first scan (after the discovery consent, FleetStore) or the first setup
+// tap does. A manager built at launch put the system alert in front of the
+// consent card that explains it, and a "Don't Allow" given with no context
+// left the new-Canary card unable to ever appear. (The watch's WristFinder
+// learned the same lesson first.)
+//
 // FOREGROUND-ONLY, BY DESIGN: an unfiltered scan with duplicates enabled does
 // not run in the background, and iOS withholds manufacturer data from
 // background scans. FleetStore stops the scan when the scene deactivates, so
@@ -53,10 +61,6 @@ final class BLEConsole: NSObject, ObservableObject {
     static let provisionServiceUUID = CBUUID(string: "8fc1cef0-b162-4401-9607-c8ac21383e90")
     static let provisionCredsUUID   = CBUUID(string: "8fc1cef3-b162-4401-9607-c8ac21383e90")
     static let provisionStateUUID   = CBUUID(string: "8fc1cef4-b162-4401-9607-c8ac21383e90")
-    /// The `canary` firmware family's status service (securacv_ble_status.h).
-    /// Known so its adverts are recognized as ours; its characteristics are not
-    /// read yet — the beacon already carries this family's state.
-    static let statusServiceUUID  = CBUUID(string: "5e63a1b0-7c3d-4f2e-8a91-0d1b2c3e4f5a")
     /// The Improv Wi-Fi setup door every Sense, Vision and WAP opens while
     /// it has no Wi-Fi of its own (firmware/common/network/improv_ble): the
     /// 128-bit service in the scan response, and its 0x4677 service data
@@ -82,8 +86,15 @@ final class BLEConsole: NSObject, ObservableObject {
     @Published private(set) var heard: [UUID: NearbyCanaries.Heard] = [:]
     @Published private(set) var poweredOn = false
     @Published private(set) var scanning = false
+    /// The radio as the setup screens need it (Model/AddCanaryFlow.swift):
+    /// off, not allowed, or able to hear — so no screen spins "Listening…"
+    /// over a radio that cannot. Read from the class-level authorization
+    /// before any manager exists (that read never prompts), then from the
+    /// manager's own state reports.
+    @Published private(set) var radio: RadioStanding = BLEConsole.standing(authorization: CBCentralManager.authorization)
 
-    private var central: CBCentralManager!
+    /// Nil until something needs the radio — see "NO MANAGER UNTIL ASKED".
+    private var central: CBCentralManager?
     private var peripherals: [UUID: CBPeripheral] = [:]
     /// Every peripheral seen recently, held so one can be connected on
     /// demand for setup (CoreBluetooth needs a strong reference to connect).
@@ -102,7 +113,40 @@ final class BLEConsole: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    /// Whether the central manager (and so the system's Bluetooth prompt)
+    /// exists yet. False from launch until a scan or a setup asks — the
+    /// guard AddCanaryFlowTests holds.
+    var hasManager: Bool { central != nil }
+
+    /// The one place a manager is born: on the first real need.
+    @discardableResult
+    private func ensureCentral() -> CBCentralManager {
+        if let central { return central }
+        let made = CBCentralManager(delegate: self, queue: .main)
+        central = made
+        return made
+    }
+
+    /// CBManagerAuthorization → the setup screens' standing, for the time
+    /// before a manager has reported a state.
+    nonisolated static func standing(authorization: CBManagerAuthorization) -> RadioStanding {
+        switch authorization {
+        case .denied, .restricted: return .denied
+        default: return .unknown
+        }
+    }
+
+    /// A manager's reported state → the setup screens' standing.
+    nonisolated static func standing(state: CBManagerState) -> RadioStanding {
+        switch state {
+        case .poweredOn: return .ready
+        case .poweredOff: return .off
+        case .unauthorized: return .denied
+        case .unsupported: return .unsupported
+        default: return .unknown          // .unknown, .resetting: a report is coming
+        }
     }
 
     /// Beacons heard recently enough to still mean something.
@@ -124,6 +168,7 @@ final class BLEConsole: NSObject, ObservableObject {
 
     func startScan() {
         wantsScan = true
+        let central = ensureCentral()     // the first call is the prompt's moment
         guard poweredOn else { return }   // resumed by centralManagerDidUpdateState
         scanning = true
         // Unfiltered: the beacon lives in manufacturer data, which no service
@@ -137,7 +182,9 @@ final class BLEConsole: NSObject, ObservableObject {
     func stopScan() {
         wantsScan = false
         scanning = false
-        central.stopScan()
+        // No manager yet means nothing was ever scanning — and stopping
+        // must never be the thing that creates one (and its prompt).
+        if let central, central.state == .poweredOn { central.stopScan() }
     }
 
     /// Drop sightings we haven't heard in a while so the fleet view can't show
@@ -167,7 +214,7 @@ final class BLEConsole: NSObject, ObservableObject {
         if peripheral.state == .connected {
             client.centralDidConnect()
         } else {
-            central.connect(peripheral)
+            ensureCentral().connect(peripheral)
         }
         return client
     }
@@ -177,7 +224,7 @@ final class BLEConsole: NSObject, ObservableObject {
         guard let client = setupClient else { return }
         setupClient = nil
         if let peripheral = seenPeripherals[client.peripheralID], peripheral.state != .disconnected {
-            central.cancelPeripheralConnection(peripheral)
+            central?.cancelPeripheralConnection(peripheral)
         }
     }
 
@@ -280,6 +327,7 @@ enum BLEProvisionOutcome: Hashable, Sendable {
 extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         poweredOn = central.state == .poweredOn
+        radio = Self.standing(state: central.state)
         if poweredOn {
             if wantsScan { startScan() }        // the radio caught up with us
         } else {

@@ -20,9 +20,12 @@
  *      get_last_decision(); wizard exposes the one-line helper that
  *      pulls that fingerprint and calls familiar::always_ignore(fp).
  *
- * This module is transport-agnostic. Phase 11 (tests) and the HTTP /
- * MQTT routing layer (in wap_server.cpp) wire the calls from the
- * outside world; here we only define the orchestration API.
+ * This module is transport-agnostic: here we only define the orchestration
+ * API. Phase 11's conformance self-test (tests.cpp) exercises it; the
+ * routes that would wire it to the outside world are NOT built yet
+ * (docs/rf_sensing_phase12_http_routes.md, a draft), so on a device
+ * nothing calls start_pairing() and the wizard stays WIZ_UNCONFIGURED
+ * (audit, 2026-10-09).
  *
  * PRIVACY NOTES
  * =============

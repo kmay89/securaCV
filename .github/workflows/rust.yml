@@ -70,6 +70,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
       uses: ./.github/actions/setup-libseccomp
+      timeout-minutes: 5
     - name: Rustfmt
       run: cargo fmt --check
     - name: Clippy
@@ -119,6 +120,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
       uses: ./.github/actions/setup-libseccomp
+      timeout-minutes: 5
     - name: Build the harness (release)
       run: cargo test --release --test bench_harness --no-run
     # The run has its own bound, apart from the compile above, so a row that
@@ -147,6 +149,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
       uses: ./.github/actions/setup-libseccomp
+      timeout-minutes: 5
     # scripts/ci/conformance.sh existed but no workflow ran it — the one
     # end-to-end gate that generates a sealed-log fixture DB and drives the
     # shipping verifier binary over it (plus the compile-fail suite that
@@ -164,6 +167,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
       uses: ./.github/actions/setup-libseccomp
+      timeout-minutes: 5
     # The adapter surface is the kernel's primary untrusted-input boundary
     # (docs/strategy/12, finding A1). Every adapter feature is off by default,
     # so without this job their tests — including the security-critical
@@ -268,6 +272,7 @@ jobs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
     - name: Install libseccomp
       uses: ./.github/actions/setup-libseccomp
+      timeout-minutes: 5
     - name: Clippy (ingest-esp32)
       run: cargo clippy --all-targets --features ingest-esp32 -- -D warnings
     - name: Clippy (adapters)
@@ -283,6 +288,18 @@ jobs:
       run: cargo test --verbose --features api-tls
     - name: Clippy (backend-tract)
       run: cargo clippy --all-targets --features backend-tract -- -D warnings
+    # The ONNX backend's tests are the evidence the docs cite for TractBackend
+    # (docs/v1-roadmap.md), and a clippy-only gate compiled them without ever
+    # running them — a box-decoding or threshold regression would have merged
+    # green. Both runs are seconds once built: the integration suite drives a
+    # 236-byte committed model (tests/fixtures/test_detector.onnx), and the
+    # unit filter covers the cfg(test) module in src/detect/backends/tract.rs.
+    - name: Test (backend-tract)
+      run: cargo test --verbose --features backend-tract --test tract_backend
+    - name: Test (backend-tract unit)
+      # Quoted: the trailing `::` in the test filter would otherwise read as
+      # a YAML mapping value and make this workflow unparseable.
+      run: "cargo test --verbose --features backend-tract --lib detect::"
     - name: Clippy (ingest-v4l2)
       run: cargo clippy --all-targets --features ingest-v4l2 -- -D warnings
     - name: Clippy (c2pa-export)

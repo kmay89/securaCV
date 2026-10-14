@@ -163,10 +163,10 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   does not build (none today: the flagship's `release_ha` is in
   `build_envs`, so the shipped image and its OTA-slot guard run on every
   PR). Envs no `flavors.json` list builds are not listed: the debug envs
-  (`*-debug`), the WAP's `mobile`, the canary's `minimal`, `standalone`,
-  `dev_ha` and `usb-onboard`, its compile-only `secure` / `secure_ha` (a
-  `firmware.yml` step, not a flavor env) and the Sentinel's window /
-  hallway / demo-head presets (door's image with other preset data).
+  (`*-debug`), the WAP's `mobile`, the canary's `minimal`, `dev_ha` and
+  `usb-onboard` and its `secure` / `secure_ha` (each compiled by a
+  compile-only `firmware.yml` step, not a flavor env) and the Sentinel's
+  window / hallway / demo-head presets (door's image with other preset data).
 - **`peripherals` come from the registry's pins header**, even for the
   `canary` and `canary-wap` trees, whose builds carry their pins in build
   flags and the sketch rather than compiling `boards/<id>/pins/pins.h`. The
@@ -223,9 +223,10 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   `board_l` / `board_w` / `pcb_t` (their comments already cite
   `brd_l("ws147")` and kin, MEASURE caveat and all — the row's `drawing` rung
   says the same). The Watch Station names `brd_l("round_disp")` for `disc_d`
-  and copies its three measured stack numbers (`disc_t`, `disp_back`,
-  `xiao_t`) — and its stand recline, `tilt`, the one non-board knob a
-  manifest owns: it retired the Lab registry's hand-typed `stand_tilt_deg`,
+  and copies its three measured stack numbers (`disc_t`, `stack_t` — the
+  whole pinned stack on the calipers, glass front to USB-shell face; the
+  socket zone the case derives from it — and `xiao_t`) — and its stand
+  recline, `tilt`, the one non-board knob a manifest owns: it retired the Lab registry's hand-typed `stand_tilt_deg`,
   so the number the Lab shows is the literal the stand is cut to. The Touch 1.69 names the `ws169` row for `pcb_w` / `pcb_h` /
   `pcb_t` and the `brd_ws169_glass_*()` facts for `glass_w` / `glass_h` —
   **crosswise**: the registry's axes follow the board's along-USB length,

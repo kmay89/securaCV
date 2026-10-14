@@ -87,8 +87,6 @@ struct HubOwnerLogin: Equatable, Sendable {
 /// What a converge run found and did — the honest breakdown behind the
 /// one question the screen asks (`ok`).
 struct HubOnboardOutcome: Equatable, Sendable {
-    /// Steps the hub reported already finished when we arrived.
-    var alreadyDone: [String] = []
     /// Steps this run completed.
     var completed: [String] = []
     /// Steps still pending after the run — a step this build doesn't know,

@@ -369,7 +369,9 @@ toolchains produce the same firmware.
 This project follows the SecuraCV firmware architecture:
 
 - **Board definitions**: `../../boards/xiao-esp32s3-sense/`
-- **Configuration**: `../../configs/canary-wap/default/`
+- **Configuration**: `arduino/canary_wap/build_config.h` (hardware target +
+  build profile). `../../configs/canary-wap/` is compiled by no build; only
+  the Lab's tooling reads it.
 - **Common modules**: `../../common/`
 - **Build environments**: `../../envs/platformio/`
 

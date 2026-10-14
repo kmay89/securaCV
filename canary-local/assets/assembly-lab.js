@@ -11,7 +11,7 @@ import { DeviceScene } from "./scene3d.js";
 import { parseSTL } from "./stl.js";
 import { parseGLB } from "./glb.js";
 import { Assembly, PARTS, M } from "./assembly.js";
-import { validateDevice, itemize, fmtDims, fmtLen, UNIT_MODES } from "./assembly-rules.js";
+import { validateDevice, itemize, fmtDims, UNIT_MODES } from "./assembly-rules.js";
 import { activeFinish } from "./finishes.js";
 
 const el = (tag, cls, text) => {

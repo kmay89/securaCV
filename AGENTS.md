@@ -208,6 +208,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_md_links.py` | Every relative link and `#anchor` in every tracked `.md` resolves — including the ~160 files outside `docs/` |
 | `scripts/lint_fleet_word.py` | A group of Canaries is a *fleet* — the banned bird-group word fails the build (rule 3, now deterministic) |
 | `scripts/lint_spelling.py` | US spellings everywhere (rule 3b); the banned forms live in its regex and nowhere else |
+| `scripts/lint_no_binaries.py` | No compiled program, object or library is tracked (ELF, Mach-O, PE, `ar`). A hand build beside its source (`g++ test_x.cpp -o test_x` in a `tests_host/`) is the usual cause: build with the Makefile, which writes to `build/` |
 | `scripts/lint_previews.py` | Every enclosure preview PNG the README, the docs or the catalogs embed exists, none on disk is unreferenced, and each has a `render.sh` recipe (CI renders with `--no-png`, so this is the only gate on them) |
 | `scripts/lint_glossary_status.py` | The glossary's device-line Status column equals the verdict `figures.json` derives (or an honest non-ladder label); a new table row needs a `ROW_MAP` entry in the same commit |
 | `scripts/lint_dictionary_sync.py` | Rust/Python/JS/firmware vocabularies match `spec/witness_dictionary.json` |
@@ -216,7 +217,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h`; every product lane resolves to one `devices/<slug>/device.json`, whose envs are real |
 | `scripts/lint_device_manifests.py` | Every `devices/<slug>/device.json` validates and its env / board / figure / flasher / emulator / CAD joins hold; every `flavors.json` build env is claimed or explained. Since wave 2 the generators read the manifests (`gen_flash.py`, `gen_figures.mjs`), so a stale join also moves a generated file; since wave 3 it also runs the `cad.params` check below |
 | `docs/hardware/enclosure/gen_cad_params.py --check` | Every manifest-owned CAD knob equals the literal in its case `.scad` (a registry reference resolved first) — in `lint.yml` for a manifest edit and in `enclosure.yml` for a `.scad` edit that bypassed the manifest; `scripts/regen_cad.py --check` runs it first and every generator downstream of it after |
-| `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
+| `scripts/lint_feature_flags.sh` | Feature-flag hygiene: every Cargo feature referenced and registered, no `FUTURE_*` transport or tamper type advertised, and every firmware `FEATURE_*` flag read by code (it runs `firmware/scripts/check_config_feature_flags.py`) |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
 | `scripts/lint_bench_rows.py` | No benchmark table the harness prints is committed to any Markdown file (rule 4; `docs/BENCHMARKS.md`) |

@@ -19,6 +19,15 @@ The rule, per target (it began life as the firmware-only button
   * source == latest, nothing changed → UP_TO_DATE (skip — this is the case
                                        that stops the button wasting compute)
   * source OLDER than latest         → BEHIND (something is wrong; say so)
+  * source newer, but a DRAFT release of exactly that version already
+    exists                           → DRAFT_PENDING (built, waiting for a
+                                       human to publish it; another build would
+                                       re-cut the same tag and spend runners)
+
+"Published" is read from git TAGS. A draft release has no tag — GitHub creates
+it when the draft is published — so drafts are passed in separately (the
+workflow lists them from the releases API) and are never mistaken for a
+release. A stale draft below the published version changes nothing.
 
 and for the un-versioned Pages target:
 
@@ -57,6 +66,7 @@ NEEDS_BUMP = "needs_bump"
 BEHIND = "behind"
 GATED = "gated"
 SKIPPED = "skipped"
+DRAFT_PENDING = "draft_pending"
 
 # Decisions that mean "start this workflow".
 ACTIONABLE = {RELEASE}
@@ -146,8 +156,12 @@ def decide(
     force: bool = False,
     gate_enabled: bool = True,
     selected: bool = True,
+    draft_pending: bool = False,
 ) -> Decision:
-    """Decide one target. Pure — every input is explicit, so it is testable."""
+    """Decide one target. Pure — every input is explicit, so it is testable.
+
+    `draft_pending`: a draft release of exactly `source_version` exists.
+    """
     name = target["name"]
     label = target.get("label", name)
     workflow = target.get("workflow")
@@ -229,6 +243,23 @@ def decide(
                 " a packaging fix is exactly what you want."
             )
         return make(RELEASE, reason, source_version)
+
+    ahead = latest_version is None or compare(source_version, latest_version) > 0
+    if draft_pending and publish and ahead:
+        # The Lab builds a DRAFT and a separate button publishes it. Until then
+        # its version is untagged, so before this branch every press re-planned
+        # it as RELEASE and dispatched the same build again — macOS and Linux
+        # runners spent re-cutting a draft that only needed publishing.
+        how = target.get("draft_publish") or "the repository's Releases page"
+        return make(
+            DRAFT_PENDING,
+            f"{source_version} is already built as a draft release "
+            f"({target['tag_prefix']}{source_version}) and is waiting to be "
+            f"published — publish it with {how}. Nothing dispatched: another "
+            f"build would re-cut the same draft. (A draft is not re-checked "
+            f"against the tree: if this target changed after the draft was "
+            f"built, use force to rebuild it before publishing.)",
+        )
 
     if latest_version is None:
         return make(
@@ -352,9 +383,11 @@ def build_plan(
     gates: dict[str, bool] | None = None,
     changed_resolver=None,
     repo_root: str = REPO_ROOT,
+    draft_tags: Iterable[str] | None = None,
 ) -> list[Decision]:
     force = force or set()
     gates = gates or {}
+    drafts = set(draft_tags or ())
     decisions = []
 
     for target in targets:
@@ -373,6 +406,11 @@ def build_plan(
 
         gate_var = target.get("gate_var")
         gate_enabled = gates.get(gate_var, False) if gate_var else True
+        draft_pending = (
+            source_version is not None
+            and bool(target.get("tag_prefix"))
+            and f"{target['tag_prefix']}{source_version}" in drafts
+        )
 
         decisions.append(
             decide(
@@ -384,6 +422,7 @@ def build_plan(
                 force=name in force or "all" in force,
                 gate_enabled=gate_enabled,
                 selected=selected,
+                draft_pending=draft_pending,
             )
         )
     return decisions
@@ -417,8 +456,9 @@ def split_names(raw: str) -> set[str]:
 def main(argv: list[str]) -> int:
     """Emit the plan as JSON.
 
-    Reads the published tag list from stdin (a JSON array) so the GitHub API
-    call stays in the workflow and this stays a pure, offline-testable function.
+    Reads the published tag list from stdin (a JSON array), and the draft
+    releases' tag names from --drafts-file (a JSON array), so the GitHub API
+    calls stay in the workflow and this stays a pure, offline-testable function.
     """
     import argparse
 
@@ -428,9 +468,22 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--only", default="", help="comma-separated target names (default: all)")
     parser.add_argument("--gates", default="{}", help="JSON object of gate var -> bool")
     parser.add_argument("--pages-since", default="", help="commit the site was last deployed from")
+    parser.add_argument(
+        "--drafts-file",
+        default="",
+        help="JSON array of the tag names of unpublished DRAFT releases (they have no git tag)",
+    )
     args = parser.parse_args(argv)
 
     published_tags = json.load(sys.stdin) if not sys.stdin.isatty() else []
+    draft_tags: list[str] = []
+    if args.drafts_file:
+        with open(args.drafts_file, encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if not isinstance(loaded, list) or not all(isinstance(t, str) for t in loaded):
+            print(f"release_plan: {args.drafts_file} is not a JSON array of tag names", file=sys.stderr)
+            return 2
+        draft_tags = loaded
     targets = load_catalog()
 
     def changed_resolver(target: dict[str, Any], latest_version: str | None) -> bool:
@@ -465,6 +518,7 @@ def main(argv: list[str]) -> int:
         only=only_names or None,
         gates=json.loads(args.gates or "{}"),
         changed_resolver=changed_resolver,
+        draft_tags=draft_tags,
     )
     json.dump([asdict(d) for d in decisions], sys.stdout, indent=2)
     sys.stdout.write("\n")

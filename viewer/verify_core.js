@@ -317,14 +317,21 @@ function serExportArtifact(a) {
 const serExportWindow = (w) =>
   `{"start_epoch_s":${serInt(w.start_epoch_s)},"end_epoch_s":${serInt(w.end_epoch_s)}}`;
 
-// `auth_mode` and `window` are optional trailing fields the Rust side skips when
-// absent (legacy receipts); serialize them only when present so both receipt
-// generations hash to the bytes the device signed.
+// `auth_mode`, `window` and `token_id` are optional trailing fields the Rust
+// side skips when absent (legacy receipts); serialize them only when present,
+// in struct order, so every receipt generation hashes to the bytes the device
+// signed. `auth_mode` is an opaque label here (`api`, `self_export`,
+// `break_glass`, `paired`, …): the viewer never interprets it, and a new
+// credential class must not break an old viewer. `token_id` (the paired
+// bearer's id, present only under `auth_mode: paired`) is LAST because it is
+// the newest field of `ExportReceipt` in src/lib.rs — the signed bytes carry
+// which credential exported, so it cannot be edited after the fact.
 function serExportReceipt(r) {
   let s = `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
     `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}`;
   if (r.auth_mode != null) s += `,"auth_mode":${serEnum(r.auth_mode)}`;
   if (r.window != null) s += `,"window":${serExportWindow(r.window)}`;
+  if (r.token_id != null) s += `,"token_id":${serStr(r.token_id)}`;
   return s + '}';
 }
 

@@ -55,7 +55,6 @@ final class WristFinder: NSObject, ObservableObject {
     private var neighborHeard: [String: (dbm: Double, at: Date)] = [:]
     private var loop: Task<Void, Never>?
     private var running = false
-    private var lastIngestedAt: Date?
 
     /// Restart the scan this often — resets CoreBluetooth's duplicate
     /// filtering so RSSI keeps flowing (see the scan-pulse note above).
@@ -83,8 +82,9 @@ final class WristFinder: NSObject, ObservableObject {
                 guard let self else { return }
                 self.tick()
                 beatsSincePulse += 1
-                // Two 0.5 s beats × 4 = the pulse cadence.
-                if beatsSincePulse >= 8 {
+                // Half-second beats, so the pulse lands every
+                // `scanPulse` seconds (the named cadence, not a literal).
+                if Double(beatsSincePulse) * 0.5 >= WristFinder.scanPulse {
                     beatsSincePulse = 0
                     self.restartScanIfReady()
                 }

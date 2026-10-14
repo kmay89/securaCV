@@ -3,14 +3,14 @@
 //
 // This is the end-to-end verification the vendored engine wants: it mounts the
 // enclosure print guide (WAP compact — committed STLs), proves the estimate
-// card renders with real numbers, exercises "watch it print", then clicks
-// "⚡ slice for exact time" and asserts the CORRECT outcome for the current
-// state of the tree:
-//   · engine vendored (assets/vendor/kiri/engine.js present) → the time tile
-//     flips to a real "sliced by Kiri:Moto" toolpath time;
-//   · engine absent → the button degrades to the honest note (enclosure-lab.js
-//     SLICER_ABSENT_NOTE: "…needs the optional slicer engine… the modeled
-//     estimate stands") and the estimate stands.
+// card renders with real numbers, exercises "watch it print", then asserts the
+// CORRECT outcome of the slice bridge for the current state of the tree:
+//   · engine vendored (assets/vendor/kiri/engine.js present) → "⚡ slice for
+//     exact time" is offered, and clicking it flips the time tile to a real
+//     "sliced by Kiri:Moto" toolpath time;
+//   · engine absent → the card offers no slice button and no sentence telling
+//     the reader to press one (a button whose only answer was "not included"
+//     was a dead end), and the estimate stands.
 // Either way: zero page errors. So this both verifies the real slice once the
 // engine lands AND pins the fail-closed contract in a real browser until then.
 //
@@ -92,7 +92,7 @@ try {
   await page.waitForSelector(".print-estimate", { timeout: 15000 });
 
   // ── the estimate card shows real, measured numbers ──
-  await page.waitForSelector(".est-slice-btn", { timeout: 15000 });
+  await page.waitForSelector(".est-totals .est-big b", { timeout: 15000 });
   const totals = await page.$$eval(".est-totals .est-big b", (bs) => bs.map((b) => b.textContent.trim()));
   if (totals.length < 4) fail("estimate totals thin: " + JSON.stringify(totals));
   const grams = totals.find((t) => /\bg$/.test(t));
@@ -110,26 +110,35 @@ try {
   await page.$eval(".print-play", (b) => b.click());  // pause — must not throw
 
   // ── the slice bridge: assert the outcome for THIS tree ──
+  // .est-slice-btn also styles the "⬇ slicer config (.ini)" download further
+  // down the card, so the slice button is the one that says what it does.
+  const SLICE = "⚡ slice for exact time";
   const timeBefore = await page.$eval(".est-totals .est-big:first-child b", (b) => b.textContent.trim());
-  await page.$eval(".est-slice-btn", (b) => b.click());
-  await page.waitForFunction(
-    () => {
-      const n = document.querySelector(".est-slice-note");
-      return n && n.textContent && n.textContent.trim() !== "" && n.textContent.trim() !== "slicing…";
-    }, null, { timeout: 40000 });
-  const note = (await page.$eval(".est-slice-note", (n) => n.textContent)).trim();
-  const timeLabel = await page.$eval(".est-totals .est-big:first-child i", (i) => i.textContent);
-
   if (engineVendored) {
+    await page.waitForFunction((t) => [...document.querySelectorAll(".est-slice-btn")]
+      .some((b) => b.textContent.trim() === t), SLICE, { timeout: 15000 });
+    await page.$$eval(".est-slice-btn", (bs, t) => bs.find((b) => b.textContent.trim() === t).click(), SLICE);
+    await page.waitForFunction(
+      () => {
+        const n = document.querySelector(".est-slice-note");
+        return n && n.textContent && n.textContent.trim() !== "" && n.textContent.trim() !== "slicing…";
+      }, null, { timeout: 40000 });
+    const note = (await page.$eval(".est-slice-note", (n) => n.textContent)).trim();
+    const timeLabel = await page.$eval(".est-totals .est-big:first-child i", (i) => i.textContent);
     if (!/kiri:moto/i.test(note) && !/sliced/i.test(timeLabel))
       fail("engine vendored but no sliced result — note: " + note + " | label: " + timeLabel);
     console.log("  engine vendored → sliced:", note);
   } else {
-    if (!/optional slicer engine.*estimate stands/i.test(note))
-      fail("engine absent but note wasn't the graceful fallback — got: " + note);
+    // The engine probe is one failed import; wait for the request that IS the
+    // probe to settle, so "no button" is the answer, not a race with it.
+    await page.waitForLoadState("networkidle", { timeout: 15000 });
+    const offered = await page.$$eval(".est-slice-btn", (bs, t) => bs.some((b) => b.textContent.trim() === t), SLICE);
+    if (offered) fail("engine absent but the card still offers " + SLICE);
+    const prov = await page.$eval(".est-prov", (p) => p.textContent);
+    if (/slice for exact time/i.test(prov)) fail("engine absent but the provenance still says to press the slice button: " + prov);
     const timeAfter = await page.$eval(".est-totals .est-big:first-child b", (b) => b.textContent.trim());
     if (timeAfter !== timeBefore) fail("estimate time changed with no engine present");
-    console.log("  engine absent → graceful fallback:", note);
+    console.log("  engine absent → no slice button; the estimate stands");
   }
 
   if (errors.length) fail("page errors:\n" + errors.join("\n"));

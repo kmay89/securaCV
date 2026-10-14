@@ -1,0 +1,20 @@
+{
+  "type": "new",
+  "before": null,
+  "after": {
+    "id": "SENTINEL_REVIEW_ID_FACE_017",
+    "camera": "front_gate",
+    "start_time": 77701402.5,
+    "end_time": null,
+    "severity": "alert",
+    "thumb_path": "SENTINEL_THUMB_PATH_FACE_017",
+    "data": {
+      "detections": ["SENTINEL_DETECTION_ID_FACE_017"],
+      "objects": ["face"],
+      "sub_labels": ["SENTINEL_FACE_NAME_FACE_ONLY_017"],
+      "zones": ["gate"],
+      "audio": [],
+      "metadata": {"title": "SENTINEL_GENAI_TITLE_FACE_017"}
+    }
+  }
+}

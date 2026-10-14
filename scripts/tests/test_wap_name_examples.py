@@ -210,9 +210,11 @@ class TheSources(unittest.TestCase):
         valid = valid_suffixes(alphabet(ino()))
         files = source_files(REPO)
         self.assertGreater(len(files), 500, "the source walk found almost nothing (git ls-files broke?)")
+        # Sweep A35 fixed three files; the third, common/encoding/cbor.h, was
+        # compiled by nothing and has since been deleted.
         for want in ("firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h",
-                     "firmware/common/encoding/cbor.h", "canary-local/tests/flash.test.js"):
-            self.assertIn(want, files, "sweep A35's three files are read")
+                     "canary-local/tests/flash.test.js"):
+            self.assertIn(want, files, "sweep A35's files are read")
         problems, used = [], {x: 0 for x in SOURCE_EXEMPT}
         for rel in files:
             try:

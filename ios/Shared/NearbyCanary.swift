@@ -8,12 +8,15 @@
 //
 // What a Canary says while its door is open (firmware/common/network/
 // improv_ble): its fleet beacon carries FLEET_BEACON_FLAG_SETUP_OPEN and a
-// local name of the form "<Family>-<4 hex>" — on a Sense or Vision the same
-// four characters as its SecuraCV-XXXX setup network; on a WAP the last four
-// hex of its key fingerprint, as its SCV-XXXX name — and its scan response carries the
-// Improv Wi-Fi service UUID with the standard's service data (state and
-// capabilities). A phone needs the UUID to be sure the device will take
-// credentials; the beacon bit alone is a hint.
+// local name of the form "<Family>-<4 chars>" — on a Sense or Vision the
+// first four characters of its device pseudonym, upper-cased (the token is
+// drawn from the 54-character no-confusion alphabet, so "Sense-K7MZ" is as
+// real as "Sense-AB12"; its SecuraCV-XXXX setup network and its mDNS host
+// name carry the same characters in their own case); on a WAP the last four
+// hex of its key fingerprint, as its SCV-XXXX name — and its scan response
+// carries the Improv Wi-Fi service UUID with the standard's service data
+// (state and capabilities). A phone needs the UUID to be sure the device
+// will take credentials; the beacon bit alone is a hint.
 
 import Foundation
 
@@ -54,16 +57,19 @@ enum NearbyCanaries {
     /// that left, or shut its door (the scan response stops coming with it).
     static let freshFor: TimeInterval = 15
 
-    /// Parse an on-air name "Sense-AB12" / "Vision-AB12" / "WAP-AB12" into
+    /// Parse an on-air name "Sense-K7MZ" / "Vision-AB12" / "WAP-AB12" into
     /// the family and the suffix. Strict: the family word must be one the
-    /// walkthrough knows, the suffix exactly four hex characters, upper case
-    /// as the firmware spells it. Anything else is not ours to interpret.
+    /// walkthrough knows, the suffix exactly four characters of 0-9 / A-Z,
+    /// upper case as the firmware spells it (a Sense or Vision upper-cases
+    /// its pseudonym, which is not hex — an earlier hex-only rule turned
+    /// nearly every real Sense into a nameless "Sense-K7MZ" with no family
+    /// and no figure). Anything else is not ours to interpret.
     static func parseName(_ name: String) -> (family: CanaryFamily, suffix: String)? {
         let parts = name.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let word = String(parts[0]), suffix = String(parts[1])
         guard suffix.count == 4,
-              suffix.allSatisfy({ ("0"..."9").contains($0) || ("A"..."F").contains($0) }) else { return nil }
+              suffix.allSatisfy({ ("0"..."9").contains($0) || ("A"..."Z").contains($0) }) else { return nil }
         let family: CanaryFamily
         switch word {
         case "Sense": family = .sense
@@ -139,5 +145,58 @@ enum NearbyCanaries {
             if a.rssiDBM != b.rssiDBM { return a.rssiDBM > b.rssiDBM }
             return a.displayName < b.displayName
         }
+    }
+
+    // MARK: - the card that comes to you
+
+    /// The signal a Canary must reach before the app offers it on its own,
+    /// AirPods-style: "close by" or nearer (the same band the card calls
+    /// "close by"), i.e. on the table next to the phone, not two rooms away.
+    static let closeEnoughDBM = -70
+
+    /// Which one Canary, if any, the app should offer by itself — the card
+    /// that slides up without being asked for. Only when exactly ONE
+    /// candidate the person has not already been offered is close enough:
+    /// two on the table is a choice, and choices belong to the list (the
+    /// inline card, where each row has its own Blink and Set up), never to a
+    /// card that guesses. Once offered — answered or waved away — a suffix
+    /// is not offered again this session; the inline card still lists it.
+    static func autoOffer(_ candidates: [NearbyCanary],
+                          alreadyOffered: Set<String>,
+                          closeEnough: Int = closeEnoughDBM) -> NearbyCanary? {
+        let close = candidates.filter { $0.rssiDBM >= closeEnough && !alreadyOffered.contains($0.suffix) }
+        return close.count == 1 ? close[0] : nil
+    }
+
+    // MARK: - is that THIS Canary?
+
+    /// Does a device seen on the network (its mDNS `host`, e.g.
+    /// "canary-vision-001-k7mzq2") belong to the Canary whose door was
+    /// heard as "Vision-K7MZ"? The firmware builds both from one pseudonym:
+    /// the host's last hyphen-separated label is its first six characters,
+    /// the on-air name's suffix its first four, upper-cased — and a
+    /// display's setup network SecuraCV-XXXX its first four as they are.
+    /// So the match is a case-insensitive prefix of the host's last label.
+    /// A host-less advert matches nothing: a family alone never proves
+    /// which unit joined (a Vision you already own is not the new one).
+    static func isSameDevice(suffix: String, host: String?) -> Bool {
+        let want = suffix.lowercased()
+        guard want.count == 4, let host, !host.isEmpty else { return false }
+        let bare = host.lowercased().hasSuffix(".local") ? String(host.lowercased().dropLast(6)) : host.lowercased()
+        guard let label = bare.split(separator: "-").last, label.count >= want.count else { return false }
+        return label.hasPrefix(want)
+    }
+
+    /// The four identity characters in a setup network's name:
+    /// "SecuraCV-aB3k" → "aB3k", and "SecuraCV-aB3k-x9" (a key that could
+    /// not be made durable) → "aB3k". Nil for anything that is not a
+    /// Canary's setup network.
+    static func suffix(ofSetupSSID ssid: String) -> String? {
+        let prefix = "SecuraCV-"
+        guard ssid.hasPrefix(prefix) else { return nil }
+        let rest = ssid.dropFirst(prefix.count)
+        guard let first = rest.split(separator: "-", omittingEmptySubsequences: false).first,
+              first.count == 4, first.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
+        return String(first)
     }
 }

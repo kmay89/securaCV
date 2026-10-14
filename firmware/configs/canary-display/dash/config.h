@@ -32,9 +32,11 @@
 #define FEATURE_BACKLIGHT_DIM       0   // CH422G backlight is ON/OFF only (no PWM)
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
-#define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
-#define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_QR_COMMISSION       1   // "add a canary" SCV1 QR minting
                                         // The surface has always compiled here
                                         // (transparency-sheet doorway); the
@@ -74,7 +76,8 @@
 // ── Nightstand wave (display_nightstand.md) — the dash is a WALL panel:
 // it gets the data lines but not the bedside behaviors (its backlight is
 // on/off only, and a hallway has no wake alarm) ──
-#define FEATURE_NIGHT_BLACKOUT      0   // dash night = dark theme + scheduled off
+// (Night here = dark theme + scheduled off, a runtime setting. The
+// FEATURE_NIGHT_BLACKOUT flag that said so gated nothing; removed 2026-10-09.)
 #define FEATURE_COMFORT_WORDS       1
 #define FEATURE_HUB_WEATHER         1
 #define FEATURE_WAKE_ALARM          0

@@ -513,16 +513,18 @@ fn free_space_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
-/// Poll whether a just-flashed hub is answering yet, so the UI can close the
-/// loop across the long silent first boot instead of abandoning the user.
-/// Returns true once the host responds with any HTTP status (HA serving a
-/// login page, a redirect, anything) — reachability is the signal, not 200.
 /// The hub address the UI hands these commands: a bare `hostname[:port]`,
 /// never a URL — and one that can only be on this network. The syntax half
 /// alone let `attacker.example` through, and `hub_onboard` posts the owner's
 /// typed credentials to whatever passes here, so the locality half is the
 /// same rule every device-facing command in fleet.rs already applies.
-fn local_hub_host(host: &str) -> Result<&str, String> {
+///
+/// It answers with the address it checked (trimmed, owned), and every caller
+/// uses that answer rather than what the UI sent: the commands hand the
+/// host to a `'static` worker thread, which cannot borrow the argument, and
+/// a caller that checked the trimmed form but connected with the untrimmed
+/// one would let the check and the connection disagree.
+fn local_hub_host(host: &str) -> Result<String, String> {
     let host = host.trim();
     if host.is_empty()
         || host.contains('/')
@@ -550,7 +552,7 @@ fn local_hub_host(host: &str) -> Result<&str, String> {
                 .to_string(),
         );
     }
-    Ok(host)
+    Ok(host.to_string())
 }
 
 /// Where the hub is in its first boot: `"offline"`, `"preparing"` or
@@ -602,7 +604,7 @@ pub async fn hub_onboard(
     username: String,
     password: String,
 ) -> Result<OnboardReport, String> {
-    local_hub_host(&host)?;
+    let host = local_hub_host(&host)?;
     tauri::async_runtime::spawn_blocking(move || {
         let log = |line: String| {
             let _ = app.emit("hub:headless-log", line);
@@ -769,7 +771,7 @@ fn hub_flash_blocking(
     let mut used_cache = false;
     let (xz_path, xz_is_temp, verified) = 'image: {
         if let Some(cp) = cached_path.as_ref().filter(|p| p.exists()) {
-            log("→ found a local copy — re-verifying it instead of downloading…".to_string());
+            log("→ found a local copy — re-checking it instead of downloading…".to_string());
             match hub_io::fetch::sha256_file(cp, cancel) {
                 // A cancel during the hash is a cancel, not a bad cache: stop
                 // cleanly and KEEP the file.
@@ -782,7 +784,8 @@ fn hub_flash_blocking(
                 Ok(sha) => {
                     match hub_core::hub_image::verify_download(&plan, &sha, published.as_deref()) {
                         Ok(v) => {
-                            log("✓ local copy verified — skipping the download".to_string());
+                            log("✓ local copy matched its checksum — skipping the download"
+                                .to_string());
                             used_cache = true;
                             break 'image (cp.clone(), false, v);
                         }
@@ -791,7 +794,7 @@ fn hub_flash_blocking(
                         Err(hub_core::hub_image::VerifyError::NoChecksumAvailable) => {
                             return Err(
                             "you're offline and this image isn't pinned yet, so the local copy \
-                             can't be verified — connect to the internet once and try again (your \
+                             can't be checked — connect to the internet once and try again (your \
                              download is kept)"
                                 .to_string(),
                         );
@@ -851,7 +854,7 @@ fn hub_flash_blocking(
         active: xz_is_temp,
     };
     log(format!(
-        "✓ image verified against {}",
+        "✓ image matched {}",
         if plan.expected_sha256.is_some() {
             "the repo-pinned checksum"
         } else {
@@ -1010,12 +1013,12 @@ fn hub_flash_blocking(
     }
     let receipt =
         hub_io::write::write_image(authz, &raw_path.path, &image_sha, cancel, &mut progress)?;
-    log("✓ written and read back — the card verifiably holds the image".to_string());
+    log("✓ written and read back — every byte on the card matches the image".to_string());
     if wifi_seeded {
         // Worth saying plainly: the settings are not a separate step that could
         // have quietly failed after the write. They were part of the image, so
         // the read-back above covers them too.
-        log("✓ your Wi-Fi is part of what was just verified on the card".to_string());
+        log("✓ your Wi-Fi is part of what was just read back from the card".to_string());
     }
 
     // 8) Offer a clean eject. Nothing depends on it — the card is complete and
@@ -1049,7 +1052,7 @@ fn hub_flash_blocking(
     // verified, so there is nothing half-written to lose.
     if let Some(ej) = eject_note.take() {
         eject_note = Some(format!(
-            "The card is finished and verified — it just wouldn't auto-eject, so eject it in your \
+            "The card is finished and read back — it just wouldn't auto-eject, so eject it in your \
              file manager before removing it. ({ej})"
         ));
     }
@@ -1217,7 +1220,7 @@ pub async fn hub_headless_setup(
     with_pihole: Option<bool>,
     with_display: Option<bool>,
 ) -> Result<HeadlessReport, String> {
-    local_hub_host(&host)?;
+    let host = local_hub_host(&host)?;
     {
         let mut busy = state.0.lock().map_err(|_| "headless state poisoned")?;
         if *busy {
@@ -1446,6 +1449,37 @@ impl Drop for CleanupPath {
     fn drop(&mut self) {
         if self.active {
             let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_hub_host;
+
+    #[test]
+    fn hub_host_answers_the_trimmed_address_it_checked() {
+        assert_eq!(
+            local_hub_host("  homeassistant.local:8123 \n").unwrap(),
+            "homeassistant.local:8123"
+        );
+        assert_eq!(local_hub_host("192.168.1.40").unwrap(), "192.168.1.40");
+        assert_eq!(local_hub_host("fe80::1").unwrap(), "fe80::1");
+    }
+
+    #[test]
+    fn hub_host_refuses_urls_and_internet_hosts() {
+        for h in [
+            "",
+            "   ",
+            "http://homeassistant.local",
+            "homeassistant.local/onboarding",
+            "a b.local",
+            "attacker.example",
+            "attacker.example:8123",
+            "8.8.8.8",
+        ] {
+            assert!(local_hub_host(h).is_err(), "{h:?} should be refused");
         }
     }
 }

@@ -6,7 +6,8 @@ has been bench-tested on hardware yet.** The radio, the iOS pairing sheet's
 timing on NimBLE 1.4.x and the BOOT button on each board are the bench items
 ([the checklist](#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 The flagship `firmware/canary` build is a **follow-up**, not part of this
-change. The displays keep their glass QR and open no door.
+change (tracked as F251 in the
+[sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The displays keep their glass QR and open no door.
 
 **Canonical statements this page restates, never overrides:** the wire and
 the door rules are the header comment of
@@ -470,7 +471,8 @@ after it left the card on the newcomer). The profile swap and the
 
 **The flagship `firmware/canary` build.** Not in this change. Its
 `securacv_network` keeps the SoftAP wizard and the BOOT-tap receipt; the door
-and the claim are a follow-up (`claim_ticket.h` says so in its header). The
+and the claim are a follow-up (`claim_ticket.h` says so in its header;
+tracked as F251 in the [sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The
 iOS name grammar already accepts a `Canary-XXXX` name and treats it as a
 WAP-class device, so the app needs no change when it lands.
 
@@ -483,54 +485,96 @@ scan does read `FLEET_BEACON_FLAG_SETUP_OPEN` from its siblings' beacons
 
 ## 6. The iOS flow
 
-The pure policy is `ios/Shared/` (Foundation only, tested); the glue is the
-app's `Transport/` and `Security/`.
+The pure policy is `ios/Shared/` and `ios/Sources/SecuraCV/Model/`
+(Foundation only, tested); the glue is the app's `Transport/` and
+`Security/`. The bar is AirPods: bring a powered-on Canary near the phone →
+one card slides up → one tap → Wi-Fi asked for at most once → a success
+card that names this device.
 
+0. **No prompt before its reason.** `BLEConsole` creates no
+   `CBCentralManager` until the first scan or setup tap — creating one is
+   what raises iOS's Bluetooth alert — and the scan starts only after the
+   discovery consent. On a fresh install Today itself asks ("Find my
+   Canary", `FirstRunCard`), so iOS's Bluetooth and Local Network prompts
+   follow the person's own tap.
 1. **Hear it.** `BLEConsole` collects, per peripheral, the beacon (with its
    setup bit), the local name and the scan response's Improv UUID + service
    data. `NearbyCanaries.candidates` decides what qualifies: heard within
    15 s, **and** the Improv service with a state that accepts credentials
    (Authorized or Provisioning) — or, for a sighting whose service data was
    not caught this time, the beacon's setup bit. The name grammar is strict
-   (`Sense-AB12`, `Vision-AB12`, `WAP-AB12`, four upper-case hex). A device
-   that is unambiguously one already paired is not "new"; a dismissed suffix
-   stays quiet.
-2. **The card.** "A new Canary is nearby" — on Today, on Fleet (comb and
-   list), and as the first step of the Set up walkthrough for the three
-   families (`SetupGuide.hasBluetoothDoor`). Strongest signal first.
-3. **Tap → connect → pick → type once.** `ImprovClient` connects, discovers
-   the service, subscribes to state / error / result, reads the state, asks
-   `GET_WIFI_NETWORKS` and shows the list the Canary sent. The person picks a
-   network and types its password once.
-4. **The pairing sheet.** The first write to the command characteristic
-   needs an encrypted link, so iOS shows its one-tap pairing sheet;
-   CoreBluetooth pairs and retries the write on its own. Nothing is bonded,
-   so the next Canary shows the sheet again — that is the design, and the
-   screen says so.
-5. **The Canary's own verdict.** The app waits on the state and error
-   characteristics: Provisioned, or `UnableToConnect` with the message in the
-   Canary's terms ("check the password"). `NotAuthorized` reads "This Canary
-   already has Wi-Fi and isn't accepting a new network. Tap its button to
-   open it up, or use its setup network."
-6. **Remember the Wi-Fi — only after it worked.** `HouseholdWiFi` is written
+   (`Sense-K7MZ`, `Vision-K7MZ`, `WAP-AB12`: four upper-case letters or
+   digits — a Sense or Vision upper-cases its pseudonym, which is drawn from
+   the no-confusion alphabet, not hex; a WAP's are hex). A device that is
+   unambiguously one already paired is not "new"; a dismissed suffix stays
+   quiet.
+2. **The card comes to you.** When exactly one candidate is "close by"
+   (−70 dBm or stronger) and has not been offered this session
+   (`NearbyCanaries.autoOffer`), one card slides up over whatever screen is
+   showing (`NearbyOfferOverlay`): the device's figure, its name,
+   **Continue**, **Not now**. Two on the table stay a choice in the inline
+   card — on Today, Fleet (comb and list), the "+" sheet and the first
+   section of the Set up walkthrough, which listens before it asks which
+   family it is (the advert already says). Strongest signal first.
+3. **Tap → connect → the pairing sheet → pick.** `ImprovClient` connects,
+   discovers the service, subscribes to state / error / result, reads the
+   state, and asks `GET_WIFI_NETWORKS`. That first write to the command
+   characteristic needs an encrypted link, so iOS shows its one-tap pairing
+   sheet *now* — the screen says "Tap Pair when iOS asks" at this step, and
+   a declined pairing is named (`ImprovClient.pairingDeclined`) instead of
+   showing as an empty list. CoreBluetooth pairs and retries the write on
+   its own. Nothing is bonded, so the next Canary shows the sheet again —
+   that is the design. The person picks from the list the Canary sent; the
+   remembered household Wi-Fi is preselected when it is in that list.
+   Before sending, the likely failure is named: a network not in the
+   Canary's list (2.4 GHz only), a password under 8 characters.
+4. **The Canary's own verdict.** The app waits on the state and error
+   characteristics: Provisioned, or `UnableToConnect` with both real causes
+   (the password, or a network the board cannot see). `NotAuthorized`
+   reads "This Canary isn't accepting a new network right now…" with the
+   way back in (a BOOT tap on a Sense or Vision, a power cycle on a new
+   one).
+5. **Remember the Wi-Fi — only after it worked.** `HouseholdWiFi` is written
    to the **device-only Keychain** (`ThisDeviceOnly`; never iCloud Keychain,
    never CloudKit) only with the toggle on and only after the Canary itself
-   said it joined (`shouldRemember(toggleOn:joined:ssid:)`). "Forget" on the
-   Set up screen clears it. The second Canary is two taps.
-7. **A WAP: the claim and the receipt.** `MagicPairPlan` sequences the rest:
+   said it joined (`shouldRemember(toggleOn:joined:ssid:)`). Every Wi-Fi
+   form opens with it (the card and the setup network), "Update fleet
+   Wi-Fi" replaces it once a Canary proved the new password, "Forget" on
+   the Set up screen clears it. The second Canary is two taps.
+6. **A WAP: the claim and the receipt.** `MagicPairPlan` sequences the rest:
    read the CLAIM characteristic over the same link, then, on the home LAN,
    `GET` the receipt at `claim_url` (the `.local` name; `sta_ip` as the
    fallback), pinning `tls_cert_fp` when present. The receipt lands in
    `DeviceStore` and the WAP is **paired**.
+7. **The success card names this unit.** "<title> is on <network>", then
+   the network watch ticks only the device whose mDNS host's last label
+   starts with the same characters as its advert name or its setup network
+   (`NearbyCanaries.isSameDevice`) — never any device of the same family —
+   and ends in words after 90 s rather than spinning.
 
 Fallbacks, each one named on screen: no card → the setup network (the key
-the Flasher printed) or a display's glass QR; "not accepting" → tap BOOT, or
-power-cycle; a `403` on the claim (expired, burned, or the phone is not on
-the device's network) → tap BOOT and **Add from receipt**.
+the Flasher printed — the phone asks the portal's `GET /scan` for the
+Canary's own network list), a display's glass QR (the camera is asked for
+at the tap; a good scan starts the join), or a WAP's own setup page;
+"not accepting" → tap BOOT, or power-cycle; a radio that is off or not
+allowed → the reason and **Open Settings**, never a spinner. On a WAP's
+claim: nothing answered (the phone off Wi-Fi, or the `.local` name not yet
+settled) → the claim is unspent, so **Try again** while it lives (180 s);
+a `403` or any other answer → the device's row under **Ready to pair** on
+the Fleet tab, which takes its recovery kit (the receipt its own page saves
+after a BOOT tap — its setup-network address moved onto the address the
+WAP answers at now, the pin still its own) or a fresh setup. The app has
+no BOOT-tap pairing over the LAN: a receipt served on a BOOT tap names the
+SoftAP address, and an installed WAP speaks https with no pin the phone
+could hold it to before the first dial.
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
-`MagicPairPlanTests` (the sequence and its fallbacks), `NearbyCanaryTests`
-(which sightings qualify), `SetupGuideTests` (the words the screen shows).
+`MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),
+`NearbyCanaryTests` (which sightings qualify, which one is offered, which
+unit joined), `SetupGuideTests` (the words the screen shows, twenty words
+up front), `SetupPortalTests` (the scan list and the next step for every
+verdict), `AddCanaryFlowTests` (no prompt at launch, the first-run card,
+the radio and camera words).
 
 ---
 
@@ -598,6 +642,13 @@ cannot speak to.
 - [ ] The first write to `...8003` raises the iOS pairing sheet; one tap
       pairs; the write lands. **On NimBLE 1.4.x (Vision) the sheet's timing
       is the open question** — confirm the retried write is not refused.
+- [ ] Decline (or ignore) the pairing sheet at the network scan: the card
+      says pairing was declined and offers a typed name — never a silently
+      empty list — and the next Pair tap lets the join through.
+- [ ] A fresh install launches with no Bluetooth alert; the alert appears
+      only after "Find my Canary" on Today, and the card slides up by itself
+      within seconds of a Canary powering on on the table (and not for one
+      in the next room — the −70 dBm band).
 - [ ] A write without encryption (a client that declines to pair) is
       refused by the stack **and** by the handler.
 - [ ] The join succeeds with the right password; the state reads
@@ -675,7 +726,18 @@ cannot speak to.
       paired-and-unambiguous exclusion with two devices sharing a suffix.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
-- [ ] The `403`-on-claim path lands on BOOT tap + Add from receipt.
+- [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,
+      and its recovery kit (saved before it joined) pairs it there.
+- [ ] With the phone on cellular at the claim, the card names it and Try
+      again pairs once the phone is back on the home Wi-Fi (inside 180 s).
+- [ ] With an older Vision already on the network, the success card does
+      not tick it for a new Vision; only the new unit's host is ticked.
+- [ ] Bluetooth off / Bluetooth denied / Local Network denied: each setup
+      screen names the cause (and offers Settings where the fix is there)
+      instead of "Listening…".
+- [ ] On the Sense / Vision walkthrough, the hub login copied on the
+      iPhone pastes into the Flasher's MQTT fields on a Mac over Universal
+      Clipboard, and is gone from the clipboard after its two minutes.
 
 ---
 

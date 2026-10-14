@@ -21,9 +21,9 @@
 // Settings), posts the home Wi-Fi, and watches /status until the device
 // says it is across.
 //
-// canary-wap is the exception: its own wizard lives at /companion and its
-// preferred path is the bonded Bluetooth provisioning service the app
-// already speaks (BLEConsole.writeWiFiCredentials); SetupGuide says so.
+// canary-wap is the exception: its own wizard lives at /companion and
+// speaks its own routes, so the walkthrough explains it and the person
+// drives it; its one-tap path is the Bluetooth setup door (SetupGuide).
 
 import Foundation
 
@@ -70,6 +70,83 @@ enum SetupPortal {
             return (false, "The Canary's answer wasn't readable.")
         }
         return ((v["ok"] as? Bool) ?? false, v["reason"] as? String)
+    }
+
+    // MARK: - the networks the Canary itself can see
+
+    /// One row of `GET /scan`: what the Canary's own radio heard. A network
+    /// missing from this list is one the Canary cannot join, whatever the
+    /// phone sees (these boards are 2.4 GHz only).
+    struct Network: Equatable, Hashable, Sendable {
+        var ssid: String
+        var rssi: Int
+        var secure: Bool
+    }
+
+    /// `{"networks":[{"ssid","rssi","secure"}], …}` → the list, strongest
+    /// first, one row per name; `{"scanning":true}` → still sweeping (ask
+    /// again in a moment). Nil for anything unreadable. Rows with an empty
+    /// name (hidden networks) are dropped — there is nothing to pick.
+    static func parseScan(_ data: Data) -> (networks: [Network], scanning: Bool)? {
+        guard let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if (v["scanning"] as? Bool) == true { return ([], true) }
+        guard let rows = v["networks"] as? [[String: Any]] else { return nil }
+        var best: [String: Network] = [:]
+        for row in rows {
+            guard let ssid = row["ssid"] as? String, !ssid.isEmpty else { continue }
+            let rssi = (row["rssi"] as? NSNumber)?.intValue ?? -100
+            let secure = (row["secure"] as? Bool) ?? true
+            if let seen = best[ssid], seen.rssi >= rssi { continue }
+            best[ssid] = Network(ssid: ssid, rssi: rssi, secure: secure)
+        }
+        let sorted = best.values.sorted { $0.rssi != $1.rssi ? $0.rssi > $1.rssi : $0.ssid < $1.ssid }
+        return (sorted, false)
+    }
+
+    /// Which network to preselect: the remembered household Wi-Fi when the
+    /// Canary can see it, else the strongest it heard, else none (the
+    /// person types a name).
+    static func preselect(_ networks: [Network], remembered: String?) -> String? {
+        if let remembered, networks.contains(where: { $0.ssid == remembered }) { return remembered }
+        return networks.first?.ssid
+    }
+
+    // MARK: - saying what went wrong, and what to do
+
+    /// The firmware's join verdicts are short labels ("Wrong password",
+    /// "Network not found", "No address from the router", "Couldn't
+    /// connect" — firmware/common/network/wifi_join_policy.h). Its own
+    /// portal page adds a tip to each (setup_portal.cpp `tip()`); this is
+    /// that tip, so the phone never shows a bare label with no next step.
+    static func advice(for reason: String) -> String {
+        let r = reason.trimmingCharacters(in: CharacterSet(charactersIn: ". \n"))
+        let lower = r.lowercased()
+        let tip: String
+        if lower.contains("password") {
+            tip = "check for typos; it's case-sensitive"
+        } else if lower.contains("not found") {
+            tip = "this Canary only joins 2.4 GHz Wi-Fi, so a 5 GHz-only network is invisible to it"
+        } else if lower.contains("connect") || lower.contains("address") {
+            tip = "move it closer to your router and try again"
+        } else {
+            return r.isEmpty ? "The Canary couldn't join." : r + "."
+        }
+        return r + " — " + tip + "."
+    }
+
+    /// Before anything is sent: is the name one the Canary said it cannot
+    /// see? Nil when it can, or when no list came back to judge by.
+    static func notListedHint(ssid: String, listed: [String]) -> String? {
+        let name = ssid.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !listed.isEmpty, !listed.contains(name) else { return nil }
+        return "This Canary can't see \(name) — it only joins 2.4 GHz Wi-Fi. Pick one from its list, or move it closer to your router."
+    }
+
+    /// Before anything is sent: a WPA password shorter than 8 characters
+    /// can never work, so say so instead of letting the Canary find out.
+    static func passwordHint(_ password: String, networkIsOpen: Bool) -> String? {
+        guard !networkIsOpen, !password.isEmpty, password.count < 8 else { return nil }
+        return "A Wi-Fi password is at least 8 characters."
     }
 
     /// Where the device stands with the join, from `/status`.

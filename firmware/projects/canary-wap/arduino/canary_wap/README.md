@@ -28,29 +28,30 @@ This is the **complete** Arduino IDE version of the Canary WAP firmware — the 
 
 ## Arduino IDE Setup
 
-### 0. Stage environment-specific sources (required before first compile)
+### 0. Staging (optional)
 
 The CSI library files (`csi_*.{h,cpp}`, `core_*.{h,cpp}`,
 `anomaly_baseline.*`, `meta_daily_summary.*`) and the header-only
-`device_pseudonym.h` are committed alongside the sketch, so a fresh GitHub zip
-download compiles without any staging step for the library itself. Their
-canonical copies live at `firmware/common/csi/src/` and
-`firmware/common/identity/`; a CI guard (`firmware/scripts/check_csi_sync.sh`)
-keeps the committed copies in sync with the canonical sources.
+`device_pseudonym.h` are committed alongside the sketch, so a fresh clone or
+GitHub zip download compiles with no staging step: CI's `arduino-cli compile`
+builds the committed tree exactly as cloned. Their canonical copies live at
+`firmware/common/csi/src/` and `firmware/common/identity/`; a CI guard
+(`firmware/scripts/check_csi_sync.sh`) keeps the committed copies in sync with
+the canonical sources.
 
-You still need to stage the environment-specific files (board pins, default
-config, secrets) once before the first build:
+`./setup.sh arduino` refreshes those committed copies from their canonical
+sources, which matters only if you edited one:
 
 ```bash
 cd firmware/projects/canary-wap
 ./setup.sh arduino
 ```
 
-If you skip this, the build fails with errors about `pins.h` / `config.h`.
-Re-run the script any time the shared board/config sources change. (The
-script also creates a `secrets.h`, but nothing reads it — canary-wap takes no
-compile-time credentials; Wi-Fi is provisioned over the captive portal and
-the AP password and API token are derived per device. See
+The sketch takes no board-pin or config header from elsewhere in the repo:
+its pins are in `canary_wap.ino` and its feature flags in `build_config.h`.
+(The script also creates a `secrets.h`, but nothing reads it — canary-wap
+takes no compile-time credentials; Wi-Fi is provisioned over the captive
+portal and the AP password and API token are derived per device. See
 `secrets/secrets.example.h`.)
 
 ### 1. Board Installation
@@ -126,7 +127,7 @@ Edit `build_config.h` to select your build profile:
 
 ```cpp
 // Uncomment exactly ONE:
-// #define BUILD_PROFILE_MINIMAL   // Crypto + GPS only (~45s build)
+// #define BUILD_PROFILE_MINIMAL   // Crypto + GPS only (~45s build; built by no CI job, see below)
 // #define BUILD_PROFILE_DEV       // + WiFi + HTTP + SD (~90s build)
 #define BUILD_PROFILE_FULL         // All features (~150s build)
 ```
@@ -134,7 +135,9 @@ Edit `build_config.h` to select your build profile:
 ### 6. Build Tips
 
 - Enable **"Aggressively cache compiled core"** in File > Preferences
-- Use MINIMAL profile during development iteration
+- Use the DEV profile during development iteration (no camera or mesh). MINIMAL
+  is faster still, but no CI job compiles it and `build_config.h` warns that it
+  may not build: the sketch fences the HTTP server's startup, not its handlers.
 - Don't close Arduino IDE between builds (keeps cache warm)
 
 ### 7. Troubleshooting

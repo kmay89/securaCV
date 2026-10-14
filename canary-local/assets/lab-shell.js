@@ -22,9 +22,8 @@ const ICONS = {
   prove: '<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/>',
 };
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
-const CHEV = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 
-let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map();
+let M, ROUTE = [], BY_SLUG = new Map(), PAGE_ROUTE = new Map(), SITE_BY_SLUG = new Map();
 let depthSel = {}; // benchSlug -> depth index
 
 /* ---- tiny hyperscript ---- */
@@ -55,8 +54,15 @@ function markVisited(id) { const s = visited(); s.add(id); try { localStorage.se
 
 /* ---- model ---- */
 function flatten() {
-  ROUTE = []; BY_SLUG = new Map(); PAGE_ROUTE = new Map();
+  ROUTE = []; BY_SLUG = new Map(); PAGE_ROUTE = new Map(); SITE_BY_SLUG = new Map();
   for (const stage of M.stages) {
+    // A stage's securacv.com pages that carry a slug are destinations too: a
+    // bench that moved to the website (showroom → see-it-in-3d) still has its
+    // old Lab slug, redirected onto the page that took its place. Only a
+    // site-relative href qualifies, so leaving can only ever go to SITE_ORIGIN.
+    for (const x of stage.site || []) {
+      if (x.slug && typeof x.href === "string" && x.href.startsWith("/")) SITE_BY_SLUG.set(x.slug, x);
+    }
     const list = stage.tracks
       ? stage.tracks.flatMap(t => t.benches.map(b => ({ stage, track: t, bench: b })))
       : (stage.benches || []).map(b => ({ stage, bench: b }));
@@ -99,18 +105,62 @@ const depthTitle = (d) => d.label + (d.desc ? "\n" + d.desc : "");
 // Array.includes() — a sanitizer CodeQL recognizes — guarantees no untrusted
 // value ever reaches navigation. Anything unknown becomes the overview.
 let VALID_IDS = [];
+const redirected = (raw) =>
+  M.redirects && Object.prototype.hasOwnProperty.call(M.redirects, raw) ? M.redirects[raw] : raw;
 function routeId(raw) {
-  const id = M.redirects && Object.prototype.hasOwnProperty.call(M.redirects, raw) ? M.redirects[raw] : raw;
+  const id = redirected(raw);
   return VALID_IDS.includes(id) ? id : "overview";
+}
+
+// The other kind of destination a hash can name: a page that lives on
+// securacv.com now. Several of the manifest's redirects point at one, and they
+// used to fall through routeId() to the Overview, under a site map promising
+// that old bookmarks "do not rot". Returns the manifest's own entry, never
+// anything built from the hash, so the URL followed is the manifest's.
+function siteRoute(raw) {
+  return SITE_BY_SLUG.get(redirected(raw)) || null;
+}
+
+// Go there. On the website the Lab and the site share the browser, so the old
+// address simply continues on (replace() for an arrival by hash, so Back skips
+// the lab.html#showroom that would only forward again). In the app the window
+// IS the Lab: the page opens in the OS browser, the way lab-nav.js sends every
+// off-origin link, and a hash arrival settles on the Overview behind it.
+function goToSite(entry, arrival) {
+  const url = SITE_ORIGIN + entry.href;
+  if (!IN_APP) {
+    if (arrival) location.replace(url); else location.assign(url);
+    return;
+  }
+  const opener = window.__TAURI__.opener;
+  if (opener && opener.openUrl) opener.openUrl(url);
+  if (arrival) {
+    history.replaceState(null, "", "#overview");
+    navigate("overview", false);
+  }
+}
+
+// Every arrival by hash: the first load, an edited address, Back and Forward.
+function arrive() {
+  const raw = location.hash.slice(1);
+  const site = siteRoute(raw);
+  if (site) goToSite(site, true);
+  else navigate(routeId(raw), false);
 }
 
 function navigate(id, push = true) {
   // `id` is always an allowlisted route (from routeId) or a literal bench slug
   // from a click handler. `view` is one of these literals and `hash` below is a
   // literal or a manifest slug — so nothing untrusted is echoed into location.
+  // Every non-bench id VALID_IDS admits needs its branch here, or it renders
+  // the Overview under its own name: "family" had none, so the sidebar's
+  // "SecuraCV everywhere" and site-map.html's lab.html#family both showed the
+  // Overview. tests/lab_shell.test.js holds this chain to VALID_IDS and to
+  // renderContent()'s branches.
   const view =
     id === "start" ? "start" :
     id === "all" ? "all" :
+    id === "family" ? "family" :
     id === "settings" ? "settings" :
     BY_SLUG.has(id) ? "bench" : "overview";
   const entry = view === "bench" ? BY_SLUG.get(id) : null;
@@ -390,8 +440,13 @@ function followFramed(href) {
   // The "‹ The Lab" back-link every bench carries. Inside the frame it loads a
   // second complete Lab shell into the first; up here it is one route change,
   // and lab.html#slug lands on that bench. routeId() is the allowlist, so an
-  // unknown slug becomes the overview rather than reaching navigate() raw.
-  if (file === "lab.html") { navigate(routeId(url.hash.slice(1))); return true; }
+  // unknown slug becomes the overview rather than reaching navigate() raw; a
+  // slug that lives on securacv.com now leaves for it, and this bench stays.
+  if (file === "lab.html") {
+    const site = siteRoute(url.hash.slice(1));
+    if (site) goToSite(site, false); else navigate(routeId(url.hash.slice(1)));
+    return true;
+  }
   const r = PAGE_ROUTE.get(file);
   if (!r) return false;
   if (r.depth != null) depthSel[r.id] = r.depth;
@@ -568,8 +623,8 @@ async function boot() {
   root.removeAttribute("data-loading");
   const shell = h("div", { class: "shell" }, h("div", { class: "main" }));
   root.replaceChildren(shell);
-  navigate(routeId(location.hash.slice(1)), false);
-  window.addEventListener("hashchange", () => navigate(routeId(location.hash.slice(1)), false));
+  arrive();
+  window.addEventListener("hashchange", arrive);
   // The embedded isometric room (Overview) posts a slug when a station's tool is
   // tapped; route it through the same allowlist sanitizer before navigating.
   window.addEventListener("message", (e) => {

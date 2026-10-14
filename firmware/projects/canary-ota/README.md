@@ -20,6 +20,12 @@
 > used to ship devices. The Wi-Fi credentials in `sdkconfig.defaults` are
 > the labeled `YOUR_WIFI_SSID` placeholders a demo user edits; nothing
 > ships them.
+>
+> **No CI job compiles this project** (its ESP-IDF toolchain, `platform_ota_idf`,
+> is used by nothing else), so treat it as a sample that may need fixing
+> before it builds. Its settings are the `platformio.ini` `-D` flags and
+> `SECURACV_OTA_CONFIG_DEFAULT` (`securacv_ota.h`); the `menuconfig` entries
+> in `components/securacv_ota/Kconfig` are read by nothing, and say so.
 
 Phase 1 implementation of the Over-The-Air (OTA) firmware update system for the SecuraCV Canary privacy witness device — kept as the standalone study/demo harness described in the note above.
 

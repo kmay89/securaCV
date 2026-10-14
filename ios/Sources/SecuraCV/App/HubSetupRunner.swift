@@ -205,11 +205,14 @@ final class HubSetupRunner: ObservableObject {
         let observed = HubProvisionPlan.observe(
             repositories: await api.supervisorGET("store/repositories", session: session),
             addons: await api.supervisorGET("addons", session: session),
-            mosquittoInfo: await api.supervisorGET("addons/\(HubProvisionPlan.mosquittoSlug)/info", session: session),
-            kernelInfo: await api.supervisorGET("addons/\(HubProvisionPlan.kernelSlug)/info", session: session),
+            mosquittoInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.mosquittoSlug), session: session),
+            kernelInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.kernelSlug), session: session),
             configEntries: await api.coreGET("config/config_entries/entry", session: session))
         let plan = HubProvisionPlan.plan(observed: observed)
         steps = plan
+        if HubProvisionPlan.todo(plan).isEmpty {
+            note("Everything this phone sets up is already in place — nothing to redo.")
+        }
         for step in plan {
             for a in step.actions {
                 stepState[a.id] = a.already ? .skipped(a.reason) : .planned
@@ -233,26 +236,39 @@ final class HubSetupRunner: ObservableObject {
         return true
     }
 
+    /// Unreachable while HubProvisionPlanTests holds every Supervisor
+    /// action to a path — said plainly rather than force-unwrapped.
+    private static let noPath = "This build has no Supervisor path for that step."
+
     private func perform(_ action: HubProvisionAction, api: HubAPI, session: HubSession) async -> StepState {
+        // Every Supervisor call takes its path from HubProvisionPlan's one
+        // table (supervisorPath / infoPath / restartPath), so the paths the
+        // tests pin are the paths this runner calls — they used to be typed
+        // twice, and the tests checked a copy nothing used.
+        let path = HubProvisionPlan.supervisorPath(for: action)
         do {
             switch action {
             case .registerRepository(let url):
-                try await api.supervisorPOST("store/repositories", body: ["repository": url], session: session)
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, body: ["repository": url], session: session)
                 return .done
-            case .installAddon(let slug, _):
-                try await api.supervisorPOST("store/addons/\(slug)/install", session: session, timeout: 900)
+            case .installAddon:
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, session: session, timeout: 900)
                 return .done
-            case .startAddon(let slug, _):
-                try await api.supervisorPOST("addons/\(slug)/start", session: session, timeout: 300)
+            case .startAddon:
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, session: session, timeout: 300)
                 return .done
             case .setKernelMode(let mode):
-                var options = await api.supervisorGET("addons/\(HubProvisionPlan.kernelSlug)/info", session: session)
+                guard let path else { return .failed(Self.noPath) }
+                var options = await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.kernelSlug), session: session)
                     .flatMap(HubProvisionPlan.options(in:)) ?? [:]
                 options["mode"] = mode
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.kernelSlug)/options",
-                                             body: ["options": options], session: session)
+                try await api.supervisorPOST(path, body: ["options": options], session: session)
                 return .done
             case .addBrokerLogin(let username):
+                guard let path else { return .failed(Self.noPath) }
                 // Keep a password this phone already minted (a re-run must
                 // not lock out Canaries flashed with the first one); mint
                 // one only when none exists.
@@ -265,14 +281,14 @@ final class HubSetupRunner: ObservableObject {
                     }
                     password = minted
                 }
-                var options = await api.supervisorGET("addons/\(HubProvisionPlan.mosquittoSlug)/info", session: session)
+                var options = await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.mosquittoSlug), session: session)
                     .flatMap(HubProvisionPlan.options(in:)) ?? [:]
                 let current = (options["logins"] as? [[String: Any]]) ?? []
                 options["logins"] = HubProvisionPlan.loginsAppending(username: username, password: password, to: current)
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.mosquittoSlug)/options",
-                                             body: ["options": options], session: session)
+                try await api.supervisorPOST(path, body: ["options": options], session: session)
                 // The broker reads `logins` at start, so it must cycle.
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.mosquittoSlug)/restart", session: session, timeout: 120)
+                try await api.supervisorPOST(HubProvisionPlan.restartPath(slug: HubProvisionPlan.mosquittoSlug),
+                                             session: session, timeout: 120)
                 try HubSecretStore.set(.init(username: username, password: password))
                 return .done
             case .connectMQTT:

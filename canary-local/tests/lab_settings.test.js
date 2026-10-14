@@ -185,7 +185,9 @@ test("the menu bar companion notifies from Rust, in coarse words, and says so ho
     "the notification plugin must be initialized on the desktop builder");
   const handlers = [...libRs.matchAll(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
   assert.strictEqual(handlers.length, 2, "expected a desktop and a non-desktop invoke_handler");
-  for (const cmd of ["companion_set_bases", "companion_snapshot"]) {
+  // (companion_snapshot is gone: no Lab page ever read it, and the tray is the
+  // companion's only display. lab_bundle.test.js refuses an uncalled command.)
+  for (const cmd of ["companion_set_bases"]) {
     assert.ok(handlers[0].includes(`companion::${cmd}`), `the desktop handler must register companion::${cmd}`);
     assert.ok(!handlers[1].includes(cmd), `the mobile handler must not register ${cmd}`);
   }

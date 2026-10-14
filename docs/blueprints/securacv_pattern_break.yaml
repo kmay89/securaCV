@@ -1,0 +1,207 @@
+# SecuraCV — Quiet-hours activity and silent-zone notices (blueprint)
+#
+# Import this blueprint via:
+#   Settings > Automations > Blueprints > Import Blueprint
+#   URL: https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_pattern_break.yaml
+#
+# Two notices from one witness-event entity, replacing the DEVICE_ID /
+# YOUR_PHONE "pattern break" automation template that used to live in
+# homeassistant/automations/:
+#   A) Quiet-hours activity — a witness event is sealed inside the window you
+#      call quiet (default 22:00–06:00). This is a window YOU set, not a learned
+#      pattern; the old template's "hours with historically zero events" was
+#      never computed by anything.
+#   B) Silent zone — during the hours you expect activity (default
+#      07:00–22:00), nothing has been witnessed for longer than the threshold
+#      (default 4 h). A camera that went dark, a blocked view, or a quiet day:
+#      the notice says it cannot tell which.
+#
+# Works with the integration's per-camera witness event entity
+# (event.securacv_<camera>) or a last-event sensor (sensor.securacv_last_event,
+# sensor.securacv_canary_<id>_last_event): both carry the zone and the event's
+# label, and both change on every sealed event.
+
+blueprint:
+  name: "SecuraCV — Quiet-hours activity & silent zone"
+  description: >-
+    Notify when a SecuraCV witness event is sealed inside your quiet window,
+    and when a zone you expect to be active has witnessed nothing for too
+    long. Reads the coarse claim the event carries — the label and the zone —
+    never who or exactly when.
+  domain: automation
+  author: "ERRERlabs"
+  homeassistant:
+    min_version: "2026.5.0"
+  source_url: "https://github.com/kmay89/securaCV/blob/main/docs/blueprints/securacv_pattern_break.yaml"
+
+  input:
+    event_entity:
+      name: "Witness event entity"
+      description: >-
+        The SecuraCV witness event for a camera (event.securacv_<camera>) or a
+        last-event sensor (sensor.securacv_last_event, or a Canary's).
+      selector:
+        entity:
+          filter:
+            - integration: securacv
+
+    online_entity:
+      name: "Online sensor (optional)"
+      description: >-
+        The kernel's (binary_sensor.securacv_kernel_online) or the Canary's
+        online sensor. When set, the silent-zone notice is skipped while the
+        witness itself is offline — that is a different problem with its own
+        alert. Leave empty to skip the check.
+      selector:
+        entity:
+          domain: binary_sensor
+      default: []
+
+    quiet_start:
+      name: "Quiet hours start"
+      selector:
+        time:
+      default: "22:00:00"
+
+    quiet_end:
+      name: "Quiet hours end"
+      selector:
+        time:
+      default: "06:00:00"
+
+    active_start:
+      name: "Active hours start"
+      description: "The silent-zone notice only runs between these hours."
+      selector:
+        time:
+      default: "07:00:00"
+
+    active_end:
+      name: "Active hours end"
+      selector:
+        time:
+      default: "22:00:00"
+
+    silent_hours:
+      name: "Silent for"
+      description: "How many hours without a witnessed event, during active hours, before the notice."
+      selector:
+        number:
+          min: 1
+          max: 48
+          unit_of_measurement: h
+      default: 4
+
+    notify_device:
+      name: "Phone (Home Assistant Companion app)"
+      description: >-
+        The device that runs the Companion app. Leave it unset only if you fill
+        in a notification service below.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+      default: false
+
+    notify_service:
+      name: "Notification service (optional override)"
+      description: "Any notify service to use instead of the phone above. Leave empty to notify the phone."
+      selector:
+        text:
+      default: ""
+
+mode: single
+max_exceeded: silent
+
+variables:
+  event_entity: !input event_entity
+  online_entity: !input online_entity
+  quiet_start: !input quiet_start
+  quiet_end: !input quiet_end
+  active_start: !input active_start
+  active_end: !input active_end
+  silent_hours: !input silent_hours
+  notify_device: !input notify_device
+  notify_service: !input notify_service
+  notify_target: >-
+    {{ notify_service if notify_service else 'notify.mobile_app_' ~ (device_attr(notify_device, 'name') | slugify) }}
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  # Lexicographic HH:MM:SS compare handles windows that wrap past midnight.
+  in_quiet: >-
+    {% set s, e, n = quiet_start, quiet_end, now_hms %}
+    {{ (s <= n <= e) if s <= e else (n >= s or n <= e) }}
+  in_active: >-
+    {% set s, e, n = active_start, active_end, now_hms %}
+    {{ (s <= n <= e) if s <= e else (n >= s or n <= e) }}
+  online: >-
+    {{ online_entity in [none, '', [], 'unknown', 'unavailable'] or is_state(online_entity, 'on') }}
+  zone: >-
+    {{ (state_attr(event_entity, 'zone') or (state_attr(event_entity, 'zone_id') or '') | replace('zone:', '')) or 'the zone' }}
+  label: >-
+    {{ state_attr(event_entity, 'friendly_event') or state_attr(event_entity, 'event_type') or states(event_entity) }}
+  # The event entity's state is the time of its last event; a sensor's
+  # last_changed is the same clock. Either way: when did it last change.
+  last_event_age_hours: >-
+    {% set st = expand(event_entity) | first %}
+    {{ ((now() - st.last_changed).total_seconds() / 3600) | round(1) if st is defined and st.state not in ['unknown', 'unavailable'] else none }}
+
+trigger:
+  - platform: state
+    entity_id: !input event_entity
+    id: activity
+  - platform: time_pattern
+    hours: "/1"
+    id: silent
+
+condition:
+  - condition: or
+    conditions:
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: activity
+          - condition: template
+            value_template: >-
+              {{ in_quiet | bool and trigger.to_state is not none
+                 and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: silent
+          - condition: template
+            value_template: >-
+              {{ in_active | bool and online | bool
+                 and last_event_age_hours is number
+                 and last_event_age_hours > (silent_hours | float) }}
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: activity
+        sequence:
+          - service: "{{ notify_target }}"
+            data:
+              title: "SecuraCV — activity in quiet hours"
+              message: >-
+                {{ label }} in {{ zone }} at {{ now().strftime('%H:%M') }} — inside your quiet window
+                ({{ quiet_start[:5] }}–{{ quiet_end[:5] }}). The log keeps the 10-minute window, not the second.
+              data:
+                tag: "securacv-quiet-hours-{{ event_entity }}"
+                group: "securacv-alerts"
+                push:
+                  interruption-level: time-sensitive
+      - conditions:
+          - condition: trigger
+            id: silent
+        sequence:
+          - service: "{{ notify_target }}"
+            data:
+              title: "SecuraCV — silent zone"
+              message: >-
+                Nothing witnessed in {{ zone }} for {{ last_event_age_hours }} h during active hours.
+                A quiet day, a blocked view or a camera that stopped reporting look the same from here —
+                check Frigate and the SecuraCV dashboard's Frigate link.
+              data:
+                tag: "securacv-silent-zone-{{ event_entity }}"
+                group: "securacv-alerts"

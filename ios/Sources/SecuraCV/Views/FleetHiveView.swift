@@ -55,7 +55,7 @@ struct FleetHiveView: View {
     /// Warmth, not pressure: name what's here, hint at the empty cell.
     private var growthLine: String {
         switch witnesses.count {
-        case 0: return "Your hive is ready — plug in a Canary and it appears here."
+        case 0: return "Your hive is ready — power on a new Canary near this phone and it appears here."
         case 1: return "One Canary on watch. There's a cell waiting for its first fleetmate."
         default: return "\(witnesses.count) Canaries watching together."
         }
@@ -135,9 +135,12 @@ struct AddHiveCell: View {
     }
 }
 
-/// The "+" cell's sheet: Canaries seen on the network, ready to pair — or
-/// the honest words when there are none yet. Pairing itself is the same
-/// PairView as everywhere.
+/// The "+" cell's sheet: a brand-new Canary asking for Wi-Fi nearby (the
+/// card), then the WAPs on the network ready to pair — or the honest words
+/// when there are none yet. Pairing itself is the same PairView as
+/// everywhere; the rows are FleetStore.discoveredRows, the same filter the
+/// list uses (it used to compare an mDNS host with a device id here, and so
+/// listed devices already in the fleet).
 struct AddCanarySheet: View {
     @EnvironmentObject var store: FleetStore
     @Binding var pairing: DiscoveredCanary?
@@ -147,41 +150,43 @@ struct AddCanarySheet: View {
     var body: some View {
         NavigationStack {
             List {
-                let unpaired = store.discovery.found.filter { d in
-                    !store.devices.devices.contains { $0.id == d.id }
+                let pairable = store.discoveredRows.pairable
+                if !store.nearbyCanaries.isEmpty {
+                    Section {
+                        NearbyCanaryCard()
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
                 if store.discoveryConsent != true {
                     Section {
                         VStack(alignment: .leading, spacing: Theme.s) {
                             Label("Discovery is off", systemImage: "antenna.radiowaves.left.and.right.slash")
                                 .font(.headline)
-                            Text("SecuraCV only looks for Canaries on your network after you say so. Enable discovery and any Canary on this Wi-Fi appears here by itself.")
+                            Text("SecuraCV only listens for Canaries after you say so. Turn it on and a new one near this phone shows up here within seconds.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                            Button("Enable discovery") { store.setDiscoveryConsent(true) }
+                            Button("Find my Canary") { store.setDiscoveryConsent(true) }
                                 .buttonStyle(.borderedProminent)
                         }
                         .padding(.vertical, Theme.xs)
                     }
-                } else if unpaired.isEmpty {
+                } else if pairable.isEmpty && store.nearbyCanaries.isEmpty {
                     Section {
                         VStack(alignment: .leading, spacing: Theme.s) {
-                            Label("No new Canaries in sight", systemImage: "wifi.slash")
+                            Label("No new Canaries in sight", systemImage: "dot.radiowaves.left.and.right")
                                 .font(.headline)
-                            Text("Plug a Canary into power on this Wi-Fi and it appears here by itself — no accounts, no setup codes.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text("A brand-new Canary has no Wi-Fi yet — the walkthrough gives it yours.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            Button("Set up a new Canary") { showingSetup = true }
+                            ListeningRow(text: "Power on a new Canary near this phone — it shows up here within seconds.",
+                                         advice: store.bluetoothAdvice)
+                            Button("Other ways to add one") { showingSetup = true }
                                 .buttonStyle(.bordered)
                         }
                         .padding(.vertical, Theme.xs)
                     }
-                } else {
-                    Section("Found on your network") {
-                        ForEach(unpaired) { d in
+                }
+                if !pairable.isEmpty {
+                    Section("Ready to pair") {
+                        ForEach(pairable) { d in
                             Button {
                                 dismiss()
                                 // Hand off to FleetView's pairing sheet after

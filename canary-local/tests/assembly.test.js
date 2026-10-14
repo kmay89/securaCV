@@ -221,13 +221,13 @@ test("caliper readout: mm · decimal inch · nearest-1/64 fraction", async () =>
 
 // ── physical sanity for the two display builds (same spirit as the WAP
 // pins): geometry from canary_watch_station.scad / canary_dash_display.scad
-test("canary-display-watch: seated in the stand's cradle divot (scad v0.2 echo)", () => {
+test("canary-display-watch: seated in the stand's open saddle (scad v0.3 echo)", () => {
   const a = asm.devices["canary-display-watch"];
   const by = Object.fromEntries(a.parts.map((p) => [p.id, p]));
-  // drum back cap at the scad's own DRUM SEAT echo: [0, 3.03, 27.36] rot [65,0,0]
-  by.drum.seated.pos.forEach((v, i) => assert.ok(Math.abs(v - [0, 3.03, 27.36][i]) < 0.01, "drum at the DRUM SEAT"));
+  // drum back cap at the scad's own DRUM SEAT echo: [0, 9.679, 30.436] rot [65,0,0]
+  by.drum.seated.pos.forEach((v, i) => assert.ok(Math.abs(v - [0, 9.679, 30.436][i]) < 0.01, "drum at the DRUM SEAT"));
   assert.deepStrictEqual(by.drum.seated.rot, [65, 0, 0],
-    "drum axis reclined 25° from vertical, USB azimuth (270) into the chin slot — no 180 flip");
+    "drum axis reclined 25° from vertical, USB azimuth (270) into the chin pocket — no 180 flip");
   // the XIAO pins into the display's BACK socket: component/USB side toward the
   // drum floor (the 180 in rx: 65+180 = 245), USB end spun to the slot azimuth
   assert.deepStrictEqual(by.xiao.seated.rot, [245, 0, 270], "XIAO upside-down in the socket, USB at 270");
@@ -235,10 +235,10 @@ test("canary-display-watch: seated in the stand's cradle divot (scad v0.2 echo)"
     "XIAO offset toward the USB slot azimuth (the socket rows sit off-center on the disc)");
   // display: glass along the drum axis, socket-row axis spun onto the USB azimuth
   assert.deepStrictEqual(by.display.seated.rot, [155, 270, 0]);
-  // bezel flips from its face-down print (65 + 180) and SNAPS — no fasteners in v0.2
+  // bezel flips from its face-down print (65 + 180) and SNAPS — no fasteners since v0.2
   assert.strictEqual(by.bezel.seated.rot[0], 245);
   assert.ok(!a.parts.some((p) => p.part === "screw"),
-    "v0.2 drum is fastener-free (snap bezel) — the Ø43.9 back-parts envelope leaves no room for posts");
+    "the drum is fastener-free (snap bezel) — the display's back parts fill the bore wall to wall, no room for posts");
   // bezel snaps last and outermost
   const maxOther = Math.max(...a.parts.filter((p) => p.id !== "bezel").map((p) => p.step));
   assert.ok(by.bezel.step >= maxOther, "the snap bezel closes the build");

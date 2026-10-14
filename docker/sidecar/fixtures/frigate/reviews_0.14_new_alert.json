@@ -1,0 +1,33 @@
+{
+  "type": "new",
+  "before": {
+    "id": "SENTINEL_BEFORE_REVIEW_ID_014",
+    "camera": "front_door",
+    "start_time": 77701001.5,
+    "end_time": null,
+    "severity": "detection",
+    "thumb_path": "SENTINEL_BEFORE_THUMB_PATH_014",
+    "data": {
+      "detections": ["SENTINEL_BEFORE_DETECTION_ID_014"],
+      "objects": ["person"],
+      "sub_labels": ["SENTINEL_BEFORE_SUB_LABEL_014"],
+      "zones": [],
+      "audio": ["SENTINEL_BEFORE_AUDIO_014"]
+    }
+  },
+  "after": {
+    "id": "SENTINEL_REVIEW_ID_014",
+    "camera": "front_door",
+    "start_time": 77701002.5,
+    "end_time": null,
+    "severity": "alert",
+    "thumb_path": "SENTINEL_THUMB_PATH_014",
+    "data": {
+      "detections": ["SENTINEL_DETECTION_ID_014_A", "SENTINEL_DETECTION_ID_014_B"],
+      "objects": ["person"],
+      "sub_labels": ["SENTINEL_SUB_LABEL_014"],
+      "zones": ["porch"],
+      "audio": ["SENTINEL_AUDIO_014"]
+    }
+  }
+}

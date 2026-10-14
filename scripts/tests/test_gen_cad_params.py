@@ -18,7 +18,7 @@ What is pinned and why:
     output, so a same-named local of a column-0 module can never be hit
     (parse_scad stops at the first `^module`);
   • the board registry (canary_board_lib.scad) parses completely — nine rows,
-    twenty facts — and a row that drifts from the literal shape is a failure,
+    twenty-six facts — and a row that drifts from the literal shape is a failure,
     never a shorter registry; each reference form resolves; an unknown row,
     dim or fact fails naming the manifest and the library;
   • a reference is declared only where the knob's help comment already cites
@@ -29,7 +29,9 @@ What is pinned and why:
     moves exactly the lines that reference it — every case that names the
     row moves (the three ws147 cases, since the C6 joined) and no other —
     the OV5647's nine camera facts joined later, named by both Vision-build
-    cases (the case and its doorbell), so REFS lists them for each;
+    cases (the case and its doorbell), so REFS lists them for each; the
+    XIAO's four switch facts (v0.9 doorbell) are cited by comment only, so
+    they are unreferenced, like the Sense camera's footprint;
   • the one display case no manifest can own yet is refused by construction,
     not by omission: the 7" frame's panel-library reads. The C6's `model`
     ternaries became the 1.47 literals they always evaluated to and the
@@ -203,8 +205,9 @@ NUMBERS = {
     "canary_vision_enclosure.scad": ["xiao_below", "vm_front_h", "board_clear", "stack_h"],
     "canary_sense_enclosure.scad": ["xiao_below", "radar_front_h", "ant_h", "pcb_t", "board_clear",
                                     "xiao_usb_z"],
-    # measured stack numbers with no registry home
-    "canary_watch_station.scad": ["disc_t", "disp_back", "xiao_t", "tilt"],
+    # measured stack numbers with no registry home — stack_t is the whole
+    # pinned stack on the calipers; the socket zone (disp_back) is derived
+    "canary_watch_station.scad": ["disc_t", "stack_t", "xiao_t", "tilt"],
     # the 4.3 panel has no registry row: MEASURE placeholders, owned as the
     # numbers they are today — documented, not blessed
     "canary_dash_display.scad": ["panel_l", "panel_w", "glass_t", "stack_t"],
@@ -427,7 +430,7 @@ class CommittedTreeIsAFixedPoint(unittest.TestCase):
 
 
 class BoardRegistry(unittest.TestCase):
-    def test_committed_lib_parses_nine_rows_and_twenty_facts(self):
+    def test_committed_lib_parses_nine_rows_and_twenty_six_facts(self):
         reg = gcp.parse_board_registry()
         self.assertEqual(reg.path, LIB)
         self.assertEqual(list(reg.rows), ["xiao", "grove_v2", "ov5647", "mr60", "dk_c3",
@@ -450,12 +453,18 @@ class BoardRegistry(unittest.TestCase):
                                            # the XIAO ESP32-S3 Sense camera, off Seeed's model
                                            "brd_xiao_sense_cam_h", "brd_xiao_sense_cam_dx",
                                            "brd_xiao_sense_cam_dy", "brd_xiao_sense_cam_fp",
+                                           # the XIAO ESP32-S3's R and B switches, off the vendor GLB (v0.9 doorbell)
+                                           "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
+                                           "brd_xiao_usb_overhang",
                                            # the OV5647-62 camera, off the vendor CAD
                                            "brd_ov5647_hole_x", "brd_ov5647_hole_y",
                                            "brd_ov5647_grid_dy", "brd_ov5647_lens_dx",
                                            "brd_ov5647_lens_dy", "brd_ov5647_lens_h",
                                            "brd_ov5647_holder_h", "brd_ov5647_holder_sq",
-                                           "brd_ov5647_barrel_d"])
+                                           "brd_ov5647_barrel_d",
+                                           # the Round Display's socket and active area, off
+                                           # the vendor GLB and the GC9A01 datasheet
+                                           "brd_round_disp_socket_x", "brd_round_disp_active_d"])
         self.assertEqual((reg.facts["brd_ov5647_grid_dy"].value, reg.facts["brd_ov5647_lens_dy"].value,
                           reg.facts["brd_ov5647_barrel_d"].value), (4.05, -1.7, 7.0))
         self.assertEqual((reg.facts["brd_xiao_sense_cam_h"].value,
@@ -691,8 +700,14 @@ class ManifestsCarryTheJoin(unittest.TestCase):
         # the Sense camera's footprint is read by the WAP's fixed arithmetic
         # (its window assert), not owned as a knob
         self.assertEqual(rows, ["heltec_v3"])
+        # (the watch's socket offset and active area the same way: its slot,
+        # end-stop and aperture asserts read them, no knob owns them)
         self.assertEqual(facts, ["brd_stack_sock_unmeasured", "brd_ws147_brass_c3",
-                                 "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp"])
+                                 "brd_ws147_brass_c6", "brd_xiao_sense_cam_fp",
+                                 # the doorbell cites the XIAO's switch facts by comment (v0.9)
+                                 "brd_xiao_btn_dx", "brd_xiao_btn_dy", "brd_xiao_btn_h",
+                                 "brd_xiao_usb_overhang",
+                                 "brd_round_disp_socket_x", "brd_round_disp_active_d"])
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(gcp.main(["--check"]), 0)
         text = out.getvalue()

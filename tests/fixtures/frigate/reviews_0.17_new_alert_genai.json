@@ -1,0 +1,55 @@
+{
+  "type": "new",
+  "before": {
+    "id": "SENTINEL_BEFORE_REVIEW_ID_017",
+    "camera": "front_door",
+    "start_time": 7771201.5,
+    "end_time": null,
+    "severity": "detection",
+    "thumb_path": "SENTINEL_BEFORE_THUMB_PATH_017",
+    "data": {
+      "detections": ["SENTINEL_BEFORE_DETECTION_ID_017"],
+      "objects": ["person"],
+      "sub_labels": [],
+      "zones": [],
+      "audio": [],
+      "metadata": {"title": "SENTINEL_BEFORE_GENAI_TITLE_017"}
+    },
+    "metadata": {"title": "SENTINEL_BEFORE_GENAI_TITLE_TOP_017"},
+    "description": "SENTINEL_BEFORE_GENAI_DESCRIPTION_017",
+    "title": "SENTINEL_BEFORE_GENAI_TITLE_ITEM_017",
+    "scene": "SENTINEL_BEFORE_GENAI_SCENE_017",
+    "other_concerns": ["SENTINEL_BEFORE_GENAI_CONCERN_017"]
+  },
+  "after": {
+    "id": "SENTINEL_REVIEW_ID_017",
+    "camera": "front_door",
+    "start_time": 7771202.5,
+    "end_time": null,
+    "severity": "alert",
+    "thumb_path": "SENTINEL_THUMB_PATH_017",
+    "data": {
+      "detections": ["SENTINEL_DETECTION_ID_017"],
+      "objects": ["face", "person"],
+      "sub_labels": ["SENTINEL_FACE_NAME_017"],
+      "zones": ["porch"],
+      "audio": ["SENTINEL_AUDIO_017"],
+      "metadata": {
+        "title": "SENTINEL_GENAI_TITLE_017",
+        "description": "SENTINEL_GENAI_DESCRIPTION_017",
+        "scene": "SENTINEL_GENAI_SCENE_017",
+        "other_concerns": ["SENTINEL_GENAI_CONCERN_017"],
+        "potential_threat_level": 7770001
+      }
+    },
+    "metadata": {
+      "title": "SENTINEL_GENAI_TITLE_TOP_017",
+      "description": "SENTINEL_GENAI_DESCRIPTION_TOP_017"
+    },
+    "description": "SENTINEL_GENAI_DESCRIPTION_ITEM_017",
+    "title": "SENTINEL_GENAI_TITLE_ITEM_017",
+    "scene": "SENTINEL_GENAI_SCENE_ITEM_017",
+    "other_concerns": ["SENTINEL_GENAI_CONCERN_ITEM_017"],
+    "SENTINEL_UNKNOWN_REVIEW_KEY_017": "SENTINEL_UNKNOWN_REVIEW_VALUE_017"
+  }
+}

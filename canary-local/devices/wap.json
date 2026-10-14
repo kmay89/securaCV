@@ -10,8 +10,8 @@
     "model": "Seeed XIAO ESP32-S3 Sense",
     "board_short": "XIAO ESP32S3",
     "board_id": "seeed_xiao_esp32s3_sense",
-    "fw_version": "2.4.15-wap",
-    "fw_train": "2.4.15",
+    "fw_version": "2.4.16-wap",
+    "fw_train": "2.4.16",
     "ota_product": "securacv-canary-wap",
     "senses": [
       "WiFi CSI (radio field)",
@@ -309,7 +309,7 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary WAP",
-      "              d b          v2.4.15-wap",
+      "              d b          v2.4.16-wap",
       "",
       "    This is your privacy witness device.",
       "    It creates tamper-proof records of what it",
@@ -419,7 +419,7 @@
       },
       {
         "tag": "[OK]",
-        "text": "Pull-OTA engine ready (product=securacv-canary-wap, version=2.4.15-wap)"
+        "text": "Pull-OTA engine ready (product=securacv-canary-wap, version=2.4.16-wap)"
       }
     ],
     "ready": [
@@ -503,14 +503,14 @@
         "suffix": "health",
         "retained": true,
         "cadence": "~60 s",
-        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.15-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
+        "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":204800,\"uptime\":312,\"firmware_version\":\"2.4.16-wap\",\"public_key\":\"\u2026\",\"event_id_space_low\":false,\"sd_mounted\":true}",
         "note": "event_id_space_low turns true once the event-id allocator nears the end of its space (sweep F82); Home Assistant shows it as the Event ID Space Low binary sensor"
       },
       {
         "suffix": "egress",
         "retained": true,
         "cadence": "~60 s, after health",
-        "payload": "{\"firmware_version\":\"2.4.15-wap\",\"uptime\":86400,\"csi_event_egress\":{\"dropped\":0,\"held_dropped\":0,\"ambient_dropped\":0,\"unsent_dropped\":0,\"planner\":{\"live\":12,\"held\":0,\"queued\":3,\"replayed\":0,\"skipped\":0,\"untrusted\":0,\"unsendable\":0,\"truncated_unsent\":0,\"read_giveups\":0}}}",
+        "payload": "{\"firmware_version\":\"2.4.16-wap\",\"uptime\":86400,\"csi_event_egress\":{\"dropped\":0,\"held_dropped\":0,\"ambient_dropped\":0,\"unsent_dropped\":0,\"planner\":{\"live\":12,\"held\":0,\"queued\":3,\"replayed\":0,\"skipped\":0,\"untrusted\":0,\"unsendable\":0,\"truncated_unsent\":0,\"read_giveups\":0}}}",
         "note": "what the committed-event egress dropped and sent since boot (sweep F149), named by the firmware_version and uptime of the health publish it follows; its own topic because the health body has no room; Home Assistant shows it as the Health sensor's csi_event_egress while it pairs with the current health"
       },
       {
@@ -556,7 +556,7 @@
         "suffix": "update/state",
         "retained": true,
         "cadence": "on OTA state change",
-        "payload": "{\"installed_version\":\"2.4.15-wap\",\"latest_version\":\"2.4.15-wap\",\"in_progress\":false,\"update_percentage\":null}"
+        "payload": "{\"installed_version\":\"2.4.16-wap\",\"latest_version\":\"2.4.16-wap\",\"in_progress\":false,\"update_percentage\":null}"
       },
       {
         "suffix": "update/auto",
@@ -595,7 +595,7 @@
         "name": "Canary <id>",
         "mf": "SecuraCV",
         "mdl": "Canary WAP",
-        "sw": "2.4.15-wap"
+        "sw": "2.4.16-wap"
       },
       "entities": [
         {
