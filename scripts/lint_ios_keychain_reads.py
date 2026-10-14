@@ -23,20 +23,25 @@ reader may sit only
     a `begin()` the view's `.task` awaits), or
   * inside an effect closure: `.task`, `.onAppear`, `.onDisappear`,
     `.onChange`, `.onReceive`, `.refreshable`, `.onSubmit`, `.onOpenURL`,
-    `.onTapGesture`, `.fileImporter`, `.fileExporter`, `Task { }`, or a
-    `Button`'s action closure (not its `label:`, and not the trailing
-    closure of `Button(action:)`, which is the label).
+    `.onTapGesture`, `.onLongPressGesture`, `.fileImporter`,
+    `.fileExporter`, or a `Button`'s action closure (not its `label:`, and
+    not the trailing closure of `Button(action:)`, which is the label).
 
-Anywhere else in a view — a `@State` or stored property's initial value, an
-`init`, `body`, a computed property, a `some View` function, a container's
-or `label:`/`footer:` closure — it is on the render path and is refused.
+A `Task { }` is neither: it runs where it is made, so the brace around it
+decides (one made in a `.task` or an action is fine; one made in `body` is
+made on every render). Anywhere else in a view — a `@State` or stored
+property's initial value, an `init`, `body`, a computed property, a
+`some View` function, a container's, a view modifier's (`.overlay`,
+`.sheet`, `.toolbar`, ...) or a `label:`/`footer:` closure — it is on the
+render path and is refused.
 
 THE READERS are derived, not listed: every `static func` in `ios/Sources`
 or `ios/Shared` whose body calls `Keychain.get(` or `SecItemCopyMatching(`,
 plus every `static func` that calls one of those (`Self.f(`, `Type.f(` or a
-bare `f(` of its own type), to a fixed point. Today that is `Keychain.get`,
-`HouseholdWiFiStore.load`, `HubSecretStore.brokerLogin`, `TokenStore.token`
-and `PinnedKeyStore.key` / `.pin`; the test pins that the set is not empty.
+bare `f(` of its own type), to a fixed point. A clean run prints the set it
+derived; the test pins that the setup screens' readers are in it, and the run
+fails when it derives nothing beyond `Keychain.get` (a derivation that broke
+would otherwise check nothing and pass).
 
 WHAT IT DOES NOT SEE (a heuristic over masked source, not a Swift parser):
 a reader reached through an instance (`KeychainSlots().get`), through a
@@ -72,8 +77,10 @@ _EFFECT_MODIFIERS = (
     "onSubmit", "onOpenURL", "onTapGesture", "onLongPressGesture",
     "fileImporter", "fileExporter",
 )
+# `Task` is not here: a Task runs where it is made, so the brace around it
+# decides (classify() walks past it to the next one out).
 EFFECT_HEADER = re.compile(
-    r"(?:\.(?:%s)\b(?:\s*\(.*\))?|\bTask\b(?:\s*\(.*\))?|\bButton\b(?:\s*\(.*\))?)"
+    r"(?:\.(?:%s)\b(?:\s*\(.*\))?|\bButton\b(?:\s*\(.*\))?)"
     r"\s*(?:\{\s*)?$" % "|".join(_EFFECT_MODIFIERS)
 )
 CLOSURE_SIGNATURE = re.compile(r"^\s*(?:@\w+\s+)?(?:\[[^\]]*\]\s*)?(?:[\w\s,()]*\bin\b)?")

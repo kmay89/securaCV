@@ -290,9 +290,11 @@ jobs:
         # body on every change the fleet publishes — during a scan, once per
         # Bluetooth sighting — and a Keychain read is a synchronous trip to
         # securityd on the main thread. The 2026-10 review moved one such
-        # read out of a @State initializer and left three more behind (sweep
-        # A75). The readers are derived from the sources; the tests in
-        # scripts/tests/test_lint_ios_keychain_reads.py pin every verdict.
+        # read out of a @State initializer and left four behind: the same
+        # read in SetupView's initializer and the hub login in three bodies
+        # (sweep A75). The readers are derived from the sources; the tests in
+        # scripts/tests/test_lint_ios_keychain_reads.py pin the verdicts
+        # they list (a source heuristic: its blind spots are in the script).
         run: python3 scripts/lint_ios_keychain_reads.py
       - name: App icon catalogs are complete (stdlib PNG header check)
         # Runs on the macOS job too, but that one is gated behind
