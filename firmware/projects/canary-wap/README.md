@@ -348,7 +348,14 @@ password is write-only, but the bridge sends it to whatever broker is
 saved, so a `POST /api/mqtt/config` that keeps the stored password and
 moves it (a new host, port, user, TLS mode or CA) takes the same two; a
 landing-page session gets `403 password_needed` and saves nothing, and
-typing the password again saves the change.
+typing the password again saves the change. That covers the save, not the
+link: the landing's pair token alone moves the WAP's Wi-Fi, and a landing
+session can make the bridge reconnect (`/api/mqtt/test`, `/api/reboot`), so
+a host that answers for the broker's address, on a network it runs or on
+yours, still gets the stored broker password on a plain link. Only a
+CA-verified broker link keeps it; Scenario 12 in
+[`THREAT_MODEL.md`](../../../docs/security/THREAT_MODEL.md) lists these
+roads.
 
 ```json
 {

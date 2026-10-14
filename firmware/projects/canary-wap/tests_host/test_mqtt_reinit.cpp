@@ -342,6 +342,13 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
 // either origin, `owner` one a BOOT tap or a setup-door claim minted. A
 // landing-page session is any && !owner. Every test starts as the owner
 // (boot_with_broker()), which is what "a session" could do before F289.
+// These are stand-ins: this suite drives the real csi_mqtt.cpp handler, not
+// the real store. The store, the cookie read and the two hooks' real
+// definitions (csi_integration.cpp, cut verbatim) are test_receipt_session.cpp's;
+// the link between them (api_auth.h's weak cv_session_validate_owner, defined
+// at file scope in csi_integration.cpp) is proven by reading and by CI's
+// firmware link, not by a host test, and a mismatch there would refuse the
+// owner, not let a landing session in.
 namespace session {
 bool any = true;
 bool owner = true;
