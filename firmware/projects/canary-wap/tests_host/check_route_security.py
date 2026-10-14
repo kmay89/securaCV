@@ -9,10 +9,15 @@ endpoint (or a resurrected one: three /api/ble routes shipped without
 auth and were only unreachable because they overflowed the handler
 table) cannot silently widen the unauthenticated surface. A route whose
 handler is a lambda fails: the check reads gates by handler name. So does a
-route registered in a shape the table does not read (fields assigned one by
-one, a positional initializer, an array): every httpd_register_uri_handler()
-names an `httpd_uri_t name = { .uri = "...", .method = ..., .handler = ... };`
-and every register_api_handler() names its uri as a literal.
+route registered in a shape the table does not read. Registrations are read
+per function: every httpd_uri_t is an `httpd_uri_t name = { .uri = "...",
+.method = HTTP_X, .handler = name };` inside a function, every
+httpd_register_uri_handler() is a call `(server, &name)` after that
+initializer in the same function, and the name appears nowhere else in that
+function. Fields assigned one by one or after the initializer, a positional
+initializer, an array, an initializer at file scope or in another function, a
+copy or a pointer each fail. Every register_api_handler() is a call that
+names its uri as a literal, and the helper itself has the modules' body.
 
 It also holds the routes that answer a credential (sweep F289). The
 landing page at / mints a session for any caller that reaches the device,
@@ -1544,7 +1549,6 @@ def function_body(source: str, name: str):
     return source[m.start():i]
 
 
-_URI_DECL = re.compile(r"httpd_uri_t\s+(\w+)\s*=\s*\{(.*?)\}\s*;", re.S)
 _REG_CALL = re.compile(
     r'register_api_handler\s*\(\s*server\s*,\s*"([^"]+)"\s*,\s*'
     r"HTTP_(\w+)\s*,\s*([A-Za-z_][\w:<>]*)")
@@ -1553,42 +1557,124 @@ _UNNAMED_REG = re.compile(
     r"HTTP_(\w+)\s*,\s*(?=[^\s\w])")
 
 
+# The module helper register_api_handler(), exactly as the modules write it
+# (whitespace folded): its calls are read as routes instead of its body. A
+# function of that name with any other body is held like any other.
+_REG_HELPER_BODY = ("httpd_uri_t route = { .uri = uri, .method = method, .handler = handler, "
+                    ".user_ctx = nullptr }; httpd_register_uri_handler(server, &route);")
+# What the route table reads of an initializer: the uri a literal, the
+# method an HTTP_ name, the handler a name, each once.
+_ROUTE_FIELDS = {"uri": r'"[^"\\]+"', "method": r"HTTP_\w+", "handler": r"[A-Za-z_][\w:<>]*"}
+_ROUTE_INIT = re.compile(r"httpd_uri_t\s+(\w+)\s*=\s*\{")
+
+
+def _route_fields(text: str, blanked: str, open_: int, close: int):
+    """The designated fields of the initializer whose braces sit at open_
+    and close ({field: [values]}, values from `text`), or None when a piece
+    is not `.field = value` (a positional initializer)."""
+    fields, start, depth = {}, open_ + 1, 0
+    for j in range(open_ + 1, close + 1):
+        c = blanked[j] if j < close else ","
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            piece = text[start:j].strip()
+            start = j + 1
+            if not piece and j == close:
+                continue  # a trailing comma
+            m = re.fullmatch(r"\.\s*(\w+)\s*=\s*(.+)", piece, re.S)
+            if not m:
+                return None
+            fields.setdefault(m.group(1), []).append(m.group(2).strip())
+    return fields
+
+
 def registration_problems(sources: dict) -> list:
-    """Every route registration is one the route table reads: an
-    httpd_register_uri_handler() of an `httpd_uri_t NAME = { .uri = "...",
-    .method = ..., .handler = ... };` in the same file (the module helper
-    register_api_handler() excepted, whose own calls are read instead), and
-    every register_api_handler() call names its uri as a literal. A route
-    registered any other way (fields assigned one by one, a positional
-    initializer, an array) would be served and never checked."""
+    """Every route registration is one the route table reads, read per
+    function: every httpd_uri_t is an `httpd_uri_t NAME = { .uri = "...",
+    .method = HTTP_X, .handler = NAME };` inside a function; every
+    httpd_register_uri_handler() is a call `(server, &NAME)` after NAME's
+    initializer in the same function; and NAME is named nowhere else in that
+    function (a field assigned after the initializer, a copy, a pointer, a
+    second registration). The module helper register_api_handler(), in the
+    shape _REG_HELPER_BODY pins, is read by its calls instead, each of which
+    names its uri as a literal. A route registered any other way (fields
+    assigned one by one, a positional initializer, an array, an initializer
+    at file scope or in another function, a reused name) would be served
+    and never checked."""
     problems = []
     for fname, text in sorted(sources.items()):
         blanked = blank_string_contents(text)
-        parsed = {m.group(1) for m in _URI_DECL.finditer(text)
-                  if re.search(r'\.uri\s*=\s*"', m.group(2)) and re.search(r"\.method\s*=", m.group(2))
-                  and re.search(r"\.handler\s*=", m.group(2))}
         funcs = functions(text, indented=True)
-        helper = [span for name, _h, _b, span in funcs if name == "register_api_handler"]
+
+        def where(pos: int) -> str:
+            lineno = blanked.count("\n", 0, pos) + 1
+            return f"{fname}:{lineno} ({' '.join(text.splitlines()[lineno - 1].split())[:90]!r})"
+
+        def home(pos: int):
+            inner = [span for *_x, span in funcs if span[0] <= pos < span[1]]
+            return min(inner, key=lambda s: s[1] - s[0]) if inner else None
+
+        helper = [span for name, _h, body, span in funcs if name == "register_api_handler"
+                  and " ".join(body.rstrip()[:-1].split()) == _REG_HELPER_BODY]
         heads = {span[0] + head.rindex(name) for name, head, _b, span in funcs
                  if name == "register_api_handler"}
+        inits = {}
+        for m in re.finditer(r"\bhttpd_uri_t\b", blanked):
+            if _inside(m.start(), helper):
+                continue
+            d = _ROUTE_INIT.match(blanked, m.start())
+            span = home(m.start())
+            close = _close(blanked, d.end() - 1) if d else -1
+            fields = _route_fields(text, blanked, d.end() - 1, close) if close > 0 else None
+            if span is None or fields is None or not re.match(r"\s*;", blanked[close + 1:]) or any(
+                    len(fields.get(f, [])) != 1 or not re.fullmatch(rx, fields[f][0])
+                    for f, rx in _ROUTE_FIELDS.items()):
+                problems.append(f"{where(m.start())}: an httpd_uri_t the route table does not read: declare "
+                                f"each route as `httpd_uri_t name = {{ .uri = \"/...\", .method = HTTP_X, "
+                                f".handler = name }};` inside the function that registers it (a declaration "
+                                f"with no such initializer, a pointer, a positional or computed field, or a "
+                                f"route outside every function would be served unchecked)")
+                continue
+            inits.setdefault((span, d.group(1)), []).append(d.start(1))
+        registered = {}
+        for m in re.finditer(r"\bhttpd_register_uri_handler\b(?!\s*\()", blanked):
+            problems.append(f"{where(m.start())}: httpd_register_uri_handler named other than in a call: "
+                            f"register each route with a plain call")
         for m in re.finditer(r"\bhttpd_register_uri_handler\s*\(", blanked):
             if _inside(m.start(), helper):
                 continue
             close = _close(blanked, m.end() - 1)
             arg = re.fullmatch(r"\s*\w+\s*,\s*&\s*(\w+)\s*", blanked[m.end():close]) if close > 0 else None
-            if arg is None or arg.group(1) not in parsed:
-                lineno = blanked.count("\n", 0, m.start()) + 1
-                problems.append(f"{fname}:{lineno}: a route registered in a shape the route table does not "
-                                f"read (it reads `httpd_uri_t name = {{ .uri = \"...\", .method = ..., "
-                                f".handler = ... }};` registered as `&name`): it would be served unchecked")
-        for m in re.finditer(r"\bregister_api_handler\s*\(", blanked):
+            span = home(m.start())
+            key = (span, arg.group(1)) if arg and span else None
+            if key not in inits or min(inits[key]) > m.start():
+                problems.append(f"{where(m.start())}: a route registered in a shape the route table does not "
+                                f"read: it reads `httpd_register_uri_handler(server, &name)` after "
+                                f"`httpd_uri_t name = {{ ... }};` in the same function")
+                continue
+            registered.setdefault(key, []).append(m.end() + arg.start(1))
+        for (span, name), decls in sorted(inits.items()):
+            regs = registered.get((span, name), [])
+            if len(decls) > 1 or len(regs) > 1:
+                problems.append(f"{where(decls[-1])}: the route {name} is declared or registered more than "
+                                f"once in one function: give each route its own name")
+            allowed = set(decls) | set(regs)
+            for m in re.finditer(r"(?<![\w.])(?<!->)" + re.escape(name) + r"\b", blanked[span[0]:span[1]]):
+                if span[0] + m.start() not in allowed:
+                    problems.append(f"{where(span[0] + m.start())}: the route {name} is named other than in its "
+                                    f"initializer and its one registration (a field assigned after the "
+                                    f"initializer, a copy or a pointer registers what the table never read): "
+                                    f"declare another route instead")
+        for m in re.finditer(r"\bregister_api_handler\b", blanked):
             if m.start() in heads:
                 continue
             if _REG_CALL.match(text, m.start()) or _UNNAMED_REG.match(text, m.start()):
                 continue
-            lineno = blanked.count("\n", 0, m.start()) + 1
-            problems.append(f"{fname}:{lineno}: a register_api_handler() call the route table does not "
-                            f"read (it reads `register_api_handler(server, \"/uri\", HTTP_X, handler)`)")
+            problems.append(f"{where(m.start())}: a register_api_handler() the route table does not read "
+                            f"(it reads the call `register_api_handler(server, \"/uri\", HTTP_X, handler)`)")
     return problems
 
 
@@ -1610,19 +1696,59 @@ def _assert_registration_rule() -> None:
     }
     assert registration_problems(good) == [], registration_problems(good)
     reg = "  httpd_register_uri_handler(server, &status);\n}\n"
+    ino = good["canary_wap.ino"]
+    init = "  httpd_uri_t status = { .uri = \"/api/status\", .method = HTTP_GET, .handler = handle_status_auth };\n"
+
+    def then(extra: str) -> str:
+        return ino.replace(reg, reg.replace("}\n", "") + extra + "}\n")
+
     bad = {
-        "N23 a route whose fields are assigned one by one": good["canary_wap.ino"].replace(reg, reg.replace(
-            "}\n", "") + "  httpd_uri_t leak2;\n  leak2.uri = \"/api/leak2\";\n  leak2.method = HTTP_GET;\n"
+        "N23 a route whose fields are assigned one by one": then(
+            "  httpd_uri_t leak2;\n  leak2.uri = \"/api/leak2\";\n  leak2.method = HTTP_GET;\n"
             "  leak2.handler = [](httpd_req_t* r) -> esp_err_t { return httpd_resp_sendstr(r, \"x\"); };\n"
-            "  httpd_register_uri_handler(server, &leak2);\n}\n"),
-        "N24 a positional initializer": good["canary_wap.ino"].replace(reg, reg.replace("}\n", "") + (
+            "  httpd_register_uri_handler(server, &leak2);\n"),
+        "N24 a positional initializer": then(
             "  httpd_uri_t leak3 = { \"/api/leak3\", HTTP_GET, handle_leak3, nullptr };\n"
-            "  httpd_register_uri_handler(server, &leak3);\n}\n")),
-        "a route from an array": good["canary_wap.ino"].replace(reg, reg.replace("}\n", "") + (
-            "  for (auto& r : kRoutes) httpd_register_uri_handler(server, &r);\n}\n")),
+            "  httpd_register_uri_handler(server, &leak3);\n"),
+        "a route from an array": then("  for (auto& r : kRoutes) httpd_register_uri_handler(server, &r);\n"),
+        # The fourth review's C5 and C5b: a name the table parsed, reused.
+        "C5 a parsed route's fields assigned again and registered again": then(
+            "  status.uri = \"/api/leak9\";\n  status.handler = handle_leak9;\n"
+            "  httpd_register_uri_handler(server, &status);\n"),
+        "C5b a route assigned field by field under a name another function parses": ino + (
+            "static void register_leak10(httpd_handle_t server) {\n  httpd_uri_t status;\n"
+            "  status.uri = \"/api/leak10\";\n  status.method = HTTP_GET;\n  status.handler = handle_leak10;\n"
+            "  httpd_register_uri_handler(server, &status);\n}\n"),
+        "a registration argument that is not &name": ino.replace("(server, &status);", "(server, g_alt ? g_alt : &status);"),
+        "a route at file scope registered from a function": (
+            "static httpd_uri_t kLeak = { .uri = \"/api/leak11\", .method = HTTP_GET, .handler = handle_leak11 };\n"
+            + then("  httpd_register_uri_handler(server, &kLeak);\n")),
+        "a route registered before its initializer": ino.replace(init + reg.replace("}\n", ""),
+                                                                  reg.replace("}\n", "") + init),
+        "a route copied": then("  auto copy = status;\n"),
+        "a route's fields written through a pointer": then("  auto* p = &status;\n  p->uri = \"/api/leak12\";\n"),
+        "a route declared twice in one function": then("  {\n" + init + "  }\n"),
+        "a route with a computed handler": ino.replace(".handler = handle_status_auth",
+                                                        ".handler = g_x ? handle_status_auth : handle_leak"),
+        "httpd_register_uri_handler taken by address": then(
+            "  auto reg = httpd_register_uri_handler;\n  reg(server, &status);\n"),
+        "a registration in a macro": "#define REG(n) httpd_register_uri_handler(server, &n)\n" + ino,
     }
     for why, text in bad.items():
+        assert text != ino, f"registration fixture did not apply: {why}"
         assert registration_problems({**good, "canary_wap.ino": text}), f"registration rule passed {why}"
+    # Two routes in two functions may share a name: each is read where it is registered.
+    two = ino + ("static void register_more(httpd_handle_t server) {\n"
+                 + init.replace("/api/status", "/api/more") + "  httpd_register_uri_handler(server, &status);\n}\n")
+    assert registration_problems({**good, "canary_wap.ino": two}) == [], registration_problems({**good, "canary_wap.ino": two})
+    helper_other = good["beacon_api.h"].replace(
+        "  httpd_register_uri_handler(server, &route);\n}\n",
+        "  httpd_register_uri_handler(server, &route);\n  httpd_register_uri_handler(server, &g_leak_route);\n}\n", 1)
+    assert helper_other != good["beacon_api.h"] and registration_problems({**good, "beacon_api.h": helper_other}), \
+        "registration rule passed a register_api_handler() whose body is not the module helper's"
+    by_address = good["beacon_api.h"] + "static auto g_reg = register_api_handler;\n"
+    assert registration_problems({**good, "beacon_api.h": by_address}), \
+        "registration rule passed register_api_handler taken by address"
     helper_bad = good["beacon_api.h"].replace(
         "  register_api_handler(server, \"/api/beacon\",",
         "  register_api_handler(server, kUri, HTTP_GET, handle_x);\n  register_api_handler(server, \"/api/beacon\",")
