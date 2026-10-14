@@ -78,7 +78,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -229,7 +229,7 @@ jobs:
   # a binary.
   tauri-crate-check:
     name: cargo check (src-tauri)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -324,7 +324,7 @@ jobs:
         run: cargo test
 
   tauri-pure-modules:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

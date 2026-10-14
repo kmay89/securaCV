@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   viewer:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -71,7 +71,7 @@ jobs:
       run: node --test src/break_glass/breakglass.test.js
 
   canary-bridge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -102,7 +102,7 @@ jobs:
       run: node --test tests/spa/*.test.js
 
   selftest-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -122,7 +122,7 @@ jobs:
 
   canary-vision-lint:
     name: ESLint (canary-vision)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7

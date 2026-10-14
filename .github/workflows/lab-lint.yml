@@ -60,7 +60,7 @@ concurrency:
 jobs:
   no-unused-vars:
     name: ESLint no-unused-vars (canary-local/assets)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -96,7 +96,7 @@ jobs:
     # its own probes first and refuses to pass the stylesheets if one comes
     # out wrong. Node only, no install: plain fs reads.
     name: Unused CSS selectors (canary-local/assets)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7

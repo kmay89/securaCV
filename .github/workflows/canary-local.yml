@@ -485,7 +485,7 @@ concurrency:
 jobs:
   logic-tests:
     name: page logic tests (committed artifacts)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -893,7 +893,7 @@ jobs:
 
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

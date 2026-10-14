@@ -22,7 +22,7 @@ concurrency:
 jobs:
   ruff:
     name: ruff (repo Python)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +47,7 @@ jobs:
 
   scripts:
     name: scripts/lint_*.sh
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -446,7 +446,7 @@ jobs:
     # first, the live store page is broken and this job fails on every
     # other PR and main push until the second one merges.
     name: HACS store page links land in this tree
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
