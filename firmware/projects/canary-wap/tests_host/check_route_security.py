@@ -8,16 +8,20 @@ justification. This pins the fail-closed property statically so a new
 endpoint (or a resurrected one: three /api/ble routes shipped without
 auth and were only unreachable because they overflowed the handler
 table) cannot silently widen the unauthenticated surface. A route whose
-handler is a lambda fails: the check reads gates by handler name.
+handler is a lambda fails: the check reads gates by handler name. So does a
+route registered in a shape the table does not read (fields assigned one by
+one, a positional initializer, an array): every httpd_register_uri_handler()
+names an `httpd_uri_t name = { .uri = "...", .method = ..., .handler = ... };`
+and every register_api_handler() names its uri as a literal.
 
 It also holds the routes that answer a credential (sweep F289). The
 landing page at / mints a session for any caller that reaches the device,
 on the home network too, so a route that answers the bearer token or the
 SoftAP password takes the bearer header or a session minted beside a served
 receipt (CREDENTIAL_GATES), never a gate that takes any session or the
-landing's pair token. Every name is matched as a call, `name(` with any
-space before the parenthesis and any `::` qualifier, in the comment-stripped
-code with string literals blanked. What it reads, and nothing more:
+landing's pair token. Names are matched in the comment-stripped code with
+string literals blanked; a call is `name(` with any space before the
+parenthesis and any `::` qualifier. What it reads, and nothing more:
 
   - canary_wap.ino: every function that reads the bearer token, the SoftAP
     password, the device key or the TLS key (a `.api_token_str`,
@@ -29,16 +33,36 @@ code with string literals blanked. What it reads, and nothing more:
     (serial, NVS, the AP's own bring-up, a module's init). An unnamed
     reader fails, a reader that reads a secret its entry does not name
     fails, a local use with a writable char or byte buffer parameter (a
-    hand-out in disguise) fails, and a secret named outside every function
-    fails unless it is one of the declarations in OUTSIDE_FUNCTION_LINES.
-    An answer must sit in, or be called only from, a registered route
-    handler that calls a CREDENTIAL_GATES gate in an `if` condition and,
-    there or in the answer itself, calls no gate in the any-session class:
-    ANY_SESSION_GATES and, to a fixed point, every function in the sketch
-    whose body calls one (so qr_scan_request_allowed() and
-    wifi_change_authorize() are in it by what they call). Nor may it call
-    any other function that takes the request and returns bool (a request
-    check this rule cannot classify) unless NOT_ACCESS_CHECKS names it.
+    hand-out in disguise) fails, a secret named outside every function
+    fails unless it is one of the declarations in OUTSIDE_FUNCTION_LINES,
+    and a macro that names a secret or g_device fails.
+  - An answer sits in, or is called only from, a registered route handler
+    whose credential gate is the whole condition of an `if` whose branch
+    ends in a return: `if (!gate(...)) return ...;` refuses, and
+    `if (gate(...)) { ... return ...; }` grants and leaves. A gate call
+    anywhere else (a stored result, a second term, outside an if) fails,
+    and so does a refusal or grant that does not return. Each answer site
+    (a secret the handler reads, or its call of the answer) comes after a
+    refusal at the top of the handler's body or inside a grant's branch,
+    unless OTHER_GRANTS names the handler (the receipt: its BOOT tap and
+    setup-door claim are test_receipt_session's). The handler and the
+    answer hold no goto and no preprocessor line, name no gate in the
+    any-session class (called or not), and call nothing but the credential
+    gates, the answers and ANSWER_CALLS, an allowlist checked against the
+    class: so a gate reached through a wrapper, a macro, a pointer, a
+    lambda or a template helper fails as a name the answer may not call.
+    The any-session class is ANY_SESSION_GATES and, to a fixed point,
+    every function in the sketch whose body calls one and every macro
+    whose body names one (so qr_scan_request_allowed() and
+    wifi_change_authorize() are in it by what they call).
+  - Every sketch file: a gate in the any-session class is named only inside
+    a function the check reads, in a #define, in a declaration or in a raw
+    string; a lambda or a pointer at file scope, an initializer or a
+    function head the check cannot parse that names one fails. Each
+    credential gate is defined once, in its CREDENTIAL_GATE_HOMES file, and
+    named elsewhere only as a call (bare, `::` or `csi_integration::`), a
+    `name &&` test of a weak symbol, or a declaration: a second definition,
+    a macro or a local by that name fails.
   - every other sketch file: each line that names a module's copy of the
     token (csi_integration.cpp's g_api_token, a register_routes module's
     auth_token_storage(), csi_mqtt.cpp's s_api_token_provider) has one of
@@ -53,12 +77,14 @@ code with string literals blanked. What it reads, and nothing more:
     Whether moves_the_kept_password() is right, and the save's behavior,
     are test_mqtt_reinit's to prove, not this rule's.
 
-It is a text check: a gate inside a branch that never runs, a gate result
-stored in a variable and tested later (refused, though it may be right), a
-secret reached through a name or a member it does not know, or a gate
-whose function head it cannot parse passes or fails it by its text, not
-its behavior. The host suites (test_receipt_session, test_mqtt_reinit)
-drive the behavior.
+It is a text check, and these pass it: a secret reached through a name it
+does not know (a copy in a global made by a function allowed to read it, a
+member under another name); what a function ANSWER_CALLS names does inside
+(it is held only to call no gate in the class, so one that calls through a
+pointer another function stored is trusted by name); the receipt's BOOT-tap
+and claim grants; and a gate that decides wrong. A gate result stored in a
+variable and tested later is refused though it may be right. The host
+suites (test_receipt_session, test_mqtt_reinit) drive the behavior.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -193,11 +219,50 @@ ANY_SESSION_GATES = (
     "wifi_change_authorize",
     "qr_scan_request_allowed",
 )
-# Functions that take the request and return bool but decide no access, so
-# a credential answer may call them. Empty today: no credential answer calls
-# one. A request check this rule cannot classify fails until it is named
-# here or in one of the gate lists above.
-NOT_ACCESS_CHECKS: dict = {}
+# Where each credential gate is defined, once: a gate of that name defined
+# anywhere else (a namespace's own api_auth_check_credential over any
+# session, a macro, a local of that name) would take its place unseen. A
+# call names it bare, `::` or `csi_integration::`; a weak symbol is tested
+# `name &&` before its call.
+CREDENTIAL_GATE_HOMES = {
+    "api_auth_check_credential": "api_auth.h",
+    "api_auth_check_credential_optional": "api_auth.h",
+    "api_auth_check_header": "api_auth.h",
+    "api_auth_bearer_header_ok": "api_auth.h",
+    "cv_session_validate_owner": "csi_integration.cpp",
+    "session_validate_owner_cookie": "csi_integration.cpp",
+}
+# Everything a credential answer may call besides the credential gates and
+# the answers themselves, by the called name (a method or a namespaced
+# function by its last part). A new call fails until it is named here, so a
+# gate reached through a name this check cannot classify (a wrapper, a
+# macro, a pointer, a lambda) fails as an unknown call; a sketch function
+# named here that calls a gate in the any-session class fails too.
+ANSWER_CALLS = frozenset((
+    # ESP-IDF's HTTP server: the answer and the query it reads.
+    "httpd_resp_send_err", "httpd_resp_sendstr", "httpd_resp_set_hdr", "httpd_resp_set_status",
+    "httpd_resp_set_type", "httpd_query_key_value", "httpd_req_get_url_query_len",
+    "httpd_req_get_url_query_str",
+    # libc and Arduino.
+    "snprintf", "malloc", "free", "millis", "println", "c_str", "toString", "isConnected", "softAPIP",
+    # The sketch's own: the QR, the error answer, the wipe, the health log, the
+    # receipt's reach and pseudonym and writers, the BOOT tap, the claim's take
+    # and the owner's session the receipt mints.
+    "send_qr_svg", "http_send_error", "secure_zero", "log_health", "request_reach", "device_id_hex",
+    "write", "provisioning_receipt", "provisioning_gate_take", "take", "session_issue",
+))
+# Handlers whose answers also stand behind something this check cannot read
+# as a credential gate: those answer sites need not follow a refusal or sit
+# in a grant's branch. The handler still needs its credential gate in an
+# `if` of the shape below, and every other rule holds.
+OTHER_GRANTS = {
+    "handle_provisioning_receipt": "the BOOT tap (provisioning_gate_take()) and the setup-door claim "
+                                   "(claim_ticket::take()), which test_receipt_session drives",
+}
+# Names `_strict_calls` sees as calls that are not calls.
+_NOT_CALLS = frozenset(("if", "for", "while", "switch", "return", "sizeof", "alignof", "decltype",
+                        "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast", "catch",
+                        "noexcept", "defined"))
 
 # The secrets, and how a function reads one: a member of that name on any
 # object (g_device.api_token_str, (&g_device)->ap_password), the TLS key's
@@ -296,15 +361,18 @@ _HEAD = (r"(?!(?:if|for|while|switch|return|else|do|case|catch)\b)[A-Za-z_][\w:<
          r"\b([A-Za-z_]\w*)\s*\(([^;{}()]*(?:\([^;{}()]*\)[^;{}()]*)*)\)\s*(?:const\s*)?\{")
 _FUNC_HEAD = re.compile(r"^" + _HEAD, re.M)
 _ANY_FUNC_HEAD = re.compile(r"^[ \t]*" + _HEAD, re.M)
-# A function that takes the request and returns bool: a request check.
-_REQUEST_CHECK = re.compile(
-    r"\bbool\s*&?\s*([A-Za-z_]\w*)\s*\(([^;{}()]*\bhttpd_req_t\s*\*[^;{}()]*)\)")
+# A preprocessor definition, its continuation lines included.
+_DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)((?:[^\n]*\\\n)*[^\n]*)", re.M)
+# A raw string literal (R"delim( ... )delim"), which blank_string_contents
+# does not read: the any-session rule skips a gate name inside one.
+_RAW_STRING = re.compile(r'R"([^()\\\s"]{0,16})\((.*?)\)\1"', re.S)
 # A parameter a secret could be handed out through: a writable char or byte
 # buffer (char* out, uint8_t buf[], char& c), or a returned char pointer.
 _BUFFER_PARAM = re.compile(r"\b(?:char|uint8_t|unsigned\s+char|int8_t)\b[^,]*[\*\[&]")
 
 
-def functions(text: str, indented: bool = False):
+@functools.lru_cache(maxsize=None)
+def functions(text: str, indented: bool = False) -> tuple:
     """(name, head, body) for every function defined in `text` (a
     comment-stripped source), at column 0 or, with `indented`, at any
     indentation (struct members, namespaced code); braces matched over the
@@ -320,7 +388,7 @@ def functions(text: str, indented: bool = False):
                 depth -= 1
             i += 1
         out.append((m.group(1), text[m.start():m.end()], text[m.end():i], (m.start(), i)))
-    return out
+    return tuple(out)
 
 
 def top_level_functions(text: str):
@@ -330,12 +398,17 @@ def top_level_functions(text: str):
 
 def any_session_class(sources: dict) -> set:
     """ANY_SESSION_GATES and, to a fixed point, every function in `sources`
-    (name -> comment-stripped text) whose body calls one of them. The
-    credential gates are never in it: the host suite proves what they take."""
+    (name -> comment-stripped text) whose body calls one of them and every
+    macro whose body names one. The credential gates are never in it: the
+    host suite proves what they take. A gate named anywhere else (a lambda
+    or pointer at file scope, a function head this check cannot parse) is
+    gate_outside_problems()'s."""
     calls = {}
     for text in sources.values():
         for name, _head, body, _span in functions(text, indented=True):
             calls.setdefault(name, set()).update(_called(blank_string_contents(body)))
+        for m in _DEFINE.finditer(blank_string_contents(text)):
+            calls.setdefault(m.group(1), set()).update(_identifiers(m.group(2)))
     members = set(ANY_SESSION_GATES)
     while True:
         grown = {name for name, called in calls.items()
@@ -350,12 +423,209 @@ def _called(code: str) -> set:
     return {m.group(1) for m in _CALL.finditer(code)}
 
 
-def request_checks(sources: dict) -> set:
-    """Every function in `sources` that takes the request and returns bool."""
-    out = set()
-    for text in sources.values():
-        out |= {m.group(1) for m in _REQUEST_CHECK.finditer(blank_string_contents(text))}
+def _identifiers(code: str) -> set:
+    """Every name `code` (string-blanked) names, called or not."""
+    return set(re.findall(r"\b[A-Za-z_]\w*\b", code))
+
+
+def _strict_calls(code: str) -> set:
+    """Every name `code` (string-blanked) calls, `name(` or `name<...>(`,
+    the keywords that look like calls left out."""
+    found = {m.group(1) for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", code)}
+    found |= {m.group(1) for m in re.finditer(r"\b([A-Za-z_]\w*)\s*<[^;(){}<>]*>\s*\(", code)}
+    return found - _NOT_CALLS
+
+
+def _close(code: str, i: int) -> int:
+    """The index of the bracket that closes the one at `code[i]` (string-
+    blanked code), or -1."""
+    pair = {"(": ")", "{": "}", "[": "]"}[code[i]]
+    depth = 0
+    for j in range(i, len(code)):
+        if code[j] == code[i]:
+            depth += 1
+        elif code[j] == pair:
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def _statement_end(code: str, k: int) -> int:
+    """The index of the `;` that ends the statement starting at `k`, outside
+    any bracket, or -1."""
+    depth = 0
+    for j in range(k, len(code)):
+        c = code[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth < 0:
+                return -1
+        elif c == ";" and depth == 0:
+            return j
+    return -1
+
+
+def _returns(code: str, k: int):
+    """The branch starting at `k` (after an `if`'s condition): (start, end,
+    whether it returns). A branch returns when it is a `return` statement
+    or a block whose last statement is one."""
+    while k < len(code) and code[k].isspace():
+        k += 1
+    if k >= len(code):
+        return k, k, False
+    if code[k] == "{":
+        end = _close(code, k)
+        if end < 0:
+            return k, len(code), False
+        inner = code[k + 1:end].rstrip()
+        if not inner.endswith(";"):
+            return k, end + 1, False
+        depth, j = 0, len(inner) - 2
+        while j >= 0:
+            c = inner[j]
+            if c in ")]":
+                depth += 1
+            elif c in "([":
+                depth -= 1
+            elif c in ";{}" and depth == 0:
+                break
+            j -= 1
+        return k, end + 1, re.match(r"\s*return\b", inner[j + 1:]) is not None
+    end = _statement_end(code, k)
+    if end < 0:
+        return k, len(code), False
+    return k, end + 1, re.match(r"return\b", code[k:end]) is not None
+
+
+def _gate_ifs(code: str) -> list:
+    """Every `if` in `code` (string-blanked) whose whole condition is one
+    credential gate's call, `!gate(...)` (a refusal) or `gate(...)` (a
+    grant): (if position, refusal?, gate, condition span, branch span,
+    branch returns?)."""
+    out = []
+    gate = re.compile(r"(!\s*)?(?:(?:[A-Za-z_]\w*)?::)*(" + "|".join(
+        sorted(map(re.escape, CREDENTIAL_GATES), key=len, reverse=True)) + r")\s*\(")
+    for m in re.finditer(r"\bif\s*\(", code):
+        open_ = m.end() - 1
+        close = _close(code, open_)
+        if close < 0:
+            continue
+        cond = code[open_ + 1:close]
+        lead = len(cond) - len(cond.lstrip())
+        g = gate.match(cond, lead)
+        if not g:
+            continue
+        args_close = _close(cond, g.end() - 1)
+        if args_close < 0 or cond[args_close + 1:].strip():
+            continue
+        start, end, returns = _returns(code, close + 1)
+        out.append((m.start(), bool(g.group(1)), g.group(2), (open_ + 1, close),
+                    (start, end), returns))
     return out
+
+
+def _brace_depth(code: str, pos: int) -> int:
+    return code.count("{", 0, pos) - code.count("}", 0, pos)
+
+
+def _is_declaration(code: str, start: int, end: int) -> bool:
+    """Whether the name at code[start:end] (string-blanked, outside every
+    function) is declared there and nothing more: a type before it, its
+    parameters after it, then attributes or qualifiers and a `;`."""
+    before = code[max(code.rfind(c, 0, start) for c in ";{}") + 1:start]
+    before = re.split(r"(?m)^[ \t]*#[^\n]*\n", before)[-1]  # an #include or #if line above it
+    if not re.fullmatch(r"[\s\w:\*&<>,]*", before) or re.search(r"\breturn\b", before):
+        return False
+    rest = code[end:]
+    p = re.match(r"\s*\(", rest)
+    if not p:
+        return False
+    close = _close(rest, p.end() - 1)
+    return close >= 0 and re.match(r"[^;{}=]*;", rest[close + 1:]) is not None
+
+
+def _readable_spans(text: str) -> tuple:
+    """(the string-blanked view, the spans of every function the check reads
+    at any indentation, the spans of every #define, the spans of every raw
+    string literal) of `text` (comment-stripped)."""
+    blanked = blank_string_contents(text)
+    funcs = [span for _n, _h, _b, span in functions(text, indented=True)]
+    defines = [(m.start(), m.end()) for m in _DEFINE.finditer(blanked)]
+    raws = [(m.start(), m.end()) for m in _RAW_STRING.finditer(text)]
+    return blanked, funcs, defines, raws
+
+
+def _inside(pos: int, spans) -> bool:
+    return any(a <= pos < b for a, b in spans)
+
+
+def gate_outside_problems(sources: dict, any_session: set) -> list:
+    """A gate in the any-session class named outside every function the
+    check reads and every #define (a lambda or a pointer at file scope, an
+    initializer, a function head it cannot parse), other than in a
+    declaration. The class is derived from functions and macros, so a gate
+    named anywhere else would reach an answer unseen."""
+    problems = []
+    rx = re.compile(r"\b(" + "|".join(sorted(map(re.escape, any_session), key=len, reverse=True)) + r")\b")
+    for fname, text in sorted(sources.items()):
+        blanked, funcs, defines, raws = _readable_spans(text)
+        for m in rx.finditer(blanked):
+            if _inside(m.start(), funcs) or _inside(m.start(), defines) or _inside(m.start(), raws):
+                continue
+            if _is_declaration(blanked, m.start(), m.end()):
+                continue
+            lineno = blanked.count("\n", 0, m.start()) + 1
+            line = " ".join(text.splitlines()[lineno - 1].split())
+            problems.append(f"{fname}:{lineno}: {m.group(1)}, a gate a landing-page session passes, "
+                            f"named outside every function this check reads ({line[:90]!r}): a lambda "
+                            f"or a pointer at file scope, an initializer or a function head it cannot "
+                            f"parse hides what calls it; write a plain function")
+    return problems
+
+
+def gate_home_problems(sources: dict) -> list:
+    """Each credential gate is defined once, in its home file
+    (CREDENTIAL_GATE_HOMES), and named elsewhere only as a call (bare, `::`
+    or `csi_integration::`), a `name &&` test of a weak symbol inside a
+    function, or a declaration outside every function."""
+    problems = []
+    defined = {g: [] for g in CREDENTIAL_GATE_HOMES}
+    rx = re.compile(r"\b(" + "|".join(sorted(map(re.escape, CREDENTIAL_GATE_HOMES), key=len, reverse=True))
+                    + r")\b")
+    for fname, text in sorted(sources.items()):
+        blanked, _funcs, _defines, raws = _readable_spans(text)
+        funcs = functions(text, indented=True)
+        heads = {}
+        for name, head, _body, span in funcs:
+            if name in CREDENTIAL_GATE_HOMES:
+                defined[name].append(fname)
+                heads[span[0] + head.rindex(name)] = name
+        for m in rx.finditer(blanked):
+            if m.start() in heads or _inside(m.start(), raws):
+                continue
+            lineno = blanked.count("\n", 0, m.start()) + 1
+            in_func = _inside(m.start(), [s for *_x, s in funcs])
+            qual = re.search(r"((?:[A-Za-z_]\w*)?::\s*)*$", blanked[:m.start()]).group(0)
+            call = re.match(r"\s*\(", blanked[m.end():]) is not None
+            weak = re.match(r"\s*&&", blanked[m.end():]) is not None and not qual
+            ok_qual = re.sub(r"\s", "", qual) in ("", "::", "csi_integration::")
+            if in_func and ((call and ok_qual) or weak):
+                continue
+            if not in_func and not re.search(r"#[ \t]*define[^\n]*$", blanked[:m.start()]) \
+                    and _is_declaration(blanked, m.start(), m.end()):
+                continue
+            problems.append(f"{fname}:{lineno}: {m.group(1)} named other than as a call, a `{m.group(1)} &&` "
+                            f"test or a declaration (a qualifier other than csi_integration::, a macro, "
+                            f"a local or a definition by that name): a credential gate is the one "
+                            f"{CREDENTIAL_GATE_HOMES[m.group(1)]} defines")
+    for gate, files in sorted(defined.items()):
+        if files != [CREDENTIAL_GATE_HOMES[gate]]:
+            problems.append(f"{gate}() is defined in {', '.join(files) or 'no file the check reads'}; a "
+                            f"credential gate is defined once, in {CREDENTIAL_GATE_HOMES[gate]}")
+    return problems
 
 
 def _secrets_in(code: str, self_name: str = "") -> set:
@@ -370,27 +640,6 @@ def _secrets_in(code: str, self_name: str = "") -> set:
     return found
 
 
-def _in_if_condition(code: str, pos: int) -> bool:
-    """Whether the call at `pos` in `code` (string-blanked) sits inside the
-    parentheses of an `if`, walking out through enclosing parentheses to the
-    statement's start."""
-    depth, i = 0, pos - 1
-    while i >= 0:
-        c = code[i]
-        if c == ")":
-            depth += 1
-        elif c == "(":
-            if depth == 0:
-                if re.search(r"\bif\s*$", code[:i]):
-                    return True
-            else:
-                depth -= 1
-        elif c in ";{}" and depth == 0:
-            return False
-        i -= 1
-    return False
-
-
 def _names(secrets) -> str:
     return ", ".join(SECRETS[s] for s in sorted(secrets))
 
@@ -398,12 +647,12 @@ def _names(secrets) -> str:
 def credential_problems(ino: str, handlers: set, sources: dict = None) -> list:
     """The F289 rule over canary_wap.ino (comment-stripped), the names of the
     handlers it registers and every sketch source (name -> comment-stripped
-    text; the any-session class and the request checks are derived from
-    them, from `ino` alone when None). Returns the problems, empty when it
-    holds."""
+    text; the any-session class is derived from them, from `ino` alone when
+    None). Returns the problems, empty when it holds. Where the credential
+    gates are defined and where an any-session gate may be named are
+    gate_home_problems()' and gate_outside_problems()'."""
     sources = sources if sources is not None else {"canary_wap.ino": ino}
     any_session = any_session_class(sources)
-    checks = request_checks(sources) - set(CREDENTIAL_GATES) - set(NOT_ACCESS_CHECKS)
     problems = []
     funcs = functions(ino)
     bodies = {}
@@ -466,43 +715,92 @@ def credential_problems(ino: str, handlers: set, sources: dict = None) -> list:
                                 f"({line!r}): the check reads secrets per function "
                                 f"(OUTSIDE_FUNCTION_LINES)")
 
-    def no_session_gate(fn: str, code: str) -> list:
-        """What `code` (fn's body, string-blanked) calls that a landing
-        session could pass, or that the rule cannot classify."""
-        called = _called(code)
+    answers = {n for n, e in CREDENTIAL_READERS.items() if e[0] == "answer"}
+    for name in sorted(ANSWER_CALLS & any_session):
+        problems.append(f"ANSWER_CALLS names {name}(), which calls a gate a landing-page session or "
+                        f"the landing's pair token passes")
+
+    # A macro that names a secret (`#define TOKF api_token_str`, then
+    # `g_device.TOKF`) hides the read from every rule above.
+    for m in _DEFINE.finditer(blanked):
+        if re.search(r"\b(?:api_token_str|ap_password|privkey|g_tls_key_der|g_device)\b", m.group(2)):
+            lineno = blanked.count("\n", 0, m.start()) + 1
+            problems.append(f"canary_wap.ino:{lineno}: the macro {m.group(1)} names a secret: the check "
+                            f"reads secrets by their names, so a macro would carry one past it")
+
+    def answer_code(fn: str, code: str) -> list:
+        """What `code` (fn's body, string-blanked) names that a landing
+        session could pass, calls that ANSWER_CALLS does not name, or holds
+        that this text check cannot read as one path."""
         out = []
-        took = sorted(called & any_session)
+        took = sorted(_identifiers(code) & any_session)
         if took:
-            out.append(f"{fn}() answers a credential and calls {', '.join(t + '()' for t in took)}, "
+            out.append(f"{fn}() answers a credential and names {', '.join(t + '()' for t in took)}, "
                        f"which a landing-page session or the landing's pair token passes")
-        unknown = sorted((called & checks) - any_session)
+        unknown = sorted(_strict_calls(code) - ANSWER_CALLS - set(CREDENTIAL_GATES) - answers
+                         - any_session)
         if unknown:
             out.append(f"{fn}() answers a credential and calls {', '.join(u + '()' for u in unknown)}, "
-                       f"a request check that is not a credential gate (CREDENTIAL_GATES) or named "
-                       f"in NOT_ACCESS_CHECKS")
+                       f"which ANSWER_CALLS does not name (name it there once it is shown to decide "
+                       f"no access)")
+        if re.search(r"^[ \t]*#", code, re.M):
+            out.append(f"{fn}() answers a credential and holds a preprocessor line: the check "
+                       f"reads one text of its body, not each build's")
+        if re.search(r"\bgoto\b", code):
+            out.append(f"{fn}() answers a credential and holds a goto, which can jump past its gate")
         return out
 
-    def gated_for_credentials(handler: str) -> list:
+    def answer_sites(handler: str, answer: str, code: str) -> list:
+        """Where `handler`'s body (string-blanked) answers: each secret it
+        reads when it is the answer, each call of `answer` otherwise."""
+        if handler != answer:
+            return [m.start() for m in re.finditer(r"\b" + re.escape(answer) + r"\s*\(", code)]
+        compared = [(m.start(), m.end()) for m in _COMPARER.finditer(code)]
+        rxs = list(_SECRET_READS.values()) + [_WHOLE_DEVICE] + [
+            re.compile(r"\b" + re.escape(n) + r"\s*\(") for n, e in CREDENTIAL_READERS.items()
+            if e[0] == "hands"]
+        return sorted(m.start() for rx in rxs for m in rx.finditer(code) if not _inside(m.start(), compared))
+
+    def gated_for_credentials(handler: str, answer: str) -> list:
         found = bodies.get(handler, [])
         if len(found) != 1:
             return [f"{handler}() defined {len(found)} times"]
         # Gate names count in code only: a log line that names a gate is not one.
         code = blank_string_contents(found[0])
-        gates = list(_calls(CREDENTIAL_GATES).finditer(code))
-        if not gates:
-            return [f"{handler}() answers a credential behind no {' / '.join(CREDENTIAL_GATES[:2])}"]
-        out = [f"{handler}() calls {g.group(1)}() outside an if condition: its answer is not "
-               f"behind it" for g in gates if not _in_if_condition(code, g.start())]
-        return out + no_session_gate(handler, code)
+        ifs = _gate_ifs(code)
+        out = []
+        if not ifs:
+            out.append(f"{handler}() answers a credential behind no `if (!{CREDENTIAL_GATES[0]}(...)) "
+                       f"return ...;` or `if ({CREDENTIAL_GATES[1]}(...)) {{ ... return ...; }}`")
+        conds = [cond for _p, _r, _g, cond, _b, _ret in ifs]
+        for g in _calls(CREDENTIAL_GATES).finditer(code):
+            if not _inside(g.start(), [(a, b) for a, b in conds]):
+                out.append(f"{handler}() calls {g.group(1)}() other than as the whole condition of an "
+                           f"`if` (a stored result, a second term, a call outside an if): its answer "
+                           f"is not behind it")
+        for _pos, _refusal, gate, _cond, _branch, returns in ifs:
+            if not returns:
+                out.append(f"{handler}()'s `if` on {gate}() does not return in its branch (a refusal "
+                           f"that falls through, or a grant that goes on): end the branch with a return")
+        refused = [branch[1] for pos, refusal, _g, _c, branch, returns in ifs
+                   if refusal and returns and _brace_depth(code, pos) == 0]
+        granted = [branch for _p, refusal, _g, _c, branch, returns in ifs if not refusal and returns]
+        if handler not in OTHER_GRANTS:
+            for site in answer_sites(handler, answer, code):
+                if not any(site >= end for end in refused) and not _inside(site, granted):
+                    lineno = found[0].count("\n", 0, site) + 1
+                    out.append(f"{handler}() answers a credential (body line {lineno}) before any "
+                               f"refusal at the top of its body and outside every grant's branch")
+        return out + answer_code(handler, code)
 
     for name, (kind, _reads, _why, _gives) in sorted(CREDENTIAL_READERS.items()):
         if kind != "answer" or name not in readers:
             continue
         if name in handlers:
-            problems.extend(gated_for_credentials(name))
+            problems.extend(gated_for_credentials(name, name))
             continue
         for body in bodies.get(name, []):
-            problems.extend(no_session_gate(name, blank_string_contents(body)))
+            problems.extend(answer_code(name, blank_string_contents(body)))
         call = re.compile(r"\b" + re.escape(name) + r"\s*\(")
         callers = sorted({fn for fn, _head, body, _span in funcs
                           if fn != name and call.search(blank_string_contents(body))})
@@ -513,7 +811,7 @@ def credential_problems(ino: str, handlers: set, sources: dict = None) -> list:
                 problems.append(f"{name}() answers a credential and is called from {fn}(), "
                                 f"not a registered route handler")
                 continue
-            problems.extend(gated_for_credentials(fn))
+            problems.extend(gated_for_credentials(fn, name))
     return problems
 
 
@@ -729,6 +1027,9 @@ def _assert_credential_rule() -> None:
         "a local use with an out-buffer": good.replace(
             "static void handle_serial_commands() {", "static void handle_serial_commands(char* out) {"),
         "a secret named outside every function": good + "#define LEAK_TOKEN g_device.api_token_str\n",
+        # The third review's N9: a member macro.
+        "a macro that names the token's member": status_answers(
+            "  return httpd_resp_sendstr(req, g_device.TOKF);\n") + "#define TOKF api_token_str\n",
     }
     handlers_bad = handlers | {"handle_leak", "handle_other", "handle_status_ap"}
     for why, text in bad.items():
@@ -738,19 +1039,155 @@ def _assert_credential_rule() -> None:
         "credential rule passed a route handler named as a local use"
     assert credential_problems(good, handlers | {"resolve_ap_password"}), \
         "credential rule passed a route handler named as a hand-out"
-    # The any-session class reaches a wrapper in another file, and a request
-    # check NOT_ACCESS_CHECKS names passes.
+    # The any-session class reaches a wrapper in another file, and a call
+    # ANSWER_CALLS names passes.
     elsewhere = {"canary_wap.ino": beside("other::gate(req)"),
                  "other.h": "namespace other {\ninline int gate(httpd_req_t* r) {\n"
                             "  return session_validate_cookie(r) ? 1 : 0;\n}\n}\n"}
     assert credential_problems(elsewhere["canary_wap.ino"], handlers, elsewhere), \
         "credential rule passed a wrapper of an any-session gate defined in another file"
-    unknown = bad["an unclassified request check beside the credential gate"]
-    NOT_ACCESS_CHECKS["request_from_lan"] = "fixture"
-    try:
-        assert credential_problems(unknown, handlers) == [], credential_problems(unknown, handlers)
-    finally:
-        del NOT_ACCESS_CHECKS["request_from_lan"]
+    named = good.replace(qr_gate, qr_gate + "  send_qr_svg(req, p);\n")
+    assert credential_problems(named, handlers) == [], credential_problems(named, handlers)
+
+    # The third review's plants (N1-N8, N12, N13, N21, N22 and the heads it
+    # could not parse), and one fixture each rule alone refuses.
+    def qr(gate_line: str, extra: str = "") -> str:
+        return good.replace(qr_gate, gate_line) + extra
+
+    either = "  if (!{x} &&\n      !api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n"
+    wrapper = "  return api_auth_check_optional(r, t);\n}\n"
+    shapes = {
+        "N1 an any-session gate taken by address into a local pointer": qr(
+            "  bool (*any_gate)(httpd_req_t*, const char*) = api_auth_check_optional;\n"
+            + either.format(x="any_gate(req, g_device.api_token_str)")),
+        "N1b auto g = &api_auth_check_optional": qr(
+            "  auto g = &api_auth_check_optional;\n" + either.format(x="g(req, t)")),
+        "N2 a function-like macro over an any-session gate":
+            "#define ANY_OK(r, t) api_auth_check_optional((r), (t))\n" + qr(either.format(x="ANY_OK(req, t)")),
+        "N3 a file-scope lambda over an any-session gate": qr(either.format(x="s_any_ok(req, t)"), (
+            "static auto s_any_ok = [](httpd_req_t* r, const char* t) { return api_auth_check_optional(r, t); };\n")),
+        "N4 a wrapper whose head carries __attribute__((noinline))": qr(either.format(x="any_ok(req, t)"), (
+            "static bool __attribute__((noinline)) any_ok(httpd_req_t* r, const char* t) {\n" + wrapper)),
+        "N4b a wrapper with a trailing return type": qr(either.format(x="any_ok(req, t)"), (
+            "static auto any_ok(httpd_req_t* r, const char* t) -> bool {\n" + wrapper)),
+        "N4c a noexcept int wrapper": qr(either.format(x="any_ok(req, t)"), (
+            "static int any_ok(httpd_req_t* r, const char* t) noexcept {\n" + wrapper)),
+        "N4d a [[nodiscard]] wrapper": qr(either.format(x="any_ok(req, t)"), (
+            "[[nodiscard]] static bool any_ok(httpd_req_t* r, const char* t) {\n" + wrapper)),
+        "N6 a refusal whose block does not return": qr(
+            "  if (!api_auth_check_credential(req, g_device.api_token_str)) { }\n"),
+        "N7 a grant whose branch only logs": qr(
+            "  if (api_auth_check_credential(req, g_device.api_token_str)) Serial.println(\"ok\");\n"),
+        "N8 the refusal's condition with a second term": qr(
+            "  if (!api_auth_check_credential(req, g_device.api_token_str) && false) return ESP_OK;\n"),
+        "N12 an any-session gate handed to a template helper": qr(
+            either.format(x="call_gate(api_auth_check_optional, req, t)"),
+            "template <typename F> static bool call_gate(F f, httpd_req_t* r, const char* t) { return f(r, t); }\n"),
+        "N13 the refusal inside a branch of its own": qr(
+            "  if (WiFi.isConnected()) {\n"
+            "    if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n  }\n"),
+        "N21 a refusal by goto": qr(
+            "  if (!api_auth_check_credential(req, g_device.api_token_str)) goto out;\n  out:\n"),
+        "N22 an any-session gate in a struct's pointer member": qr(either.format(x="g_gates.any(req, t)"), (
+            "struct Gates { bool (*any)(httpd_req_t*, const char*); } g_gates = { api_auth_check_optional };\n")),
+        # Each rule alone. The receipt's answers after its grant stand behind
+        # OTHER_GRANTS, so only the returning branch holds these two.
+        "the receipt's grant whose block goes on": good.replace(
+            "    return send_provisioning_receipt(req, Grant::BEARER);\n  }\n",
+            "    send_provisioning_receipt(req, Grant::BEARER);\n  }\n"),
+        "the receipt's grant whose branch only logs": good.replace(
+            "  if (api_auth_check_credential_optional(req, g_device.api_token_str)) {\n"
+            "    return send_provisioning_receipt(req, Grant::BEARER);\n  }\n",
+            "  if (api_auth_check_credential_optional(req, g_device.api_token_str)) Serial.println(\"ok\");\n"),
+        "an answer before its refusal": qr(
+            "  snprintf(p, n, \"%s\", g_device.api_token_str);\n" + qr_gate),
+        "a goto past the refusal": qr("  goto skip;\n" + qr_gate + "  skip:\n"),
+        "a preprocessor branch around the refusal": qr("#if 0\n" + qr_gate + "#endif\n"),
+        "an any-session gate named, not called, in the answer": qr(
+            qr_gate + "  (void)api_auth_check_optional;\n"),
+        "an ANSWER_CALLS name that calls an any-session gate": good + (
+            "static bool provisioning_gate_take() {\n  return api_auth_check_optional(g_req, g_tok);\n}\n"),
+        "an ANSWER_CALLS name defined as a macro over an any-session gate":
+            "#define send_qr_svg(r, p) api_auth_check_optional((r), (p))\n" + good,
+    }
+    for why, text in shapes.items():
+        assert credential_problems(text, handlers), f"credential rule passed {why}"
+
+    # An any-session gate is named only in the functions and macros the
+    # class is derived from, or in a declaration (or a raw string).
+    api_home = (
+        "extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));\n"
+        "extern bool cv_session_validate_owner(httpd_req_t* req) __attribute__((weak));\n"
+        "static bool api_auth_check_header(httpd_req_t* req, const char* t) {\n  return true;\n}\n"
+        "static bool api_auth_check_credential(httpd_req_t* req, const char* t) {\n"
+        "  if (cv_session_validate_owner && cv_session_validate_owner(req)) return true;\n"
+        "  return api_auth_check_header(req, t);\n}\n"
+        "static bool api_auth_bearer_header_ok(httpd_req_t* req, const char* t) {\n  return true;\n}\n"
+        "static bool api_auth_check_credential_optional(httpd_req_t* req, const char* t) {\n"
+        "  if (api_auth_bearer_header_ok(req, t)) return true;\n"
+        "  return cv_session_validate_owner && cv_session_validate_owner(req);\n}\n"
+        "static bool api_auth_check_optional(httpd_req_t* req, const char* t) {\n"
+        "  if (cv_session_validate && cv_session_validate(req)) return true;\n"
+        "  return api_auth_check_header(req, t);\n}\n")
+    csi_home = (
+        "#include <esp_http_server.h>\n"
+        "bool cv_session_validate(httpd_req_t* req);\n"
+        "namespace csi_integration {\nbool session_validate_cookie(httpd_req_t* req) {\n  return true;\n}\n"
+        "bool session_validate_owner_cookie(httpd_req_t* req) {\n  return true;\n}\n}\n"
+        "bool cv_session_validate_owner(httpd_req_t* req) {\n"
+        "  return csi_integration::session_validate_owner_cookie(req);\n}\n"
+        "#define CSI_AUTH_OR_RETURN(req) do { \\\n"
+        "    if (api_auth_check_optional((req), g_api_token)) break; \\\n} while (0)\n"
+        # Last: a raw string's odd quote leaves the gate's name in code to
+        # blank_string_contents, and the rest of the file in a string.
+        "static const char kPage[] = R\"PAGE(<a title=\"x>api_auth_check_optional(</a>)PAGE\";\n")
+    homes = {"api_auth.h": api_home, "csi_integration.cpp": csi_home,
+             "csi_integration.h": "namespace csi_integration {\n"
+                                  "bool session_validate_owner_cookie(httpd_req_t* req);\n}\n"}
+
+    def outside(text: str) -> list:
+        sources = {**homes, "canary_wap.ino": text}
+        return gate_outside_problems(sources, any_session_class(sources))
+
+    assert outside(good) == [], outside(good)
+    outside_bad = {
+        "N3 a file-scope lambda": shapes["N3 a file-scope lambda over an any-session gate"],
+        "N4 an attribute in the head": shapes["N4 a wrapper whose head carries __attribute__((noinline))"],
+        "N4b a trailing return type": shapes["N4b a wrapper with a trailing return type"],
+        "N22 a struct initializer": shapes["N22 an any-session gate in a struct's pointer member"],
+        "a file-scope pointer": good + "static bool (*g_gate)(httpd_req_t*, const char*) = api_auth_check_optional;\n",
+        "an ANSWER_CALLS name defined as a file-scope lambda": good + (
+            "static auto send_qr_svg = [](httpd_req_t* r) { return api_auth_check_optional(r, nullptr); };\n"),
+    }
+    for why, text in outside_bad.items():
+        assert outside(text), f"any-session rule passed {why}"
+
+    # The credential gates live in their homes.
+    def home(text: str, extra: dict = None) -> list:
+        return gate_home_problems({**homes, "canary_wap.ino": text, **(extra or {})})
+
+    assert home(good) == [], home(good)
+    home_bad = {
+        "N5 a credential gate's name redefined in a namespace": qr(
+            "  if (!leak::api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n",
+            "namespace leak {\nstatic bool api_auth_check_credential(httpd_req_t* r, const char* t) {\n"
+            + wrapper + "}\n"),
+        "a credential gate called through another namespace": qr(
+            "  if (!leak::api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n"),
+        "a macro by a credential gate's name":
+            "#define api_auth_check_credential api_auth_check_optional\n" + good,
+        "a local by a credential gate's name": qr(
+            "  auto api_auth_check_credential = [&](httpd_req_t* r, const char* t) {\n"
+            "    return api_auth_check_optional(r, t);\n  };\n" + qr_gate),
+    }
+    for why, text in home_bad.items():
+        assert home(text), f"credential-gate home rule passed {why}"
+    assert home(good, {"other.h": "inline bool api_auth_check_header(httpd_req_t* r, const char* t) {\n"
+                                  "  return true;\n}\n"}), \
+        "credential-gate home rule passed a gate defined in a second file"
+    assert gate_home_problems({**homes, "api_auth.h": api_home.replace(
+        "static bool api_auth_bearer_header_ok(", "static bool api_auth_bearer_header_ok_v2("),
+        "canary_wap.ino": good}), "credential-gate home rule passed a gate missing from its home"
 
     # The modules' copies of the token.
     copies = {
@@ -972,6 +1409,92 @@ def function_body(source: str, name: str):
     return source[m.start():i]
 
 
+_URI_DECL = re.compile(r"httpd_uri_t\s+(\w+)\s*=\s*\{(.*?)\}\s*;", re.S)
+_REG_CALL = re.compile(
+    r'register_api_handler\s*\(\s*server\s*,\s*"([^"]+)"\s*,\s*'
+    r"HTTP_(\w+)\s*,\s*([A-Za-z_][\w:<>]*)")
+_UNNAMED_REG = re.compile(
+    r'register_api_handler\s*\(\s*server\s*,\s*"([^"]+)"\s*,\s*'
+    r"HTTP_(\w+)\s*,\s*(?=[^\s\w])")
+
+
+def registration_problems(sources: dict) -> list:
+    """Every route registration is one the route table reads: an
+    httpd_register_uri_handler() of an `httpd_uri_t NAME = { .uri = "...",
+    .method = ..., .handler = ... };` in the same file (the module helper
+    register_api_handler() excepted, whose own calls are read instead), and
+    every register_api_handler() call names its uri as a literal. A route
+    registered any other way (fields assigned one by one, a positional
+    initializer, an array) would be served and never checked."""
+    problems = []
+    for fname, text in sorted(sources.items()):
+        blanked = blank_string_contents(text)
+        parsed = {m.group(1) for m in _URI_DECL.finditer(text)
+                  if re.search(r'\.uri\s*=\s*"', m.group(2)) and re.search(r"\.method\s*=", m.group(2))
+                  and re.search(r"\.handler\s*=", m.group(2))}
+        funcs = functions(text, indented=True)
+        helper = [span for name, _h, _b, span in funcs if name == "register_api_handler"]
+        heads = {span[0] + head.rindex(name) for name, head, _b, span in funcs
+                 if name == "register_api_handler"}
+        for m in re.finditer(r"\bhttpd_register_uri_handler\s*\(", blanked):
+            if _inside(m.start(), helper):
+                continue
+            close = _close(blanked, m.end() - 1)
+            arg = re.fullmatch(r"\s*\w+\s*,\s*&\s*(\w+)\s*", blanked[m.end():close]) if close > 0 else None
+            if arg is None or arg.group(1) not in parsed:
+                lineno = blanked.count("\n", 0, m.start()) + 1
+                problems.append(f"{fname}:{lineno}: a route registered in a shape the route table does not "
+                                f"read (it reads `httpd_uri_t name = {{ .uri = \"...\", .method = ..., "
+                                f".handler = ... }};` registered as `&name`): it would be served unchecked")
+        for m in re.finditer(r"\bregister_api_handler\s*\(", blanked):
+            if m.start() in heads:
+                continue
+            if _REG_CALL.match(text, m.start()) or _UNNAMED_REG.match(text, m.start()):
+                continue
+            lineno = blanked.count("\n", 0, m.start()) + 1
+            problems.append(f"{fname}:{lineno}: a register_api_handler() call the route table does not "
+                            f"read (it reads `register_api_handler(server, \"/uri\", HTTP_X, handler)`)")
+    return problems
+
+
+def _assert_registration_rule() -> None:
+    """The registration rule on fixtures, every run."""
+    good = {
+        "canary_wap.ino": (
+            "static void register_api_routes(httpd_handle_t server) {\n"
+            "  httpd_uri_t status = { .uri = \"/api/status\", .method = HTTP_GET, .handler = handle_status_auth };\n"
+            "  httpd_register_uri_handler(server, &status);\n}\n"),
+        "beacon_api.h": (
+            "static inline void register_api_handler(httpd_handle_t server, const char* uri,\n"
+            "                                        httpd_method_t method,\n"
+            "                                        esp_err_t (*handler)(httpd_req_t*)) {\n"
+            "  httpd_uri_t route = { .uri = uri, .method = method, .handler = handler, .user_ctx = nullptr };\n"
+            "  httpd_register_uri_handler(server, &route);\n}\n"
+            "inline void register_routes(httpd_handle_t server, const char* api_token = nullptr) {\n"
+            "  register_api_handler(server, \"/api/beacon\", HTTP_GET, bcn_auth_gated<handle_status>);\n}\n"),
+    }
+    assert registration_problems(good) == [], registration_problems(good)
+    reg = "  httpd_register_uri_handler(server, &status);\n}\n"
+    bad = {
+        "N23 a route whose fields are assigned one by one": good["canary_wap.ino"].replace(reg, reg.replace(
+            "}\n", "") + "  httpd_uri_t leak2;\n  leak2.uri = \"/api/leak2\";\n  leak2.method = HTTP_GET;\n"
+            "  leak2.handler = [](httpd_req_t* r) -> esp_err_t { return httpd_resp_sendstr(r, \"x\"); };\n"
+            "  httpd_register_uri_handler(server, &leak2);\n}\n"),
+        "N24 a positional initializer": good["canary_wap.ino"].replace(reg, reg.replace("}\n", "") + (
+            "  httpd_uri_t leak3 = { \"/api/leak3\", HTTP_GET, handle_leak3, nullptr };\n"
+            "  httpd_register_uri_handler(server, &leak3);\n}\n")),
+        "a route from an array": good["canary_wap.ino"].replace(reg, reg.replace("}\n", "") + (
+            "  for (auto& r : kRoutes) httpd_register_uri_handler(server, &r);\n}\n")),
+    }
+    for why, text in bad.items():
+        assert registration_problems({**good, "canary_wap.ino": text}), f"registration rule passed {why}"
+    helper_bad = good["beacon_api.h"].replace(
+        "  register_api_handler(server, \"/api/beacon\",",
+        "  register_api_handler(server, kUri, HTTP_GET, handle_x);\n  register_api_handler(server, \"/api/beacon\",")
+    assert registration_problems({**good, "beacon_api.h": helper_bad}), \
+        "registration rule passed a register_api_handler() call with a uri that is not a literal"
+
+
 def _assert_parser_robust() -> None:
     """Guard the string-aware brace matcher on every run. A handler whose
     body carries an UNBALANCED brace inside a string literal before its auth
@@ -1011,6 +1534,7 @@ def _assert_parser_robust() -> None:
 def main() -> int:
     _assert_parser_robust()
     _assert_credential_rule()
+    _assert_registration_rule()
     sources = {}
     for path in sorted(SKETCH.glob("*.h")) + sorted(SKETCH.glob("*.cpp")) + sorted(
             SKETCH.glob("*.ino")):
@@ -1108,6 +1632,9 @@ def main() -> int:
     ino_handlers = {h.split("::")[-1].split("<")[0]
                     for _u, _m, h, f in routes if f == "canary_wap.ino"}
     failures.extend(credential_problems(ino, ino_handlers, sources))
+    failures.extend(gate_outside_problems(sources, any_session_class(sources)))
+    failures.extend(gate_home_problems(sources))
+    failures.extend(registration_problems(sources))
     failures.extend(token_copy_problems(sources))
     failures.extend(mqtt_password_problems(sources.get("csi_mqtt.cpp", ""), sources))
 
