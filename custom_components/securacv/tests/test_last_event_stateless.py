@@ -1,21 +1,26 @@
-"""A stateless row's Last event reads its type, not ``unknown`` (HA28).
+"""A summary row's Last event reads its type, not ``unknown`` (HA28).
 
 The CSI dialect's ``event_type`` is the row's state.
 firmware/common/csi/src/csi_event_wire.h writes the placeholder ``unknown``
-there, and as ``state``, when a row has no state of its own, and the two
-stateless rows the firmware commits are exactly that: meta.daily_summary's
-``daily_summary`` (every night at 23:55 on a canary or canary-wap with a
-synced clock, since F121) and meta.quiet_hours' ``held_summary``. The row's
-name rides only in ``type``. The canary Last event sensor read
-``event_type`` first, so it turned ``unknown`` at each, and the voice brief
-recorded the same ``unknown``.
+there, and as ``state``, when a row has no state of its own, and the row's
+name rides only in ``type``. Several rows are stateless:
+meta.daily_summary's ``daily_summary`` (every night at 23:55 on a canary or
+canary-wap with a synced clock, since F121), meta.quiet_hours'
+``held_summary`` (when a Quiet Hours window ends), core.activity_ribbon's
+``ribbon_bucket_advanced`` (every 15 minutes, both trees) and, on the
+canary-wap, ble.events' link and discovery rows (``ble_client_connected``,
+``ble_client_disconnected``, ``canary_discovered``, ``canary_lost``). The
+canary Last event sensor read ``event_type`` first, so it turned
+``unknown`` at each, and the voice brief recorded the same ``unknown``.
 
-The sensor now treats an ``event_type`` that is missing, null, empty or the
-wire's placeholder as saying nothing, and falls back to ``type``, then to
-``event`` (the canary-sense and canary-sentinel dialects), then to
-``unknown``. The fix is in the consumer only: the wire is unchanged, the
-kernel's Last event sensor is unchanged, and the signed canonical carries
-``state``, so verification is unchanged.
+The sensor now names the two summary rows by their type and leaves every
+other stateless row at ``unknown``, so the ribbon's quarter-hourly row does
+not take over Last event, the voice brief or the timeline card. An
+``event_type`` that is missing, null or empty (no firmware writes the last
+two) falls back to ``type``, then to ``event`` (the canary-sense and
+canary-sentinel dialects), then to ``unknown``. The fix is in the consumer
+only: the wire is unchanged, the kernel's Last event sensor is unchanged,
+and the signed canonical carries ``state``, so verification is unchanged.
 
 The CSI bodies below are byte for byte what ``build_event_body`` writes for
 those rows with no signer (each was printed from the header by a scratch
@@ -43,7 +48,7 @@ from .. import sensor as sensor_platform
 from ..const import DOMAIN
 from ..device_trust import TrustStore
 from ..signature import build_event_canonical
-from ..voice import _spoken_label, fleet_brief
+from ..voice import _spoken_label, fleet_brief, speak_last_event, speak_whats_up
 
 DEVICE = "canary01"
 
@@ -72,8 +77,25 @@ HELD_SUMMARY_BODY = (
 PRESENT_BODY = (
     '{"event_id":43,"event_type":"present","timestamp":86460,"zone":"",'
     '"confidence":"tentative","signed":false,"module":"core.presence",'
-    '"type":"presence","category":"event","privacy":"p1",'
+    '"type":"presence_changed","category":"event","privacy":"p0",'
     '"state":"present","motion":0,"breathing":0,"bpm":0,"duration_sec":0,'
+    '"bundled":1,"replay":false,"v":1}'
+)
+# Two stateless rows that are not summaries: core.activity_ribbon's
+# quarter-hourly row (both trees) and a canary-wap ble.events discovery row
+# (its peer hash rides in `note`, which the body does not carry).
+RIBBON_BODY = (
+    '{"event_id":45,"event_type":"unknown","timestamp":87300,"zone":"",'
+    '"confidence":"tentative","signed":false,"module":"core.activity_ribbon",'
+    '"type":"ribbon_bucket_advanced","category":"event","privacy":"p0",'
+    '"state":"unknown","motion":0,"breathing":0,"bpm":0,"duration_sec":0,'
+    '"bundled":1,"replay":false,"v":1}'
+)
+BLE_DISCOVERED_BODY = (
+    '{"event_id":46,"event_type":"unknown","timestamp":87360,"zone":"",'
+    '"confidence":"tentative","signed":false,"module":"ble.events",'
+    '"type":"canary_discovered","category":"event","privacy":"p0",'
+    '"state":"unknown","motion":0,"breathing":0,"bpm":0,"duration_sec":0,'
     '"bundled":1,"replay":false,"v":1}'
 )
 
@@ -144,8 +166,8 @@ def test_a_held_summary_reads_held_summary() -> None:
 
 @pytest.mark.parametrize(
     "event_type",
-    ["", None, "unknown", "<missing>"],
-    ids=["empty", "null", "wire-placeholder", "missing"],
+    ["", None, "unknown", "<missing>", 0, False],
+    ids=["empty", "null", "wire-placeholder", "missing", "zero", "false"],
 )
 def test_an_event_type_that_says_nothing_falls_back_to_type(event_type) -> None:
     body = json.loads(DAILY_SUMMARY_BODY)
@@ -156,6 +178,40 @@ def test_an_event_type_that_says_nothing_falls_back_to_type(event_type) -> None:
     ent = _sensor(_hass())
     ent._handle_message(_msg(json.dumps(body)))
     assert ent._attr_native_value == "daily_summary"
+
+
+@pytest.mark.parametrize(
+    "body", [RIBBON_BODY, BLE_DISCOVERED_BODY], ids=["activity-ribbon", "ble-discovered"]
+)
+def test_a_stateless_row_that_is_not_a_summary_still_reads_unknown(body) -> None:
+    """The ribbon's row lands every 15 minutes: naming it would make Last
+    event, the voice brief and the timeline read it most of a quiet day."""
+    ent = _sensor(_hass())
+    ent._handle_message(_msg(body))
+    assert ent._attr_native_value == "unknown"
+    last = ENTRY.runtime_data.devices[DEVICE]["last_event"]
+    assert last["event_type"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        # Only the wire's placeholder is limited to the summaries; an empty
+        # event_type (no firmware writes one) takes any type, as the chain says.
+        ({"event_id": 7, "event_type": "", "type": "canary_discovered"}, "canary_discovered"),
+        ({"event_id": 7, "type": "ribbon_bucket_advanced"}, "ribbon_bucket_advanced"),
+        # The placeholder rule reads event_type only: a type that says
+        # `unknown` is taken as it stands.
+        ({"event_id": 7, "event_type": "", "type": "unknown", "event": "x"}, "unknown"),
+        # A placeholder row whose type is not a string is no summary.
+        ({"event_id": 7, "event_type": "unknown", "type": ["daily_summary"]}, "unknown"),
+    ],
+    ids=["empty-takes-any-type", "missing-takes-any-type", "type-unknown-kept", "type-a-list"],
+)
+def test_where_the_summary_limit_applies(body, expected) -> None:
+    ent = _sensor(_hass())
+    ent._handle_message(_msg(json.dumps(body)))
+    assert ent._attr_native_value == expected
 
 
 @pytest.mark.parametrize(
@@ -193,6 +249,9 @@ def test_a_later_stateful_row_replaces_the_summary() -> None:
     # And a later summary replaces the stateful row in turn.
     ent._handle_message(_msg(HELD_SUMMARY_BODY.replace('"event_id":42', '"event_id":44')))
     assert ent._attr_native_value == "held_summary"
+    # The next ribbon row (at most 15 minutes on) reads unknown again.
+    ent._handle_message(_msg(RIBBON_BODY))
+    assert ent._attr_native_value == "unknown"
 
 
 def test_a_signed_summary_verifies_and_reads_its_type() -> None:
@@ -242,8 +301,18 @@ def test_the_voice_brief_records_the_same_value() -> None:
         now=last["received_at"] + 60,
     )
     assert brief["canary_latest"]["event_type"] == "daily_summary"
-    # Spoken as words, where it used to be spoken as "unknown".
+    # The casual and night answers speak it as words, where they used to
+    # say "unknown"; the last-event answer reads the dictionary's label,
+    # which for a type it does not list is the id itself.
     assert _spoken_label(brief["canary_latest"]["event_type"]) == "daily summary"
+    assert "the last thing witnessed was daily summary," in speak_whats_up(brief)
+    night = fleet_brief(
+        [{"devices": ENTRY.runtime_data.devices, "verify": ENTRY.runtime_data.verify}],
+        now=last["received_at"] + 60,
+        local_hour=2,
+    )
+    assert speak_whats_up(night).startswith("One thing in the last hour: daily summary,")
+    assert speak_last_event(brief).startswith("daily_summary, ")
 
 
 @pytest.mark.parametrize("payload", ["not json at all", "5", '["daily_summary"]'])
