@@ -1458,6 +1458,20 @@ function meshShowError(msg) {
   el.classList.remove("hidden");
 }
 
+// Why the new Canary refused to join, in words (sweep F136). A PlatformIO
+// Canary that holds an opera refuses a join with 409 opera_exists (the
+// add-on proxy passes the body on: "Device HTTP error 409: {...}"): it
+// leaves that opera first, and a changed-address re-pair is Leave, then
+// Join. A canary-wap answers the same refusal 400 pairing_failed, which
+// names no reason, so that one reads as before.
+function meshJoinRefusedText(err) {
+  if (typeof err === "string" && /\bopera_exists\b/.test(err)) {
+    return "The new Canary is already in an opera. Leave that opera on the new Canary " +
+      "first, then start pairing again.";
+  }
+  return err || "New Canary refused to join";
+}
+
 async function meshStartPairing() {
   const initAddr = document.getElementById("mesh-init-addr").value.trim();
   const initTok  = document.getElementById("mesh-init-token").value;
@@ -1499,7 +1513,7 @@ async function meshStartPairing() {
       // The initiator is already in pairing mode; cancel it (best effort) so
       // an immediate retry isn't blocked until the initiator's own timeout.
       try { await api("api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
-      meshStartFailed(r2.error || "New Canary refused to join");
+      meshStartFailed(meshJoinRefusedText(r2.error));
       return;
     }
   } catch (e) {

@@ -21,9 +21,13 @@
 //     stops the wait without claiming either, and cancels a side still
 //     running this wizard's pairing, so a retry is not refused until that
 //     Canary's own 5-minute timeout;
-//   - giving up at either wait's timeout cancels what the last poll saw
-//     still running this wizard's pairing, and nothing on a poll that did
-//     not read both, nor a Canary that reports no number;
+//   - giving up at either wait's timeout reads both Canaries once more
+//     (F215; until then it acted on the last poll's reads, as F163 pinned)
+//     and cancels a side that reports this wizard's pairing still running,
+//     nothing beside a side that reports it paired, and not a Canary that
+//     cannot be read or reports no number;
+//   - (F136) a join the new Canary refuses because it is in an opera
+//     (opera_exists) says to leave that opera first;
 //   - a Canary whose answers carry no number (from before F133, or a
 //     canary-wap) is read the old way, done once it reads ACTIVE, also beside
 //     a Canary that reports its outcome;
@@ -749,6 +753,33 @@ test("each wait's timeout cancels from a fresh read, not from its final poll (F2
     assert.strictEqual(p.polls[wait].join, polls + 1,
       "the other Canary is read at every poll and once more at the timeout");
   }
+});
+
+// F136: a Canary that holds an opera refuses the join (409 opera_exists on
+// the PlatformIO tree): the wizard says so and what to do, ends the
+// existing Canary's pairing as for any refused join, and Start is ready.
+test("a join refused because the new Canary is in an opera says to leave it first", async () => {
+  const p = page(Object.assign({}, F133, {
+    join: { ok: false, error: "Device HTTP error 409: {\"ok\":false,\"error\":\"opera_exists\"}" },
+  }));
+  await p.t.meshStartPairing();
+  assert.strictEqual(p.el("mesh-error").textContent,
+    "The new Canary is already in an opera. Leave that opera on the new Canary first, " +
+    "then start pairing again.");
+  assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel init"]);
+  assert.ok(!p.el("mesh-start-btn").disabled && visible(p, "mesh-form"));
+
+  // Any other refusal reads as it did (a canary-wap's 400 pairing_failed
+  // names no reason).
+  const q = page(Object.assign({}, F133, {
+    join: { ok: false, error: "Device HTTP error 400: {\"ok\":false,\"error\":\"pairing_failed\"}" },
+  }));
+  await q.t.meshStartPairing();
+  assert.strictEqual(q.el("mesh-error").textContent,
+    "Device HTTP error 400: {\"ok\":false,\"error\":\"pairing_failed\"}");
+  const r = page(Object.assign({}, F133, { join: { ok: false } }));
+  await r.t.meshStartPairing();
+  assert.strictEqual(r.el("mesh-error").textContent, "New Canary refused to join");
 });
 
 // A gate the test opens by hand: wait() parks until open() is called.
