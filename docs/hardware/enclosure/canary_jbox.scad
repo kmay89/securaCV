@@ -24,7 +24,7 @@
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
-use <canary_port_lib.scad>   // connector standards — the USB slot centers on the shell axis
+use <canary_port_lib.scad>   // connector standards — the pigtail slot centers on the USB-C shell axis
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
@@ -122,7 +122,7 @@ assert(abs((screw_d + 2*tol_hole) + 2*screw_head_h - (screw_head_d + 2*tol_hole)
        "screw_head_h: the 90° seat does not open to the flat head's diameter");
 assert(lid_t - screw_head_h >= 1.0, "the lid seat leaves under 1.0 mm under the head");
 usb_zc = floor_t + standoff_h + board_h + port_usbc_shell_h()/2;
-// the drain: -X wall at the floor, beside the USB slot
+// the drain: -X wall at the floor, beside the pigtail slot
 weep_y = pigtail_w/2 + weep_d()/2 + 1.5;
 assert(!opt_weep || weep_y + weep_d()/2 + 0.5 <= inner_w/2 - pd, "the weep runs into a corner post");
 // Cantilever snap clip on a board long edge — the compact-WAP idiom, so the

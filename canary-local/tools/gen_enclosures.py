@@ -376,9 +376,12 @@ def parse_scad(path: Path):
     for ln in lines:
         if in_header:
             # A multi-line group header runs on until its `*/`; its lines
-            # finish the group's note, and none of them is a knob.
+            # finish the group's note, and none of them is a knob. Only the
+            # comment gutter (spaces, a leading ` * `) is stripped here: a
+            # line may end mid-sentence on a dash that the next line answers,
+            # and the opener's separator strip below would eat it.
             body, closed, _ = ln.partition("*/")
-            cur["note"] = " ".join(filter(None, (cur["note"], body.strip(" -—*/"))))
+            cur["note"] = " ".join(filter(None, (cur["note"], body.strip(" *"))))
             in_header = not closed
             continue
         g = GROUP_RE.search(ln)

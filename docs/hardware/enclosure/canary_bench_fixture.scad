@@ -55,7 +55,7 @@ btn_dep = 2.0;       // tact switch pocket depth into the plate face
 reed_l = 15.0;       // reed switch glass length
 reed_d = 2.8;        // reed glass diameter — the channel bores it + 2 x tol_press and its crown stands 0.3 + tol_press above the face, so the top is open; the slider's relief channel is this + 1.0 wide
 mag_d  = 6.0;        // tamper magnet (rides the slider)
-mag_h  = 3.0;        // tamper magnet height — not read by the geometry: the slider's pocket runs 10 deep, open at the knob top
+mag_h  = 3.0;        // tamper magnet height — not read by the geometry: the slider's pocket is open at the knob top, its floor 1.3 above the foot's underside and 6.4 below the knob top
 
 /* [Plate] */
 fx_w = 120.0;        // plate width (X); the corner holes sit 6 in from each edge

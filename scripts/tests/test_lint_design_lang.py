@@ -182,9 +182,11 @@ def knobs_without_help(path: Path) -> list[str]:
 # C10c: the development cases' knobs with no help, per file, counted as above.
 # Shrink-only: write help and lower the number in the same change; a knob that
 # loses its help, or a new knob without one, fails. The three monorepo-only dev
-# cases (C10c-1) carry help on every knob alone on its line. What is left is
-# handed up rather than done, because writing it moves catalog.json: each
-# remaining knob shares its line with another (`lip_w = 1.5;  lip_h = 2.0;`),
+# cases (C10c-1) carry help on every knob alone on its line except the field
+# case's bez_on (below) and the bare `part` selectors (not counted, see
+# knobs_without_help). What is left is handed up rather than done, because
+# writing it moves catalog.json: each remaining knob but bez_on shares its
+# line with another (`lip_w = 1.5;  lip_h = 2.0;`),
 # and a one-per-line split makes the Lab parser read knobs it skips today
 # (gen_enclosures.py reads one assignment per line), which moves the catalog's
 # engineering_param_count; field_case's bez_on is a catalog option whose help

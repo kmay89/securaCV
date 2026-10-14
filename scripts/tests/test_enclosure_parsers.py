@@ -19,9 +19,13 @@ now takes the builder's own GROUP_RE, and Groups holds the two parsers to one
 group for every knob both read.
 
 gen_enclosures.py runs its writers at import, so its parse_scad is lifted
-out of the source with `ast` rather than imported, together with the
-module-level imports it reads from gen_builder_manifest (its GROUP_RE) — the
-binding the generator really runs, not one this test supplies.
+out of the source with `ast` rather than imported, together with its
+`from gen_builder_manifest import ...` line. A lifted copy sees only what is
+lifted, so a later rebinding of GROUP_RE in the generator would pass it while
+the real run regrouped every knob. Two tests close that: Groups holds the
+committed enclosures.json (CI's "Enclosure catalog drift" step keeps it equal
+to the real generator's output) to the builder's groups, and Binding holds
+the generator to that one import as GROUP_RE's only binding.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -29,6 +33,7 @@ Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 import tempfile
@@ -41,8 +46,12 @@ sys.path.insert(0, str(ENC))
 import gen_builder_manifest  # noqa: E402
 
 
+LAB_SRC = ROOT / "canary-local" / "tools" / "gen_enclosures.py"
+ENCLOSURES_JSON = ROOT / "canary-local" / "devices" / "enclosures.json"
+
+
 def _lab_parse_scad():
-    src = (ROOT / "canary-local" / "tools" / "gen_enclosures.py").read_text(encoding="utf-8")
+    src = LAB_SRC.read_text(encoding="utf-8")
     body = ast.parse(src).body
     fn = next(n for n in body
               if isinstance(n, ast.FunctionDef) and n.name == "parse_scad")
@@ -123,6 +132,27 @@ class Groups(unittest.TestCase):
         self.assertGreater(both, 1000, "the parsers should share well over a thousand knobs")
         self.assertEqual(bad, [], "\n".join(bad))
 
+    def test_the_committed_lab_catalog_groups_like_the_builder(self):
+        # The output itself, not a lifted copy of the parser: whatever
+        # binding the generator really ran, this is what it wrote.
+        scads = json.loads(ENCLOSURES_JSON.read_text(encoding="utf-8"))["scads"]
+        self.assertGreater(len(scads), 20, "enclosures.json should list the case files")
+        bad, both = [], 0
+        for scad, parsed in sorted(scads.items()):
+            builder = {p["name"]: g["name"]
+                       for g in gen_builder_manifest.parse_scad(ENC / scad) for p in g["params"]}
+            lab = {p["name"]: g["name"] for g in parsed["groups"] for p in g["params"]}
+            for name in builder.keys() & lab.keys():
+                both += 1
+                if builder[name] != lab[name]:
+                    bad.append(f"{scad}:{name}: builder '{builder[name]}' vs "
+                               f"enclosures.json '{lab[name]}'")
+        self.assertGreater(both, 1000, "the catalog should share well over a thousand knobs")
+        self.assertEqual(bad, [], "\n".join(bad))
+        wap = {p["name"]: g["name"]
+               for g in scads["canary_wap_enclosure.scad"]["groups"] for p in g["params"]}
+        self.assertEqual(wap["tol_slide"], "Print tolerances")
+
     def test_the_wap_tolerances_are_print_tolerances(self):
         # The WAP's header is two lines long; before C10 the Lab filed these
         # under "Shell", the group before it.
@@ -138,6 +168,7 @@ class Groups(unittest.TestCase):
                          "a = 1;  // in the one-line group\n"
                          "/* [Two lines] — the note starts here\n"
                          "ghost = 2;\n"
+                         " *  and runs on, a clause ending on a dash —\n"
                          "   and closes here */\n"
                          "b = 3;  // in the two-line group\n"
                          "/*[Tight]*/\n"
@@ -150,8 +181,42 @@ class Groups(unittest.TestCase):
         self.assertNotIn("ghost", lab, "a header's own lines are never a knob")
         self.assertEqual(lab_groups["One line"]["note"], "the whole note")
         self.assertEqual(lab_groups["Two lines"]["note"],
-                         "the note starts here ghost = 2; and closes here")
+                         "the note starts here ghost = 2; "
+                         "and runs on, a clause ending on a dash — and closes here")
         self.assertEqual(lab_groups["Tight"]["note"], "")
+
+
+class Binding(unittest.TestCase):
+    """GROUP_RE reaches the generator's parse_scad by one road: the import
+    from gen_builder_manifest. Any other binding of the name anywhere in
+    gen_enclosures.py (an assignment, a `global`, a parameter, a second
+    import or alias) is one the lifted parser in this file would not see."""
+
+    def test_group_re_is_bound_only_by_the_builder_import(self):
+        tree = ast.parse(LAB_SRC.read_text(encoding="utf-8"))
+        imports, other = [], []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    bound = a.asname or a.name.split(".")[0]
+                    if bound == "GROUP_RE":
+                        mod = getattr(node, "module", None)
+                        (imports if (mod, a.name) == ("gen_builder_manifest", "GROUP_RE")
+                         else other).append(f"line {node.lineno}: import binds GROUP_RE")
+            elif isinstance(node, ast.Name) and node.id == "GROUP_RE" \
+                    and isinstance(node.ctx, (ast.Store, ast.Del)):
+                other.append(f"line {node.lineno}: GROUP_RE assigned")
+            elif isinstance(node, (ast.Global, ast.Nonlocal)) and "GROUP_RE" in node.names:
+                other.append(f"line {node.lineno}: global/nonlocal GROUP_RE")
+            elif isinstance(node, ast.ExceptHandler) and node.name == "GROUP_RE":
+                other.append(f"line {node.lineno}: except ... as GROUP_RE")
+            elif isinstance(node, ast.arg) and node.arg == "GROUP_RE":
+                other.append(f"line {node.lineno}: GROUP_RE as a parameter")
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == "GROUP_RE":
+                other.append(f"line {node.lineno}: GROUP_RE defined")
+        self.assertEqual(len(imports), 1, "gen_enclosures.py should import GROUP_RE "
+                                          "from gen_builder_manifest exactly once")
+        self.assertEqual(other, [], "\n".join(other))
 
 
 if __name__ == "__main__":
