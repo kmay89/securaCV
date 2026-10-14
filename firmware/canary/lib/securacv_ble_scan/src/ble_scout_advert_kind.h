@@ -28,16 +28,24 @@
  * That is the documented limit: a phone or a stranger's tag held close can
  * still win the window. Only a fleet-format advert is refused here.
  *
- * Not excluded (a choice, repo sweep F36): an advert that carries a SecuraCV
- * GATT service UUID but no fleet-format manufacturer data — the canary-wap
- * Bluetooth channel's SERVICE_UUID advert, or the legacy UUID-and-name
- * fallback the beacon code drops to when its advert data is refused. This
+ * Not excluded (a choice, repo sweep F36): any advert without fleet-format
+ * manufacturer data, a Canary's included. Read from the source, a Canary
+ * sends one in at least these cases: a canary-wap DEV-profile build's
+ * Bluetooth channel advert (its SERVICE_UUID; that profile has no Opera
+ * beacon), the legacy service-UUID advert the beacon code falls back to when
+ * its advert data is refused (both trees), and a Sense or Vision Improv
+ * setup door's flags-and-name advert when no beacon was handed to it. In a
+ * FULL canary-wap the beacon takes the primary advert and the service UUIDs
+ * ride the scan response, which this passive scan never requests. This
  * header reads manufacturer data only, so it stays a pure function of bytes
  * both trees share; a UUID rule would copy UUID strings from canary-wap-only
- * headers into this one with nothing to hold the copies together.
+ * headers into this one with nothing to hold the copies together, and would
+ * still miss the name-only advert.
  *
  * test_ble_scout_pairing.cpp holds these constants to fleet_beacon.h (by
- * include) and to fleet_roster_feed.cpp's Chirp branch (by reading it).
+ * include) and to fleet_roster_feed.cpp's Chirp branch and the canary-wap's
+ * ble_config.h sender (by reading them), and both trees' scan callbacks to
+ * the read, classify and pass shape above (by reading them too).
  *
  * PURE and self-contained: <stdint.h> and <stddef.h> only, no NimBLE, no
  * Arduino, no fleet_link include path. Committed byte-identically in both
