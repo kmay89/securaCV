@@ -129,7 +129,7 @@ lands on **DI COM**.
 | **ToF range** | I2C | **VL53L0X** (0x29) | Live mm + trip threshold (50/100/200/400 mm) with counter — the laser-gap prototype |
 | **Cap touch** | I2C | **MPR121** 12-pad (0x5A) | Electrode bitmap + 4 sensitivity presets for the shell-thickness test |
 | **RS485** | A/B | Modbus RTU device (energy meter, PLC, VFD, HVAC controller, alarm panel) | **PROBE** reads holding register 0 of slave 1 (9600 8N1) and shows the value — the industrial serial bus; a Modbus exception reply is named at once (`exception=<code>`), silence after 300 ms is `reply=none` |
-| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged; a controller driven bus-off recovers on its own (`bus=off recovery=started`, then `bus=on recovered`) and sends again only on the next tap |
+| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged; a controller driven bus-off recovers on its own (`bus=off recovery=started`, then `bus=on recovered`), a tap while it does says `tx=fail bus=off (recovering)`, and it sends again only on the next tap |
 | **I2C census** | bus | anything | Live scan every 3 s with reserved-address warnings |
 
 ### Capacitive-touch shell-thickness test (printed coupons)

@@ -100,9 +100,11 @@ and the station shows the value. A slave that answers with a Modbus
 exception (five bytes, CRC good) prints `PG1 <ms> EVT rs485 slave=1
 exception=<code>` as soon as it is in (`2` is an illegal data address: the
 slave is there, register 0 is not; the station's tile still reads "no reply").
-A quiet bus — or anything else that is not one good register back within the
-300 ms reply window (a bad CRC, another slave, a cut-short or corrupted
-exception) — prints `PG1 <ms> EVT rs485 slave=1 reply=none` after the window.
+Anything else prints `PG1 <ms> EVT rs485 slave=1 reply=none`, at one of two
+moments: a reply of the full seven bytes that fails its checks (a bad CRC,
+another slave's, another function's) as soon as its last byte is in; a quiet
+bus, a cut-short reply, or a corrupted, another slave's or another function's
+exception when the 300 ms reply window closes.
 
 **Fail → fix:** no reply with a known-good slave → **swap A/B** (or the
 TX/RX orientation) and re-test; the `pins.h` RS485 orientation note is
@@ -132,13 +134,18 @@ jumper is **OFF by default** — enable it only if this board is a bus end.
 **Pass:** the first SEND FRAME prints `[CAN] up on H/L (TX=15 RX=16) @ 500000
 bit/s` once, then `PG1 <ms> EVT can tx id=0x100 dlc=8 ok`. That `ok` means the
 TWAI driver queued the frame (`twai_transmit` returned `ESP_OK`), not that a node
-acknowledged it; a send the driver refuses (the transmit queue still full after
-50 ms, or the controller not running) prints
-`PG1 <ms> EVT can tx=fail (bus quiet? need another node/ack)`. Received frames
+acknowledged it. A send the driver refuses prints
+`PG1 <ms> EVT can tx=fail bus=off (recovering)` while the controller is
+bus-off or recovering from it, and
+`PG1 <ms> EVT can tx=fail (bus quiet? need another node/ack)` otherwise (the
+transmit queue still full after 50 ms: a node alone on the bus, with nothing
+to acknowledge its frames, keeps retrying them; it goes error-passive, never
+bus-off). Received frames
 print `PG1 <ms> EVT can rx id=0x... ext=0 rtr=0 dlc=N data=...` (up to 8 every
-100 ms) and count on the station. A controller driven **bus-off** (H/L
-swapped, no termination, no node to acknowledge) recovers on its own: the
-station's 100 ms drain initiates the controller's standard recovery once
+100 ms) and count on the station. A controller driven **bus-off** by bus
+errors while another node is on the bus (H/L swapped at one end, say) recovers
+on its own: the station's 100 ms drain initiates the controller's standard
+recovery once
 (`[CAN] bus-off - initiating recovery`, `PG1 <ms> EVT can bus=off
 recovery=started`), waits while the controller sees the bus free 128 times,
 and restarts it (`[CAN] recovered - restarted`, `PG1 <ms> EVT can bus=on
@@ -151,7 +158,10 @@ short, a live fault) keeps it recovering.
 kbit/s, and verify H/L aren't swapped; after a fix the station comes back
 without a reboot. Recovery is host-tested against a stand-in driver only:
 watch for both recovery lines the first time a bench drives the controller
-bus-off (pull the termination, tap SEND FRAME a few times, restore it). Retire the CAN
+bus-off. With another 500 kbit/s node on the bus, swap H/L at this end and tap
+SEND FRAME until a tap says `tx=fail bus=off (recovering)` (one tap can be
+enough), then put H/L back; pulling the termination may do it too, but a short
+bench bus often runs without it. Retire the CAN
 timing/terminator VERIFY notes in `pins.h` once frames flow cleanly. For another
 standard rate, change the rate the station passes to `can_begin` in
 `src/playground/playground.cpp` (and the inline transport's timing preset next
