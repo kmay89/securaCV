@@ -305,6 +305,8 @@ int main() {
     fresh_glass(320, 180);
     nightlight_ui_create();  // rebuilt again before its first update
     nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption().empty(), "a face rebuilt after a turn, before its update, says nothing "
+          "(\"%s\")", caption().c_str());
     const YSpan rebuilt = watch_y(600);
     report("a face rebuilt after a turn, before its update", rebuilt);
     CHECK(!startled(rebuilt), "a rebuild drops the owed Startle (y %d..%d)", rebuilt.lo,
@@ -361,7 +363,11 @@ int main() {
     nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
     CHECK(caption() == "here with you", "a life glance after 24.8 days shows its line (\"%s\")",
           caption().c_str());
-    fake_lvgl::run(6100);
+    fake_lvgl::run(5900);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(caption() == "here with you", "...and still shows it 5.9 s on (\"%s\")",
+          caption().c_str());
+    fake_lvgl::run(200);
     nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
     CHECK(caption().empty(), "...for 6 s only (\"%s\" 6.1 s on)", caption().c_str());
     // A turn there still says its word for the tumble's 1.4 s.
@@ -376,6 +382,38 @@ int main() {
     nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
     CHECK(caption().empty(), "...for the tumble's 1.4 s only (\"%s\" 1.5 s on)",
           caption().c_str());
+    // While the tumble plays, the clock's breath-in animation owns its
+    // opacity: 300 ms into a turn the update leaves the animation's value
+    // (it rises from 20% to full over 900 ms), not the full clock.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(1, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(300);
+    const int breath_in = clock_opa();
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    std::printf("  300 ms into a turn: the breath-in has the clock at opa %d, the update "
+                "leaves %d\n", breath_in, clock_opa());
+    CHECK(breath_in > LV_OPA_20 && breath_in < LV_OPA_COVER && clock_opa() == breath_in,
+          "300 ms into a turn the update leaves the clock to its breath-in (opa %d, the "
+          "animation's %d)", clock_opa(), breath_in);
+    // A face rebuilt 300 ms after a turn, with no tumble of its own (a
+    // rebuild of the active face), plays none of the turn's moments: no
+    // word, and a visit there dims the clock and names itself.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(1, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(300);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_update(g_fleet, now(), visiting(CanaryMood::Idle, VisitKind::Stretch));
+    CHECK(caption() == canary::care::visit_caption(VisitKind::Stretch) &&
+              clock_opa() == LV_OPA_40,
+          "a face rebuilt 300 ms after a turn plays none of its moments (caption \"%s\", "
+          "clock opa %d)", caption().c_str(), clock_opa());
     // ...and across the counter's wrap at 49.7 days: a turn 0.5 s before it
     // keeps its word 1 s on (past the wrap) and drops it 1.5 s on.
     fake_lvgl::tick() = 0u - 500u;
@@ -454,6 +492,49 @@ int main() {
     nightlight_ui_update(g_fleet, now(), visit);
     fake_lvgl::run(1000);
     CHECK(bird_ty() == 0, "landscape, a half turn mid-visit lands at 0 (%d)", bird_ty());
+    // A face rebuilt mid-fall takes the fall's offset with the old bird: the
+    // old bird's animation goes with the old screen and never writes the
+    // fall's last 0, so the rebuild itself starts the new bird with no fall.
+    // A rebuild 300 ms into a portrait half turn (no tumble of its own),
+    // then a visit: the bird is at the lift, and back at 0 when it ends.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(300);
+    const int fall_left = bird_ty();
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_update(g_fleet, now(), visit);
+    std::printf("  rebuilt 300 ms into a fall (translate_y %d then): %d in a visit (lift %d)\n",
+                fall_left, bird_ty(), lift);
+    CHECK(fall_left < 0, "300 ms into the fall the bird is still above its perch (%d)",
+          fall_left);
+    CHECK(bird_ty() == lift, "a face rebuilt mid-fall, then a visit: the bird is at the lift "
+          "(%d, lift %d)", bird_ty(), lift);
+    fake_lvgl::run(1500);
+    nightlight_ui_update(g_fleet, now(), visit);
+    CHECK(bird_ty() == lift, "...and stays there (%d, lift %d)", bird_ty(), lift);
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    CHECK(bird_ty() == 0, "...and the visit's end puts it on its perch (%d)", bird_ty());
+    // A quarter turn onto the landscape glass 300 ms into a portrait fall:
+    // the new bird slides in from the side, and a visit there has no lift.
+    fake_lvgl::run(9000);
+    fresh_glass(180, 320);
+    nightlight_ui_create();
+    nightlight_ui_tumble(2, now());
+    nightlight_ui_update(g_fleet, now(), state(CanaryMood::Idle));
+    fake_lvgl::run(300);
+    fresh_glass(320, 180);
+    nightlight_ui_create();
+    nightlight_ui_tumble(1, now());
+    nightlight_ui_update(g_fleet, now(), visit);
+    CHECK(bird_ty() == 0, "a quarter turn onto the landscape glass mid-fall, then a visit: "
+          "translate_y 0 (%d)", bird_ty());
+    fake_lvgl::run(1500);
+    nightlight_ui_update(g_fleet, now(), visit);
+    CHECK(bird_ty() == 0, "...and still 0 after the slide (%d)", bird_ty());
   }
 
   if (g_fail == 0) {
