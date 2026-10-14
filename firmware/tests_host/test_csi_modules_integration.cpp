@@ -23,6 +23,16 @@
 // Each test fails on the bridge before F81 (built with a no-op
 // securacv_csi_modules_tick, which is what main.cpp ran there: nothing).
 //
+// Backlog F90, on the same bridge and clock: a state held one, two or three
+// hours (plus 0, 7, 133 or 301 s of phase) reopens its
+// bundle every ten minutes, six an hour, core.presence's whole ceiling. The
+// library checked the ceiling before the bundler, so after about an hour
+// the held state's own refreshes were refused and the walk-out waited for a
+// slot to age out. Now a refresh of the open bundle is never refused and
+// the ceiling's last slot is kept for a change of state:
+// test_a_held_state_keeps_its_refreshes_and_the_way_out fails on the
+// library before F90 and passes on it.
+//
 // Build/run: make -C firmware/tests_host (the CI "host tests" job).
 
 #include <cstdint>
@@ -273,11 +283,68 @@ static int test_a_bundle_commits_while_csi_is_shed() {
   return 0;
 }
 
+// F90: hold "active" for `hold_s` windows past walk_in(), then walk out.
+// core.presence refreshes its held state at 5, 20 and every 60 windows; a
+// refresh the loop pass makes while the bundle is still open (inside its
+// window and its quiet gap, read from the bundler's own snapshot before the
+// pass) must land in that bundle. The walk-out must open its "empty" bundle
+// within core.presence's two windows of hysteresis.
+static int hold_then_walk_out(uint32_t hold_s, uint32_t* refreshes, uint32_t* refused,
+                              bool* walked_out) {
+  fresh();
+  *refreshes = 0;
+  *refused = 0;
+  const uint32_t opened = walk_in();
+  CHECK(opened != 0);
+  for (uint32_t w = 1; w <= hold_s; ++w) {
+    csi_event_record_t before;
+    const bool was_open = open_bundle("active", &before);
+    loop_pass(&kActive);
+    const bool refresh_window = (w == 5 || w == 20 || w % 60 == 0);
+    if (!refresh_window || !was_open) continue;
+    const bool mergeable = g_host_millis - before.first_seen_ms < CSI_BUNDLER_WINDOW_MS &&
+                           g_host_millis - before.last_seen_ms < CSI_BUNDLER_MAX_GAP_MS;
+    if (!mergeable) continue;
+    ++*refreshes;
+    csi_event_record_t after;
+    if (!open_bundle("active", &after) || after.first_seen_ms != before.first_seen_ms ||
+        after.bundled_count != before.bundled_count + 1) {
+      ++*refused;
+    }
+  }
+  loop_pass(&kEmpty);
+  loop_pass(&kEmpty);                          // two windows of hysteresis
+  csi_event_record_t out;
+  *walked_out = open_bundle("empty", &out);
+  return 0;
+}
+
+static int test_a_held_state_keeps_its_refreshes_and_the_way_out() {
+  static const uint32_t kPhaseS[] = {0, 7, 133, 301};
+  for (uint32_t hours = 1; hours <= 3; ++hours) {
+    for (uint32_t phase : kPhaseS) {
+      uint32_t refreshes = 0, refused = 0;
+      bool walked_out = false;
+      if (hold_then_walk_out(hours * 3600 + phase, &refreshes, &refused, &walked_out)) return 1;
+      if (refused != 0 || !walked_out) {
+        std::fprintf(stderr, "  hold %u h + %u s: %u of %u open-bundle refreshes refused, "
+                     "walk-out %s\n", (unsigned)hours, (unsigned)phase, (unsigned)refused,
+                     (unsigned)refreshes, walked_out ? "admitted" : "refused");
+      }
+      CHECK(refreshes > 0);
+      CHECK(refused == 0);
+      CHECK(walked_out);
+    }
+  }
+  return 0;
+}
+
 int main() {
   if (test_a_refresh_inside_the_window_commits_nothing_and_spends_nothing()) return 1;
   if (test_a_closed_bundle_commits_once()) return 1;
   if (test_a_window_closes_into_one_row_and_reopens()) return 1;
   if (test_a_bundle_commits_while_csi_is_shed()) return 1;
+  if (test_a_held_state_keeps_its_refreshes_and_the_way_out()) return 1;
   std::printf("test_csi_modules_integration: %d checks passed\n", g_checks);
   return 0;
 }

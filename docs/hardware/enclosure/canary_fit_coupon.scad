@@ -134,7 +134,7 @@ brand_raised = "CANARY";     // the EMBOSS station's wordmark
 brand_sunk   = "SecuraCV";   // the DEBOSS station's wordmark
 // ⚠️  EMBLEM STATION RETIRED — 0, and the reason is a measurement.
 // The house mark was redrawn to the brand's monoline art: a bird carrying a
-// notepad with a C spiralled into its wing and a V nested in its tail. That
+// notepad with a C spiraled into its wing and a V nested in its tail. That
 // drawing has INTERIOR detail, so it has a minimum size — at this station's
 // 0.7 mm rib, mark_min_h(0.7) is 15.6 mm. The air between the EMBOSS and
 // DEBOSS wordmarks is 7.6 mm ("CANARY" at size 7 ends at x -7.5, "SecuraCV"

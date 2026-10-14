@@ -230,6 +230,13 @@ class NimBLECharacteristic {
   std::string getValue() const { return value_; }
   void notify() { ++notifies; }
   unsigned notifies = 0;
+  // A peer's write as NimBLE delivers it (the BLE provisioning harness,
+  // test_ble_provision.cpp): the value set, then the callbacks' onWrite().
+  void host_write(const std::string& v) {
+    value_ = v;
+    NimBLEConnInfo info;
+    if (cb_) cb_->onWrite(this, info);
+  }
  private:
   NimBLECharacteristicCallbacks* cb_ = nullptr;
   std::string value_;
@@ -503,6 +510,18 @@ struct PasskeyAnswer {
 inline std::mutex passkey_mu;
 inline std::vector<PasskeyAnswer> passkey_answers;
 inline bool nimble_up = false;
+// When set, NimBLEDevice::init() fails as NimBLE-Arduino 2.x's does when the
+// controller or host cannot come up (it answers false and the stack stays
+// down): a boot bring-up that failed (sweep F235). The test clears it, and
+// the next init() succeeds: the kind of failure NimBLE-Arduino 2.5.0 leaves
+// nothing behind for (NimBLEDevice.cpp: nvs_flash_init() or
+// esp_bt_controller_init() failing). A failure after the controller's init
+// (esp_bt_controller_enable(), esp_nimble_hci_init()) leaves the controller
+// initialized, so on a device every later init() fails until a reboot; that
+// sticky kind is not modeled here.
+inline bool nimble_init_fails = false;
+// The name the last init() was given: the name the radio advertises (F261).
+inline std::string nimble_name;
 inline std::unique_ptr<NimBLEServer> server;
 inline NimBLEAdvertising advertising;
 inline NimBLEScan scan;
@@ -564,8 +583,10 @@ int gap_unpair(const NimBLEAddress& a);   // ble_gap_unpair() (below NimBLEDevic
 class NimBLEDevice {
  public:
   static bool isInitialized() { return host_sim::nimble_up; }
-  static bool init(const std::string&) {
+  static bool init(const std::string& name) {
     host_sim::note("nimble_init");
+    host_sim::nimble_name = name;
+    if (host_sim::nimble_init_fails) return false;
     host_sim::nimble_up = true;
     return true;
   }

@@ -100,7 +100,9 @@ enum class CardChange : uint8_t {
  * whose log cannot be opened stays closed until it is pulled. On kOpened,
  * `*size` is the log's size (0 when it does not exist yet) and `*tail_id`
  * the id of its last row: the last whole line that is not a dismissal,
- * looked for up to TAIL_SCAN_MAX bytes back (0 when there is none).
+ * looked for up to TAIL_SCAN_MAX bytes back (0 when there is none). A row
+ * whose strings parse() refuses counts (csi_event_log_line::record_id(),
+ * sweep F264): the backfill must walk to it to skip and count it.
  */
 CardChange poll(uint32_t* size, uint32_t* tail_id);
 

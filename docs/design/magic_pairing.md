@@ -515,7 +515,11 @@ card that names this device.
    **Continue**, **Not now**. Two on the table stay a choice in the inline
    card — on Today, Fleet (comb and list), the "+" sheet and the first
    section of the Set up walkthrough, which listens before it asks which
-   family it is (the advert already says). Strongest signal first.
+   family it is (the advert already says). Strongest signal first. While
+   the "+" sheet is up the card stands down — it would only show dimmed
+   behind the sheet's half-height detent, offering what the sheet already
+   lists — and nothing is counted as offered behind it; a card already up
+   comes back when the sheet closes (`NearbyOfferLatch`).
 3. **Tap → connect → the pairing sheet → pick.** `ImprovClient` connects,
    discovers the service, subscribes to state / error / result, reads the
    state, and asks `GET_WIFI_NETWORKS`. That first write to the command
@@ -561,12 +565,32 @@ allowed → the reason and **Open Settings**, never a spinner. On a WAP's
 claim: nothing answered (the phone off Wi-Fi, or the `.local` name not yet
 settled) → the claim is unspent, so **Try again** while it lives (180 s);
 a `403` or any other answer → the device's row under **Ready to pair** on
-the Fleet tab, which takes its recovery kit (the receipt its own page saves
-after a BOOT tap — its setup-network address moved onto the address the
-WAP answers at now, the pin still its own) or a fresh setup. The app has
-no BOOT-tap pairing over the LAN: a receipt served on a BOOT tap names the
-SoftAP address, and an installed WAP speaks https with no pin the phone
-could hold it to before the first dial.
+the Fleet tab, which takes its recovery kit or a fresh setup. The kit is
+the receipt the WAP's own pages save: the setup wizard's close-out after a
+BOOT tap, and since #1802 its dashboard (F257), so a WAP set up through
+this door, which never runs the wizard's close-out, has a kit to save. On
+the dashboard (`https://canary-<suffix>.local/settings` once set up; port
+80 redirects there) a browser that is signed out chooses **Use BOOT Tap
+Once**, and the tap that signs it in offers **Save my recovery kit** in the
+wizard's words; one already signed in (a session cookie from the landing
+page, a tap or a claim, or a token) saves it from **Settings**, **Device**,
+**Recovery kit** without a tap. A kit saved on the setup network names the
+SoftAP address; one saved over the home network names the `.local` name
+(F255: the receipt, and port 80's redirect, name the SoftAP address only
+for a request that arrived over the SoftAP, or while the STA holds no
+address). Neither lasts: the SoftAP is gone once the WAP is on your Wi-Fi,
+and the `.local` name lasts only as long as the WAP's name — naming it
+later (the wizard, or `POST /api/device-name`) changes the host. So the
+app moves a kit whose `device_id` is the row's onto the address the WAP
+answers at now, whatever host the kit names, keeping its scheme, port and
+pin (`ProvisioningReceipt.rebased`, A88); a kit with no `device_id` moves
+only off the SoftAP address, and another device's kit keeps the host it
+names. A kit saved before a rename is dialed at the new name. "The row's
+id" is a 16-bit suffix of the WAP's key fingerprint, so two WAPs in one
+home can share one, and then one's kit moves onto the other (the rebase's
+comment says what follows). The app has no BOOT-tap
+pairing over the LAN: an installed WAP speaks https with no pin the phone
+could hold it to before the first dial (F256).
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 `MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),
@@ -574,7 +598,8 @@ Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 unit joined), `SetupGuideTests` (the words the screen shows, twenty words
 up front), `SetupPortalTests` (the scan list and the next step for every
 verdict), `AddCanaryFlowTests` (no prompt at launch, the first-run card,
-the radio and camera words).
+the radio and camera words), `DeviceAPITests` (which recovery kit moves
+onto the WAP it was opened for, and which stays as it is).
 
 ---
 
@@ -714,6 +739,20 @@ cannot speak to.
       second time is `403`; a wrong claim is `403` **and** burns the real
       one; a claim after 180 s is `403`; the BOOT tap is still unspent after
       a claim served.
+- [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
+      from a laptop on the home network (the dashboard's sign-in at
+      `https://canary-<suffix>.local/settings`) names `base_url` at
+      `https://canary-<suffix>.local`; the same tap from a phone still on
+      the setup network inside the AP grace window names `192.168.4.1`; a
+      bearer re-sync over the home network names the `.local` name; and
+      `http://canary-<suffix>.local/settings` answers `301` to
+      `https://canary-<suffix>.local/settings`, before and after the AP
+      drops.
+- [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**,
+      and a signed-in dashboard saves it from **Settings**, **Device**,
+      **Recovery kit**; the saved `canary-recovery-kit.json` is the
+      receipt, and it pairs the WAP from its row under **Ready to pair** in
+      the iPhone app; a sign-in whose tap never came offers nothing.
 - [ ] The iPhone ends up paired from one tap; the `tls_cert_fp` pin holds
       on a TLS-enabled unit; a phone that takes three minutes to spend the
       claim still finds the WAP up (the reboot is held while the claim is
@@ -724,10 +763,22 @@ cannot speak to.
 
 - [ ] The card on Today, Fleet and the walkthrough; dismissal; the
       paired-and-unambiguous exclusion with two devices sharing a suffix.
+- [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
+      behind the half-height sheet, on an iPhone and on an iPad) and lists
+      the Canary inline; closing the sheet brings the card back; a Canary
+      first heard while the sheet is up is offered once it closes. On an
+      iPad with two windows the stand-down is app-wide (one flag in
+      `FleetStore`): a "+" sheet in one window hides the card in both, and
+      with a "+" sheet up in each, closing one brings the card back
+      behind the other; note what the bench sees.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,
       and its recovery kit (saved before it joined) pairs it there.
+- [ ] A kit saved from the dashboard over the home network, then the WAP
+      named (`POST /api/device-name`, or the wizard's name), pairs it from
+      its row at the new `.local` name, the pin held on a TLS-enabled
+      unit; another WAP's kit opened from that row is not moved onto it.
 - [ ] With the phone on cellular at the claim, the card names it and Try
       again pairs once the phone is back on the home Wi-Fi (inside 180 s).
 - [ ] With an older Vision already on the network, the success card does
@@ -750,6 +801,8 @@ cannot speak to.
 | The short BOOT tap (pure) | [`firmware/common/io/short_tap.h`](../../firmware/common/io/short_tap.h) | `firmware/tests_host/test_short_tap.cpp` |
 | The claim ticket (pure) | [`firmware/common/network/claim_ticket.h`](../../firmware/common/network/claim_ticket.h) | `firmware/tests_host/test_claim_ticket.cpp` |
 | The receipt's four-grant order | [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h) (`receipt_decide`) | `firmware/tests_host/test_provisioning_gate.cpp` |
+| Which address the WAP's receipt and port-80 redirect name (pure) | [`firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h`](../../firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h) | `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp` |
+| The WAP's recovery kit, one builder for the wizard and the dashboard (BOOT-tap offer and Settings) | `RECOVERY_KIT` in `companion_pwa.h` and `web_ui.h` (same lines) | `firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js` |
 | The beacon's setup bit | [`firmware/common/fleet_link/fleet_beacon.h`](../../firmware/common/fleet_link/fleet_beacon.h) (`FLEET_BEACON_FLAG_SETUP_OPEN`) | the beacon tests |
 | Sense / Vision flag and window | `include/canary/config.h` (`FEATURE_IMPROV`, `IMPROV_FIRST_BOOT_WINDOW_MS`) | the per-board `-DFEATURE_IMPROV=0` CI veto |
 | The WAP's glue, advert set, claim service | [`firmware/projects/canary-wap/arduino/canary_wap/ble_improv.h`](../../firmware/projects/canary-wap/arduino/canary_wap/ble_improv.h), `build_config.h` (`FEATURE_IMPROV`), `bluetooth_channel::set_setup_door` | CI-compiled; `check_improv_sync.sh` holds the staged core |
@@ -758,8 +811,9 @@ cannot speak to.
 | The walkthrough's words (pure) | [`ios/Shared/SetupGuide.swift`](../../ios/Shared/SetupGuide.swift) | `SetupGuideTests` |
 | The CoreBluetooth glue | `ios/Sources/SecuraCV/Transport/ImprovClient.swift` | bench |
 | The WAP sequence: claim → receipt → paired (pure) | [`ios/Shared/MagicPairPlan.swift`](../../ios/Shared/MagicPairPlan.swift) | `MagicPairPlanTests` |
+| Which recovery kit moves onto the WAP it was opened for (pure) | `ProvisioningReceipt.rebased` in `ios/Sources/SecuraCV/Transport/DeviceAPI.swift` | `DeviceAPITests`; `PairView`'s call, as source: [`scripts/tests/test_ios_setup_glue.py`](../../scripts/tests/test_ios_setup_glue.py) |
 | The remembered Wi-Fi (device-only Keychain) | `ios/Sources/SecuraCV/Security/HouseholdWiFi.swift` | — |
-| The card | `ios/Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift` | — |
+| The card | `ios/Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift` | its latch (`NearbyOfferLatch`, pure): `NearbyCanaryTests`; the "+" sheet's stand-down wiring, as source: `test_ios_setup_glue.py` |
 | The lessons | [`firmware/LESSONS_LEARNED.md`](../../firmware/LESSONS_LEARNED.md) (three entries dated 2026-10-07) | — |
 | The parity row | [`firmware/FEATURES.md`](../../firmware/FEATURES.md) | the dashboard guard |
 

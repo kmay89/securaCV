@@ -177,6 +177,60 @@ static void test_parse_exception() {
   CHECK(mb::decode_exception(frame, n) == 0x02, "exception code 0x02 decoded");
 }
 
+// exception_complete(): the stop condition a transport waiting for a normal
+// reply uses (F291). It holds only once five CRC-good bytes from the expected
+// slave carry the expected function with the exception bit.
+static void test_exception_complete() {
+  uint8_t ex[8] = {0x11, mb::FN_READ_HOLDING | mb::EXCEPTION_FLAG, 0x02};
+  const size_t n = mb::append_crc(ex, 3);
+  CHECK(n == mb::EXCEPTION_LEN && mb::EXCEPTION_LEN == 5, "an exception is 5 bytes");
+  CHECK(mb::exception_complete(ex, n, 0x11, mb::FN_READ_HOLDING),
+        "a whole, CRC-good exception is complete");
+  CHECK(mb::decode_exception(ex, n) == 0x02, "and decodes to its code");
+  for (size_t got = 0; got < mb::EXCEPTION_LEN; got++) {
+    CHECK(!mb::exception_complete(ex, got, 0x11, mb::FN_READ_HOLDING),
+          "fewer than five bytes are not yet an exception");
+  }
+  CHECK(!mb::exception_complete(nullptr, n, 0x11, mb::FN_READ_HOLDING),
+        "no buffer is no exception");
+  // Bytes behind the five (a late echo, line noise) do not hide it.
+  ex[5] = 0xAA;
+  ex[6] = 0x55;
+  CHECK(mb::exception_complete(ex, 7, 0x11, mb::FN_READ_HOLDING),
+        "the first five bytes decide, whatever follows");
+  CHECK(!mb::exception_complete(ex, n, 0x12, mb::FN_READ_HOLDING),
+        "another slave's exception is not this exchange's");
+  CHECK(!mb::exception_complete(ex, n, 0x11, mb::FN_READ_INPUT),
+        "an exception to another function is not this exchange's");
+  uint8_t bad[8];
+  std::memcpy(bad, ex, sizeof(bad));
+  bad[4] ^= 0x01;  // CRC high byte
+  CHECK(!mb::exception_complete(bad, n, 0x11, mb::FN_READ_HOLDING),
+        "a corrupted CRC is not an exception");
+  std::memcpy(bad, ex, sizeof(bad));
+  bad[2] ^= 0x01;  // the code, CRC unchanged
+  CHECK(!mb::exception_complete(bad, n, 0x11, mb::FN_READ_HOLDING),
+        "a corrupted code is not an exception");
+
+  // A normal one-register reply is never one, even when its first five bytes
+  // happen to carry a good CRC (its value equal to the CRC of its header):
+  // its function byte has no exception bit.
+  uint8_t ok[8] = {0x11, mb::FN_READ_HOLDING, 0x02};
+  const uint16_t hc = mb::crc16(ok, 3);
+  ok[3] = static_cast<uint8_t>(hc & 0xFF);
+  ok[4] = static_cast<uint8_t>(hc >> 8);
+  const size_t okn = mb::append_crc(ok, 5);
+  CHECK(mb::crc_ok(ok, mb::EXCEPTION_LEN), "the normal reply's head is CRC-good");
+  CHECK(!mb::exception_complete(ok, mb::EXCEPTION_LEN, 0x11, mb::FN_READ_HOLDING),
+        "a normal reply's head is not an exception");
+  CHECK(!mb::exception_complete(ok, okn, 0x11, mb::FN_READ_HOLDING),
+        "a whole normal reply is not an exception");
+  uint16_t regs[1] = {0};
+  CHECK(mb::parse_registers(ok, okn, 0x11, mb::FN_READ_HOLDING, regs, 1) == 1 &&
+            regs[0] == static_cast<uint16_t>((ok[3] << 8) | ok[4]),
+        "and it parses as the register it is");
+}
+
 int main() {
   test_crc_known_answer();
   test_crc_trailer_order();
@@ -188,6 +242,7 @@ int main() {
   test_parse_valid();
   test_parse_rejects();
   test_parse_exception();
+  test_exception_complete();
 
   if (g_fail == 0) {
     std::printf("ALL MODBUS RTU TESTS PASSED\n");

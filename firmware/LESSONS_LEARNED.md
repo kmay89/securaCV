@@ -1184,7 +1184,7 @@
   HTML instruction page, including Android's `/generate_204`. Android only
   treats a network as "validated/online" when that probe returns **HTTP 204
   No Content**; any other response flips it to "Wi-Fi has no internet,"
-  which de-prioritises the AP and eventually disassociates.
+  which de-prioritizes the AP and eventually disassociates.
 - **Fix:** Answer probes per-platform (the "hybrid" strategy):
   - **Apple** (`/hotspot-detect.html`, `/library/test/success.html`) → the
     instruction page. This pops the Captive Network Assistant sheet (which
@@ -1783,7 +1783,9 @@
   Envs and samples: four canary envs and both firmware samples were
   compiled by no job, and one sample had already drifted from the library.
   `firmware/configs/canary-wap/` was compiled by no build at all while the
-  Workshop, `FEATURES.md` and the Flipper guide quoted its flags.
+  Workshop, `FEATURES.md` and the Flipper guide quoted its flags (deleted in
+  sweep F258, once the Lab's generators read the sketch's `build_config.h`
+  and `canary_wap.ino` instead).
 - **Root cause:** every one of these passed the guards that existed: the
   reachability check looked at `.cpp` files, the flag lint at Cargo
   features, and CI at the envs `flavors.json` lists. The shape of a feature
@@ -2287,6 +2289,42 @@
   Code that reads an address off an httpd socket goes through this helper,
   never a bare `sin_addr`.
 - **Date learned:** 2026-09
+
+### A receipt names where its reader is, not where the device was set up (canary-wap)
+- **What happened:** canary-wap's provisioning receipt wrote
+  `WiFi.softAPIP()` into `base_url` for the bearer and BOOT-tap grants and
+  the `.local` name only for a spent setup-door claim. A receipt fetched
+  over the home network while the STA was up therefore named
+  `192.168.4.1`, which nothing on that network reaches and which is gone
+  once the SoftAP drops after its grace window; the recovery kit a
+  dashboard sign-in saves (F257) is that receipt. The iPhone moved a
+  `192.168.4.1` receipt onto the host it had discovered, so it kept
+  working there, and every other reader was left with a dead address.
+- **Root cause:** the address was chosen by the grant (how the caller got
+  in), when the question is the network (where the caller is). The
+  flagship had answered it from the request socket since 2026-09
+  (`local_addr_of`, the entry above); the WAP never asked.
+- **Fix:** `receipt_authority.h` (pure): the SoftAP address only for a
+  bearer or BOOT-tap request whose socket's local address is the SoftAP
+  address, or while the STA holds no address; otherwise the `.local` name
+  (the STA's address with no name); a claim keeps its `.local` contract.
+  The sketch reads the local address with `httpd_req_to_sockfd()` +
+  `getsockname()` through the same IPv4-mapped unwrap as the flagship, and
+  a socket that cannot say falls back to the `.local` name while the STA is
+  up, the one answer every home-network reader can use (sweep F255). Port
+  80's redirect to https made the same choice for every caller and now asks
+  the same header. An address that reads 0 is never named: on
+  Arduino-ESP32 core 3.x `WiFi.softAPIP()` reads `0.0.0.0` once
+  `wifi_drop_ap()` has released the AP netif, which is an installed WAP's
+  steady state, so a test that only ever feeds the configured
+  `192.168.4.1` never sees the case the device lives in.
+- **Regression check:** `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp`
+  (every grant and the redirect on the SoftAP, on the STA, with the STA
+  down and with the SoftAP dropped, beside the old rule; the unwrap held to
+  `provisioning_gate.h`'s; the sketch's glue compared token for token with
+  its comments removed). The lwIP glue is built only by CI; not run on a
+  device.
+- **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 

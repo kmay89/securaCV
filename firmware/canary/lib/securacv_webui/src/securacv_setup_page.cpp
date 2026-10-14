@@ -126,7 +126,7 @@ textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:
 <li><b>2</b><span>Put your phone back on your home Wi-Fi — it usually hops back by itself.</span></li>
 <li><b>3</b><span>Open <span class="addr">canary.local</span> in your browser any time — that's your Canary's home page<span id="ipalt"></span>.</span></li>
 </ol>
-<details id="hubbox" style="text-align:left;margin-top:14px">
+<details id="hubbox" style="text-align:left;margin-top:14px;display:none">
 <summary style="cursor:pointer;color:var(--accent);font-size:14px">Have a SecuraCV hub? Point your Canary at it (optional)</summary>
 <p class="hint">These defaults are right for a SecuraCV hub (Home Assistant with the Mosquitto broker add-on). No hub yet? Skip this — you can do it any time from canary.local.</p>
 <label for="mhost">Hub address</label>
@@ -303,10 +303,18 @@ function refreshTls(){
   var port=parseInt($('mport').value,10)||1883;
   $('mportnudge').style.display=(m!==0&&port===1883)?'block':'none';
 }
+// The hub box shows only where the image has the hub bridge (F275): the
+// /api/mqtt/* routes are registered only under FEATURE_HA_MQTT (dev_ha,
+// release_ha), and every answer they give is JSON (a refusal included), while
+// an image without them answers the catch-all's 404 page or its redirect to
+// this wizard. So the box stays hidden unless GET /api/mqtt/status answers
+// JSON.
 function loadHub(){
   if(hubAsked)return;hubAsked=true;
   fetch('/api/mqtt/status',{headers:hdrs()}).then(function(r){return r.json()}).then(function(d){
-    if(!d||!d.ok)return;
+    if(!d||typeof d!=='object')return;
+    $('hubbox').style.display='';
+    if(!d.ok)return;
     hub.loaded=true;
     if(d.host){$('mhost').value=d.host}
     if(d.port){$('mport').value=String(d.port)}
@@ -358,7 +366,7 @@ $('mqttsave').addEventListener('click',function(){
   }).catch(function(e){
     $('mqttsave').disabled=false;
     if(e&&e.cvRefused){mqttMsg('Couldn’t save: '+e.message+' — you can set this any time from canary.local.')}
-    else{mqttMsg('This Canary doesn’t have the hub bridge turned on — set it up later from canary.local.')}
+    else{mqttMsg('Couldn’t reach the Canary to save the hub settings — try again.')}
   });
 });
 $('rebootnow').addEventListener('click',function(){

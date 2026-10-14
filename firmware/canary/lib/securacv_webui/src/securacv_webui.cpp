@@ -982,7 +982,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="nav-btn" data-panel="timeline">Timeline</button>
       <button class="nav-btn" data-panel="sensing">Sensing</button>
       <button class="nav-btn" data-panel="peek">Peek</button>
-      <button class="nav-btn" data-panel="opera">
+      <!-- Opera: hidden until GET /api/mesh answers (F273, F176's shape).
+           Only [env:full] sets FEATURE_MESH_NETWORK; every other build
+           registers no /api/mesh route, so the tab stays hidden there. -->
+      <button class="nav-btn" data-panel="opera" id="navOpera" style="display:none">
         Opera<span class="count" id="operaAlertCount" style="display:none">0</span>
       </button>
       <!-- Community (Chirp): hidden until GET /api/chirp answers with a Chirp
@@ -1739,7 +1742,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
       
-      <div class="card">
+      <div class="card" id="peekControlsCard">
         <div class="card-header">
           <div>
             <div class="card-title">Camera Controls</div>
@@ -1864,7 +1867,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- Camera Info — live stream metrics from /api/peek/status -->
-      <div class="card">
+      <div class="card" id="camInfoCard">
         <div class="card-header">
           <div>
             <div class="card-title">Stream Metrics</div>
@@ -2805,7 +2808,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
       else if (panel === 'timeline') loadTimeline();
-      else if (panel === 'peek') { refreshPeekStatus(); refreshSensorState(); }
+      else if (panel === 'peek') { refreshPeekStatus(); if (peekServed) refreshSensorState(); }
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
@@ -2844,7 +2847,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       refreshStatus();
       loadWifiStatus();
       // A tab probe the missing token turned away (401) asks again: a
-      // firmware that serves the route gets its tab back now (F176, F198).
+      // firmware that serves the route gets its tab back now (F176, F198,
+      // F273).
+      if (!operaServed) refreshOpera();
       if (!chirpServed) refreshChirpStatus();
       if (!btServed) refreshBtStatus();
     }
@@ -2894,11 +2899,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           console.error('JSON parse error:', parseErr, 'Response:', text);
           // Truncate error to avoid huge HTML error pages in alerts
           const errMsg = res.ok ? 'Invalid response format' : (text || 'Request failed');
-          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg };
+          // unrouted: a 404 page or a redirect, how the GET "/*" fallback
+          // answers a path no route of this build registers (the redirect
+          // goes to the setup wizard). Only a caller whose route always
+          // answers JSON may read it as "this build has no such route".
+          // notJson marks every answer that was not JSON, unrouted or not.
+          return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg,
+                   unrouted: res.status === 404 || res.redirected === true, notJson: true };
         }
       } catch (e) {
         console.error('API error:', e);
-        return { ok: false, success: false, error: 'Network error' };
+        // unanswered: the request never got an answer (says nothing).
+        return { ok: false, success: false, error: 'Network error', unanswered: true };
       }
     }
 
@@ -2906,21 +2918,55 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // PEEK (Camera Preview) — FIXED VERSION
     // ══════════════════════════════════════════════════════════════════
     
+    // F274: the camera routes are registered only where FEATURE_CAMERA_PEEK
+    // is set (not in [env:minimal] or [env:esp32-wroom]). A status no route
+    // took (api()'s unrouted: the fallback's 404 page or setup redirect),
+    // before any status has answered, is a build without the preview: the
+    // panel shows its no-camera state, says why, and hides the controls and
+    // metrics cards, which hold every control that calls another camera
+    // route. Opening the panel reads the sensor state (GET /api/peek/sensor)
+    // only once a status has answered; until then the first answer pulls it,
+    // so a build without the camera is asked only for the status. No answer,
+    // or the route's own refusal (a token it wants), says nothing about the
+    // build and changes nothing. Once a status has answered (peekServed), a
+    // failed poll changes nothing, as before: a network blip mid-stream is
+    // not a missing camera.
+    let peekServed = false;
+
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
-      if (data && data.ok) {
-        const wasReady = cameraReady;
-        cameraReady = data.camera_initialized;
-        peekActive = data.peek_active;
-        if (typeof data.resolution !== 'undefined') {
-          currentResolution = data.resolution;
-          updateResolutionUI();
+      if (!(data && data.ok)) {
+        if (!peekServed && data && data.unrouted) {
+          cameraReady = false;
+          peekActive = false;
+          stopCamInfoPolling();
+          updatePeekUI();
+          document.getElementById('peekStatus').textContent = 'No camera in this build';
+          document.getElementById('peekOfflineText').textContent = 'This firmware was built without the camera preview.';
+          document.getElementById('peekControlsCard').style.display = 'none';
+          document.getElementById('camInfoCard').style.display = 'none';
         }
-        applyCameraInfo(data);
-        updatePeekUI();
-        if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
-        if (cameraReady && !wasReady) refreshSensorState();
+        return;
       }
+      const firstAnswer = !peekServed;
+      if (firstAnswer) {
+        peekServed = true;
+        document.getElementById('peekControlsCard').style.display = '';
+        document.getElementById('camInfoCard').style.display = '';
+      }
+      const wasReady = cameraReady;
+      cameraReady = data.camera_initialized;
+      peekActive = data.peek_active;
+      if (typeof data.resolution !== 'undefined') {
+        currentResolution = data.resolution;
+        updateResolutionUI();
+      }
+      applyCameraInfo(data);
+      updatePeekUI();
+      if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
+      // The first status this page heard stands in for the sensor read the
+      // panel's opening held back; a camera that just came up pulls it too.
+      if (firstAnswer || (cameraReady && !wasReady)) refreshSensorState();
     }
     
     function updatePeekUI() {
@@ -4788,13 +4834,27 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       `).join('');
     }
 
+    // POST /api/export answers the bundle itself, inline (handle_export:
+    // ok, device, chain head, public key, last record), and names no file to
+    // fetch, so the page saves that answer as the download (F278). It looked
+    // for a download_url the handler never sends and alerted "Export
+    // failed" after every good export.
     async function exportWitness() {
       const data = await api('/api/export', 'POST');
-      if (data.ok && data.download_url) {
-        window.location.href = data.download_url;
-      } else {
-        alert('Export failed: ' + (data.error || 'Unknown error'));
+      if (!data || data.ok !== true) {
+        alert('Export failed: ' + ((data && data.error) || 'Unknown error'));
+        return;
       }
+      const id = String(data.device_id || 'canary').replace(/[^A-Za-z0-9_-]/g, '_');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'witness-export-' + id + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -5280,8 +5340,29 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     let pairingMode = null;
     let pairingConfirmed = false;
 
+    // F273: the Opera tab shows only once GET /api/mesh has answered. The
+    // mesh routes are registered only where FEATURE_MESH_NETWORK is set
+    // ([env:full]), and there every answer the route gives is JSON, a
+    // refusal included (rate_limit_check's 429, auth_gate's 401/403/503):
+    // any JSON answer shows the tab. Elsewhere the page load's one call
+    // gets the GET "/*" fallback's 404 page or setup redirect (api()'s
+    // unrouted), the tab stays hidden and nothing polls the mesh again.
+    // A probe that got no verdict (no answer, or another answer that was
+    // not JSON) is asked again on the 5 s poll (operaProbeAgain), and
+    // unlocking with a token asks once more, as for Community and Bluetooth.
+    let operaServed = false;
+    let operaProbeAgain = false;
+
     async function refreshOpera() {
       const data = await api('/api/mesh');
+      if (!operaServed) {
+        if (data.unanswered || data.notJson) {
+          operaProbeAgain = !data.unrouted;
+          return;
+        }
+        operaServed = true;
+        document.getElementById('navOpera').style.display = '';
+      }
       if (!data.ok) return;
 
       operaState = data;
@@ -6587,9 +6668,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     setInterval(() => {
       if (currentPanel === 'logs') loadLogs();
       else if (currentPanel === 'witness') loadWitness();
-      else if (currentPanel === 'opera') refreshOpera();
+      else if (currentPanel === 'opera' && operaServed) refreshOpera();
       else if (currentPanel === 'community' && chirpServed) refreshChirpStatus();
       else if (currentPanel === 'bluetooth' && btServed) refreshBtStatus();
+      // A mesh probe that got no verdict asks again (F273).
+      if (!operaServed && operaProbeAgain) refreshOpera();
     }, 5000);
     /* Sensing panel polls at 1 Hz to match the CSI window cadence so the
      * gauges feel live without flooding the device with HTTP. */

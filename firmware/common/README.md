@@ -14,7 +14,8 @@ common/
 ├── attest/         # self_manifest.h — the device self-manifest (host-testable)
 ├── boot/           # boot_banner.{h,cpp} — the shared boot banner (PIO library)
 ├── chirp/          # chirp_channel.h — the ratified C-ABI Chirp API for the ACTIVE port; no
-│                   #   build includes it yet (tests_host syntax-checks it). See chirp/README.md
+│                   #   build includes it yet (tests_host syntax-checks it; canary-wap's host
+│                   #   tests hold its values to the reference, F272). See chirp/README.md
 ├── color/          # color/look/plumage engines — the Nightstand look and the lamp's voice
 ├── console/        # tuning_console.h — line-based serial tuning console (knob table in, commands out)
 ├── core/

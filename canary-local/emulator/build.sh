@@ -335,7 +335,6 @@ INCLUDES=(
 DEFINES=(
   -DARDUINO=10812
   -DLV_CONF_INCLUDE_SIMPLE
-  -DCONFIG_CANARY_DISPLAY
   -DEMU_BUILD_FLAVOR="\"$FLAVOR\""
   # The emulator is not real hardware, so the piezo-unpopulated gate that keeps
   # FEATURE_CHIME off in shipped firmware does not apply here: turn it ON so the

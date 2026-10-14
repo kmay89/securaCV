@@ -106,6 +106,11 @@ constexpr size_t MAX_USER_LEN   = 64;
 constexpr size_t MAX_PASS_LEN   = 128;
 constexpr size_t MAX_PREFIX_LEN = 32;
 constexpr size_t MAX_CA_LEN     = 3071;   /* PEM bytes, NUL excluded (mqtt_transport_logic.h kCaPemMax) */
+/* The longest body POST /api/mqtt/config reads (sweep F266): every field at
+ * its limit and the CA JSON-escaped, with room to spare. A Content-Length
+ * past it is refused (400, "body must be at most N bytes") before any of the
+ * body is read. */
+constexpr size_t MAX_CONFIG_BODY_LEN = 640 + 2 * MAX_CA_LEN + 63;
 
 /* The client's network timeout (esp_mqtt_client_config_t's
  * network.timeout_ms; sweep F112): how long esp_mqtt lets one socket

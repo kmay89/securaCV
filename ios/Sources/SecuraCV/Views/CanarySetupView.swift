@@ -94,6 +94,10 @@ struct CanaryFamilySetupView: View {
     /// Read on appear (prefill), not here: a @State initial value is
     /// evaluated on every init of this view, and the Keychain is not free.
     @State private var remembered: HouseholdWiFi?
+    /// The hub's broker login, a Keychain item read in prefill for the same
+    /// reason; the watch step used to read it in `body`, once per render
+    /// while the scan republishes (sweep A75).
+    @State private var hubLogin: HubSecretStore.BrokerLogin?
     @State private var showingScanner = false
     @State private var scanNote: String?
     @State private var cameraDenied = false
@@ -170,6 +174,7 @@ struct CanaryFamilySetupView: View {
     /// Every path that asks for Wi-Fi opens with the remembered one.
     private func prefill() {
         remembered = HouseholdWiFiStore.load()
+        hubLogin = HubSecretStore.brokerLogin()
         if let p = HouseholdWiFiStore.prefill(typedSSID: homeSSID, remembered: remembered) {
             homeSSID = p.ssid
             homePassword = p.password
@@ -409,7 +414,7 @@ struct CanaryFamilySetupView: View {
         } else {
             ListeningRow(text: "Watching this network for the \(family.deviceType.role.lowercased())…", advice: nil)
         }
-        if let login = HubSecretStore.brokerLogin(), family == .vision || family == .sense {
+        if let login = hubLogin, family == .vision || family == .sense {
             VStack(alignment: .leading, spacing: Theme.xs) {
                 Text("Hub login for the Flasher's MQTT fields: \(login.username)")
                     .font(.caption.weight(.medium))

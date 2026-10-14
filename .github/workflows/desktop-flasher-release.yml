@@ -804,7 +804,7 @@ jobs:
     name: Finalize updater manifest (stable URLs + consistency guard)
     needs: build
     if: github.ref_type == 'tag' || github.event.inputs.dry_run == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     permissions:
       contents: write
@@ -1019,7 +1019,7 @@ jobs:
     name: Keep releases/latest on the firmware
     needs: [build, finalize]
     if: always() && (github.ref_type == 'tag' || github.event.inputs.dry_run == 'false')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     permissions:
       contents: write

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -39,7 +39,7 @@ jobs:
 
   build:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     strategy:
       matrix:
@@ -75,7 +75,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     # contents: write to publish the release; id-token + attestations to sign
     # and store the build-provenance attestation (mirrors firmware-release.yml).
@@ -136,7 +136,7 @@ jobs:
 
   validate-hacs:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +161,7 @@ jobs:
     name: Keep releases/latest on the firmware
     needs: release
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     permissions:
       contents: write

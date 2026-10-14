@@ -152,11 +152,20 @@ input-poll's brief expander direction-flip causes no backlight flicker.
   CRC-16/MODBUS check value `0x4B37`, plus build/parse roundtrips and CRC / addr
   / func / capacity / exception rejection cases. Run by the display's
   `tests_host` Makefile, which `firmware.yml` runs.
-- `src/io/rs485.{h,cpp}` — thin `Serial1` transport (auto-direction, bounded
-  request→response wait) behind `FEATURE_RS485`; the whole TU is empty without
-  the flag, so the default/emulator builds stay byte-identical.
+- `src/io/rs485.cpp` + `include/canary/io/rs485.h` — thin `Serial1` transport
+  (auto-direction, bounded request→response wait) behind `FEATURE_RS485`; the
+  whole TU is empty without the flag (and the emulator never compiles it), so
+  the default builds stay byte-identical. Its caller is the dev playground's
+  RS485 station (`action_rs485_probe`), which reads through it under
+  `FEATURE_RS485`; builds without the flag keep the station's own thin
+  transport, with the same wire behavior.
+- `tests_host/test_fieldbus_glue.cpp` — the real driver and the playground's
+  station against a stand-in `Serial1`: request bytes, 9600 8N1 on the board
+  pins, the 300 ms reply window, the stale-byte drain, argument refusals and
+  return codes, in a build of each transport.
 - `canary-display-dash-rs485` PlatformIO env (in `flavors.json` build_envs) so
-  CI compiles the gated driver against the real toolchain.
+  CI compiles the gated driver and its call site against the real toolchain
+  (the env also sets `FEATURE_DEVMODE`, which compiles the bench in).
 
 **Why it matters:** RS485/Modbus is the lingua franca of building security and
 industrial gear. This turns the dash into a **gateway**: read alarm panels,
@@ -168,9 +177,10 @@ RS485 and console logging are mutually exclusive — the `FEATURE_RS485` build
 keeps logging on the native USB CDC.
 
 **Remaining to go live:** bench-validate TX/RX orientation + bus timing against a
-real Modbus slave (VERIFY-tagged in `pins.h`), then wire a Modbus register-map
-into the fleet event pipeline and add a matching playground station (which also
-needs an emulator `dist/*.js` rebuild). Until then it ships **off**.
+real Modbus slave (VERIFY-tagged in `pins.h`; the activation checklist's §2 runs
+it through the playground station in the `dash-rs485` env), then wire a Modbus
+register-map into the fleet event pipeline — nothing in the fleet runtime calls
+the driver yet. Until then it ships **off**.
 
 ---
 
@@ -179,7 +189,8 @@ needs an emulator `dist/*.js` rebuild). Until then it ships **off**.
 **Status:** Built · bench-gated (`FEATURE_CAN 0`). Pins declared in `pins.h`
 (TX=GPIO15 / RX=GPIO16, **dedicated transceiver** — unlike the plain 4.3 there's
 no USB mux — plus a jumper-selectable on-board 120 Ω terminator, OFF by default;
-default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
+`pins.h` declares `CAN_BITRATE_DEFAULT` 500 kbit/s, which no code reads — the
+playground's CAN station asks for 500 kbit/s itself).
 
 **Shipped in this build (compile-verified, bench-pending):**
 - `include/canary/io/can_frame.h` — a pure CAN 2.0 (ISO 11898-1) frame core: the
@@ -189,22 +200,32 @@ default bit rate `CAN_BITRATE_DEFAULT` 500 kbit/s).
 - `tests_host/test_can_frame.cpp` — host test of every rule above (id ranges,
   DLC bounds, filter mask cases, exact formatter output, buffer guards). Run by
   the display's `tests_host` Makefile, which `firmware.yml` runs.
-- `src/io/can_bus.{h,cpp}` — thin ESP-IDF **TWAI** transport on the H/L terminal
-  (`twai_driver_install`/`twai_start`, bounded `twai_transmit`/`twai_receive`,
-  frame ⇄ `twai_message_t` conversion, accept-all filter, normal mode) behind
-  `FEATURE_CAN`; the whole TU is empty without the flag, so the default/emulator
-  builds stay byte-identical.
+- `src/io/can_bus.cpp` + `include/canary/io/can_bus.h` — thin ESP-IDF **TWAI**
+  transport on the H/L terminal (`twai_driver_install`/`twai_start`, bounded
+  `twai_transmit`/`twai_receive`, frame ⇄ `twai_message_t` conversion,
+  accept-all filter, normal mode) behind `FEATURE_CAN`; the whole TU is empty
+  without the flag (and the emulator never compiles it), so the default builds
+  stay byte-identical. Its caller is the dev playground's CAN station
+  (`action_can_send` and the loop's receive drain) under `FEATURE_CAN`; builds
+  without the flag keep the station's own thin transport, with the same wire
+  behavior. Nothing recovers a controller that has gone bus-off.
+- `tests_host/test_fieldbus_glue.cpp` — the real driver and the playground's
+  station against a stand-in TWAI driver: the install configuration (pins,
+  normal mode, the 500 kbit/s preset, accept-all), the test frame, the drain,
+  refused install/start, frame packing both ways and the bitrate presets.
 - `canary-display-dash-can` PlatformIO env (in `flavors.json` build_envs) so CI
-  compiles the gated driver — including `<driver/twai.h>` — against the toolchain.
+  compiles the gated driver and its call sites — including `<driver/twai.h>` —
+  against the toolchain (the env also sets `FEATURE_DEVMODE`).
 
 **Why it matters:** a Canary that witnesses a **vehicle gate/barrier controller,
 fleet telematics, or CANopen building automation** — a tamper-evident CAN event
 log. The transceiver is free and dedicated, so it's pure upside.
 
 **Remaining to go live:** bench-validate TX/RX orientation, bit timing, and the
-terminator jumper against a real bus, then wire received frames into the fleet
-event pipeline and add a matching playground station (needs an emulator dist
-rebuild). Until then it ships **off**.
+terminator jumper against a real bus (the activation checklist's §3 runs it
+through the playground station in the `dash-can` env), then wire received
+frames into the fleet event pipeline — nothing in the fleet runtime calls the
+driver yet. Until then it ships **off**.
 
 ---
 

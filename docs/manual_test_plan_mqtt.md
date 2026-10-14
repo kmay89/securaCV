@@ -21,6 +21,18 @@ Use these documented defaults when validating:
   - `sensor.pwk_<zone>_events`
   - `binary_sensor.pwk_<zone>_motion`
   - `sensor.pwk_last_event`.【F:docs/homeassistant_setup.md†L266-L277】
+  - These ids need Home Assistant 2025.10 or later. The bridge asks for them
+    with `default_entity_id`, which Home Assistant 2025.10 and later honors
+    when it first registers an entity; `<zone>` is the zone id without its
+    `zone:` prefix, as Home Assistant slugs it (`zone:back-gate` becomes
+    `back_gate`). An entity your Home Assistant registered before keeps the id
+    it has, and an older Home Assistant names the entity from the device name
+    and the entity name.
+  - With the PWK add-on, which this plan's preconditions use, the 2025.10
+    condition always holds: the add-on needs Home Assistant 2026.5.0 or later.
+    It matters only for a bridge run outside the add-on (the sidecar beside an
+    existing Home Assistant) against an older release, and for an entity
+    registered before.
 
 ## Preconditions
 - Frigate is running and publishing MQTT events to `frigate/events`.
@@ -69,10 +81,16 @@ Use these documented defaults when validating:
 - Search for the expected entity IDs.
 
 **Expected**
-- Entities auto-created via MQTT Discovery:
+- Entities auto-created via MQTT Discovery (these ids on Home Assistant 2025.10
+  or later, for an entity it registers for the first time; see References):
   - `sensor.pwk_<zone>_events`
   - `binary_sensor.pwk_<zone>_motion`
   - `sensor.pwk_last_event`.【F:docs/homeassistant_setup.md†L266-L277】
+- For an entity registered before, or a bridge outside the add-on on a Home
+  Assistant before 2025.10, look the entities up by name under the **Privacy
+  Witness Kernel** device instead: `PWK Last Event`, `PWK <zone name> Events`
+  and `PWK <zone name> Motion`, where the zone name is the zone id without
+  `zone:` and is not slugged (`PWK back-gate Events` for `zone:back-gate`).
 - `sensor.pwk_last_event` updates when new events are logged (from Step 2).
 
 ## Notes / Troubleshooting

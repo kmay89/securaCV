@@ -31,6 +31,7 @@ import {
 } from './iso.mjs';
 import { stlBounds } from './stlbox.mjs';
 import { FIGURES, conceptFigure } from './massing.mjs';
+import { TREE_TYPES, walkTrees, readProjects, treeConfigsOfEnvs } from './wire_types.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../..');
@@ -86,12 +87,41 @@ const assembledDims = JSON.parse(readFileSync(join(ENCLOSURE, 'assembled_dims.js
 
 const LADDER = ['idea', 'prototype', 'confirmed', 'shipping'];
 
+// A device whose flags live in its own sources rather than a firmware/configs/
+// directory: the WAP's sketch includes no config.h, and build_config.h's
+// BUILD_PROFILE_* blocks set its profile flags (a few module flags default in
+// their own headers). Its flavor is the one the Workshop
+// publishes from that header (gen_enclosures.py reads the FULL block through
+// _wap_profile.py), present while the header still has the block — so the
+// evidence moves if the block does.
+const SKETCH_FLAVORS = {
+  'canary-wap': {
+    header: 'firmware/projects/canary-wap/arduino/canary_wap/build_config.h',
+    flavors: { full: /^[ \t]*#[ \t]*elif[ \t]+defined\(BUILD_PROFILE_FULL\)[ \t]*$/m },
+  },
+};
+
+/* Device types published by a tree that reads no firmware/configs/ directory
+ * (the WAP's sketch): TREE_TYPES and walkTrees() live in wire_types.mjs, which
+ * reads every site a row's files publish the type at and refuses one it cannot
+ * spell, so figures.test.js can hold the reader itself to the sketch. */
+
 function firmwareConfigs(deviceId) {
   // firmware/configs/<family>/<flavor>/config.h — the flavors that exist.
   // The registry's own family is the honest key where one exists (the
   // Nightlight is family canary-display without the name prefix); the
   // prefix collapse stays as the fallback for ids not in the registry.
   const dev = registry.devices.find((d) => d.id === deviceId);
+  const sketch = SKETCH_FLAVORS[dev?.family ?? deviceId];
+  if (sketch) {
+    const path = join(ROOT, sketch.header);
+    if (!existsSync(path)) {
+      throw new Error(`figures: ${deviceId}'s flags are read from ${sketch.header}, which is gone. `
+        + 'Point SKETCH_FLAVORS at the header the firmware builds from.');
+    }
+    const text = readFileSync(path, 'utf8');
+    return Object.entries(sketch.flavors).filter(([, re]) => re.test(text)).map(([f]) => f).sort();
+  }
   const family = (dev?.family && existsSync(join(ROOT, 'firmware/configs', dev.family)))
     ? dev.family
     : deviceId.startsWith('canary-display') ? 'canary-display' : deviceId;
@@ -572,7 +602,7 @@ function globIni(dir, nested = false) {
 }
 
 function walkConfigs() {
-  const out = [];
+  const out = walkTrees(ROOT).map(({ sites, ...row }) => row);
   const base = join(ROOT, 'firmware/configs');
   if (!existsSync(base)) return out;
   for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
@@ -622,15 +652,14 @@ function walkConfigs() {
 // device names its board_id and, once drawn, its figure. Envs with no pins
 // header of their own key on `board:<platformio id>`.
 
-// firmware/configs/<family>/<flavor> -> figure. Used ONLY to work out which
-// published device types are unambiguous; never as an identity itself, since
-// one config directory serves several panels.
+// firmware/configs/<family>/<flavor> (or a TREE_TYPES row) -> figure. Used
+// ONLY to work out which published device types are unambiguous; never as an
+// identity itself, since one config directory serves several panels.
 const CONFIG_FIGURE = {
   'canary-vision/default': 'device.canary-vision',
   'canary-sense/default': 'device.canary-sense',
   'canary-sense/wellbeing': 'device.canary-sense',
-  'canary-wap/default': 'device.canary-wap',
-  'canary-wap/mobile': 'device.canary-wap',
+  'canary-wap/sketch': 'device.canary-wap',
   'canary-display/watch': 'device.canary-display-watch',
   'canary-display/dash': 'device.canary-display-dash',
   'canary-display/dash7': 'device.canary-display-dash7',
@@ -671,9 +700,9 @@ const CONFIG_FIGURELESS = new Map([
 
 {
   // Every config directory on disk (a config.h, with or without a published
-  // DEVICE_TYPE) is accounted for: mapped, or explained above. Listed all at
-  // once so one run names every gap.
-  const onDisk = [];
+  // DEVICE_TYPE) and every TREE_TYPES row is accounted for: mapped, or
+  // explained above. Listed all at once so one run names every gap.
+  const onDisk = TREE_TYPES.map((t) => `${t.family}/${t.flavor}`);
   const base = join(ROOT, 'firmware/configs');
   for (const fam of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory())) {
     for (const flav of readdirSync(join(base, fam.name), { withFileTypes: true }).filter((e) => e.isDirectory())) {
@@ -741,6 +770,10 @@ const mappedConfigRows = configRows.filter((r) => r.fig);
 /* ── hardware: the exact lookup, from the pins each build compiles ────── */
 
 const envs = walkEnvs();
+// The envs that build a TREE_TYPES row (the WAP's sketch) take its key as
+// their config, read off each project's platformio.ini (sweep A89; the
+// join and its refusals are in wire_types.mjs, held by figures.test.js).
+treeConfigsOfEnvs(envs, readProjects(ROOT));
 const envByName = new Map(envs.map((e) => [e.env, e]));
 
 /* ── the device manifests: which figure draws which board ────────────────
@@ -1025,6 +1058,7 @@ const ledger = {
     // firmware, because a config directory is not one piece of hardware.
     configs_audit: mappedConfigRows.map((r) => ({
       family: r.family, flavor: r.flavor, device_type: r.device_type, figure: r.fig.id,
+      ...(r.source ? { source: r.source } : {}),
     })),
   },
   // The EXACT lookup. Every build env compiles against exactly one
@@ -1398,8 +1432,8 @@ inline const FigureArt* figure_art(const char* figure_id) {
 /* ── Swift: what the phone and the wrist draw ───────────────────────── */
 
 // The firmware's mDNS advert canonicalizes DEVICE_TYPE before it goes on the
-// wire (canonical_dt: lowercase, underscores and spaces to hyphens), so the
-// phone sees "canary-wap" where a config says "canary_wap". The Swift map is
+// wire (canonical_dt: lowercase, underscores and spaces to hyphens), so a type
+// a source spells "canary_x" reaches the phone as "canary-x". The Swift map is
 // keyed on the canonical form and the lookup canonicalizes its input, so
 // both spellings land on one row. A collision between two device types'
 // canonical forms would silently merge them, so it is a hard error.
@@ -1514,7 +1548,7 @@ public struct FleetFigure: Sendable {
   /// none — draw the generic marker then, never a guessed product. The input
   /// is canonicalized the same way the firmware's mDNS advert canonicalizes
   /// its own DEVICE_TYPE (lowercase; underscores and spaces to hyphens), so
-  /// "canary_wap" from a config and "canary-wap" from the wire both resolve.
+  /// "canary_x" from a source and "canary-x" from the wire both resolve.
   public static func forDeviceType(_ deviceType: String) -> FleetFigure? {
     guard let id = deviceTypeToFigure[canonicalDeviceType(deviceType)] else { return nil }
     return all[id]

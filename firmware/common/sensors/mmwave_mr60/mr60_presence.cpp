@@ -69,7 +69,8 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
     }
     if (state_ != Presence::Unknown &&
         elapsed(now_ms, last_frame_ms_, cfg_.stall_timeout_ms)) {
-        ev.count_changed = (count_ != CountBucket::Zero);
+        // The stall is a state change, so it carries the dropped count
+        // (Zero) in ev.count and reports no separate count move (F131).
         state_ = Presence::Unknown;
         count_ = CountBucket::Zero;
         range_ = RangeBand::Unknown;
@@ -121,13 +122,31 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
         }
     }
 
-    // Count + range track the latest frame's scalars.
+    // The count follows the DEBOUNCED state (sweep F131), not each frame:
+    // Zero unless Present. While Present a frame that names a count updates
+    // the bucket, and a frame that names none keeps the last one — a
+    // no-target frame inside the clear timeout, whatever count it carries
+    // (a TARGET_COUNT frame decoded after PEOPLE_EXIST(0) holds the radar's
+    // count beside a cleared flag), and a target frame whose count is 0,
+    // which is what the decoder emits after a no-target frame zeroed its
+    // aggregate and before the radar's count frame lands. So a
+    // one-frame dropout moves nothing, an emptying room keeps its count until
+    // the tick that turns Clear (which then carries Zero), and no Clear row
+    // ever counts an occupant during the Present debounce. A held count does
+    // not decay while Present. Range keeps following each frame.
     const CountBucket prev_count = count_;
-    count_ = frame.has_target ? bucket_of(frame.target_count) : CountBucket::Zero;
-    range_ = frame.has_target ? band_of(frame.distance_cm)    : RangeBand::Unknown;
+    if (state_ != Presence::Present) {
+        count_ = CountBucket::Zero;
+    } else if (frame.has_target && frame.target_count > 0) {
+        count_ = bucket_of(frame.target_count);
+    }
+    range_ = frame.has_target ? band_of(frame.distance_cm) : RangeBand::Unknown;
 
     ev.state_changed = (state_ != prev_state);
-    ev.count_changed = (count_ != prev_count);
+    // A tick that changes the state carries its count in ev.count (Present
+    // the bucket it was entered with, Clear Zero), so the caller signs one
+    // record per transition: count_changed is a move while the state held.
+    ev.count_changed = !ev.state_changed && (count_ != prev_count);
     ev.state = state_;
     ev.count = count_;
     ev.range = range_;

@@ -126,6 +126,33 @@ TRANSPORT_SENSORS: dict[str, str] = {
     TRANSPORT_CHIRP: "mdi:bird",
 }
 
+# What each word on the `chirp` topic reads as on the Chirp Active sensor.
+# The canary-wap is the one firmware that publishes the topic:
+# csi_mqtt::publish_chirp_state() sends `{"state": "<word>"}` (retained, on a
+# build with the mesh feature, every 30 s on mains or a normal battery and
+# stretched to 2 or 4 min in the battery saver and low power modes), and the
+# word is chirp_channel::state_name() of the channel's shown state. The words
+# that read on are a channel that is on with a session: `active`; `cooldown`, an
+# active channel whose own send timer runs (shown, never stored); `muted`, a
+# channel that drops incoming chirps for the mute's window while its
+# presence beacon and an owner's send still go out (spec §7.1); and
+# `listening`, which state_name() can name though the canary-wap never
+# enters it. `disabled` and `initializing` (no session yet) read off. Any
+# other word, state_name()'s own `unknown` among them, reads unknown, not off;
+# the lookup is exact (state_name() sends lowercase literals), so `ACTIVE` or
+# ` active` is another word. chirp_channel::is_active(), which nothing calls,
+# counts only `active` and `listening`; this sensor reads "the channel is on"
+# on purpose, and `channel_state` says which word it was.
+# test_chirp_active.py holds this table to state_name()'s words.
+CHIRP_STATE_IS_ON: dict[str, bool] = {
+    "active": True,
+    "cooldown": True,
+    "muted": True,
+    "listening": True,
+    "disabled": False,
+    "initializing": False,
+}
+
 
 def _read_trust_view(
     hass: HomeAssistant, entry: ConfigEntry, device_id: str
@@ -1245,15 +1272,21 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
 class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for Chirp community network status.
 
-    Chirp uses ephemeral identities (3-emoji) and template-only messages
-    for community awareness without surveillance.
-    """
+    Chirp uses ephemeral session identities (shown as five emoji) and
+    template-only messages for community awareness without surveillance.
 
+    On while the device's Chirp channel is on with a session, off while it
+    is disabled; the `channel_state` attribute carries the word the
+    firmware sent (CHIRP_STATE_IS_ON says what each reads as). The topic
+    carries that word and nothing else, so the sensor carries no counters
+    or session display.
+    """
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "chirp_active")
-        self._attr_is_on = False
+        # Unknown until a chirp publish is read (an unknown word keeps it so).
+        self._attr_is_on: bool | None = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT chirp topic; release the subscription on removal."""
@@ -1268,20 +1301,22 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
 
     @callback
     def _handle_message(self, msg: mqtt.ReceiveMessage) -> None:
-        """Handle chirp status message."""
+        """Handle a chirp state publish: `{"state": "<word>"}`."""
         data = parse_mqtt_json(msg.payload)
         if data is None:
             return
-        self._attr_is_on = bool(data.get("enabled", False) and data.get("ready", False))
-
+        word = data.get("state")
+        if not isinstance(word, str):
+            # Not the shape any firmware sends: leave the sensor as it is
+            # (debug only, as the mesh handler does for an untrusted broker).
+            _LOGGER.debug(
+                "Ignoring chirp publish for %s: no string `state` in it",
+                self._device_id,
+            )
+            return
+        self._attr_is_on = CHIRP_STATE_IS_ON.get(word)
         self._attr_extra_state_attributes = {
-            "session_emoji": data.get("session_id", ""),  # 3-emoji identity
-            "cooldown_tier": data.get("cooldown_tier", 0),
-            "presence_minutes": data.get("presence_minutes", 0),
-            "can_broadcast": data.get("can_broadcast", False),
-            "alerts_sent": data.get("sent", 0),
-            "alerts_received": data.get("received", 0),
-            "confirmations_given": data.get("confirmed", 0),
+            "channel_state": word,
             **unsigned_trust_attrs(self.hass, self._entry, self._device_id),
         }
         self.async_write_ha_state()

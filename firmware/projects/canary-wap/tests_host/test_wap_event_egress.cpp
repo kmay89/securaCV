@@ -23,7 +23,9 @@
  *     flush_dismissals() before csi_mqtt::loop's pump on each main-loop
  *     pass;
  *   - csi_mqtt's tamper bridge: the real csi_event_wire body builder decides
- *     whether a row has one;
+ *     whether a row has one; and each events body publish_event_row() would
+ *     send is built by the same builder and held to a strict JSON reader
+ *     (json_strict.h, sweep F264);
  *   - the esp_mqtt task: connect() flips the link up.
  * firmware/scripts/check_wap_event_egress.py holds the firmware's hook and
  * call sites to that glue (the hook only enqueues, after the privacy gate;
@@ -81,6 +83,7 @@
 #include "csi_event_log.h"
 #include "csi_event_log_line.h"
 #include "csi_event_wire.h"
+#include "json_strict.h"   // each events body held to JSON.parse()'s rules (sweep F264)
 #include "csi_integration.h"
 #include "csi_module.h"
 #include "csi_module_settings_nvs.h"
@@ -147,6 +150,7 @@ struct World {
   int  publishes_in_hook = 0;      /* a publish made from inside the commit hook */
   int  watermark_moves_in_hook = 0;
   int  ceiling_violations = 0;     /* an id handed over with NVS not past it */
+  int  bodies_not_json = 0;        /* events bodies (the real builder's) a strict reader refuses */
   int  tamper_bridges = 0;
   bool in_hook = false;
   std::function<void(uint32_t)> after_publish;   /* fires once */
@@ -183,6 +187,18 @@ EventSend publish_event_row(const csi_event_record_t& rec, uint16_t, bool replay
   if (!host_nvs().fail_puts && nvs_get(NVS_KEY_DELIVERED) <= rec.event_id) {
     W.ceiling_violations++;
     g_ceiling_violations_total++;
+  }
+  /* The body as csi_mqtt::publish_event_row() builds it: the real
+   * csi_event_wire builder (unsigned here; the signature is base64url),
+   * held to a strict JSON reader, as Home Assistant parses it (F264). */
+  {
+    char body[768];
+    const csi_event_wire::Signer unsigned_signer = {nullptr, 1, "", ""};
+    const size_t n = csi_event_wire::build_event_body(
+        body, sizeof(body), rec.event_id, rec.module_id, rec.type_name, rec.category, rec.privacy,
+        &rec.values, rec.first_seen_ms, rec.bundled_count, replay, unsigned_signer);
+    json_strict::Value v;
+    if (n == 0 || !json_strict::parse(std::string(body, n), &v)) W.bodies_not_json++;
   }
   W.wire.push_back(rec.event_id);
   W.ha.receive(rec.event_id, replay);
@@ -855,6 +871,97 @@ static void test_forged_card_line_is_never_sent() {
   CHECK(csi_event_get_next_event_id() == next, "and the walk allocated no id");
 }
 
+/* Sweep F264: rows waiting on the card, two of them edited there (the
+ * card went to a computer): a state of `occ\` and one holding 0x01, the
+ * item's probe. Before, parse() took both, and the backfill published them
+ * through csi_mqtt::publish_event_row() as events bodies a strict parser
+ * refuses. Now the walk skips and counts them, sends every other row once,
+ * in order, and does not stall on them; nothing it sends fails to parse. */
+static bool edit_card_state(uint32_t id, const std::string& state) {
+  std::string& log = SD.files["/EVENTS/today.ndjson"];
+  const size_t at = log.find("{\"id\":" + std::to_string(id) + ",");
+  if (at == std::string::npos) return false;
+  const std::string key = "\"state\":\"";
+  const size_t from = log.find(key, at) + key.size();
+  const size_t to = log.find('"', from);
+  log.replace(from, to - from, state);
+  return true;
+}
+
+static void test_card_line_no_writer_could_spell_is_skipped() {
+  printf("-- a card line edited to hold a backslash or a control byte is skipped, not sent (F264)\n");
+  fresh_device();
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // held: the link is down
+  CHECK(edit_card_state(ids[1], "occ\\") && edit_card_state(ids[3], std::string("oc\x01" "c")),
+        "two rows edited on the card");
+  boot();                       // the card comes back with the device
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, {ids[0], ids[2], ids[4], ids[5]}),
+        "every row but the two edited ones arrives once, in order");
+  CHECK(W.bodies_not_json == 0, "and every events body sent parses");
+  printf("     skipped=%lu\n", (unsigned long)csi_event_egress::stats().planner.skipped);
+  CHECK(csi_event_egress::stats().planner.skipped == 2, "the two are skipped and counted");
+  CHECK(csi_event_egress::watermark() >= ids[5], "the walk went on past them");
+  const uint32_t c = emit_ping();
+  drain(4);
+  CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
+}
+
+/* The review of F264: the card's LAST rows edited. The tail scan
+ * (last_row_id(), back a window at a time up to TAIL_SCAN_MAX) went
+ * through parse(), so it took the last unedited row for the card's newest:
+ * the walk stopped there, and an edited row after it was never counted.
+ * With more edited rows at the end than the scan reads back, it found no
+ * row at all, and every unsent row before them was taken as delivered. It
+ * now reads only each line's id (csi_event_log_line::record_id()), so the
+ * walk reaches the card's end: every unedited row goes once, in order, and
+ * every edited one is skipped and counted. */
+static void test_card_lines_edited_at_the_end_are_skipped() {
+  printf("-- the card's last rows edited: every row before them still goes, each edited one is counted (F264)\n");
+  {
+    fresh_device();
+    std::vector<uint32_t> ids;
+    for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // held
+    CHECK(edit_card_state(ids[5], "occ\\"), "the last row edited on the card");
+    boot();
+    connect();
+    drain();
+    CHECK(exactly(W.ha.accepted, {ids[0], ids[1], ids[2], ids[3], ids[4]}),
+          "every row before it arrives once, in order");
+    CHECK(W.bodies_not_json == 0, "and every events body sent parses");
+    printf("     skipped=%lu\n", (unsigned long)csi_event_egress::stats().planner.skipped);
+    CHECK(csi_event_egress::stats().planner.skipped == 1, "the edited last row is skipped and counted");
+    const uint32_t c = emit_ping();
+    drain(4);
+    CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
+  }
+  {
+    fresh_device();
+    std::vector<uint32_t> ids;
+    for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // held, kept
+    const size_t line = SD.files["/EVENTS/today.ndjson"].size() / 6;
+    const size_t edited = csi_event_log::TAIL_SCAN_MAX / line + 4;   // more than the scan reads back
+    std::vector<uint32_t> tail;
+    for (size_t i = 0; i < edited; ++i) { tail.push_back(emit_ping()); loop_pass(); }
+    bool all = true;
+    for (uint32_t id : tail) all = edit_card_state(id, "occ\\") && all;
+    CHECK(all, "every row after the first six edited on the card");
+    boot();
+    connect();
+    drain();
+    CHECK(exactly(W.ha.accepted, ids), "the six unedited rows arrive once, in order");
+    CHECK(W.bodies_not_json == 0, "and every events body sent parses");
+    printf("     edited=%zu skipped=%lu\n", edited,
+           (unsigned long)csi_event_egress::stats().planner.skipped);
+    CHECK(csi_event_egress::stats().planner.skipped == edited, "every edited row is skipped and counted");
+    const uint32_t c = emit_ping();
+    drain(4);
+    CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
+  }
+}
+
 static void test_upgrade_floor_without_a_ceiling() {
   printf("-- an upgrade's first boot (an id floor in NVS, no delivery ceiling): the card's older rows count as delivered\n");
   fresh_device();
@@ -1466,6 +1573,8 @@ int main() {
 #ifndef EGRESS_PRE_FIX
   test_steady_state_is_live();
   test_reboot_mid_backlog();
+  test_card_line_no_writer_could_spell_is_skipped();
+  test_card_lines_edited_at_the_end_are_skipped();
   test_no_broker_is_not_owed();
   test_dismissal_is_not_replayed();
   test_send_failure_keeps_the_row();

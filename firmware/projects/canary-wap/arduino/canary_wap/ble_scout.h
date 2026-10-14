@@ -28,11 +28,14 @@
  *   ble_scout_pair_window_cancel(now_ms) / ble_scout_pair_window_status()
  *   ble_scout_registry_snapshot(out, max) — hashed_id + label copies
  *   ble_scout_registry_dirty()            — a pair/unpair awaits its NVS write
- *   The first advert from an unpaired beacon at/above the threshold inside
- *   an armed window is paired from ble_scout_on_advert() via
- *   ble_scout_pair() — the MAC never leaves the scan callback. The
- *   registry persists as one NVS blob (ble_scout_registry_store.h),
- *   written from ble_scout_tick() on the loop task and loaded at init.
+ *   The first offerable advert from an unpaired beacon at/above the
+ *   threshold inside an armed window is paired from ble_scout_on_advert()
+ *   via ble_scout_pair() — the MAC never leaves the scan callback. An
+ *   advert in the fleet's own formats (a presence beacon or a Chirp from
+ *   another Canary, ble_scout_advert_kind.h, repo sweep F36) is never
+ *   offerable. The registry persists as one NVS blob
+ *   (ble_scout_registry_store.h), written from ble_scout_tick() on the loop
+ *   task and loaded at init.
  *
  * Threading: the registry, the presence tracker and the window are touched
  * by the HTTP task (window start/cancel/status, snapshot, unpair), the
@@ -41,9 +44,10 @@
  * and NVS I/O stay outside it.
  *
  * Internal entry point (called by the NimBLE scan TU):
- *   ble_scout_on_advert(mac, rssi, now_ms)
+ *   ble_scout_on_advert(mac, rssi, now_ms, offerable)
  *     Drives the presence state machine + emits arrived/departed
- *     events through the privacy chokepoint.
+ *     events through the privacy chokepoint; offers an offerable
+ *     unpaired advert to the pairing window.
  */
 
 #ifndef SECURACV_BLE_SCOUT_H
@@ -122,11 +126,17 @@ void ble_scout_tick(uint32_t now_ms);
 
 /* Entry point for the NimBLE scan callback. Hashes the MAC and
  * routes through the presence state machine. Emits arrived/
- * departed events when transitions fire. Idempotent for
- * unpaired-beacon adverts (cheap registry lookup, then drop). */
+ * departed events when transitions fire. An advert from an unpaired
+ * device is offered to an armed pairing window only when `offerable`
+ * is true; otherwise it is dropped after the cheap registry lookup.
+ * The scan callback passes advert_kind::offerable() of the advert's
+ * manufacturer data (ble_scout_advert_kind.h, repo sweep F36), so a
+ * presence beacon or a Chirp from another Canary never pairs. A paired
+ * device is tracked whatever `offerable` says. */
 void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
                          int8_t        rssi_dbm,
-                         uint32_t      now_ms);
+                         uint32_t      now_ms,
+                         bool          offerable);
 
 /* csi_module manifest. Registered by csi_modules_integration.cpp when
  * FEATURE_BLE_SCAN=1. The module's tick() bridges to ble_scout_tick()

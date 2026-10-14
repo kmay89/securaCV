@@ -62,13 +62,25 @@ function seedValues() {
   return values;
 }
 
-function makeElement(id, value) {
+// Elements the markup hides (an inline style="…display:none…"), so a test
+// reads the page's real starting visibility, not the stub's.
+function seedHidden() {
+  const hidden = new Set();
+  for (const tag of html.matchAll(/<[a-z]+\b[^>]*>/g)) {
+    const id = tag[0].match(/\bid="([^"]+)"/);
+    const style = tag[0].match(/\bstyle="([^"]*)"/);
+    if (id && style && /display:\s*none/.test(style[1])) hidden.add(id[1]);
+  }
+  return hidden;
+}
+
+function makeElement(id, value, hidden) {
   const el = {
     id,
     value: value === undefined ? "" : value,
     textContent: "",
     disabled: false,
-    style: {},
+    style: hidden ? { display: "none" } : {},
     listeners: {},
     children: [],
     classes: new Set(),
@@ -89,14 +101,17 @@ function makeElement(id, value) {
 }
 
 // Run the page's script once against canned API answers. `routes` maps a
-// "METHOD /path" to either a JSON value or an Error (a route the firmware
-// does not have: r.json() rejects the way a 404 HTML body would).
+// "METHOD /path" to either a JSON value, an Error (a route the firmware
+// does not have: r.json() rejects the way a 404 HTML body would) or
+// NETWORK_DOWN (fetch itself rejects).
+const NETWORK_DOWN = Symbol("network down");
 async function boot(routes, opts) {
   const values = seedValues();
+  const hidden = seedHidden();
   const els = new Map();
   const document = {
     getElementById(id) {
-      if (!els.has(id)) els.set(id, makeElement(id, values[id]));
+      if (!els.has(id)) els.set(id, makeElement(id, values[id], hidden.has(id)));
       return els.get(id);
     },
     createElement(tag) { return makeElement("<" + tag + ">"); },
@@ -107,6 +122,8 @@ async function boot(routes, opts) {
     const key = method + " " + url;
     calls.push({ key, url, method, headers: (opts && opts.headers) || {}, body: opts && opts.body });
     const answer = routes[key];
+    // NETWORK_DOWN: the request itself fails (the phone left the network).
+    if (answer === NETWORK_DOWN) return Promise.reject(new TypeError("Failed to fetch"));
     return Promise.resolve({
       json: () => (answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)),
     });
@@ -182,12 +199,15 @@ test("changing only the hub password on a pinned unit sends no tls and no fp: th
   assert.match($("mqttmsg").textContent, /^Saved/, "the save went through: " + $("mqttmsg").textContent);
 });
 
-test("when /api/mqtt/status cannot be read, an untouched select still sends no tls (never a blind Plain)", async () => {
+test("when /api/mqtt/status answers a refusal, an untouched select still sends no tls (never a blind Plain)", async () => {
+  // A token the Canary refuses (403 {"error":"forbidden"}): the route is
+  // there, so the box shows (F275), but nothing about the stored link is read.
   const { $, calls } = await boot({
     "GET /api/wifi/status": onWifi,
-    "GET /api/mqtt/status": new Error("404 text/html"),
+    "GET /api/mqtt/status": { error: "forbidden" },
     "POST /api/mqtt/config": { ok: true, transport: "tls-ca" },
   });
+  assert.notStrictEqual($("hubbox").style.display, "none", "the image has the bridge: the box shows");
   assert.strictEqual($("mtls").value, "0", "the markup's default stays");
   $("mpass").value = "new-hub-password";
   $("mqttsave").fire("click");
@@ -297,6 +317,56 @@ test("a new hub address with no password: the 400 password_required_for_new_host
   assert.ok($("mqttmsg").textContent.includes("password"), "and it names the password box");
   assert.strictEqual($("mqttsave").disabled, false, "the Save button is re-enabled for the retry");
   assert.notStrictEqual($("rebootnow").style.display, "block", "a refused save offers no Restart");
+});
+
+// ── the hub box shows only where the image has the hub bridge (F275) ────────
+// /api/mqtt/status, /config and /ca are registered only under
+// FEATURE_HA_MQTT (dev_ha, release_ha). Every answer those routes give is
+// JSON, a refusal included; an image without them answers the GET "/*"
+// catch-all's 404 page, or during setup its redirect to this wizard, which
+// r.json() refuses. The box used to show in every image, and Save then said
+// to set the hub up from canary.local, which serves no hub route either.
+test("the hub box starts hidden in the markup", () => {
+  assert.match(html, /<details id="hubbox"[^>]*style="[^"]*display:\s*none/);
+});
+
+test("an image without the hub bridge keeps the hub box hidden", async () => {
+  const { $, calls } = await boot({
+    "GET /api/wifi/status": onWifi,
+    "GET /api/mqtt/status": new Error("404 text/html"),
+  });
+  assert.ok(calls.some((c) => c.key === "GET /api/mqtt/status"), "the finish line asked");
+  assert.strictEqual($("hubbox").style.display, "none", "no hub box: nothing in this image serves it");
+});
+
+test("a status the hub bridge answers shows the hub box", async () => {
+  const { $ } = await boot({
+    "GET /api/wifi/status": onWifi,
+    "GET /api/mqtt/status": { ok: true, host: "hub.lan", port: 1883, tls_mode: 0 },
+  });
+  assert.notStrictEqual($("hubbox").style.display, "none");
+  assert.strictEqual($("mhost").value, "hub.lan");
+});
+
+test("a status request that never reaches the Canary shows no hub box", async () => {
+  const { $ } = await boot({
+    "GET /api/wifi/status": onWifi,
+    "GET /api/mqtt/status": NETWORK_DOWN,
+  });
+  assert.strictEqual($("hubbox").style.display, "none");
+});
+
+test("a save that gets no JSON back says the Canary was not reached, not that it has no bridge", async () => {
+  const { $ } = await boot({
+    "GET /api/wifi/status": onWifi,
+    "GET /api/mqtt/status": { ok: true, tls_mode: 0 },
+    "POST /api/mqtt/config": new Error("502 text/html"),
+  });
+  $("mqttsave").fire("click");
+  await settle();
+  assert.match($("mqttmsg").textContent, /^Couldn’t reach the Canary/);
+  assert.ok(!/hub bridge/.test($("mqttmsg").textContent), "the box shows only where the bridge is: " + $("mqttmsg").textContent);
+  assert.strictEqual($("mqttsave").disabled, false, "the button comes back for the retry");
 });
 
 test("the success line and the Restart button no longer contradict each other", () => {

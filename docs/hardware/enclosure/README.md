@@ -738,7 +738,7 @@ still there (`ink_groups` / `accent_groups` in the case file decide it, and
 every recipe below is derived from those lists rather than naming a spool in
 prose), so a three-filament build is one edit away.
 
-The mark is **monoline** — one stroke weight for the outline, the C spiralled
+The mark is **monoline** — one stroke weight for the outline, the C spiraled
 into the wing, the V in the tail and the notepad alike — so a single number
 (`bird_rib`) decides whether the whole drawing prints, and the library asserts
 it. It is drawn ~68 × 62 mm on the back plate, which is the largest that keeps

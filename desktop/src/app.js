@@ -1690,6 +1690,28 @@ function matchProjectToProduct(catalog, projectName) {
   return best;
 }
 
+// The catalog product a board's app descriptor names, display-aware — the
+// twin of flash-core.js productForProject (desktop_parity.test.js runs both
+// over the same names). matchProjectToProduct is a substring match where the
+// longest asset_stem wins, so a display build whose name carries no flavor
+// ("canary_display", "canary-display") matches only the flagship's "canary".
+// A name the browser counts as a display (it says "display") resolves to the
+// display product it names, else the catalog display entry it matches, else
+// the first display product — never the flagship. Every display firmware
+// reads the same serial console (none), so the monitor's commands are right
+// either way.
+function productForProject(catalog, projectName) {
+  const match = matchProjectToProduct(catalog, projectName);
+  const name = String(projectName || "").toLowerCase();
+  if (!/display/.test(name)) return match;
+  const isDisplay = (p) => (p.role || (/display|watch|dash/.test(String(p.id || "")) ? "display" : "")) === "display";
+  if (match && isDisplay(match)) return match;
+  const products = (catalog && catalog.products) || [];
+  const displays = (catalog && Array.isArray(catalog.displays)) ? catalog.displays : [];
+  const d = displays.find((x) => name === x.id) || displays.find((x) => x.match && name.includes(x.match));
+  return (d && products.find((p) => p.id === d.flash_product)) || products.find(isDisplay) || null;
+}
+
 // Semver-ish compare returning -1/0/1, or null when either side can't be
 // parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
 function compareVersions(a, b) {
@@ -3407,6 +3429,7 @@ async function onFlash() {
   // Reflash must start from a clean slate — never show the PREVIOUS flash's
   // green result, receipts, certificate, or a stale "Broken pipe" monitor line.
   resetOutcome();
+  noteBoardWritten(); // what the passport read is about to be overwritten
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
@@ -4394,6 +4417,7 @@ async function onRescueRestore() {
   }
   if (!ok) { cancelRescue(); return; }
   await runRescue("Restore", async () => {
+    noteBoardWritten(); // the image going on is not the one the passport read
     await invoke("write_local_image", {
       port,
       path,
@@ -4424,6 +4448,7 @@ async function onRescueErase() {
   }
   if (!ok) { cancelRescue(); return; }
   await runRescue("Erase", async () => {
+    noteBoardWritten(); // nothing the passport read survives an erase
     await invoke("erase_chip", { port });
     return "Chip erased — factory-fresh. Flash any image next.";
   });
@@ -4694,6 +4719,7 @@ async function onFlashLocalFile() {
   $("dev-channel").disabled = true;
   setStatus("local-result", "");
   resetOutcome();
+  noteBoardWritten(); // what the passport read is about to be overwritten
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
@@ -5037,11 +5063,16 @@ async function askSelfCheck() {
   state.selfCheckAsked = true; // the answer is a self-check, not a boot receipt
   if (!state.monitoring) await startMonitor();
   if (!state.monitoring) return;
-  const ask = () => {
-    if (state.monitoring) invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
-  };
-  setTimeout(ask, 900);
-  setTimeout(ask, 2600);
+  // Only a firmware that answers j is asked for it (parity: the browser's
+  // monitor gates its identity ask the same way) — the WAP sketch, Sense's
+  // tuning console and a display would answer "unknown command" twice.
+  if (requiresLiveReceipt(monitorProductOnBench())) {
+    const ask = () => {
+      if (state.monitoring) invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
+    };
+    setTimeout(ask, 900);
+    setTimeout(ask, 2600);
+  }
   $("serial-monitor").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -5238,31 +5269,80 @@ async function restartMonitorAtBaud(baud, opts = {}) {
   await startMonitor({ baud, manualBaud: opts.manual, tried: opts.tried });
 }
 
-// The firmware's single-key vocabulary, copied verbatim from the browser
-// flasher (canary-local/assets/flash.js, MONITOR_CMDS). The desktop exposed
-// only `j` as a button, so every other command had to be typed blind by
-// someone who already knew that `i` is identity and `b` is battery.
-const MONITOR_CMDS = [
-  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
-  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
-];
+// The serial monitor's commands are the firmware's own (sweep A86): the
+// product's `monitor` record in the embedded flash.json ({ kind, cmds:
+// [[command, label], …], placeholder }), which gen_flash.py holds to that
+// firmware's command handler — single keys for the Canary, the WAP and
+// Vision, the tuning console's words for Sense, none for a display. The
+// browser flasher's monitor and the Lab app's receipt card read the same
+// record through flash-core.js monitorVocabulary, this function's twin
+// (desktop_parity.test.js runs both over every product). A product not known
+// gets the catalog's monitor_unknown: no chips, and a box that says why.
+function monitorVocabulary(catalog, product) {
+  const own = product && product.monitor;
+  if (own && Array.isArray(own.cmds) && typeof own.placeholder === "string") return own;
+  const unknown = catalog && catalog.monitor_unknown;
+  if (unknown && Array.isArray(unknown.cmds) && typeof unknown.placeholder === "string") return unknown;
+  return { kind: "unknown", cmds: [], placeholder: "type a command" };
+}
+
+// The product whose firmware the monitor is watching — the browser
+// flasher's rule (flash.js phaseMonitor):
+//   1. the last host flash: the firmware just written. A local file's receipt
+//      names no catalog product (its product_id is the file), so: null.
+//   2. else the firmware the passport read off the board at connect
+//      (state.resident, display-aware through productForProject), until this
+//      bench writes to the board — a flash, a local file, a Rescue restore or
+//      erase marks it overwritten (noteBoardWritten), since a write that left
+//      no host receipt (it failed, or it was a restore) leaves the read
+//      describing bytes that may be gone. A blank board runs nothing, and a
+//      firmware the catalog does not name answers no chip it knows: null.
+//   3. else the chosen product card (the radar suite's and the field bench's
+//      fallback): a board whose read failed, or one this bench wrote.
+function monitorProductOnBench() {
+  const products = (state.catalog && state.catalog.products) || [];
+  const host = state.vision && state.vision.hostFlash;
+  if (host) return products.find((p) => p.id === host.product_id) || null;
+  const r = state.resident;
+  if (r && !r.unknown && !r.overwritten) {
+    // A blank board, or firmware the catalog does not know: no chips rather
+    // than the card's, which that board does not run.
+    return r.blank ? null : productForProject(state.catalog, r.projectName);
+  }
+  const id = state.product && state.product.id;
+  return (id && products.find((p) => p.id === id)) || null;
+}
+
+// The bench is about to write to the board: what the passport read at
+// connect no longer names what the board runs (monitorProductOnBench).
+function noteBoardWritten() {
+  if (state.resident) state.resident.overwritten = true;
+}
 
 function renderMonitorCmds() {
   const host = $("monitor-cmds");
   if (!host) return;
   host.innerHTML = "";
-  for (const [ch, label] of MONITOR_CMDS) {
+  const product = monitorProductOnBench();
+  const vocab = monitorVocabulary(state.catalog, product);
+  const input = $("monitor-cmd");
+  if (input) input.placeholder = vocab.placeholder;
+  // "Print receipt (j)" asks for the self-manifest: shown only where the
+  // firmware answers j (the catalog's serial_receipt, derived from it).
+  const receiptBtn = $("monitor-manifest");
+  if (receiptBtn) receiptBtn.classList.toggle("hidden", !requiresLiveReceipt(product));
+  for (const [cmd, label] of vocab.cmds) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "btn btn-ghost btn-small";
-    b.dataset.cmd = ch;
-    b.textContent = `${label} (${ch})`;
+    b.dataset.cmd = cmd;
+    b.textContent = `${label} (${cmd})`;
     b.disabled = !state.monitoring;
     // The backend does not auto-append a newline (so "No line ending" is
     // honored on the free-text form), so send one here — the firmware's
     // command parser reads a line.
     b.addEventListener("click", () =>
-      invoke("serial_monitor_send", { command: ch + "\n" }).catch((e) =>
+      invoke("serial_monitor_send", { command: cmd + "\n" }).catch((e) =>
         setStatus("monitor-status", String(e), "err")));
     host.appendChild(b);
   }
@@ -5279,6 +5359,7 @@ async function startMonitor(opts) {
   $("monitor-status").textContent = "Waiting for the board to reappear after reboot…";
   renderSenseTune(); // the radar tuning suite rides the monitor on Sense boards
   renderWapField();  // …and the field bench on a WAP
+  renderMonitorCmds(); // …and the command chips of the firmware on the bench
   renderSelfCheck(null); // a fresh session earns its own chips
   setMonitorButtons(true);
   // The speed to open at: an explicit one from a baud hop, else whatever the
@@ -6829,7 +6910,7 @@ function hubValidateAccount() {
   const pass = $("hub-acct-pass").value;
   const pass2 = $("hub-acct-pass2").value;
   const hint = $("hub-acct-hint");
-  // Intent to pre-make an account is signalled by a PASSWORD — a name or
+  // Intent to pre-make an account is signaled by a PASSWORD — a name or
   // username alone can't make a login and must never block a plain flash
   // (they may be remembered from last time). And because the password field
   // lives inside the collapsed panel, "requested" can only ever become true

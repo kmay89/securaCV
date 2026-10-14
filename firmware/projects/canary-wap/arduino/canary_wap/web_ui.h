@@ -939,6 +939,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button class="btn btn-primary btn-sm" onclick="otaBannerView()">View &amp; install</button>
       <button class="btn btn-ghost btn-sm" onclick="otaBannerDismiss()">Later</button>
     </div>
+    <!-- The recovery kit after a BOOT-tap sign-in (sweep F257), in the
+         /companion wizard's words: the receipt that tap fetched, saved by the
+         browser as canary-recovery-kit.json (RecoveryKit.save). Shown only
+         after a tap that served a receipt; saving it or putting it off drops
+         the text. -->
+    <div class="card" id="recoveryKitCard" style="display:none" role="region" aria-labelledby="recoveryKitTitle">
+      <div class="card-header">
+        <div>
+          <div class="card-title" id="recoveryKitTitle">Save your recovery kit</div>
+          <div class="card-subtitle" id="recoveryKitLead">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</div>
+        </div>
+      </div>
+      <p class="card-subtitle" id="recoveryKitDone" style="display:none;margin:0 0 0.6rem;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" id="recoveryKitLater" onclick="closeRecoveryKit()">Do this later</button>
+        <button class="btn btn-primary btn-sm" id="recoveryKitSave" onclick="saveRecoveryKit()">Save my recovery kit</button>
+      </div>
+    </div>
     <!-- Clean 5-Tab Navigation -->
     <nav>
       <button class="nav-btn active" data-panel="status">Status</button>
@@ -1307,7 +1325,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </p>
       </div>
 
-      <div class="card">
+      <div class="card" id="peekControlsCard">
         <div class="card-header">
           <div>
             <div class="card-title">Camera Controls</div>
@@ -1426,7 +1444,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- Real-time camera info: every value is read from /api/peek/status (esp_camera state). -->
-      <div class="card">
+      <div class="card" id="camInfoCard">
         <div class="card-header">
           <div>
             <div class="card-title">Camera Info</div>
@@ -1699,14 +1717,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- ═══════════════════════════════════════════════════════════════════════ -->
     <div class="panel" id="panel-community">
       <!-- Sub-navigation -->
+      <!-- Opera and Chirp stay hidden until GET /api/mesh or GET /api/chirp
+           answers (F276, F176's shape): both route families are registered
+           only under FEATURE_MESH_NETWORK, which the DEV profile leaves off.
+           BLE Discovery is the first view until Opera answers. -->
       <div class="sub-nav">
-        <button class="sub-nav-btn active" onclick="switchCommunityTab('opera')">🔗 Opera Network</button>
-        <button class="sub-nav-btn" onclick="switchCommunityTab('chirp')">🐦 Chirp Channel</button>
-        <button class="sub-nav-btn" onclick="switchCommunityTab('ble-discovery')">📡 BLE Discovery</button>
+        <button class="sub-nav-btn" data-tab="opera" id="communityTabOpera" style="display:none" onclick="switchCommunityTab('opera')">🔗 Opera Network</button>
+        <button class="sub-nav-btn" data-tab="chirp" id="communityTabChirp" style="display:none" onclick="switchCommunityTab('chirp')">🐦 Chirp Channel</button>
+        <button class="sub-nav-btn active" data-tab="ble-discovery" onclick="switchCommunityTab('ble-discovery')">📡 BLE Discovery</button>
       </div>
 
       <!-- BLE DISCOVERY SUB-PANEL -->
-      <div class="sub-panel" id="community-ble-discovery">
+      <div class="sub-panel active" id="community-ble-discovery">
         <div class="feature-info">
           <h4>📡 BLE Discovery (Opera/Chirp/Nearby)</h4>
           <p>Bluetooth Low Energy subsystem for device presence, broadcast alerts, and proximity detection.</p>
@@ -1777,7 +1799,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
 
       <!-- OPERA SUB-PANEL -->
-      <div class="sub-panel active" id="community-opera">
+      <div class="sub-panel" id="community-opera">
         <!-- What is Opera? Info Box -->
         <div class="feature-info">
           <h4>🔗 What is Opera Network?</h4>
@@ -2444,6 +2466,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Recovery kit, any time (sweep F257): the receipt this signed-in
+             page can already fetch (GET /api/provisioning-receipt serves
+             its token or its session cookie), saved by the browser as
+             canary-recovery-kit.json through RecoveryKit.save, the builder
+             the BOOT-tap offer and the /companion wizard save with. -->
+        <div class="card" id="settingsKitCard">
+          <div class="card-header">
+            <div>
+              <div class="card-title" id="settingsKitTitle">Recovery kit</div>
+              <div class="card-subtitle" id="settingsKitLead">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveRecoveryKitFromSettings()" id="settingsKitSave">Save my recovery kit</button>
+          </div>
+          <p class="card-subtitle" id="settingsKitDone" style="display:none;margin:0;">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>.</p>
+          <p class="card-subtitle" id="settingsKitErr" role="alert" style="display:none;margin:0;color:var(--danger);"></p>
+        </div>
+
         <!-- Software Update Card (signed pull updates over WiFi) -->
         <div class="card" id="otaCard" style="display:none;">
           <div class="card-header">
@@ -2671,6 +2710,14 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
      * genuine init failure, heat, or the battery policy block the
      * preview, each with its own honest copy. */
     function cameraPanelState(initialized, standby, gate) {
+      /* A build without FEATURE_CAMERA_PEEK registers no camera route
+       * (sweep F274): no route took the status read before any had
+       * answered. */
+      if (gate === 'not_built') {
+        return { usable: false, btn: '\u26a0 No Camera',
+                 label: 'No camera in this build',
+                 offline: 'This firmware was built without the camera preview.' };
+      }
       if (!initialized && !standby) {
         return { usable: false, btn: '\u26a0 No Camera',
                  label: 'Camera unavailable',
@@ -2740,6 +2787,51 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     })();
     if (typeof module !== 'undefined' && module.exports) { module.exports = WebUiLogic; }
     /* WEBUI_LOGIC:END */
+
+    /* RECOVERY_KIT:BEGIN — the recovery kit, one builder for the two pages that
+       offer it: the /companion wizard's close-out (companion_pwa.h) and the
+       dashboard after a BOOT-tap sign-in (web_ui.h, sweep F257). The two copies
+       are the same lines, indentation aside; recovery_kit.test.js holds them so
+       and drives both pages through them. The kit is the receipt text exactly
+       as GET /api/provisioning-receipt served it, handed to the browser as a
+       download: nothing here fetches or sends anything. DOM-free: the page
+       passes its window in (document, Blob, URL, setTimeout), so Node can drive
+       it. */
+    const RecoveryKit = (function () {
+      const FILE_NAME = 'canary-recovery-kit.json';
+
+      // A receipt the iPhone's recovery path can pair from (PairView decodes a
+      // base_url and a non-empty token), so neither page offers or saves
+      // anything else as a kit.
+      function isReceipt(text) {
+        if (typeof text !== 'string' || text === '') return false;
+        let r;
+        try { r = JSON.parse(text); } catch (e) { return false; }
+        return !!r && typeof r === 'object' && !Array.isArray(r) &&
+               typeof r.token === 'string' && r.token !== '' &&
+               typeof r.base_url === 'string' && r.base_url !== '';
+      }
+
+      // Save `text` as canary-recovery-kit.json through a same-page blob: URL.
+      // False, with nothing saved, when it is not a receipt.
+      function save(win, text) {
+        if (!isReceipt(text)) return false;
+        const blob = new win.Blob([text], { type: 'application/json' });
+        const url = win.URL.createObjectURL(blob);
+        const a = win.document.createElement('a');
+        a.href = url;
+        a.download = FILE_NAME;
+        win.document.body.appendChild(a);
+        a.click();
+        win.document.body.removeChild(a);
+        win.setTimeout(function () { win.URL.revokeObjectURL(url); }, 4000);
+        return true;
+      }
+
+      return { FILE_NAME: FILE_NAME, isReceipt: isReceipt, save: save };
+    })();
+    if (typeof module !== 'undefined' && module.exports) { module.exports = RecoveryKit; }
+    /* RECOVERY_KIT:END */
 
     // ═══════════════════════════════════════════════════════════════
     // AUTH — Token stored ONLY in JS variable. No localStorage/cookies.
@@ -2822,6 +2914,66 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    // The recovery kit after a BOOT-tap sign-in (sweep F257). A WAP set up
+    // through the Bluetooth setup door never runs the /companion wizard's
+    // close-out, the one place the kit was offered, so its owner had no kit
+    // for the iPhone's recovery path (PairView) to pair from. The tap's
+    // receipt text is held here only while the offer is on screen (saving it
+    // or putting it off drops it), and it never leaves the browser: the save
+    // is a download through a blob: URL, not a request.
+    let recoveryKitText = null;
+
+    function offerRecoveryKit(text) {
+      if (!RecoveryKit.isReceipt(text)) return false;
+      recoveryKitText = text;
+      document.getElementById('recoveryKitDone').style.display = 'none';
+      document.getElementById('recoveryKitSave').style.display = '';
+      document.getElementById('recoveryKitLater').textContent = 'Do this later';
+      document.getElementById('recoveryKitCard').style.display = 'block';
+      return true;
+    }
+
+    function closeRecoveryKit() {
+      recoveryKitText = null;
+      document.getElementById('recoveryKitCard').style.display = 'none';
+    }
+
+    function saveRecoveryKit() {
+      if (!RecoveryKit.save(window, recoveryKitText)) return;
+      recoveryKitText = null;
+      document.getElementById('recoveryKitDone').style.display = 'block';
+      document.getElementById('recoveryKitSave').style.display = 'none';
+      document.getElementById('recoveryKitLater').textContent = 'Continue';
+    }
+
+    // Settings → Device → Recovery kit (sweep F257): the kit again, any time,
+    // without a tap. A page that is signed in already holds what the receipt
+    // route serves on (its token, or the cv_session cookie a BOOT tap, a
+    // setup-door claim or the landing page issued); a browser that resumed
+    // its session on load never sees the BOOT-tap offer above, so this is
+    // where its owner saves the kit. The one request is that GET; the save
+    // is RecoveryKit.save's blob: download. A refused session is
+    // secureFetch's: the sign-in comes back, and its BOOT tap offers the kit.
+    async function saveRecoveryKitFromSettings() {
+      const done = document.getElementById('settingsKitDone');
+      const err = document.getElementById('settingsKitErr');
+      done.style.display = 'none';
+      err.style.display = 'none';
+      err.textContent = '';
+      try {
+        const resp = await secureFetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!RecoveryKit.save(window, await resp.text())) throw new Error('not a recovery kit');
+        done.style.display = 'block';
+      } catch (e) {
+        const signIn = e && (e.message === 'auth_required' || e.message === 'rate_limited');
+        err.textContent = signIn
+          ? 'Sign in again first (Use BOOT Tap Once offers the kit as it signs you in).'
+          : 'Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again.';
+        err.style.display = 'block';
+      }
+    }
+
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
@@ -2837,10 +2989,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         try {
           const resp = await fetch(API_BASE + '/api/provisioning-receipt');
           if (resp.status === 200) {
-            const receipt = await resp.json();
+            const text = await resp.text();
+            const receipt = JSON.parse(text);
             apiToken = receipt.token;
             hideAuthModal();
             startDashboard();
+            offerRecoveryKit(text);
             return;
           }
           if (resp.status === 403 && !gotFirst403) {
@@ -2934,7 +3088,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     let currentPanel = 'status';
-    let currentCommunityTab = 'opera';
+    let currentCommunityTab = 'ble-discovery';
     let currentRecordsTab = 'logs';
     let currentSettingsTab = 'wifi';
     let pendingAckSeq = null;
@@ -3158,7 +3312,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (loadPanel) {
         if (panel === 'records') { loadLogs(); loadWitness(); }
-        else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); refreshVault(); }
+        else if (panel === 'camera') { refreshPeekStatus(); if (peekServed) refreshSensorState(); refreshVault(); }
         else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
         else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
         else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
@@ -3166,21 +3320,35 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel !== 'camera' && peekActive) stopPeek();
       if (panel !== 'camera') stopCamInfoPolling();
+      // BLE Discovery refreshes only while it is on screen (F276).
+      if (panel !== 'community') clearTimeout(bleDiscoveryTimer);
     }
 
     function initialPanelFromPath() {
       return window.location.pathname.replace(/\/+$/, '') === '/settings' ? 'settings' : 'status';
     }
 
+    // The Community view the owner picked (F276): until one is picked, the
+    // Opera view takes over from BLE Discovery when GET /api/mesh first
+    // answers, so a build with the mesh opens on Opera as it always did.
+    let communityTabChosen = false;
+
     function switchCommunityTab(tab) {
-      currentCommunityTab = tab;
-      document.querySelectorAll('#panel-community .sub-nav-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
-      document.querySelectorAll('#panel-community .sub-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById(`community-${tab}`).classList.add('active');
+      communityTabChosen = true;
+      selectCommunityTab(tab);
       if (tab === 'opera') refreshOpera();
       else if (tab === 'ble-discovery') refreshBleDiscovery();
       else refreshChirpStatus();
+    }
+
+    function selectCommunityTab(tab) {
+      currentCommunityTab = tab;
+      if (tab !== 'ble-discovery') clearTimeout(bleDiscoveryTimer);
+      document.querySelectorAll('#panel-community .sub-nav-btn').forEach(b => {
+        if (b.dataset.tab === tab) b.classList.add('active'); else b.classList.remove('active');
+      });
+      document.querySelectorAll('#panel-community .sub-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(`community-${tab}`).classList.add('active');
     }
 
     function switchRecordsTab(tab) {
@@ -3213,8 +3381,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try {
         const res = await secureFetch(endpoint, opts);
         const text = await res.text();
+        // unrouted: a 404 that is not JSON, how esp_http_server answers a
+        // path no route of this build registers. Only a caller whose route
+        // always answers JSON may read it as "this build has no such route".
         try { return JSON.parse(text); }
-        catch { return { ok: false, error: text.slice(0, 100) }; }
+        catch { return { ok: false, error: text.slice(0, 100), unrouted: res.status === 404 }; }
       } catch (e) {
         if (e.message === 'auth_required' || e.message === 'rate_limited') return { ok: false, error: e.message };
         return { ok: false, error: 'Network error' };
@@ -3788,26 +3959,59 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (camInfoTimer) { clearInterval(camInfoTimer); camInfoTimer = null; }
     }
 
+    // F274: the camera routes are registered only under FEATURE_CAMERA_PEEK
+    // (not in the DEV profile, the canary-wap-mobile env, or FULL on the
+    // XIAO ESP32-C3). A status no route took (api()'s unrouted: the server's
+    // 404), before any status has answered, is a build without the preview:
+    // the tab shows its no-camera state and hides the Camera Controls and
+    // Camera Info cards, which hold every control that calls another camera
+    // route. Opening the tab reads the sensor state (GET /api/peek/sensor)
+    // only once a status has answered; until then the first answer pulls it,
+    // so a build without the camera is asked only for the status. No
+    // answer, or a sign-in the route wants, says nothing about the build and
+    // changes nothing. Once a status has answered (peekServed), a failed poll
+    // changes nothing, as before: a blip mid-stream is not a missing camera.
+    let peekServed = false;
+
     async function refreshPeekStatus() {
       const data = await api('/api/peek/status');
-      if (data && data.ok) {
-        const wasReady = cameraReady;
-        cameraReady = data.camera_initialized;
-        cameraStandby = !!data.standby;
-        cameraGate = data.gate || 'ok';
-        peekActive = data.peek_active;
-        if (typeof data.resolution !== 'undefined') {
-          currentResolution = data.resolution;
-          if (data.resolution_name) currentResolutionName = data.resolution_name;
-          updateResolutionUI();
+      if (!(data && data.ok)) {
+        if (!peekServed && data && data.unrouted) {
+          cameraReady = false;
+          cameraStandby = false;
+          cameraGate = 'not_built';
+          peekActive = false;
+          stopCamInfoPolling();
+          updatePeekUI();
+          document.getElementById('peekControlsCard').style.display = 'none';
+          document.getElementById('camInfoCard').style.display = 'none';
         }
-        applyCameraInfo(data);
-        updatePeekUI();
-        if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
-        // The camera just became available — pull sensor state so the
-        // tuning sliders show the on-chip values rather than blanks.
-        if (cameraReady && !wasReady) refreshSensorState();
+        return;
       }
+      const firstAnswer = !peekServed;
+      if (firstAnswer) {
+        peekServed = true;
+        document.getElementById('peekControlsCard').style.display = '';
+        document.getElementById('camInfoCard').style.display = '';
+      }
+      const wasReady = cameraReady;
+      cameraReady = data.camera_initialized;
+      cameraStandby = !!data.standby;
+      cameraGate = data.gate || 'ok';
+      peekActive = data.peek_active;
+      if (typeof data.resolution !== 'undefined') {
+        currentResolution = data.resolution;
+        if (data.resolution_name) currentResolutionName = data.resolution_name;
+        updateResolutionUI();
+      }
+      applyCameraInfo(data);
+      updatePeekUI();
+      if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
+      // The camera just became available — pull sensor state so the
+      // tuning sliders show the on-chip values rather than blanks. The
+      // first status this page heard pulls it too, standing in for the
+      // read the tab's opening held back.
+      if (firstAnswer || (cameraReady && !wasReady)) refreshSensorState();
     }
 
     function updatePeekUI() {
@@ -4034,9 +4238,23 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ══════════════════════════════════════════════════════════════════
     let pairingPollingInterval = null;
 
+    // F276: the Opera and Chirp views show only once their status route has
+    // answered. Both families are registered only under
+    // FEATURE_MESH_NETWORK; in the DEV profile the page load's one call each
+    // is refused, the views stay hidden, and the 5 s poll (which refreshes
+    // only the view on screen) never asks for them. Opening the Community
+    // panel asks once more, so a probe a busy load turned away recovers.
+    let operaServed = false;
+    let chirpServed = false;
+
     async function refreshOpera() {
       const data = await api('/api/mesh');
       if (!data.ok) return;
+      if (!operaServed) {
+        operaServed = true;
+        document.getElementById('communityTabOpera').style.display = '';
+        if (!communityTabChosen) selectCommunityTab('opera');
+      }
 
       document.getElementById('operaStatus').textContent = data.state || 'DISABLED';
       document.getElementById('peersOnline').textContent = data.peers_online || 0;
@@ -4150,6 +4368,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshChirpStatus() {
       const data = await api('/api/chirp');
       if (!data.state) return;
+      if (!chirpServed) {
+        chirpServed = true;
+        document.getElementById('communityTabChirp').style.display = '';
+      }
 
       document.getElementById('chirpSessionEmoji').textContent = data.session_emoji || '--';
       document.getElementById('chirpNearbyCount').textContent = data.nearby_count || 0;
@@ -4288,10 +4510,26 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>`).join('');
     }
 
+    // POST /api/export answers the bundle itself, inline (F278: the
+    // download_url it used to name was a route nothing registers), so the
+    // page saves that answer as the download. A card copy, when one was
+    // written, is named in card_path; the download does not depend on it.
     async function exportWitness() {
       const data = await api('/api/export', 'POST');
-      if (data.ok && data.download_url) window.location.href = data.download_url;
-      else alert('Export failed');
+      if (!data || data.ok !== true) {
+        alert('Export failed: ' + ((data && data.error) || 'Unknown error'));
+        return;
+      }
+      const id = String(data.device_id || 'canary').replace(/[^A-Za-z0-9_-]/g, '_');
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'witness-export-' + id + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     // ── Pairing QR (Settings → Device) ──────────────────────────────────
@@ -4988,9 +5226,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         list.innerHTML = html;
       } catch(e) { console.error('Failed to fetch nearby devices:', e); }
 
-      // Auto-refresh every 10 seconds when tab is visible
+      // Auto-refresh every 10 seconds while the view is on screen: the
+      // Community panel open and BLE Discovery picked in it (now the first
+      // view where Opera never answers, F276). Leaving the panel or the
+      // view cancels a refresh already waiting (switchPanel,
+      // selectCommunityTab).
       clearTimeout(bleDiscoveryTimer);
-      if (currentCommunityTab === 'ble-discovery') {
+      if (currentPanel === 'community' && currentCommunityTab === 'ble-discovery') {
         bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);
       }
     }
@@ -5110,10 +5352,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // When init was refused/failed, say WHY in the subtitle instead of
       // presenting a dead-looking panel ("internal RAM too fragmented…").
+      // Once a bring-up succeeds the reason is cleared, and the subtitle goes
+      // back to the card's own line: a tap of Start Advertising or Pair can
+      // bring a refused stack up within the page's session (sweep F235), and
+      // the refusal used to stay on screen until a reload.
       const subtitle = document.getElementById('btSubtitle');
       if (subtitle && data.init_fail_reason) {
         subtitle.textContent = 'Radio off — ' + data.init_fail_reason;
         badge.className = 'badge warning'; text.textContent = 'Off';
+      } else if (subtitle) {
+        subtitle.textContent = 'BLE connectivity';
       }
 
       // Live connection panel (Find My-like card)

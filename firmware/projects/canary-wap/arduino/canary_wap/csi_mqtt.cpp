@@ -63,6 +63,8 @@
 #include "csi_event_id_floor.h"     /* staged copy — space_low(): the health's event-id warning (F82) */
 #include "mqtt_transport_logic.h"  /* staged copy of firmware/common/network/ — check_mqtt_transport_sync.sh */
 #include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
+#include "wap_json_writer.h"         /* GET /api/mqtt/config's answer, escaped and measured (sweep F227) */
+#include "http_body_reader.h"        /* POST /api/mqtt/config's body, read whole or refused (sweep F266) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -523,10 +525,24 @@ bool config_load(Config* out) {
    * without a separate toggle. Non-HA users flip it off via the /mqtt
    * settings page; the persisted bool then survives reboots. */
   out->discovery = prefs.getBool(NVS_KEY_DISCOVERY, true);
-  prefs.getString(NVS_KEY_HOST,   out->host,   MAX_HOST_LEN);
-  prefs.getString(NVS_KEY_USER,   out->user,   MAX_USER_LEN);
-  prefs.getString(NVS_KEY_PASS,   out->pass,   MAX_PASS_LEN);
-  prefs.getString(NVS_KEY_PREFIX, out->prefix, MAX_PREFIX_LEN);
+  /* Each string with its member's whole size (sweep F241). Arduino-ESP32's
+   * Preferences::getString(key, buf, maxLen) refuses, whole, a value whose
+   * length with its NUL exceeds maxLen; these read with MAX_*_LEN, so a
+   * value of exactly MAX_*_LEN characters, which the POST stores, read back
+   * as nothing: the prefix as the default, the host as none. A value longer
+   * than its member (none this firmware writes) is still refused that way.
+   * Each is read only when it is there (sweep F267), as the time zone and
+   * the CA are: getString() logs "nvs_get_str len fail: <key> NOT_FOUND" at
+   * error level for a missing key, and the shared namespace exists on a
+   * device whose bridge was never configured (the egress's ceiling record
+   * creates it at boot), so every boot, re-init and config GET or POST of a
+   * debug build printed four such lines. A missing key leaves the member as
+   * the memset above left it, as the refused read did: an empty host, user
+   * and password, and the default prefix below. */
+  if (prefs.isKey(NVS_KEY_HOST))   prefs.getString(NVS_KEY_HOST,   out->host,   sizeof(out->host));
+  if (prefs.isKey(NVS_KEY_USER))   prefs.getString(NVS_KEY_USER,   out->user,   sizeof(out->user));
+  if (prefs.isKey(NVS_KEY_PASS))   prefs.getString(NVS_KEY_PASS,   out->pass,   sizeof(out->pass));
+  if (prefs.isKey(NVS_KEY_PREFIX)) prefs.getString(NVS_KEY_PREFIX, out->prefix, sizeof(out->prefix));
   prefs.end();
   if (!out->prefix[0]) strncpy(out->prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (out->port == 0)  out->port = out->tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
@@ -1478,12 +1494,13 @@ void device_id_slug(char* out, size_t cap) {
 
 /* Emit one entity's config payload. Returns true on enqueue success.
  * The discovery JSON is built into a fixed 768-byte buffer. The longest
- * body is the presence entity's: 762 bytes at the longest device id (32),
- * prefix (31, what config_load reads back) and firmware version (23) the
- * bridge holds, and 654 at a device's own 14-character id with that
- * prefix. test_ha_discovery_ids.cpp formats every config at those lengths
- * and holds each under the buffer; a body that does not fit is never
- * published, and publish_discovery() stops at it. */
+ * body is the presence entity's: 764 bytes at the longest device id (32),
+ * prefix (32, MAX_PREFIX_LEN, what config_load reads back since sweep F241)
+ * and firmware version (23) the bridge holds, and 656 at a device's own
+ * 14-character id with that prefix. test_ha_discovery_ids.cpp formats
+ * every config at those lengths and holds each under the buffer; a body
+ * that does not fit is never published, and publish_discovery() stops at
+ * it. */
 bool publish_one_discovery(const DiscoveryEntity& e) {
   const char* prefix = s_active_cfg.prefix[0] ? s_active_cfg.prefix : DEFAULT_PREFIX;
   char slug[sizeof(s_device_id)];
@@ -1921,6 +1938,54 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
  * registers an accessor at init time via set_api_token_provider. */
 const char* (*s_api_token_provider)() = nullptr;
 
+/* GET /api/mqtt/config's answer, from copies taken before it is measured
+ * (sweep F227): the host and the user are what the settings page sent, and
+ * json_extract_string() hands them over with `"`, `\` and control bytes
+ * decoded (and raw bytes as they came), so a %s answer broke on a quote. (The
+ * prefix cannot hold one: handle_config_post() keeps it to [a-zA-Z0-9_/-].)
+ * Every string goes through wap_json_writer.h's escaper here all the same,
+ * and the answer is measured and written into a heap buffer of exactly its
+ * length: an escaped answer can pass the old 800 bytes (a byte can spend
+ * six), which the old unescaped format never reached (622 at most).
+ * last_error is the loop task's: it is copied once, so both passes read the
+ * same bytes. */
+struct ConfigAnswer {
+  const Config* c;
+  const char*   transport;
+  const char*   last_error;
+  bool          connected;
+};
+
+static void write_config_answer(wap_json::Writer& w, const ConfigAnswer& a) {
+  wap_json::raw(w, "{\"enabled\":");
+  wap_json::boolean_value(w, a.c->enabled);
+  wap_json::raw(w, ",\"host\":");
+  wap_json::str(w, a.c->host);
+  wap_json::raw(w, ",\"port\":");
+  wap_json::number(w, a.c->port);
+  wap_json::raw(w, ",\"user\":");
+  wap_json::str(w, a.c->user);
+  wap_json::raw(w, ",\"prefix\":");
+  wap_json::str(w, a.c->prefix);
+  wap_json::raw(w, ",\"tls\":");
+  wap_json::boolean_value(w, a.c->tls);
+  wap_json::raw(w, ",\"tls_mode\":");
+  wap_json::number(w, a.c->tls_mode);
+  wap_json::raw(w, ",\"ca_set\":");
+  wap_json::boolean_value(w, a.c->ca_set);
+  wap_json::raw(w, ",\"transport\":");
+  wap_json::str(w, a.transport);
+  wap_json::raw(w, ",\"last_error\":");
+  wap_json::str(w, a.last_error);
+  wap_json::raw(w, ",\"discovery\":");
+  wap_json::boolean_value(w, a.c->discovery);
+  wap_json::raw(w, ",\"password_set\":");
+  wap_json::boolean_value(w, a.c->pass[0] != '\0');
+  wap_json::raw(w, ",\"connected\":");
+  wap_json::boolean_value(w, a.connected);
+  wap_json::raw(w, "}");
+}
+
 esp_err_t handle_config_get(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -1934,59 +1999,77 @@ esp_err_t handle_config_get(httpd_req_t* req) {
   config_load(&c);
   /* Echo everything but the password — the password is write-only on
    * the wire so a casual attacker who somehow obtained a session
-   * cookie can't read the broker creds back out of GET. */
-  char body[800];
-  /* snprintf return value intentionally unchecked: we send via
-   * HTTPD_RESP_USE_STRLEN below so a truncated payload still has a
-   * NUL terminator and httpd_resp_send walks until it. Using
-   * snprintf's return as the length would walk past the NUL on
-   * truncation and over-read. (PR #394 review r3213674558.)
+   * cookie can't read the broker creds back out of GET.
    * tls_mode / ca_set / transport / last_error are the broker-TLS
    * surface: the CA itself is never echoed (a page that can read it
-   * back is a page that can be tricked into showing it), and last_error
-   * is one of the header's constant strings — no quotes, no backslashes
-   * (the host suite asserts that), so it is JSON-safe as-is. */
-  snprintf(body, sizeof(body),
-    "{"
-      "\"enabled\":%s,"
-      "\"host\":\"%s\","
-      "\"port\":%u,"
-      "\"user\":\"%s\","
-      "\"prefix\":\"%s\","
-      "\"tls\":%s,"
-      "\"tls_mode\":%u,"
-      "\"ca_set\":%s,"
-      "\"transport\":\"%s\","
-      "\"last_error\":\"%s\","
-      "\"discovery\":%s,"
-      "\"password_set\":%s,"
-      "\"connected\":%s"
-    "}",
-    c.enabled ? "true" : "false",
-    c.host,
-    (unsigned)c.port,
-    c.user,
-    c.prefix,
-    c.tls ? "true" : "false",
-    (unsigned)c.tls_mode,
-    c.ca_set ? "true" : "false",
-    transport_name(),
-    s_last_error,
-    c.discovery ? "true" : "false",
-    c.pass[0] ? "true" : "false",
-    connected() ? "true" : "false");
+   * back is a page that can be tricked into showing it). */
+  char last_error[sizeof(s_last_error)];
+  memcpy(last_error, s_last_error, sizeof(last_error));
+  last_error[sizeof(last_error) - 1] = '\0';
+  const ConfigAnswer a = {&c, transport_name(), last_error, connected()};
+  wap_json::Writer m;
+  wap_json::begin_measure(m);
+  write_config_answer(m, a);
+  const size_t need = m.len + 1;
+  char* body = (char*)malloc(need);
+  if (!body) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"out of memory\"}", -1);
+    return ESP_OK;
+  }
+  wap_json::Writer w;
+  wap_json::begin(w, body, need);
+  write_config_answer(w, a);   /* the same copies: the same length */
+  if (!wap_json::ok(w)) {
+    free(body);
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"answer changed\"}", -1);
+    return ESP_OK;
+  }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+  free(body);
   return ESP_OK;
+}
+
+/* One character of a JSON string value at p, its escape decoded; p moves
+ * past it. Standard JSON string escapes — covers everything a broker host /
+ * username / password / prefix could legally carry. \uXXXX is
+ * intentionally NOT decoded: those fields are ASCII in practice
+ * and adding UTF-16 surrogate handling for one corner case isn't
+ * worth the parser surface (PR #394 review r3213674569). An
+ * unrecognized escape passes the next char through literally —
+ * matches how the existing /api/settings POST parser handles
+ * nonsense, and avoids a silent reject for marginally-malformed
+ * input. */
+static char json_next_char(const char*& p) {
+  if (*p == '\\' && p[1]) {
+    const char esc = p[1];
+    p += 2;
+    switch (esc) {
+      case 'b': return '\b';
+      case 'f': return '\f';
+      case 'n': return '\n';
+      case 'r': return '\r';
+      case 't': return '\t';
+      default:  return esc;   /* \" \\ \/ and anything else: itself */
+    }
+  }
+  return *p++;
 }
 
 /* Find a JSON string field's value into out (NUL-terminated, truncated to
  * out_cap-1). Returns true if the key was present (even if empty).
  * Hand-rolled to keep ArduinoJson out of this TU — same shape the
- * existing /api/settings POST parser uses. */
+ * existing /api/settings POST parser uses. With `cut`, says whether the
+ * value did not fit and what was dropped holds more than whitespace (space,
+ * tab, CR, LF): the TLS CA's refusal (sweep F241) reads it, so a PEM that
+ * fits but for the newline after its END line is taken, and one that does
+ * not fit is refused instead of stored cut. */
 static bool json_extract_string(const char* body, const char* key,
-                                char* out, size_t out_cap) {
+                                char* out, size_t out_cap, bool* cut = nullptr) {
+  if (cut) *cut = false;
   if (!body || !key || !out || out_cap == 0) return false;
   const char* k = strstr(body, key);
   if (!k) return false;
@@ -1997,34 +2080,14 @@ static bool json_extract_string(const char* body, const char* key,
   if (*p != '"') return false;
   p++;  /* past opening quote */
   size_t i = 0;
-  while (*p && *p != '"' && i < out_cap - 1) {
-    /* Standard JSON string escapes — covers everything a broker host /
-     * username / password / prefix could legally carry. \uXXXX is
-     * intentionally NOT decoded: those fields are ASCII in practice
-     * and adding UTF-16 surrogate handling for one corner case isn't
-     * worth the parser surface (PR #394 review r3213674569). An
-     * unrecognized escape passes the next char through literally —
-     * matches how the existing /api/settings POST parser handles
-     * nonsense, and avoids a silent reject for marginally-malformed
-     * input. */
-    if (*p == '\\' && p[1]) {
-      char esc = p[1];
-      switch (esc) {
-        case '"':  out[i++] = '"';  p += 2; break;
-        case '\\': out[i++] = '\\'; p += 2; break;
-        case '/':  out[i++] = '/';  p += 2; break;
-        case 'b':  out[i++] = '\b'; p += 2; break;
-        case 'f':  out[i++] = '\f'; p += 2; break;
-        case 'n':  out[i++] = '\n'; p += 2; break;
-        case 'r':  out[i++] = '\r'; p += 2; break;
-        case 't':  out[i++] = '\t'; p += 2; break;
-        default:   out[i++] = esc;  p += 2; break;
-      }
-    } else {
-      out[i++] = *p++;
+  while (*p && *p != '"' && i < out_cap - 1) out[i++] = json_next_char(p);
+  out[i] = '\0';
+  if (cut) {
+    while (*p && *p != '"' && !*cut) {
+      const char ch = json_next_char(p);
+      *cut = ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n';
     }
   }
-  out[i] = '\0';
   return true;
 }
 
@@ -2054,6 +2117,28 @@ static bool json_extract_int(const char* body, const char* key, long* out) {
   return true;
 }
 
+/* Answer a setting longer than the device keeps (sweep F241), or a body
+ * longer than the handler reads (F266), with the limit in the reason, so the
+ * page can say which field and how long. A setting's limit is bytes:
+ * strlen() of what the extract decoded, so a letter outside ASCII spends two
+ * to four of them (an HTML maxlength counts UTF-16 units). */
+static void answer_too_long(httpd_req_t* req, const char* field, size_t max) {
+  char answer[96];
+  snprintf(answer, sizeof(answer),
+           "{\"ok\":false,\"reason\":\"%s must be at most %u bytes\"}",
+           field, (unsigned)max);
+  httpd_resp_set_status(req, "400 Bad Request");
+  httpd_resp_send(req, answer, HTTPD_RESP_USE_STRLEN);
+}
+
+/* Refuse a string setting its Config member cannot hold; the handler used to
+ * cut a long user or prefix to the member and save it. */
+static bool refuse_too_long(httpd_req_t* req, const char* field, const char* value, size_t max) {
+  if (strlen(value) <= max) return false;
+  answer_too_long(req, field, max);
+  return true;
+}
+
 esp_err_t handle_config_post(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -2064,11 +2149,25 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
-  /* Body cap covers all fields including a 128-char password, a
-   * 128-char host and a JSON-escaped CA PEM (3071 bytes raw, newlines as
-   * \n); anything longer is rejected as oversized rather than silently
-   * truncated. Heap, not stack: 5 KB on the httpd task's stack is how a
-   * settings save becomes a reboot. */
+  /* The body is read whole or refused (sweep F266). The cap covers every
+   * field at its limit, a 128-byte password and host among them, and a
+   * JSON-escaped CA PEM (3071 bytes raw, newlines as \n). A body whose
+   * Content-Length is past it is refused before any of it is read or a
+   * buffer is taken, with the limit in the reason (400, as every other
+   * refusal here: the /mqtt page and the setup wizard show the reason of
+   * any answer that is not ok). The handler used to parse what ONE
+   * httpd_req_recv() returned, which is what the socket held: a body that
+   * came in more than one TCP segment (a pasted CA is most of it) was parsed
+   * cut, its CA refused or stored cut and any field after the cut lost
+   * without a word; and a body past the cap was cut at it, not refused as
+   * this comment said. http_body::read_all() (the Beacon routes' reader,
+   * beacon_api.h's read_body()) loops until Content-Length bytes are in,
+   * never asks for more than is owed, sits out three socket timeouts and
+   * refuses at the fourth (each is the server's recv_wait_timeout, 30 s in
+   * both of canary_wap.ino's configs, so a stalled sender holds the httpd
+   * task up to about two minutes: the Beacon routes' budget, behind the
+   * same authorization). Heap, not stack: these 10 KB (the body and the CA)
+   * on the httpd task's stack are how a settings save becomes a reboot. */
   struct HeapBuf {
     char* p;
     explicit HeapBuf(size_t n) : p((char*)malloc(n)) {}
@@ -2076,7 +2175,16 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     HeapBuf(const HeapBuf&) = delete;
     HeapBuf& operator=(const HeapBuf&) = delete;
   };
-  constexpr size_t kBodyCap = 640 + 2 * MAX_CA_LEN + 64;
+  constexpr size_t kBodyCap = MAX_CONFIG_BODY_LEN + 1;   /* and its NUL */
+  if (req->content_len == 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
+    return ESP_OK;
+  }
+  if (req->content_len > MAX_CONFIG_BODY_LEN) {
+    answer_too_long(req, "body", MAX_CONFIG_BODY_LEN);
+    return ESP_OK;
+  }
   HeapBuf bodybuf(kBodyCap);
   HeapBuf cabuf(MAX_CA_LEN + 1);
   if (!bodybuf.p || !cabuf.p) {
@@ -2085,13 +2193,22 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
   char* body = bodybuf.p;
-  const int got = httpd_req_recv(req, body, kBodyCap - 1);
-  if (got <= 0) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"empty body\"}", -1);
+  size_t got = 0;
+  const http_body::Result read = http_body::read_all(
+      [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
+      req->content_len, body, kBodyCap, HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read == http_body::TOO_LARGE) {
+    /* Not reached while the Content-Length check above holds (the buffer is
+     * the cap and its NUL); if the two ever part, one limit keeps one
+     * reason. */
+    answer_too_long(req, "body", MAX_CONFIG_BODY_LEN);
     return ESP_OK;
   }
-  body[got] = '\0';
+  if (read != http_body::OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
+    return ESP_OK;
+  }
 
   /* Start from current NVS so PATCH-style requests (just toggling
    * enabled, leaving everything else alone) work. */
@@ -2142,7 +2259,18 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * absent leaves it. Shape-checked before it can reach NVS so a pasted
    * fingerprint or a half-copied PEM is a 400 here, not a -0x2180 later. */
   bool ca_changed = false;
-  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1)) {
+  bool ca_cut = false;
+  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1, &ca_cut)) {
+    /* A CA longer than MAX_CA_LEN bytes is refused, never stored cut (sweep
+     * F241): a cut chain still has a BEGIN and an END line, so it passed the
+     * shape check and reached NVS ending mid-certificate. Whitespace past
+     * the limit is not the certificate: the /mqtt page sends the PEM it
+     * trimmed and a newline, so a PEM of exactly MAX_CA_LEN bytes arrives
+     * one over and is stored without that newline. */
+    if (ca_cut) {
+      answer_too_long(req, "ca", MAX_CA_LEN);
+      return ESP_OK;
+    }
     if (cabuf.p[0] != '\0' && !canary::net::mqtt_tls::ca_pem_looks_valid(cabuf.p)) {
       httpd_resp_set_status(req, "400 Bad Request");
       httpd_resp_send(req,
@@ -2155,12 +2283,24 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
     c.port = (uint16_t)port_l;
   }
-  /* Empty string in any field clears it; missing field leaves it as-is. */
-  char buf[MAX_PASS_LEN + 1] = {};
+  /* Empty string in any field clears it; missing field leaves it as-is.
+   * A value longer than its Config member holds is refused, never cut
+   * (sweep F241): buf holds one byte more than the longest member, so
+   * json_extract_string()'s cut cannot hide a value past any member's limit.
+   * The limits are bytes of the decoded value: an escape the extract decodes
+   * (\" \\ \/ \b \f \n \r \t) is one, \uXXXX is kept as its five
+   * characters, a letter outside ASCII is two to four. Each member holds what
+   * config_load() reads back, so what is saved is what the bridge uses. */
+  constexpr size_t kLongestSetting = MAX_HOST_LEN > MAX_PASS_LEN ? MAX_HOST_LEN : MAX_PASS_LEN;
+  static_assert(MAX_USER_LEN <= kLongestSetting && MAX_PREFIX_LEN <= kLongestSetting,
+                "buf must hold one byte past every string setting");
+  char buf[kLongestSetting + 2] = {};
   if (json_extract_string(body, "\"host\"",   buf, sizeof(buf))) {
+    if (refuse_too_long(req, "host", buf, MAX_HOST_LEN)) return ESP_OK;
     strncpy(c.host,   buf, MAX_HOST_LEN);   c.host  [MAX_HOST_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"user\"",   buf, sizeof(buf))) {
+    if (refuse_too_long(req, "user", buf, MAX_USER_LEN)) return ESP_OK;
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
@@ -2185,9 +2325,13 @@ esp_err_t handle_config_post(httpd_req_t* req) {
         "{\"ok\":false,\"reason\":\"prefix must be [a-zA-Z0-9_/-]+\"}", -1);
       return ESP_OK;
     }
+    /* Its length after its characters: a prefix in a letter outside that set
+     * is refused for the letter, not for the bytes it spends. */
+    if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
+    if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
   }
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
@@ -2285,15 +2429,15 @@ button.test{background:transparent;color:#3a311e;border:1px solid #d4c994;}
     <input type="checkbox" id="enabled"> Send to a broker
   </label>
   <div class="row">
-    <label>Broker host<input type="text" id="host" placeholder="192.168.1.10"></label>
+    <label>Broker host<input type="text" id="host" maxlength="128" placeholder="192.168.1.10"></label>
     <label>Port<input type="number" id="port" min="1" max="65535" value="1883"></label>
   </div>
   <div class="row">
-    <label>Username (optional)<input type="text" id="user"></label>
-    <label>Password (optional)<input type="text" class="pw-masked" id="password" placeholder="leave blank to keep" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+    <label>Username (optional)<input type="text" id="user" maxlength="64"></label>
+    <label>Password (optional)<input type="text" class="pw-masked" id="password" maxlength="128" placeholder="leave blank to keep" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
   </div>
   <div class="row">
-    <label>Topic prefix<input type="text" id="prefix" value="securacv"></label>
+    <label>Topic prefix<input type="text" id="prefix" maxlength="32" value="securacv"></label>
     <label>Encryption<select id="tls_mode">
       <option value="0">Off (plain, port 1883)</option>
       <option value="1">On, check the broker's certificate (port 8883)</option>

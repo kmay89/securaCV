@@ -1289,8 +1289,19 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   const web = read(join(REPO, "firmware/projects/canary-display/src/net/glass_web.cpp"));
   assert.ok(web.includes("canary::care::nightlight_request_rotation((uint8_t)v);"), "the app's picker writes the same mailbox");
   const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
-  assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);"),
-    "main.cpp's loop drains it into the one apply path");
+  assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now, \"app picker\");"),
+    "main.cpp's loop drains it into the one apply path, naming the app's picker on the [orient] line (F285)");
+  // The other two askers, which the driver cannot reach (the emulator has no
+  // IMU and presses no button): each names itself, and the triple-press logs
+  // its [input] line before the turn, so the serial log reads cause, then
+  // the [orient] line (F285).
+  assert.ok(mainCpp.includes("if (s_orient.step(sx, sy, az, now)) {\n        nightlight_apply_orientation((uint8_t)s_orient.current(), now, \"IMU\");"),
+    "the IMU's commit names the IMU on the [orient] line");
+  const triple = /case canary::io::ButtonEvent::Triple: \{[\s\S]*?\n {6}\}/.exec(mainCpp)?.[0] || "";
+  const pressed = triple.indexOf('boot_line("[input] triple-press -> turn the face");');
+  const turned = triple.indexOf("nightlight_apply_orientation(");
+  assert.ok(pressed >= 0 && turned > pressed && /now,\s*"triple-press"\);/.test(triple.slice(turned)),
+    "the triple-press logs its [input] line, then turns the face naming itself");
   // CI: beside glass_turn.sh — after the third-party cache, before every step
   // that reads the committed dist — unconditional and bounded.
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
@@ -1301,6 +1312,189 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   }
   const step = /- name: Runtime turn[\s\S]*?run: bash canary-local\/emulator\/test\/runtime_turn\.sh\n/.exec(wf)?.[0] || "";
   assert.ok(step && !/^\s+if:/m.test(step) && /^\s+timeout-minutes: \d+$/m.test(step), "the step runs unconditionally, with a time bound");
+});
+
+// Sweep A81: the native drivers play the page, so each defines the EM_JS
+// calls of the emulator sources it links. Under their emscripten.h stand-ins
+// an EM_JS is a plain extern "C" declaration, which carries no signature: a
+// definition that drops an argument links all the same and then cannot read
+// it (runtime_turn_test.cpp's js_display_ready took three, dropping A56's
+// turn). So every definition is held here to its EM_JS: the same return type
+// and the same parameter types, in order, and no page call left undefined or
+// defined for a call the sources no longer make.
+const EMU_SRC = join(ROOT, "emulator/src");
+function cTypes(params) {
+  const TYPE_WORDS = new Set(["void", "int", "char", "double", "float", "long", "short", "unsigned", "signed",
+    "const", "bool", "size_t", "uint8_t", "uint16_t", "uint32_t", "int32_t"]);
+  const list = params.replace(/\s+/g, " ").trim();
+  if (list === "" || list === "void") return [];
+  return list.split(",").map((p) => {
+    const words = p.trim().replace(/\s*\*\s*/g, "* ").trim().split(" ");
+    if (words.length > 1 && /^[A-Za-z_]\w*$/.test(words[words.length - 1]) && !TYPE_WORDS.has(words[words.length - 1])) words.pop();
+    return words.join(" ").replace(/\* ?$/, "*");
+  });
+}
+function emJsCalls(files) {
+  const calls = new Map();
+  for (const f of files) {
+    for (const m of read(f).matchAll(/\bEM_JS\(\s*([^,]+?)\s*,\s*(js_\w+)\s*,\s*\(([^)]*)\)/g)) {
+      calls.set(m[2], { ret: m[1].trim(), params: cTypes(m[3]), file: f });
+    }
+  }
+  return calls;
+}
+function pageDefinitions(driver) {
+  const defs = new Map();
+  for (const m of read(driver).matchAll(/^(?:extern "C" )?([A-Za-z_][\w ]*?\**)\s+(js_\w+)\s*\(([^)]*)\)\s*\{/gm)) {
+    defs.set(m[2], { ret: m[1].trim(), params: cTypes(m[3]) });
+  }
+  return defs;
+}
+test("A81: every native driver defines each page call it links with the EM_JS's own signature", () => {
+  const all = require("node:fs").readdirSync(EMU_SRC).filter((f) => /\.(?:cpp|c)$/.test(f)).map((f) => join(EMU_SRC, f));
+  const hal = [join(EMU_SRC, "emu_hal_display.cpp")];
+  // The parser reads every EM_JS the sources hold (a form it cannot read
+  // would drop out of the comparison unseen).
+  const declared = all.reduce((n, f) => n + (read(f).match(/\bEM_JS\(/g) || []).length, 0);
+  assert.strictEqual(emJsCalls(all).size, declared, "every EM_JS in emulator/src has a form this test reads");
+  assert.deepStrictEqual(emJsCalls(hal).get("js_display_ready").params, ["int", "int", "int", "int"],
+    "the HAL announces width, height, round mask and turn (A56)");
+  for (const [driver, links] of [
+    ["emulator/test/runtime_turn_test.cpp", all],   // runtime_turn.sh links every emulator source
+    ["emulator/test/glass_turn_test.cpp", hal],     // glass_turn.sh links the display HAL alone
+    ["emulator/test/backlight_cap_test.cpp", hal],
+  ]) {
+    const want = emJsCalls(links);
+    const have = pageDefinitions(join(ROOT, driver));
+    assert.deepStrictEqual([...have.keys()].sort(), [...want.keys()].sort(),
+      `${driver} defines the page calls of exactly the sources it links`);
+    for (const [name, w] of want) {
+      assert.deepStrictEqual(have.get(name), { ret: w.ret, params: w.params },
+        `${driver}'s ${name} is not the ${w.file.replace(`${ROOT}/`, "")} EM_JS's ${w.ret} (${w.params.join(", ")})`);
+    }
+  }
+  // ...and the full boot reads the turn it is now handed, after every turn.
+  const drv = read(join(ROOT, "emulator/test/runtime_turn_test.cpp"));
+  assert.ok(drv.includes("g_seen.shape_turn = turn;") && drv.includes("g_seen.shapes_at_ask = g_seen.shapes;") &&
+    drv.includes("s.shape_turn == announced_turn(to)") && drv.includes("s.shape_turn == announced_turn(r)"),
+  "runtime_turn_test.cpp records the announced turn and requires it at boot and after each turn");
+});
+
+// Sweep A82: glass_turn.sh and runtime_turn.sh made a fresh `mktemp -d` per
+// run (about 3.5 MB of objects) and never removed it. Each script now removes
+// its default directory on exit, pass or fail, and leaves an explicit
+// GLASS_TURN_OUT / RUNTIME_TURN_OUT alone. Run here for real, against
+// stand-in checkouts whose headers refuse to compile: each script gets past
+// its checks, makes its build directory, and ends red at its first compile,
+// so the exit path is the one a broken tree takes (a green run leaves by the
+// same trap; CI's wasm job runs both scripts whole).
+test("A82: the turn scripts remove their default build directory on exit and leave an explicit one", (t) => {
+  const gxx = spawnSync("g++", ["--version"], { encoding: "utf8" });
+  if (gxx.status !== 0) {
+    if (process.env.CI) assert.fail("g++ is missing on this CI runner: the turn scripts' exit cannot be run");
+    t.skip("no g++ on this host: the turn scripts compile with it");
+    return;
+  }
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const base = fs.mkdtempSync(join(os.tmpdir(), "securacv-a82-"));
+  const put = (rel, text) => {
+    fs.mkdirSync(join(base, rel, ".."), { recursive: true });
+    fs.writeFileSync(join(base, rel), text);
+  };
+  // An LVGL 8.4 by its version lines (both scripts check them), with no C
+  // sources and a header that stops every compile that includes it.
+  put("lvgl/lvgl.h", "#define LVGL_VERSION_MAJOR 8\n#define LVGL_VERSION_MINOR 4\n#error stand-in LVGL (sweep A82 test)\n");
+  fs.mkdirSync(join(base, "lvgl/src"), { recursive: true });
+  put("aj/src/ArduinoJson.h", "#error stand-in ArduinoJson (sweep A82 test)\n");
+  put("al/libraries/Crypto/Ed25519.cpp", "#error stand-in Crypto (sweep A82 test)\n");
+  const dirsIn = (d) => fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  const run = (script, args, outVar, outDir) => {
+    const tmp = fs.mkdtempSync(join(base, "tmpdir-"));
+    const env = { ...process.env, TMPDIR: tmp };
+    delete env.GLASS_TURN_OUT;
+    delete env.RUNTIME_TURN_OUT;
+    if (outDir) env[outVar] = outDir;
+    const r = spawnSync("bash", [join(ROOT, "emulator/test", script), ...args.map((a) => join(base, a))],
+      { encoding: "utf8", env, timeout: 300000 });
+    return { r, tmp };
+  };
+  try {
+    for (const [script, args, outVar, made] of [
+      ["glass_turn.sh", ["lvgl"], "GLASS_TURN_OUT", "lvgl"],
+      ["runtime_turn.sh", ["lvgl", "aj", "al"], "RUNTIME_TURN_OUT", "fw"],
+    ]) {
+      // Default: a temporary directory, gone once the script has ended.
+      const def = run(script, args);
+      assert.notStrictEqual(def.r.status, 0, `${script} passed against stand-in checkouts that cannot compile`);
+      assert.match(def.r.stderr, /stand-in (?:LVGL|ArduinoJson|Crypto) \(sweep A82 test\)/,
+        `${script} did not reach a compile:\n${def.r.stderr.slice(-2000)}`);
+      assert.deepStrictEqual(dirsIn(def.tmp), [], `${script} left its build directory in TMPDIR (${def.tmp})`);
+      // Explicit: the caller's directory, left as it is: what it already held
+      // (an earlier run's object, here) and the tree the script made in it.
+      const keep = join(base, `keep-${outVar}`);
+      const earlier = join(keep, made, "earlier_run.o");
+      fs.mkdirSync(join(keep, made), { recursive: true });
+      fs.writeFileSync(earlier, "an object an earlier run left (sweep A82 test)\n");
+      const exp = run(script, args, outVar, keep);
+      assert.notStrictEqual(exp.r.status, 0, `${script} passed with ${outVar} set, against stand-in checkouts`);
+      assert.ok(fs.existsSync(join(keep, made)), `${script} removed the ${outVar} directory it was handed`);
+      assert.strictEqual(fs.existsSync(earlier) && fs.readFileSync(earlier, "utf8"), "an object an earlier run left (sweep A82 test)\n",
+        `${script} emptied the ${outVar} directory it was handed (an earlier run's object is gone)`);
+      assert.deepStrictEqual(dirsIn(exp.tmp), [], `${script} made a temporary directory although ${outVar} was set`);
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("A76: no emulator build hands a compiler a marker define nothing reads", () => {
+  // The 2026-10 cleanup dropped the PlatformIO envs' unread CONFIG_CANARY_*
+  // markers; the emulator's build and its native harnesses kept passing
+  // -DCONFIG_CANARY_DISPLAY to every compile. No source of ours reads it
+  // (scanned below over every in-tree directory those compiles put on the -I
+  // path; the fetched third_party/ is not in a checkout, and the sweep's
+  // preprocessor run found every translation unit byte-identical without the
+  // flag), so a flavor is its config directory on the -I path, as on the
+  // board. build.sh's DEFINES and runtime_turn.sh's DEFS are held equal by
+  // the F222 test above.
+  const fs = require("node:fs");
+  const scripts = ["emulator/build.sh", "emulator/test/glass_turn.sh", "emulator/test/glass_turn_lvgl9.sh",
+    "emulator/test/runtime_turn.sh"];
+  for (const f of scripts) {
+    assert.ok(!/-DCONFIG_CANARY_\w+/.test(read(join(ROOT, f))), `${f} passes no CONFIG_CANARY_* marker`);
+  }
+  // ...nor this file's own native compile of the binding (F243, below).
+  const self = read(__filename);
+  assert.ok(!self.includes('"-DCONFIG_' + 'CANARY_DISPLAY"'), "the request-rotation compile passes no marker");
+  // The board directories: exactly the pins/ directories those compiles put
+  // on -I (each script names its own; F243's compile below names two), not
+  // all of firmware/boards, whose other files sit outside canary-local.yml's
+  // path filter (scripts/check_path_filter_reads.py holds every read here to
+  // it). A pins assignment in another shape is refused rather than skipped.
+  const pinsDirs = new Set(REQUEST_ROTATION_CONFIGS.map((c) => `boards/${c.board}/pins`));
+  for (const f of scripts) {
+    for (const line of read(join(ROOT, f)).split("\n").filter((l) => /^\s*\w*PINS\w*=/.test(l))) {
+      const m = /^\s*\w*PINS\w*="\$FW\/(boards\/[\w-]+\/pins)"\s*$/.exec(line);
+      assert.ok(m, `${f}: a pins directory this test cannot read: ${line.trim()}`);
+      pinsDirs.add(m[1]);
+    }
+  }
+  assert.ok(pinsDirs.size >= 6, `the compiles' pins directories (${[...pinsDirs].join(", ")})`);
+  const roots = [join(REPO, "firmware/projects/canary-display"), join(REPO, "firmware/common"),
+    join(REPO, "firmware/configs/canary-display"), ...[...pinsDirs].map((d) => join(REPO, "firmware", d)),
+    join(ROOT, "emulator/src"), join(ROOT, "emulator/shim"), join(ROOT, "emulator/test")];
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? (e.name === "third_party" || e.name.startsWith(".") ? [] : walk(join(d, e.name)))
+      : /\.(c|cc|cpp|h|hpp|ino)$/.test(e.name) ? [join(d, e.name)] : []);
+  let scanned = 0;
+  for (const r of roots) {
+    for (const f of walk(r)) {
+      scanned++;
+      assert.ok(!/\bCONFIG_CANARY_[A-Z_]+/.test(read(f)), `${f} reads a CONFIG_CANARY_* marker`);
+    }
+  }
+  assert.ok(scanned > 100, `scanned the emulator's include trees (${scanned} files)`);
 });
 
 test("dash face (F223): main.cpp picks the dash face from the turn the port wore, never from the saved rotation", () => {
@@ -1338,4 +1532,254 @@ test("CI runs the generator check, this test and the browser probe", () => {
   // Chained like gen_wap → gen_csp: the portal data is checked before the CSP.
   assert.ok(wf.indexOf("gen_display_portal.py --check") < wf.indexOf("python3 canary-local/tools/gen_csp.py --check"),
     "the portal data gate runs before the CSP gate that hashes it");
+});
+
+// ── F243: a running glass turned, through the firmware's own mailbox ─────
+// runtime_turn.sh holds the sources natively, but nothing turned the dist's
+// nightlight while it ran: emu_preset_rotation() refuses after power-on. The
+// emulator now exports emu_request_rotation(), which writes the rotation
+// mailbox the app's picker writes (glass_web.cpp) and main.cpp's loop drains;
+// emu-shell.js wraps it, and boot_probe.mjs turns nightlight@landscape back
+// to portrait with it once the dist carries it (and says so by name until
+// then). These hold the binding natively, the shell's answers, the probe's
+// judges and its wiring.
+const REQUEST_ROTATION_CONFIGS = [
+  { name: "nightlight", cfg: "nightlight", board: "waveshare-esp32c3-lcd147", mailbox: true },
+  { name: "dash", cfg: "dash", board: "waveshare-esp32s3-lcd43", mailbox: false },
+];
+
+test("F243: emu_request_rotation writes the mailbox main.cpp drains, and only on a running nightlight (native g++)", (t) => {
+  const gxx = spawnSync("g++", ["--version"], { encoding: "utf8" });
+  if (gxx.status !== 0) {
+    if (process.env.CI) assert.fail("g++ is missing on this CI runner: the binding's native test cannot run");
+    t.skip("no g++ on this host: request_rotation_test.cpp needs one");
+    return;
+  }
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const out = fs.mkdtempSync(join(os.tmpdir(), "securacv-request-rotation-"));
+  const FW = join(REPO, "firmware");
+  const PROJ = join(FW, "projects/canary-display");
+  const EMU = join(ROOT, "emulator");
+  try {
+    for (const c of REQUEST_ROTATION_CONFIGS) {
+      const inc = ["-I", join(EMU, "test/native"), "-I", join(EMU, "shim"), "-I", join(EMU, "src"), "-I", join(PROJ, "include"),
+        "-I", join(FW, "configs/canary-display", c.cfg), "-I", join(FW, "boards", c.board, "pins"), "-I", join(FW, "common")];
+      const cxx = ["-std=gnu++17", "-O1", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wno-unused-parameter",
+        "-DARDUINO=10812", ...inc];
+      // the emulator's real binding (main() renamed: the driver owns the
+      // process), the driver, and on the nightlight the firmware's real mailbox
+      const srcs = [[join(EMU, "src/emu_main.cpp"), ["-Dmain=emu_entry"]], [join(EMU, "test/request_rotation_test.cpp"), []]];
+      if (c.mailbox) srcs.push([join(PROJ, "src/care/nightlight.cpp"), []]);
+      const objs = [];
+      for (const [src, extra] of srcs) {
+        const obj = join(out, `${c.name}_${src.replace(/[^A-Za-z0-9]/g, "_")}.o`);
+        const r = spawnSync("g++", [...cxx, ...extra, "-c", src, "-o", obj], { encoding: "utf8" });
+        assert.strictEqual(r.status, 0, `${c.name}: ${src} did not compile:\n${r.stderr}`);
+        objs.push(obj);
+      }
+      const exe = join(out, c.name);
+      const link = spawnSync("g++", ["-o", exe, ...objs], { encoding: "utf8" });
+      assert.strictEqual(link.status, 0, `${c.name}: the driver did not link:\n${link.stderr}`);
+      const run = spawnSync(exe, [], { encoding: "utf8", timeout: 30000 });
+      assert.strictEqual(run.status, 0, `${c.name}: request_rotation_test failed:\n${run.stdout}${run.stderr}`);
+      assert.match(run.stdout, /ALL REQUEST ROTATION TESTS PASSED/);
+      assert.match(run.stdout, c.mailbox ? /emu_request_rotation writes the rotation mailbox/ : /answers -1/);
+    }
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+  // The binding is the one the page and the probe call, and the mailbox is
+  // the one the app's picker writes and the loop drains (the F222 test above
+  // holds those two ends).
+  const emuMain = read(join(ROOT, "emulator/src/emu_main.cpp"));
+  assert.match(emuMain, /extern "C" EMSCRIPTEN_KEEPALIVE int emu_request_rotation\(int rot\) \{\n#ifdef CD_NIGHTLIGHT\n  if \(!g_power \|\| rot < 0 \|\| rot > 3\) return 0;\n  canary::care::nightlight_request_rotation\(\(uint8_t\)rot\);\n  return 1;\n#else/);
+});
+
+test("F243: the shell turns a running glass through the binding, names each refusal, and an old dist says it cannot", async () => {
+  const { CanaryEmulator } = await shell();
+  const fake = (answer) => {
+    const calls = [];
+    const factory = async () => ({
+      cwrap: (name) => (...args) => { calls.push([name, ...args]); return name === "emu_request_rotation" ? answer : 0; },
+      _emu_request_rotation: answer === undefined ? undefined : () => answer,
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "null",
+    });
+    return { calls, factory, canvas: { getContext: () => ({}), addEventListener: () => {} } };
+  };
+  let m = fake(1);
+  let emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await emu.requestRotation(0);
+  assert.deepStrictEqual(m.calls.filter((c) => c[0] === "emu_request_rotation"), [["emu_request_rotation", 0]],
+    "the asked rotation reaches the binding once");
+  assert.ok(m.calls.findIndex((c) => c[0] === "emu_power_on") < m.calls.findIndex((c) => c[0] === "emu_request_rotation"),
+    "asked of a running unit");
+  m = fake(0);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(4), /the firmware refused rotation 4/);
+  m = fake(-1);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(1), /has no rotation mailbox/);
+  m = fake(undefined);
+  emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+  await emu.start({});
+  await assert.rejects(emu.requestRotation(0), /no emu_request_rotation \(rebuild it\)/);
+  assert.ok(!m.calls.some((c) => c[0] === "emu_request_rotation"), "an old dist is never asked");
+});
+
+// Sweep A80: the Lab's Nightlight card could stage a turn only before power-on.
+// Its Try it view now offers a control that turns the running glass through
+// requestRotation(), shown only where the twin itself says its glass turns at
+// runtime (turnsAtRuntime(): the binding is there and answers an out-of-range
+// ask with 0, not the -1 of a flavor with no mailbox; request_rotation_test.cpp
+// holds both answers, and that the refused ask writes nothing, against the
+// real emu_main.cpp). The probe half is bench_probe.mjs.
+test("A80: the shell says whether a glass turns while it runs, asking the binding a turn it refuses", async () => {
+  const { CanaryEmulator } = await shell();
+  const fake = (answer) => {
+    const calls = [];
+    const factory = async () => ({
+      cwrap: (name) => (...args) => { calls.push([name, ...args]); return name === "emu_request_rotation" ? answer : 0; },
+      _emu_request_rotation: answer === undefined ? undefined : () => answer,
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "null",
+    });
+    return { calls, factory, canvas: { getContext: () => ({}), addEventListener: () => {} } };
+  };
+  for (const [answer, turns, why] of [[0, true, "the nightlight's mailbox refuses -1"], [-1, false, "a flavor with no mailbox"],
+    [undefined, false, "a dist built before the binding"]]) {
+    const m = fake(answer);
+    const emu = new CanaryEmulator(m.factory, { canvas: m.canvas });
+    await emu.start({});
+    assert.strictEqual(await emu.turnsAtRuntime(), turns, why);
+    const asked = m.calls.filter((c) => c[0] === "emu_request_rotation");
+    assert.deepStrictEqual(asked, answer === undefined ? [] : [["emu_request_rotation", -1]],
+      `${why}: asked once, with a turn the binding refuses before it writes anything`);
+    emu.retire();
+    assert.strictEqual(await emu.turnsAtRuntime(), turns, `${why}: the answer is the flavor's, retired or not`);
+  }
+  const unborn = new CanaryEmulator(fake(0).factory, { canvas: fake(0).canvas });
+  assert.strictEqual(await unborn.turnsAtRuntime(), false, "no module yet, no control");
+  // ...and the native test holds the binding's two answers to a refused ask
+  const rr = read(join(ROOT, "emulator/test/request_rotation_test.cpp"));
+  assert.ok(rr.includes("for (int bad : {-1, 4, 5, 255, 256, -256}) {") && rr.includes('CHECK(nightlight_take_rotation_request() == 2, "a refused ask disturbed the queued rotation");') &&
+    rr.includes("for (int r : {0, 1, 2, 3, -1, 4}) {"), "request_rotation_test.cpp refuses -1 without writing, and answers -1 on a flavor with no mailbox");
+});
+
+test("A80: the Nightlight's Try it view turns the running glass through the mailbox, and only where the twin turns", async () => {
+  const app = read(join(ROOT, "assets/app.js"));
+  // GLASS_TURNS and turnGlass(), run as app.js ships them
+  const at = (name) => {
+    const i = app.indexOf(name);
+    assert.ok(i >= 0, `app.js has ${name}`);
+    return i;
+  };
+  const block = (start, open) => {
+    let depth = 0;
+    for (let k = app.indexOf(open, start); k < app.length; k++) {
+      if (app[k] === open) depth++;
+      else if (app[k] === (open === "{" ? "}" : "]") && --depth === 0) return app.slice(start, k + 1);
+    }
+    return "";
+  };
+  const turnsSrc = block(at("const GLASS_TURNS = ["), "[");
+  const fnSrc = block(at("async function turnGlass("), "{");
+  const { GLASS_TURNS, turnGlass } = new Function(`${turnsSrc};\n${fnSrc}\nreturn { GLASS_TURNS, turnGlass };`)();
+  // the four turns are io/orientation.h's Orient, by value and by the edge it names
+  const orient = read(join(REPO, "firmware/projects/canary-display/include/canary/io/orientation.h"));
+  const body = /enum class Orient : uint8_t \{([\s\S]*?)\n\};/.exec(orient)?.[1] || "";
+  const values = Object.fromEntries([...body.matchAll(/\b(R\d+) = (\d)/g)].map((m) => [m[1], Number(m[2])]));
+  assert.deepStrictEqual(values, { R0: 0, R90: 1, R180: 2, R270: 3 }, "orientation.h's Orient, read");
+  assert.match(body, /R90 = 1,\s+\/\/ turned a quarter clockwise, onto its right edge/);
+  assert.match(body, /R270 = 3,\s+\/\/ turned a quarter counter-clockwise, onto its left edge/);
+  assert.deepStrictEqual(GLASS_TURNS.map((t) => [t.rot, t.label]),
+    [[values.R0, "upright"], [values.R90, "on its right edge"], [values.R180, "upside down"], [values.R270, "on its left edge"]]);
+  // a turn goes to the mailbox once, and says so; a refusal is said, not thrown
+  const asked = [];
+  const said = [];
+  const ok = { glassTurn: 0, requestRotation: async (r) => { asked.push(r); } };
+  assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
+  assert.deepStrictEqual(asked, [1]);
+  assert.strictEqual(said.pop(), "asked the firmware to stand it on its right edge (turned a quarter clockwise, onto its right edge): " +
+    "its loop turns the panel on its next pass, and the companion tumbles in");
+  // the turn it already stands in (review): still asked, since the apply path
+  // syncs the orientation model first and the ask replaces a waiting one, but
+  // nothing turns or tumbles (main.cpp returns at rot == prev), and the note
+  // says so rather than promising a turn
+  const main = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  assert.match(main, /static void nightlight_apply_orientation\(uint8_t rot, uint32_t now,\s+const char\* who\) \{[\s\S]*?s_orient\.sync\(static_cast<canary::io::Orient>\(rot\)\);\n  const uint8_t prev = canary::ui::lvgl_port_rotation\(\);\n  if \(rot == prev\) \{\n    boot_linef\("\[orient\] %s -> rotation %u \(already worn\)", who, \(unsigned\)rot\);\n    return;\n  \}/,
+    "main.cpp syncs the model, then returns before any turn when the glass already stands so");
+  ok.glassTurn = 1;
+  assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
+  assert.deepStrictEqual(asked, [1, 1], "the same turn is still asked");
+  assert.strictEqual(said.pop(), "it already stands on its right edge (turned a quarter clockwise, onto its right edge): " +
+    "the firmware keeps the glass as it is, and nothing tumbles");
+  ok.glassTurn = null;
+  await turnGlass(ok, GLASS_TURNS[0], (l) => said.push(l));
+  assert.match(said.pop(), /^asked the firmware to stand it upright \(upright, USB down\): its loop turns/, "an unannounced glass is asked, not told it stands so");
+  const refused = { requestRotation: async () => { throw new Error("the firmware refused rotation 3 (a running unit, 0..3)"); } };
+  assert.strictEqual(await turnGlass(refused, GLASS_TURNS[3], (l) => said.push(l)), false);
+  assert.strictEqual(said.pop(), "the glass did not turn: the firmware refused rotation 3 (a running unit, 0..3)");
+  // the view: the control only where the twin says its glass turns, one chip
+  // per turn through turnGlass, lit by the turn the HAL announced, in the page
+  const tv = block(at("function tryView(ctx, noteLine) {"), "{");
+  assert.ok(tv.includes("const turns = await ctx.emu.turnsAtRuntime();") && tv.includes("if (!turns) return;"),
+    "gated on the twin's own answer");
+  assert.ok(/while \(!ctx\.emu\?\.c\) \{[\s\S]*?if \(!turnWrap\.isConnected\) return;\s*\}/.test(tv),
+    "a twin still loading is asked once its bindings are there, a closed tab never");
+  assert.ok(tv.includes('turnWrap.dataset.turns = turns ? "yes" : "no";'), "the rail carries the answer the probe reads");
+  assert.ok(tv.includes("for (const t of GLASS_TURNS) {") &&
+    tv.includes("const b = mk(t.label, () => turnGlass(ctx.emu, t, (line) => { noteLine.textContent = line; }));"),
+  "one chip per turn, through turnGlass on the live emulator");
+  assert.ok(tv.includes("const now = ctx.emu?.glassTurn;") && tv.includes('b.classList.toggle("on", Number(b.dataset.rot) === now);'),
+    "the lit chip is the turn the HAL announced");
+  assert.ok(/wrap\.append\([\s\S]*?styleWrap,\s*turnWrap,\s*grid,/.test(tv), "the control is on the Try it bench");
+  // the shell's glassTurn is the announced turn
+  const sh = read(join(ROOT, "emulator/web/emu-shell.js"));
+  assert.ok(sh.includes("this.glassTurn = Number.isInteger(turn) && turn >= 0 && turn <= 3 ? turn : null;"));
+});
+
+test("F243: the probe's runtime turn is read from the sources, and its judges fail what they should", async () => {
+  const { runtimeTurns, readTurnedSources } = await import("./turned_glass.mjs");
+  const { turnedAtRuntime, perchAfterTurn } = await import("./onboard_glass.mjs");
+  const fs = require("node:fs/promises");
+  const src = await readTurnedSources(REPO, (file, enc) => fs.readFile(file, enc));
+  const [rt] = runtimeTurns(src);
+  assert.strictEqual(rt.flavor, "nightlight");
+  assert.deepStrictEqual([rt.from.rotation, rt.from.glass], [1, { w: 320, h: 180 }], "from Orient::R90, the landscape glass");
+  assert.deepStrictEqual([rt.to.rotation, rt.to.glass], [0, { w: 180, h: 320 }], "back to Orient::R0, the panel's own shape");
+  assert.throws(() => runtimeTurns({ ...src, orientation: src.orientation.replace(/\bR0\s*=\s*0/, "UPRIGHT = 0") }), /Orient::R0/);
+  // turnedAtRuntime: the asked shape and turn, frames drawn on it after
+  const before = [{ w: 180, h: 320, frames: 0, turn: 0 }, { w: 320, h: 180, frames: 0, turn: 1 }];
+  const turned = [...before, { w: 180, h: 320, frames: 140, turn: 0 }];
+  assert.strictEqual(turnedAtRuntime(turned, 2, 160, rt.to), null);
+  assert.strictEqual(turnedAtRuntime([...before, { w: 180, h: 320, frames: 140, turn: null }], 2, 160, rt.to), null,
+    "a dist that announces no turn is held to the shape alone");
+  assert.match(turnedAtRuntime(before, 2, 160, rt.to), /announced no new shape/);
+  assert.match(turnedAtRuntime([...before, { w: 320, h: 180, frames: 140, turn: 3 }], 2, 160, rt.to), /announced 320x180/);
+  assert.match(turnedAtRuntime([...before, { w: 180, h: 320, frames: 140, turn: 2 }], 2, 160, rt.to), /announced turn 2/,
+    "upside down is the same shape: only the turn tells it from portrait");
+  assert.match(turnedAtRuntime(turned, 2, 140, rt.to), /drew no frame on it after/);
+  // perchAfterTurn: the perch a boot there seats it on, within the breath
+  const ref = { x: 42, y: 202, w: 96, h: 96, shown: true };
+  assert.strictEqual(perchAfterTurn({ ...ref, y: 204 }, ref), null);
+  assert.strictEqual(perchAfterTurn({ ...ref, y: 198 }, ref), null);
+  assert.match(perchAfterTurn({ ...ref, y: 197 }, ref) || "", /seats it at 42,202/);
+  assert.match(perchAfterTurn({ ...ref, x: -118 }, ref) || "", /drawn at -118,202/, "F222's companion left at the tumble's start");
+  assert.match(perchAfterTurn({ ...ref, shown: false }, ref) || "", /no bird on stage/);
+  assert.strictEqual(perchAfterTurn({ ...ref, x: 0 }, null), null, "no reference read: nothing to hold it to");
+  // The probe makes the turn, by name, from these
+  const probe = read(join(ROOT, "tests/boot_probe.mjs"));
+  assert.ok(probe.includes("const RUNTIME = runtimeTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));"));
+  assert.ok(probe.includes("await page.evaluate((rot) => window.__emu.requestRotation(rot), rt.to.rotation);"));
+  assert.ok(probe.includes("if (!(await page.evaluate(() => !!window.__emu.c.requestRotation))) {") &&
+    probe.includes("BOOT_PROBE_SKIP[${name}]: this ${rt.flavor} dist has no emu_request_rotation (built before sweep F243)"),
+  "a dist without the binding is skipped by name");
+  for (const judge of ["turnedAtRuntime(st.shapes, asked, st.flushes, rt.to)", "birdOnStage(st,", "birdPerch(st)", "perchAfterTurn(st.bird, ref)"]) {
+    assert.ok(probe.includes(judge), `the runtime turn is held by ${judge}`);
+  }
 });

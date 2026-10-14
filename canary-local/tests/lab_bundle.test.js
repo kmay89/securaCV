@@ -267,7 +267,8 @@ test("nothing a page loads is pruned from the bundle", () => {
 // desktop-lab registered four commands no Lab page ever invoked — app_version
 // (app_info's older twin), list_serial_ports (list_ports under another name),
 // companion_snapshot (the tray is the companion's only display) and
-// serial_monitor_send (the native monitor has no command box). Each one was
+// serial_monitor_send (the native monitor had no command box then; it came
+// back with that box, sweep A67). Each one was
 // reachable over IPC from the webview while serving no feature. Both
 // directions are held here: a registered command has a caller in canary-local,
 // and an invoke() in canary-local has a registered command, or the page's call

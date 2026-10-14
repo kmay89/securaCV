@@ -3001,7 +3001,7 @@
       "Dfb1"
      ],
      "fw": [
-      "FEATURE_CHIRP"
+      "FEATURE_AUDIBLE_CHIRP"
      ]
     },
     {
@@ -3040,9 +3040,6 @@
      "default": false,
      "bom": [
       "M1"
-     ],
-     "fw": [
-      "FEATURE_GNSS"
      ]
     },
     {

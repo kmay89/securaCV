@@ -61,3 +61,10 @@ system_python_ok: []
 # are `<workflow>.yml:<job>`, each with a reason; should stay empty — an inline
 # copy is exactly the drift the actions exist to end.
 inline_toolchain_ok: []
+
+# R11: workflows allowed to keep the floating `ubuntu-latest` runner label.
+# Should stay empty: ubuntu-latest moves to Ubuntu 26.04 from 2026-10-19, so
+# every workflow is pinned to ubuntu-24.04 (sweep CI11, #1802). An entry is a
+# temporary exemption for a workflow another open change is editing, with that
+# change named; the integrator pins it and removes the entry when it lands.
+ubuntu_latest_ok: []

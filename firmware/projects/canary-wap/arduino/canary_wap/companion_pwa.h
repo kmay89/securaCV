@@ -476,7 +476,7 @@ footer a{color:var(--accent);text-decoration:none}
           <li>Within 30 seconds, tap <strong>Save my recovery kit</strong> below.</li>
         </ol>
         <div class="err" id="wiz-recovery-err" role="alert"></div>
-        <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can get it again any time: press BOOT, then reload the dashboard.</p>
+        <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
         <div class="wiz-btnrow">
           <button class="btn btn-secondary" id="wiz-recovery-skip">Do this later</button>
           <button class="btn btn-primary" id="wiz-recovery-save">Save my recovery kit</button>
@@ -491,10 +491,10 @@ footer a{color:var(--accent);text-decoration:none}
       <div id="wiz-ha-block" style="display:none;margin-top:.85rem">
         <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Use Home Assistant? (optional)</h3>
         <p class="wiz-sub" style="margin:0 0 .6rem">Your Canary can send its alerts to Home Assistant over MQTT. Type your broker's address and it appears there on its own. You can also do this later from the dashboard.</p>
-        <input type="text" class="wiz-input" id="wiz-ha-host" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
+        <input type="text" class="wiz-input" id="wiz-ha-host" maxlength="128" placeholder="Broker address (like 192.168.1.10)" autocomplete="off" spellcheck="false" aria-describedby="wiz-ha-err">
         <input type="number" class="wiz-input" id="wiz-ha-port" placeholder="Port (1883)" min="1" max="65535" style="margin-top:.4rem">
-        <input type="text" class="wiz-input" id="wiz-ha-user" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
-        <input type="text" class="wiz-input pw-masked" id="wiz-ha-pass" placeholder="Password (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="margin-top:.4rem">
+        <input type="text" class="wiz-input" id="wiz-ha-user" maxlength="64" placeholder="Username (optional)" autocomplete="off" spellcheck="false" style="margin-top:.4rem">
+        <input type="text" class="wiz-input pw-masked" id="wiz-ha-pass" maxlength="128" placeholder="Password (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="margin-top:.4rem">
         <div class="err" id="wiz-ha-err" role="alert"></div>
         <p class="wiz-sub" id="wiz-ha-done" style="display:none;margin:.4rem 0 .6rem">✓ Connected. Your Canary will show up in Home Assistant on its own.</p>
         <div class="wiz-btnrow">
@@ -825,6 +825,51 @@ const WizardLogic = (function () {
 })();
 if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLogic; }
 /* WIZARD_LOGIC:END */
+
+/* RECOVERY_KIT:BEGIN — the recovery kit, one builder for the two pages that
+   offer it: the /companion wizard's close-out (companion_pwa.h) and the
+   dashboard after a BOOT-tap sign-in (web_ui.h, sweep F257). The two copies
+   are the same lines, indentation aside; recovery_kit.test.js holds them so
+   and drives both pages through them. The kit is the receipt text exactly
+   as GET /api/provisioning-receipt served it, handed to the browser as a
+   download: nothing here fetches or sends anything. DOM-free: the page
+   passes its window in (document, Blob, URL, setTimeout), so Node can drive
+   it. */
+const RecoveryKit = (function () {
+  const FILE_NAME = 'canary-recovery-kit.json';
+
+  // A receipt the iPhone's recovery path can pair from (PairView decodes a
+  // base_url and a non-empty token), so neither page offers or saves
+  // anything else as a kit.
+  function isReceipt(text) {
+    if (typeof text !== 'string' || text === '') return false;
+    let r;
+    try { r = JSON.parse(text); } catch (e) { return false; }
+    return !!r && typeof r === 'object' && !Array.isArray(r) &&
+           typeof r.token === 'string' && r.token !== '' &&
+           typeof r.base_url === 'string' && r.base_url !== '';
+  }
+
+  // Save `text` as canary-recovery-kit.json through a same-page blob: URL.
+  // False, with nothing saved, when it is not a receipt.
+  function save(win, text) {
+    if (!isReceipt(text)) return false;
+    const blob = new win.Blob([text], { type: 'application/json' });
+    const url = win.URL.createObjectURL(blob);
+    const a = win.document.createElement('a');
+    a.href = url;
+    a.download = FILE_NAME;
+    win.document.body.appendChild(a);
+    a.click();
+    win.document.body.removeChild(a);
+    win.setTimeout(function () { win.URL.revokeObjectURL(url); }, 4000);
+    return true;
+  }
+
+  return { FILE_NAME: FILE_NAME, isReceipt: isReceipt, save: save };
+})();
+if (typeof module !== 'undefined' && module.exports) { module.exports = RecoveryKit; }
+/* RECOVERY_KIT:END */
 
 (function onboardWizard() {
   const params = new URLSearchParams(window.location.search);
@@ -1807,16 +1852,9 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
         return;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const text = await r.text();
-      const blob = new Blob([text], { type: 'application/json' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url;
-      a.download = 'canary-recovery-kit.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      // The same builder the dashboard's BOOT-tap sign-in saves with
+      // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
+      if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
       $w('wiz-recovery-done').style.display = 'block';
       save.style.display = 'none';
       $w('wiz-recovery-skip').textContent = 'Continue';
@@ -1856,7 +1894,12 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = WizardLo
         err.textContent = 'This needs the recovery-kit step first — go back, press BOOT, and save the kit.';
         return;
       }
-      if (!cfg.ok) throw new Error('HTTP ' + cfg.status);
+      if (!cfg.ok) {
+        // The device's reason when it gives one (a field past what it keeps
+        // is refused with the field and its limit in bytes, sweep F241).
+        const j = await cfg.json().catch(() => ({}));
+        throw new Error((j && typeof j.reason === 'string' && j.reason) || ('HTTP ' + cfg.status));
+      }
       const t = await fetch('/api/mqtt/test', { method: 'POST' });
       const tj = t.ok ? await t.json() : { ok: false };
       if (tj.ok) {

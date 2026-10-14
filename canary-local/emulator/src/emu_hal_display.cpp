@@ -7,7 +7,10 @@
 // regions and flushes them through Arduino_GFX::draw16bitRGBBitmap,
 // which lands here and becomes RGBA pixels the page textures onto the
 // 3D device's screen. Backlight intent (day PWM ladder, 13-bit night
-// floor) is forwarded to JS so the on-screen glass really dims.
+// floor) is forwarded to JS so the on-screen glass really dims, clipped at
+// the board's own ceiling where its HAL has one (the nightlight's 50%,
+// sweep A61), and on the expander board the night floor stepped to the byte
+// the board writes (sweep A79).
 //
 // A turned glass (F184): the panel keeps scanning its native landscape and
 // LVGL hands every flush in that frame, already turned by its software
@@ -101,9 +104,64 @@ volatile int g_touch_down = 0;
 volatile int g_touch_x = 0;
 volatile int g_touch_y = 0;
 
-// Backlight intent as last applied by the firmware's brightness policy.
+// Backlight as last applied by the firmware's brightness policy, after the
+// board's own ceiling (below): what the glass glows at, not only what was
+// asked.
 volatile int g_backlight_level = 255;   // 0..255 day ladder
 volatile int g_night_duty13 = -1;       // 0..8191 when night profile owns it
+
+// The board's backlight ceiling (sweep A61). The C3-LCD-1.47 (TFT_USE_EXIO,
+// the nightlight's pin map) has no LEDC backlight pin: brightness is one
+// byte in Waveshare's I2C expander's PWM register, and display_1in47.cpp's
+// exio_backlight() clips that byte at (255 * CD_BL_MAX_PCT) / 100 — 127 for
+// the nightlight config's 50%, its heat budget in the closed pocket case —
+// under every caller, the day ladder and the night floor alike. The twin
+// clips the same byte at the same place, so its glow and the bench's
+// backlight row read what the glass would. The LEDC boards' HALs apply no
+// such ceiling, and neither does this one for them: there the level is
+// passed on as asked, as before. Below the cap the expander also steps the
+// night floor: its 13-bit duty becomes one byte (>> 5, never zero while a
+// glow was asked for), so the twin holds that byte too (capped_night below,
+// sweep A79).
+#if defined(TFT_USE_EXIO) && TFT_USE_EXIO
+#ifndef CD_BL_MAX_PCT
+#define CD_BL_MAX_PCT 100  // display_1in47.cpp's default: no ceiling
+#endif
+constexpr int kBacklightCapPct = CD_BL_MAX_PCT;
+#else
+constexpr int kBacklightCapPct = 100;
+#endif
+// The register byte the board writes at most: exio_backlight()'s kCap.
+constexpr int kBacklightCap8 = (255 * kBacklightCapPct) / 100;
+
+// The day ladder's byte as the board writes it: clipped at the cap, every
+// dimmer value exactly as asked ("a ceiling, not a scale").
+int capped_level(uint8_t level) {
+  return level > kBacklightCap8 ? kBacklightCap8 : level;
+}
+
+// The night floor's 13-bit duty as the board writes it (sweep A79), in the
+// same 13-bit terms. display_1in47.cpp's backlight_night_set() clamps the
+// duty to the night scale (8191) and compresses it to one expander byte,
+// duty13 >> 5, raised to 1 when a glow was asked for (a calibrated floor must
+// never go dark); exio_backlight() then clips that byte at the cap. The twin
+// holds the duty that byte stands for, byte << 5: the glass's night floor
+// has the board's steps (32 duties apart, cap + 1 of them), a glow asked
+// under 32 glows at the first step rather than dimmer, a duty on a step
+// passes as asked, and one the board clips is held at the cap's byte — 4064
+// for the nightlight's 127, 8160 with no cap. A board without the expander
+// is passed on as asked, as before.
+int capped_night(uint16_t duty13) {
+#if defined(TFT_USE_EXIO) && TFT_USE_EXIO
+  const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX
+  int byte = duty >> 5;
+  if (byte == 0 && duty > 0) byte = 1;
+  if (byte > kBacklightCap8) byte = kBacklightCap8;
+  return byte << 5;
+#else
+  return duty13;
+#endif
+}
 
 // Every shape announcement carries the quarter turns the glass is worn at
 // (sweep A56): the dash's software rotation as LVGL's driver holds it
@@ -296,15 +354,17 @@ Arduino_GFX* gfx() { return &g_gfx; }
 
 void display_flush() {}
 
+// Both sinks clip where the board's HAL clips (capped_level / capped_night
+// above), and the page is told what the glass glows at.
 void backlight_set(uint8_t level) {
-  g_backlight_level = level;
+  g_backlight_level = capped_level(level);
   g_night_duty13 = -1;
-  js_backlight_apply(level, -1);
+  js_backlight_apply(g_backlight_level, -1);
 }
 
 void backlight_night_set(uint16_t duty13) {
-  g_night_duty13 = duty13;
-  js_backlight_apply(-1, duty13);
+  g_night_duty13 = capped_night(duty13);
+  js_backlight_apply(-1, g_night_duty13);
 }
 
 TouchSample touch_read() {
@@ -362,6 +422,11 @@ EMSCRIPTEN_KEEPALIVE int emu_fb_serial(void) { return (int)g_dirty_serial; }
 EMSCRIPTEN_KEEPALIVE int emu_flush_count(void) { return (int)g_flush_count; }
 EMSCRIPTEN_KEEPALIVE int emu_backlight_level(void) { return g_backlight_level; }
 EMSCRIPTEN_KEEPALIVE int emu_backlight_night_duty(void) { return g_night_duty13; }
+// The ceiling this twin clips the backlight at, in percent of full duty, as
+// the board's HAL clips it (sweep A61): CD_BL_MAX_PCT on the expander board
+// (50 on the nightlight), 100 where no ceiling applies. Its presence is how
+// the page tells a twin that clips from a dist built before it.
+EMSCRIPTEN_KEEPALIVE int emu_backlight_cap_pct(void) { return kBacklightCapPct; }
 
 EMSCRIPTEN_KEEPALIVE void emu_touch(int down, int x, int y) {
   g_touch_down = down;

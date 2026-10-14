@@ -93,7 +93,7 @@ jobs:
   # read, never blocked.
   drafts:
     name: List unpublished draft releases
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     permissions:
       contents: write
@@ -118,7 +118,7 @@ jobs:
   update:
     name: Work out what needs releasing, then release exactly that
     needs: drafts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

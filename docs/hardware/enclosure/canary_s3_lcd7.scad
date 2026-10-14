@@ -4662,7 +4662,7 @@ module stand() {
                          halign = "center", valign = "center");
         }
         // cable channel: desk-level, from the well out the back edge,
-        // tunnelling under the fin's foot. Its section is the catalog's
+        // tunneling under the fin's foot. Its section is the catalog's
         // bridge-safe profile (canary_port_lib port_bridge_profile2d), not a
         // box: where the fin's foot crosses it the roof is a bridge on this
         // base-down print, and 16 mm of flat roof is over twice the 7.0 the

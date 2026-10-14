@@ -26,7 +26,14 @@ struct SetupView: View {
     var initial: SetupTarget?
 
     @State private var hubRecord = HubStore.load()
-    @State private var householdWiFi = HouseholdWiFiStore.load()
+    /// The household Wi-Fi and the hub's broker login, both Keychain items,
+    /// read in onAppear (which runs again when a walkthrough pushed from
+    /// here comes back), never here or in `body`: a @State initial value is
+    /// evaluated on every init of this view, `body` on every change the
+    /// fleet publishes while the walkthrough is open, and a Keychain read is
+    /// not free (sweep A75; CanarySetupView's `remembered` is the same).
+    @State private var householdWiFi: HouseholdWiFi?
+    @State private var hubLogin: HubSecretStore.BrokerLogin?
     @State private var path: [SetupTarget] = []
 
     var body: some View {
@@ -51,7 +58,7 @@ struct SetupView: View {
                 } footer: {
                     Text("Each step says what this phone does, and what stays yours.")
                 }
-                if let login = HubSecretStore.brokerLogin() {
+                if let login = hubLogin {
                     Section {
                         Label("Hub login for your Canaries: \(login.username)", systemImage: "key.horizontal")
                         BrokerPasswordCopyButton(password: login.password)
@@ -84,6 +91,7 @@ struct SetupView: View {
             .onAppear {
                 hubRecord = HubStore.load()
                 householdWiFi = HouseholdWiFiStore.load()
+                hubLogin = HubSecretStore.brokerLogin()
                 if let initial, path.isEmpty { path = [initial] }
             }
         }

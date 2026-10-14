@@ -17,7 +17,7 @@ import { buildBuildIt } from "./build-it.js";
 import { buildBoardLab } from "./board-lab.js";
 import { buildAssemblyLab } from "./assembly-lab.js";
 import { CanaryEmulator, demoFleet } from "../emulator/web/emu-shell.js";
-import { BenchPower, romBanner } from "../emulator/web/bench.js";
+import { BenchPower, romBanner, benchRibbon } from "../emulator/web/bench.js";
 import { DEMO, beatsBetween } from "./mode-sim.js";
 import { buildOnboardPhone } from "./onboard-phone.js";
 import {
@@ -97,6 +97,55 @@ async function main() {
   const target = deepLinkId(location.hash);
   const dev = state.registry.devices.find((d) => d.id === target);
   if (dev) openSheet(dev);
+}
+
+// The bench's backlight row, on a ceiling: the board's (`boardCap`, the
+// bench block's cap_pct — the percent of full duty its own HAL clips at) beside
+// the twin's (`twinCap`, what the emulator's display HAL clips at, read from
+// emu_backlight_cap_pct; null from a dist built before sweep A61, whose HAL set
+// the level as asked, and 100 where it clips nothing). A level the twin reads
+// is the glass's only when the two agree.
+function backlightCapNote(boardCap, twinCap) {
+  const twin = Number.isFinite(twinCap) && twinCap < 100 ? twinCap : null;
+  if (!boardCap) return twin === null ? "" : ` · this twin caps it at ${twin}% duty`;
+  if (twin === boardCap) return ` · capped at ${boardCap}% duty, as the board's HAL caps it`;
+  if (twin === null) return ` · the board caps it at ${boardCap}% duty, this twin does not`;
+  return ` · the board caps it at ${boardCap}% duty, this twin at ${twin}%`;
+}
+
+// The Nightlight's quarter turns (sweep A80), as io/orientation.h's Orient
+// names them: the value is the rotation the firmware's mailbox takes (0..3,
+// Arduino_GFX numbering) and the quarter turns its HAL announces with the
+// glass's shape, each the turn the device has made from upright, clockwise
+// as its front is seen.
+const GLASS_TURNS = [
+  { rot: 0, label: "upright", says: "upright, USB down" },
+  { rot: 1, label: "on its right edge", says: "turned a quarter clockwise, onto its right edge" },
+  { rot: 2, label: "upside down", says: "upside down, USB up" },
+  { rot: 3, label: "on its left edge", says: "turned a quarter counter-clockwise, onto its left edge" },
+];
+
+// Turn a running glass by hand (sweep A80): through the firmware's own
+// rotation mailbox (emu-shell's requestRotation, emu_request_rotation), the
+// one the app's orientation picker writes, so the firmware's loop applies it
+// on its one path: the panel turned, the face rebuilt, the companion tumbling
+// in. A refusal is said, never thrown into the page. The turn the glass
+// already stands in is still asked (the firmware's apply path syncs its
+// orientation model before it finds nothing to turn, and the ask replaces
+// any turn still waiting in the mailbox), but the note says nothing turns:
+// main.cpp's nightlight_apply_orientation() returns at rot == prev.
+async function turnGlass(emu, turn, say) {
+  const already = emu.glassTurn === turn.rot;
+  try {
+    await emu.requestRotation(turn.rot);
+  } catch (e) {
+    say(`the glass did not turn: ${(e && e.message) || e}`);
+    return false;
+  }
+  say(already
+    ? `it already stands ${turn.label} (${turn.says}): the firmware keeps the glass as it is, and nothing tumbles`
+    : `asked the firmware to stand it ${turn.label} (${turn.says}): its loop turns the panel on its next pass, and the companion tumbles in`);
+  return true;
 }
 
 // the finish picker rides in the hero, above the fineprint line
@@ -302,6 +351,10 @@ function closeSheet() {
 // ── display sheet: live firmware ────────────────────────────────────────
 async function buildDisplaySheet(ctx, side, stage) {
   const dev = ctx.dev;
+  // The board's chip and BOOT strap, as its bench block names them: every
+  // mask-ROM banner this sheet stages is that chip's (bench.js ROM_VOICES,
+  // sweep A59), never one chip's for every card.
+  const rom = dev.bench?.rom;
 
   // The glass: the emulator's native canvas — touchable, and the very
   // same pixels the 3D screen textures from. The shade above it is the
@@ -500,7 +553,7 @@ async function buildDisplaySheet(ctx, side, stage) {
           return;
         }
         note("device rebooted — booting again with its memory intact");
-        serialAppend("\n\n※ ── power cycle ── ※\n\n" + romBanner("swreset"));
+        serialAppend("\n\n※ ── power cycle ── ※\n\n" + romBanner("swreset", rom));
         await boot({ preserve: true });
       },
     });
@@ -567,7 +620,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     g2d.fillStyle = "#000";
     g2d.fillRect(0, 0, glass.width, glass.height);
     setShade("waiting for download");
-    serialAppend("\n※ ── reset, BOOT held low ── ※\n\n" + romBanner("download"));
+    serialAppend("\n※ ── reset, BOOT held low ── ※\n\n" + romBanner("download", rom));
   };
   ctx.bench = dev.bench
     ? new BenchPower(dev.bench, {
@@ -585,7 +638,7 @@ async function buildDisplaySheet(ctx, side, stage) {
             enterDownload();
             return;
           }
-          serialAppend("\n※ ── power restored ── ※\n\n" + romBanner("poweron"));
+          serialAppend("\n※ ── power restored ── ※\n\n" + romBanner("poweron", rom));
           await bootWhenFree();
         },
         onReset: async (kind) => {
@@ -594,7 +647,7 @@ async function buildDisplaySheet(ctx, side, stage) {
             enterDownload();
             return;
           }
-          serialAppend("\n※ ── reset ── ※\n\n" + romBanner("reset"));
+          serialAppend("\n※ ── reset ── ※\n\n" + romBanner("reset", rom));
           await bootWhenFree();
         },
       })
@@ -604,7 +657,7 @@ async function buildDisplaySheet(ctx, side, stage) {
     ctx.dispose.push(() => clearInterval(benchTick));
   }
 
-  serialAppend(romBanner("poweron"));
+  serialAppend(romBanner("poweron", rom));
   await boot();
 
   const guideCtx = {
@@ -618,7 +671,7 @@ async function buildDisplaySheet(ctx, side, stage) {
         return;
       }
       note("rebooting for a first meeting — the bird will introduce itself, then raise its setup network (the phone in Try it walks it)");
-      serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron"));
+      serialAppend("\n\n※ ── power cycle (first meeting) ── ※\n\n" + romBanner("poweron", rom));
       ctx.emu.retire();
       await boot({ preserve: true, firstMeeting: true });
     },
@@ -845,6 +898,46 @@ function tryView(ctx, noteLine) {
     storyBtn.textContent = "⏸ storyline playing (6×) — tap to stop";
   }
 
+  // ── Turn the glass while it runs (sweep A80) ──
+  // Only where the running firmware has the rotation mailbox and the dist
+  // the binding (the Nightlight's, since F243): asked of the twin itself, so
+  // a dist built before the binding, or a flavor without the mailbox, shows
+  // no control at all. Each turn goes through the mailbox the app's
+  // orientation picker writes; the lit chip is the turn the HAL last
+  // announced with the glass's shape. A tab opened while the twin is still
+  // loading its module asks once the bindings are there, and not at all
+  // once the tab has closed; the rail carries the answer (data-turns).
+  const turnWrap = el("div", "style-rail turn-rail");
+  (async () => {
+    while (!ctx.emu?.c) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!turnWrap.isConnected) return;
+    }
+    const turns = await ctx.emu.turnsAtRuntime();
+    turnWrap.dataset.turns = turns ? "yes" : "no";
+    if (!turns) return;
+    const row = el("div", "try-grid turn-row");
+    for (const t of GLASS_TURNS) {
+      const b = mk(t.label, () => turnGlass(ctx.emu, t, (line) => { noteLine.textContent = line; }));
+      b.classList.add("turn-chip");
+      b.dataset.rot = String(t.rot);
+      row.append(b);
+    }
+    const lit = () => {
+      const now = ctx.emu?.glassTurn;
+      for (const b of row.children) b.classList.toggle("on", Number(b.dataset.rot) === now);
+    };
+    lit();
+    const timer = setInterval(() => (turnWrap.isConnected ? lit() : clearInterval(timer)), 400);
+    turnWrap.append(
+      el("h4", null, "Turn the glass"),
+      el("p", "muted",
+        "Stand it on another edge, the way the app's orientation picker turns it: the request goes to " +
+        "the firmware's own rotation mailbox, and its loop turns the panel, rebuilds the face in the " +
+        "new shape and lets the companion tumble in. The lit chip is the turn the glass last announced."),
+      row);
+  })();
+
   const grid = el("div", "try-grid");
   grid.append(
     storyBtn,
@@ -868,6 +961,7 @@ function tryView(ctx, noteLine) {
       "Drag the device. Touch its glass: tap pages, hold to acknowledge. " +
       "Then break the household on purpose — the glass must never lie about it."),
     styleWrap,
+    turnWrap,
     grid,
     setupWrap,
     noteLine
@@ -889,11 +983,10 @@ function benchView(ctx, guideCtx, noteLine) {
       "wired past the chip. Pull the cable mid-frame, brown out the " +
       "battery, park the ROM in download mode — the glass and the serial " +
       "log react exactly as a real bench would."),
-    el("p", "bench-ribbon",
-      "Honesty: the mask-ROM banner is staged by the bench (its text is " +
-      "verbatim ESP32-S3); everything after it is the real firmware. The " +
-      "PWR/CHG/DONE lights are hardwired to the rail and charge chip — " +
-      "no firmware here or on your desk can turn them off.")
+    // Said per board, from its bench block (its chip's ROM, its own
+    // hardwired lights): one fixed sentence for every card named the S3's
+    // ROM and PWR/CHG/DONE on the Nightlight's card (sweep A59 review).
+    el("p", "bench-ribbon", benchRibbon(profile))
   );
 
   // ── The lights ────────────────────────────────────────────────────────
@@ -975,9 +1068,10 @@ function benchView(ctx, guideCtx, noteLine) {
   const dMode = diagRow("mode");
   const dUp = diagRow("uptime");
   const dBl = diagRow("backlight");
-  // A cap the board's own HAL enforces and the twin's does not (the
-  // nightlight's heat budget): say it beside the level, so the twin's
-  // brighter glow is not read as the glass's (sweep A54).
+  // A cap the board's own HAL enforces (the nightlight's heat budget, sweep
+  // A54), said beside the level with whether this twin's HAL clips at it too
+  // (backlightCapNote; a dist built since sweep A61 does), so a twin glowing
+  // brighter than the glass is never read as the glass.
   const blCap = profile.backlight?.cap_pct;
   if (blCap) dBl.title = profile.backlight.note || "";
   const dFlush = diagRow("frames flushed");
@@ -1032,10 +1126,10 @@ function benchView(ctx, guideCtx, noteLine) {
     try {
       const night = await ctx.emu.c.nightDuty();
       const level = await ctx.emu.c.backlight();
+      const twinCap = ctx.emu.c.backlightCap ? await ctx.emu.c.backlightCap() : null;
       dBl.textContent = (night >= 0
         ? `night floor · 13-bit duty ${night}/8191`
-        : `day ladder · ${level}/255`) +
-        (blCap ? ` · the board caps it at ${blCap}% duty, this twin does not` : "");
+        : `day ladder · ${level}/255`) + backlightCapNote(blCap, twinCap);
       dFlush.textContent = String(await ctx.emu.c.flushCount());
       dMqtt.textContent = (await ctx.emu.c.mqttConnected()) ? "connected" : "down / reconnecting";
     } catch {

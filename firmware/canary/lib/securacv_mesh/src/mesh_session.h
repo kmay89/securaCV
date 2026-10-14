@@ -1028,7 +1028,11 @@ void set_opera_create_handler(opera_create_fn fn);
  *
  * Execution refuses what would strand a rotation: LEAVE and SET_ENABLED
  * {false} while one runs (REKEY_IN_FLIGHT); REMOVE while a pairing runs
- * (RemoveResult::PAIRING). SET_NAME without an opera is NO_OPERA.
+ * (RemoveResult::PAIRING). SET_NAME without an opera is NO_OPERA. PAIR_JOIN
+ * on a device that holds an opera is OPERA_EXISTS (F136): it leaves first,
+ * and nothing (no pairing number, member, key or secret) is touched.
+ * start_pairing_joiner() itself does not check; the request is the one
+ * caller on the device.
  *
  * The slot state moves by GCC __atomic builtins (acquire/release, a
  * compare-exchange at every hand-off) — the pattern securacv_audio's mute
@@ -1045,7 +1049,8 @@ enum class RequestType : uint8_t {
   REMOVE,         /* remove_peer(fp) */
   PAIR_START,     /* start_pairing_initiator(opera_secret, <the opera's name>) — F33;
                    * with `create`, found a new opera first (OPERA CREATION) */
-  PAIR_JOIN,      /* start_pairing_joiner() — F33 */
+  PAIR_JOIN,      /* start_pairing_joiner() — F33; refused (OPERA_EXISTS)
+                   * while this device holds an opera (F136) */
   PAIR_CONFIRM,   /* confirm_pairing_code() — F33 */
   PAIR_CANCEL,    /* cancel_pairing() — F33 */
 };
@@ -1060,7 +1065,8 @@ enum class RequestStatus : uint8_t {
                       * is off (F33) */
   REFUSED,           /* PAIR_START / PAIR_JOIN / PAIR_CONFIRM: the pairing
                       * state machine refused (wrong state) (F33) */
-  OPERA_EXISTS,      /* PAIR_START {create} while the session holds an opera */
+  OPERA_EXISTS,      /* PAIR_START {create}, or PAIR_JOIN (F136), while the
+                      * session holds an opera: a join is Leave, then Join */
   NOT_PERSISTED,     /* PAIR_START {create}: the new secret could not be
                       * stored — no opera was created (F33 part 4) */
   PARTNER_REFUSED,   /* PAIR_CONFIRM: this device cannot hold the partner

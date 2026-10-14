@@ -13,6 +13,7 @@ exists. State logic is unchanged and the signed entities are untouched.
 from __future__ import annotations
 
 from .test_mqtt_payload_hardening import ENTRY, HomeAssistant, _entity, _hass, _msg
+from .test_chirp_active import WAP_CHIRP_ACTIVE
 from .conftest import make_runtime, run
 
 from .. import binary_sensor as bs_platform
@@ -142,10 +143,12 @@ def test_mesh_and_chirp_sensors_stamp() -> None:
     assert mesh._attr_extra_state_attributes["peer_count"] == 1
     _assert_unsigned(mesh._attr_extra_state_attributes, FP)
 
+    # The canary-wap's own chirp body (test_chirp_active.py holds the literal
+    # to csi_mqtt.cpp's publish_chirp_state()).
     chirp = _entity(bs_platform.SecuraCVCanaryChirpActiveSensor, hass=_store_hass(pinned=False))
-    chirp._handle_message(_msg('{"enabled": true, "ready": true, "session_id": "abc"}'))
+    chirp._handle_message(_msg(WAP_CHIRP_ACTIVE))
     assert chirp._attr_is_on is True
-    assert chirp._attr_extra_state_attributes["session_emoji"] == "abc"
+    assert chirp._attr_extra_state_attributes["channel_state"] == "active"
     _assert_unsigned(chirp._attr_extra_state_attributes)
 
 

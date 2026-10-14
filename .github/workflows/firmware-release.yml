@@ -72,7 +72,7 @@ concurrency:
 jobs:
   build-sign-release:
     name: Build, sign, and publish firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     outputs:
       tag: ${{ steps.ver.outputs.tag }}
@@ -308,9 +308,25 @@ jobs:
           PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
             pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI + ESP32 core (cached)
+      - name: Install Arduino CLI + ESP32 core 3.3.8 (WAP row, exclusive)
+        # Pinned to the WAP sketch.yaml's core (3.3.8, the core inside
+        # platform_core3), so a release builds on a core a PR has already
+        # compiled the sketch on, not on whatever the action's weekly "latest"
+        # is that day. firmware.yml's PR row keeps floating on "latest" by
+        # design (the early warning for the next core), so a cut release can
+        # differ from its PR build's core; firmware/PLATFORMS.md records the
+        # decision (sweep F21). Exclusive because this job installs two more
+        # cores: this row is its first install today, but should a step ever
+        # restore another core's cache into ~/.arduino15 ahead of it, both
+        # releases would sit there (installing one already present is a
+        # no-op) and the unversioned FQBN would take the newer
+        # (RELEASE_LESSONS 2026-07-29 (k)). The action uninstalls the
+        # installed esp32:esp32 release before installing, and fails the step
+        # unless 3.3.8 is the one installed afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
+          core-version: "3.3.8"
+          exclusive-core: "true"
           libraries: |
             Crypto
             ArduinoJson
@@ -335,11 +351,11 @@ jobs:
         # NimBLE 1.4.3). SPI panel: no RGB-scanout mechanism, so the
         # bench-validated core-2 row is the right one. Runs AFTER the wap
         # build on purpose: it switches the installed esp32:esp32 platform,
-        # and wap builds on the latest core.
+        # and wap builds on its own pinned core (3.3.8).
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "2.0.17"
-          # Exclusive: the wap row above installed the LATEST core into the
+          # Exclusive: the wap row above installed core 3.3.8 into the
           # same ~/.arduino15. Without this, both versions sit there, the
           # unversioned FQBN below takes the newest, and the watch compiles
           # against core 3 with the core-2 library row — which is exactly

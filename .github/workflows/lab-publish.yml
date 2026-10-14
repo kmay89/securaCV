@@ -55,7 +55,7 @@ concurrency:
 jobs:
   publish:
     name: Publish the draft, keep releases/latest on the firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     permissions:
       contents: write

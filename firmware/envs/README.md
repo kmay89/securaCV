@@ -24,7 +24,7 @@ envs/
 
 The WAP's Config column is a build profile, not a `configs/` directory: the
 sketch reads its flags from `projects/canary-wap/arduino/canary_wap/build_config.h`,
-and `configs/canary-wap/` is on no include path (only the Lab's tooling reads it).
+and so does the Lab's tooling (there is no `configs/canary-wap/`).
 
 ### Canary Vision
 

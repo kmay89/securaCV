@@ -179,14 +179,73 @@ Slot* find_free_slot(Slot* pending, size_t* npending) {
   return oldest;
 }
 
+/* Is an open slot past its window or its quiet gap at `now_ms`? The one
+ * expiry rule: expire_overdue() closes by it, and csi_bundler_peek() calls
+ * such a bundle unmergeable by it (backlog F90). */
+bool overdue(const Slot* s, uint32_t now_ms) {
+  const bool window_expired = (now_ms - s->opened_ms) >= CSI_BUNDLER_WINDOW_MS;
+  const bool gap_too_large  = (now_ms - s->last_seen_ms) >= CSI_BUNDLER_MAX_GAP_MS;
+  return window_expired || gap_too_large;
+}
+
 void expire_overdue(uint32_t now_ms, Slot* pending, size_t* npending) {
   for (size_t i = 0; i < CSI_BUNDLER_SLOTS; ++i) {
     Slot* s = &g_slots[i];
     if (!s->used) continue;
-    const bool window_expired = (now_ms - s->opened_ms) >= CSI_BUNDLER_WINDOW_MS;
-    const bool gap_too_large  = (now_ms - s->last_seen_ms) >= CSI_BUNDLER_MAX_GAP_MS;
-    if (window_expired || gap_too_large) close_slot_locked(s, pending, npending);
+    if (overdue(s, now_ms)) close_slot_locked(s, pending, npending);
   }
+}
+
+/* Roll an emit into its key's open bundle, WITH THE LOCK HELD: admit's merge,
+ * and csi_bundler_refresh()'s. Mirrors the live bundle back into `values`. */
+void merge_locked(Slot* open, uint32_t now_ms, csi_event_values_t* values,
+                  uint32_t* handle_out) {
+  open->last_seen_ms = now_ms;
+  open->values.bundled_count = (uint16_t)(open->values.bundled_count + 1);
+  /* Score-style fields take the running max so the row reflects the peak
+   * intensity within the bundle. */
+  if (values->present_fields & CSI_FIELD_MOTION_SCORE
+      && values->motion_score > open->values.motion_score) {
+    open->values.motion_score = values->motion_score;
+  }
+  if (values->present_fields & CSI_FIELD_BREATHING_SCORE
+      && values->breathing_score > open->values.breathing_score) {
+    open->values.breathing_score = values->breathing_score;
+  }
+  /* BPM takes the most recent (P1 anyway, only emitted when stable). */
+  if (values->present_fields & CSI_FIELD_BREATHING_RATE) {
+    open->values.breathing_rate_bpm = values->breathing_rate_bpm;
+  }
+  /* Confidence promotes monotonically. */
+  if (values->present_fields & CSI_FIELD_CONFIDENCE) {
+    const char* a = open->values.confidence;
+    const char* b = values->confidence;
+    auto rank = [](const char* s) -> int {
+      if (!s || !s[0]) return 0;
+      if (strcmp(s, "tentative") == 0) return 1;
+      if (strcmp(s, "observed")  == 0) return 2;
+      if (strcmp(s, "confirmed") == 0) return 3;
+      return 0;
+    };
+    if (rank(b) > rank(a)) {
+      strncpy(open->values.confidence, b, sizeof(open->values.confidence) - 1);
+      open->values.confidence[sizeof(open->values.confidence) - 1] = '\0';
+    }
+  }
+  /* Mirror the live snapshot back to the caller so the dashboard sees the
+   * up-to-date bundle row. */
+  *values = open->values;
+  if (handle_out) *handle_out = open->handle;
+}
+
+/* Can admit key this emit (it is not ambient and carries a state name)?
+ * admit's own two checks, in its order, for csi_bundler_peek() and
+ * csi_bundler_refresh(); test_csi_bundler_ceiling.cpp holds the peek to
+ * admit's answer. */
+bool keyable(const csi_event_values_t* values) {
+  if (values->category == CSI_CATEGORY_AMBIENT) return false;
+  return (values->present_fields & CSI_FIELD_STATE_NAME) != 0
+      && values->state_name[0] != '\0';
 }
 
 }  /* namespace */
@@ -235,43 +294,8 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
       outcome = CSI_BUNDLER_COMMIT;
     } else if (Slot* open = find_open_slot(module_id, type_name, values->state_name)) {
       /* Roll into the existing bundle. */
-      open->last_seen_ms = now_ms;
-      open->values.bundled_count = (uint16_t)(open->values.bundled_count + 1);
-      /* Score-style fields take the running max so the row reflects the peak
-       * intensity within the bundle. */
-      if (values->present_fields & CSI_FIELD_MOTION_SCORE
-          && values->motion_score > open->values.motion_score) {
-        open->values.motion_score = values->motion_score;
-      }
-      if (values->present_fields & CSI_FIELD_BREATHING_SCORE
-          && values->breathing_score > open->values.breathing_score) {
-        open->values.breathing_score = values->breathing_score;
-      }
-      /* BPM takes the most recent (P1 anyway, only emitted when stable). */
-      if (values->present_fields & CSI_FIELD_BREATHING_RATE) {
-        open->values.breathing_rate_bpm = values->breathing_rate_bpm;
-      }
-      /* Confidence promotes monotonically. */
-      if (values->present_fields & CSI_FIELD_CONFIDENCE) {
-        const char* a = open->values.confidence;
-        const char* b = values->confidence;
-        auto rank = [](const char* s) -> int {
-          if (!s || !s[0]) return 0;
-          if (strcmp(s, "tentative") == 0) return 1;
-          if (strcmp(s, "observed")  == 0) return 2;
-          if (strcmp(s, "confirmed") == 0) return 3;
-          return 0;
-        };
-        if (rank(b) > rank(a)) {
-          strncpy(open->values.confidence, b, sizeof(open->values.confidence) - 1);
-          open->values.confidence[sizeof(open->values.confidence) - 1] = '\0';
-        }
-      }
-      /* Mirror the live snapshot back to the caller so the dashboard sees the
-       * up-to-date bundle row. */
-      *values = open->values;
-      if (handle_out) *handle_out = open->handle;
-      outcome = CSI_BUNDLER_MERGED;   /* no new row: the chokepoint refunds its ceiling slot */
+      merge_locked(open, now_ms, values, handle_out);
+      outcome = CSI_BUNDLER_MERGED;   /* no new row: it spends no ceiling slot */
     } else {
       /* New bundle. */
       Slot* fresh = find_free_slot(pending, &npending);
@@ -303,6 +327,43 @@ csi_bundler_outcome_t csi_bundler_admit(const char*         module_id,
 
   for (size_t i = 0; i < npending; ++i) commit_closed(&pending[i]);
   return outcome;
+}
+
+csi_bundler_outcome_t csi_bundler_peek(const char*               module_id,
+                                       const char*               type_name,
+                                       const csi_event_values_t* values) {
+  if (!module_id || !type_name || !values) return CSI_BUNDLER_DROPPED;
+  if (!keyable(values)) return CSI_BUNDLER_COMMIT;
+  const uint32_t now_ms = bundler_now_ms();
+  SlotLock _lock;
+  const Slot* open = find_open_slot(module_id, type_name, values->state_name);
+  return (open && !overdue(open, now_ms)) ? CSI_BUNDLER_MERGED : CSI_BUNDLER_BUFFERED;
+}
+
+bool csi_bundler_refresh(const char*         module_id,
+                         const char*         type_name,
+                         csi_event_values_t* values,
+                         uint32_t*           handle_out) {
+  if (handle_out) *handle_out = 0;
+  if (!module_id || !type_name || !values || !keyable(values)) return false;
+
+  const uint32_t now_ms = bundler_now_ms();
+  Slot pending[CSI_BUNDLER_SLOTS];
+  size_t npending = 0;
+  bool merged = false;
+  {
+    SlotLock _lock;
+    /* admit's expiry, so a bundle past its gap or window closes and is not
+     * merged into. */
+    expire_overdue(now_ms, pending, &npending);
+    if (Slot* open = find_open_slot(module_id, type_name, values->state_name)) {
+      merge_locked(open, now_ms, values, handle_out);
+      merged = true;
+    }
+  }  /* lock released */
+
+  for (size_t i = 0; i < npending; ++i) commit_closed(&pending[i]);
+  return merged;
 }
 
 void csi_bundler_tick(void) {

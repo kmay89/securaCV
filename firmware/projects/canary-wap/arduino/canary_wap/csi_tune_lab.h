@@ -9,6 +9,13 @@
  * handlers; the table and the POST's store-and-apply live here, in a TU
  * tests_host/test_wap_tune_lab.cpp compiles with the staged CSI library.
  *
+ * A Tuning Lab reset (a row's reset and Reset all) sends JSON null for a
+ * knob, and tune_post() removes its row (sweep F127): the device then runs
+ * what it runs with no row, so a saved preset and sensitivity apply to
+ * core.presence's three thresholds again. A number or a bool stores a row,
+ * as before; the calibration's apply and a bundle import still store
+ * theirs.
+ *
  * Why a metadata table next to the shared key map
  * (csi_module_settings_nvs.h)? The key map only knows (full_key, nvs_key);
  * it cannot render a slider. This table adds what the UI needs (label,
@@ -50,7 +57,8 @@ struct TuneCoeff {
                              then at the balanced preset and sensitivity 50
                              (with another preset or slider position it runs
                              that baseline, which tune_read_value() reports).
-                             The Lab's reset stores it as a row (sweep F127). */
+                             The Lab's reset no longer stores it: it removes
+                             the row (sweep F127). */
   TuneApply   apply;
 };
 
@@ -76,10 +84,15 @@ int32_t tune_read_value(Preferences& prefs, const TuneCoeff& c);
 /** Store one knob, clamped, typed as its kind (putBool / putInt). */
 void tune_write_value(Preferences& prefs, const TuneCoeff& c, int32_t v);
 
+/** Remove one knob's row, of whatever type, so the device runs what it runs
+ *  with none (sweep F127). A knob with no row is left alone: Preferences'
+ *  remove() logs an error for a key that is not there. */
+void tune_clear_value(Preferences& prefs, const TuneCoeff& c);
+
 /** What one Tuning Lab POST did. */
 struct TunePost {
   bool nvs_ok;             /* false: "csi" would not open read-write; nothing stored */
-  int  changed;            /* knobs stored */
+  int  changed;            /* knobs stored or reset (a null removes the row) */
   bool reinit_presence;    /* applied: core.presence re-ran its init() */
   bool reinit_breathing;   /* applied: core.breathing re-ran its init() */
   bool reinit_anomaly;     /* applied: anomaly.baseline re-ran its init() */
@@ -90,7 +103,10 @@ struct TunePost {
  * POST /api/tune/coefficients and POST /api/tune/preset: store every
  * "<full_key>": value pair in `body` that names a knob (a number, or
  * true / false / 1 / 0 for a bool; each clamped to the knob's range; any
- * other key ignored), close NVS, then apply what changed: each module
+ * other key ignored), remove the row of every knob whose value is null (the
+ * Lab's reset, sweep F127; any other value it cannot read is ignored, as
+ * before; JSON whitespace, newlines included, may sit on either side of the
+ * colon), close NVS, then apply what changed: each module
  * touched once through `reinit` (csi_integration.cpp's reinit_module()), and
  * the stored Quiet Hours once through apply_quiet_hours_from_nvs() when a
  * core.quiet_hours.* knob was stored (sweep F128). Nothing is signed or

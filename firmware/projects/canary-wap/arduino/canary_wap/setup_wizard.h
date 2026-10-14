@@ -29,11 +29,13 @@
 
 #include "captive_dns.h"          // pure DNS response builder (host-tested)
 #include "csi_module_settings_nvs.h"  // begin_read_only(): the quiet probe (sweep F201)
+#include "device_name_rule.h"     // no control byte in the name (sweep F226, host-tested)
 #include "provisioning_logic.h"   // pure timeout/teardown decisions (host-tested)
 
 namespace setup_wizard {
 
 static constexpr size_t DEVICE_NAME_MAX = 32;
+static_assert(DEVICE_NAME_MAX == device_name_rule::kMaxLen, "the name's bound is device_name_rule's");
 static constexpr uint32_t SETUP_TIMEOUT_MS = 15UL * 60UL * 1000UL;
 static constexpr uint16_t DNS_PORT = 53;
 
@@ -50,11 +52,16 @@ static bool s_dns_running = false;
 // when it stores the key), so it is asked for quietly. An absent namespace
 // opens nothing and logs nothing, and reads as a first boot, as the refused
 // open did (sweep F201).
+//
+// A name stored before the routes refused control bytes (sweep F226) is read
+// with each control byte as a space: no answer that reads it carries one
+// raw, and the mDNS label (both bytes map to '-') stays the one it was.
 inline bool init() {
   Preferences prefs;
   if (csi_module_settings_nvs::begin_read_only(prefs, "securacv")) {
     s_first_boot = !prefs.getBool("setup_ok", false);
     prefs.getString("dev_name", s_device_name, sizeof(s_device_name));
+    device_name_rule::scrub_stored(s_device_name);
     prefs.end();
   } else {
     s_first_boot = true;
@@ -154,8 +161,11 @@ inline const char* get_device_name() {
   return s_device_name[0] ? s_device_name : nullptr;
 }
 
+// The one setter both rename routes call: 1 to 32 bytes and no control
+// byte (sweep F226: ArduinoJson writes one raw into POST /api/device-name's
+// answer and GET /api/fleet/scan's self row, and JSON.parse refuses it).
 inline bool set_device_name(const char* name) {
-  if (!name || strlen(name) == 0 || strlen(name) > DEVICE_NAME_MAX) return false;
+  if (!device_name_rule::storable(name)) return false;
   strncpy(s_device_name, name, sizeof(s_device_name) - 1);
   s_device_name[sizeof(s_device_name) - 1] = '\0';
   Preferences prefs;

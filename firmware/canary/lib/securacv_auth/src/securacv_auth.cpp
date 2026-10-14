@@ -43,7 +43,7 @@ void AuthManager::reset() {
 }
 
 bool AuthManager::constantTimeCompare(const void* a, const void* b, size_t len) {
-  // Always visit every byte. Cast through volatile so the optimiser cannot
+  // Always visit every byte. Cast through volatile so the optimizer cannot
   // short-circuit once a mismatch is detected.
   const volatile uint8_t* pa = static_cast<const volatile uint8_t*>(a);
   const volatile uint8_t* pb = static_cast<const volatile uint8_t*>(b);

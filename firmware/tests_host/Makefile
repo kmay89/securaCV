@@ -13,6 +13,30 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror
 NODE     ?= node
 
+# Every compile writes the headers it read beside its binary (sweep F286):
+# -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
+# deleted one is no error, and the end of this file reads them back and
+# gives each source they name the same rule (-MP names none). So an edit to
+# any header a suite compiles, one a forced include reaches too, rebuilds
+# that suite whether or not its rule lists the header, a header or source
+# moved since is a rebuild and not an error, and a new rule that compiles
+# one source with $(CXXFLAGS) needs nothing more. `override`, so a CXXFLAGS
+# given to make keeps it; and so any global CXXFLAGS assignment written below
+# this line must be `override` too, or make ignores it without a word (a
+# target-specific one still works). One command that compiles several
+# sources writes that one file once per source, each over the last (GCC and
+# clang alike), so such a recipe runs as $(call with_deps,<the compile>):
+# the compile, then the same flags and sources with -MM in place of its
+# output, which writes $@.d again with every source's headers. A comma in
+# the compile goes through a variable, as $(call) splits on commas. A compile
+# with no -o (the syntax checks) would write its .d into this directory, so
+# it sets DEPFLAGS empty. scripts/tests/test_vision_core_make_deps.py builds
+# every suite and holds each compile's headers, by `g++ -MM`, to what make
+# reads.
+DEPFLAGS = -MMD -MP
+override CXXFLAGS += $(DEPFLAGS)
+with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
+
 MR60_DIR = ../common/sensors/mmwave_mr60
 MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
            $(MR60_DIR)/mr60_presence.cpp \
@@ -22,8 +46,8 @@ MR60_SRC = $(MR60_DIR)/mr60_uart.cpp \
 # once presence-only (vitals TU compiles to nothing), once with the vitals
 # build flag so the vitals decode path and FSM are compile- and run-tested.
 # Binaries live in an ignored build/ directory (never in the source tree, so
-# CI always proves the sources compile) and depend on the module headers AND
-# this Makefile, so flag changes rebuild too.
+# CI always proves the sources compile) and depend on this Makefile, so flag
+# changes rebuild too, and on every header their compile reads (DEPFLAGS).
 BUILD_DIR       = build
 MR60_TEST_SRC   = test_mr60_uart.cpp
 MR60_HDRS       = $(wildcard $(MR60_DIR)/*.h)
@@ -284,10 +308,14 @@ IDFLOOR_BIN = $(BUILD_DIR)/test_csi_event_id_floor
 # The SD event log's line format both trees write
 # (common/csi/src/csi_event_log_line.h, backlog F37): byte-exact goldens of
 # the canary-wap format it came from, round trip, torn and glued lines
-# refused, and both trees' adapters naming the same file and cap.
+# refused, and both trees' adapters naming the same file and cap. And a
+# string field holding a byte no writer puts in a name refused, so what
+# parse() takes writes back as JSON through marshal() and the events body
+# (sweep F264, held with the canary-wap host tests' strict JSON reader).
 EVLINE_HDRS = ../common/csi/src/csi_event_log_line.h ../common/csi/src/csi_event.h \
               ../projects/canary-wap/arduino/canary_wap/csi_event_log.h \
-              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h
+              ../canary/src/csi_event_log.h ../common/csi/src/csi_event_backfill.h \
+              ../common/csi/src/csi_event_wire.h ../projects/canary-wap/tests_host/json_strict.h
 EVLINE_BIN  = $(BUILD_DIR)/test_csi_event_log_line
 
 # The one event-id space (backlog F46), on the REAL CSI library: csi_event.cpp
@@ -424,6 +452,14 @@ CHIRPPANEL_JS = test_canary_community_panel.test.js
 # and a scan holds every route the page names to one a source registers.
 DASHROUTES_JS = test_canary_dashboard_routes.test.js
 
+# What that dashboard shows where the build lacks a feature, and what Export
+# saves (repo sweeps F273, F274, F278, from F238's GATED list): the Opera tab
+# starts hidden until GET /api/mesh answers (only [env:full] registers the
+# mesh routes), a refused GET /api/peek/status shows the Peek panel's
+# no-camera state and hides the cards that call the other camera routes, and
+# Export saves the bundle POST /api/export answers inline (it named no file).
+DASHGATES_JS = test_canary_dashboard_gates.test.js
+
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
 # matches (a `*` counts only at a template's end), so the per-entry
@@ -437,8 +473,12 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 #     tables in registration order (dashboard_route_tables.js) and asks
 #     idf_uri_route_oracle (IDF's httpd_uri_match_wildcard, copied verbatim,
 #     and the first-match / refuse-a-duplicate loop around it) which route
-#     answers each request both dashboards make, then hands the URL each
-#     dashboard's per-entry Acknowledge builds to test_log_ack_route --parse
+#     answers each /api/ URL written in every page the two trees serve
+#     (sweep F238: the setup page, the companion PWA, the Tuning Lab, the
+#     MQTT and Sense pages too; a URL a page takes from a response is not
+#     read), names each request to a route only some #if branches
+#     register, then hands the URL each dashboard's per-entry Acknowledge
+#     builds to test_log_ack_route --parse
 #     (both trees' parsers) to hold it to the entry the handler reads. The
 #     oracle is C: IDF's function names a parameter `template`. It is built
 #     with -Wno-sign-compare, as IDF builds it (the copy is not edited).
@@ -645,16 +685,12 @@ VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
 # emulator's Arduino shim and a one-macro emscripten.h stub. Holds the tick
 # JSON the Vision page's MQTT pane reads: the tracker's settled cell and
 # visit_ms (sweep A39), and dwell_ended's dwell (F130) through the ABI.
+# Its headers come from its own compile (DEPFLAGS, with_deps): the hand list
+# it had once missed the box pipeline the bindings include (sweep F249), and
+# then detect_profiles.h and log.h, which detect_config.cpp reads.
 EMU_DIR    = ../../canary-local/emulator
 VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
-# Every header vision_core_bindings.cpp includes is a prerequisite, the
-# detection pipeline among them (sweep F249): without it an incremental make
-# after a pipeline edit rebuilt test_vision_detection_pipeline and reused a
-# stale test_vision_core_bindings. CI builds fresh, so only local runs lied.
-VISCORE_HDR = $(VISFSM_HDR) $(VISION_PIPE_HDR) $(VISION_INC)/canary/version.h \
-              $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
-              stubs/emscripten/emscripten.h
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
@@ -774,13 +810,13 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(MR60_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@)
 
 $(MR60_VITALS_BIN): $(MR60_TEST_SRC) $(MR60_SRC) $(MR60_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCANARY_SENSE_VITALS=1 -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCANARY_SENSE_VITALS=1 -I $(MR60_DIR) $(MR60_TEST_SRC) $(MR60_SRC) -o $@)
 
 $(DEVSIG_BIN): test_device_signature_common.cpp $(DEVSIG_SRC) $(DEVSIG_DIR)/device_signature.h Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I $(DEVSIG_DIR) test_device_signature_common.cpp $(DEVSIG_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(DEVSIG_DIR) test_device_signature_common.cpp $(DEVSIG_SRC) -o $@)
 
 $(WITCHAIN_BIN): test_witness_chain_core.cpp $(WITCHAIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common test_witness_chain_core.cpp -lcrypto -o $@
@@ -877,11 +913,11 @@ $(BACKFILL_BIN): test_csi_event_backfill.cpp $(BACKFILL_HDRS) $(MQTTQUEUE_HDR) M
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD -I ../common/csi/src test_csi_event_backfill.cpp -o $@
 
 $(CANEGR_BIN): test_canary_event_egress.cpp $(CANEGR_SRC) $(CANEGR_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	    -DFEATURE_CSI=1 -DFEATURE_HA_MQTT=1 -DFEATURE_SD_STORAGE=1 -DFEATURE_WATCHDOG=1 \
 	    -I stubs/canary_egress -I ../canary/include -I ../canary/src \
 	    -I ../canary/lib/securacv_mqtt/src -I ../common/csi/src -I ../common \
-	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@
+	    test_canary_event_egress.cpp $(CANEGR_SRC) -o $@)
 
 $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -DCSI_TEST_HOST_BUILD \
@@ -893,22 +929,22 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    $(CANDIAG_SRC) -o $@
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
-	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
+	    test_csi_event_id_space.cpp $(IDSPACE_SRC) -o $@)
 
 $(CEILING_BIN): test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
-	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -DCSI_TEST_CLOCK -I $(IDSPACE_DIR) \
+	    test_csi_bundler_ceiling.cpp $(IDSPACE_SRC) -o $@)
 
 $(MODINT_BIN): test_csi_modules_integration.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
-	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@
+	    test_csi_modules_integration.cpp $(MODINT_SRC) -o $@)
 
 $(MODBOOT_BIN): test_csi_module_boot.cpp $(MODINT_SRC) $(MODINT_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src \
-	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@
+	    test_csi_module_boot.cpp $(MODINT_SRC) -o $@)
 
 # meta.daily_summary on the canary (sweep F121): main.cpp's clock feed,
 # updateCsiClockOffset() cut verbatim (cut_functions.awk) with the
@@ -933,10 +969,10 @@ $(DAILY_INC): $(DAILY_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
 
 $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDRS) \
               ../common/time/tz_rule.h Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD \
 	    -I stubs/csi_modules -I stubs/csi_hal -I $(MODINT_DIR) -I ../canary/src -I ../common \
 	    -I $(BUILD_DIR) -DCANARY_MAIN_CPP='"$(abspath $(DAILY_MAIN))"' \
-	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@
+	    test_csi_daily_summary.cpp $(MODINT_SRC) -o $@)
 
 .PHONY: run-daily-summary
 run-daily-summary: $(DAILY_BIN)
@@ -944,15 +980,18 @@ run-daily-summary: $(DAILY_BIN)
 run: run-daily-summary
 
 # Compile-only checks for sources no firmware build compiles, so they cannot
-# rot unseen (audit, 2026-10-09; firmware/scripts/
-# check_common_build_reachability.py waives the header on this basis):
+# rot unseen (audit, 2026-10-09):
 #   - common/chirp/chirp_channel.h, the ratified C-ABI Chirp API the ACTIVE
 #     tree's port will implement, as C and as C++ (`-include` of /dev/null,
-#     so `#pragma once` is not in the main file);
+#     so `#pragma once` is not in the main file). Its values are held to the
+#     canary-wap reference by canary-wap's test_chirp_protocol_invariants.cpp
+#     (sweep F272); this check is what keeps it valid C;
 #   - examples/modules/stub_door_opens.cpp, the template a third-party CSI
 #     module starts from, against the CSI library's host stubs.
-# Nothing to run: each passes by compiling under -Werror.
+# Nothing to run: each passes by compiling under -Werror, and writes no
+# dependency file (it has no -o to name one after).
 .PHONY: run-syntax-checks
+run-syntax-checks: DEPFLAGS =
 run-syntax-checks:
 	$(CXX) $(CXXFLAGS) -fsyntax-only -x c++ -include ../common/chirp/chirp_channel.h /dev/null
 	$(CC) -std=c11 -Wall -Wextra -Werror -fsyntax-only -x c -include ../common/chirp/chirp_channel.h /dev/null
@@ -1022,7 +1061,7 @@ $(LOGACK_BIN): test_log_ack_route.cpp $(LOGACK_PIO_INC) $(LOGACK_WAP_INC) Makefi
 	$(CXX) $(CXXFLAGS) -I $(BUILD_DIR) test_log_ack_route.cpp -o $@
 
 $(ROUTE_ORACLE): idf_uri_route_oracle.c Makefile | $(BUILD_DIR)
-	$(CC) $(ORACLE_CFLAGS) idf_uri_route_oracle.c -o $@
+	$(CC) $(ORACLE_CFLAGS) $(DEPFLAGS) idf_uri_route_oracle.c -o $@
 
 $(OPTFEAT_BIN): test_optical_features.cpp $(OPTFEAT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(OPTFEAT_INC) test_optical_features.cpp -o $@
@@ -1038,33 +1077,33 @@ $(VISPROF_BIN): test_vision_profiles.cpp $(VISPROF_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) -I ../common/fleet_link test_vision_profiles.cpp -o $@
 
 $(VISFSM_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(VISION_INC) -I $(VISION_CFG) test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
 $(VISFSM_GRACE_BIN): test_vision_presence_fsm.cpp $(VISFSM_SRC) $(VISFSM_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
-	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DVISION_DWELL_END_GRACE_MS=$(VISFSM_GRACE_MS) -I $(VISION_INC) -I $(VISION_CFG) \
+	    test_vision_presence_fsm.cpp $(VISFSM_SRC) -o $@)
 
-$(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) $(VISCORE_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
-	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@
+$(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
+	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@)
 
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@)
 
 $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/door/config.h Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="door"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="door"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_presets.cpp $(FUSION_SRC) -o $@)
 
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@)
 
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@)
 
 $(STORY_BIN): test_story.cpp $(STORY_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_story.cpp -o $@
 
 $(PLUMAGE_BIN): test_plumage.cpp $(PLUMAGE_SRC) $(PLUMAGE_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I ../common test_plumage.cpp $(PLUMAGE_SRC) -o $@
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I ../common test_plumage.cpp $(PLUMAGE_SRC) -o $@)
 
 $(TUNECON_BIN): test_tuning_console.cpp $(TUNECON_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_tuning_console.cpp -o $@
@@ -1079,9 +1118,9 @@ $(WXCORE_BIN): test_wx_core.cpp $(WXCORE_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../projects/canary-display/include test_wx_core.cpp -o $@
 
 $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DCONFIG_IDF_TARGET_ESP32S3=1 -DCONFIG_ESP_WIFI_CSI_ENABLED=1 \
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
-	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
+	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
 run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
@@ -1157,8 +1196,17 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(HEALTHLOG_JS)
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
+	$(NODE) --test $(DASHGATES_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# What each suite's compile read (DEPFLAGS, at the top): last, so that no rule
+# in them can become the default goal. Then an empty rule for each source the
+# files name, as -MP gives each header, so a source moved since they were
+# written rebuilds the suite instead of stopping make with "No rule to make
+# target" (an empty rule with no recipe, so it never overrides a real one).
+-include $(wildcard $(BUILD_DIR)/*.d)
+$(filter %.c %.cpp,$(shell cat $(wildcard $(BUILD_DIR)/*.d) /dev/null)):

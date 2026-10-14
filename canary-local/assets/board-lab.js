@@ -136,7 +136,7 @@ function renderBoardPanel(boardsData, bid) {
     try {
       const buf = await (await fetch(board.glb)).arrayBuffer();
       parsed = parseGLB(buf);
-    } catch (e) {
+    } catch {
       legend.append(el("span", "muted", "board mesh unavailable — run tools/gen_boards.py"));
       return;
     }

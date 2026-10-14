@@ -46,14 +46,20 @@ concurrency:
 jobs:
   ram-audit:
     name: DRAM static-symbol ranking (FULL/S3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI + ESP32 core (cached)
+      - name: Install Arduino CLI + ESP32 core 3.3.8 (cached)
+        # The core the WAP's release rows pin (the sketch.yaml's 3.3.8), so
+        # this audit measures a build on the core a release ships on (sweep
+        # F21, firmware/PLATFORMS.md); its flags differ from the release
+        # image's, so it ranks DRAM on that core, not of that image. One core
+        # in this job, so no exclusive install.
         uses: ./.github/actions/setup-arduino-esp32
         with:
+          core-version: "3.3.8"
           libraries: |
             Crypto
             ArduinoJson

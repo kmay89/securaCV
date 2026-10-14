@@ -345,7 +345,7 @@ bool derive_api_token(const uint8_t privkey[32],
   // ~27 accepted chars, so format_api_token_string()'s deterministic fallback
   // tops up the last few — collision resistance stays anchored in the HMAC
   // bytes already consumed (see that function's note). Feeding the full 32
-  // bytes (vs the 24-byte canary-wap reference) maximises real HMAC entropy;
+  // bytes (vs the 24-byte canary-wap reference) maximizes real HMAC entropy;
   // existing canary-wap devices keep their previously-stored tokens via NVS
   // load, so the divergence only affects fresh canary-PIO flashes.
   format_api_token_string(token_hash, sizeof(token_hash),

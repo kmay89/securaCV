@@ -1391,6 +1391,29 @@ def test_go2rtc_transform_rejects_non_dict_payload():
     assert serve_wizard._go2rtc_streams_to_cameras(None) == []
 
 
+def test_go2rtc_transform_skips_a_name_that_slugs_to_nothing():
+    """The empty name is the one that slugs to nothing (every other
+    character becomes one), and `zone:` fails zone:[a-z0-9_-]{1,64}: run.sh
+    took that row, sorted first by name, as the primary camera and exited
+    with "Invalid zone_id format" (sweep HA34). It is skipped, beside a good
+    stream; a blank or non-ASCII name still slugs to "_" and stays."""
+    streams = {
+        "": {"producers": [{"url": "rtsp://10.0.0.1/empty"}]},
+        " ": {"producers": [{"url": "rtsp://10.0.0.1/blank"}]},
+        "\u00e9": {"producers": [{"url": "rtsp://10.0.0.1/e"}]},
+        "Front Door": {"producers": [{"url": "rtsp://10.0.0.1/front"}]},
+    }
+    cameras = serve_wizard._go2rtc_streams_to_cameras(streams)
+    assert [(c["name"], c["zone_id"]) for c in cameras] == [
+        (" ", "zone:_"),
+        ("Front Door", "zone:front_door"),
+        ("\u00e9", "zone:_"),
+    ]
+    assert serve_wizard._go2rtc_streams_to_cameras(
+        {"": {"producers": ["rtsp://10.0.0.1/only"]}}
+    ) == []
+
+
 def test_go2rtc_transform_skips_malformed_rows_not_the_payload():
     streams = {
         "good": {"producers": [{"url": "rtsp://10.0.0.1/a"}]},
@@ -1447,9 +1470,32 @@ _GO2RTC_PARITY_PAYLOADS = {
         "Ünïcode-über": {"producers": ["rtsp://u/1"]},
         "L" * 80: {"producers": ["rtsp://l/1"]},
     },
+    # The empty name slugs to nothing and is skipped (sweep HA34); a blank
+    # and a non-ASCII name slug to "_" and stay. It sorts first, so a row
+    # for it would be the one run.sh takes as the primary camera.
+    "a name that slugs to nothing": {
+        "": {"producers": ["rtsp://e/1"]},
+        " ": {"producers": ["rtsp://s/1"]},
+        "\u00e9": {"producers": ["rtsp://u/1"]},
+        "cam": {"producers": ["rtsp://c/1"]},
+    },
+    "only a name that slugs to nothing": {
+        "": {"producers": [{"url": "rtsp://e/1"}]},
+    },
     "a list payload": ["not", "a", "dict"],
     "a string payload": "oops",
     "an empty object": {},
+    # JSON escapes reach jq as written: a tab, a newline, a backslash and a
+    # quote in a name, a backslash in a URL. The script once piped the payload
+    # through `echo`, which dash (the runner's /bin/sh) reads escapes in, so
+    # "\t" became a raw tab and jq refused the payload; Alpine's busybox echo
+    # does not, so the add-on and CI ran different bytes (sweep HA32).
+    "JSON escapes in names and URLs": {
+        "tab\there": {"producers": ["rtsp://t/1"]},
+        "new\nline": {"producers": ["rtsp://n/1"]},
+        "back\\slash": {"producers": ["rtsp://b/1\\x"]},
+        'say "cheese"': {"producers": ["rtsp://q/1"]},
+    },
 }
 
 
@@ -1467,6 +1513,27 @@ def _shell_go2rtc_rows(payload):
     return json.loads(out.stdout)
 
 
+# The add-on runs Alpine 3.18's jq, 1.6 (the base tag test_addon_store.py
+# pins; aports 3.18-stable builds the unpatched 1.6 release source); the
+# runner's is 1.7. pwk-wizard-tests.yml puts the jq-1.6 release binary, pinned
+# by sha256, first on PATH and names the version it must report in
+# PWK_REQUIRE_JQ, so the cases above run on the add-on's jq. A CI run that
+# falls back to the runner's jq, or loses the variable, fails here instead of
+# passing the parity cases on a jq the add-on never runs (sweep HA32).
+def test_go2rtc_parity_runs_on_the_jq_ci_requires():
+    want = os.environ.get("PWK_REQUIRE_JQ")
+    if not want:
+        if os.environ.get("CI"):
+            pytest.fail("CI must name the jq the parity cases run on (PWK_REQUIRE_JQ, e.g. jq-1.6)")
+        pytest.skip("PWK_REQUIRE_JQ is not set (CI sets it to the add-on's jq-1.6)")
+    if shutil.which("jq") is None:
+        pytest.fail("jq is not installed: discover_cameras.sh cannot be held to the reference")
+    got = subprocess.run(["jq", "--version"], capture_output=True, text=True, timeout=30)
+    assert got.stdout.strip() == want, (
+        f"the parity cases would run on {got.stdout.strip() or got.stderr.strip()!r}, not {want!r}"
+    )
+
+
 @pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))
 def test_go2rtc_shell_transform_matches_the_reference(label):
     payload = _GO2RTC_PARITY_PAYLOADS[label]
@@ -1476,6 +1543,199 @@ def test_go2rtc_shell_transform_matches_the_reference(label):
     for row in rows:
         assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", row["zone_id"]), row
         assert row["url"] not in ("", "null")
+
+
+# run.sh's own camera pick, run as written: standalone mode merges the
+# configured cameras with discover_cameras.sh's rows (unique_by(.name), which
+# sorts by name), takes the first as the primary camera and exits when its
+# zone fails zone:[a-z0-9_-]{1,64}. A stream named "" sorted first, so one
+# stray go2rtc stream stopped the app at start (sweep HA34). The block is
+# lifted out of run.sh from its first line to the comment that ends it, the
+# discovery script's install path swapped for this tree's copy (run under
+# sh, as its #!/bin/sh would), and bashio stubbed: the log, and the option
+# reads answered as bashio answers them (below).
+_RUN_SH = _MODULE_PATH.parent / "run.sh"
+_PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
+_PICK_END = "    # Build configuration file\n"
+_PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
+# bashio::config and bashio::config.has_value as bashio v0.15.0 (the version
+# the app's 3.18 base image pins; lib/config.sh, unchanged through bashio's
+# main branch) writes them, reading the options from $TEST_OPTIONS instead of
+# the Supervisor. The part that matters: an array option is printed one
+# compact element per line (`.key[]` through `jq --raw-output -c -M`), never
+# as a JSON array, and an empty one prints nothing. `|| true` after `read`
+# only keeps its end-of-input status from tripping `set -e` here.
+_PICK_STUBS = r"""set -euo pipefail
+bashio::config() {
+    local key=${1}
+    local default_value=${2:-null}
+    local query
+    local result
+    read -r -d '' query << QUERY || true
+        if (.${key} == null) then
+            null
+        elif (.${key} | type == "string") then
+            .${key} // empty
+        elif (.${key} | type == "boolean") then
+            .${key} // false
+        elif (.${key} | type == "array") then
+            if (.${key} == []) then
+                empty
+            else
+                .${key}[]
+            end
+        elif (.${key} | type == "object") then
+            if (.${key} == {}) then
+                empty
+            else
+                .${key}
+            end
+        else
+            .${key}
+        end
+QUERY
+    result=$(jq --raw-output -c -M "${query}" <<< "${TEST_OPTIONS}")
+    if [[ "${result}" == "null" ]]; then
+        echo "${default_value}"
+    else
+        printf "%s" "${result}"
+    fi
+    return 0
+}
+bashio::config.has_value() {
+    local value
+    value=$(bashio::config "${1}")
+    [[ "${value}" != "null" ]] && [[ -n "${value}" ]]
+}
+bashio::log.info() { printf 'info: %s\n' "$*" >&2; }
+bashio::log.warning() { printf 'warning: %s\n' "$*" >&2; }
+bashio::log.error() { printf 'error: %s\n' "$*" >&2; }
+"""
+_PICK_REPORT = "printf '%s\\n' \"$CAMERA_NAME\" \"$CAMERA_ZONE\" \"$CAMERA_URL\"\n"
+
+
+def _bashio_stub_ready():
+    if shutil.which("jq") is None:
+        if os.environ.get("CI"):
+            pytest.fail("jq is not installed: run.sh's camera pick cannot run")
+        pytest.skip("jq is not installed")
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not installed")
+
+
+def test_the_bashio_stub_answers_list_options_as_bashio_does():
+    """The stub is only worth what its fidelity is: two cameras come back as
+    two compact objects on two lines (not an array), an empty list as nothing
+    (so has_value is false), a missing option as its default."""
+    _bashio_stub_ready()
+    options = {
+        "cameras": [{"name": "a", "url": "rtsp://a"}, {"name": "b", "url": "rtsp://b"}],
+        "none": [],
+        "go2rtc_discovery": True,
+    }
+    script = _PICK_STUBS + (
+        "bashio::config cameras; echo '|'\n"
+        "bashio::config.has_value none || echo 'none: no value'\n"
+        "bashio::config missing; bashio::config go2rtc_discovery; echo\n"
+    )
+    out = subprocess.run(
+        ["bash", "-c", script], env={**os.environ, "TEST_OPTIONS": json.dumps(options)},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == [
+        '{"name":"a","url":"rtsp://a"}',
+        '{"name":"b","url":"rtsp://b"}|',
+        "none: no value",
+        "null",
+        "true",
+    ], out.stdout
+
+
+def _run_sh_camera_pick(streams, cameras=()):
+    """Run run.sh's standalone camera pick on a go2rtc payload (and the
+    configured `cameras` option). Returns (exit code, [name, zone, url] of the
+    primary camera when it got that far, stderr)."""
+    _bashio_stub_ready()
+    text = _RUN_SH.read_text(encoding="utf-8")
+    assert text.count(_PICK_START) == 1 and text.count(_PICK_END) == 1, (
+        "run.sh's standalone camera block moved; update this test"
+    )
+    block = text[text.index(_PICK_START):text.index(_PICK_END)]
+    assert block.count(_PICK_DISCOVER) == 1, "run.sh no longer runs discover_cameras.sh once"
+    assert block.count('jq -s \'add | unique_by(.name)\'') == 1, "run.sh's merge moved"
+    block = block.replace(_PICK_DISCOVER, 'sh "$TEST_DISCOVER_SH" "$GO2RTC_URL"')
+    env = {
+        **os.environ,
+        "GO2RTC_STREAMS_JSON": json.dumps(streams),
+        # The options as the Supervisor holds them: config.yaml's defaults
+        # with the user's cameras (an empty list when none is configured).
+        "TEST_OPTIONS": json.dumps({
+            "go2rtc_discovery": True,
+            "go2rtc_url": "http://127.0.0.1:9",
+            "cameras": list(cameras),
+        }),
+        "TEST_DISCOVER_SH": str(_DISCOVER_SH),
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PICK_STUBS + block + _PICK_REPORT],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    primary = out.stdout.splitlines() if out.returncode == 0 else []
+    return out.returncode, primary, out.stderr
+
+
+def test_run_sh_never_takes_a_nameless_stream_as_the_primary_camera():
+    streams = {
+        "": {"producers": [{"url": "rtsp://10.0.0.1/empty"}]},
+        "Front Door": {"producers": [{"url": "rtsp://10.0.0.1/front"}]},
+    }
+    code, primary, err = _run_sh_camera_pick(streams)
+    assert code == 0, err
+    assert primary == ["Front Door", "zone:front_door", "rtsp://10.0.0.1/front"], err
+    assert "Invalid zone_id" not in err
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "run.sh reads the cameras option as a JSON array, but bashio prints an "
+        "array option one element per line: with any configured camera "
+        "`.[0]` fails on an object and the app exits at start (handed up from "
+        "the HA34 review, #1802). Remove this marker when run.sh reads the "
+        "option whole."
+    ),
+)
+def test_run_sh_takes_the_configured_camera_beside_a_nameless_stream():
+    """Once the nameless stream is skipped, the configured camera is what is
+    left to be primary. This is what run.sh should do; today it never gets
+    that far (the xfail says why), so the case fails, strictly, until it
+    does."""
+    configured = [{"name": "porch", "url": "rtsp://10.0.0.2/p", "zone_id": "zone:porch"}]
+    code, primary, err = _run_sh_camera_pick(
+        {"": {"producers": ["rtsp://10.0.0.1/empty"]}}, configured
+    )
+    assert code == 0, err
+    assert primary == ["porch", "zone:porch", "rtsp://10.0.0.2/p"], err
+
+
+def test_run_sh_with_only_a_nameless_stream_says_no_cameras():
+    """Nothing usable is discovered, so run.sh says so; it never reaches the
+    zone check with a row it cannot use."""
+    code, primary, err = _run_sh_camera_pick({"": {"producers": ["rtsp://10.0.0.1/e"]}})
+    assert code == 1 and primary == []
+    assert "No cameras configured!" in err
+    assert "Invalid zone_id" not in err
+
+
+@pytest.mark.parametrize("label", sorted(_GO2RTC_PARITY_PAYLOADS))
+def test_run_sh_primary_zone_is_valid_for_every_parity_payload(label):
+    code, primary, err = _run_sh_camera_pick(_GO2RTC_PARITY_PAYLOADS[label])
+    assert "Invalid zone_id" not in err, err
+    if code == 0:
+        assert re.fullmatch(r"zone:[a-z0-9_-]{1,64}", primary[1]), primary
+    else:
+        assert code == 1 and "No cameras configured!" in err, err
 
 
 if __name__ == "__main__":

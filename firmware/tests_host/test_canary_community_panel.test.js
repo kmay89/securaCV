@@ -70,6 +70,10 @@ function page(answers) {
     document: { getElementById: el, querySelectorAll: () => [] },
     escapeHtml: (s) => String(s),
     currentPanel: "status",
+    // The Opera probe the poll asks again only while it has no verdict
+    // (F273); here it has one.
+    operaServed: false,
+    operaProbeAgain: false,
     loadLogs: () => calls.push("loadLogs"),
     loadWitness: () => calls.push("loadWitness"),
     refreshOpera: () => calls.push("refreshOpera"),

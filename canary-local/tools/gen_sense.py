@@ -678,12 +678,18 @@ N_WELLBEING = len(ENTITIES)
 # presence change, a count change and any vitals change (and the lux loop on a
 # 5 lx move); the loop publishes it then, and on every heartbeat. A range band
 # that moves alone dirties nothing, so it waits for the heartbeat.
-# The count bucket follows every radar frame while presence waits out its
-# timers, and a count change while Present is a witnessed occupancy_changed:
-# so an emptying room records one to "0" before presence_cleared. The lab
-# keeps the count until Clear; the pane note says so.
-must(PRESENCE_H.with_suffix(".cpp"), "    count_ = frame.has_target ? bucket_of(frame.target_count) : CountBucket::Zero;",
-     "the count follows each frame")
+# The count bucket follows the debounced state (sweep F131): Zero unless
+# Present, held through a frame that names no count, zeroed on the tick that
+# turns Clear or stalls, and a tick that changes the state reports no count
+# move of its own. A count change while Present is a witnessed
+# occupancy_changed, so an emptying room records presence_cleared alone, and
+# the lab's two ports keep the same rule (tests/sense.test.js and
+# tests/senselab.test.js hold them to this file, built natively).
+must(PRESENCE_H.with_suffix(".cpp"), "    if (state_ != Presence::Present) {\n        count_ = CountBucket::Zero;\n"
+     "    } else if (frame.has_target && frame.target_count > 0) {\n        count_ = bucket_of(frame.target_count);\n    }",
+     "the count follows the debounced state")
+must(PRESENCE_H.with_suffix(".cpp"), "    ev.count_changed = !ev.state_changed && (count_ != prev_count);",
+     "a state change carries its count")
 must(MAIN_CPP, "    if (g_presence.state() == Presence::Present) {\n      set_last_event(\"occupancy_changed\");\n"
      "      record_event_now(\"occupancy_changed\", now);", "a count change while Present is witnessed")
 HEARTBEAT_MS = grab_int(CFG_DEFAULT, "CS_HEARTBEAT_MS")
@@ -714,9 +720,11 @@ MQTT = {
     # non-retained topics from each topic's own flag
     "pane_note": "Every topic and every key, in its order, is the firmware's, and the radar lab publishes "
                  "when the firmware would, at its own thresholds: an event and the chain head on a "
-                 "witnessed transition, the state row on a change and every heartbeat. One step is left "
-                 "out: when the room empties, the device records an occupancy_changed to 0 occupants before "
-                 "presence_cleared (its count follows each radar frame), and the lab does not. What this page "
+                 "witnessed transition, the state row on a change and every heartbeat. The occupant count is "
+                 "the firmware's too: 0 until presence is confirmed, held while the room empties, and back "
+                 "to 0 with presence_cleared, never an occupancy_changed to 0. One step is left out: the "
+                 "device also records a presence_cleared when the radar's first frame finds the room empty "
+                 "(at boot, and when the radar comes back from a stall), and the lab does not. What this page "
                  "cannot know reads …: each sig, the health topic's public_key, and a chain head's hash "
                  "once it moves; the fp is an illustrative one, not the repo test key's. uptime_s, ts_ms "
                  "and bucket_uptime_s keep the example's values, since the page has no device clock, and "

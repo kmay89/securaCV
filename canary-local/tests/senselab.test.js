@@ -250,6 +250,40 @@ test("PresenceFSM: debounce, clear timeout, stall — the firmware integration w
   assert.ok(ev.stalled);
 });
 
+// F131: the Sense Lab's PresenceFSM, and what its pipeline records, against
+// the firmware's own, built from mr60_presence.cpp with the host's g++
+// (fixtures/mr60_presence_native.js), on the same frames: every tick's state,
+// count, band, both change flags and stall, and the events drive_fsms would
+// sign (SensePipeline's own _fsms, the loop body radar-emu.js drives).
+test("PresenceFSM and the pipeline's records tick as mr60_presence.cpp and drive_fsms do", async (t) => {
+  const native = require("./fixtures/mr60_presence_native.js");
+  for (const gate of native.MAIN_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms gate the driver mirrors: " + gate);
+  const b = native.build();
+  if (b.skip) { t.skip(b.skip); return; }
+  const S = await simP;
+  const cfg = data.fsm.presence;
+  for (const [name, trace] of Object.entries(native.traces(cfg))) {
+    const want = native.runFirmware(cfg, trace);
+    // the FSM on its own for the change flags, and a presence-only
+    // pipeline beside it for what it records, fed the same frames
+    const fsm = new S.PresenceFSM(cfg);
+    const pipe = new S.SensePipeline(cfg, data.fsm.vitals, false);
+    const got = [];
+    for (const k of trace) {
+      if ("reset" in k) { fsm.reset(k.reset); pipe.reset(k.reset); continue; }
+      const frame = "target" in k
+        ? { kind: S.FrameKind.Presence, has_target: k.target, target_count: k.count, distance_cm: k.cm, breath_rate: 0, heart_rate: 0 }
+        : { kind: S.FrameKind.None };
+      const ev = fsm.tick(frame, k.t);
+      const events = pipe._fsms(frame, k.t);
+      got.push({ state: fsm.state, count: fsm.count, range: fsm.range, state_changed: ev.state_changed,
+        count_changed: ev.count_changed, stalled: ev.stalled, events });
+    }
+    assert.deepStrictEqual(got, want, `trace "${name}"`);
+    assert.ok(!want.some((r) => r.events.includes("occupancy_changed") && r.count === "0"), `trace "${name}" signs no occupancy_changed to 0`);
+  }
+});
+
 test("VitalsFSM: lock confirm, instant multi-target suppression, deadline loss", async () => {
   const S = await simP;
   const cfg = data.fsm.vitals;

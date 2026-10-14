@@ -152,8 +152,8 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   composite action on every PR; `firmware-release.yml` publishes from the same
   matrix. Profiles are the `CANARY_PROFILE_*` defines the sketch reads.
 
-- [ ] **Stabilize Arduino dependency pinning** — the docs half is done; the CI
-  half is the open sub-item below
+- [x] **Stabilize Arduino dependency pinning** — the docs half and the CI
+  half below (#1802); the PR row floats on purpose
   - [x] Tested core + libraries locked in the docs: `arduino/canary_wap/sketch.yaml` pins
         `esp32:esp32 (3.3.8)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
         the firmware SBOM (`scripts/gen_firmware_sbom.py --check --validate`,
@@ -161,11 +161,23 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] Compatibility notes: `README.md` "Install Libraries" names
         ArduinoJson 7.x, Crypto, and NimBLE-Arduino **2.3.8 or later** (1.x
         compiles with Bluetooth silently disabled).
-  - [ ] Locked in the CI scripts too: the WAP's Arduino-CLI CI rows still
-        build on the weekly "latest" core while the sketch pins 3.3.8, so the
-        box's "in docs + CI scripts" is not met yet.
-        [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records pinning those
-        rows as a release decision for the maintainer, not a lint's call.
+  - [x] Locked in the CI scripts too (#1802, sweep F21): the WAP's release
+        rows (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
+        `csi_module_disable_matrix.yml`) pass `core-version: "3.3.8"`, the
+        sketch's pin; the two release jobs install it exclusively, since they
+        go on to install the display cores in the same job. `firmware.yml`'s
+        PR row keeps floating on the weekly "latest" by design, as the early
+        warning for the next core, so a cut release can differ from its PR
+        build's core; [`firmware/PLATFORMS.md`](../../PLATFORMS.md) records
+        the decision (maintainer to confirm). Evidence: the firmware SBOM
+        lists each row under the core it pins,
+        `gen_firmware_sbom.py --check --validate` (`lint.yml`) refuses a row
+        pin no WAP sketch profile shares, and
+        `scripts/tests/test_gen_firmware_sbom.py` holds each WAP row to its
+        side of the split (a row moved either way fails it). The libraries
+        stay unversioned in the rows and the profile alike (the README names
+        minimum versions). The release rows compile only when a release runs
+        (CI's, on dispatch or tag).
 
 - [x] **Split oversized `web_ui.h` payload** — superseded by the gzip
   shipping model.
@@ -227,13 +239,31 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] `--no-default-features` build (note: `Cargo.toml` defines no `default` feature, so this is the same build as the default one)
   - [x] `--features backend-tract` build
 
-- [ ] **Backend audit trail** — **open, its own change** (lives in the
-  kernel, not this firmware): a `docs/security/backend_audit.md` row per
-  detector backend (the default pure-Rust path; `backend-tract` behind its
-  cargo feature) and a `cargo test` asserting every non-pure-Rust backend is
-  feature-gated.
-  - Document audit results for each enabled detector backend.
-  - Ensure all non-pure-Rust backends remain feature-gated.
+- [x] **Backend audit trail** — done in #1802 (sweep F34; lives in the
+  kernel, not this firmware): [`docs/security/backend_audit.md`](../../../docs/security/backend_audit.md)
+  has a row per backend module in `src/detect/backends/` (the default
+  motion-only `cpu` and `stub` backends and their shared `motion.rs` engine;
+  `tract` behind `backend-tract`, which `detect-eval` also enables), and
+  `scripts/tests/test_backend_feature_gates.py` (unittest, run by `lint.yml`'s
+  `scripts/tests` discover) is the gate. Decision (maintainer to confirm): a
+  static Python test, not the `cargo test` this box first named; the kernel's
+  crates are not fetchable everywhere the check should run and the property
+  lives in the source text (`Cargo.toml` features, `Cargo.lock`, `cfg` on the
+  `mod` item or the file), while `rust.yml` keeps building the default and
+  `backend-tract` feature sets. It passes on this tree; its own cases break the
+  gate on copies of the real inputs (tract ungated, gated on a feature that
+  does not pull `tract-onnx`, `default` enabling it directly or through
+  `detect-eval`, a missing or stale audit row, a directory module, a
+  `#[path]` module, an aliased `use`, a default backend on `rusqlite`) and
+  each fails.
+  - [x] Document audit results for each enabled detector backend — the
+        table's "Audit result" column (a source reading; no bench run).
+  - [x] Ensure all non-pure-Rust backends remain feature-gated — a second
+        decision (maintainer to confirm): a backend is non-pure-Rust when a
+        crate it names, optional or required, has `cc`, `cmake`, `bindgen`,
+        `pkg-config` or `vcpkg` in its `Cargo.lock` tree, and every backend
+        that needs an optional crate is gated too. The default backends name
+        only `anyhow` and `sha2`, neither native.
 
 ---
 
