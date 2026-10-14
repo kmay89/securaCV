@@ -276,7 +276,10 @@ function bindRowEvents(){
     row.querySelector('.reset').addEventListener('click', async () => {
       // null removes the stored row (sweep F127): the device runs its
       // default again, which for a presence threshold is the preset's.
-      // Reload to show what it runs now.
+      // Reload to show what it runs now. A drag's save still waiting in
+      // postCoeff()'s 300 ms timer is dropped first, or it would store
+      // the row again after the reset.
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }
       try {
         const body = {}; body[c.full_key] = null;
         const r = await cvFetch('/api/tune/coefficients', {
@@ -346,6 +349,7 @@ $('#loadPreset').addEventListener('change', async ev => {
 
 $('#resetAll').addEventListener('click', async () => {
   if (!confirm('Remove every stored coefficient, so each goes back to its default? This is one POST per row.')) return;
+  if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }   // a waiting save would store a row again
   for (const c of state.coeffs){
     try {
       const body = {}; body[c.full_key] = null;   // null removes the row (sweep F127)

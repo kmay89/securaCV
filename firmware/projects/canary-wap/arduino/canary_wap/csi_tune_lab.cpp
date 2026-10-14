@@ -173,10 +173,13 @@ TunePost tune_post(const char* body, void (*reinit)(const char* module_id)) {
     const char* p = strstr(body, needle);
     if (!p) continue;
     p += nl;
-    while (*p == ' ' || *p == '\t') p++;
+    /* JSON whitespace on both sides of the colon, newlines included: a
+     * null or a bool on the next line is read, as a number there always
+     * was (strtol skips them itself). */
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (*p != ':') continue;
     p++;
-    while (*p == ' ' || *p == '\t') p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
 
     /* null: the Lab's reset, the row goes whatever the knob's kind. */
     const bool reset = is_json_null(p);

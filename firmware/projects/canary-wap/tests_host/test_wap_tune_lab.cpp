@@ -715,8 +715,9 @@ static int test_the_calibration_status_reports_the_thresholds_in_use() {
 // every knob) stored 35 / 75 / 30 as rows, which then won over the preset:
 // the thresholds moved without anyone choosing them. The Lab now reports
 // what the module runs, read_presence_thresholds_in_use(), so a round trip
-// keeps them. (That the round trip stores rows at all, and the Lab's reset
-// storing each declared default as a row, are sweep F127's.)
+// keeps them. (The round trip still stores a row for every knob, which
+// sweep F127 kept; the Lab's reset stored each declared default as a row
+// until F127, and now removes the row.)
 
 // The bundle GET /api/tune/preset streams: every knob, read as the handler
 // reads it (the pins below hold the handler to this).
@@ -1268,6 +1269,21 @@ static int test_a_lab_reset_removes_the_row() {
   CHECK(lab_value("core.presence.pet_mode") == 0);
   CHECK(lab_value("core.quiet_hours.enabled") == (kQuietHoursDefaultEnabled ? 1 : 0));
   CHECK(host_prefs().error_logs == logs);
+
+  // JSON whitespace around the colon includes newlines: a null or a bool
+  // on the next line is read, as a number there always was (a hand-edited
+  // bundle posted to /api/tune/preset can be laid out this way).
+  CHECK(tune_post("{\"core.presence.active_threshold\":\n  98}", reinit_module_model).changed == 1);
+  CHECK(lab_value("core.presence.active_threshold") == 98);
+  post = tune_post("{\"core.presence.active_threshold\":\n  null\n}", reinit_module_model);
+  CHECK(post.changed == 1 && post.reinit_presence);
+  CHECK(!has_row("core.presence.active_threshold"));
+  CHECK(tune_post("{\"core.presence.pet_mode\"\r\n:\r\ntrue}", reinit_module_model).changed == 1);
+  CHECK(has_row("core.presence.pet_mode") && lab_value("core.presence.pet_mode") == 1);
+  post = tune_post("{\r\n  \"core.presence.pet_mode\" :\r\n  null\r\n}", reinit_module_model);
+  CHECK(post.changed == 1);
+  CHECK(!has_row("core.presence.pet_mode"));
+  CHECK(host_prefs().error_logs == logs);
   host_prefs().clear();
   return 0;
 }
@@ -1408,8 +1424,12 @@ static int test_wifi_channel_activity_has_no_lab_knob() {
 }
 
 // The page: tune_ui.h's per-row reset and Reset all each POST a null for
-// the knob, never its declared default. Checked against in-memory mutations
-// of the page (each must be caught).
+// the knob, never its declared default; each first drops a slider or toggle
+// save still waiting in postCoeff()'s 300 ms timer (it would store the row
+// again after the reset), and reloads after its POST, so the rows show what
+// the device runs now. The per-row reset says a failed POST failed, not
+// "stored value removed". Checked against in-memory mutations of the page
+// (each must be caught).
 static std::vector<std::string> lab_page_problems(const std::string& page) {
   std::vector<std::string> out;
   auto block = [&](const std::string& head) -> std::string {
@@ -1422,9 +1442,9 @@ static std::vector<std::string> lab_page_problems(const std::string& page) {
     }
     return "";
   };
-  const struct { const char* name; const char* head; } kHandlers[] = {
-      {"the row's reset", "row.querySelector('.reset').addEventListener('click'"},
-      {"Reset all", "$('#resetAll').addEventListener('click'"},
+  const struct { const char* name; const char* head; bool reports_failure; } kHandlers[] = {
+      {"the row's reset", "row.querySelector('.reset').addEventListener('click'", true},
+      {"Reset all", "$('#resetAll').addEventListener('click'", false},
   };
   for (const auto& h : kHandlers) {
     const std::string b = block(h.head);
@@ -1438,6 +1458,15 @@ static std::vector<std::string> lab_page_problems(const std::string& page) {
       out.push_back(std::string(h.name) + ": still uses the declared default");
     if (b.find("'/api/tune/coefficients'") == std::string::npos)
       out.push_back(std::string(h.name) + ": does not POST to /api/tune/coefficients");
+    const size_t fetch_at = b.find("cvFetch(");
+    const size_t clear_at = b.find("clearTimeout(pendingTimer)");
+    if (fetch_at == std::string::npos || clear_at == std::string::npos || clear_at > fetch_at)
+      out.push_back(std::string(h.name) + ": does not drop a waiting save before its POST");
+    const size_t load_at = b.find("await load();");
+    if (fetch_at == std::string::npos || load_at == std::string::npos || load_at < fetch_at)
+      out.push_back(std::string(h.name) + ": does not reload after its POST");
+    if (h.reports_failure && b.find("if (!r.ok) throw") == std::string::npos)
+      out.push_back(std::string(h.name) + ": reports a refused POST as a reset");
   }
   return out;
 }
@@ -1454,6 +1483,19 @@ static int test_the_lab_page_resets_with_null() {
       {"const body = {}; body[c.full_key] = null;   // null removes the row (sweep F127)",
        "const body = {}; body[c.full_key] = c.value;"},
       {"$('#resetAll').addEventListener('click'", "$('#resetAll').addEventListener('dblclick'"},
+      // No reload after the row's reset, or after Reset all: the rows keep
+      // showing the removed values while the device runs the defaults.
+      {"        if (!r.ok) throw new Error('HTTP '+r.status);\n        await load();\n",
+       "        if (!r.ok) throw new Error('HTTP '+r.status);\n"},
+      {"  await load();\n  setStatus('All stored", "  setStatus('All stored"},
+      // The row's reset reads a 503 "nvs unavailable" as "stored value removed".
+      {"        if (!r.ok) throw new Error('HTTP '+r.status);\n        await load();\n",
+       "        await load();\n"},
+      // A waiting slider save is left to fire after the reset.
+      {"      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }\n      try {",
+       "      try {"},
+      {"  if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }   // a waiting save",
+       "  // a waiting save"},
   };
   for (const Mutation& mu : kMutations) {
     std::string m = page;
@@ -1461,6 +1503,14 @@ static int test_the_lab_page_resets_with_null() {
     if (lab_page_problems(m).empty()) std::fprintf(stderr, "page mutation not caught: %s\n", mu.to);
     CHECK(!lab_page_problems(m).empty());
   }
+  // ...or dropped only after the POST, when the waiting save may already
+  // have fired.
+  std::string late = page;
+  CHECK(mutate(late, "      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = 0; }\n      try {",
+               "      try {"));
+  CHECK(mutate(late, "        await load();\n        setStatus('Reset ",
+               "        await load();\n        clearTimeout(pendingTimer);\n        setStatus('Reset "));
+  CHECK(!lab_page_problems(late).empty());
   return 0;
 }
 

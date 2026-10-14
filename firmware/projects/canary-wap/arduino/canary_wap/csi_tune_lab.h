@@ -105,7 +105,8 @@ struct TunePost {
  * true / false / 1 / 0 for a bool; each clamped to the knob's range; any
  * other key ignored), remove the row of every knob whose value is null (the
  * Lab's reset, sweep F127; any other value it cannot read is ignored, as
- * before), close NVS, then apply what changed: each module
+ * before; JSON whitespace, newlines included, may sit on either side of the
+ * colon), close NVS, then apply what changed: each module
  * touched once through `reinit` (csi_integration.cpp's reinit_module()), and
  * the stored Quiet Hours once through apply_quiet_hours_from_nvs() when a
  * core.quiet_hours.* knob was stored (sweep F128). Nothing is signed or
