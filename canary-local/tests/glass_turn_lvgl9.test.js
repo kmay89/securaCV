@@ -35,6 +35,42 @@ function lvglAsks(block) {
   return block.split("\n").filter((l) => /^\s*lvgl\/lvgl(?:[@\s]|$)/.test(l)).map((l) => l.trim());
 }
 
+// Every lib_deps entry in an .ini that names LVGL in any spelling (with or
+// without the owner, a range, a URL), with its [section]: comments dropped,
+// continuation lines read as the key above them.
+function lvglDeps(ini) {
+  const out = [];
+  let section = "";
+  let key = "";
+  for (const raw of ini.split("\n")) {
+    const line = raw.replace(/\s;.*$/, "").replace(/\s+$/, "");
+    if (!line.trim() || /^\s*[;#]/.test(line)) continue;
+    const sec = /^\[([^\]]+)\]/.exec(line);
+    if (sec) {
+      section = sec[1];
+      key = "";
+      continue;
+    }
+    const kv = /^([A-Za-z_][\w.-]*)\s*=\s*(.*)$/.exec(line);
+    let value = line.trim();
+    if (kv) {
+      key = kv[1];
+      value = kv[2].trim();
+    } else if (!/^\s/.test(line)) {
+      key = "";
+    }
+    if (key === "lib_deps" && /lvgl/i.test(value)) out.push({ section, dep: value });
+  }
+  return out;
+}
+
+// The lib_deps entries naming LVGL that are neither an 8.x row nor exactly
+// lvgl/lvgl@<pin>: what F247 refuses.
+function offPin(ini, pin) {
+  const eight = /^lvgl\/lvgl@[\^~]?8\.\d+\.\d+$/;
+  return lvglDeps(ini).filter(({ dep }) => !eight.test(dep) && dep !== `lvgl/lvgl@${pin}`);
+}
+
 // One [section] of an .ini, up to the next.
 function iniBlock(ini, section) {
   const at = ini.indexOf(`\n[${section}]\n`);
@@ -144,8 +180,21 @@ test("the pin is exact (F247): both PlatformIO LVGL 9 rows ask for exactly sketc
   for (const section of ["env:canary-display-dash", "canary_display_c6_core3"]) {
     assert.deepStrictEqual(lvglAsks(iniBlock(ini, section)), [`lvgl/lvgl@${pin}`], `[${section}] asks for exactly LVGL ${pin}`);
   }
-  const nines = [...ini.matchAll(/^\s*lvgl\/lvgl\s*@\s*(\S*9\.\S*)\s*$/gm)].map((m) => m[1]);
-  assert.ok(nines.length >= 2 && nines.every((v) => v === pin), `every LVGL 9 row in the .ini is exactly ${pin}: ${nines}`);
+  // Every other lib_deps entry that names LVGL is an 8.x row: an LVGL 9 (or
+  // unversioned, or URL) dependency anywhere else in the .ini is refused too,
+  // however it is spelled.
+  assert.deepStrictEqual(offPin(ini, pin), [], `every LVGL dependency in the .ini is an 8.x row or exactly lvgl/lvgl@${pin}`);
+  assert.ok(lvglDeps(ini).filter(({ dep }) => dep === `lvgl/lvgl@${pin}`).length >= 2, "the two LVGL 9 rows are seen");
+  for (const plant of [`lvgl/lvgl@^${pin}`, "lvgl/lvgl@^9", "lvgl/lvgl@>=9.0.0", `lvgl@${pin.replace(/\.\d+$/, ".9")}`,
+    "lvgl/lvgl", `lvgl/lvgl @ ${pin}`, "https://github.com/lvgl/lvgl.git#v9.6.0", `lvgl/lvgl@${pin} ; pinned`]) {
+    const probe = `${ini}\n[env:probe]\nlib_deps =\n    other/lib@1.0.0\n    ${plant}\n`;
+    const seen = offPin(probe, pin).map(({ section, dep }) => `${section}: ${dep}`);
+    if (plant.endsWith("; pinned")) {
+      assert.deepStrictEqual(seen, [], "an inline comment is not part of the row");
+    } else {
+      assert.deepStrictEqual(seen, [`env:probe: ${plant}`], `a third env asking for ${plant} is refused`);
+    }
+  }
   // The script, run on a copy of the files its env checks read, with an
   // LVGL directory that does not exist: the exact pin gets past every check
   // to the library, and a caret in either row stops it there, naming the row.
@@ -167,11 +216,20 @@ test("the pin is exact (F247): both PlatformIO LVGL 9 rows ask for exactly sketc
     const first = ini.indexOf(row);
     const last = ini.lastIndexOf(row);
     assert.ok(first >= 0 && last > first, "two exact rows to plant a caret in");
-    const caret = (at) => `${ini.slice(0, at)}    lvgl/lvgl@^${pin}\n${ini.slice(at + row.length)}`;
+    // A caret, a bare name, a spaced spec and a second row beside the exact
+    // one, each planted in either row: refused, the row and what it asks named.
+    const plants = [
+      [`    lvgl/lvgl@^${pin}\n`, `lvgl/lvgl@^${pin}`],
+      ["    lvgl/lvgl\n", "lvgl/lvgl"],
+      [`    lvgl/lvgl @ ${pin}\n`, `lvgl/lvgl @ ${pin}`],
+      [`${row}    lvgl/lvgl@^${pin}\n`, `lvgl/lvgl@${pin} lvgl/lvgl@^${pin}`],
+    ];
     for (const [at, who] of [[first, "the PlatformIO dash env"], [last, "canary_display_c6_core3"]]) {
-      const r = run(caret(at));
-      assert.strictEqual(r.status, 2, r.stderr);
-      assert.ok(r.stderr.includes(`${who} asks for 'lvgl/lvgl@^${pin}', not exactly lvgl/lvgl@${pin}`), r.stderr);
+      for (const [text, asks] of plants) {
+        const r = run(`${ini.slice(0, at)}${text}${ini.slice(at + row.length)}`);
+        assert.strictEqual(r.status, 2, r.stderr);
+        assert.ok(r.stderr.includes(`${who} asks for '${asks}', not exactly lvgl/lvgl@${pin}`), r.stderr);
+      }
     }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
