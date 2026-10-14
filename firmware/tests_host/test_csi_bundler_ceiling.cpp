@@ -91,13 +91,19 @@ static constexpr uint8_t kCeiling = 6;   // core.presence's default per hour
 static uint32_t g_rows = 0;
 static uint32_t g_rows_by_state_a = 0;
 static uint32_t g_row_ms[4096];
+static uint32_t g_held_rows = 0;     // Quiet Hours' held_summary rows
+static uint32_t g_held_count = 0;    // the last one's count of held emits
 
-extern "C" void csi_event_on_committed(uint32_t, const char*, const char*,
+extern "C" void csi_event_on_committed(uint32_t, const char*, const char* type_name,
                                        csi_event_category_t, csi_privacy_class_t,
                                        const csi_event_values_t* v) {
   if (g_rows < sizeof(g_row_ms) / sizeof(g_row_ms[0])) g_row_ms[g_rows] = g_now_ms;
   ++g_rows;
   if (v && std::strcmp(v->state_name, "a") == 0) ++g_rows_by_state_a;
+  if (v && type_name && std::strcmp(type_name, "held_summary") == 0) {
+    ++g_held_rows;
+    g_held_count = v->bundled_count;
+  }
 }
 
 // ── A module: one state-bearing type under a 6/hour ceiling ─────────────
@@ -775,6 +781,64 @@ static int test_the_peek_answers_what_admit_does_and_changes_nothing() {
   return 0;
 }
 
+// Quiet Hours count what they hold, whatever the ceiling. The hold sits
+// after the ceiling in the chokepoint, so before F90 a refresh of an open
+// bundle at a full ceiling was refused there and never reached it; now a
+// refresh needs no slot, so Quiet Hours hold it and count it, as they do
+// below the ceiling. An opening at the full ceiling is still refused before
+// the hold and not counted. The chokepoint's own held_summary row reports
+// the count (a stand-in manifest for meta.quiet_hours, as the shipped one
+// declares it: note, bundled_count and time bucket, no ceiling).
+static const csi_event_decl_t kQuietEvents[] = {
+  {"held_summary", CSI_FIELD_NOTE | CSI_FIELD_BUNDLED_COUNT | CSI_FIELD_TIME_BUCKET,
+   CSI_PRIVACY_P0, 0},
+};
+static const csi_module_t kQuietModule = {
+  "meta.quiet_hours", CSI_PRIVACY_P0, kQuietEvents, 1, nullptr, tick, nullptr, nullptr,
+};
+
+// Open "a", fill the module's other `others` slots, step one minute into a
+// quiet window (inside "a"'s quiet gap), refresh "a" three times and try one
+// opening, then leave the window; the next emit commits the summary.
+static int held_while(int others, uint32_t* held_rows, uint32_t* held_count) {
+  start_run(0);
+  (void)csi_module_register(&kQuietModule);   // once; a second call is refused
+  csi_event_set_clock_offset_minutes(600);    // 10:00 now
+  csi_event_set_quiet_window(601, 700, true);
+  g_held_rows = 0;
+  g_held_count = 0;
+  CHECK(emit("a") != 0);
+  static const char* const kOthers[] = {"b", "c", "d", "e", "f"};
+  for (int i = 0; i < others; ++i) CHECK(emit(kOthers[i]) != 0);
+  g_now_ms += kMinute;                         // 10:01, in the window
+  for (int i = 0; i < 3; ++i) {
+    CHECK(emit("a") == 0);                     // held, not merged
+    g_now_ms += 10 * kSecond;
+  }
+  CHECK(emit("g") == 0);                       // held below the ceiling, refused at it
+  csi_event_set_quiet_window(601, 700, false);
+  (void)emit("a");                             // the first emit out of the window
+  *held_rows = g_held_rows;
+  *held_count = g_held_count;
+  csi_event_set_clock_offset_minutes(0);
+  return 0;
+}
+
+static int test_quiet_hours_count_a_refresh_at_a_full_ceiling() {
+  uint32_t rows = 0, count = 0;
+  if (held_while(2, &rows, &count)) return 1;  // three of six slots spent
+  CHECK(rows == 1);
+  CHECK(count == 4);                           // the three refreshes and "g"
+  if (held_while(5, &rows, &count)) return 1;  // the ceiling full
+  if (rows != 1 || count != 3) {
+    std::fprintf(stderr, "  full ceiling: %u summary rows, %u held\n", (unsigned)rows,
+                 (unsigned)count);
+  }
+  CHECK(rows == 1);
+  CHECK(count == 3);                           // the three refreshes; "g" was refused
+  return 0;
+}
+
 int main() {
   if (test_admit_reports_merge_after_its_own_expiry()) return 1;
   if (test_emits_just_past_the_gap_spend_the_ceiling()) return 1;
@@ -792,6 +856,7 @@ int main() {
   if (test_the_peek_sees_the_cleaned_state()) return 1;
   if (test_a_ceiling_of_one_has_no_slot_to_keep()) return 1;
   if (test_a_ceiling_of_255()) return 1;
+  if (test_quiet_hours_count_a_refresh_at_a_full_ceiling()) return 1;
   std::printf("test_csi_bundler_ceiling: %d checks passed\n", g_checks);
   return 0;
 }

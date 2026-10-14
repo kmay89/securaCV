@@ -758,7 +758,10 @@ instead. At the first emit AFTER the window closes (or when the user
 disables Quiet Hours mid-window), the chokepoint synthesizes one
 `held_summary` row through the registered `meta.quiet_hours` module.
 The summary's `note` is `"quiet_hours"` and `bundled` reflects
-the number of suppressed events. **Anomaly events (`CSI_CATEGORY_ANOMALY`)
+the number of suppressed events. The hold comes after the module's hourly
+ceiling, so an emit the ceiling refuses is not counted, while a refresh of
+an open bundle needs no slot and is counted at a full ceiling too (sweep
+F90; before it, a full ceiling refused those refreshes first). **Anomaly events (`CSI_CATEGORY_ANOMALY`)
 always pass through** — the night-time category is precisely when
 unusual activity matters most.
 
