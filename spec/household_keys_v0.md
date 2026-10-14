@@ -123,11 +123,14 @@ A fixed 112-byte record, all integers big-endian:
 | 48 | 64 | `sig` | Ed25519 by the hub posture key over `"securacv-posture-v1\0" ‖ bytes[0..48]` |
 
 A statement carries no credential, member, door or zone. It does carry a
-time: `issued_at` is the minute of the last posture change (a command, a
-lapse or a restart), and whoever reads the statement learns that minute
-(§6.2). The checker keeps `seq` at or above `minute(issued_at) << 10`, so
-restoring its sequence file from a backup cannot make it reuse a sequence
-number. That floor states nothing `issued_at` does not already state.
+time: `issued_at` is the minute of the last posture change or `home`
+renewal (a command, a lapse or a restart), and whoever reads the statement
+learns that minute (§6.2). The checker keeps `seq` at or above
+`minute(issued_at) << 10`, so restoring its sequence file from a backup
+cannot make it reuse a sequence number. That floor states nothing
+`issued_at` does not already state, but a `seq` above the floor does: on a
+hub clock that never stepped back, `seq` minus the floor is how many
+statements were issued earlier in the same minute.
 
 ### 3.2 Verification (witness side)
 
@@ -239,13 +242,14 @@ rejected responses on one lane of one door within ten minutes start a
 60-second cooldown for that lane, so junk on one lane never cools the other.
 The LAN API is one door (`door_id` = 16 zero bytes).
 
-- Only a response to a live challenge counts: the challenge take and every
-  check after it. A request without a paired token, or whose body does not
-  parse, never reaches the limiter (§6.1), so a client with no token cannot
-  start a cooldown. A refusal caused by a cooldown, or by a stale roster
-  (§6.1), is not counted either.
-- A cooldown refuses only `home`, both the challenge and the command. `away`
-  and `night` still go through on a cooling signature lane, so a denial of
+- Only a response counts: from the challenge take (answering an unknown,
+  used, expired or another session's challenge counts) through every check
+  after it. Asking for a challenge is never counted. A request without a
+  paired token, or whose body does not parse, never reaches the limiter
+  (§6.1), so a client with no token cannot start a cooldown. A refusal
+  caused by a cooldown, or by a stale roster (§6.1), is not counted either.
+- On the signature lane, a cooldown refuses only `home`, both the challenge
+  and the command. `away` and `night` still go through, so a denial of
   service cannot hold a house in `home` through the cooldown.
 - The card lane carries `away` and `night` only, and it stays closed while it
   cools: every trial `AuthenticateEV2First` (§4.2) touches a real card's
@@ -347,10 +351,11 @@ pending` lists it.
 approval is all any change needs (an add also needs the confirm at the hub),
 including removing every other admin once the 24-hour pending period has
 passed, and nothing announces that pending change beyond `roster pending`.
-So "one stolen admin key cannot take over" holds only with `threshold` 2 or
-more. The trade-off: with exactly two admins and `threshold` 2, losing one
-admin key leaves no way to remove it, because removing an admin needs two
-current admins. So `threshold` 2 wants at least three admins.
+So one stolen admin key can take over a roster at `threshold` 1; only
+`threshold` 2 or more stops it. The trade-off: with exactly two admins and
+`threshold` 2, losing one admin key leaves no way to remove it, because
+removing an admin needs two current admins. So `threshold` 2 wants at least
+three admins.
 
 ### 5.4 Secrets and backups
 
@@ -369,10 +374,11 @@ accepted roster (§5.1). Their public halves are in plaintext
 `hub_keys.json`. No roster field is secret.
 
 The KEK is a file of 64 hex characters. The checker refuses a KEK path
-inside the data directory, and (on Unix) a KEK file readable by group or
-others. There is no passphrase option. Only the commands that open sealed
-material take `--kek`: `init`, `roster genesis`, `roster apply`,
-`card provision` and `serve`; every other command reads public material only.
+inside the data directory, and (on Unix) a KEK file that group or others
+have any permission on. There is no passphrase option. Only the commands
+that open sealed material take `--kek`: `init`, `roster genesis`,
+`roster apply`, `card provision` and `serve`; every other command reads
+public material only.
 `card provision` opens the hub keys first, which proves the KEK belongs to
 this household, so a card key is never sealed under a KEK the server cannot
 open.
@@ -432,7 +438,8 @@ only, since every request it forwards arrives from its own address). Without
 it, every request crosses the LAN in cleartext, including each client's bearer
 token (stable per client) and, in a `/v1/command` body, the member handle. A
 passive listener on the LAN can therefore link acts to a device and to a
-member, and can replay a sniffed token to read the posture. A signature still
+member, and can replay a sniffed token to read the posture, use up the
+request cap, or start cooldowns that refuse `home` (§4.3). A signature still
 has to come from an enrolled key.
 
 | Method | Path | Body | Result |
@@ -464,17 +471,22 @@ has to come from an enrolled key.
   was missing or wrong, the request cap was reached, the body did not parse,
   `home` was refused during a cooldown (§4.3) or while the roster is stale
   (below), the challenge was used, the handle was unknown, the signature was
-  bad or the class was not allowed. No response says whether a handle exists,
-  and neither does the time a refusal takes: every command that reaches the
-  credential check runs exactly one P-256 check, against a dummy key when the
-  handle is unknown, expired, a card, or does not match the binding the
-  request used (an `es256` response for a FIDO2 member or the other way round,
-  a wrong `rp_id`, no UV from an `intent` FIDO2 member). A test asserts this by
-  counting the checks, not by timing them.
+  bad or the class was not allowed. (Only a request refused before its token
+  is checked gets anything else: `400` or `413` when the HTTP request does
+  not parse or is too large, `404` or `405` for an unknown path or method.)
+  No response says whether a handle exists, and neither does the time a
+  refusal takes: every command that reaches the credential check with a DER
+  signature runs exactly one P-256 check, against a dummy key when the handle
+  is unknown, expired, a card, or does not match the binding the request used
+  (an `es256` response for a FIDO2 member or the other way round, a wrong
+  `rp_id`, no UV from an `intent` FIDO2 member). A command whose signature
+  is not DER runs none, whatever the handle. A test asserts this by counting
+  the checks, not by timing them.
 - **A request without a paired token is refused before anything is
   counted**: it is charged neither to the request cap nor to the door limiter,
-  so a client with no token cannot crowd out paired clients or start a
-  cooldown. A body that does not parse never reaches the door limiter either.
+  so a client with no token cannot use up the request cap or start a
+  cooldown (it can still hold connection slots, below). A body that does not
+  parse never reaches the door limiter either.
 - The server is bounded like the kernel API: 8 KiB per request, a 4 KiB
   body, one request per connection, no chunked bodies, and a cap of 600
   requests a minute for all paired clients together, charged only after the
@@ -489,10 +501,10 @@ has to come from an enrolled key.
 - **It reloads while it runs.** The roster chain, the sealed card store and
   the pairings reload independently. A part that fails to load keeps its
   previous state, is retried on every poll, and is logged once. If the roster
-  chain changed but does not load or pass its checks (§5.1, §5.5), the roster
-  is **stale**: `home` is refused until a roster passes them, and `away` and
-  `night` are still checked against the last roster that did, because raising
-  sensing is safe whoever asks.
+  chain gains or loses its newest roster but then does not load or pass its
+  checks (§5.1, §5.5), the roster is **stale**: `home` is refused until a
+  roster passes them, and `away` and `night` are still checked against the
+  last roster that did, because raising sensing is safe whoever asks.
 - It logs startup, shutdown, reload trouble and storage failures, and nothing
   per request: no handle, credential id or peer address.
 
@@ -511,14 +523,14 @@ does not reveal a tap that changed nothing. `home` is always reissued,
 because that renews its lapse.
 
 The seam holds the current statement only, not a history, but the data
-directory states the time of the last posture change: the seam's `issued_at`
-and `not_after`, and `seq.json`'s `last_seq` (whose value `>> 10` is that
-minute), give the minute, and both files' modification times give the
-second. That change was
-a command, a lapse or a restart. Any live reader of the seam or of
-`GET /v1/posture` learns each change time to its own polling precision.
-Whether that is acceptable is for the posture RFC (§9) to decide, beside
-whether Home Assistant may show the household posture at all.
+directory states the time of the last posture change or `home` renewal: the
+seam's `issued_at` and `not_after`, and `seq.json`'s `last_seq` (whose value
+`>> 10` is that minute), give the minute, and both files' modification times
+give the second. It was a command, a lapse or a restart. Any live reader of
+the seam or of `GET /v1/posture` learns each change time to its own polling
+precision. Whether that is acceptable is for the posture RFC (§9) to
+decide, beside whether Home Assistant may show the household posture at
+all.
 
 ### 6.3 Key satellite (not built)
 

@@ -82,8 +82,8 @@ every surface (iPhone, Watch, web, HA, displays):
 | Tier | When | iOS/watchOS delivery | Web delivery | Sound/haptic |
 |---|---|---|---|---|
 | **Digest** | Routine: activity on a single weak channel (radio, sound or PIR alone), ambient events, daily summary. No tier keys on who someone is or whether they belong to the household ([decision record](household_presence_and_posture.md) D6) | `.passive` — no light-up, no sound, sits in Notification Center / Smart Stack | No push at all; visible on next open + morning digest | none |
-| **Important** | Corroborated presence (two or more physically independent channels agree, or a camera or radar reports a person — [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2), device offline past tolerance, health warning | `.timeSensitive` — breaks through Focus, once; a local notification from the LAN, never an APNs push | LAN only: in-page, or over SSE on the home network. No Web Push: no important event has a cloud poke class ([`spec/witness_dictionary.json`](../../spec/witness_dictionary.json) `attention.tiers`) | single |
-| **Critical** | Tamper, chain-integrity failure, heartbeat declared **dark/failed** | `.critical` (entitlement pending — ship `.timeSensitive` until granted, per `iphone_companion_app.md` §10 #6) | Web Push flagged urgent | distinct, repeats until acked |
+| **Important** | Corroborated presence (two or more physically independent channels agree, or a camera or radar reports a person — [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2), health warning | `.timeSensitive` — breaks through Focus, once; a local notification from the LAN, never an APNs push | LAN only: in-page, or over SSE on the home network. No Web Push: no important event has a cloud poke class ([`spec/witness_dictionary.json`](../../spec/witness_dictionary.json) `attention.tiers`) | single |
+| **Critical** | Tamper, chain-integrity failure, a witness declared dark (offline past tolerance), a heard smoke or CO alarm (spec §7.2 rule 1), heartbeat declared **dark/failed** | `.critical` (entitlement pending — ship `.timeSensitive` until granted, per `iphone_companion_app.md` §10 #6) | Web Push flagged urgent | distinct, repeats until acked |
 
 Corroborated presence and a camera or radar person never take a remote lane
 (APNs, Web Push or ntfy): `cloud_class` in
@@ -138,12 +138,16 @@ Doctrine, in five rules (these are the §5b properties made operational):
   cloud poke class, which today is Critical alone; Important stays on the
   LAN whatever the rule says. (The app already publishes an away wake only
   at severity `alert` and above, as one of its four wake classes, but
-  `AlertCenter.level(for:)` still arms `alert` — a failed chain, a lost
-  witness, an alarm pattern — at `.important`, a divergence from this table
-  for the app to reconcile.)
+  `AlertCenter.level(for:awayFromHome:now:)` still arms `alert` — a failed
+  chain, a lost witness, an alarm pattern — at `.important`, a divergence
+  from this table for the app to reconcile.)
 - **Quiet hours affect Digest and Important only.** Critical punches
   through by definition — this is the smoke-alarm posture, and it is also
-  exactly what Apple's `.critical` level is for.
+  exactly what Apple's `.critical` level is for. (The hub's attention
+  engine disagrees today: under
+  [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2 quiet
+  hours hold only a `digest` and deliver `important`, while the app's
+  `QuietHours.silences` holds Important too. One of the two has to change.)
 - **The first-run default is our taste, not a questionnaire.** Everything
   ships at the table above; the wizard asks nothing about notifications.
 - **A "why did/didn't I get this?" trace.** Phase 8 already produces bounded

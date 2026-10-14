@@ -358,22 +358,24 @@ event.
    presence only) may set `away` or `night`. A borrowed or relayed card can
    raise sensing and never lower it. A rate-limit cooldown (five rejected
    responses on one lane of one door in ten minutes cool that lane for
-   60 s) or a roster on disk that does not verify refuses `home`, but on the
-   signature lane `away` and `night` still go through, so neither can hold a
-   house in `home`. (The card lane carries only `away` and `night` and stays
-   cooled, because each trial touches a real card's failed-authentication
-   counter.)
+   60 s) or a roster on disk that does not verify refuses `home`, but
+   `away` and `night` still go through (checked against the last roster that
+   verified), so neither can hold a house in `home`. The one exception is a
+   cooling card lane: it carries only `away` and `night` and stays closed
+   while it cools, because each trial touches a real card's
+   failed-authentication counter.
 2. **Home lapses.** A `home` statement lives at most 24 hours (12 by default)
    and lapses on each witness's own clock. A witness also refuses a statement
    issued more than 5 minutes (`MAX_SKEW_SECS`) ahead of its clock, so a
    `home` counts on a witness for at most 24 hours 5 minutes of that
    witness's own clock, whatever the hub's clock said
    ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §3.3). A
-   hub clock more than 5 minutes ahead makes witnesses refuse its statements
-   (they behave as `away`, the fail-safe); a hub clock behind makes `home`
-   lapse early, and at once if it steps back more than 5 minutes behind the
-   statement's `issued_at`, because the hub's own lapse check runs the same
-   test on its clock. Plain NTP is unauthenticated, so the hub should take
+   hub clock more than 5 minutes ahead (give or take the minute floor on
+   `issued_at`) makes witnesses refuse its statements (they behave as
+   `away`, the fail-safe); a hub clock behind makes `home` lapse early, and
+   at once if it steps back more than 5 minutes behind the statement's
+   `issued_at`, because the hub's own lapse check runs the same test on its
+   clock. Plain NTP is unauthenticated, so the hub should take
    its time from an authenticated source (for example chrony with NTS). The
    hub replaces a lapsed `home` with `away` and starts in `away` after every
    restart. A forgotten tap, or a denial of service against the LAN API
@@ -384,19 +386,22 @@ event.
    and `GET /v1/posture`, never as an unsigned broker word. Whoever holds the
    posture key can sign `home` past rule 1, and a forged statement with a
    huge `seq` would lock out every genuine one, so a leaked key means a new
-   posture key and every witness paired again. The checker seals it at rest
-   with the roster key under a key-encryption key kept outside its data
-   directory, which protects a copy of the directory, not a disk image that
-   also holds that key (spec §5.4).
+   posture key and every witness paired again. The checker seals it at rest,
+   together with the hub roster key, under a key-encryption key (KEK) that it
+   refuses to load from inside its data directory. That protects a copy of
+   the directory, not a disk image or a backup that also holds the KEK;
+   keeping the two apart is the operator's job, which v0 cannot enforce
+   (spec §5.4).
 4. **Witnesses fall to `away` on any doubt.** Missing, lapsed, wrong
    household, replayed, a bad signature, issued more than 5 minutes ahead of
    the witness's clock, or no trusted clock all read as `away`, which is full
    sensing.
 5. **No who.** The roster holds random handles and public keys and no field
    that can hold a name. No output says which credential or member acted.
-   v0 has no TLS, though: on a LAN bind each client's bearer token and, in a
-   command, the member handle cross the network in cleartext, so a passive
-   listener on the LAN can link acts to a device and to a member (spec §6.1).
+   v0 has no TLS of its own, though: on a LAN bind without a TLS-terminating
+   proxy in front of it, each client's bearer token and, in a command, the
+   member handle cross the network in cleartext, so a passive listener on the
+   LAN can link acts to a device and to a member (spec §6.1).
 
 **The physical-confirm idiom.** In the repo the idiom is a press on the device
 itself (announce → press-BOOT; [`test_console.md`](test_console.md),
@@ -455,10 +460,11 @@ or whether they belong to the household. This is a strengthening change.
      recorder keeps an exact-time diary of every change;
    - next to that, decide whether the change time the hub itself reveals is
      acceptable: nothing records which credential was used, but the current
-     statement states the minute of the last change (a command, a lapse or a
-     restart), the seam's modification time states its second, and any live
-     reader of the seam or `GET /v1/posture` learns each change's time to its
-     own polling precision;
+     statement states the minute of the last posture change or `home` renewal
+     (a command, a lapse or a restart), the modification times of the seam and
+     `seq.json` state its second, and any live reader of the seam or
+     `GET /v1/posture` learns each change's time to its own polling
+     precision;
    - map the household posture onto canary-wap's `notify` Context; and
    - carry the key-satellite device-class contract
      ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §6.3) as
