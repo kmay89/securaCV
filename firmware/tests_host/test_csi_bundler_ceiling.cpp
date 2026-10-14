@@ -79,8 +79,16 @@ static int g_checks = 0;
   } while (0)
 
 // ── The clock: the library reads it through csi_test_now_ms() ───────────
+// g_auto_ms moves it on after every read (0 but in the stale-peek case,
+// test_a_stale_peek_is_decided_as_an_opening), so two reads inside one
+// emit see two times.
 static uint32_t g_now_ms = 1000;
-extern "C" uint32_t csi_test_now_ms(void) { return g_now_ms; }
+static uint32_t g_auto_ms = 0;
+extern "C" uint32_t csi_test_now_ms(void) {
+  const uint32_t t = g_now_ms;
+  g_now_ms += g_auto_ms;
+  return t;
+}
 
 static constexpr uint32_t kSecond = 1000;
 static constexpr uint32_t kMinute = 60 * kSecond;
@@ -94,6 +102,14 @@ static uint32_t g_row_ms[4096];
 static uint32_t g_held_rows = 0;     // Quiet Hours' held_summary rows
 static uint32_t g_held_count = 0;    // the last one's count of held emits
 
+// The race case (test_a_stale_peek_is_decided_as_an_opening): when "a"'s
+// row commits while this is set, open a new "a" bundle straight through the
+// bundler, as another task's admit would between the chokepoint's refresh
+// and its own admit, and keep its handle.
+static bool g_open_a_when_a_commits = false;
+static uint32_t g_raced_handle = 0;
+static csi_event_values_t presence(const char* state);
+
 extern "C" void csi_event_on_committed(uint32_t, const char*, const char* type_name,
                                        csi_event_category_t, csi_privacy_class_t,
                                        const csi_event_values_t* v) {
@@ -104,9 +120,16 @@ extern "C" void csi_event_on_committed(uint32_t, const char*, const char* type_n
     ++g_held_rows;
     g_held_count = v->bundled_count;
   }
+  if (g_open_a_when_a_commits && v && std::strcmp(v->state_name, "a") == 0) {
+    g_open_a_when_a_commits = false;
+    csi_event_values_t w = presence("a");
+    (void)csi_bundler_admit("test.ceiling", "presence", CSI_PRIVACY_P0, &w, &g_raced_handle);
+  }
 }
 
-// ── A module: one state-bearing type under a 6/hour ceiling ─────────────
+// ── A module: state-bearing types under a 6/hour ceiling ────────────────
+// Every test emits "presence"; "other" is a second state-bearing type of the
+// same module, for the type half of F90's last-slot rule.
 static const csi_event_decl_t kEvents[] = {
   {
     /* type_name */                "presence",
@@ -115,10 +138,17 @@ static const csi_event_decl_t kEvents[] = {
     /* privacy */                  CSI_PRIVACY_P0,
     /* default_ceiling_per_hour */  kCeiling,
   },
+  {
+    "other",
+    CSI_FIELD_STATE_NAME | CSI_FIELD_MOTION_SCORE | CSI_FIELD_BUNDLED_COUNT
+        | CSI_FIELD_DURATION_SEC,
+    CSI_PRIVACY_P0,
+    kCeiling,
+  },
 };
 static void tick(const csi_features_t*) {}
 static const csi_module_t kModule = {
-  "test.ceiling", CSI_PRIVACY_P0, kEvents, 1, nullptr, tick, nullptr, nullptr,
+  "test.ceiling", CSI_PRIVACY_P0, kEvents, 2, nullptr, tick, nullptr, nullptr,
 };
 
 static void power_on() {
@@ -314,9 +344,12 @@ static int test_a_window_reopen_spends_the_ceiling() {
 }
 
 // What F80 must not break, counted in slots: thirty refreshes of "a" inside
-// one bundle, then new states. The merges gave their slots back, so five
-// new states open (six slots, one spent on "a"), the sixth is refused at the
-// ceiling, and the lot commits as six rows, one of them "a".
+// one bundle, then new states. The refreshes spent no slot (since F90 they
+// merge through csi_bundler_refresh() and never take one; the refund of a
+// MERGED admit is left for the cross-task race, which
+// test_a_stale_peek_is_decided_as_an_opening reaches), so five new states
+// open (six slots, one spent on "a"), the sixth is refused at the ceiling,
+// and the lot commits as six rows, one of them "a".
 static int test_a_merge_gives_its_slot_back() {
   power_on_counter_anchored();
   CHECK(emit("a") != 0);
@@ -601,9 +634,12 @@ static int test_alternating_states_cannot_exceed_the_cap() {
 // The rule, emit by emit, at the default 6/hour. Five states open; the
 // fifth's bundle is closed (as a tamper row closes its own); reopening it
 // at the last slot is refused, a refresh of an open bundle still merges at
-// the full ceiling, and a different state takes the last slot. A row that
-// commits directly (no state name) takes any free slot and is no opening:
-// it neither uses nor moves the rule.
+// the full ceiling, and a different state takes the last slot. The rule is
+// on (type, state): the same state name under another type of the module is
+// a change. It remembers the most recent OPENING: a refresh of an older
+// state's open bundle in between does not move it. A row that commits
+// directly (no state name) takes any free slot and is no opening: it
+// neither uses nor moves the rule.
 static csi_event_values_t stateless() {
   csi_event_values_t v;
   csi_event_values_init(&v);
@@ -621,6 +657,10 @@ static uint32_t emit_ambient(const char* state) {
   v.category = CSI_CATEGORY_AMBIENT;
   return csi_event_emit("test.ceiling", "presence", &v);
 }
+static uint32_t emit_other(const char* state) {
+  csi_event_values_t v = presence(state);
+  return csi_event_emit("test.ceiling", "other", &v);
+}
 
 static int test_the_last_slot_goes_to_a_change_of_state() {
   start_run(0);
@@ -636,6 +676,37 @@ static int test_the_last_slot_goes_to_a_change_of_state() {
   CHECK(emit("a") == ha);                      // still merges at the full ceiling
   csi_event_flush_bundles();
   CHECK(g_rows == 6);
+
+  // The type half: presence/"x" is the most recent opening; other/"x" is
+  // a different (type, state) and takes the last slot. A rule that
+  // compared the state name alone would refuse it.
+  start_run(0);
+  for (const char* st : kMore) CHECK(emit(st) != 0);
+  CHECK(emit("x") != 0);                       // fifth: presence/"x"
+  CHECK(emit_other("x") != 0);                 // sixth: other/"x", a change
+  CHECK(emit("y") == 0);                       // full
+  // ...and the same (type, state) is refused whichever type it is.
+  start_run(0);
+  for (const char* st : kMore) CHECK(emit(st) != 0);
+  CHECK(emit_other("x") != 0);                 // fifth: other/"x"
+  csi_bundler_flush_key("test.ceiling", "other", "x");
+  CHECK(emit_other("x") == 0);                 // the last slot: other/"x" again
+  CHECK(emit("x") != 0);                       // presence/"x" is a change
+
+  // The memory is the most recent OPENING. "a" to "e" open; "a"'s still
+  // open bundle is refreshed (a merge, no opening); "e" is sealed. "e" is
+  // still the most recent opening, so its reopening at the last slot is
+  // refused. Remembering the refresh would make "a" the last and let the
+  // held "e" take the slot the rule keeps.
+  start_run(0);
+  const uint32_t ra = emit("a");
+  CHECK(ra != 0);
+  for (const char* st : kMore) CHECK(emit(st) != 0);
+  g_now_ms += 5 * kSecond;
+  CHECK(emit("a") == ra);                      // a refresh
+  csi_bundler_flush_key("test.ceiling", "presence", "e");
+  CHECK(emit("e") == 0);                       // "e" was the last opening
+  CHECK(emit("f") != 0);                       // a change takes it
 
   // Rows with no state name are no openings.
   start_run(0);
@@ -781,6 +852,106 @@ static int test_the_peek_answers_what_admit_does_and_changes_nothing() {
   return 0;
 }
 
+// The peek's answer can go stale before the merge: the clock moves on
+// between them, or another task's admit closes or evicts the bundle. The
+// chokepoint then merges through csi_bundler_refresh(), which merges or
+// does nothing, and an emit whose bundle closed in between is decided as
+// an opening, the full ceiling and the last-slot rule included.
+//
+// Reached here with the clock moving 1 ms per read. "a" opens (after
+// `others` other states, or before them with `a_first`, all at once), and
+// its refresh is emitted `before_gap_ms` short of its quiet gap. Scanning that offset down, the
+// first emit inside which "a"'s bundle closes is the stale path: one
+// millisecond earlier no read in the emit saw the bundle overdue, so this
+// time the peek (an earlier read than the refresh's) still saw it open, and
+// the refresh, a read later, closed it. With `race`, "another task" opens a
+// new "a" bundle as the old one's row commits, between the chokepoint's
+// refresh and its admit (the hook in csi_event_on_committed above): admit
+// then merges, and the slot the chokepoint took for an opening goes back.
+struct StaleEmit {
+  uint32_t first_handle;    // "a"'s bundle before
+  uint32_t handle;          // what the refresh returned
+  bool closed_inside;       // "a"'s row committed inside the emit
+};
+static StaleEmit stale_emit(int others, uint32_t before_gap_ms, bool race,
+                            bool a_first = false) {
+  start_run(0);
+  StaleEmit r = {};
+  if (a_first) r.first_handle = emit("a");
+  static const char* const kOthers[] = {"b", "c", "d", "e", "f"};
+  for (int i = 0; i < others && i < 5; ++i) (void)emit(kOthers[i]);
+  if (!a_first) r.first_handle = emit("a");
+  g_now_ms += CSI_BUNDLER_MAX_GAP_MS - before_gap_ms;
+  const uint32_t rows_a = g_rows_by_state_a;
+  g_raced_handle = 0;
+  g_open_a_when_a_commits = race;
+  g_auto_ms = 1;
+  r.handle = emit("a");
+  g_auto_ms = 0;
+  g_open_a_when_a_commits = false;
+  r.closed_inside = g_rows_by_state_a > rows_a;
+  return r;
+}
+// The offset of the stale path for this many other states: 0 if no offset
+// up to 64 ms reaches it.
+static uint32_t stale_offset(int others, bool a_first = false) {
+  for (uint32_t d = 64; d >= 1; --d) {
+    const StaleEmit r = stale_emit(others, d, false, a_first);
+    if (r.closed_inside) return d;
+    if (r.handle != r.first_handle) return 0;   // not a merge, yet nothing closed
+  }
+  return 0;
+}
+
+static int test_a_stale_peek_is_decided_as_an_opening() {
+  // Below the ceiling: the fallback opens a new bundle.
+  uint32_t d = stale_offset(0);
+  CHECK(d >= 1);
+  std::printf("  stale peek: reached %u ms short of the quiet gap\n", (unsigned)d);
+  StaleEmit r = stale_emit(0, d, false);
+  CHECK(r.closed_inside);
+  CHECK(r.handle != 0 && r.handle != r.first_handle);
+  CHECK(csi_bundler_has_open("test.ceiling", "presence", "a"));
+
+  // The ceiling full ("a" and five others): refused, and nothing opens.
+  d = stale_offset(5);
+  CHECK(d >= 1);
+  r = stale_emit(5, d, false);
+  CHECK(r.closed_inside);
+  CHECK(r.handle == 0);
+  CHECK(!csi_bundler_has_open("test.ceiling", "presence", "a"));
+  CHECK(emit("z") == 0);                       // still full
+
+  // The last slot, "a" the most recent opening (four others before it):
+  // the same (type, state), so refused; a change still takes the slot.
+  d = stale_offset(4);
+  CHECK(d >= 1);
+  r = stale_emit(4, d, false);
+  CHECK(r.closed_inside);
+  CHECK(r.handle == 0);
+  CHECK(!csi_bundler_has_open("test.ceiling", "presence", "a"));
+  CHECK(emit("z") != 0);
+
+  // The race: "a" opens, then "b" to "e" (five slots, "e" the most recent
+  // opening), all closing together at the gap. Another task opens "a"
+  // between the chokepoint's refresh and its admit; admit merges into that
+  // bundle, and the chokepoint gives back the slot it took and remembers no
+  // opening. So five slots stay held and "e" is still the most recent
+  // opening: "e" is refused at the last slot, "f" (a change) takes it, and
+  // "g" is refused.
+  d = stale_offset(4, /*a_first=*/true);
+  CHECK(d >= 1);
+  r = stale_emit(4, d, true, /*a_first=*/true);
+  CHECK(r.closed_inside);
+  CHECK(g_raced_handle != 0);
+  CHECK(r.handle == g_raced_handle);           // merged into the raced bundle
+  CHECK(!csi_bundler_has_open("test.ceiling", "presence", "e"));
+  CHECK(emit("e") == 0);                       // the last slot: "e" was the last opening
+  CHECK(emit("f") != 0);                       // a change takes it
+  CHECK(emit("g") == 0);                       // full
+  return 0;
+}
+
 // Quiet Hours count what they hold, whatever the ceiling. The hold sits
 // after the ceiling in the chokepoint, so before F90 a refresh of an open
 // bundle at a full ceiling was refused there and never reached it; now a
@@ -854,6 +1025,7 @@ int main() {
   if (test_alternating_states_cannot_exceed_the_cap()) return 1;
   if (test_the_last_slot_goes_to_a_change_of_state()) return 1;
   if (test_the_peek_sees_the_cleaned_state()) return 1;
+  if (test_a_stale_peek_is_decided_as_an_opening()) return 1;
   if (test_a_ceiling_of_one_has_no_slot_to_keep()) return 1;
   if (test_a_ceiling_of_255()) return 1;
   if (test_quiet_hours_count_a_refresh_at_a_full_ceiling()) return 1;
