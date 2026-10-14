@@ -31,7 +31,7 @@ What is built and tested on a host:
 - the `es256` and `fido2-es256` verifiers;
 - the NTAG 424 DNA `AuthenticateEV2First` reader state machine, checked
   against NXP AN12196 transcripts;
-- the sealed card-key store;
+- the sealed store for card keys and the hub's two signing keys;
 - the posture statement and every witness-side check;
 - the LAN API;
 - a reference software credential.
@@ -71,8 +71,16 @@ counter, usage tally or arrival history is kept for any credential. FIDO2
 clone detection is traded away for that.
 
 **`home` lapses.** A `home` statement lives at most 24 hours (12 by
-default). A witness checks the lapse against its own clock. The hub replaces a
-lapsed `home` with `away`. The hub also starts in `away` after every restart.
+default). A witness checks the lapse against its own clock, and keeps checking
+the statement it holds on that clock (`Statement::is_current`). It refuses a
+statement issued more than 5 minutes ahead of its clock, and refusing means
+behaving as `away`. So a `home` counts on a witness for at most 24 hours and 5
+minutes of the witness's own clock, whatever the hub's clock said. The hub
+replaces a lapsed `home` with `away` on its own clock, and that `home` also
+lapses at once if the hub's clock steps back more than 5 minutes behind its
+`issued_at`. The hub also starts in `away` after every restart. Plain NTP is
+unauthenticated, so the hub should take its time from an authenticated source
+(chrony with NTS, for example).
 
 **The roster has no names.** Members and admins are random 16-byte handles.
 Unknown JSON fields are refused, so no field can hold a name.

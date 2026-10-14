@@ -2,7 +2,7 @@
 
 Status: Draft v0.1
 Intended Status: Normative
-Last Updated: 2026-10-13
+Last Updated: 2026-10-14
 
 This is the wire contract for the design recorded in
 [`docs/research/face_id_without_faces.md`](../docs/research/face_id_without_faces.md)
@@ -22,7 +22,8 @@ here has been on a bench or had an external security review:
   `household-keys`, binary `household_checker`): the roster and its change
   rules, single-use challenges, the `es256` and `fido2-es256` checks, the
   NTAG 424 DNA `AuthenticateEV2First` reader state machine (checked against
-  NXP AN12196's worked examples), the sealed card-key store, the posture statement
+  NXP AN12196's worked examples), the sealed card-key and hub-key stores
+  (§5.4), the posture statement
   with every witness-side check (§3.2), the output seam (§6.2) and the LAN API
   (§6.1);
 - the attention engine, [`src/relay/attention.rs`](../src/relay/attention.rs),
@@ -55,8 +56,10 @@ project uses the word. The P-256, FIDO2 and AES checks are called *checks*.
    set `home`, the posture that lowers sensing. A *possession* credential may
    set only `away` or `night`.
 5. **Home lapses.** Every `home` statement carries a `not_after` at most
-   `HOME_MAX_SECS` after it was issued. A witness that cannot verify a current
-   statement senses fully.
+   `HOME_MAX_SECS` after it was issued, and a witness counts it for at most
+   `HOME_MAX_SECS + MAX_SKEW_SECS` of its own clock, whatever the hub's clock
+   said (§3.3). A witness that cannot verify a current statement senses
+   fully.
 6. **No who, in any output.** Rosters carry random handles, never names.
    Nothing in a posture statement, a log line, an HTTP response or a
    notification identifies a credential or a member.
@@ -120,28 +123,38 @@ A fixed 112-byte record, all integers big-endian:
 | 40 | 8 | `not_after` | Unix seconds; `0xFFFF_FFFF_FFFF_FFFF` (never) is allowed only for `away` and `night` |
 | 48 | 64 | `sig` | Ed25519 by the hub posture key over `"securacv-posture-v1\0" ‖ bytes[0..48]` |
 
-A statement carries no credential, member, door or zone. The checker keeps
-`seq` at or above `minute(issued_at) << 10`, so restoring its sequence file
-from a backup cannot make it reuse a sequence number.
+A statement carries no credential, member, door or zone. It does carry a
+time: `issued_at` is the minute of the last posture change (a command, a
+lapse or a restart), and whoever reads the statement learns that minute
+(§6.2). The checker keeps `seq` at or above `minute(issued_at) << 10`, so
+restoring its sequence file from a backup cannot make it reuse a sequence
+number. That floor states nothing `issued_at` does not already state.
 
 ### 3.2 Verification (witness side)
 
 A witness accepts a statement only if every check passes. Otherwise it MUST
 behave as `away`:
 
-1. the length is exactly 112, `magic` and `version` match, and `reserved` is
-   zero;
+1. the length is exactly 112, `magic` and `version` match, `posture` is a §2
+   wire byte, `reserved` is zero, and `issued_at` is a whole minute;
 2. `household` equals the household the witness was paired into;
 3. the signature verifies against the **pinned** hub posture key;
 4. `seq` is strictly greater than the last accepted `seq`, which the witness
    persists;
 5. the witness has a trusted wall clock, and `now < not_after`;
-6. for `home`: `not_after - issued_at <= HOME_MAX_SECS`.
+6. for `home`: `not_after - issued_at <= HOME_MAX_SECS`;
+7. `issued_at <= now + MAX_SKEW_SECS` (300 s in v0): a statement issued
+   further ahead of the witness's clock (a hub clock running fast, or a
+   statement signed for later) is refused.
 
 A statement byte-identical to the one already accepted is not new: the witness
-keeps it and does not run rule 4 against it again. It re-evaluates rule 5 on
-its own clock for as long as it holds the statement, so a stale `home` cannot
-keep a house in `home` past its lapse even if the hub dies.
+keeps it and does not run rule 4 against it again (it would fail). For as long
+as it holds the statement it re-evaluates rules 5 and 7 on its own trusted
+clock, treating no clock as a failure, and for `home` also requires
+`not_after <= now + HOME_MAX_SECS + MAX_SKEW_SECS`, the bound rules 6 and 7
+imply. So a stale `home` cannot keep a house in `home` past its lapse even if
+the hub dies, and a held statement stops counting at once if the witness's
+clock steps back far enough to put it in the future.
 
 ### 3.3 Lapse
 
