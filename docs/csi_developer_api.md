@@ -213,11 +213,15 @@ ten minutes, six times an hour, which is all of `core.presence`'s six, so
 the ceiling keeps its last slot for a change of state: with a ceiling of
 two or more, an opening at the last slot is admitted only when its (type,
 state) differs from the module's most recent opening (sweep F90). A state
-held on its own therefore commits at most five of its rows in the
-counter's hour, goes up to about ten minutes once an hour with no open row,
-and the transition out of it is admitted at once (host-tested on the
-library and on the canary's bridge, holds of one to three hours at several
-clock phases). Before F90 the ceiling was checked before the bundler: after
+held on its own therefore opens at most five of its own bundles in the
+counter's hour, goes once an hour with no open row until a slot ages out
+(up to about a bucket plus one refresh interval: 597 to 604 s measured on
+the host), and the transition out of it is admitted at once (host-tested
+on the library and on the canary's bridge, holds of one to three hours at
+several clock phases). The rule reaches every module whose ceiling is two
+or more, alarm rows included: a `system.integrity` tamper (12 an hour) or
+an `anomaly.baseline` kind (10) repeated in one state, each sealed at once,
+gets the ceiling less one an hour, the last slot kept for a different kind. Before F90 the ceiling was checked before the bundler: after
 an hour or more in one state the transition waited up to about ten
 minutes, 7 to 602 s depending on when a slot aged out, and every refresh of
 the held state's open bundle was refused too.
@@ -253,12 +257,14 @@ those bodies `"replay":true`. On the canary base
   reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
   most a device can commit) and after a wrap. It only warns, and nothing on
   the device resets the id space (sweep F82's decision): recovery is an
-  owner action. On a canary, a factory reset clears its NVS, the floor
-  (`csi.evid`) and the delivery ceiling (`csi.evsent`) with it; a canary-wap
-  has no reset path, so its owner flashes it with the flasher's full erase,
-  which clears the floor (`ev.next`) and `csi.evsent` with the rest of NVS.
-  Either way the owner then re-pins the device in Home Assistant, whose mark
-  is above the restarted ids. Home Assistant shows the flag as the device's
+  owner action. On a canary, a factory reset clears its `securacv` NVS
+  namespace, the floor (`csi.evid`) and the delivery ceiling (`csi.evsent`)
+  with it; a canary-wap has no reset path, so its owner flashes it with the
+  flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
+  with the rest of NVS, and does not restore the flasher's pre-erase backup
+  afterwards (it would bring the counter back). Either way the owner then
+  re-pins the device in Home Assistant, whose mark is above the restarted
+  ids. Home Assistant shows the flag as the device's
   Event ID Space Low diagnostic binary sensor (HA24). At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
@@ -500,9 +506,12 @@ and sensitivity's baseline, at once and from every boot. Before F127 the
 reset stored the declared default as a row, so a preset or slider change
 made after it applied nowhere. Reset all removes every knob's row, the
 dashboard's own preset and sensitivity among them (the Lab lists them), so
-it returns the device to balanced at sensitivity 50; a value `tune_post()`
-cannot read (not a number, `true` / `false`, or `null`) is ignored, as
-before.
+it returns the device to balanced at sensitivity 50, and Quiet Hours go
+back to off (23:00 to 07:00, disabled), as before. Either reset first drops
+a slider or toggle save still waiting to be sent, then reloads the rows
+from the device. A value `tune_post()` cannot read (not a number,
+`true` / `false`, or `null`) is ignored, as before; JSON whitespace,
+newlines included, may sit on either side of the colon.
 
 ---
 

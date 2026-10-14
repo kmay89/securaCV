@@ -240,8 +240,11 @@ ceiling of two or more keeps its last slot for an opening whose (type,
 state) differs from the module's most recent opening (sweep F90). A state
 held on its own therefore opens at most the ceiling less one of its own
 bundles in the counter's hour; the window it cannot reopen goes without an
-open row until a slot ages out, up to about ten minutes; and the
-transition out of it is admitted at once. A ceiling of 1 has no slot to
+open row until a slot ages out, up to about a bucket plus one refresh
+interval (about ten minutes); and the transition out of it is admitted at
+once. The rule is every capped module's, alarm rows included: a tamper or
+anomaly kind repeated in one state gets the ceiling less one an hour, the
+last slot kept for a different kind. A ceiling of 1 has no slot to
 spare: the held state's reopening takes it, and a transition waits until it
 ages out, as before. A row that commits at the emit (ambient, or no
 `state_name`) is not an opening: it takes any free slot, the last
