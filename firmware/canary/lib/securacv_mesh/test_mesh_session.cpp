@@ -4290,8 +4290,19 @@ void test_paired_peer_bound_reports_the_bind() {
   assert(g_bound_calls[0].bound && g_bound_calls[0].after_paired_cb);
   assert(std::memcmp(g_bound_calls[0].fp, j_fp, 8) == 0);
   assert(std::memcmp(g_bound_calls[0].mac, mac_x, 6) == 0);
+  /* F162: a pairing whose member was bound tells every bound member once
+   * (J at X, and C itself). */
+  auto beats_to = [](size_t from, const uint8_t to[6]) {
+    size_t k = 0;
+    for (size_t i = from; i < g_outs.size(); ++i) {
+      if (is_heartbeat(g_outs[i].bytes) && std::memcmp(g_outs[i].mac, to, 6) == 0) ++k;
+    }
+    return k;
+  };
+  size_t outs_at = g_outs.size();
   assert(pair_from(S, me, mac_c, c_pub, c_priv, 200));
   assert(g_bound_calls.size() == 2 && g_bound_calls[1].bound);
+  assert(beats_to(outs_at, mac_x) == 1 && beats_to(outs_at, mac_c) == 1);
 
   /* J re-pairs from C's address: refused at the confirm since F118, so no
    * bound callback (it used to report false here). */
@@ -4315,9 +4326,17 @@ void test_paired_peer_bound_reports_the_bind() {
   uint8_t n_pub[32], n_priv[32], n_fp[8];
   assert(mesh_crypto::ed25519_generate_keypair(n_pub, n_priv));
   mesh_crypto::compute_fingerprint(n_pub, n_fp);
+  outs_at = g_outs.size();
+  const uint64_t ctr_at = mesh_session::outbound_counter();
   assert(pair_from(S, me, mac_n, n_pub, n_priv, 400));
   assert(g_bound_calls.size() == 3);
   assert(!g_bound_calls[2].bound && g_bound_calls[2].after_paired_cb);
+  /* F162's review: a refused bind has no new member to tell, so its
+   * NOTIFY_PAIRED sends no heartbeat, not even to the members bound
+   * before it, and signs nothing. */
+  assert(beats_to(outs_at, mac_x) == 0 && beats_to(outs_at, mac_c) == 0);
+  assert(beats_to(outs_at, mac_n) == 0);
+  assert(mesh_session::outbound_counter() == ctr_at);
   assert(std::memcmp(g_bound_calls[2].fp, n_fp, 8) == 0);
   assert(std::memcmp(g_bound_calls[2].mac, mac_n, 6) == 0);
   assert(!transport_has(mac_n));   /* the partner's address left with the pairing */
@@ -7126,8 +7145,9 @@ void test_two_paired_canaries_hear_each_other_at_once() {
  * the opera with a counter past the restored one, and to nobody else (not
  * a pairing partner whose address the transport holds: F101); a member the
  * restore could not bind gets none. Then nothing over an hour of passes,
- * and nothing either from a boot whose restore bound no member. On the code
- * before F162 the first pass sends nothing. */
+ * and nothing either from a boot whose restore bound no member, nor from
+ * one whose bound member is gone before the first pass (no counter spent
+ * either). On the code before F162 the first pass sends nothing. */
 void test_a_reboot_announces_itself_once_to_each_member() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x91 + i);
@@ -7192,6 +7212,24 @@ void test_a_reboot_announces_itself_once_to_each_member() {
   g_outs.clear();
   for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
   assert(g_outs.empty());
+
+  /* F162's review: a boot whose one bound member is gone before the first
+   * pass (main.cpp does nothing between the restore and the loop; this is
+   * send_heartbeat's own guard): nothing is signed and no counter spent. */
+  stand_up_session(S, pub, priv);
+  uint8_t gone_pub[32], gone_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(gone_pub, gone_priv));
+  assert(mesh_session::register_trusted_peer(gone_pub));
+  uint8_t gone_fp[1][8];
+  mesh_crypto::compute_fingerprint(gone_pub, gone_fp[0]);
+  const uint8_t gone_mac[1][6] = {{0x24, 0x0A, 0xC4, 0x16, 0x30, 0x0C}};
+  mesh_session::StoredMacVerdict v3[1];
+  assert(mesh_session::restore_peer_macs(gone_fp, gone_mac, 1, v3) == 1);
+  assert(mesh_session::unregister_trusted_peer(gone_fp[0]));
+  const uint64_t ctr_gone = mesh_session::outbound_counter();
+  g_outs.clear();
+  mesh_session::process(1000);
+  assert(g_outs.empty() && mesh_session::outbound_counter() == ctr_gone);
 
   /* A boot with the mesh turned off (POST /api/mesh/enable, main.cpp turns
    * it off before the restore): nothing while it is off, the one heartbeat

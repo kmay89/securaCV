@@ -1114,8 +1114,15 @@ one, F101) at two moments: as a pairing completes and binds its partner, on
 each side, so the joiner's ends the initiator's `PAIR_COMPLETE` copies
 (§5.2) and each side reads the other `PEER_CONNECTED` once it arrives; and
 on the first loop pass that runs after a boot whose restore bound at least
-one member, so each member hears it at once. A mesh turned off at boot sends
-that one at the first pass after it is turned on. It goes through the
+one member. A mesh turned off at boot sends that one at the first pass after
+it is turned on. That pass comes right after `setup()`, and `WiFi.begin()`
+does not wait for the station to join its router: until it does, the radio
+is on the softAP's channel (`AP_CHANNEL`, 1), and the ESP-NOW peers follow
+the current channel. So on a board whose router is on another channel the
+boot heartbeat can go out where no member listens, and nothing sends it
+again; the members then read this one `PEER_OFFLINE` until its next frame
+(from code; arming it once the station is associated needs a `main.cpp`
+hook, open). It goes through the
 transport's storm limit like every opera send; this tree has no airtime
 governor. A receiver handles it as any verified opera frame (counter,
 liveness) and nothing more. Not changed: an initiator whose first COMPLETE

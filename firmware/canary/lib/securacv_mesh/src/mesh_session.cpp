@@ -732,6 +732,10 @@ static size_t send_to_members(const uint8_t* frame, size_t len) {
  * a member), sent at the two moments a member would otherwise sit unheard:
  * right after NOTIFY_PAIRED on each side of a pairing, and once in the
  * first running process() pass after a boot restore that bound a member.
+ * That pass can come before the station joins its router (WiFi.begin() is
+ * asynchronous; until then the radio sits on the softAP's channel), so on
+ * a board whose router is on another channel the boot one can reach no
+ * member, and nothing sends it again (spec §7.1).
  * A PIO receiver verifies it and drops it (dispatch_verified has no case
  * for it), which marks the sender heard from its binding: the initiator's
  * COMPLETE copies stop on the joiner's (F134), and each side's GET
@@ -2297,7 +2301,7 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
          * the opera_id check and they sat in the new opera's slots, listed
          * and never heard. Refused before a pairing number is taken and
          * before any member, stored key or secret is touched; a changed-MAC
-         * re-pair is Leave, then Join (spec §5.2). */
+         * re-pair is Leave, then Join (spec §8.3). */
         if (s_opera_id_set) {
           res->status = RequestStatus::OPERA_EXISTS;
           break;
