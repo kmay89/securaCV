@@ -4,18 +4,17 @@
  *
  * This configuration is for the Vision AI presence detection device
  * using Grove Vision AI V2 sensor and ESP32-C3.
+ *
+ * What lives here is what something reads (sweep F182): the FEATURE_* flags
+ * (feature_sanity.h checks them against the board; the Lab's workshop.json
+ * copies them) and the watchdog timeout. Every other setting the firmware
+ * uses is a constant in projects/canary-vision/include/canary/config.h,
+ * which owns it; the four seeds below are copies of four of those constants
+ * for the flasher catalog (canary-local/tools/gen_flash.py), held equal to
+ * them by scripts/tests/test_vision_flavor_config_readers.py.
  */
 
 #pragma once
-
-// ============================================================================
-// DEVICE IDENTITY
-// ============================================================================
-
-#define CONFIG_DEVICE_TYPE          "canary-vision"  // canonical: lowercase, hyphenated
-#define CONFIG_DEVICE_ID            "canary_vision_001"
-#define CONFIG_MANUFACTURER         "SecuraCV"
-#define CONFIG_MODEL                "Canary Vision (ESP32-C3 + Grove Vision AI V2)"
 
 // ============================================================================
 // FEATURE FLAGS
@@ -41,56 +40,10 @@
 #define FEATURE_GNSS                0
 
 // ============================================================================
-// VISION AI CONFIGURATION
+// FLASHER SEEDS (copies of include/canary/config.h, which owns the values)
 // ============================================================================
 
 #define CONFIG_PERSON_TARGET        0       // SSCMA class ID for person
 #define CONFIG_SCORE_MIN            70      // Minimum detection confidence
 #define CONFIG_LOST_TIMEOUT_MS      1500    // Time before presence lost
-
-// ============================================================================
-// DWELL DETECTION
-// ============================================================================
-
 #define CONFIG_DWELL_START_MS       10000   // Time to confirm dwelling
-#define CONFIG_DWELL_END_GRACE_MS   0       // Grace period before dwell ends
-
-// ============================================================================
-// INTERACTION DETECTION
-// ============================================================================
-
-#define CONFIG_INTERACTION_AFTER_LEAVE_WINDOW_MS    3000
-#define CONFIG_ZONE_INTERACTION_MS                  2500
-
-// ============================================================================
-// VOXEL GRID
-// ============================================================================
-
-#define CONFIG_VOXEL_COLS           3
-#define CONFIG_VOXEL_ROWS           3
-
-// ============================================================================
-// FRAME DIMENSIONS
-// ============================================================================
-
-#define CONFIG_FRAME_W              240
-#define CONFIG_FRAME_H              240
-
-// ============================================================================
-// TIMING
-// ============================================================================
-
-#define CONFIG_INVOKE_PERIOD_MS     100     // Vision sample interval
-#define CONFIG_HEARTBEAT_MS         5000    // Status heartbeat interval
-
-// ============================================================================
-// MQTT CONFIGURATION
-// ============================================================================
-
-#define CONFIG_MQTT_BUFFER_BYTES    1536
-#define CONFIG_HA_DISCOVERY_PREFIX  "homeassistant"
-
-// Topic patterns (device_id substituted at runtime)
-#define CONFIG_TOPIC_EVENTS         "securacv/%s/events"
-#define CONFIG_TOPIC_STATE          "securacv/%s/state"
-#define CONFIG_TOPIC_STATUS         "securacv/%s/status"
