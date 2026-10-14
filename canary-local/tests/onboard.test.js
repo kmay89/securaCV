@@ -1291,6 +1291,17 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   const mainCpp = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
   assert.ok(mainCpp.includes("const int req = canary::care::nightlight_take_rotation_request();\n      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now, \"app picker\");"),
     "main.cpp's loop drains it into the one apply path, naming the app's picker on the [orient] line (F285)");
+  // The other two askers, which the driver cannot reach (the emulator has no
+  // IMU and presses no button): each names itself, and the triple-press logs
+  // its [input] line before the turn, so the serial log reads cause, then
+  // the [orient] line (F285).
+  assert.ok(mainCpp.includes("if (s_orient.step(sx, sy, az, now)) {\n        nightlight_apply_orientation((uint8_t)s_orient.current(), now, \"IMU\");"),
+    "the IMU's commit names the IMU on the [orient] line");
+  const triple = /case canary::io::ButtonEvent::Triple: \{[\s\S]*?\n {6}\}/.exec(mainCpp)?.[0] || "";
+  const pressed = triple.indexOf('boot_line("[input] triple-press -> turn the face");');
+  const turned = triple.indexOf("nightlight_apply_orientation(");
+  assert.ok(pressed >= 0 && turned > pressed && /now,\s*"triple-press"\);/.test(triple.slice(turned)),
+    "the triple-press logs its [input] line, then turns the face naming itself");
   // CI: beside glass_turn.sh — after the third-party cache, before every step
   // that reads the committed dist — unconditional and bounded.
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));

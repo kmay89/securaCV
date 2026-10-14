@@ -2130,11 +2130,13 @@ void loop() {
         // Manual orientation: one quarter turn per triple-press, and the
         // IMU lets go — a hand on the dial parks AUTO (the app's toggle
         // brings it back), or the model would just turn it right back.
+        // The press is logged before the turn, so the serial line reads the
+        // cause and then the [orient] line the commit writes (F285).
+        boot_line("[input] triple-press -> turn the face");
         canary::care::nightlight_set_auto_rotate(false);
         nightlight_apply_orientation(
             (uint8_t)((canary::ui::lvgl_port_rotation() + 1) & 3), now,
             "triple-press");
-        boot_line("[input] triple-press -> turn the face");
 #endif
         break;
       }
