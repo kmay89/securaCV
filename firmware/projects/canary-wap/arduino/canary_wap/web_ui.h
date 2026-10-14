@@ -3312,7 +3312,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (loadPanel) {
         if (panel === 'records') { loadLogs(); loadWitness(); }
-        else if (panel === 'camera') { refreshPeekStatus(); refreshSensorState(); refreshVault(); }
+        else if (panel === 'camera') { refreshPeekStatus(); if (peekServed) refreshSensorState(); refreshVault(); }
         else if (panel === 'presence') { refreshPresence(); refreshHousehold(); refreshWifiPresence(); refreshAudibleChirpStatus(); }
         else if (panel === 'community') { refreshOpera(); refreshChirpStatus(); refreshBleDiscovery(); }
         else if (panel === 'settings') { loadWifiStatus(); refreshBtStatus(); loadBtPairedDevices(); refreshBtOtaStatus(); loadRfSettings(); }
@@ -3961,7 +3961,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // XIAO ESP32-C3). A status no route took (api()'s unrouted: the server's
     // 404), before any status has answered, is a build without the preview:
     // the tab shows its no-camera state and hides the Camera Controls and
-    // Camera Info cards, the only callers of the other camera routes. No
+    // Camera Info cards, which hold every control that calls another camera
+    // route. Opening the tab reads the sensor state (GET /api/peek/sensor)
+    // only once a status has answered; until then the first answer pulls it,
+    // so a build without the camera is asked only for the status. No
     // answer, or a sign-in the route wants, says nothing about the build and
     // changes nothing. Once a status has answered (peekServed), a failed poll
     // changes nothing, as before: a blip mid-stream is not a missing camera.
@@ -3982,7 +3985,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         return;
       }
-      if (!peekServed) {
+      const firstAnswer = !peekServed;
+      if (firstAnswer) {
         peekServed = true;
         document.getElementById('peekControlsCard').style.display = '';
         document.getElementById('camInfoCard').style.display = '';
@@ -4001,8 +4005,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       updatePeekUI();
       if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
       // The camera just became available — pull sensor state so the
-      // tuning sliders show the on-chip values rather than blanks.
-      if (cameraReady && !wasReady) refreshSensorState();
+      // tuning sliders show the on-chip values rather than blanks. The
+      // first status this page heard pulls it too, standing in for the
+      // read the tab's opening held back.
+      if (firstAnswer || (cameraReady && !wasReady)) refreshSensorState();
     }
 
     function updatePeekUI() {

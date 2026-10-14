@@ -11,10 +11,12 @@
 //     alert. A status no route took (esp_http_server's 404), before any
 //     status has answered, now shows the no-camera state (the "not_built"
 //     gate of WebUiLogic.cameraPanelState) and hides the Camera Controls and
-//     Camera Info cards, the only callers of the other camera routes. No
-//     answer, or a sign-in the route wants, says nothing about the build and
-//     changes nothing; once a status has answered, a failed poll changes
-//     nothing. The refusals come from the page's own secureFetch() and api(),
+//     Camera Info cards, which hold every control that calls another camera
+//     route; opening the tab reads the sensor state only once a status has
+//     answered (the first answer pulls it), so such a build is asked only for
+//     the status. No answer, a sign-in the route wants, or a text error page
+//     from a route that exists says nothing about the build and changes
+//     nothing; once a status has answered, a failed poll changes nothing. The refusals come from the page's own secureFetch() and api(),
 //     run against a stub fetch.
 //   * Community (F276): the /api/mesh and /api/chirp routes are registered only
 //     under FEATURE_MESH_NETWORK (off in the DEV profile), and the Opera and
@@ -150,6 +152,7 @@ function pageContext(answers, extra = {}) {
     URL: { createObjectURL: (b) => `blob:${record.blobs.indexOf(b)}`, revokeObjectURL: (u) => record.revoked.push(u) },
     document: {
       getElementById: el,
+      querySelector: () => makeEl('nav'),
       querySelectorAll: (sel) => (sel === '#panel-community .sub-nav-btn' ? navBtns
         : sel === '#panel-community .sub-panel' ? subPanels : []),
       createElement: () => ({ click() { record.clicks.push({ href: this.href, download: this.download }); }, remove() {} }),
@@ -331,6 +334,21 @@ function cameraPage(answers) {
 
 const PEEK_STATUS = { ok: true, camera_initialized: true, standby: false, gate: 'ok', peek_active: false, resolution: 8 };
 
+// Opening the Camera tab: the page's switchPanel() and refreshSensorState()
+// run beside the camera code, so a request the opening makes is recorded as
+// the request it is.
+function cameraPanelPage(answers, init = {}) {
+  const p = cameraPage(answers);
+  Object.assign(p.ctx, { currentPanel: 'status', bleDiscoveryTimer: null, applySensorState() {},
+                         stopPeek() {} }, init);
+  for (const stub of ['refreshVault']) p.ctx[stub] = () => p.calls.push(stub);
+  vm.runInContext(uiFunction('switchPanel', false) + uiFunction('refreshSensorState', true) +
+                  '\nglobalThis.__t.switchPanel = switchPanel;\n', p.ctx);
+  p.open = async () => { p.ctx.__t.switchPanel('camera'); await settle(); await settle(); };
+  p.asked = () => p.calls.filter((c) => c.includes('/api/'));
+  return p;
+}
+
 describe('Camera tab: the no-camera state on a refused status (F274)', () => {
   it("api() reads esp_http_server's 404 as no route of this build", async () => {
     assert.deepEqual({ ...(await answerTo(IDF_404)) }, NOT_FOUND);
@@ -358,9 +376,15 @@ describe('Camera tab: the no-camera state on a refused status (F274)', () => {
     assert.equal(p.el('camInfoCard').style.display, '');
   });
 
+  // esp_http_server's own text pages for a route that exists (a handler that
+  // failed, a request it timed out) and a JSON 404 from a route that answered
+  // are not "no such route" either: only a 404 that is not JSON is.
   for (const [name, res] of [['no answer', 'no answer'],
                              ['the route wants a token (401)', { status: 401, body: '{"ok":false,"error":"unauthorized"}' }],
-                             ['the sign-in is rate-limited (429)', { status: 429, body: '{"ok":false,"retry_after_s":30}' }]]) {
+                             ['the sign-in is rate-limited (429)', { status: 429, body: '{"ok":false,"retry_after_s":30}' }],
+                             ['a text error page from a route that exists (500)', { status: 500, body: 'Internal Server Error' }],
+                             ['a text timeout page (408)', { status: 408, body: 'Server closed this connection' }],
+                             ['a JSON 404 from a route that answered', { status: 404, body: '{"ok":false,"error":"not_found"}' }]]) {
     it(`${name}, before any status, says nothing about the build`, async () => {
       const refused = await answerTo(res);
       assert.notEqual(refused.ok, true);
@@ -372,6 +396,43 @@ describe('Camera tab: the no-camera state on a refused status (F274)', () => {
       assert.equal(p.el('peekToggle').disabled, false);
       assert.equal(p.el('peekControlsCard').style.display, '');
       assert.equal(p.el('camInfoCard').style.display, '');
+    });
+  }
+
+  it('a camera status after a status no route took brings the cards back and Start with them', async () => {
+    const answers = { '/api/peek/status': await answerTo(IDF_404) };
+    const p = cameraPage(answers);
+    await p.ctx.__t.refreshPeekStatus();
+    assert.equal(p.el('peekControlsCard').style.display, 'none');
+    answers['/api/peek/status'] = PEEK_STATUS;
+    await p.ctx.__t.refreshPeekStatus();
+    assert.equal(p.el('peekControlsCard').style.display, '');
+    assert.equal(p.el('camInfoCard').style.display, '');
+    assert.equal(p.el('peekToggle').disabled, false);
+    assert.equal(p.el('peekToggle').textContent, '▶ Start');
+    assert.equal(p.el('peekStatus').textContent, 'Ready');
+  });
+
+  it('opening the Camera tab in a build without the camera asks only for the status, every time', async () => {
+    const p = cameraPanelPage({ '/api/peek/status': await answerTo(IDF_404) });
+    await p.open();
+    assert.equal(p.el('peekStatus').textContent, 'No camera in this build');
+    await p.open();
+    assert.deepEqual(p.asked(), ['/api/peek/status', '/api/peek/status'],
+      'no GET /api/peek/sensor while no status has answered');
+  });
+
+  for (const [name, init] of [['the camera was not known to be up', { cameraReady: false }],
+                              ['the camera was already known to be up', { cameraReady: true }]]) {
+    it(`opening the Camera tab in a camera build reads the sensor state once per open (${name})`, async () => {
+      const p = cameraPanelPage({ '/api/peek/status': PEEK_STATUS, '/api/peek/sensor': { ok: true } }, init);
+      await p.open();
+      assert.deepEqual(p.asked(), ['/api/peek/status', '/api/peek/sensor'],
+        'the first status pulls the sensor state the opening held back');
+      p.calls.length = 0;
+      await p.open();
+      assert.deepEqual([...p.asked()].sort(), ['/api/peek/sensor', '/api/peek/status'],
+        'after a status has answered, the opening reads it again');
     });
   }
 

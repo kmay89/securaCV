@@ -2808,7 +2808,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (panel === 'logs') loadLogs();
       else if (panel === 'witness') loadWitness();
       else if (panel === 'timeline') loadTimeline();
-      else if (panel === 'peek') { refreshPeekStatus(); refreshSensorState(); }
+      else if (panel === 'peek') { refreshPeekStatus(); if (peekServed) refreshSensorState(); }
       else if (panel === 'opera') refreshOpera();
       else if (panel === 'community') refreshChirpStatus();
       else if (panel === 'bluetooth') { refreshBtStatus(); loadBtPairedDevices(); }
@@ -2921,7 +2921,10 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // took (api()'s unrouted: the fallback's 404 page or setup redirect),
     // before any status has answered, is a build without the preview: the
     // panel shows its no-camera state, says why, and hides the controls and
-    // metrics cards, the only callers of the other camera routes. No answer,
+    // metrics cards, which hold every control that calls another camera
+    // route. Opening the panel reads the sensor state (GET /api/peek/sensor)
+    // only once a status has answered; until then the first answer pulls it,
+    // so a build without the camera is asked only for the status. No answer,
     // or the route's own refusal (a token it wants), says nothing about the
     // build and changes nothing. Once a status has answered (peekServed), a
     // failed poll changes nothing, as before: a network blip mid-stream is
@@ -2943,7 +2946,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         return;
       }
-      if (!peekServed) {
+      const firstAnswer = !peekServed;
+      if (firstAnswer) {
         peekServed = true;
         document.getElementById('peekControlsCard').style.display = '';
         document.getElementById('camInfoCard').style.display = '';
@@ -2958,7 +2962,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       applyCameraInfo(data);
       updatePeekUI();
       if (peekActive) startCamInfoPolling(); else stopCamInfoPolling();
-      if (cameraReady && !wasReady) refreshSensorState();
+      // The first status this page heard stands in for the sensor read the
+      // panel's opening held back; a camera that just came up pulls it too.
+      if (firstAnswer || (cameraReady && !wasReady)) refreshSensorState();
     }
     
     function updatePeekUI() {
