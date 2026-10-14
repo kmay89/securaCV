@@ -2530,13 +2530,16 @@ def answered_words(handler: Path, where: str) -> tuple[set[str], set[tuple[str, 
     words: set[str] = set()
     args: set[tuple[str, str]] = set()
     current = None
+    def live(pat: str, line: str, raw: str) -> list[str]:
+        # group 1 of each match in the raw line whose start the blanked line keeps
+        return [m.group(1) for m in re.finditer(pat, raw) if line[m.start()] != " "]
+
     for line, raw in unconditional_lines(body):
-        live = lambda pat: [m.group(1) for m in re.finditer(pat, raw) if line[m.start()] != " "]
-        found = live(r'\bieq_\(\s*cmd\s*,\s*"([^"]+)"\s*\)')
+        found = live(r'\bieq_\(\s*cmd\s*,\s*"([^"]+)"\s*\)', line, raw)
         if found:
             words.update(found)
             current = found[0]
-        for a in live(r'\bieq_\(\s*tok\[1\]\s*,\s*"([^"]+)"\s*\)'):
+        for a in live(r'\bieq_\(\s*tok\[1\]\s*,\s*"([^"]+)"\s*\)', line, raw):
             if current:
                 args.add((current, a))
     help_body, _ = c_function_body(text, "print_help", where)
