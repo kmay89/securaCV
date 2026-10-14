@@ -107,8 +107,14 @@ Smaller one-time human acts, same flavor:
   changes no carried file; wave 17 changes one,
   `www/securacv-evidence-viewer.html` (CI9's one-word fix to the manifest
   check's message, byte-identical to `viewer/evidence_viewer.html`), so its
-  carry follows #1802's merge; the mirror PR securacv-homeassistant#28 (HA31)
-  touches only mirror-owned files. Until the secret is set, every `main`
+  carry follows #1802's merge. Waves 18 and 19 change six: `binary_sensor.py`,
+  `tests/test_chirp_active.py` (new), `tests/test_unsigned_trust_attrs.py` and
+  `tests/test_mqtt_payload_hardening.py` (HA33), and `sensor.py` and
+  `tests/test_last_event_stateless.py` (new; HA28); `conftest.py` is
+  unchanged, and their carry follows #1802's merge too. The mirror PRs
+  securacv-homeassistant#28 (HA31, merged 2026-10-13) and #29 (CI11's runner
+  pins and CI13's docstring, merged 2026-10-14) touch only mirror-owned files.
+  Until the secret is set, every `main`
   change to the carried set needs that again.
   #1762's carried files (waves 9-15, 12 files) followed by hand in
   securacv-homeassistant#24 (`034089c`, 2026-10-07), after which
@@ -1040,15 +1046,17 @@ so — see D2 below.)
   `ipv4_host_order()`, `request_local_ipv4()` and `request_reach()` compared
   token for token with the comments removed, and the receipt's and the
   redirect's write-or-503. 45 mutants of the header and glue are killed; the
-  pre-F255 sketch fails 16 checks. Readers: the iPhone keeps a `.local`
-  receipt as it is (`rebased(onto:)` moves only a 192.168.4.1 host;
-  `DeviceAPI.isPrivate` accepts `<label>.local`; the certificate pin, not the
-  name, holds an https connection), and a kit saved before the WAP is renamed
-  names its old `.local` name, which the app does not yet move (A88). The Lab,
+  pre-F255 sketch fails 16 checks. Readers: the iPhone accepts a `.local`
+  receipt (`DeviceAPI.isPrivate` accepts `<label>.local`; the certificate pin,
+  not the name, holds an https connection); at F255 it moved only a
+  192.168.4.1 host, so a kit saved before the WAP was renamed named a host
+  nothing answered, and since A88 (#1802) `rebased(onto:discoveredAs:)` moves
+  any kit of the row's device onto the host it was discovered at. The Lab,
   the desktop apps and the Home Assistant integration read no WAP receipt; the
   companion wizard saves the receipt as the kit without reading `base_url`;
   the dashboard reads only `token`. Docs: `magic_pairing.md` (the kit
-  paragraph with the rename caveat, §9 and §10 rows),
+  paragraph, whose rename caveat A88 has since replaced with the rule for
+  which kits move; §9 and §10 rows),
   `iphone_companion_app.md`, the WAP README, `DeviceAPI.swift`'s and
   `identity_json.h`'s comments, `LESSONS_LEARNED.md`, the U1 checklist rows
   (https; the redirect before and after the AP drops). Host-tested; the ESP32
@@ -6016,6 +6024,18 @@ so — see D2 below.)
   Found here: the tests_host mirrors that test copies (F271), the canonical
   common header's three-emoji display (F272), and Home Assistant's Chirp
   Active sensor, which reads fields no firmware sends (HA33).
+- [ ] **F295 [code] The canary-wap's own Chirp Channel State entity promises
+  words the firmware never sends.** `csi_mqtt.cpp`'s discovery table and the
+  `publish_chirp_state()` comment in `csi_mqtt.h` say the `chirp` topic's
+  `state` is Normal, Trouble, Alarm or Supervisory, the entity's template
+  turns a missing state into `Normal`, and the publish comment in
+  `canary_wap.ino` says the Chirp states are mapped to the NFPA-72 four "on
+  the HA dashboard side". The only caller passes
+  `chirp_channel::state_name()`'s lowercase words (`disabled`, `active`,
+  `muted`, `cooldown`), and no dashboard maps them. Make the comments and the
+  template's default name the words that are sent (or send a mapped word and
+  say so, which `test_chirp_active.py`'s caller pin will then ask to decide),
+  with a check that reads both. Found by HA33 (#1802).
 - [ ] **F232 [code+decision] canary-wap Chirp: unsigned presence beacons fill
   the nearby table and steer two gates.** `handle_presence()` adds a row for
   any session id a beacon claims, up to `MAX_NEARBY_CACHE` (32), and refuses
@@ -11570,7 +11590,7 @@ so — see D2 below.)
   banner, ribbon and download note in local Chromium on the committed dist. No
   dist change. Not bench-tested: no banner was captured from a board (A84).
   Found here: A83 and A84.
-- [ ] **A83 [code] The bench's narration and flows tell the S3 boards' story
+- [x] **A83 [code] The bench's narration and flows tell the S3 boards' story
   on every card.** `canary-local/emulator/web/bench.js`'s `setBootHeld()` logs
   "BOOT held — a strapping pin, sampled only at reset. Running firmware
   ignores it." and the troubleshooter's "Pressing BOOT does nothing" flow
@@ -11586,6 +11606,61 @@ so — see D2 below.)
   the board's `ROM_VOICES` entry for the lines they quote, would let the
   narration say the truth per board and leave a step out where it is false.
   Found by A59 and its review (#1802).
+  *Done (#1802):* each bench block's BOOT button carries `read_while_running`:
+  true on the watch, the 1.47" stick, the Touch 1.69, the AMOLED 2.41 and the
+  Nightlight, whose `main.cpp` BOOT grammar runs because their `pins.h` names
+  a `BOOT_BUTTON_PIN`; false on the two dashes, whose pin maps name none
+  (GPIO0 is an RGB data line there, BOOT a strap only). The premise was
+  broader than filed: the watch's, the stick's and the Touch 1.69's notes also
+  said the running firmware ignores BOOT, and now say what it does.
+  `bench.js`'s `setBootHeld()` narrates from the flag (`bootHeldLine()`),
+  saying on a board that reads BOOT that the bench holds the strap only and
+  does not press the twin's button. The troubleshooter's steps and flows that
+  quote a ROM line ("waiting for download", RTC_SW_SYS_RST) name the line's
+  kind and quote, and `benchFixesFor()` offers them only where the board's
+  `ROM_VOICES` entry (A59's lines the Lab quotes for its chip) holds the line,
+  so the Nightlight's ESP32-C3 card, for which no Espressif source on file
+  quotes a download or restart banner, no longer offers them; BOOT steps go
+  only to the boards whose story they tell; the reboot flow's Wi-Fi restore
+  step stands on its own. `bench.test.js` holds each flag to its note and to
+  the env's `pins.h` and config, each card's narration to its flag, each
+  card's flows to the lines the Lab quotes for its chip and to its BOOT story,
+  and every card's flows in closed form: every flow and step whose `battery`,
+  `rom` and `boot` markers fit the board, each as written, and nothing else,
+  with what each card leaves out pinned by name. The old registry, `bench.js`
+  and `guides.js` each fail it, as do mutants that offer every BOOT step,
+  every ROM step, ROM steps without reading the voice, or one more step
+  dropped on every battery board (which passed every suite before the closed
+  form). The dist does not move. Host-tested; not looked at in the Lab page by
+  hand. Found here: A99 (the bench never presses the twin's BOOT), A101 (the
+  C3 card's download-mode diagnosis) and D14 (the round watch's pin map
+  comment).
+- [ ] **A99 [code] The Lab's bench never presses BOOT on a twin whose firmware
+  reads it.** `canary-local/emulator/src/emu_support.cpp` exports
+  `emu_button()`, the BOOT level `main.cpp`'s BOOT grammar reads, but no page
+  calls it, so on the five cards whose running firmware reads BOOT (the watch,
+  the 1.47" stick, the Touch 1.69, the AMOLED 2.41 and the Nightlight) the
+  bench's BOOT chip is the strap only, and the presses the firmware answers
+  (wake, acknowledge, the lamp's double press, the Nightlight's turn) cannot
+  be tried on the twin; since A83 the narration says so. Wiring a press
+  control to `emu_button()` where the bench block's `read_while_running` is
+  true, held by a node test and a probe step, would let them be tried; it
+  changes no dist input. Found by A83 (#1802).
+- [ ] **A101 [code] The Nightlight's troubleshooter card loses the
+  download-mode diagnosis along with the unsourced banner.** Since A83,
+  `benchFixesFor()` leaves out, on the ESP32-C3 card, both the "Serial says
+  'waiting for download'" flow and the screen-dark flow's "Second guess: it's
+  in download mode" step, because their text quotes a download banner the Lab
+  quotes no source for on that chip, and the card's screen-dark flow keeps
+  only a first guess worded for the battery boards. The diagnosis itself is
+  true on the C3's GPIO9 strap: BOOT held, or wedged by the case, at reset
+  leaves the ROM waiting for a flasher with the rail up and the glass dark,
+  and RESET alone recovers it; the C3 bench stages it, `romBanner()` prints
+  its own note for it, and the Nightlight's closed pocket case is the step's
+  own misfit scenario. Give the step a body for a chip whose voice holds no
+  download line (quoting the bench's note, not a banner), so the C3 card keeps
+  the diagnosis, held in `bench.test.js` by requiring the C3 card to offer a
+  download-mode step that quotes no ROM token. Found by A83's review (#1802).
 - [ ] **A84 [code+human] Capture the ROM banners the Lab's bench cannot
   quote.** Since A59 the bench prints only banners quoted from an Espressif
   source, except the ESP32-S3's two download-mode lines (the bench's pre-A59
@@ -11659,7 +11734,7 @@ so — see D2 below.)
   dist for all six display flavors; CI's pinned emsdk rebuilt it on the branch
   (5abf3e34), not run here. Host-tested; not bench-tested; not looked at in
   the Lab page by hand.
-- [ ] **A79 [code] The Nightlight twin does not model its expander's
+- [x] **A79 [code] The Nightlight twin does not model its expander's
   night-floor steps.** `display_1in47.cpp`'s `backlight_night_set()` writes
   the 13-bit night duty as one expander byte (`duty13 >> 5`, raised to 1 when
   a glow was asked for), so the glass's night floor has 256 steps and never
@@ -11670,7 +11745,39 @@ so — see D2 below.)
   `TFT_USE_EXIO` only, would close it. Hold it with `backlight_cap_test.cpp`
   against the board's path for every duty. It moves the dist. Found by A61
   (#1802).
-- [ ] **A80 [code] The Lab page has no way to turn a running Nightlight
+  *Done (#1802):* on `TFT_USE_EXIO` boards `emu_hal_display.cpp`'s
+  `capped_night()` now holds the duty the board's expander byte stands for
+  (`duty13 >> 5`, raised to 1 while a glow is asked for, clipped at the cap's
+  byte, then `<< 5`): 128 steps 32 apart from dark to 4064 on the Nightlight's
+  50% cap, a glow under 32 shown at 32, a duty on a step passed as asked; the
+  LEDC boards pass the duty through as before. `backlight_cap_test.cpp` holds
+  the twin's night duty to the board's byte for every duty 0..9000 (on the
+  13-bit scale, never between two steps, never dark while a glow is asked for,
+  no step past the cap) and counts the steps: 63909 checks in the nightlight
+  config and 25347 in the dash's, natively against LVGL 8.4. The A61 HAL fails
+  it, and so do six mutants (no raise to 1, the top of each step, no cap, the
+  byte itself, rounding to the nearest step, stepping the dash config).
+  `bench.test.js` pins the step and the test's checks. The registry's
+  backlight note says an emulator built since A79 steps the floor and an older
+  one passes the duty as asked: no binding tells the row which it runs, and
+  `bench_probe.mjs`'s night check (the duty `>> 5` within the cap byte) passes
+  either, so the native test is the step's only holder. It moves the
+  `canary-display-nightlight` dist bundle (mark3's F279-F285 move all six
+  display flavors in the same wave); CI's pinned emsdk rebuilds the dist on
+  #1802's branch after this push (`emulator-dist-refresh.yml`), and the
+  rebuilt bundle was not run here. Host-tested; not bench-tested. Found here:
+  A100 (the AMOLED 2.41 twin's floor).
+- [ ] **A100 [code] The AMOLED 2.41 twin does not step its night floor as the
+  board does.** `display_amoled241.cpp`'s `backlight_night_set()` writes the
+  13-bit night duty as one panel brightness byte (`duty13 >> 5`, raised to 1
+  while a glow is asked for), as the Nightlight's expander does, but since A79
+  `emu_hal_display.cpp`'s `capped_night()` steps the duty only under
+  `TFT_USE_EXIO`, so the amoled241 twin passes every duty through and its
+  dimmest floors read finer, and a duty under 32 dimmer, than the panel.
+  Stepping it on the AMOLED build too, held by `backlight_cap_test.cpp` in an
+  amoled241 config, would close it; it moves that flavor's dist. Found by A79
+  (#1802).
+- [x] **A80 [code] The Lab page has no way to turn a running Nightlight
   glass.** Since F243, `emu-shell.js`'s `requestRotation()` turns the
   nightlight through the firmware's own mailbox, but only `boot_probe.mjs`
   calls it. The Lab's nightlight card stages a rotation only before power-on
@@ -11679,6 +11786,47 @@ so — see D2 below.)
   nightlight's Try it bench, wired to `requestRotation()` and absent on a dist
   without the binding, would show it. Hold it with a node test of the
   control's wiring and a probe step. Found by F243 (#1802).
+  *Done (#1802):* the Nightlight's Try it bench offers `io/orientation.h`'s
+  four turns (upright, on its right edge, upside down, on its left edge). Each
+  chip asks the firmware's own rotation mailbox through `emu-shell.js`'s
+  `requestRotation()` and says the ask ("asked the firmware to stand it on its
+  right edge (...)"), or the refusal, in the note line. The chip of the turn
+  the glass already stands in still asks (the apply path syncs the orientation
+  model first, and the ask replaces a turn still waiting in the one-slot
+  mailbox) but says the firmware keeps the glass as it is, since `main.cpp`'s
+  `nightlight_apply_orientation()` returns at `rot == prev`. The lit chip is
+  the turn the HAL last announced with the glass's shape. The control is
+  offered only where the new `turnsAtRuntime()` says the glass turns (it asks
+  the binding for a turn it refuses: -1 from a flavor with no mailbox, 0 from
+  the nightlight), so the watch and a dist without the binding show none.
+  `onboard.test.js` holds the shell's answer per flavor, the view's wiring and
+  both notes (red on the old shell, the old `app.js`, and mutants that never
+  see the lit turn or skip its ask). Integration changed one pin: F285 (#1802)
+  made that early return write an `[orient] <who> -> rotation R (already
+  worn)` line first, so the two packages each passed alone and failed
+  together; the pin now holds the model synced, then the early return with its
+  line (82f557c9). `bench_probe.mjs` clicks the side turn and back on the
+  committed dist and watches the canvas go 180x320, 320x180, 180x320 with the
+  matching chip lit, then clicks the lit chip and requires the stay-as-it-is
+  note and an unmoved glass (green in Chromium; a chip wired to the wrong
+  turn, and a lit chip that promises a turn, each fail it). It checks that the
+  watch's Try it offers no turn, and on a dist without `emu_request_rotation`
+  prints `BENCH_PROBE_SKIP[nightlight turn]` (exercised on a copy of the
+  committed dist with the binding's export renamed). CI runs the probe on the
+  committed dist, before the wasm job's in-job rebuild. A80 moves no dist
+  byte. Not looked at in the Lab page by hand. Found here: A98 (the iPhone's
+  picker names the side turns the other way round).
+- [ ] **A98 [code+decision] The iPhone's Nightlight orientation picker names
+  the side turns the other way round from the firmware.**
+  `ios/Sources/SecuraCV/Views/Components/NightlightSection.swift` labels tag 1
+  "On its left side" and tag 3 "On its right side", where `io/orientation.h`
+  says `R90 = 1` is "turned a quarter clockwise, onto its right edge" and
+  `R270 = 3` "onto its left edge"; the Lab's Try it chips (A80) follow the
+  header. One of the two wordings is wrong, or they mean different things by
+  "side" (the edge it rests on, or the way its top points). A person with a
+  Nightlight on a desk should settle which edge each value stands it on; then
+  one wording goes into both, with a test that holds the Swift labels to the
+  header. Found by A80 (#1802).
 - [x] **A62 [code] `fleet.html` turns a malformed deep link into a page
   error.** `canary-local/assets/app.js` reads its card with a bare
   `decodeURIComponent(location.hash.slice(1))`, so `fleet.html#%E0` throws
@@ -11756,7 +11904,7 @@ so — see D2 below.)
   8.4 (the sources `build.sh` compiles, not the dist's bytes); the emulator
   dist does not move. Found here: A81 (the full-boot test's stand-in drops the
   turn).
-- [ ] **A81 [code] `runtime_turn_test.cpp`'s page stand-in drops the turn.**
+- [x] **A81 [code] `runtime_turn_test.cpp`'s page stand-in drops the turn.**
   It defines `js_display_ready(int w, int h, int)` where `emu_hal_display.cpp`
   declares four arguments (A56's turn); it links only because a C declaration
   carries no signature, so the full-boot test cannot read the turn a runtime
@@ -11764,12 +11912,36 @@ so — see D2 below.)
   the turn after each nightlight turn (as `glass_turn_test.cpp` now does, A64)
   would hold A56's announcement through `nightlight_request_rotation()` too.
   Found by A64 (#1802).
-- [ ] **A82 [code] `glass_turn.sh` and `runtime_turn.sh` leave their default
+  *Done (#1802):* `runtime_turn_test.cpp` defines `js_display_ready(int w, int
+  h, int round_mask, int turn)` and requires every boot's last announcement,
+  and after each nightlight turn through `nightlight_request_rotation()` one
+  made after the ask, to carry no round mask and the turn written from
+  `io/orientation.h`'s `Orient` (R90, R180, R270 as 1, 2, 3): 140 checks
+  natively against LVGL 8.4 (124 before). A HAL that announces 1 for every
+  side turn passes the old driver and fails four new checks; one that
+  announces no turn fails twelve; one that names R90 and R270 the wrong way
+  round passes the old driver and fails eight. `onboard.test.js` now holds
+  every page call the three native drivers define to the EM_JS it stands in
+  for (return and parameter types, none undefined or stale); it fails on the
+  old driver. The emulator dist does not move. Host-tested.
+- [x] **A82 [code] `glass_turn.sh` and `runtime_turn.sh` leave their default
   temporary build directory behind.** Without `GLASS_TURN_OUT` /
   `RUNTIME_TURN_OUT` each run makes a `mktemp -d` (about 3.5 MB of objects)
   and never removes it; `glass_turn_lvgl9.sh` removes its own on exit
   (`trap`). Harmless in CI, it accumulates in a developer's `TMPDIR`. The same
   `trap` would fix both. Found by the F246 and F248 work (#1802).
+  *Done (#1802):* `glass_turn.sh` and `runtime_turn.sh` remove their default
+  `mktemp -d` build directory on exit, pass or fail, with the trap
+  `glass_turn_lvgl9.sh` uses (`runtime_turn.sh`'s first waits out the compiles
+  still running in the background; no test holds that wait, and the trap's
+  comment says so); an explicit `GLASS_TURN_OUT` / `RUNTIME_TURN_OUT` is left
+  as it is. `onboard.test.js` runs both scripts against stand-in checkouts
+  whose headers stop the first compile and requires an empty `TMPDIR`
+  afterwards, and an explicit directory that keeps what it already held (an
+  earlier run's object) and the build tree the script made in it; both old
+  scripts fail it, and so does either script cleaning the explicit directory
+  before it builds. Green default runs of both scripts left an empty `TMPDIR`.
+  The dist does not move. Host-tested.
 - [ ] **A65 [code+human] The iPhone's Fleet Wi-Fi Bluetooth rescue lane cannot
   reach a WAP.** The Fleet Wi-Fi rollout offers a "Bluetooth rescue" for a
   Canary the router change stranded (`FleetWiFiRollout.swift`'s did-not-return
@@ -11834,7 +12006,7 @@ so — see D2 below.)
   are caught. Not compiled here (CI's `cargo check (desktop-lab/src-tauri)`
   compiles it; `rustfmt --check` passes); not tried in the app by hand. Found
   here: A85 and A86.
-- [ ] **A85 [code] The Lab app's receipt card keeps the previous flash's
+- [x] **A85 [code] The Lab app's receipt card keeps the previous flash's
   monitor listeners.** `canary-local/assets/flash-native.js` `renderReceipt`
   registers `serial:status`, `serial:log` and `serial:receipt` listeners on
   every flash and removes them only on Stop watching, so each further flash in
@@ -11842,7 +12014,25 @@ so — see D2 below.)
   a detached card. Unlisten the previous card's listeners when a new receipt
   card is drawn (and when the bench takes the port back). Found by A67
   (#1802).
-- [ ] **A86 [code] The monitor's command chips are labeled for one firmware.**
+  *Done (#1802):* the premise held: `renderReceipt` pushed its three listeners
+  into a card-local array that only Stop watching emptied, so a second flash
+  in one session left the first card's set attached (two listeners per event,
+  the old ones writing into a detached card), and a failed reflash, which
+  draws no card, left the last set listening to a monitor that was not
+  running. Each receipt card now keeps its own unlisteners on the bench
+  (`receiptCard`), and `releaseReceipt()` lets them go when a flash starts
+  (the bench takes the port back for the write), when a new card is drawn,
+  when "Read the board again" takes the port back, and on Stop watching.
+  `desktop_parity.test.js` counts the listeners through four flashes in one
+  session (the fourth failing), a re-read and Stop watching: one set after
+  each successful flash, none after the failed one, the re-read or Stop
+  watching, and the detached card hears nothing more. It fails on the old
+  `flash-native.js` at the second flash. Mutants dropping the flash-start,
+  re-read, Stop-watching or release-body unlisten are caught; the release
+  inside `renderReceipt` is redundant behind the flash-start one (it has no
+  other caller), so a mutant dropping it survives. Host-tested in node; not
+  tried in the app by hand.
+- [x] **A86 [code] The monitor's command chips are labeled for one firmware.**
   `canary-local/assets/flash.js`'s `MONITOR_CMDS` (h help, j self-manifest, i
   identity, s status, t time, w wifi, m system, b battery) follows the WAP
   sketch's menu (`canary_wap.ino` `handle_serial_commands`, which itself has
@@ -11856,6 +12046,135 @@ so — see D2 below.)
   shows its menu" placeholder for every `flash.json` product. Give each
   product its command vocabulary and change all three benches together (the
   two-flashers rule). Found by the A67 review (#1802).
+  *Done (#1802):* the premise held (the WAP sketch has no `j`; the flagship's
+  `t`/`w` are its tests and tamper log and its `m` an MQTT status behind `#if
+  FEATURE_HA_MQTT`; Vision answers `j` and `h`; Sense's tuning console reads
+  words; the display firmware reads no serial console). `flash.json` now
+  carries a `monitor` record per product (`kind`, `cmds` as `[command, label]`
+  pairs, `placeholder`) and a top-level `monitor_unknown`, from
+  `gen_flash.py`'s `MONITOR_VOCAB` through `monitor_block()`. It refuses a
+  chip the firmware does not answer with no `#if` around it
+  (`handle_serial_commands()` case labels and Vision's `command == 'x'`, read
+  with comments and literals blanked), a tuning-console word or argument
+  `execute_()` does not read, a word console the project never feeds its USB
+  console to, a label that is not the firmware's own help-menu words for that
+  command, a key firmware without `h` (its placeholder promises it), and kind
+  `none` for a firmware that reads its serial console. The chips: flagship h
+  help, j self-manifest, i identity, s status, t all tests, e last boot, f
+  provenance, w tamper log; WAP h help, i identity, s status, t time, w Wi-Fi
+  AP, m system, b battery, g GPS; Vision j install receipt, h help; Sense
+  help, cfg (all knobs), stream on and stream off (radar line on and off); a
+  display none, with "this firmware reads no serial commands — its console
+  only prints". Chips change nothing the board keeps: the reboot (`x`), the
+  WAP's USB-drive mode cycle (`u`), `set` and `reset` stay in the typed box;
+  Sense's `stream on` and `stream off` toggle only the console session's radar
+  line, which a reboot forgets. All three benches read the record:
+  `flash-core.js`'s `monitorVocabulary()` for the browser flasher's monitor
+  and the Lab app's receipt card (`flash.js` no longer hands the bench a
+  table), and its twin in `desktop/src/app.js` for the Flasher. Which product:
+  the browser monitor takes the flashed product after a flash (an explicit
+  none after a backup or a local file), else the product the board's app
+  descriptor names at connect, through a new display-aware
+  `productForProject()` (a display build whose name carries no flavor,
+  `canary_display` or `canary-display`, resolves to a display; the plain
+  substring matcher had resolved it to the flagship's `canary` stem and
+  offered the flagship's eight chips); the role line uses the same helper. The
+  Lab card takes the flashed product. The Flasher takes the last host flash,
+  else the firmware its passport read off the board (through its own
+  `productForProject()` twin) until the bench writes to the board (a flash, a
+  local file, a Rescue restore or erase mark that read overwritten), else the
+  chosen card: a resident WAP with the Sense card chosen shows the WAP's
+  chips, and a blank board or foreign firmware shows none. It redraws its
+  chips when the monitor starts, sets the box's placeholder from the record
+  (`index.html`'s own is `monitor_unknown`'s) and hides "Print receipt (j)"
+  where `serial_receipt` is false. Chips send their command plus a newline on
+  all three. A board whose product is not known gets no chips and a box saying
+  its firmware was not identified. The browser monitor's status lines
+  (`monitorStatusText()`) name `h` for a key console, `help` for the tuning
+  console and no command for a display or an unknown board; both flashers ask
+  for `j` (the browser after a flash or on "ask the board itself", the Flasher
+  on "Ask it for its self-check") only where `serial_receipt` is not false.
+  The monitor's lede and its `settings_help` entry say it sends the commands
+  the firmware answers. Tests:
+  `canary-local/tools/tests/test_flash_monitor_vocab.py` runs each table
+  refusal against the real tree (the old eight-key table fails every firmware
+  it was shown for) and the parser readings on synthetic sources (commented,
+  quoted and `#if`-gated keys and words are not answers; a handler inside an
+  `#if` and an unwired tuning console are refused). `desktop_parity.test.js`
+  re-derives each firmware's answered commands and help words with a second
+  implementation of the generator's reading (the same method written again,
+  not an independent one, so a blind spot of the method is shared) and holds
+  every product's chips to them, each of its checks failing alone on a record
+  wrong in exactly one way; it runs both `productForProject` twins over
+  fifteen descriptor names, drives `flash.js`'s own `boardProduct` and
+  `monitorProduct`, runs the Flasher's chips through its own
+  `renderMonitorCmds`, `noteBoardWritten` and `askSelfCheck`, flashes a WAP, a
+  Vision, a Sense and a display through the Lab bench, and checks
+  `monitorStatusText` for every product. The browser monitor's own DOM (the
+  chips drawn, the box, the `j` gate, the status lines put in place) is held
+  by source pins on `phaseMonitor`, not driven (A95). All of them fail on the
+  base; mutants dropping each generator refusal, each oracle check, the
+  display-aware match, the Flasher's resident and overwritten rules, the `j`
+  gates and the status-line wording are caught. `canary-local.yml`'s path
+  filters take `firmware/canary/src/main.cpp`, which those tests read. On the
+  integrated tree `gen_flash.py --check` is up to date (21 products) and the
+  suites pass; integration only restyled `gen_flash.py`'s `answered_words`
+  matcher from a lambda to a def for ruff (no behavior change). The desktop
+  Rust side did not change. Host-tested in node and Python; not tried on a
+  board or in the apps by hand. Found here: A93, A94, A95, A96 and A97.
+- [ ] **A93 [code] Offer a flagship command behind a feature flag where the
+  product's build compiles it.** `gen_flash.py`'s `monitor_block()` (A86)
+  offers only keys `handle_serial_commands()` answers with no `#if` around
+  them, so the flagship's `m` (MQTT status), `b` (battery), `p` (power
+  policy), `d` (diagnostics) and `r` (data management) never get a chip, even
+  for a product whose env builds them. Resolve each gated key's `FEATURE_*`
+  for the product's env (`gen_flash.py` already reads env build flags,
+  `env_defines`, and the defaults the firmware's config headers give) and
+  offer it there only, with `desktop_parity.test.js`'s firmware oracle doing
+  the same. Found by A86 (#1802).
+- [ ] **A94 [decision] The WAP's `w` monitor chip prints its SoftAP
+  password.** `canary_wap.ino`'s `w` answers with the AP SSID, the AP password
+  in clear, the IP and a redacted API token. It was one of the eight shared
+  chips before A86 and stays a WAP chip after it (labeled Wi-Fi AP). Decide
+  whether a one-tap chip on a screen that may be shared or recorded should
+  print a secret, or whether the firmware should redact the password the way
+  it redacts the token (and the chip stay). This is the USB console, a
+  separate road from F289's network one. Found by A86 (#1802).
+- [ ] **A95 [code] Drive the browser flasher's serial monitor DOM in a test.**
+  Since A86 the browser monitor's product choice is driven
+  (`desktop_parity.test.js` evaluates `flash.js`'s own `boardProduct` and
+  `monitorProduct`), but `phaseMonitor`'s rendering is held by source pins
+  only: the chips drawn from the vocabulary, the box's placeholder, the `j`
+  identity ask gated on `serial_receipt`, and the status lines from
+  `monitorStatusText()`. Nothing renders `phaseMonitor` and reads them back,
+  as the same file does for the Lab bench and the Flasher. Give it a seam (or
+  drive it in Chromium past a fake Web Serial connect) and hold its chips,
+  placeholder, status lines and the `j` it sends (or does not) per product, a
+  backup or local-file flash included. Found by A86's review (#1802).
+- [ ] **A96 [code] Resolve a board's app descriptor display-aware on every
+  surface that names it.** A86 added `flash-core.js`'s `productForProject()`
+  (and its `desktop/src/app.js` twin) because the plain
+  `matchProjectToProduct()` resolves a display build whose name carries no
+  flavor (`canary_display`, `canary-display`, both counted as displays by
+  `looksLikeDisplayProject()`) to the flagship's `canary` stem, but only the
+  serial monitor and the browser's role line use it. The other callers still
+  name such a board the flagship: `flash.js`'s `readCurrentFirmware`
+  (`productName`), the connect page's voice bench role, the update headline
+  and `installVerdictFor`, `flash-core.js`'s `pickRescueProduct` and the
+  product preselect, and in `desktop/src/app.js` the passport's
+  `resident.product` ("Running SecuraCV Canary …", which also offers "Ask it
+  for its self-check") and its preselect. Route them through
+  `productForProject()`, with a test per surface; whether a real display
+  build's descriptor ever reads a flavorless name is worth checking on a board
+  first. Found by A86's review (#1802).
+- [ ] **A97 [code] Offer the self-check ask only to firmware that answers
+  `j`.** The Flasher's passport button "Ask it for its self-check" (any
+  recognized resident product) and the browser's "ask the board itself" (any
+  identified descriptor) are offered for the WAP, Sense and a display, which
+  have no `j`; since A86 both open the monitor and send nothing there, so the
+  button promises a self-check that never comes. Hide or reword them where the
+  product's `serial_receipt` is false, on both flashers, with a test each.
+  Found by A86 (#1802).
 - [x] **A68 [code] No CI compiles hub-core or hub-io for Windows.** A9's CI
   half. `desktop-hub-core.yml` runs only on `ubuntu-latest`, so the Windows
   branches of `desktop/hub-core` (`hub_enumerate_windows.rs`) and
@@ -11883,7 +12202,7 @@ so — see D2 below.)
   340d0253, both `windows-latest` jobs passed `cargo check --all-targets`, so
   lzma-sys and ring build there. Compile-checked only: nothing runs on
   Windows. Found here: A87.
-- [ ] **A87 [code] Hub Core's Windows job compiles but neither lints nor
+- [x] **A87 [code] Hub Core's Windows job compiles but neither lints nor
   tests.** `windows-check` (A68) runs `cargo check --all-targets` only. `cargo
   clippy --all-targets -- -D warnings` for `x86_64-pc-windows-gnu` was clean
   for both crates on 2026-10-13, so adding it costs a few minutes and catches
@@ -11891,6 +12210,28 @@ so — see D2 below.)
   cannot see; `cargo test` there would also run `hub_enumerate_windows.rs`'s
   pure judgments on the OS they judge (the FAT round-trip tests would skip
   without dosfstools). Found by A68 (#1802).
+  *Done (#1802):* `desktop-hub-core.yml`'s `windows-check` job, now "cargo
+  check, clippy and test on Windows (hub-core / hub-io)", runs `cargo clippy
+  --all-targets -- -D warnings` and `cargo test` after `cargo check
+  --all-targets` on `windows-latest`, in each crate's directory, with the
+  Linux matrix's toolchain (the image's rustup stable, plus `rustup component
+  add clippy`) and rust-cache shape, and a 30-minute timeout. A step before
+  the checkout sets `core.autocrlf false`: hub-io's
+  `embedded_bytes_match_python_manifest_pins` hashes `include_str!` bytes
+  against pins taken over LF, so a CRLF checkout (Git for Windows' default,
+  assumed for the image, not observed) would fail it on Windows alone.
+  hub-core's FAT round-trip tests skip there (no dosfstools or mtools); the
+  Linux matrix stays the job that proves they ran, and
+  `write_backend_available()` still answers false on Windows.
+  `scripts/tests/test_hub_core_windows_job.py` (7 tests) holds the job's
+  shape: a Windows runner, both crates, every run step in `desktop/${{
+  matrix.crate }}` (only the autocrlf step sets its own directory), the
+  autocrlf step before `actions/checkout`, check, clippy and test after it,
+  and no `continue-on-error` or `if:` on the job or any step. The old job and
+  a planted fixture of each refusal fail it. It proves the workflow's shape,
+  not that clippy and the tests pass: cargo was not run here, and the first CI
+  run on #1802 is that proof. Not covered by the shape test: an env such as
+  `RUSTFLAGS=--cap-lints`, or a `shell:` override that swallows exit codes.
 - [ ] **A69 [code+human] Writing a hub card on Linux needs a disk-group
   account or root.** `desktop/hub-io/src/write.rs`'s `open_target` opens the
   raw device directly, so a normal desktop account gets `PermissionDenied`;
@@ -11953,7 +12294,7 @@ so — see D2 below.)
   on rows that are `NavigationLink`s; Check the Fleet in Siri, Shortcuts and
   the Ultra's Action button picker. (`apple_watch_and_notifications.md` §8 W1
   says the long-look is untried.)
-- [ ] **A75 [code] Two iPhone setup leftovers from the 2026-10 review.** (1)
+- [x] **A75 [code] Two iPhone setup leftovers from the 2026-10 review.** (1)
   `NearbySetupSheet` (`Views/Components/NearbyCanaryCard.swift`) and
   `SetupView` still read the Keychain in a `@State` initial value
   (`HouseholdWiFiStore.load()`), which runs on every struct init; the review
@@ -11961,7 +12302,46 @@ so — see D2 below.)
   parent re-renders constantly during the scan, and left these two. (2) The
   nearby-offer overlay can show dimmed behind the "+" sheet's `.medium`
   detent. Neither is a compile defect.
-- [ ] **A88 [code] The iPhone keeps a stale `.local` recovery kit instead of
+  *Done (#1802):* (1) The premise was half stale: `NearbySetupSheet` already
+  read the household Wi-Fi in `begin()` at the base (moved inside #1785, the
+  PR that filed this item). `SetupView`'s `@State householdWiFi =
+  HouseholdWiFiStore.load()` now starts nil and is read in the `onAppear` the
+  screen already had, the shape `CanarySetupView`'s `remembered` has. Three
+  screens also read the hub's broker login (two Keychain items) in `body` on
+  every render: `SetupView`, `CanaryFamilySetupView`'s watch step and
+  `NearbySetupSheet`'s done card; each now reads it into a `@State` beside the
+  Wi-Fi read (`onAppear`, `prefill()`, `begin()`).
+  `scripts/lint_ios_keychain_reads.py` (a `lint.yml` step; a source heuristic
+  whose blind spots its docstring lists) keeps the static Keychain readers out
+  of view initializers, bodies, view builders and view-modifier content:
+  inside a `View` struct a reader, derived from the sources (every static func
+  that reaches `Keychain.get` or `SecItemCopyMatching`, through `Self.`, a
+  type name or a bare call), may be called only from a func that returns no
+  view or from an effect closure (`.task`, `.onAppear`, `.onChange`, a
+  `Button` action, ...); a `Task` decides nothing on its own, so one made in
+  `body` is refused. It names the four reads on the base tree and none now;
+  `scripts/tests/test_lint_ios_keychain_reads.py` (20 cases) pins the verdicts
+  it lists, and 25 of 26 mutants of the lint fail it (the one left,
+  `header_of` not stopping at `;`, changes no verdict on Swift a view can
+  declare). (2) The nearby card stands down while the Fleet tab's "+" sheet
+  (`AddCanarySheet`, `.medium` detent) is up, rather than show dimmed behind
+  it: its rules are now a pure value, `NearbyOfferLatch`
+  (`ios/Shared/NearbyCanary.swift`), that draws nothing and latches nothing
+  while `FleetStore.nearbyOfferStandsDown` is set (raised by the sheet on
+  appear, cleared on disappear), so nothing is counted as offered behind the
+  sheet and a card already up comes back when it closes. `NearbyCanaryTests`
+  drive `NearbyOfferLatch`; `scripts/tests/test_ios_setup_glue.py` holds the
+  sheet's and the overlay's wiring as source (the flag raised and cleared from
+  the sheet's root, no other writer, every draw and the latch reading it, a
+  re-latch on its change; ten mutants of that wiring each fail it). Hiding was
+  chosen over presenting the card above the sheet because the sheet lists the
+  same Canaries with their own Set up. The flag is app-wide, so on an iPad
+  with two windows a "+" sheet in one hides the card in both (a section 9
+  bench row; A92). Left as it was: `SetupView`'s `HubStore.load()` `@State`
+  initializer (UserDefaults, not the Keychain). The Python pins and lint ran
+  here; the Swift compile and tests are CI's (`ios-selfheal.yml`), not run
+  here; not on a phone (two section 9 rows in `magic_pairing.md`).
+- [x] **A88 [code] The iPhone keeps a stale `.local` recovery kit instead of
   moving it onto the WAP it found.** `PairView.pair(from:)` runs
   `decoded.rebased(onto: discovered)` only for the same device, and
   `rebased(onto:)` moves the host only when `baseURL.host == SetupPortal.host`
@@ -11977,6 +12357,63 @@ so — see D2 below.)
   `DeviceAPITests` case for a stale `.local` kit; until then
   `magic_pairing.md` tells the owner to save the kit again after a rename.
   Found by F255 (#1802).
+  *Done (#1802):* `ProvisioningReceipt.rebased(onto:discoveredAs:)`
+  (`ios/Sources/SecuraCV/Transport/DeviceAPI.swift`) now owns the same-device
+  decision `PairView.pair(from:)` used to make: a kit whose `device_id` is the
+  id its Ready-to-pair row was discovered under is moved onto the host that
+  row answers at, whatever host the kit names (a `.local` name from before the
+  WAP was named, an old DHCP address, 192.168.4.1, even a host off the
+  network), keeping the kit's scheme, port and `tls_cert_fp` pin. A kit with
+  no `device_id` still moves only off 192.168.4.1, whether its row carried an
+  id or not; another device's kit (an exact, case-sensitive id compare, as the
+  paired row's) is never moved; nothing discovered, nothing moved. Changed: a
+  same-device kit naming anything but 192.168.4.1 (it was kept as it was, and
+  one naming a public host was refused as off the network; it now lands on the
+  discovered private host, so the token still never leaves the LAN).
+  Unchanged: another device's kit, a nameless kit, the `isPrivate` gate and
+  the https pin check after the move. "Same device" is as strong as the id, a
+  16-bit suffix of the WAP's key fingerprint: two WAPs in one home can share
+  one, and then one's kit moves onto the other (`rebased()`'s comment and
+  `magic_pairing.md` say what follows; A91). `DeviceAPITests` gains cases for
+  a stale `.local` kit, a 192.168.4.1 kit, kits with a pin and a port, a
+  plain-http kit, an off-network kit, a kit already naming the live host,
+  another device's kit, a case-different id, an id-less row, a nameless kit
+  (from a named and an id-less row) and nothing seen;
+  `scripts/tests/test_ios_setup_glue.py` holds `PairView`'s call as source
+  (the row's host and id, the gates after it, only the rebased receipt paired;
+  six mutants of the call each fail it). `magic_pairing.md` drops "save the
+  kit again after a rename" and says which kits move; its section 9 gains the
+  rename bench row and section 10 the rebase row; `ios/README.md` and
+  `PairView`'s comments say the same. Checked by reading against the iOS 17
+  target, and the test expectations against a Python transliteration of the
+  old and new rule over 21 vectors (the old fails the stale `.local`, port,
+  plain-http and off-network vectors; nine mutants of the new are each
+  caught). The Swift compile and tests are CI's (`ios-selfheal.yml`), not run
+  here; not on a phone (U1).
+- [ ] **A91 [code+decision] A recovery kit of another device, opened from a
+  Ready-to-pair row, is paired under that row's name.** `PairView.pair(from:)`
+  keeps another device's kit at the host it names (A88) but still builds the
+  `PairedDeviceRef` from the row (`name: canary.name`, `deviceType:
+  canary.deviceType`), so WAP A's kit opened from WAP B's row adds A under B's
+  name and type. And "the same device" is a 16-bit `device_id` suffix of the
+  key fingerprint (`canary_wap.ino` `generate_device_id`), so two WAPs in one
+  home share an id with probability about n²/131072, and then A's kit is moved
+  onto B: an https kit fails on A's pin, and a plain-http kit sends A's token
+  to B. Decide whether a kit whose `device_id` is not the row's is refused
+  with a sentence that names both devices, and whether a plain-http kit should
+  be moved at all when it names a host other than the setup address; then test
+  it in `DeviceAPITests` and pin the view in
+  `scripts/tests/test_ios_setup_glue.py`. Found by the A88 review (#1802).
+- [ ] **A92 [code] The nearby card's stand-down is one flag for every iPad
+  window.** `FleetStore.nearbyOfferStandsDown` (A75) is a single `@Published`
+  Bool and the app supports multiple scenes
+  (`UIApplicationSupportsMultipleScenes`), so a "+" sheet in one window hides
+  the card in every window, and with a "+" sheet up in two windows, closing
+  one clears the flag while the other is still up, and the card shows dimmed
+  behind it. Keep the stand-down per scene (an environment value from the
+  scene that presents the sheet), or count presenters with a guard against an
+  unpaired onAppear, and turn the `magic_pairing.md` section 9 iPad note into
+  a check. Found by the A75 review (#1802).
 - [x] **A76 [code] The emulator still passes a marker flag nothing reads.**
   The 2026-10 cleanup deleted the unread `CONFIG_CANARY_*` marker `-D`s from
   the PlatformIO envs, but `canary-local/emulator/build.sh` and
@@ -12008,11 +12445,38 @@ so — see D2 below.)
   byte; the Dist
   drift check confirms it at the next rebuild, which F258's figure table
   forces anyway.
-- [ ] **A89 [code] figures.json's XIAO ESP32-S3 hardware row serves nothing.**
+- [x] **A89 [code] figures.json's XIAO ESP32-S3 hardware row serves nothing.**
   `servesOf` in `gen_figures.mjs` maps only PlatformIO envs to
   `firmware/configs/` directories, so `board:seeed_xiao_esp32s3` lists
   `serves: []` though the WAP sketch builds on it. Feed it the sketch row
   `TREE_TYPES` now carries (`wire_types.mjs`). Found by F258 (#1802).
+  *Done (#1802):* `gen_figures.mjs`'s `servesOf` now sees the WAP sketch.
+  `wire_types.mjs`'s `readProjects()` reads each
+  `firmware/projects/<p>/platformio.ini` (its `[platformio]` `src_dir` and
+  `extra_configs`), and `treeConfigsOfEnvs(envs, projects)` gives the envs of
+  the one project whose `src_dir` holds every source a `TREE_TYPES` row reads
+  that row's `family/flavor` config. It refuses a row no project or two
+  projects compile, a row no env builds, an env file two projects pull in, and
+  an env that also includes a `configs/` flavor. `board:seeed_xiao_esp32s3`
+  now serves `["canary-wap"]` where it served `[]`. Regenerated in CLAUDE.md
+  order: only `canary-local/devices/figures.json` moved (`fleet_figures.h`,
+  `fleet_figures_art.h` and `FleetFigures.swift` unchanged, so no `setup.sh
+  regen`, and the emulator dist does not move). `figures.test.js`'s "every
+  drawn board serves the device type its builds publish" fails on the old
+  ledger; two more tests drive the join's happy path and each refusal with
+  synthetic projects and envs, and hold `readProjects` to a synthetic tree and
+  the WAP's real project. `canary-local.yml`'s path lists gain
+  `firmware/projects/*/*.ini`, every `.ini` `gen_figures` reads. On the
+  integrated tree `gen_figures.mjs --check` is up to date and
+  `figures.test.js` passes. Host-tested.
+- [ ] **A90 [code] The Lab's canary-wap topic sample shows a Chirp state the
+  device never enters.** `gen_wap.py` writes the `chirp` topic's sample
+  payload as `{"state":"listening"}` (`wap.json`), but the canary-wap goes
+  from `disabled` through `initializing` straight to `active` (`enable()` in
+  `chirp_channel.cpp`) and nothing sets `CHIRP_LISTENING`;
+  `chirp_channel::is_active()`, which counts it, has no caller. Show a state
+  the device publishes (`active`), and decide whether LISTENING stays in the
+  enum and in spec §7.1. Found by HA33 (#1802).
 - [ ] **A77 [human] Run one real `.deb` self-update on Ubuntu 22.04.** Since
   the 2026-10 cleanup the desktop apps' install docs and release bodies say
   the `.deb` updates itself and asks for a password: tauri-plugin-updater
@@ -12811,7 +13275,8 @@ so — see D2 below.)
   monorepo checkout, run weekly with `docs/` added to mirror-freshness's
   sparse checkout, as its own step so a broken link does not raise the "mirror
   has drifted" issue. Found by the 2026-10 cleanup's mirror package.
-  *Done (the mirror PR, securacv-homeassistant#28, open):* the mirror's
+  *Done (the mirror PR, securacv-homeassistant#28, merged 2026-10-13):* the
+  mirror's
   `lint_readme.py --source <monorepo-checkout>` resolves every URL the
   mirror-owned prose (`README.md`, `AGENTS.md`, `CLAUDE.md`) writes into
   `kmay89/securaCV` against a checkout of `main`. That covers links, bare
@@ -12841,11 +13306,13 @@ so — see D2 below.)
   145 single mutations, 132 fail it; the 2 that pass are equivalent, and the
   other 11 target replaced code. On GitHub Actions, the mirror PR's own run on
   its head (50f496f) passed the link step against the monorepo's `main` and
-  ran `test_lint_readme.py` green in `workflows-lint.yml`; the PR is still
-  open and unmerged. Limit: the check reads `main` weekly, so a
-  heading renamed or a file moved upstream still breaks the HACS page until
-  that run notices (HA35). Host-tested. Found here: HA35.
-- [ ] **HA35 [code] A monorepo PR that breaks a link on the HACS store page
+  ran `test_lint_readme.py` green in `workflows-lint.yml`; the PR merged on
+  2026-10-13 (mirror `main` cd99f93). Limit: the check reads `main` weekly, so
+  a heading renamed or a file moved upstream still broke the HACS page until
+  that run noticed; since HA35 (#1802) the monorepo PR that breaks a
+  store-page link fails itself, and the weekly step stays as the backstop.
+  Host-tested. Found here: HA35.
+- [x] **HA35 [code] A monorepo PR that breaks a link on the HACS store page
   stays green.** The mirror's link check (HA31) reads the monorepo's `main`
   once a week, so the HACS page is already broken when it goes red, and the
   store page pipes `scripts/install.sh` to bash. A monorepo CI step could
@@ -12854,6 +13321,47 @@ so — see D2 below.)
   checkout>` on PRs touching `docs/**` or `scripts/install.sh`. That would
   fail the PR that breaks a link, and the mirror's weekly step would stay as
   the backstop. Found by HA31 (the mirror PR, securacv-homeassistant#28).
+  *Done (#1802):* `lint.yml`'s job `hacs-store-page-links` runs
+  `scripts/check_hacs_store_links.py` on every PR. It fetches `README.md`,
+  `AGENTS.md`, `CLAUDE.md` and `.github/scripts/lint_readme.py` from the
+  mirror's `main` over raw.githubusercontent.com (read-only, no credentials;
+  the checkout keeps no token, `persist-credentials: false`; three tries),
+  lays them out as the mirror has them, and runs `lint_readme.py --source <the
+  PR checkout>` isolated (`python -I`). It fails closed: a link that does not
+  land is exit 1, and exit 0 counts only with the checker's own "links into
+  kmay89/securaCV OK — <n> resolve" line (n at least 1), so a checker older
+  than securacv-homeassistant#28, a silent or truncated one, or a file that
+  cannot be fetched or comes back empty is exit 2, never a pass. It sits in
+  `lint.yml`, unfiltered, rather than behind `docs/**` and
+  `scripts/install.sh`, because the store page also links
+  `.github/workflows/homeassistant-mirror.yml`. A rename on purpose keeps the
+  old name alive in the same PR (an `<a id="old-slug"></a>` above the heading,
+  or the old file left in place), then moves the mirror's link after it
+  merges, the order the mirror's own link step asks for; the job comment and
+  the failure message say so. Proved against the live mirror `main` (cd99f93):
+  renaming `docs/homeassistant_setup.md`'s "Step 4: Verify Discovery" heading
+  in scratch exits 1 naming `README.md:21`'s `#step-4-verify-discovery`; with
+  the alias above it, all 24 links land.
+  `scripts/tests/test_check_hacs_store_links.py` drives the run path with a
+  stand-in checker and the fetch path with a local HTTP server, and holds the
+  wiring. Host-tested; the job has not run in CI yet. Found here: HA36 (what
+  an unreachable mirror should mean) and HA37 (the summary line is now a
+  contract with the mirror).
+- [ ] **HA36 [decision] What an unreachable mirror means for the HACS link
+  job.** `lint.yml`'s `hacs-store-page-links` fetches four files from
+  raw.githubusercontent.com on every PR and exits 2 (red) when it cannot after
+  three tries, so a network blip turns any PR red. Decide whether an
+  unreachable mirror is a failure (today: nothing is checked, so nothing
+  passes silently) or a warning annotation. Found by HA35 (#1802).
+- [ ] **HA37 [code] Pin the mirror checker's `--source` summary line in the
+  mirror's own tests.** The monorepo's `hacs-store-page-links` job (HA35)
+  counts the mirror `lint_readme.py`'s exit 0 only with its line "links into
+  kmay89/securaCV OK — <n> resolve against ...", failing closed, so a reword
+  in the mirror turns every monorepo PR red until
+  `scripts/check_hacs_store_links.py`'s `VOUCHED` follows. A test in
+  securacv-homeassistant that asserts the line's shape, and a comment in
+  `lint_upstream()` naming the consumer, would make the contract visible on
+  the mirror side. Found by HA35 (#1802).
 - [x] **HA32 [code] `discover_cameras.sh` has never run under the add-on's
   jq.** Its jq rewrite (2026-10 cleanup,
   `privacy_witness_kernel/discover_cameras.sh`) is written for jq 1.6, and its
@@ -12883,7 +13391,7 @@ so — see D2 below.)
   download and its digest check passed, and the parity, `run_lib` and config
   render steps passed on it (curl retries three times and fails closed on a
   digest mismatch). Host-tested and run in CI. Found here: HA34.
-- [ ] **HA34 [code] An empty go2rtc stream name stops the app.** Both
+- [x] **HA34 [code] An empty go2rtc stream name stops the app.** Both
   `serve_wizard._go2rtc_streams_to_cameras` and `discover_cameras.sh` slug a
   stream named `""` to `zone:` (they agree, so the parity cases pass), which
   fails `^zone:[a-z0-9_-]{1,64}$`. `run.sh` merges cameras with
@@ -12891,7 +13399,71 @@ so — see D2 below.)
   `run.sh` exits with "Invalid zone_id format". Skip such a stream or give it
   a fallback slug, in the reference first, with a parity case. Found by HA32
   (#1802).
-- [ ] **HA33 [code] The integration's Chirp Active binary sensor reads fields
+  *Done (#1802):* skipped, not given a fallback slug, the reference first.
+  `serve_wizard._go2rtc_streams_to_cameras` and then `discover_cameras.sh`
+  skip a stream whose slug is empty, which only the empty name gives (every
+  other character becomes one); a fallback was not taken because the empty
+  name gives nothing to derive one from. A reference case and two parity cases
+  (the empty name beside a blank, a non-ASCII and a plain name; the empty name
+  alone) hold both copies; the parity cases fail on the old shell copy under
+  jq 1.7 and under the jq-1.6 release binary CI pins. Tests in
+  `privacy_witness_kernel/tests/test_serve_wizard.py` run run.sh's own
+  standalone camera block, lifted from the script with the discovery script's
+  install path swapped for the tree's copy and bashio's own config query as
+  the stub (an array option answered one compact element per line, as bashio
+  0.15.0 in the app's 3.18 base answers it; a further test holds the stub to
+  that shape): with no configured camera, a nameless stream beside `Front
+  Door` leaves `Front Door` primary at `zone:front_door`, alone it ends at "No
+  cameras configured!" rather than the zone check, and every parity payload's
+  primary zone passes run.sh's pattern. On the old script those cases fail
+  under each jq, the first at run.sh's "Invalid zone_id format: zone:". The
+  case with a configured camera is a strict xfail: under that stub run.sh
+  stops at its own read of the cameras option before any pick (HA38).
+  Host-tested under jq 1.7 and jq 1.6 with this host's bash and dash (CI runs
+  them on jq 1.6); not run in the app image (busybox sh, Alpine's jq 1.6-r4).
+  No carried Home Assistant file. Found here: HA38 (run.sh's list-option
+  reads) and HA39 (the wizard page's own slug rule).
+- [ ] **HA38 [code] run.sh reads list options as JSON arrays, which bashio
+  does not print.** `bashio::config` prints an array option one compact
+  element per line (`.key[]` through `jq --raw-output -c -M`, in bashio
+  0.15.0, which the app's 3.18 base pins, and on bashio's main branch) and an
+  empty one as nothing. In standalone mode any configured camera stops the app
+  at start: `jq length` counts the first camera's keys, `.[0]` fails on an
+  object ("Cannot index object with number", exit 5), and with go2rtc
+  discovery on and a stream found, `add` fails on an object plus an array and
+  the primary zone is empty ("Invalid zone_id format: "). The wizard writes
+  the cameras option at setup, so this is the configured path, not a corner.
+  In frigate mode `frigate.labels`, whose default is not empty, reaches `jq -r
+  'join(",")'` as raw lines and fails to parse (exit 5), as does a non-empty
+  `frigate.cameras`; at run.sh:119 two configured cameras give "[: integer
+  expression expected" and the CONFIGURED gate falls through to the key file.
+  Read each list option whole (from `/data/options.json`, or slurp the lines:
+  `jq -s .` for objects, `jq -R . | jq -s .` for raw strings), and hold
+  run.sh's standalone and frigate blocks with tests whose bashio stub answers
+  as bashio does (`_PICK_STUBS` in
+  `privacy_witness_kernel/tests/test_serve_wizard.py` is one; its
+  configured-camera case is a strict xfail until this lands). Probed line by
+  line with that stub under jq 1.6 and 1.7, not in the app image: start a
+  configured app once on a bench first, since a clean start there would mean
+  the image's bashio answers differently and this premise is false. Once the
+  option reads whole, decide whether a configured camera comes before a
+  discovered one (the pick is the first row by name, `unique_by(.name)` then
+  `.[0]`). Found by the HA34 review (#1802).
+- [ ] **HA39 [code] The wizard page slugs camera names by its own rule.**
+  `updateCamera()` and `savePayload()`'s fallback in
+  `privacy_witness_kernel/wizard/index.html` lowercase with JavaScript's
+  Unicode-aware `toLowerCase()` and sweep UTF-16 code units, and the fallback
+  has no 64-character cut, unlike `serve_wizard._go2rtc_streams_to_cameras`
+  and `discover_cameras.sh` (ASCII A-Z only, per code point, cut to 64):
+  `İstanbul` gives `zone:i_stanbul` on the page and `zone:_stanbul` from the
+  reference, an astral emoji gives two underscores rather than one, and the
+  server stores the page's `zone_id` unchecked. Discovered rows keep the
+  reference's zone unless renamed, and empty names are refused, so today only
+  a name over 64 characters that reaches the fallback without a zone can reach
+  run.sh's zone check. Port the reference rule to the page (or have the server
+  derive `zone_id`), with a node case for an astral and a 65-character name.
+  Found by the HA34 review (#1802).
+- [x] **HA33 [code] The integration's Chirp Active binary sensor reads fields
   no firmware sends.** `SecuraCVCanaryChirpActiveSensor`
   (`custom_components/securacv/binary_sensor.py`) is created when
   `<prefix>/<id>/chirp` arrives and is on only when the payload's `enabled`
@@ -12904,6 +13476,50 @@ so — see D2 below.)
   sends. Map it to `state` (deciding which states read on) or retire it; the
   fix is a carried file, so the HACS mirror follows. From code. Found by F231
   (#1802).
+  *Done (#1802):* mapped, not retired. `SecuraCVCanaryChirpActiveSensor`
+  (`custom_components/securacv/binary_sensor.py`) reads the payload's `state`:
+  the word `chirp_channel::state_name()` gives for the channel's shown state,
+  which the sketch's one caller passes and the canary-wap's
+  `publish_chirp_state()` sends alone as `{"state":"<word>"}` (retained, on a
+  build with the mesh feature, every 30 s on mains or a normal battery,
+  stretched to 2 or 4 minutes in the battery saver and low power modes).
+  `CHIRP_STATE_IS_ON` decides: `active`, `cooldown` (an active channel whose
+  send timer runs), `muted` and `listening` (named by `state_name()`, never
+  entered by the canary-wap) read on, a channel that is on with a session;
+  `disabled` and `initializing` read off; any other word, `state_name()`'s own
+  `unknown` included, reads unknown. The lookup is exact, since the firmware
+  sends lowercase literals, so `ACTIVE` or ` active` is another word and reads
+  unknown; a body with no string `state` (the REST status shape, a number, a
+  boolean, null, a list) leaves the sensor as it was, and the sensor starts
+  unknown rather than off. Muted reads on because a mute keeps the session,
+  the presence beacon and an owner's send and drops only incoming chirps;
+  `chirp_channel::is_active()`, which nothing calls, counts only `active` and
+  `listening`, and the sensor reads "the channel is on" on purpose, with the
+  `channel_state` attribute carrying the word so an automation can tell. The
+  seven attributes no firmware sent are gone, and the docstring says five
+  emoji (F231). `tests/test_chirp_active.py` (12 tests) reads the body format
+  from `csi_mqtt.cpp`, the words from `chirp_channel.cpp` and the argument of
+  the one `publish_chirp_state()` call in `canary_wap.ino`; it holds the table
+  to those words, each word to the decision written out in the test,
+  `WAP_CHIRP_ACTIVE` (the literal the older fixtures in
+  `test_unsigned_trust_attrs.py` and `test_mqtt_payload_hardening.py` now
+  feed) to the firmware's render, and `python.yml`'s path lists to the three
+  firmware files it reads (`chirp_channel.cpp` is now in both, so a
+  firmware-only edit runs the suite). The six source- and workflow-reading
+  tests skip in the HACS mirror and the six literal cases run there. On the
+  old sensor ten tests fail (eight new, the two rewritten fixtures), and
+  mutations each fail the file: a new `state_name()` word, an extra body
+  field, `muted` off, no type check, an unknown word read as off, the sensor
+  starting off, the word folded before the lookup, a boolean read as active,
+  and a caller that sends any word but `state_name()` of the shown state. On
+  the integrated tree, beside wapchirp5's `chirp_channel.cpp` changes (F269,
+  F270), the file still passes. `docs/homeassistant_setup.md`'s entity line
+  and the `homeassistant.json` generated from it follow. Host-tested on the
+  integration's stub lane; not run in a Home Assistant (the real-HA lane has
+  no chirp case), not bench-tested. Carried files (`binary_sensor.py` and
+  three tests): the HACS mirror follows after #1802 merges. Found here: F295
+  (the canary-wap's own Chirp Channel State entity promises NFPA words) and
+  A90 (the Lab's `listening` sample).
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store
@@ -13269,7 +13885,8 @@ so — see D2 below.)
   theme darkens) and have it read inline `style="…"` attributes too: it reads
   only `<style>` blocks, which is how `checkup.html`'s inline `color:#065f46`
   passed. Found by the 2026-10 cleanup's site review.
-  *Done (the website PR, securacv_website#227, open):* the seven rules
+  *Done (the website PR, securacv_website#227, merged 2026-10-13):* the seven
+  rules
   (compare `.category`, store `.batchnote`, the how-it-works and vault
   `.noscript-note`, ideas `.noob`, playground `.pill.honest` and `.btn.on`)
   take a `:root` ink token their page lifts in a night block, in both dark
@@ -13298,7 +13915,7 @@ so — see D2 below.)
   found 21 dark-ink elements under 3:1 before and only linux's `.dash` device
   mock (the same in both modes) after.
   Host-tested in node and Chromium. Found here: W32-W34.
-- [ ] **W32 [code] White ink on night-lifted `--brand` fills reads at 2.45:1
+- [x] **W32 [code] White ink on night-lifted `--brand` fills reads at 2.45:1
   on the website.** Primary buttons and calls to action on about 40 pages set
   `color: #fff` on `var(--brand)`, which `css/site.css` lifts to #7aa5f8 at
   night. A Chromium audit (prefers-color-scheme dark, every root page) counted
@@ -13309,7 +13926,32 @@ so — see D2 below.)
   extend `tests/dark-mode.test.mjs` to refuse light ink on a background token
   the night theme lightens. Found by W22 (the website PR,
   securacv_website#227).
-- [ ] **W33 [code] Light rgba() surfaces stay light at night on two website
+  *Done (the website PR, securacv_website#228, merged 2026-10-14):*
+  `css/site.css` gains an `--on-brand` token (#ffffff by day, #0c0c0e at night
+  in both dark sources; `nav .btn-nav` now reads it), and every white ink on a
+  fill the night theme lifts is written `var(--on-brand, #fff)`: 91
+  declarations on 39 pages (primary buttons, calls to action, selected chips,
+  numbered badges, checkup's and help's `--success` buttons and `.fw-flash`,
+  the `--caution` and `--canary-dark` fills, index's `::selection` and
+  `.step-num` on `--text`), site.css's `.ar-cta`, the `js/site.js` skip link
+  and index's own. checkup's primary hover reads a page `--moss-hover` token
+  (#047857 by day, #6ee7b7 at night in both sources), so the night ink holds
+  on hover (12.8:1; it read 3.6:1 on the day green). Day rendering of every
+  rewritten rule is unchanged (a Chromium day dump of every root page, base
+  against head). The new inks read 6.1 to 17.8:1 at night (most 8.0:1), up
+  from 1.1 to 2.5:1. `tests/dark-mode.test.mjs` mirrors W22's guard for light
+  ink: contrast under 3:1 against a background token the night theme lightens,
+  in either dark source, with the panel found as the dark guard finds it,
+  minus pseudo-element boxes and with the painter's ancestors required. It
+  reads every page, every `js/*.js` and `css/site.css` through one sources
+  list (a test plants a rule in each kind), reads `hsl()` inks, and reads a
+  `:hover`/`:focus`/`:active` rule's own fill under the `--on-brand` ink at
+  4.5:1; a self-test holds it to 16 refusals and 10 passes.
+  `tests/skip-link.test.mjs` pins the skip link's ink. On the pre-change pages
+  the guard names 94 rules in 40 files and the pin fails. Host-tested in node
+  and Chromium; not checked on a phone. Found here: W36 (W22's dark-ink guard
+  still skips `css/site.css`).
+- [x] **W33 [code] Light rgba() surfaces stay light at night on two website
   pages.** print.html's `.progress-rail` (rgba(250,250,250,.92)) and
   render-lab.html's `.lab-stage .badge` (rgba(255,255,255,.85)) and
   `.lab-stage .modelpick` (rgba(255,255,255,.9)) keep a near-white fill at
@@ -13317,7 +13959,26 @@ so — see D2 below.)
   Chromium audit. `tests/dark-mode.test.mjs`'s LIGHT scan matches hex and
   named colors only; teach it light rgba()/hsla() fills, then give the three a
   night value. Found by W22 (the website PR, securacv_website#227).
-- [ ] **W34 [code] The website's dark-ink guard reads selectors, not the
+  *Done (the website PR, securacv_website#228, merged 2026-10-14):* the LIGHT
+  scan in `tests/dark-mode.test.mjs` reads `rgb()`/`rgba()`/`hsl()`/`hsla()`
+  and `#rgba`/`#rrggbbaa` fills as light at 0.65 luminance and 0.5 alpha or
+  more, in page `<style>` blocks, `style=""` attributes and `js/*.js` alike; a
+  literal passes only when both dark sources restyle the same fill property,
+  and a self-test holds it to 8 refusals and 6 passes plus three inline
+  spellings. On the branch base it named print.html's `.progress-rail`,
+  render-lab.html's `.lab-stage .badge` and `.lab-stage .modelpick`, and
+  store.html's `#cartBar`; each now has night glass in its page's night block,
+  in both sources (day unchanged). Three ALLOW rows name pictures that keep
+  their own colors (plugin's iOS banner and Files sheet, the Witness Wall
+  camera figure, view-in-room's hotspot ring). The iPhone rows are marked
+  literal and a test refuses any page token inside them: it caught the
+  banner's heading on `var(--text)` (#f4f4f5 on the white banner, 1.1:1 at
+  night once the iPhone flow runs) and the sheet's highlighted row on
+  `var(--brand-light)` (1.2:1), both now this page's day literals, identical
+  by day. The rail's count reads 9.5:1 at night and the chips 8.0 to 8.8:1, up
+  from 1.5 to 1.6:1. Host-tested in node and Chromium. Found here: W39 (the
+  iPhone mock's own grays read under 3:1 in both themes).
+- [x] **W34 [code] The website's dark-ink guard reads selectors, not the
   rendered page.** `tests/dark-mode.test.mjs` decides a rule's panel from the
   selectors that paint it, so ink on a panel painted by an element its
   selector does not name, or ink a script sets through `el.style`, is outside
@@ -13327,6 +13988,90 @@ so — see D2 below.)
   dark ink under 3:1 that is not a named device mock, or record the audit's
   scope next to the guard. Found by W22 (the website PR,
   securacv_website#227).
+  *Done (the website PR, securacv_website#228, merged 2026-10-14):* the item's
+  premise was wrong: no website workflow used Playwright at the branch base,
+  so there was no setup to reuse. The job adapts the install-and-cache steps
+  of the monorepo's `canary-local.yml`, with Playwright pinned to 1.56.1 and
+  the browser cache keyed on that version (`canary-local.yml` installs it
+  unpinned and keys the cache weekly); `tests/night-contrast.test.mjs` holds
+  the version to the same value in all three places.
+  `scripts/night-contrast.mjs` (arithmetic in
+  `scripts/lib/night-contrast.mjs`) renders every root page in Chromium three
+  ways (system dark mode; a stored night choice on a day-mode system; system
+  dark mode with scripts off), once its network settles and its DOM holds
+  still, and reads each text element's computed ink against every box from it
+  out to `<html>`: alpha composited, opacity read as a group (a stack with a
+  box at opacity 0, a reveal not yet triggered, is read at full opacity),
+  every gradient stop a candidate, a stop in a space it cannot convert (oklch,
+  lab, display-p3) unmeasured rather than dropped, gradients covering under
+  half the box ignored, gradient text read by its stops. It fails text under
+  3:1 unless the element sits in a named device picture on ALLOW (linux.html's
+  `.dash`, witness-wall.html's `.tv-shell` and `.remote`) or in an inactive
+  state on DIMMED whose fade alone takes it under (checkup's unreached rungs,
+  off pills and off tiles, explainer's gone rows, linux's locked capabilities,
+  modes' unplayed beats, each under 3:1 by day too; the same text must read
+  3:1 undimmed), and it fails any reading it cannot measure and any ALLOW or
+  DIMMED row that excused nothing. Before it judges a root page it reads its
+  own fixture page in every mode and stops unless the expected verdicts come
+  back, so a pass that reads nothing, drops a failure, skips a mode or ignores
+  opacity cannot go green; a full run also needs readings from every root page
+  in every mode. Its SCOPE list says what it cannot see (states a visitor
+  opens, `:hover`/`:focus`, pseudo-element text, panels painted by siblings or
+  images, filter and blend modes). It runs as the `night-contrast` job in
+  `site-checks.yml`, fixture step first. `tests/night-contrast.test.mjs` holds
+  the arithmetic, the judge, the fixture's coverage, the ALLOW and DIMMED rows
+  (no blankets, checked against the page and the scripts it loads), the job
+  block and the script's exit paths. On the branch base it names 448 readings
+  on 145 elements; after W32, W33 and these fixes it names none in about
+  27,100 readings, none unmeasured (lab's yellow and orange numerals take
+  #17150f, by day too; index's `.arch-label` goes from alpha .3 to .5, 2.5 to
+  5.3:1 in both modes; transparency's No reads the `--alert` token, now given
+  its day value on the page, which site.css already lifts to #f87171 at night,
+  6.9:1). Host-tested in Chromium; the `night-contrast` job passed in CI on
+  the website's `main` after the merge (run 38618612153). Not checked on a
+  phone or in Safari. Found here: W35 (what the pass does not open), W37 (3:1
+  or 4.5:1) and W38 (the six inactive fades).
+- [ ] **W35 [code] The night contrast pass reads root pages once loaded, and
+  nothing a visitor opens.** The routed `/tv/` app (`tv/index.html`), the
+  states a visitor opens (plugin.html's iPhone flow, which hid a 1.1:1 heading
+  until a static test caught it; store's cart drawer; dialogs; tabs; the ideas
+  vote dialog) and `:hover`/`:focus` colors outside the `--on-brand` state
+  fills `tests/dark-mode.test.mjs` reads are outside it
+  (`scripts/lib/night-contrast.mjs` SCOPE). Extend it to `tv/index.html` and
+  to named interactions per page, read through the same fixture-checked judge,
+  and force `:hover`/`:focus` on the controls the static guard covers. Found
+  by W34 (the website PR, securacv_website#228).
+- [ ] **W36 [code] W22's dark-ink guard does not read `css/site.css`.** The
+  dark-ink guard in `tests/dark-mode.test.mjs` reads page `<style>` blocks and
+  scripts, not `css/site.css`'s shared rules; W32's light-ink guard now reads
+  all three through one sources list. Give the dark-ink guard the same list,
+  so a shared rule that paints dark ink on a night-dark panel is caught
+  statically, not only by the rendered pass. Found by W32 (the website PR,
+  securacv_website#228).
+- [ ] **W37 [decision] The night contrast pass holds normal-size text to 3:1,
+  not 4.5:1.** It fails only under 3:1 (WCAG's large-text and UI-component
+  floor), so normal-size text between 3:1 and 4.5:1 passes (lab.html's stage 5
+  and 6 numerals read 3.7:1, white on teal and green, the same by day). Decide
+  whether normal-size text is held to 4.5:1, which would make the pass a
+  per-element size check (the light-ink guard's state-fill check already uses
+  4.5:1). Found by W34 (the website PR, securacv_website#228).
+- [ ] **W38 [decision] Six inactive states fade under 3:1 in both themes.**
+  checkup.html's unreached BLE rungs (`.rung.dim`, opacity .45), off firmware
+  pills (`.fw-pill.off`) and off tiles (`.tile.off`), explainer.html's gone
+  rows (`.row.gone`), linux.html's locked capability tags (`.cap.locked`) and
+  modes.html's unplayed beats (`.beat` not yet `.fired`) read 1.5 to 2.8:1 by
+  day and by night; the night pass excuses them through its DIMMED list only
+  because the same text reads 3:1 undimmed. Decide whether an inactive state
+  keeps a readable fade (3:1 or better, by opacity or a muted ink); if so,
+  restyle the six and delete DIMMED. Found by W34 (the website PR,
+  securacv_website#228).
+- [ ] **W39 [code] plugin.html's iPhone mock grays read under 3:1 by day and
+  by night.** The Files rows' meta labels ("Files ▸ Browse", "HTML · 2 KB",
+  "folder") and the opening line ("START-HERE.html", "Opening …") are #94a3b8
+  on the mock's light rows and screen, 2.2 to 2.6:1, the same in both themes.
+  Give the mock an iOS secondary gray that reads (#6b7280 reads 4.8:1 on
+  white, as the mock's own `.toast small` already uses). Found by W33's review
+  (the website PR, securacv_website#228).
 - [x] **W23 [code] Four small website leftovers from the 2026-10 cleanup.**
   (1) `js/help.js`'s flasher door note says the Flasher "backs up before it
   writes and verifies after"; say it checks the write after ("verified" is
@@ -13343,7 +14088,8 @@ so — see D2 below.)
   and an `['apple tv', '/apple-tv']` probe in `tests/site-map.test.mjs` fix it
   and hold it. (4) `css/site.css`'s two `.announce-badge` night overrides
   style nothing since the homepage's hero pill was cut.
-  *Done (the website PR, securacv_website#227, open):* (1) `/help`'s flasher
+  *Done (the website PR, securacv_website#227, merged 2026-10-13):* (1)
+  `/help`'s flasher
   door says the Flasher "backs up before it writes and checks the write
   after", and its "board disappears" card (also in `llms-full.txt`) says the
   flasher "checks the image before it writes and checks the write after it";
@@ -13430,7 +14176,7 @@ so — see D2 below.)
   `CLAUDE.md` says "the five things adding a page requires". Update both
   together (the `CLAUDE.md` edit is a human's, which is why the 2026-10
   integrator left both), then run `node scripts/make-agent-entrypoints.mjs`.
-- [ ] **W31 [code] Three Lab playground files reach the website by hand.**
+- [x] **W31 [code] Three Lab playground files reach the website by hand.**
   `js/playground-data.js`, `js/playground-sim.js` and `js/mode-sim.js` are
   hand copies of the monorepo's `canary-local/devices/playground.json` and
   `canary-local/assets/{playground,mode}-sim.js` (headed HAND-COPIED;
@@ -13454,15 +14200,21 @@ so — see D2 below.)
   pins the site paths, the headers, the module text (and that node evaluates
   it to the upstream object), the whole sims, the stop-before-write cases, and
   the bytes the full run and `--only playground` write, against an oracle
-  built from the upstream files. The website half is in the website PR
-  (securacv_website#227, open), which merges after #1802 reaches main: it is
+  built from the upstream files. The website half is the website PR
+  (securacv_website#227), which merged on 2026-10-13, ahead of #1802: it is
   the carry's first run (only the headers moved; the bodies were current at
   2.4.16), adds the three paths to `update-everything.yml`'s `CARRY_PATHS`,
   moves them from `tests/carry-claims.test.mjs`'s `HAND_COPIES` to a
   `PLAYGROUND_CARRY` list and adds their row to `docs/LAYOUT.md`'s carries
   table; `carry-claims.test.mjs` fails with any one of those parts missing.
-  Until both merge the files still reach the website by hand, so the box stays
-  open; tick it when the website PR merges.
+  Until both merged the files reached the website by hand.
+  *Done (#1802 and the website PR, securacv_website#227):* both halves are in:
+  the monorepo's `playground` carry in #1802 and the website half in
+  securacv_website#227, merged 2026-10-13. The website's weekly carry job
+  (`update-everything.yml`) runs `scripts/carry_to_site.py` from this
+  repository's `main`, so it starts writing the three files once #1802 reaches
+  `main`; until then they hold what the carry's first run wrote, and
+  `CARRY_PATHS` already names them.
 
 ---
 
@@ -13642,12 +14394,33 @@ major, by theme") — work its themes, then tick here.
   and shrinks `KNOWN_DRIFT`, whose `--check` fails when a listed entry stops
   happening. Same pass: `bom_canary_display.csv`'s D-ENC1 still describes the
   Dash back's retired keyholes and M4 pair.
-- [ ] **C19 [code] The WAP BOM's GNSS row names a flag the WAP does not
+- [x] **C19 [code] The WAP BOM's GNSS row names a flag the WAP does not
   have.** `docs/hardware/bom_canary_wap.csv` M1's note ends `FEATURE_GNSS`, a
   canary-tree flag; the WAP sketch opens its GNSS UART in every profile and
   has no such flag (F258, #1802). Reword the note; it flows into
   `canary-local/devices/build.json` and the website carry. Found by F258
   (#1802).
+  *Done (#1802):* `docs/hardware/bom_canary_wap.csv`'s M1 (L76K GNSS) note no
+  longer names `FEATURE_GNSS`, which the WAP sketch does not define. It reads
+  "UART 9600 on D6/D7 (GPIO43/44); no build flag: the WAP sketch opens this
+  UART at every boot and probes for the module (skipped in safe mode)", which
+  is `canary_wap.ino`'s PHASE 4. `canary-local/devices/build.json` was
+  regenerated with `canary-local/tools/gen_enclosures.py` (the only generated
+  file carrying the note; the catalog drift diff is clean).
+  `gen_builder_manifest.py` does not read the BOM (`--check` up to date),
+  `gen_hardware.py --check` is OK, and no website file carries the note, so
+  the item's "website carry" had nothing to carry.
+  `scripts/tests/test_wap_bom_flags.py` requires every `FEATURE_*` the WAP BOM
+  names to be defined in the sketch's `build_config.h`; on the old BOM it
+  reports line 23's `FEATURE_GNSS`. Found here: C20 (the board registry's
+  pinout makes the same claim).
+- [ ] **C20 [code] The XIAO ESP32-S3 Sense pinout names the WAP a flag it
+  lacks.** `boards/boards.config.json` (`boards[0].pinout[4]`, carried into
+  `canary-local/devices/boards.json`) labels the GNSS UART "L76K TX/RX @ 9600
+  (FEATURE_GNSS)". That holds for the canary (PIO) tree; the WAP sketch on the
+  same board opens that UART at every boot with no flag (C19 fixed the BOM's
+  copy of the same claim). Say which build the flag belongs to, or drop it,
+  and regenerate `boards.json`. Found by C19 (#1802).
 - [x] **C13 [code] Lab display-line leftovers from #1703.** (1)
   `canary-local/devices/registry.json` lags the display manifests:
   `canary-display-nightstand-c6`, `canary-display-nightstand7` and
@@ -13913,12 +14686,31 @@ major, by theme") — work its themes, then tick here.
   placeholders when the template is finished; and decide whether
   `terms-of-sale.html` needs the same clause (W28). A legal fact only the
   owner has.
-- [ ] **D13 [code] `firmware/FEATURES.md`'s Last updated line carries one
+- [x] **D13 [code] `firmware/FEATURES.md`'s Last updated line carries one
   passage twice.** The run from "2026-09-23: canary (PIO) `GET /api/witness`
   row" through "2026-07-02: canary-sense witness signing" appears twice in the
   line (both counted in the integrated tree; it was there before wave 16, and
   F240's merge kept it). Drop the second copy, leaving the history newest
   first. Docs only. Found by F240 (#1802).
+  *Done (#1802):* `firmware/FEATURES.md`'s Last updated line carried the
+  2026-09-23 to 2026-07-02 run twice: the #1746 merge appended its own passage
+  (the OTA A/B rollback row restated; canary (PIO) "Hardware state & safe
+  mode") after 2026-07-02, and then the copy. The copy is gone, and the #1746
+  passage, dated 2026-09-30 with no word changed, sits between 2026-10-03 and
+  2026-09-29, so the line reads newest first (the header's 2026-10-13, then
+  10-09, 10-03, 09-30, 09-29, 09-23, 09-19, 09-08, 09-05, 09-02, 07-11 and
+  07-02); it is 7319 characters where it was 10527.
+  `scripts/tests/test_features_last_updated.py` holds the header date newest,
+  the entries newest first and no entry repeated word for word; on the old
+  line it reports 2026-09-23 after 2026-07-02 and five repeated entries. Docs
+  only.
+- [ ] **D14 [code] The round watch's pin map says no gesture reads BOOT.**
+  `firmware/boards/xiao-esp32s3-round/pins/pins.h` says BOOT (GPIO0) is
+  "reserved for a future factory-reset long-press; no gesture is wired to it
+  yet", but `main.cpp`'s BOOT grammar runs wherever `BOOT_BUTTON_PIN` is 0 or
+  more, so on the watch a press wakes the glass and a hold acknowledges (A83's
+  bench note now says so). Make the comment say what the firmware does. A
+  comment only. Found by A83 (#1802).
 
 ---
 
@@ -14170,7 +14962,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   and shared (14 parts draw nothing under their default selectors, the same at
   the base). The website's carried `scad/canary_fit_coupon.scad` refreshes
   through the weekly carry. Host-tested. Found here: CI13-CI15.
-- [ ] **CI13 [code] Two carried comments still say the spelling lists
+- [x] **CI13 [code] Two carried comments still say the spelling lists
   disagree.** The website's `tests/copy-honesty.test.mjs` says, above
   `UK_WORD_LIST`, that its generated families "are owed" to
   `scripts/lint_spelling.py` and that a carried file can pass that lint and
@@ -14186,6 +14978,21 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   Reword the website comment to say the two are aligned and to name the lint's
   `FAMILIES`, `family_pairs()` and the digest test as the other copy, and
   reword the mirror docstring to point at one list. Found by CI9 (#1802).
+  *Done (the mirror PR, securacv-homeassistant#29, and the website PR,
+  securacv_website#228, both merged 2026-10-14):* the mirror's
+  `.github/scripts/lint_readme.py` docstring no longer says the lists
+  disagree. It names the monorepo's `scripts/lint_spelling.py` (its
+  `WORD_LIST` and its US-stem `FAMILIES`; `family_pairs()` expands those into
+  the pairs the lint's self-test checks) as the one list the mirror follows,
+  and the website's test as the other copy that agrees with it (ported from
+  website commit 32fa634 in #1802, CI9, and pinned to that commit by the
+  digest in `scripts/tests/test_lint_spelling.py`). The comment above
+  `UK_WORD_LIST` in the website's `tests/copy-honesty.test.mjs` now says the
+  two lists are aligned, names the lint's `WORD_LIST`, `FAMILIES`,
+  `family_pairs()` and the digest test as the other copy, and says a word or
+  stem added on the website side is owed there in the same change; the six
+  stem lists and the 203-entry word list compared equal to the monorepo lint.
+  A docstring and a comment only. One home for the two copies is still CI14.
 - [ ] **CI14 [code+decision] One home for the spelling families across both
   repos.** The families now live twice: as JavaScript lists in the website's
   `tests/copy-honesty.test.mjs` and as Python lists in
@@ -14198,11 +15005,16 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   JSON and fail on a hand edit. The other keeps two copies and adds a parity
   check to the weekly carry job that runs both regexes over the generated
   pairs. Found by CI9 (#1802).
-- [ ] **CI15 [code] `scripts/lint_spelling.py` does not read `.txt`, which the
+- [x] **CI15 [code] `scripts/lint_spelling.py` does not read `.txt`, which the
   website's test does.** Nineteen tracked `.txt` files (`CMakeLists.txt` among
   them) are outside its suffix list. All scan clean under the ported families
   today, so adding the suffix costs nothing now and closes the gap before a
   carried or copied text file needs it. Found by CI9 (#1802).
+  *Done (#1802):* `scripts/lint_spelling.py`'s `EXTS` gains `.txt`; the 19
+  tracked `.txt` files scan clean. `scripts/tests/test_lint_spelling.py`'s
+  `test_a_walked_directory_reads_text_files` plants a banned form in a
+  `CMakeLists.txt` and a `notes.txt` and expects exit 1; the old lint exits 0
+  on them. Host-tested.
 - [ ] **CI10 [code+decision] The kernel's release workflow has never run, and
   the planner cannot reach it.** `release.yml` fires only on a pushed `v*`
   tag, no `v*` release exists (releases API, 2026-10-10), and
@@ -14260,10 +15072,34 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   text carries the measured numbers. On the integrated tree, with the other
   packages' asset edits, the same command passes over the 78 files, and
   `lab-lint.yml` passed in CI on #1802's 340d0253. CSS is not linted (CI16).
-- [ ] **CI16 [code] No lint keeps unused CSS out of the Lab's stylesheets.**
+- [x] **CI16 [code] No lint keeps unused CSS out of the Lab's stylesheets.**
   The 2026-10 cleanup removed unused CSS from `canary-local/assets` by hand;
   CI12's ESLint job covers the JavaScript only, so a selector no page or
   script uses can grow back unseen. Optional. Found by CI12 (#1802).
+  *Done (#1802):* `canary-local/tools/lint_css_selectors.mjs` fails on any
+  class or id selector in `canary-local/assets/*.css` (`vendor/` left out)
+  that no page (`canary-local/*.html`) or first-party script (`assets/*.js`,
+  `*.mjs`) names as a whole token. Each sheet is read in one pass that knows
+  strings (with backslash escapes) and comments, so a quote in a comment or a
+  comment opener in a string cannot hide the rules after it; names come from
+  rule selectors only, never from declarations, at-rule preludes, strings or
+  comments. What the pass cannot read fails the lint: a string or comment that
+  never closes, a brace with no partner, a selector with a backslash escape,
+  no stylesheet, no class or id selector anywhere, no page or script. A class
+  a script builds counts as used when a `prefix-${...}` template or a
+  `"prefix-" + ...` concatenation builds the prefix and the suffix is a token
+  in the pages or scripts. The three names built from transformed data
+  (`sense-err-falsepositive`, `-falsenegative` and `-wrongvalue`:
+  `sense-ui.js` strips the hyphen from `sense.json`'s kinds) are in `ALLOW`
+  with where they are built, and a stale `ALLOW` entry fails too. The tool
+  runs 27 probes of its own first. One dead rule went (`flash.css`
+  `.flash-console-ok`, used nowhere; the lint exits 1 on the old tree naming
+  it). It runs as `lab-lint.yml`'s `unused-css` job, whose path filters add
+  `canary-local/*.html` and the tool. Known limits, in its header: a name in a
+  comment or prose counts as used, and a built variant whose suffix is a
+  common word elsewhere passes. On the integrated tree it passes (1941 names
+  in 14 stylesheets, against 104 pages and scripts). Host-tested; the job has
+  not run in CI yet.
 
 ---
 
