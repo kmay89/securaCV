@@ -3320,6 +3320,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       if (panel !== 'camera' && peekActive) stopPeek();
       if (panel !== 'camera') stopCamInfoPolling();
+      // BLE Discovery refreshes only while it is on screen (F276).
+      if (panel !== 'community') clearTimeout(bleDiscoveryTimer);
     }
 
     function initialPanelFromPath() {
@@ -3341,6 +3343,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function selectCommunityTab(tab) {
       currentCommunityTab = tab;
+      if (tab !== 'ble-discovery') clearTimeout(bleDiscoveryTimer);
       document.querySelectorAll('#panel-community .sub-nav-btn').forEach(b => {
         if (b.dataset.tab === tab) b.classList.add('active'); else b.classList.remove('active');
       });
@@ -5225,7 +5228,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       // Auto-refresh every 10 seconds while the view is on screen: the
       // Community panel open and BLE Discovery picked in it (now the first
-      // view where Opera never answers, F276, so a left panel stops it).
+      // view where Opera never answers, F276). Leaving the panel or the
+      // view cancels a refresh already waiting (switchPanel,
+      // selectCommunityTab).
       clearTimeout(bleDiscoveryTimer);
       if (currentPanel === 'community' && currentCommunityTab === 'ble-discovery') {
         bleDiscoveryTimer = setTimeout(refreshBleDiscovery, 10000);

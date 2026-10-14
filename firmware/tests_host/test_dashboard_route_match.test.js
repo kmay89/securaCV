@@ -503,7 +503,7 @@ const GATED = {
         routes: ["DELETE /api/mesh/alerts", "GET /api/mesh", "GET /api/mesh/alerts", "GET /api/mesh/peers",
                  "POST /api/mesh/enable", "POST /api/mesh/leave", "POST /api/mesh/name", "POST /api/mesh/pair/cancel",
                  "POST /api/mesh/pair/confirm", "POST /api/mesh/pair/join", "POST /api/mesh/pair/start", "POST /api/mesh/remove"],
-        meets: "the Opera tab, the only caller of the rest, starts hidden and shows when /api/mesh answers (F273)" },
+        meets: "the Opera tab, the only caller of the rest, starts hidden and shows when /api/mesh answers JSON, its route's refusals included (F273)" },
     },
     "setup page": {
       "FEATURE_HA_MQTT": {

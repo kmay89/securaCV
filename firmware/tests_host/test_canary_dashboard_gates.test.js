@@ -6,9 +6,12 @@
 //   - Opera (F273): the mesh routes are registered only under
 //     FEATURE_MESH_NETWORK, which only [env:full] sets, and the Opera tab
 //     always showed, its controls posting to routes nothing registers. The
-//     tab now takes F176's shape: it starts hidden, the page load's one
-//     GET /api/mesh shows it only when that answers ok, the 5 s poll asks
-//     nothing until one has, and unlocking with a token asks once more.
+//     tab now takes F176's shape: it starts hidden and the page load's one
+//     GET /api/mesh shows it on any JSON answer (the route's own refusals,
+//     429/401/503, are JSON: the build serves it). The fallback's 404 page
+//     or setup redirect keeps it hidden and nothing asks again; a probe that
+//     got no verdict (no answer, another text page) is asked again on the
+//     5 s poll, and unlocking with a token asks once more.
 //   - Peek (F274): the camera routes are registered only under
 //     FEATURE_CAMERA_PEEK ([env:minimal] and [env:esp32-wroom] have none).
 //     refreshPeekStatus() ignored the refusal, so the tab kept "Ready" and
@@ -63,7 +66,41 @@ function slice(from, to) {
 // What api() returns for the GET "/*" fallback's 404 page (text, not JSON),
 // the answer a build gives a route it does not register (pinned to the
 // page's own api() in the Peek section).
-const NOT_FOUND = { ok: false, success: false, error: "not found", unrouted: true };
+const NOT_FOUND = { ok: false, success: false, error: "not found", unrouted: true, notJson: true };
+
+// What the page's own api() returns for a response (or for no answer at
+// all): lifted from the page and run against a stub fetch, so the refusal a
+// test feeds the panel is the one the page itself makes of it.
+const apiSrc = slice("    async function api(endpoint, method = 'GET', body = null) {", "\n    }\n") + "\n    }\n";
+async function answerTo(res, url = "/api/peek/status") {
+  const ctx = {
+    API_BASE: "", CV_TOKEN: "", console: { error() {} },
+    fetch: async () => {
+      if (res === "no answer") throw new TypeError("Failed to fetch");
+      return { status: res.status, ok: res.status >= 200 && res.status < 300, redirected: !!res.redirected,
+               text: async () => res.body };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(apiSrc + "\nglobalThis.__api = api;\n", ctx);
+  return ctx.__api(url);
+}
+// The GET "/*" fallback (handle_captive_catchall): a 404 page, or during
+// setup a redirect to the wizard, which fetch follows.
+const FALLBACK_404 = { status: 404, body: "not found" };
+const FALLBACK_SETUP = { status: 200, redirected: true, body: "<!DOCTYPE html><html><title>Canary setup</title></html>" };
+// The route's own refusals (securacv_auth, auth_gate): JSON.
+const ROUTE_401 = { status: 401, body: '{"error":"unauthorized","message":"Bearer token required"}' };
+const ROUTE_503 = { status: 503, body: '{"error":"not_provisioned"}' };
+const ROUTE_429 = { status: 429, body: '{"error":"rate_limited"}' };
+// Answers that are not JSON from a route that exists: esp_http_server's own
+// error pages (httpd_resp_send_err) for a handler that failed or a request it
+// timed out. Only the fallback's 404 or redirect says "no such route".
+const IDF_500 = { status: 500, body: "Internal Server Error" };
+const IDF_408 = { status: 408, body: "Server closed this connection" };
+// A JSON 404: a route that answered, finding nothing.
+const JSON_404 = { status: 404, body: '{"ok":false,"error":"not_found"}' };
+
 
 const settle = () => new Promise((r) => setImmediate(r));
 
@@ -144,18 +181,81 @@ test("the Opera nav button starts hidden", () => {
   assert.match(navButton("opera"), /id="navOpera"/);
 });
 
-test("a refused GET /api/mesh at load keeps the Opera tab hidden and asks nothing more", async () => {
-  const p = operaPage({});
+for (const [name, res] of [["the fallback's 404 page", FALLBACK_404], ["the fallback's redirect to setup", FALLBACK_SETUP]]) {
+  test(`a GET /api/mesh no route took (${name}) keeps the Opera tab hidden and asks nothing more`, async () => {
+    const p = operaPage({ "/api/mesh": await answerTo(res, "/api/mesh") });
+    await p.ctx.__load();
+    await settle();
+    assert.strictEqual(p.el("navOpera").style.display, "none");
+    assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh"]);
+    // The 5 s poll asks nothing of the mesh while no status has answered,
+    // even were the Opera panel current.
+    for (const panel of ["status", "opera"]) {
+      p.ctx.currentPanel = panel;
+      for (let i = 0; i < 3; ++i) p.ctx.__panelPoll();
+    }
+    await settle();
+    assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh"]);
+  });
+}
+
+// [env:full]'s handle_mesh_status refuses in JSON (rate_limit_check, then
+// auth_gate): the build serves the route, so the tab shows and its click
+// asks again, as the page always did there.
+for (const [name, res] of [["a token it wants (401)", ROUTE_401], ["the device-wide request limit (429)", ROUTE_429],
+                           ["no token to check yet (503)", ROUTE_503]]) {
+  test(`the mesh route's own refusal at load (${name}) shows the Opera tab`, async () => {
+    const p = operaPage({ "/api/mesh": await answerTo(res, "/api/mesh") });
+    await p.ctx.__load();
+    await settle();
+    assert.strictEqual(p.el("navOpera").style.display, "", "the tab shows");
+    p.calls.length = 0;
+    p.ctx.currentPanel = "status";
+    p.ctx.__panelPoll();
+    await settle();
+    assert.deepStrictEqual(meshCalls(p.calls), [], "nothing more is asked off the Opera panel");
+    p.ctx.currentPanel = "opera";
+    p.ctx.__panelPoll();
+    await settle();
+    assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh"], "and the panel's poll asks again");
+  });
+}
+
+for (const [name, res] of [["no answer", "no answer"], ["a text error page (500)", IDF_500]]) {
+  test(`a probe that got ${name} at load is asked again on the 5 s poll until it gets a verdict`, async () => {
+    const answers = { "/api/mesh": await answerTo(res, "/api/mesh") };
+    const p = operaPage(answers);
+    await p.ctx.__load();
+    await settle();
+    assert.strictEqual(p.el("navOpera").style.display, "none");
+    p.ctx.currentPanel = "status";
+    p.ctx.__panelPoll();
+    await settle();
+    assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh", "/api/mesh"], "the poll asks again");
+    assert.strictEqual(p.el("navOpera").style.display, "none");
+    answers["/api/mesh"] = MESH_STATUS;
+    p.ctx.__panelPoll();
+    await settle();
+    assert.strictEqual(p.el("navOpera").style.display, "", "a status on a later tick shows the tab");
+    p.calls.length = 0;
+    for (let i = 0; i < 3; ++i) p.ctx.__panelPoll();
+    await settle();
+    assert.deepStrictEqual(meshCalls(p.calls), [], "and the probe stops off the Opera panel");
+  });
+}
+
+test("a probe with no verdict stops once a later one finds no route", async () => {
+  const answers = { "/api/mesh": await answerTo("no answer", "/api/mesh") };
+  const p = operaPage(answers);
   await p.ctx.__load();
   await settle();
-  assert.strictEqual(p.el("navOpera").style.display, "none");
-  assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh"]);
-  // The 5 s poll asks nothing of the mesh while no status has answered,
-  // even were the Opera panel current.
-  p.ctx.currentPanel = "opera";
+  answers["/api/mesh"] = await answerTo(FALLBACK_404, "/api/mesh");
+  p.ctx.__panelPoll();
+  await settle();
   for (let i = 0; i < 3; ++i) p.ctx.__panelPoll();
   await settle();
-  assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh"]);
+  assert.deepStrictEqual(meshCalls(p.calls), ["/api/mesh", "/api/mesh"]);
+  assert.strictEqual(p.el("navOpera").style.display, "none");
 });
 
 test("a mesh status shows the Opera tab, and the poll refreshes it on that panel", async () => {
@@ -176,9 +276,8 @@ test("a mesh status shows the Opera tab, and the poll refreshes it on that panel
   assert.deepStrictEqual(p.calls, ["loadLogs"]);
 });
 
-test("unlocking with a token asks a turned-away Opera probe once more", async () => {
-  // [env:full] answers a tokenless page 401: refused, so hidden.
-  const answers = { "/api/mesh": { ok: false, error: "unauthorized" } };
+test("unlocking with a token asks a probe that got no verdict once more", async () => {
+  const answers = { "/api/mesh": await answerTo("no answer", "/api/mesh") };
   const p = operaPage(answers);
   await p.ctx.__load();
   await settle();
@@ -201,38 +300,6 @@ test("unlocking with a token asks a turned-away Opera probe once more", async ()
 // ── Peek (F274) ──────────────────────────────────────────────────────────
 
 const peek = slice("    // PEEK (Camera Preview)", "    function togglePeek() {");
-
-// What the page's own api() returns for a response (or for no answer at
-// all): lifted from the page and run against a stub fetch, so the refusal a
-// test feeds the panel is the one the page itself makes of it.
-const apiSrc = slice("    async function api(endpoint, method = 'GET', body = null) {", "\n    }\n") + "\n    }\n";
-async function answerTo(res) {
-  const ctx = {
-    API_BASE: "", CV_TOKEN: "", console: { error() {} },
-    fetch: async () => {
-      if (res === "no answer") throw new TypeError("Failed to fetch");
-      return { status: res.status, ok: res.status >= 200 && res.status < 300, redirected: !!res.redirected,
-               text: async () => res.body };
-    },
-  };
-  vm.createContext(ctx);
-  vm.runInContext(apiSrc + "\nglobalThis.__api = api;\n", ctx);
-  return ctx.__api("/api/peek/status");
-}
-// The GET "/*" fallback (handle_captive_catchall): a 404 page, or during
-// setup a redirect to the wizard, which fetch follows.
-const FALLBACK_404 = { status: 404, body: "not found" };
-const FALLBACK_SETUP = { status: 200, redirected: true, body: "<!DOCTYPE html><html><title>Canary setup</title></html>" };
-// The route's own refusals (securacv_auth, auth_gate): JSON.
-const ROUTE_401 = { status: 401, body: '{"error":"unauthorized","message":"Bearer token required"}' };
-const ROUTE_503 = { status: 503, body: '{"error":"not_provisioned"}' };
-// Answers that are not JSON from a route that exists: esp_http_server's own
-// error pages (httpd_resp_send_err) for a handler that failed or a request it
-// timed out. Only the fallback's 404 or redirect says "no such route".
-const IDF_500 = { status: 500, body: "Internal Server Error" };
-const IDF_408 = { status: 408, body: "Server closed this connection" };
-// A JSON 404: a route that answered, finding nothing.
-const JSON_404 = { status: 404, body: '{"ok":false,"error":"not_found"}' };
 
 // The panel's text as the markup writes it, so a refusal that changes
 // nothing reads "Ready" and "▶ Start" as the page does.

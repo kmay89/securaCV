@@ -25,8 +25,10 @@
 //     answer; BLE Discovery is the first view until Opera answers (then Opera
 //     takes over, as it always opened, unless the owner picked a view); the
 //     5 s poll refreshes only the view on screen, so it never asks for a
-//     hidden one. BLE Discovery's 10 s refresh runs only while the Community
-//     panel is open, now that it can be the view a build opens on.
+//     hidden one; opening the Community panel asks both again, so a probe a
+//     busy load turned away recovers. BLE Discovery's 10 s refresh runs only
+//     while it is on screen (leaving the panel or the view cancels a waiting
+//     one), now that it can be the view a build opens on.
 //   * Export (F278): POST /api/export now answers the bundle inline (no
 //     download_url, which named a route nothing registers), and
 //     exportWitness() saves that answer as a JSON download. The answer fed to
@@ -203,9 +205,10 @@ function communityPage(answers) {
                       'refreshHousehold', 'refreshWifiPresence', 'loadLogs', 'loadWitness', 'refreshBtStatus']) {
     p.ctx[stub] = () => p.calls.push(stub);
   }
-  vm.runInContext(community + opera + chirp +
+  Object.assign(p.ctx, { peekActive: false, bleDiscoveryTimer: null, stopPeek() {}, stopCamInfoPolling() {} });
+  vm.runInContext(community + opera + chirp + uiFunction('switchPanel', false) +
     '\nglobalThis.__panelPoll = ' + panelPoll + '};\n' +
-    'globalThis.__t = { refreshOpera, refreshChirpStatus, switchCommunityTab };\n', p.ctx);
+    'globalThis.__t = { refreshOpera, refreshChirpStatus, switchCommunityTab, switchPanel };\n', p.ctx);
   // A click on a sub-nav button, as the browser delivers it (the old page
   // read the global event's target).
   p.click = (tab) => {
@@ -276,6 +279,27 @@ describe('Community tab: Opera and Chirp views gated on a first answer (F276)', 
     assert.deepEqual(visibleSubPanel(p), ['community-opera'], 'and a click still switches');
   });
 
+  it('opening the Community panel asks Opera and Chirp again after a load that got no answer', async () => {
+    const answers = { '/api/mesh': await answerTo('no answer'), '/api/chirp': await answerTo('no answer') };
+    const p = communityPage(answers);
+    await p.ctx.__t.refreshOpera();
+    await p.ctx.__t.refreshChirpStatus();
+    const byTab = Object.fromEntries(p.navBtns.map((b) => [b.opens, b]));
+    assert.equal(byTab.opera.style.display, 'none');
+    assert.equal(byTab.chirp.style.display, 'none');
+    answers['/api/mesh'] = MESH_STATUS;
+    answers['/api/chirp'] = CHIRP_STATUS;
+    p.calls.length = 0;
+    p.ctx.currentPanel = 'status';
+    p.ctx.__t.switchPanel('community');
+    await settle();
+    assert.deepEqual(askedOf(p.calls, '/api/mesh'), ['/api/mesh']);
+    assert.deepEqual(askedOf(p.calls, '/api/chirp'), ['/api/chirp']);
+    assert.equal(byTab.opera.style.display, '', 'the Opera sub-tab shows');
+    assert.equal(byTab.chirp.style.display, '', 'the Chirp sub-tab shows');
+    assert.deepEqual(visibleSubPanel(p), ['community-opera'], 'and Opera takes over, no view having been picked');
+  });
+
   it('a Chirp status shows the Chirp view without switching to it', async () => {
     const p = communityPage({ '/api/chirp': CHIRP_STATUS });
     await p.ctx.__t.refreshChirpStatus();
@@ -295,8 +319,12 @@ describe("BLE Discovery's 10 s refresh runs only while the Community panel is op
     const near = { canaries: [{ device_id_prefix: 'a1b2', rssi_current: -60, rssi_quality: 'good', last_seen_sec_ago: 1 }],
                    non_canary_device_count: 0 };
     const p = pageContext({ '/api/ble/status': { ble_available: true }, '/api/nearby': near },
-      { currentPanel: panel, currentCommunityTab: 'ble-discovery', bleDiscoveryTimer: 0 });
-    vm.runInContext(ble + '\nglobalThis.__t = { refreshBleDiscovery };\n', p.ctx);
+      { currentPanel: panel, currentCommunityTab: 'ble-discovery', bleDiscoveryTimer: 0,
+        peekActive: false, stopPeek() {}, stopCamInfoPolling() {} });
+    p.cleared = [];
+    p.ctx.clearTimeout = (id) => p.cleared.push(id);
+    vm.runInContext(ble + uiFunction('switchPanel', false) + uiFunction('selectCommunityTab', false) +
+      '\nglobalThis.__t = { refreshBleDiscovery, switchPanel, selectCommunityTab };\n', p.ctx);
     return p;
   }
   it('schedules the next refresh with the panel open', async () => {
@@ -308,6 +336,24 @@ describe("BLE Discovery's 10 s refresh runs only while the Community panel is op
     const p = blePage('status');
     await p.ctx.__t.refreshBleDiscovery();
     assert.deepEqual(p.timers, []);
+  });
+  for (const [name, leave] of [['leaving the Community panel', (p) => p.ctx.__t.switchPanel('status')],
+                               ['picking another Community view', (p) => p.ctx.__t.selectCommunityTab('opera')]]) {
+    it(`${name} cancels a refresh already waiting`, async () => {
+      const p = blePage('community');
+      await p.ctx.__t.refreshBleDiscovery();
+      assert.deepEqual(p.timers, [10000]);
+      p.cleared.length = 0;
+      leave(p);
+      assert.ok(p.cleared.includes(1), `the waiting refresh (timer 1) is canceled (${p.cleared})`);
+    });
+  }
+  it('opening the Community panel keeps a waiting refresh', async () => {
+    const p = blePage('community');
+    await p.ctx.__t.refreshBleDiscovery();
+    p.cleared.length = 0;
+    p.ctx.__t.switchPanel('community', false);
+    assert.deepEqual(p.cleared, []);
   });
 });
 

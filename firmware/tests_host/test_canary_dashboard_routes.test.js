@@ -104,6 +104,7 @@ function btPage(answers) {
     currentPanel: "status",
     chirpServed: false,
     operaServed: false,
+    operaProbeAgain: false,
     CV_TOKEN: "",
     alert() {}, confirm: () => true, setInterval: () => 0, clearInterval() {}, setTimeout: () => 0,
     formatBytes: (n) => String(n), formatDuration: (n) => String(n),

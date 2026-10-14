@@ -2903,12 +2903,14 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           // answers a path no route of this build registers (the redirect
           // goes to the setup wizard). Only a caller whose route always
           // answers JSON may read it as "this build has no such route".
+          // notJson marks every answer that was not JSON, unrouted or not.
           return { ok: false, success: false, error: errMsg.length > 100 ? errMsg.slice(0, 100) + '...' : errMsg,
-                   unrouted: res.status === 404 || res.redirected === true };
+                   unrouted: res.status === 404 || res.redirected === true, notJson: true };
         }
       } catch (e) {
         console.error('API error:', e);
-        return { ok: false, success: false, error: 'Network error' };
+        // unanswered: the request never got an answer (says nothing).
+        return { ok: false, success: false, error: 'Network error', unanswered: true };
       }
     }
 
@@ -5340,18 +5342,28 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     // F273: the Opera tab shows only once GET /api/mesh has answered. The
     // mesh routes are registered only where FEATURE_MESH_NETWORK is set
-    // ([env:full]); elsewhere the page load's one call below is refused, the
-    // tab stays hidden and nothing polls the mesh again (unlocking with a
-    // token asks once more, as for Community and Bluetooth).
+    // ([env:full]), and there every answer the route gives is JSON, a
+    // refusal included (rate_limit_check's 429, auth_gate's 401/403/503):
+    // any JSON answer shows the tab. Elsewhere the page load's one call
+    // gets the GET "/*" fallback's 404 page or setup redirect (api()'s
+    // unrouted), the tab stays hidden and nothing polls the mesh again.
+    // A probe that got no verdict (no answer, or another answer that was
+    // not JSON) is asked again on the 5 s poll (operaProbeAgain), and
+    // unlocking with a token asks once more, as for Community and Bluetooth.
     let operaServed = false;
+    let operaProbeAgain = false;
 
     async function refreshOpera() {
       const data = await api('/api/mesh');
-      if (!data.ok) return;
       if (!operaServed) {
+        if (data.unanswered || data.notJson) {
+          operaProbeAgain = !data.unrouted;
+          return;
+        }
         operaServed = true;
         document.getElementById('navOpera').style.display = '';
       }
+      if (!data.ok) return;
 
       operaState = data;
 
@@ -6659,6 +6671,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (currentPanel === 'opera' && operaServed) refreshOpera();
       else if (currentPanel === 'community' && chirpServed) refreshChirpStatus();
       else if (currentPanel === 'bluetooth' && btServed) refreshBtStatus();
+      // A mesh probe that got no verdict asks again (F273).
+      if (!operaServed && operaProbeAgain) refreshOpera();
     }, 5000);
     /* Sensing panel polls at 1 Hz to match the CSI window cadence so the
      * gauges feel live without flooding the device with HTTP. */
