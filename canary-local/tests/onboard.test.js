@@ -1711,7 +1711,7 @@ test("A80: the Nightlight's Try it view turns the running glass through the mail
   // nothing turns or tumbles (main.cpp returns at rot == prev), and the note
   // says so rather than promising a turn
   const main = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
-  assert.match(main, /static void nightlight_apply_orientation\(uint8_t rot, uint32_t now\) \{[\s\S]*?s_orient\.sync\(static_cast<canary::io::Orient>\(rot\)\);\n  const uint8_t prev = canary::ui::lvgl_port_rotation\(\);\n  if \(rot == prev\) return;/,
+  assert.match(main, /static void nightlight_apply_orientation\(uint8_t rot, uint32_t now,\s+const char\* who\) \{[\s\S]*?s_orient\.sync\(static_cast<canary::io::Orient>\(rot\)\);\n  const uint8_t prev = canary::ui::lvgl_port_rotation\(\);\n  if \(rot == prev\) \{\n    boot_linef\("\[orient\] %s -> rotation %u \(already worn\)", who, \(unsigned\)rot\);\n    return;\n  \}/,
     "main.cpp syncs the model, then returns before any turn when the glass already stands so");
   ok.glassTurn = 1;
   assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
