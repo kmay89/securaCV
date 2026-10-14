@@ -1695,10 +1695,26 @@ test("A80: the Nightlight's Try it view turns the running glass through the mail
   // a turn goes to the mailbox once, and says so; a refusal is said, not thrown
   const asked = [];
   const said = [];
-  const ok = { requestRotation: async (r) => { asked.push(r); } };
+  const ok = { glassTurn: 0, requestRotation: async (r) => { asked.push(r); } };
   assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
   assert.deepStrictEqual(asked, [1]);
-  assert.match(said.pop(), /^asked for turned a quarter clockwise, onto its right edge: the firmware turns the panel/);
+  assert.strictEqual(said.pop(), "asked the firmware to stand it on its right edge (turned a quarter clockwise, onto its right edge): " +
+    "its loop turns the panel on its next pass, and the companion tumbles in");
+  // the turn it already stands in (review): still asked, since the apply path
+  // syncs the orientation model first and the ask replaces a waiting one, but
+  // nothing turns or tumbles (main.cpp returns at rot == prev), and the note
+  // says so rather than promising a turn
+  const main = read(join(REPO, "firmware/projects/canary-display/src/main.cpp"));
+  assert.match(main, /static void nightlight_apply_orientation\(uint8_t rot, uint32_t now\) \{[\s\S]*?s_orient\.sync\(static_cast<canary::io::Orient>\(rot\)\);\n  const uint8_t prev = canary::ui::lvgl_port_rotation\(\);\n  if \(rot == prev\) return;/,
+    "main.cpp syncs the model, then returns before any turn when the glass already stands so");
+  ok.glassTurn = 1;
+  assert.strictEqual(await turnGlass(ok, GLASS_TURNS[1], (l) => said.push(l)), true);
+  assert.deepStrictEqual(asked, [1, 1], "the same turn is still asked");
+  assert.strictEqual(said.pop(), "it already stands on its right edge (turned a quarter clockwise, onto its right edge): " +
+    "the firmware keeps the glass as it is, and nothing tumbles");
+  ok.glassTurn = null;
+  await turnGlass(ok, GLASS_TURNS[0], (l) => said.push(l));
+  assert.match(said.pop(), /^asked the firmware to stand it upright \(upright, USB down\): its loop turns/, "an unannounced glass is asked, not told it stands so");
   const refused = { requestRotation: async () => { throw new Error("the firmware refused rotation 3 (a running unit, 0..3)"); } };
   assert.strictEqual(await turnGlass(refused, GLASS_TURNS[3], (l) => said.push(l)), false);
   assert.strictEqual(said.pop(), "the glass did not turn: the firmware refused rotation 3 (a running unit, 0..3)");

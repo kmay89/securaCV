@@ -129,15 +129,22 @@ const GLASS_TURNS = [
 // rotation mailbox (emu-shell's requestRotation, emu_request_rotation), the
 // one the app's orientation picker writes, so the firmware's loop applies it
 // on its one path: the panel turned, the face rebuilt, the companion tumbling
-// in. A refusal is said, never thrown into the page.
+// in. A refusal is said, never thrown into the page. The turn the glass
+// already stands in is still asked (the firmware's apply path syncs its
+// orientation model before it finds nothing to turn, and the ask replaces
+// any turn still waiting in the mailbox), but the note says nothing turns:
+// main.cpp's nightlight_apply_orientation() returns at rot == prev.
 async function turnGlass(emu, turn, say) {
+  const already = emu.glassTurn === turn.rot;
   try {
     await emu.requestRotation(turn.rot);
   } catch (e) {
     say(`the glass did not turn: ${(e && e.message) || e}`);
     return false;
   }
-  say(`asked for ${turn.says}: the firmware turns the panel on its next pass, and the companion tumbles in`);
+  say(already
+    ? `it already stands ${turn.label} (${turn.says}): the firmware keeps the glass as it is, and nothing tumbles`
+    : `asked the firmware to stand it ${turn.label} (${turn.says}): its loop turns the panel on its next pass, and the companion tumbles in`);
   return true;
 }
 

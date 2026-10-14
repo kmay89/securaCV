@@ -335,9 +335,15 @@ await page.waitForSelector(".style-chip.on", { timeout: 15000 })
         await fail(`a turn to rotation ${to.rot} never gave the ${to.glass.w}x${to.glass.h} glass with its chip lit (now ${now})`);
       }
       const said = await page.locator(".note").first().textContent();
-      if (!/^asked for .*: the firmware turns the panel on its next pass/.test(said || ""))
+      if (!/^asked the firmware to stand it .*: its loop turns the panel on its next pass/.test(said || ""))
         await fail(`the turn to rotation ${to.rot} was not said in the note line: ${said}`);
     }
+    // the lit chip again (review): asked, nothing turns, and the note says so
+    await page.locator(`.turn-chip[data-rot="${NL_UPRIGHT.rot}"]`).click();
+    const same = await page.locator(".note").first().textContent();
+    if (!/^it already stands upright .*: the firmware keeps the glass as it is, and nothing tumbles$/.test(same || ""))
+      await fail(`a click on the lit chip promised a turn: ${same}`);
+    if (!(await turned(NL_UPRIGHT))) await fail("a click on the lit chip moved the glass off upright");
     console.log(`bench_probe: the Nightlight's Try it turned the running glass ${NL_UPRIGHT.glass.w}x${NL_UPRIGHT.glass.h} → ` +
       `${NL_SIDE.glass.w}x${NL_SIDE.glass.h} (rotation ${NL_SIDE.rot}) and back (rotation ${NL_UPRIGHT.rot})`);
   }
