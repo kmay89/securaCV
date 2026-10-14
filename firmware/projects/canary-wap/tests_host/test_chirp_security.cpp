@@ -23,7 +23,8 @@
 //     handle_suppress_vote() at 7 and 32 rows (sweep F233).
 //   - c8_priority_storage_eviction: replaced. A full table of info chirps
 //     takes an urgent one by evicting its oldest info chirp, a later info
-//     chirp evicts the next oldest info chirp and never the urgent one, and
+//     chirp evicts the next oldest info chirp and never the urgent one, info
+//     chirps keep evicting info rows once the urgent row is the oldest, and
 //     a table full of urgent chirps refuses an info one.
 //   - c9_bloom_flood: replaced. A witness's nonce is still refused after a
 //     thousand more nonces reached the real filter, which took very few of
@@ -165,6 +166,18 @@ void test_c8_priority_storage_eviction() {
   deliver(late, later_info);
   CHECK(holds(later_info) && holds(urgent));  // the next oldest info chirp went, not the urgent one
   CHECK(!holds(info[1]));
+
+  // Sixteen more info chirps: each evicts the oldest info row. From the
+  // fifteenth on the urgent row is the oldest in the table, so eviction of
+  // the oldest row behind the urgency gate would refuse those two; here the
+  // urgent row stays, the sixteenth evicts the first of the sixteen, and the
+  // other fifteen are held.
+  std::vector<std::vector<uint8_t>> more;
+  fill_with(cc::TPL_AID_OFFERING_HELP, cc::CHIRP_URG_INFO, 0x50, 0x90, &more);
+  CHECK(holds(urgent));
+  CHECK(!holds(later_info));
+  CHECK(!holds(more[0]));
+  for (size_t i = 1; i < more.size(); ++i) CHECK(holds(more[i]));
 
   // A table of urgent chirps refuses an info one.
   boot_enabled();

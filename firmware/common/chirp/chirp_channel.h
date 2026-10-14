@@ -132,6 +132,11 @@ extern "C" {
 
 /**
  * @brief Chirp channel state
+ *
+ * The API's own states, not the reference's: canary-wap's ChirpState
+ * (mesh_network.h) has LISTENING and ACTIVE where this has READY, and no
+ * ERROR. Nothing holds one to the other (test_chirp_protocol_invariants.cpp
+ * holds the enums that cross the wire and the mute durations).
  */
 typedef enum {
     CHIRP_STATE_DISABLED = 0,   // Feature disabled

@@ -383,8 +383,60 @@ static_assert(CHIRP_COOLDOWN_TIER3_MS == cc::COOLDOWN_TIER_3_MS, "cooldown 3");
 static_assert(CHIRP_COOLDOWN_TIER4_MS == cc::COOLDOWN_TIER_4_MS, "cooldown 4");
 static_assert(CHIRP_COOLDOWN_RESET_MS == cc::COOLDOWN_RESET_MS, "cooldown reset");
 
-// The enums the API names, value for value, and the template table: every
-// template the reference takes, and no other (0x04 stays reserved).
+// Whether `t` is an enumerator of the API's chirp_template_t, and whether
+// `d` is one of its chirp_mute_duration_t. Each is a switch with no default
+// that -Wswitch is made an error for, so a template or a duration added to
+// the header and not named here fails to compile: the lists below are the
+// header's whole enums, not a copy that could fall behind them.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
+bool api_names_template(int id) {
+  switch ((chirp_template_t)id) {
+    case CHIRP_TPL_AUTH_POLICE_ACTIVITY:
+    case CHIRP_TPL_AUTH_HEAVY_RESPONSE:
+    case CHIRP_TPL_AUTH_ROAD_BLOCKED:
+    case CHIRP_TPL_AUTH_HELICOPTER:
+    case CHIRP_TPL_INFRA_POWER_OUT:
+    case CHIRP_TPL_INFRA_WATER_ISSUE:
+    case CHIRP_TPL_INFRA_GAS_SMELL:
+    case CHIRP_TPL_INFRA_INTERNET_DOWN:
+    case CHIRP_TPL_INFRA_ROAD_CLOSED:
+    case CHIRP_TPL_EMERG_FIRE:
+    case CHIRP_TPL_EMERG_MEDICAL:
+    case CHIRP_TPL_EMERG_MULTI_AMBULANCE:
+    case CHIRP_TPL_EMERG_EVACUATION:
+    case CHIRP_TPL_EMERG_SHELTER:
+    case CHIRP_TPL_WX_SEVERE:
+    case CHIRP_TPL_WX_TORNADO:
+    case CHIRP_TPL_WX_FLOOD:
+    case CHIRP_TPL_WX_LIGHTNING:
+    case CHIRP_TPL_AID_WELFARE:
+    case CHIRP_TPL_AID_SUPPLIES:
+    case CHIRP_TPL_AID_OFFERING:
+    case CHIRP_TPL_CLR_RESOLVED:
+    case CHIRP_TPL_CLR_SAFE:
+    case CHIRP_TPL_CLR_FALSE_ALARM:
+      return true;
+  }
+  return false;
+}
+bool api_names_mute(int minutes) {
+  switch ((chirp_mute_duration_t)minutes) {
+    case CHIRP_MUTE_15_MINS:
+    case CHIRP_MUTE_30_MINS:
+    case CHIRP_MUTE_60_MINS:
+    case CHIRP_MUTE_120_MINS:
+      return true;
+  }
+  return false;
+}
+#pragma GCC diagnostic pop
+
+// The enums the API names, value for value; the template table, the header's
+// every template against every id the reference takes (0x04 stays
+// reserved); and the mute durations against every one the reference's
+// mute() takes. chirp_state_t is the API's own and has no counterpart to
+// hold it to (the reference's ChirpState names other states).
 void test_common_header_matches_the_reference() {
   CHECK((int)CHIRP_CAT_AUTHORITY == (int)cc::CHIRP_CAT_AUTHORITY);
   CHECK((int)CHIRP_CAT_INFRA == (int)cc::CHIRP_CAT_INFRA);
@@ -415,26 +467,22 @@ void test_common_header_matches_the_reference() {
       {CHIRP_DETAIL_DIR_WEST, cc::DETAIL_DIR_WEST},
   };
   for (const auto& d : details) CHECK(d.api == d.ref);
-  const int api_templates[] = {
-      CHIRP_TPL_AUTH_POLICE_ACTIVITY, CHIRP_TPL_AUTH_HEAVY_RESPONSE, CHIRP_TPL_AUTH_ROAD_BLOCKED,
-      CHIRP_TPL_AUTH_HELICOPTER,      CHIRP_TPL_INFRA_POWER_OUT,     CHIRP_TPL_INFRA_WATER_ISSUE,
-      CHIRP_TPL_INFRA_GAS_SMELL,      CHIRP_TPL_INFRA_INTERNET_DOWN, CHIRP_TPL_INFRA_ROAD_CLOSED,
-      CHIRP_TPL_EMERG_FIRE,           CHIRP_TPL_EMERG_MEDICAL,       CHIRP_TPL_EMERG_MULTI_AMBULANCE,
-      CHIRP_TPL_EMERG_EVACUATION,     CHIRP_TPL_EMERG_SHELTER,       CHIRP_TPL_WX_SEVERE,
-      CHIRP_TPL_WX_TORNADO,           CHIRP_TPL_WX_FLOOD,            CHIRP_TPL_WX_LIGHTNING,
-      CHIRP_TPL_AID_WELFARE,          CHIRP_TPL_AID_SUPPLIES,        CHIRP_TPL_AID_OFFERING,
-      CHIRP_TPL_CLR_RESOLVED,         CHIRP_TPL_CLR_SAFE,            CHIRP_TPL_CLR_FALSE_ALARM,
-  };
   size_t taken = 0;
   for (int id = 0; id < 256; ++id) {
-    const bool in_api = std::find(std::begin(api_templates), std::end(api_templates), id) !=
-                        std::end(api_templates);
     const bool in_ref = cc::is_valid_template((cc::ChirpTemplate)id);
-    CHECK(in_api == in_ref);
+    CHECK(api_names_template(id) == in_ref);
     taken += in_ref ? 1 : 0;
   }
-  CHECK(taken == sizeof api_templates / sizeof api_templates[0]);
+  CHECK(taken == 24);
   CHECK(!cc::is_valid_template((cc::ChirpTemplate)0x04));
+  // The reference's mute() takes exactly the durations the API names.
+  boot_enabled();
+  for (int minutes = 0; minutes < 256; ++minutes) {
+    cc::MuteRefusal why = cc::MUTE_REFUSED_NONE;
+    const bool muted = cc::mute((uint8_t)minutes, &why);
+    CHECK(muted == api_names_mute(minutes));
+    if (muted) CHECK(cc::unmute(&why));
+  }
   // The longest display there is (five suns, each 6 bytes with its variation
   // selector) and its NUL fit the API's field.
   uint8_t sid[cc::SESSION_ID_SIZE];
