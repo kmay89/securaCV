@@ -13,6 +13,11 @@ setting would come too late and the pin test would fail on Windows alone.
 
 This holds those three facts, since no local run can: cargo does not run on
 the hosts these suites run on, and the job's first CI run is its own proof.
+It also holds that the steps GATE: every cargo command runs in the crate's
+own directory (desktop/<crate>, the job's default; at the repo root cargo
+would find the kernel's Cargo.toml and lint neither crate), after the
+checkout, with no `if:` that could skip it and no `continue-on-error` on the
+job or any step that would swallow its failure.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_hub_core_windows_job.py' -v
 CI:   .github/workflows/lint.yml (unittest discover -s scripts/tests)
@@ -29,8 +34,21 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "desktop-hub-core.yml"
 
 
+CRATE_DIR = "desktop/${{ matrix.crate }}"
+AUTOCRLF = "git config --global core.autocrlf false"
+CARGO = ("cargo check --all-targets",
+         "cargo clippy --all-targets -- -D warnings",
+         "cargo test")
+
+
 def job_problems(job: dict) -> list[str]:
     found = []
+    if "continue-on-error" in job:
+        found.append("the job has continue-on-error")
+    if "if" in job:
+        found.append("the job has an if:")
+    if job.get("defaults", {}).get("run", {}).get("working-directory") != CRATE_DIR:
+        found.append(f"the job's run steps do not default to {CRATE_DIR}")
     if "windows" not in str(job.get("runs-on", "")):
         found.append("the job does not run on Windows")
     if set(job.get("strategy", {}).get("matrix", {}).get("crate", [])) != {
@@ -41,19 +59,28 @@ def job_problems(job: dict) -> list[str]:
     checkout = next((i for i, s in enumerate(steps)
                      if str(s.get("uses", "")).startswith("actions/checkout@")),
                     None)
-    crlf = next((i for i, r in enumerate(runs)
-                 if r == "git config --global core.autocrlf false"), None)
+    crlf = next((i for i, r in enumerate(runs) if r == AUTOCRLF), None)
+    for i, step in enumerate(steps):
+        name = step.get("name") or step.get("uses") or runs[i]
+        if "continue-on-error" in step:
+            found.append(f"step `{name}` has continue-on-error")
+        if "if" in step:
+            found.append(f"step `{name}` has an if:")
+        # Only the autocrlf step leaves the crate directory (it runs before
+        # the checkout makes it).
+        if "working-directory" in step and runs[i] != AUTOCRLF:
+            found.append(f"step `{name}` leaves {CRATE_DIR}")
     if checkout is None:
         found.append("no actions/checkout step")
     if crlf is None:
         found.append("core.autocrlf is never turned off")
     elif checkout is not None and crlf > checkout:
         found.append("core.autocrlf is turned off after the checkout")
-    for want in ("cargo check --all-targets",
-                 "cargo clippy --all-targets -- -D warnings",
-                 "cargo test"):
+    for want in CARGO:
         if want not in runs:
             found.append(f"no step runs `{want}`")
+        elif checkout is not None and runs.index(want) < checkout:
+            found.append(f"`{want}` runs before the checkout")
     return found
 
 
@@ -75,6 +102,52 @@ class WindowsJob(unittest.TestCase):
         self.assertIn("core.autocrlf is never turned off", got)
         self.assertIn("no step runs `cargo clippy --all-targets -- -D warnings`", got)
         self.assertIn("no step runs `cargo test`", got)
+
+    def mutated(self, step_name: str | None, **fields) -> list[str]:
+        """job_problems() of the real job with `fields` set on the step
+        named `step_name` (or on the job itself when None)."""
+        job = dict(self.wf["jobs"]["windows-check"])
+        job["steps"] = [dict(s) for s in job["steps"]]
+        target = job if step_name is None else next(
+            s for s in job["steps"] if s.get("name") == step_name)
+        target.update(fields)
+        return job_problems(job)
+
+    def test_a_step_that_cannot_fail_the_job_is_refused(self):
+        for step in ("Clippy (warnings are errors)", "Test",
+                     "cargo check --all-targets (Windows branches compile)"):
+            with self.subTest(step=step):
+                self.assertIn(f"step `{step}` has continue-on-error",
+                              self.mutated(step, **{"continue-on-error": True}))
+        self.assertIn("the job has continue-on-error",
+                      self.mutated(None, **{"continue-on-error": True}))
+
+    def test_a_step_that_can_be_skipped_is_refused(self):
+        for step in ("Clippy (warnings are errors)", "Test",
+                     "Check out with the repository's line endings"):
+            with self.subTest(step=step):
+                self.assertIn(f"step `{step}` has an if:",
+                              self.mutated(step, **{"if": "false"}))
+        self.assertIn("the job has an if:", self.mutated(None, **{"if": "false"}))
+
+    def test_cargo_outside_the_crate_directory_is_refused(self):
+        # At the repo root cargo finds the kernel's Cargo.toml: neither crate
+        # would be linted or tested.
+        job = dict(self.wf["jobs"]["windows-check"])
+        job.pop("defaults")
+        self.assertIn(f"the job's run steps do not default to {CRATE_DIR}",
+                      job_problems(job))
+        self.assertIn("step `Test` leaves desktop/${{ matrix.crate }}",
+                      self.mutated("Test", **{"working-directory": "."}))
+
+    def test_cargo_before_the_checkout_is_refused(self):
+        job = dict(self.wf["jobs"]["windows-check"])
+        steps = list(job["steps"])
+        test = next(s for s in steps if s.get("run") == "cargo test")
+        steps.remove(test)
+        steps.insert(0, test)
+        job["steps"] = steps
+        self.assertIn("`cargo test` runs before the checkout", job_problems(job))
 
     def test_autocrlf_after_checkout_is_refused(self):
         job = dict(self.wf["jobs"]["windows-check"])
