@@ -840,9 +840,10 @@ _NOTIFY_H = "firmware/projects/canary-wap/arduino/canary_wap/notify.h"
 _REPEAT_SWIFT = "ios/Sources/SecuraCV/Alerts/RepeatGovernor.swift"
 _RELAY_RS = "src/relay/mod.rs"
 
-# Words no phrase or reason text may say (spec household_keys_v0 §7.2 rule 7,
-# Free Signals Invariant F and §5): no who, no known-vs-unknown, no
-# authorized-vs-not, and the novelty hint never reaches wording.
+# Words no phrase or reason text may say (spec household_keys_v0 §7.2, "No
+# identity, ever"; Free Signals Invariant F and §5): no who, no
+# known-vs-unknown, no authorized-vs-not, and the novelty hint never reaches
+# wording.
 _ATTENTION_FORBIDDEN_WORDS = frozenset({
     "name", "names", "known", "unknown", "stranger", "strangers", "intruder",
     "intruders", "recognized", "verified", "familiar", "unfamiliar",
@@ -883,12 +884,252 @@ def rust_variant_arms(body: str, enum: str, rhs: str) -> dict[str, str]:
     return out
 
 
-def rust_matches_set(body: str, enum: str) -> set[str]:
-    """Variants named in a `matches!(self, E::A | E::B)` body."""
-    m = re.search(r"matches!\s*\(\s*self\s*,(.*?)\)", body, re.S)
-    if not m:
-        return set()
-    return set(re.findall(re.escape(enum) + r"::(\w+)", m.group(1)))
+_RUST_PUNCT = ("..=", "=>", "::", "||", "&&", "==", "!=", "<=", ">=", "->", "..")
+_RUST_SIMPLE_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\", "0": "\0", "'": "'", '"': '"'}
+
+
+def _rust_tokens(text: str, where: str) -> list[tuple[str, str, int]] | None:
+    """Rust source as (kind, value, offset) tokens, comments dropped.
+
+    Kinds: `str` (value: the literal's DECODED contents, escapes and raw
+    strings included, so `"a\\"b"` is the word a"b), `bytes` (a b"" / c""
+    literal), `char`, `lifetime`, `ident`, `num`, `punct`. Small on purpose —
+    just enough to read a match's arms and a matches! call exactly instead of
+    by regex, which is what let a hyphenated word or a trailing `|| ...`
+    through. An unterminated literal or comment, or an escape Rust has not
+    got, is an error (None), never a guess.
+    """
+    out: list[tuple[str, str, int]] = []
+    i, n = 0, len(text)
+
+    def bad(msg: str) -> None:
+        line = text.count("\n", 0, i) + 1
+        err(f"[parse] {where}: {msg} at body line {line} — update the linter if the code is right")
+
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            if depth:
+                bad("unterminated block comment")
+                return None
+            i = j
+        elif (m := re.match(r'(b|c)?r(#*)"', text[i:])):
+            # A raw string: no escapes, ends at a quote followed by as many #.
+            close = '"' + m.group(2)
+            j = text.find(close, i + m.end())
+            if j < 0:
+                bad("unterminated raw string")
+                return None
+            out.append(("bytes" if m.group(1) else "str", text[i + m.end() : j], i))
+            i = j + len(close)
+        elif c == '"' or (c in "bc" and text.startswith('"', i + 1)):
+            kind = "str" if c == '"' else "bytes"
+            j = i + (1 if c == '"' else 2)
+            buf: list[str] = []
+            while True:
+                if j >= n:
+                    bad("unterminated string literal")
+                    return None
+                ch = text[j]
+                if ch == '"':
+                    j += 1
+                    break
+                if ch != "\\":
+                    buf.append(ch)
+                    j += 1
+                    continue
+                esc = text[j + 1 : j + 2]
+                if esc in _RUST_SIMPLE_ESCAPES:
+                    buf.append(_RUST_SIMPLE_ESCAPES[esc])
+                    j += 2
+                elif esc == "x" and re.fullmatch(r"[0-7][0-9A-Fa-f]", text[j + 2 : j + 4]):
+                    buf.append(chr(int(text[j + 2 : j + 4], 16)))
+                    j += 4
+                elif esc == "u" and (um := re.match(r"\{([0-9A-Fa-f_]{1,8})\}", text[j + 2 :])):
+                    buf.append(chr(int(um.group(1).replace("_", ""), 16)))
+                    j += 2 + um.end()
+                elif esc == "\n":
+                    # A line continuation: the newline and the next line's
+                    # leading whitespace are not part of the string.
+                    j += 2
+                    while j < n and text[j] in " \t\r\n":
+                        j += 1
+                else:
+                    bad(f"escape \\{esc} is not a Rust string escape")
+                    return None
+            out.append((kind, "".join(buf), i))
+            i = j
+        elif c == "'":
+            m = re.match(r"'(?:\\(?:[nrt\\0'\"]|x[0-7][0-9A-Fa-f]|u\{[0-9A-Fa-f_]{1,8}\})|[^\\'\n])'",
+                         text[i:])
+            if m:
+                out.append(("char", m.group(0), i))
+                i += m.end()
+            else:
+                m = re.match(r"'[A-Za-z_][A-Za-z0-9_]*", text[i:])
+                if not m:
+                    bad("a quote that is neither a char literal nor a lifetime")
+                    return None
+                out.append(("lifetime", m.group(0), i))
+                i += m.end()
+        elif (m := re.match(r"(?:r#)?[A-Za-z_][A-Za-z0-9_]*", text[i:])):
+            out.append(("ident", m.group(0), i))
+            i += m.end()
+        elif (m := re.match(r"[0-9][0-9A-Za-z_]*", text[i:])):
+            out.append(("num", m.group(0), i))
+            i += m.end()
+        else:
+            p = next((p for p in _RUST_PUNCT if text.startswith(p, i)), c)
+            out.append(("punct", p, i))
+            i += len(p)
+    return out
+
+
+def _tok_is(toks: list, i: int, kind: str, value: str | None = None) -> bool:
+    return i < len(toks) and toks[i][0] == kind and (value is None or toks[i][1] == value)
+
+
+def _tok_line(body: str, toks: list, i: int) -> str:
+    """The source line a token sits on, for an error message."""
+    at = toks[i][2] if i < len(toks) else len(body)
+    start = body.rfind("\n", 0, at) + 1
+    end = body.find("\n", at)
+    return body[start : end if end >= 0 else len(body)].strip()
+
+
+def rust_matches_set(body: str, enum: str, what: str) -> set[str] | None:
+    """Variants of a method whose WHOLE body is `matches!(self, E::A | E::B)`.
+
+    Anything else in the body — `matches!(self, E::A) || self == E::B`, a
+    guard, a second statement — is a parse error and returns None: the
+    variants the dictionary pins must be every variant the method answers
+    true for, and only a lone matches! makes the set it names that answer.
+    (This used to read the first matches!'s arguments and nothing after.)
+    """
+    where = f"{_ATT_RS} {what}"
+    toks = _rust_tokens(body, where)
+    if toks is None:
+        return None
+    shape = f"the body must be exactly one `matches!(self, {enum}::A | {enum}::B)`"
+    i = 0
+    for kind, value in (("ident", "matches"), ("punct", "!"), ("punct", "("),
+                        ("ident", "self"), ("punct", ",")):
+        if not _tok_is(toks, i, kind, value):
+            err(f"[parse] {where}: {shape}, found `{_tok_line(body, toks, i)}`")
+            return None
+        i += 1
+    if _tok_is(toks, i, "punct", "|"):
+        i += 1
+    variants: set[str] = set()
+    while True:
+        if not (_tok_is(toks, i, "ident", enum) and _tok_is(toks, i + 1, "punct", "::")
+                and _tok_is(toks, i + 2, "ident")):
+            err(f"[parse] {where}: {shape}, found `{_tok_line(body, toks, i)}`")
+            return None
+        variants.add(toks[i + 2][1])
+        i += 3
+        if not _tok_is(toks, i, "punct", "|"):
+            break
+        i += 1
+    if _tok_is(toks, i, "punct", ","):
+        i += 1
+    if not _tok_is(toks, i, "punct", ")") or i + 1 != len(toks):
+        err(f"[parse] {where}: {shape} and nothing else, found `{_tok_line(body, toks, i)}`")
+        return None
+    return variants
+
+
+def rust_device_word_arms(body: str, what: str) -> tuple[list[tuple[str, str]], str | None] | None:
+    """Arms of a body that is exactly `match word { ... }`, as written.
+
+    Returns ([(word, EventClass variant), ...] in source order, the `_ =>`
+    fallback's variant or None). Every arm must be one or more string
+    literals (`"a" | "b"`, escapes decoded) mapped straight to
+    `EventClass::X`, with only `_ => EventClass::X` after them: matching is
+    exact and case-sensitive, so the literals ARE the words the hub knows,
+    and anything else (a guard, a binding, a normalized `word`, a block) is a
+    parse error rather than an arm this reader silently skipped. The old
+    reader matched only `"[a-z0-9_]+" => ...`, so `"smoke-alarm" => ...` or
+    the second word of `"a" | "b" =>` was never compared at all.
+    """
+    where = f"{_ATT_RS} {what}"
+    toks = _rust_tokens(body, where)
+    if toks is None:
+        return None
+    if not (_tok_is(toks, 0, "ident", "match") and _tok_is(toks, 1, "ident", "word")
+            and _tok_is(toks, 2, "punct", "{") and _tok_is(toks, len(toks) - 1, "punct", "}")):
+        err(f"[parse] {where}: the body must be exactly `match word {{ ... }}` (exact, "
+            f"case-sensitive matching on the word as received), found "
+            f"`{_tok_line(body, toks, 0)}`")
+        return None
+    arms: list[tuple[str, str]] = []
+    fallback: str | None = None
+    i, end = 3, len(toks) - 1
+    while i < end:
+        arm_at = i
+        shape = (f"every arm must be `\"word\" => EventClass::X,` (or `\"a\" | \"b\" => ...`), "
+                 f"then `_ => EventClass::X`")
+        if fallback is not None:
+            err(f"[parse] {where}: an arm after the `_ =>` fallback: `{_tok_line(body, toks, i)}`")
+            return None
+        words: list[str] = []
+        wild = False
+        if _tok_is(toks, i, "punct", "|"):
+            i += 1
+        if _tok_is(toks, i, "ident", "_"):
+            wild = True
+            i += 1
+        else:
+            while True:
+                if not _tok_is(toks, i, "str"):
+                    err(f"[parse] {where}: {shape}; found `{_tok_line(body, toks, i)}`")
+                    return None
+                words.append(toks[i][1])
+                i += 1
+                if not _tok_is(toks, i, "punct", "|"):
+                    break
+                i += 1
+        if not _tok_is(toks, i, "punct", "=>"):
+            err(f"[parse] {where}: {shape}; found `{_tok_line(body, toks, i)}`")
+            return None
+        i += 1
+        braced = _tok_is(toks, i, "punct", "{")
+        if braced:
+            i += 1
+        if not (_tok_is(toks, i, "ident", "EventClass") and _tok_is(toks, i + 1, "punct", "::")
+                and _tok_is(toks, i + 2, "ident")):
+            err(f"[parse] {where}: {shape}; found `{_tok_line(body, toks, i)}`")
+            return None
+        variant = toks[i + 2][1]
+        i += 3
+        if braced:
+            if not _tok_is(toks, i, "punct", "}"):
+                err(f"[parse] {where}: {shape}; found `{_tok_line(body, toks, i)}`")
+                return None
+            i += 1
+        if _tok_is(toks, i, "punct", ","):
+            i += 1
+        elif i < end and not braced:
+            err(f"[parse] {where}: {shape}; found `{_tok_line(body, toks, arm_at)}`")
+            return None
+        if wild:
+            fallback = variant
+        else:
+            arms.extend((w, variant) for w in words)
+    return arms, fallback
 
 
 def rust_all_array(text: str, type_name: str, rel: str) -> list[str]:
@@ -964,7 +1205,7 @@ def _check_attention_text(what: str, text: str) -> None:
     for word in re.findall(r"[A-Za-z]+", bare):
         if word.lower() in _ATTENTION_FORBIDDEN_WORDS:
             err(f"[drift] attention {what} {text!r} says {word!r} — no who, no "
-                f"known-vs-unknown, no novelty in any wording (spec §7.2 rule 7)")
+                f"known-vs-unknown, no novelty in any wording (spec §7.2, \"No identity, ever\")")
 
 
 def _check_attention(d: dict) -> None:
@@ -1025,9 +1266,9 @@ def _check_attention(d: dict) -> None:
     zks = att["zone_kinds"]
     _check_id_enum(src, "ZoneKind", zks, "attention.zone_kinds")
     applies = rust_matches_set(rust_impl_fn_body(src, "ZoneKind", "posture_applies", _ATT_RS),
-                               "ZoneKind")
+                               "ZoneKind", "ZoneKind::posture_applies()")
     want_applies = {z["rust_variant"] for z in zks if z["posture_applies"]}
-    if applies != want_applies:
+    if applies is not None and applies != want_applies:
         err(f"[drift] ZoneKind::posture_applies(): code {sorted(applies)} vs dictionary "
             f"{sorted(want_applies)} — household posture must act on indoor zones only")
 
@@ -1052,8 +1293,10 @@ def _check_attention(d: dict) -> None:
     _check_id_enum(src, "Channel", chans, "attention.channels")
     modality_arms = rust_variant_arms(rust_impl_fn_body(src, "Channel", "modality", _ATT_RS),
                                       "Channel", r"(Some\(\s*Modality::\w+\s*\)|None)")
-    weak = rust_matches_set(rust_impl_fn_body(src, "Channel", "is_weak", _ATT_RS), "Channel")
-    sees = rust_matches_set(rust_impl_fn_body(src, "Channel", "sees_person", _ATT_RS), "Channel")
+    weak = rust_matches_set(rust_impl_fn_body(src, "Channel", "is_weak", _ATT_RS), "Channel",
+                            "Channel::is_weak()")
+    sees = rust_matches_set(rust_impl_fn_body(src, "Channel", "sees_person", _ATT_RS), "Channel",
+                            "Channel::sees_person()")
     for c in chans:
         rv = c["rust_variant"]
         arm = modality_arms.get(rv)
@@ -1069,10 +1312,10 @@ def _check_attention(d: dict) -> None:
             err(f"[drift] attention.channels {c['id']!r} names modality {c['modality']!r}, "
                 f"which attention.modalities does not list")
     want_weak = {c["rust_variant"] for c in chans if c["weak"]}
-    if weak != want_weak:
+    if weak is not None and weak != want_weak:
         err(f"[drift] Channel::is_weak(): code {sorted(weak)} vs dictionary {sorted(want_weak)}")
     want_sees = {c["rust_variant"] for c in chans if c["sees_person"]}
-    if sees != want_sees:
+    if sees is not None and sees != want_sees:
         err(f"[drift] Channel::sees_person(): code {sorted(sees)} vs dictionary {sorted(want_sees)}")
     sentinel_cpp = read(_SENTINEL_CPP)
     if sentinel_cpp and sentinel_h:
@@ -1190,7 +1433,7 @@ def _check_attention(d: dict) -> None:
     phrase_of = rust_variant_arms(rust_impl_fn_body(src, "EventClass", "phrase", _ATT_RS),
                                   "EventClass", r"PhraseId::(\w+)")
     person = rust_matches_set(rust_impl_fn_body(src, "EventClass", "person_class", _ATT_RS),
-                              "EventClass")
+                              "EventClass", "EventClass::person_class()")
     fam_variant = {f["id"]: f["rust_variant"] for f in fams}
     phrase_variant = {p["id"]: p["rust_variant"] for p in phrases}
     for c in classes:
@@ -1206,7 +1449,7 @@ def _check_attention(d: dict) -> None:
             elif got_map.get(rv) != want:
                 err(f"[drift] EventClass::{rv}.{field}(): code {got_map.get(rv)!r} vs "
                     f"dictionary {want!r}")
-        if (rv in person) != bool(c["person_class"]):
+        if person is not None and (rv in person) != bool(c["person_class"]):
             err(f"[drift] EventClass::{rv}.person_class(): code {rv in person} vs dictionary "
                 f"{c['person_class']}")
         f, ce = rank.get(c["floor_tier"], -1), rank.get(c["ceiling_tier"], -1)
@@ -1244,7 +1487,7 @@ def _check_attention(d: dict) -> None:
             err(f"[drift] class_for_event_type(EventType::{e['rust_variant']}): code "
                 f"{kernel_arms.get(e['rust_variant'])!r} vs dictionary {want!r}")
     word_body = rust_fn_body(src, "class_for_device_word", _ATT_RS)
-    word_arms = dict(re.findall(r'"([a-z0-9_]+)"\s*=>\s*EventClass::(\w+)', word_body))
+    parsed = rust_device_word_arms(word_body, "class_for_device_word()")
     want_words = {w: class_by_id[c]["rust_variant"] for w, c in cm["device_words"].items()
                   if c in class_by_id}
     for w, c in cm["device_words"].items():
@@ -1252,17 +1495,31 @@ def _check_attention(d: dict) -> None:
             err(f"[drift] class_map.device_words[{w!r}] = {c!r} is not a class")
         if w in cm["kernel_event_types"]:
             err(f"[drift] class_map.device_words lists {w!r}, a kernel event id — one dialect each")
-    if word_arms != want_words:
-        missing = sorted(set(want_words.items()) - set(word_arms.items()))
-        extra = sorted(set(word_arms.items()) - set(want_words.items()))
-        err(f"[drift] class_for_device_word(): code vs dictionary device_words — missing "
-            f"{missing}, unexpected {extra}")
-    fallback = re.search(r"\b_\s*=>\s*EventClass::(\w+)", word_body)
+    fallback = None
+    if parsed is not None:
+        arms, fallback = parsed
+        word_arms: dict[str, str] = {}
+        for w, v in arms:
+            if w in word_arms:
+                err(f"[drift] class_for_device_word(): {w!r} has two arms — one word, one class")
+            word_arms[w] = v
+            if w not in cm["device_words"]:
+                err(f"[drift] class_for_device_word(): arm {w!r} => EventClass::{v} is not a "
+                    f"class_map.device_words key — matching is exact and case-sensitive, so a "
+                    f"spelling the dictionary does not list is a word it does not govern (add it "
+                    f"to the dictionary first, or drop the arm)")
+        for w, want in want_words.items():
+            if w not in word_arms:
+                err(f"[drift] class_for_device_word(): no arm for dictionary device word {w!r} "
+                    f"(EventClass::{want})")
+            elif word_arms[w] != want:
+                err(f"[drift] class_for_device_word({w!r}): code EventClass::{word_arms[w]} vs "
+                    f"dictionary EventClass::{want}")
     unknown_cls = class_by_id.get(cm["unknown_word_class"])
     if unknown_cls is None:
         err(f"[drift] class_map.unknown_word_class {cm['unknown_word_class']!r} is not a class")
     else:
-        if not fallback or fallback.group(1) != unknown_cls["rust_variant"]:
+        if parsed is not None and fallback != unknown_cls["rust_variant"]:
             err(f"[drift] class_for_device_word(): the `_ =>` fallback must be "
                 f"EventClass::{unknown_cls['rust_variant']} (dictionary unknown_word_class)")
         if unknown_cls["ceiling_tier"] != "digest" or unknown_cls["floor_tier"] != "digest":

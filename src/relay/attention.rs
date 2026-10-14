@@ -24,8 +24,8 @@
 //! is the conformance vector set every surface that decides tiers replays
 //! (the test at the bottom of this file is the Rust replay).
 //!
-//! The rules (spec §7.2, renumbered here in the order [`decide`] applies
-//! them; "rule N" in this file means this list):
+//! The rules (spec §7.2, which numbers them in the order [`decide`] applies
+//! them; "rule N" in this file means this list, numbered as the spec's):
 //!
 //! 1. **Critical is never lowered.** Tamper, a log-integrity failure, a
 //!    witness declared dark and a heard smoke or CO cadence are `critical`
@@ -998,8 +998,9 @@ pub fn class_for_event_type(event: &EventType) -> EventClass {
 }
 
 /// The class of a Canary device wire word. Exact and case-sensitive; any word
-/// not listed is `Other`, whose ceiling is `digest` — an unknown word can
-/// never be critical, and never `none`.
+/// not listed is `Other`, whose ceiling is `digest` — an unknown word falls
+/// back to digest and is never critical; like every non-critical class it is
+/// `none` only under rule 2 (household posture `home` on an indoor witness).
 pub fn class_for_device_word(word: &str) -> EventClass {
     match word {
         "person_detected" => EventClass::Person,
@@ -1252,12 +1253,18 @@ pub enum EpisodeVerdict {
 }
 
 /// One episode's memory. RAM only; never emitted.
+///
+/// Both seconds only ever move forward: a stamp earlier than `last_seen_at`
+/// is recorded as `last_seen_at`, so `last_notified_at <= last_seen_at`
+/// always holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct EpisodeMemory {
+    /// When the episode last notified (at the latest second seen so far).
     last_notified_at: u64,
-    /// The last time any repeat was considered, notified or collapsed. The
-    /// calm gap is measured from here, so a family that never stops churning
-    /// can never age into a fake calm (the hole RepeatGovernor.swift fixed).
+    /// The latest second any repeat was considered, notified or collapsed.
+    /// The calm gap is measured from here, so a family that never stops
+    /// churning can never age into a fake calm (the hole RepeatGovernor.swift
+    /// fixed) — and a stray early stamp cannot move it back to fake one.
     last_seen_at: u64,
     worst_notified: Tier,
     notifications: u32,
@@ -1290,17 +1297,30 @@ impl EpisodeGovernor {
     /// Should this decision notify, given its episode so far? Records what it
     /// saw. Seconds must be monotonic; a clock that steps back can only make
     /// a repeat rest longer, never notify more.
+    ///
+    /// That holds because the memory never moves back. A stamp earlier than
+    /// the latest second the episode has seen is recorded as that latest
+    /// second, in every branch, so it decides exactly as if it had arrived
+    /// then — the earliest it can really have happened — except that its
+    /// rest is measured from the earlier stamp, which only reads longer. It
+    /// cannot start a fresh episode (its calm-gap distance saturates to 0),
+    /// cannot pass a rest (every collapsed stamp is inside the current rest,
+    /// so an earlier one is too), and a critical or a higher tier, which
+    /// notify whatever the clock says, stamp the notification at the latest
+    /// second, so they cannot shorten the next rest either.
     pub fn consider(&mut self, key: EpisodeKey, tier: Tier, now_secs: u64) -> EpisodeVerdict {
         if tier == Tier::None {
             return EpisodeVerdict::NotSurfaced;
         }
         let prior = self.episodes.get(&key).copied();
+        // The latest second this episode has seen, this one included.
+        let latest = prior.map_or(now_secs, |m| m.last_seen_at.max(now_secs));
 
         // The critical tier is never governed.
         if tier == Tier::Critical {
             let memory = EpisodeMemory {
-                last_notified_at: now_secs,
-                last_seen_at: now_secs,
+                last_notified_at: latest,
+                last_seen_at: latest,
                 worst_notified: prior.map_or(tier, |m| m.worst_notified.max(tier)),
                 notifications: prior.map_or(0, |m| m.notifications).saturating_add(1),
             };
@@ -1313,8 +1333,8 @@ impl EpisodeGovernor {
             Some(m) if now_secs.saturating_sub(m.last_seen_at) < EPISODE_CALM_GAP_SECS => m,
             _ => {
                 let fresh = EpisodeMemory {
-                    last_notified_at: now_secs,
-                    last_seen_at: now_secs,
+                    last_notified_at: latest,
+                    last_seen_at: latest,
                     worst_notified: tier,
                     notifications: 1,
                 };
@@ -1326,8 +1346,8 @@ impl EpisodeGovernor {
         // A higher tier always gets through.
         if tier > memory.worst_notified {
             let escalated = EpisodeMemory {
-                last_notified_at: now_secs,
-                last_seen_at: now_secs,
+                last_notified_at: latest,
+                last_seen_at: latest,
                 worst_notified: tier,
                 notifications: memory.notifications.saturating_add(1),
             };
@@ -1340,8 +1360,8 @@ impl EpisodeGovernor {
         let elapsed = now_secs.saturating_sub(memory.last_notified_at);
         if elapsed >= rest {
             let repeated = EpisodeMemory {
-                last_notified_at: now_secs,
-                last_seen_at: now_secs,
+                last_notified_at: latest,
+                last_seen_at: latest,
                 worst_notified: memory.worst_notified.max(tier),
                 notifications: memory.notifications.saturating_add(1),
             };
@@ -1349,9 +1369,10 @@ impl EpisodeGovernor {
             return EpisodeVerdict::Notify(NotifyCause::RestElapsed);
         }
 
-        // Collapsed, but seen: the calm gap keeps measuring from now.
+        // Collapsed, but seen: the calm gap keeps measuring from the latest
+        // second, never from an earlier one.
         let seen = EpisodeMemory {
-            last_seen_at: now_secs,
+            last_seen_at: latest,
             ..memory
         };
         self.episodes.insert(key, seen);
@@ -1643,7 +1664,7 @@ mod tests {
                 && !input.class.is_critical()
                 && d.tier > Tier::Digest
             {
-                // The one exception the spec allows (rule 4 here; spec §7.2 rule 5).
+                // The one exception the spec allows (rule 4, here and in spec §7.2).
                 assert_eq!(d.reason, ReasonCode::RfOnlyArrival, "{input:?}");
                 assert_eq!(input.novelty, Novelty::Unfamiliar, "{input:?}");
                 assert_eq!(input.dwell, DwellBand::Sustained, "{input:?}");
@@ -1684,6 +1705,8 @@ mod tests {
             " tamper",
             "Tamper",
             "tamper_detected",
+            "tamperDetected",
+            "smoke-alarm",
             "fire",
             "x",
         ] {
@@ -1694,7 +1717,19 @@ mod tests {
                 continue;
             }
             let d = decide(&input);
-            assert!(d.tier <= Tier::Digest, "{input:?}");
+            if input.posture == HouseholdPosture::Home && input.zone_kind == ZoneKind::Indoor {
+                // Rule 2 comes before rule 3: like every non-critical class,
+                // an unknown word from an indoor witness while home is none.
+                assert_eq!(d.tier, Tier::None, "{input:?}");
+            } else {
+                // Everywhere else it is exactly digest, by rule 3 — never
+                // none, never more.
+                assert_eq!(
+                    (d.tier, d.reason),
+                    (Tier::Digest, ReasonCode::Unclassified),
+                    "{input:?}"
+                );
+            }
         }
     }
 
