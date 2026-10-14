@@ -19,9 +19,16 @@ What is pinned and why:
     `static constexpr` in the project config.h (CONFIG_ dropped), and it
     must hold the same value. Today they are the four gen_flash.py reads
     (CONFIG_PERSON_TARGET, CONFIG_SCORE_MIN, CONFIG_LOST_TIMEOUT_MS,
-    CONFIG_DWELL_START_MS) for the flasher catalog's detection defaults. A
-    seed with no same-named constant, or one whose constant is not a plain
-    literal this test can compare, is refused rather than passed;
+    CONFIG_DWELL_START_MS) for the flasher catalog's detection defaults, and
+    CONFIG_DEVICE_TYPE, which gen_figures.mjs reads to key the flavor's
+    figure. A seed with no same-named constant, or one whose constant is not
+    a plain literal this test can compare, is refused rather than passed;
+  • a tool that reads a macro by pattern rather than by name (gen_figures.mjs
+    matches any `#define ...DEVICE_TYPE`) is a reader only through
+    PATTERN_READERS, and only while that file still holds the pattern and
+    the pattern still matches the macro's line. F182 first deleted
+    CONFIG_DEVICE_TYPE as unread, and the Vision boards stopped serving a
+    device type in figures.json;
   • the checks fail on what they exist to catch: a planted unread macro, a
     seed that drifted, a constant spelled as an expression. Those self-tests
     run the checkers on synthetic inputs, so they hold the checkers and not
@@ -55,6 +62,12 @@ READER_SUFFIXES = {
 READER_NAMES = {"Makefile", "CMakeLists.txt"}
 # Generated bundles that only echo compiled code.
 SKIP_PREFIXES = ("canary-local/emulator/dist/",)
+# Readers that match a macro by pattern, so a whole-word search cannot see
+# them: macro -> (file, the pattern's source text as the file spells it).
+PATTERN_READERS = {
+    "CONFIG_DEVICE_TYPE": ("canary-local/tools/figures/gen_figures.mjs",
+                           r"#define\s+\w*DEVICE_TYPE\s+"),
+}
 
 DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(CONFIG_[A-Za-z0-9_]+)\b[ \t]*(.*)$", re.M)
 # The defined name of any CONFIG_* #define, which names it without reading it.
@@ -108,6 +121,19 @@ def unread(macros, corpus) -> list[str]:
     return sorted(name for name in macros if name not in found)
 
 
+def pattern_read(name: str, flavor_text: str, readers=PATTERN_READERS, read=None) -> bool:
+    """Whether `name` is read by pattern: its PATTERN_READERS file still holds
+    the pattern's source text, and that pattern matches the macro's line."""
+    if name not in readers:
+        return False
+    rel, pattern = readers[name]
+    text = read(rel) if read else (REPO / rel).read_text(encoding="utf-8")
+    if pattern not in text:
+        return False
+    line = next((m.group(0) for m in DEFINE.finditer(flavor_text) if m.group(1) == name), "")
+    return re.search(pattern, line) is not None
+
+
 def seed_problems(macros: dict[str, str], constants: dict[str, str]) -> list[str]:
     """Each macro must be a literal copy of the same-named project constant."""
     problems = []
@@ -158,19 +184,24 @@ class FlavorConfigReaders(unittest.TestCase):
 
     def test_every_config_macro_left_has_a_reader(self):
         self.assertTrue(self.macros, f"no CONFIG_* parsed from {FLAVOR}")
-        self.assertEqual(unread(self.macros, self.corpus), [],
+        missing = [n for n in unread(self.macros, self.corpus)
+                   if not pattern_read(n, self.flavor_text)]
+        self.assertEqual(missing, [],
                          f"{FLAVOR} defines CONFIG_* macros nothing outside it reads; "
                          "the firmware reads include/canary/config.h, so delete them there")
 
     def test_every_seed_equals_the_project_constant(self):
         self.assertEqual(seed_problems(self.macros, project_constants(self.project_text)), [])
 
-    def test_the_seeds_are_the_four_gen_flash_reads(self):
-        self.assertEqual(sorted(self.macros), ["CONFIG_DWELL_START_MS", "CONFIG_LOST_TIMEOUT_MS",
-                                               "CONFIG_PERSON_TARGET", "CONFIG_SCORE_MIN"])
+    def test_the_seeds_are_the_four_gen_flash_reads_and_the_figure_type(self):
+        self.assertEqual(sorted(self.macros), ["CONFIG_DEVICE_TYPE", "CONFIG_DWELL_START_MS",
+                                               "CONFIG_LOST_TIMEOUT_MS", "CONFIG_PERSON_TARGET",
+                                               "CONFIG_SCORE_MIN"])
         gen_flash = (REPO / "canary-local/tools/gen_flash.py").read_text(encoding="utf-8")
-        for name in self.macros:
+        for name in sorted(set(self.macros) - {"CONFIG_DEVICE_TYPE"}):
             self.assertIn(f'read_const(VISION_CFG, "{name}")', gen_flash, name)
+        self.assertTrue(pattern_read("CONFIG_DEVICE_TYPE", self.flavor_text),
+                        "gen_figures.mjs no longer reads the flavor's DEVICE_TYPE by its pattern")
 
     # ── the checks catch what they exist to catch ─────────────────────────
 
@@ -180,6 +211,17 @@ class FlavorConfigReaders(unittest.TestCase):
                   "#define CONFIG_NOBODY_READS_THIS   7\n")
         corpus = ['read_const(VISION_CFG, "CONFIG_READ_BY_A_TOOL")', "# CONFIG_NOBODY_READS_THESE"]
         self.assertEqual(unread(flavor_macros(flavor), corpus), ["CONFIG_NOBODY_READS_THIS"])
+
+    def test_a_pattern_reader_counts_only_while_it_holds_and_matches(self):
+        readers = {"CONFIG_KIND": ("tool.mjs", r"#define\s+\w*KIND\s+")}
+        flavor = '#define CONFIG_KIND   "x"\n'
+        holds = 'const m = text.match(/#define\\s+\\w*KIND\\s+"([^"]+)"/);'
+        self.assertIn(r"#define\s+\w*KIND\s+", holds)
+        self.assertTrue(pattern_read("CONFIG_KIND", flavor, readers, read=lambda _: holds))
+        self.assertFalse(pattern_read("CONFIG_KIND", flavor, readers, read=lambda _: "// gone"))
+        self.assertFalse(pattern_read("CONFIG_KIND", '#define CONFIG_KINDS "x"\n', readers,
+                                      read=lambda _: holds))
+        self.assertFalse(pattern_read("CONFIG_OTHER", flavor, readers, read=lambda _: holds))
 
     def test_a_second_definition_is_not_a_reader(self):
         macros = {"CONFIG_A": "1", "CONFIG_B": "2"}

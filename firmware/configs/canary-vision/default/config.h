@@ -11,13 +11,25 @@
  * it used to repeat are set in the project's own headers:
  * projects/canary-vision/include/canary/config.h (identity, detection and
  * dwell defaults, voxel grid, frame size, timing, MQTT buffer, discovery
- * prefix) and include/canary/topics.h (the topic patterns). The four seeds
- * below are copies of four config.h constants for the flasher catalog
+ * prefix) and include/canary/topics.h (the topic patterns). The seeds
+ * below are copies of config.h constants that a tool reads here: the device
+ * type for the fleet figures (canary-local/tools/figures/gen_figures.mjs) and
+ * four detection defaults for the flasher catalog
  * (canary-local/tools/gen_flash.py), held equal to them by
  * scripts/tests/test_vision_flavor_config_readers.py.
  */
 
 #pragma once
+
+// ============================================================================
+// DEVICE TYPE (a copy for the fleet figures)
+// ============================================================================
+
+// gen_figures.mjs keys each flavor's figure by the `#define ...DEVICE_TYPE`
+// in its config.h (walkConfigs); without it the Vision boards serve no device
+// type in figures.json. The firmware publishes include/canary/config.h's
+// DEVICE_TYPE, which owns the value.
+#define CONFIG_DEVICE_TYPE          "canary-vision"  // canonical: lowercase, hyphenated
 
 // ============================================================================
 // FEATURE FLAGS

@@ -47,10 +47,12 @@ only; live values persist across reboots and OTA installs (see
 settings the flavor file used to repeat. The flavor file,
 `firmware/configs/canary-vision/default/config.h`, holds only what
 something reads from it: the `FEATURE_*` flags and the watchdog timeout,
-which it owns, and four copies of the detection defaults above
-(`CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS`,
-`CONFIG_DWELL_START_MS`) that the flasher catalog reads. Change a default
-in `include/canary/config.h` and its copy with it;
+which it owns, a copy of the device type the fleet figures key the
+flavor on (`CONFIG_DEVICE_TYPE`, read by `gen_figures.mjs`), and four
+copies of the detection defaults above (`CONFIG_PERSON_TARGET`,
+`CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS`, `CONFIG_DWELL_START_MS`)
+that the flasher catalog reads. Change a default in
+`include/canary/config.h` and its copy with it;
 `scripts/tests/test_vision_flavor_config_readers.py` fails while the two
 differ, and fails on a `CONFIG_*` in the flavor file that nothing reads.
 
