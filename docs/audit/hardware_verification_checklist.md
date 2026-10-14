@@ -1955,7 +1955,7 @@ repo). Compile is CI's. Owner: U1.
     erasing NVS and read `/api/fleet/scan` and `/api/device-info` again, and
     `ping canary-kit-chen.local`.
   - Expected: the rename answers `"ok":false` with "Invalid name: 1 to 32
-    bytes, no control characters, and at least one letter or digit" (the
+    bytes, no byte below 0x20, and at least one ASCII letter or digit" (the
     rule the route applies, since F263) and the device keeps its old name; the
     scan answer parses and the Fleet sheet lists the device. On the upgraded
     device both answers parse, the name reads `kit chen` (the control byte as
@@ -1972,13 +1972,18 @@ Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.h` /
 below 0x20, and a saved one is not loaded), `bluetooth_api.h` (POST
 `/api/bluetooth/settings` and `/api/bluetooth/name` answer
 `DEVICE_NAME_REFUSAL`), `wap_json_writer.h` (`replaced_text()`: each control
-byte as U+FFFD, cut on a character), and its callers in `canary_wap.ino`,
-`selftest_api.h` and `ble_provision.cpp`. Host-tested
-(`tests_host/test_bluetooth_commands_wap.cpp` on the real
+byte as U+FFFD, cut on a character; `shows_as()` and `listed_by_shown()`: a
+posted SSID read back to the listed network), and its callers in
+`canary_wap.ino` (the routes, `scan_cache_listed_ssid()`), `selftest_api.h`
+and `ble_provision.cpp` (the list fitted to its 480 bytes, CREDS read back).
+Host-tested (`tests_host/test_bluetooth_commands_wap.cpp` on the real
 `bluetooth_channel.cpp` and `bluetooth_api.h`, `tests_host/test_wap_json_writer.cpp`
-on the real header and ArduinoJson 7.4.1's own writer) and held by
+on the real header, a model of ArduinoJson 7.4.1's string spelling and a
+WHATWG UTF-8 decoder, `tests_host/test_ble_provision.cpp` on the real
+`ble_provision.cpp` over stand-ins) and held by
 `firmware/scripts/check_wap_json_answers.py` (J9); no host test runs the
-radio, a real access point's beacon, or a browser reading the device.
+radio, a real access point's beacon, a phone, or a browser reading the
+device.
 
 - [ ] **A Bluetooth name holding a control byte is refused, and a saved one is not loaded (F261)**
   - Setup: a canary-wap with its API token and Bluetooth on; for the second
@@ -1992,25 +1997,34 @@ radio, a real access point's beacon, or a browser reading the device.
     takes it), then flash this firmware without erasing NVS and read both
     answers and `/api/logs` again.
   - Expected: both POSTs answer `"success":false` with "Invalid Bluetooth
-    name: 1 to 32 bytes, no control characters" and nothing else in the
+    name: 1 to 32 bytes, no byte below 0x20" and nothing else in the
     settings POST is applied; both GETs parse and the radio still advertises
     the old name. On the upgraded device both answers parse, the name is the
     default one, and the health log holds "Saved Bluetooth name held a control
     byte: the default name is used" (before F261 both answers were
     unparseable in the browser).
   - Artifact: `docs/audit/repro/F261/control-byte-bt-name/`.
-- [ ] **An SSID holding a control byte reaches every answer as U+FFFD, and the device still joins it (F262)**
-  - Setup: a canary-wap with its API token, and an access point whose SSID
-    holds 0x01 (hostapd with `ssid2=P"kit\x01chen"`) in range.
-  - Repro: `curl -s http://<wap>/api/wifi/scan | python3 -m json.tool`; join
-    it with `curl -X POST --data-binary
-    '{"ssid":"kit\u0001chen","password":"<pass>"}' http://<wap>/api/wifi/connect`
-    and read that answer; once joined, read `/api/wifi`, `/api/selftest` and
-    `/api/logs` (with the token) the same way, and open the setup wizard's
-    network list.
+- [ ] **An SSID holding a control byte reaches every answer as U+FFFD, and the device joins it from every list (F262)**
+  - Setup: a canary-wap with its API token, an access point whose SSID holds
+    0x01 (hostapd with `ssid2=P"kit\x01chen"`) in range, a second one whose
+    SSID is 32 bytes of 0x01 (`ssid2=P"\x01\x01...\x01"`), and a phone with
+    the companion page for the BLE provisioning list.
+  - Repro: `curl -s http://<wap>/api/wifi/scan | python3 -m json.tool`; pick
+    `kit�chen` in the setup wizard's network list and join it; on a second
+    device, pick it in the dashboard's Settings list; on a third, pick it in
+    the phone's BLE provisioning list; pick the 32-byte one in the wizard;
+    read `/api/wifi`, `/api/selftest` and `/api/logs` (with the token) once
+    joined, and open the Fleet sheet and make its QR code. Read the BLE
+    provisioning list's length with 20 such networks in range.
   - Expected: every answer parses; each shows the network as `kit�chen`
-    (U+FFFD where the byte was), and the device joins the network by its real
-    bytes. Before F262 the scan answer did not parse in the browser.
+    (U+FFFD where the byte was); a pick from each list joins it (the wizard,
+    the dashboard and the phone post back the text they were shown, and the
+    device reads it back to the network's own bytes); the 32-byte one joins
+    from the wizard (its text is 96 bytes); the Fleet QR code, scanned by
+    another Canary, joins the home network; the BLE list is at most 480
+    bytes and lists the strongest networks that fit. Before F262 the scan
+    answer did not parse in the browser; with F262 alone a pick named no
+    network and the join failed.
   - Artifact: `docs/audit/repro/F262/control-byte-ssid/`.
 
 ## One event-id space (F46) — on-device verification

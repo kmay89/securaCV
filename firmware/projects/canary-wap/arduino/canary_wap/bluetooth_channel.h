@@ -59,7 +59,7 @@ inline bool name_storable(const char* name) {
 // What a refused name is answered with: the rule name_storable() applies,
 // in words, its bound held to MAX_DEVICE_NAME_LEN below.
 static constexpr char DEVICE_NAME_REFUSAL[] =
-    "Invalid Bluetooth name: 1 to 32 bytes, no control characters";
+    "Invalid Bluetooth name: 1 to 32 bytes, no byte below 0x20";
 static_assert(device_name_rule::states_bound(DEVICE_NAME_REFUSAL, MAX_DEVICE_NAME_LEN),
               "DEVICE_NAME_REFUSAL states MAX_DEVICE_NAME_LEN");
 

@@ -346,12 +346,16 @@ void test_a_name_stored_before_reads_back_without_control_bytes() {
 // breaks none of them is taken, whatever else it holds (a space, a quote, a
 // byte past 0x7f), which the old words ("letters/digits/hyphen") said was
 // refused. The bound the words state is the one storable() applies, read
-// from the words themselves.
+// from the words themselves. And the words name the bytes exactly (the F263
+// review): a name of letters past ASCII alone is refused, and the words say
+// "ASCII letter"; DEL and a C1 control are kept, and the words say "below
+// 0x20", not "control characters".
 void test_the_refusal_states_the_rule_the_route_applies() {
   const std::string words = device_name_rule::kRefusal;
   CHECK(words.find("1 to 32 bytes") != std::string::npos);
-  CHECK(words.find("no control characters") != std::string::npos);
-  CHECK(words.find("at least one letter or digit") != std::string::npos);
+  CHECK(words.find("no byte below 0x20") != std::string::npos);
+  CHECK(words.find("at least one ASCII letter or digit") != std::string::npos);
+  CHECK(words.find("control") == std::string::npos);
   CHECK(words.find("hyphen") == std::string::npos);
   CHECK(device_name_rule::states_bound(device_name_rule::kRefusal, device_name_rule::kMaxLen));
   CHECK(!device_name_rule::states_bound(device_name_rule::kRefusal, device_name_rule::kMaxLen + 1));
@@ -359,12 +363,14 @@ void test_the_refusal_states_the_rule_the_route_applies() {
   const std::string longest(device_name_rule::kMaxLen, 'n');
   bool ok = false;
   for (const std::string& refused : {longest + "n", std::string(), std::string("kit\x01" "chen"),
-                                     std::string(" \"-\" ")}) {
+                                     std::string(" \"-\" "), std::string("\xe5\x8f\xb0\xe6\x89\x80"),
+                                     std::string("\xce\xa3\xce\xb1\xce\xbb\xcf\x8c\xce\xbd\xce\xb9")}) {
     CHECK(!device_name_rule::usable(refused.c_str()));
     CHECK(device_name_route(refused.c_str(), &ok) == std::string(words) && !ok);
   }
   for (const std::string& taken : {longest, std::string("kitchen north"), std::string("kitchen \"north\""),
-                                   std::string("K\xc3\xbc" "che"), std::string("a\x7f" "b")}) {
+                                   std::string("K\xc3\xbc" "che"), std::string("a\x7f" "b"),
+                                   std::string("\xc2\x85" "x")}) {
     CHECK(device_name_route(taken.c_str(), &ok) == nullptr && ok);
     CHECK(name_now() == taken);
   }

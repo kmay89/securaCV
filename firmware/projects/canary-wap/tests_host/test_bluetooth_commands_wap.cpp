@@ -4630,7 +4630,7 @@ void answers_carry_name(const std::string& name) {
 // past 0x7f) is kept, and both answers carry it.
 void test_a_name_holding_a_control_byte_is_refused() {
   const std::string refused = refused_with(bc::DEVICE_NAME_REFUSAL);
-  CHECK(refused.find("1 to 32 bytes, no control characters") != std::string::npos);
+  CHECK(refused.find("1 to 32 bytes, no byte below 0x20") != std::string::npos);
   boot();
   Tap t = tap(bluetooth_api::handle_bluetooth_name_set, "{\"name\":\"Porch\"}");
   CHECK(t.body == succeeded_with("Device name updated"));
@@ -4695,6 +4695,31 @@ void test_a_name_holding_a_control_byte_is_refused() {
     }
   }
   none_on_httpd();
+  // Refused before anything is brought up (the F261 review: every POST above
+  // found the stack up, so `t.inits == 0` held whatever the order). Saved
+  // off and never up, a POST that turns Bluetooth on and names a name
+  // holding a control byte brings nothing up, turns nothing on and writes
+  // nothing; the same POST with a plain name brings the stack up (the
+  // handler's own init()) and turns Bluetooth on.
+  boot(/*bring_up=*/false);
+  saved_off_and_loaded();
+  const unsigned writes = host_sim::count("nvs_write");
+  t = tap(bluetooth_api::handle_bluetooth_settings_set,
+          ("{\"enabled\":true,\"device_name\":\"" + json_text("Shed\x01") + "\"}").c_str());
+  CHECK(t.body == refused && t.inits == 0 && t.sleeps == 0);
+  CHECK(!bc::is_initialized() && !bc::is_enabled() && !bc::read_enabled() && !nvs_bool("bt_enabled"));
+  CHECK(host_sim::count("nimble_init") == 0 && host_sim::count("nvs_write") == writes);
+  t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"enabled\":true,\"device_name\":\"Shed\"}");
+  CHECK(t.body == succeeded_with("Settings updated") && t.inits == 1);
+  CHECK(bc::is_initialized() && bc::is_enabled() && std::strcmp(bc::g_settings.device_name, "Shed") == 0);
+  // The name command refuses such a name with its own refusal (the name
+  // route reads only `ok`; the settings route maps BT_REFUSED_BAD_NAME to the
+  // words, a mapping its own check above leaves unreached).
+  bc::Command n = cmd_of(bc::BT_CMD_NAME);
+  std::memcpy(n.name, "Shed\x01", 6);
+  const Rest nr = rest(n);
+  CHECK(nr.wait == lcr::Wait::kDone && !nr.r.ok && nr.r.refusal == bc::BT_REFUSED_BAD_NAME);
+  CHECK(std::strcmp(bc::g_settings.device_name, "Shed") == 0);
   std::printf("PASS a_name_holding_a_control_byte_is_refused\n");
 }
 

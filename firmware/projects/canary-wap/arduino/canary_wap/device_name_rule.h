@@ -99,9 +99,13 @@ inline bool storable(const char* name) { return storable(name, kMaxLen); }
  * read one place. The bound it states is held to kMaxLen at compile time.
  * The old answer, "1-32 chars, letters/digits/hyphen", named a rule the
  * route never applied: a space, a quote and a byte past 0x7f are kept (the
- * mDNS label drops them), and since F226 only a control byte is refused. */
+ * mDNS label drops them), and since F226 only a control byte is refused.
+ * The words name the bytes exactly (the F263 review): "control characters"
+ * would take in DEL (0x7f) and C1, which the rule keeps, and "a letter or
+ * digit" letters past ASCII, which the label drops and usable() does not
+ * count. */
 static constexpr char kRefusal[] =
-    "Invalid name: 1 to 32 bytes, no control characters, and at least one letter or digit";
+    "Invalid name: 1 to 32 bytes, no byte below 0x20, and at least one ASCII letter or digit";
 static_assert(states_bound(kRefusal, kMaxLen), "kRefusal states kMaxLen");
 
 /* True when `name` is storable and holds a letter or a digit: the bytes the
