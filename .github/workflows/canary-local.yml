@@ -65,6 +65,11 @@ on:
       - "devices/**"
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
+      # gen_figures.mjs reads every firmware/projects/<p>/*.ini (globIni, one
+      # level down: the envs, and the [platformio] src_dir and extra_configs
+      # that say which env builds which sketch tree, sweep A89), not only the
+      # four projects above: canary-ota's and canary-sentinel's too.
+      - "firmware/projects/*/*.ini"
       - "canary-local/tools/gen_flash.py"
       # the display host test's LVGL font metrics are generated from the
       # emulator's pinned LVGL checkout (checked after the build below)
@@ -285,6 +290,11 @@ on:
       - "devices/**"
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
+      # gen_figures.mjs reads every firmware/projects/<p>/*.ini (globIni, one
+      # level down: the envs, and the [platformio] src_dir and extra_configs
+      # that say which env builds which sketch tree, sweep A89), not only the
+      # four projects above: canary-ota's and canary-sentinel's too.
+      - "firmware/projects/*/*.ini"
       - "canary-local/tools/gen_flash.py"
       # the display host test's LVGL font metrics are generated from the
       # emulator's pinned LVGL checkout (checked after the build below)

@@ -582,6 +582,81 @@ test("every drawn board serves the device type its builds publish", async () => 
   assert.ok(xiao.builds.every((b) => b.startsWith("canary-wap-")), `${xiao.builds}`);
 });
 
+test("the tree-config join keys a sketch's envs, and refuses what it cannot decide", async () => {
+  // treeConfigsOfEnvs() (sweep A89) is what lets the WAP's envs, which include
+  // no firmware/configs/ flavor, serve the sketch's wire type. Each refusal is
+  // driven here with synthetic projects and envs, so none can rot into a guess.
+  const { treeConfigsOfEnvs } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const W = "firmware/projects/w";
+  const project = (name, src, files) => ({ project: `firmware/projects/${name}`, src,
+    files: new Set(files) });
+  const wap = project("w", `${W}/arduino/w`, [`${W}/platformio.ini`, "firmware/envs/platformio/w.ini",
+    "firmware/envs/platformio/common.ini"]);
+  const other = project("o", "firmware/projects/o/src", ["firmware/projects/o/platformio.ini",
+    "firmware/envs/platformio/o.ini", "firmware/envs/platformio/common.ini"]);
+  const row = { family: "w", flavor: "sketch",
+    sources: [{ file: `${W}/arduino/w/w.ino` }, { file: `${W}/arduino/w/mqtt.cpp` }] };
+  const env = (name, file, config = null) => ({ env: name, file, config });
+  const envs = () => [env("w-a", "firmware/envs/platformio/w.ini"),
+    env("w-b", "firmware/envs/platformio/w.ini"), env("o-a", "firmware/envs/platformio/o.ini", "o/x")];
+
+  // The happy join: the sketch's envs take its key; another project's env keeps its config.
+  const joined = treeConfigsOfEnvs(envs(), [wap, other], [row]);
+  assert.deepStrictEqual(joined.map((e) => [e.env, e.config]),
+    [["w-a", "w/sketch"], ["w-b", "w/sketch"], ["o-a", "o/x"]]);
+
+  const refuses = (why, re, list, projects, rows = [row]) => assert.throws(
+    () => treeConfigsOfEnvs(list, projects, rows), re, why);
+  refuses("a row no project compiles", /no firmware\/projects\/<p>\/platformio\.ini src_dir compile/,
+    envs(), [other]);
+  refuses("a row two projects compile (a src_dir inside another)", /2 projects \(firmware\/projects\/w, firmware\/projects\/wide\)/,
+    envs(), [wap, project("wide", W, [`${W}/other.ini`])]);
+  refuses("a row whose sources span two projects", /no firmware\/projects\/<p>\/platformio\.ini src_dir compile/,
+    envs(), [wap, other], [{ ...row, sources: [...row.sources, { file: "firmware/projects/o/src/x.cpp" }] }]);
+  refuses("a row no env builds", /no env builds firmware\/projects\/w's src_dir/,
+    [env("o-a", "firmware/envs/platformio/o.ini", "o/x")], [wap, other]);
+  refuses("an env file two projects pull in", /env w-c is defined in firmware\/envs\/platformio\/common\.ini, which firmware\/projects\/w and firmware\/projects\/o all pull in/,
+    [...envs(), env("w-c", "firmware/envs/platformio/common.ini")], [wap, other]);
+  refuses("an env that also includes a configs/ flavor", /env w-b builds the w\/sketch sketch .* and includes configs\/canary\/x too/,
+    [env("w-a", "firmware/envs/platformio/w.ini"), env("w-b", "firmware/envs/platformio/w.ini", "canary/x")],
+    [wap, other]);
+});
+
+test("readProjects reads each project's src_dir and env files off its platformio.ini", async () => {
+  const { readProjects } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
+  const { tmpdir } = require("node:os");
+  const root = mkdtempSync(join(tmpdir(), "figures-projects-"));
+  try {
+    const put = (rel, text) => {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    };
+    // Multi-line extra_configs with a comment line; a src_dir; a section after.
+    put("firmware/projects/a/platformio.ini", "[platformio]\n; envs\nextra_configs =\n"
+      + "    ../../envs/platformio/common.ini\n    ; a comment line\n    ../../envs/platformio/a.ini ; trailing\n"
+      + "\ndefault_envs = a\nsrc_dir = arduino/a\n\n[env]\nsrc_dir = elsewhere\n");
+    // One-line extra_configs, no src_dir: PlatformIO's default `src`.
+    put("firmware/projects/b/platformio.ini", "[platformio]\nextra_configs = b.ini\n\n[env:b]\nboard = x\n");
+    // A directory with no platformio.ini is not a project.
+    put("firmware/projects/c/README.md", "not a project\n");
+    const got = readProjects(root).map((p) => ({ ...p, files: [...p.files].sort() }));
+    assert.deepStrictEqual(got, [
+      { project: "firmware/projects/a", src: "firmware/projects/a/arduino/a",
+        files: ["firmware/envs/platformio/a.ini", "firmware/envs/platformio/common.ini",
+          "firmware/projects/a/platformio.ini"] },
+      { project: "firmware/projects/b", src: "firmware/projects/b/src",
+        files: ["firmware/projects/b/b.ini", "firmware/projects/b/platformio.ini"] },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  // And the tree: the WAP's project compiles its sketch and pulls in its env file.
+  const wap = readProjects(REPO).find((p) => p.project === "firmware/projects/canary-wap");
+  assert.strictEqual(wap.src, "firmware/projects/canary-wap/arduino/canary_wap");
+  assert.ok(wap.files.has("firmware/envs/platformio/canary-wap.ini"), [...wap.files].join(", "));
+});
+
 test("nothing a figure draws falls outside the frame it declares", () => {
   // The contact shadow used to be laid out AFTER the fit, so it could land
   // outside the viewBox and be clipped — a round display shadow reached

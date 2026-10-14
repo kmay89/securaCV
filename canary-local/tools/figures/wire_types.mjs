@@ -20,9 +20,15 @@
 // blanked first (string literals kept), so a commented-out call is no site.
 // gen_figures.mjs builds its tree rows from this; figures.test.js holds it to
 // the sketch and to every refusal.
+//
+// treeConfigsOfEnvs() (sweep A89) says which build envs compile a row, so the
+// board those envs target serves the row's wire type in the hardware table.
+// readProjects() reads what it needs from each firmware/projects/<p>/
+// platformio.ini; the join takes those records as an argument, so
+// figures.test.js can drive every refusal with synthetic projects.
 
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 /** The source text with every comment replaced by spaces (newlines kept, so
  * offsets and line numbers still point into the file). String and character
@@ -180,4 +186,73 @@ export function walkTrees(root, rows = TREE_TYPES) {
     const [[device_type, sites]] = [...seen];
     return { family: t.family, flavor: t.flavor, device_type, source: t.sources[0].file, sites };
   });
+}
+
+/** Each firmware/projects/<p>/platformio.ini under `root`, as {project, src,
+ * files}: the src_dir it compiles (PlatformIO's default `src` when it names
+ * none) and the set of .ini files its envs can be defined in (itself and
+ * every `extra_configs` entry, comments dropped), all relative to `root`. A
+ * project directory with no platformio.ini is not a project. */
+export function readProjects(root) {
+  const base = join(root, 'firmware/projects');
+  const out = [];
+  for (const p of readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).sort(
+    (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    const ini = join(base, p.name, 'platformio.ini');
+    if (!existsSync(ini)) continue;
+    const pio = (readFileSync(ini, 'utf8').match(/^\[platformio\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m) || [])[1] || '';
+    const src = (pio.match(/^src_dir\s*=\s*(\S+)/m) || [])[1] || 'src';
+    const extra = pio.match(/^extra_configs\s*=[ \t]*(.*)\n((?:[ \t]+\S.*(?:\n|$))*)/m);
+    const named = extra ? [extra[1], ...extra[2].split('\n')] : [];
+    const rel = (f) => relative(root, join(base, p.name, f));
+    out.push({
+      project: `firmware/projects/${p.name}`,
+      src: rel(src),
+      files: new Set([rel('platformio.ini'), ...named.map((x) => x.replace(/;.*$/, '').trim())
+        .filter(Boolean).map(rel)]),
+    });
+  }
+  return out;
+}
+
+/* A TREE_TYPES row (the WAP's sketch) has no firmware/configs/ flavor, so the
+ * envs that build it include no configs/ header and resolve `config: null`,
+ * and the board they compile served nothing in the hardware table
+ * (board:seeed_xiao_esp32s3 read `serves: []`, sweep A89). Which envs build a
+ * sketch is not typed anywhere: an env defined in one of a project's files
+ * (`projects`, from readProjects()) compiles that project's src_dir, so an env
+ * whose project's src_dir holds every source a row reads compiles that row,
+ * and is keyed `<family>/<flavor>` like a config: this sets `config` on each
+ * such env in `envs` ([{env, file, config}]). Refused, not guessed: a row no
+ * project (or two) compiles, a row no env builds, an env file two projects
+ * pull in, and an env that also includes a configs/ flavor. */
+export function treeConfigsOfEnvs(envs, projects, rows = TREE_TYPES) {
+  for (const row of rows) {
+    const key = `${row.family}/${row.flavor}`;
+    const homes = projects.filter((p) => row.sources.every((s) => s.file.startsWith(`${p.src}/`)));
+    if (homes.length !== 1) {
+      throw new Error(`figures: TREE_TYPES row ${key} reads ${row.sources.map((s) => s.file).join(', ')}, `
+        + `which ${homes.length ? `${homes.length} projects (${homes.map((h) => h.project).join(', ')})`
+          : 'no firmware/projects/<p>/platformio.ini src_dir'} compile. A row is one sketch tree.`);
+    }
+    const [home] = homes;
+    const built = envs.filter((e) => home.files.has(e.file));
+    if (!built.length) {
+      throw new Error(`figures: no env builds ${home.project}'s src_dir ${home.src}, which TREE_TYPES `
+        + `row ${key} reads; nothing compiles the row.`);
+    }
+    for (const e of built) {
+      const owners = projects.filter((p) => p.files.has(e.file)).map((p) => p.project);
+      if (owners.length > 1) {
+        throw new Error(`figures: env ${e.env} is defined in ${e.file}, which ${owners.join(' and ')} `
+          + 'all pull in, so it builds more than one src_dir; define it in one project\'s files.');
+      }
+      if (e.config && e.config !== key) {
+        throw new Error(`figures: env ${e.env} builds the ${key} sketch (${home.src}) and includes `
+          + `configs/${e.config} too; one build cannot publish both.`);
+      }
+      e.config = key;
+    }
+  }
+  return envs;
 }
