@@ -9,7 +9,7 @@
 //!   and the DER ES256 signature. The signature counter is parsed past and
 //!   **never stored or compared**: freshness comes from the single-use hub
 //!   nonce, and FIDO2 clone detection is traded away for keeping no per-key
-//!   usage state (draft §8).
+//!   usage state (spec §8).
 //!
 //! p256 accepts high-S signatures, so signature bytes are never used as a
 //! replay or uniqueness key anywhere in this crate.
@@ -41,6 +41,13 @@ pub fn parse_sec1_uncompressed(pk: &[u8]) -> Option<VerifyingKey> {
     VerifyingKey::from_sec1_bytes(pk).ok()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many P-256 verifications ran on this thread (tests only: the
+    /// checker's equal-work property is asserted by count, not by timing).
+    pub(crate) static ES256_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Verify an `es256` signature: ECDSA P-256 / SHA-256 over `msg`, DER.
 pub fn es256(public_key_sec1: &[u8], msg: &[u8], der_sig: &[u8]) -> bool {
     if der_sig.is_empty() || der_sig.len() > MAX_DER_SIG {
@@ -52,6 +59,8 @@ pub fn es256(public_key_sec1: &[u8], msg: &[u8], der_sig: &[u8]) -> bool {
     let Ok(sig) = Signature::from_der(der_sig) else {
         return false;
     };
+    #[cfg(test)]
+    ES256_RUNS.with(|c| c.set(c.get() + 1));
     vk.verify(msg, &sig).is_ok()
 }
 
@@ -88,6 +97,26 @@ pub fn parse_auth_data(ad: &[u8]) -> Option<AuthData> {
     Some(AuthData { rp_id_hash, flags })
 }
 
+/// Whether assertion authenticator data passes every check but the
+/// signature: it parses, its `rpIdHash` equals `rp_id_hash`, UP is set, and
+/// UV is set when `require_uv`.
+pub fn fido2_auth_data_ok(rp_id_hash: &[u8; 32], auth_data: &[u8], require_uv: bool) -> bool {
+    let Some(ad) = parse_auth_data(auth_data) else {
+        return false;
+    };
+    ad.rp_id_hash == *rp_id_hash
+        && ad.flags & FLAG_UP != 0
+        && (!require_uv || ad.flags & FLAG_UV != 0)
+}
+
+/// The bytes a FIDO2 assertion signs: `authenticatorData ‖ clientDataHash`.
+pub fn fido2_signed_bytes(auth_data: &[u8], client_data_hash: &[u8; 32]) -> Vec<u8> {
+    let mut signed = Vec::with_capacity(auth_data.len() + 32);
+    signed.extend_from_slice(auth_data);
+    signed.extend_from_slice(client_data_hash);
+    signed
+}
+
 /// Verify a `fido2-es256` assertion.
 ///
 /// `client_data_hash` is what the hub handed the authenticator (for a member
@@ -101,23 +130,15 @@ pub fn fido2_es256(
     der_sig: &[u8],
     require_uv: bool,
 ) -> bool {
-    let Some(ad) = parse_auth_data(auth_data) else {
-        return false;
-    };
     let want: [u8; 32] = Sha256::digest(rp_id.as_bytes()).into();
-    if ad.rp_id_hash != want {
+    if !fido2_auth_data_ok(&want, auth_data, require_uv) {
         return false;
     }
-    if ad.flags & FLAG_UP == 0 {
-        return false;
-    }
-    if require_uv && ad.flags & FLAG_UV == 0 {
-        return false;
-    }
-    let mut signed = Vec::with_capacity(auth_data.len() + 32);
-    signed.extend_from_slice(auth_data);
-    signed.extend_from_slice(client_data_hash);
-    es256(public_key_sec1, &signed, der_sig)
+    es256(
+        public_key_sec1,
+        &fido2_signed_bytes(auth_data, client_data_hash),
+        der_sig,
+    )
 }
 
 /// Whether an assertion's authenticator data carries the UV flag (parsed the

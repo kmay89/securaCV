@@ -134,8 +134,24 @@ fn binary_end_to_end() {
             "genesis",
             "--data-dir",
             s(&data),
+            "--kek",
+            s(&kek),
             "--admin-key",
             s(&admin)
+        ])
+        .code,
+        0
+    );
+    // Genesis signs with the sealed roster key, so it needs the KEK.
+    assert_ne!(
+        run(&[
+            "roster",
+            "genesis",
+            "--data-dir",
+            s(&data),
+            "--admin-key",
+            s(&admin),
+            "--physical-confirm",
         ])
         .code,
         0
@@ -145,10 +161,15 @@ fn binary_end_to_end() {
         "genesis",
         "--data-dir",
         s(&data),
+        "--kek",
+        s(&kek),
         "--admin-key",
         s(&admin),
         "--physical-confirm",
     ]);
+    // No hub secret key sits in the data directory in the clear.
+    assert!(!data.join("posture.key").exists() && !data.join("roster.key").exists());
+    assert!(data.join("hub_keys.sealed").exists());
 
     // Two software credentials: one enrolled as intent (a phone), one as
     // possession (a fob).
@@ -184,7 +205,17 @@ fn binary_end_to_end() {
         ]);
         // Threshold 1: apply without the physical confirm is refused.
         assert_ne!(
-            run(&["roster", "apply", "--data-dir", s(&data), "--proposal", &dg]).code,
+            run(&[
+                "roster",
+                "apply",
+                "--data-dir",
+                s(&data),
+                "--kek",
+                s(&kek),
+                "--proposal",
+                &dg
+            ])
+            .code,
             0
         );
         ok(&[
@@ -192,6 +223,8 @@ fn binary_end_to_end() {
             "apply",
             "--data-dir",
             s(&data),
+            "--kek",
+            s(&kek),
             "--proposal",
             &dg,
             "--physical-confirm",
@@ -199,6 +232,146 @@ fn binary_end_to_end() {
         ]);
         keys.push(kf);
     }
+
+    // A card: its key comes from a file (never argv), only under this
+    // household's KEK, and leaves the sealed store when the card is revoked.
+    let p = ok(&[
+        "roster",
+        "propose",
+        "add-member",
+        "--data-dir",
+        s(&data),
+        "--kind",
+        "card",
+        "--class",
+        "possession",
+    ]);
+    let card_dg = p["proposal"].as_str().unwrap().to_string();
+    let card_handle = p["new_member_handle"].as_str().unwrap().to_string();
+    let card_key = base.join("card.key");
+    std::fs::write(&card_key, "00112233445566778899aabbccddeeff\n").unwrap();
+    let other_kek = base.join("other.kek");
+    std::fs::write(
+        &other_kek,
+        "0101010101010101010101010101010101010101010101010101010101010101",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&other_kek, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    assert_ne!(
+        run(&[
+            "card",
+            "provision",
+            "--data-dir",
+            s(&data),
+            "--kek",
+            s(&other_kek),
+            "--handle",
+            &card_handle,
+            "--key-file",
+            s(&card_key),
+        ])
+        .code,
+        0,
+        "a card sealed under another household's KEK"
+    );
+    assert!(!data.join("cards.sealed").exists());
+    let o = run(&[
+        "card",
+        "provision",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--handle",
+        &card_handle,
+        "--key-file",
+        s(&card_key),
+    ]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert!(o.stdout.trim().is_empty(), "a supplied key was echoed");
+    assert_ne!(
+        run(&[
+            "card",
+            "provision",
+            "--data-dir",
+            s(&data),
+            "--kek",
+            s(&kek),
+            "--handle",
+            &card_handle,
+            "--key-hex",
+            "00112233445566778899aabbccddeeff",
+        ])
+        .code,
+        0,
+        "--key-hex is gone"
+    );
+    ok(&[
+        "roster",
+        "approve",
+        "--data-dir",
+        s(&data),
+        "--proposal",
+        &card_dg,
+        "--admin-key",
+        s(&admin),
+    ]);
+    let applied = ok(&[
+        "roster",
+        "apply",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--proposal",
+        &card_dg,
+        "--physical-confirm",
+        &card_dg[..8],
+    ]);
+    assert_eq!(applied["card_keys_removed"], 0);
+    let p = ok(&[
+        "roster",
+        "propose",
+        "revoke",
+        "--data-dir",
+        s(&data),
+        "--handle",
+        &card_handle,
+    ]);
+    let dg = p["proposal"].as_str().unwrap().to_string();
+    ok(&[
+        "roster",
+        "approve",
+        "--data-dir",
+        s(&data),
+        "--proposal",
+        &dg,
+        "--admin-key",
+        s(&admin),
+    ]);
+    let o = run(&[
+        "roster",
+        "apply",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--proposal",
+        &dg,
+    ]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let v: serde_json::Value = serde_json::from_str(o.stdout.trim()).unwrap();
+    assert_eq!(v["card_keys_removed"], 1, "a revoked card's key was kept");
+    assert!(
+        o.stderr.contains("pair --reset"),
+        "no pairing hint: {}",
+        o.stderr
+    );
+    handles.push(card_handle);
     // An intent fob is refused at propose time.
     let kf = base.join("bad-fob.key");
     let pk = ok(&["client", "keygen", "--out", s(&kf)]);
@@ -314,13 +487,40 @@ fn binary_end_to_end() {
         "--admin-key",
         s(&admin),
     ]);
-    ok(&["roster", "apply", "--data-dir", s(&data), "--proposal", &dg]);
+    ok(&[
+        "roster",
+        "apply",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--proposal",
+        &dg,
+    ]);
     std::thread::sleep(std::time::Duration::from_millis(1500));
     assert_ne!(
         cmd(&keys[0], &handles[0], "night").code,
         0,
         "revoked key still works"
     );
+
+    // An old token still reads the posture until `pair --reset`, which takes
+    // effect while the server runs.
+    let posture = || {
+        run(&[
+            "client",
+            "posture",
+            "--token-file",
+            s(&token_file),
+            "--addr",
+            &addr,
+        ])
+        .code
+    };
+    assert_eq!(posture(), 0);
+    ok(&["pair", "--data-dir", s(&data), "--reset"]);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert_ne!(posture(), 0, "an unpaired token still reads the posture");
 
     let mut child = srv.child;
     child.kill().unwrap();

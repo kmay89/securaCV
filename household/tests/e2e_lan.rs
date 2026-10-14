@@ -271,18 +271,20 @@ fn lan_api_end_to_end_with_sentinels() {
     assert_eq!((s1, s2), (401, 401));
     assert_eq!(b1, b2);
 
-    // A fifth rejection starts the cooldown: even a good credential is now
-    // refused, with the same body.
+    // A fifth rejection starts the cooldown. It refuses home, even from a
+    // good intent credential, with the same body...
     assert_eq!(h.set(&ghost, Purpose::Away).0, 401);
-    let (st, body) = h.set(&intent, Purpose::Away);
+    let (st, body) = h.set(&intent, Purpose::Home);
     assert_eq!(
         (st, body.as_str()),
         (401, household_keys::server::REJECTED_BODY)
     );
+    // ...and never blocks raising sensing.
+    assert_eq!(h.set(&intent, Purpose::Away).0, 200);
+    assert_eq!(h.get_posture().0, HouseholdPosture::Away);
     h.clock
         .mono
         .fetch_add(household_keys::ratelimit::COOLDOWN_MS, Ordering::SeqCst);
-    assert_eq!(h.set(&intent, Purpose::Away).0, 200);
 
     // Home lapses on the hub's own tick.
     assert_eq!(h.set(&intent, Purpose::Home).0, 200);
@@ -394,4 +396,48 @@ fn challenge_from_one_session_cannot_be_answered_on_another() {
     let (st, _) = client::http(a, "POST", "/v1/command", Some(t1), Some(&cmd)).unwrap();
     assert_eq!(st, 401, "challenge survived a cross-session attempt");
     h.stop();
+}
+
+/// The review's scenario: a member sets home, then something with no token
+/// at all sends five requests and one more every minute. Before the fix
+/// that held the LAN door in cooldown and refused `away`, so `home` stayed in
+/// force until it lapsed. Now a tokenless request is refused before anything
+/// is counted, and `away` goes through.
+#[test]
+fn a_tokenless_request_stream_cannot_hold_the_house_in_home() {
+    let mut h = start();
+    let intent = cred(INTENT, 0x31, Binding::Es256);
+    assert_eq!(h.set(&intent, Purpose::Home).0, 200);
+    let a = h.handle.addr();
+    let junk = |n: usize| {
+        for _ in 0..n {
+            let (st, _) = client::http(a, "GET", "/v1/posture", None, None).unwrap();
+            assert_eq!(st, 401);
+            let (st, _) = client::http(a, "GET", "/v1/posture", Some("wrong"), None).unwrap();
+            assert_eq!(st, 401);
+        }
+    };
+    junk(5);
+    for _ in 0..5 {
+        h.clock.mono.fetch_add(60_000, Ordering::SeqCst);
+        junk(1);
+        let (st, body) = h.set(&intent, Purpose::Away);
+        assert_eq!(st, 200, "away refused behind tokenless traffic: {body}");
+        assert_eq!(h.get_posture().0, HouseholdPosture::Away);
+        // Home again, for the next round.
+        assert_eq!(h.set(&intent, Purpose::Home).0, 200);
+    }
+    // Malformed bodies from a paired client are not counted either.
+    for _ in 0..10 {
+        let (st, _) = client::http(a, "POST", "/v1/command", Some(TOKEN), Some("{}")).unwrap();
+        assert_eq!(st, 401);
+        let (st, _) = client::http(a, "POST", "/v1/challenge", Some(TOKEN), Some("nope")).unwrap();
+        assert_eq!(st, 401);
+    }
+    assert_eq!(
+        h.set(&intent, Purpose::Home).0,
+        200,
+        "junk bodies cooled the door"
+    );
+    h.handle.stop();
 }

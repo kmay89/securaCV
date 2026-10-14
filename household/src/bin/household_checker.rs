@@ -3,7 +3,7 @@
 //! ```text
 //! household_checker init --data-dir D --kek K
 //! household_checker admin-keygen --out FILE
-//! household_checker roster genesis --data-dir D --admin-key FILE [--admin-key FILE…] [--threshold N] --physical-confirm
+//! household_checker roster genesis --data-dir D --kek K --admin-key FILE [--admin-key FILE…] [--threshold N] --physical-confirm
 //! household_checker roster show|pending --data-dir D
 //! household_checker roster propose add-member --data-dir D --kind phone|watch|fob|fido2|card --class intent|possession
 //!                                             [--public-key HEX] [--rp-id RP --credential-id HEX] [--not-after UNIX]
@@ -12,8 +12,8 @@
 //! household_checker roster propose remove-admin --data-dir D --handle H
 //! household_checker roster propose set-threshold --data-dir D --threshold N
 //! household_checker roster approve --data-dir D --proposal DIGEST (--admin-key FILE | --approval-file F | --holder-proof-file F)
-//! household_checker roster apply --data-dir D --proposal DIGEST [--physical-confirm DIGEST8]
-//! household_checker card provision --data-dir D --kek K --handle H [--key-hex HEX]
+//! household_checker roster apply --data-dir D --kek K --proposal DIGEST [--physical-confirm DIGEST8]
+//! household_checker card provision --data-dir D --kek K --handle H [--key-file F]
 //! household_checker pair --data-dir D [--reset]
 //! household_checker serve --data-dir D --kek K [--bind ADDR] [--allow-lan-plaintext] [--home-ttl SECS]
 //! household_checker client keygen --out FILE
@@ -21,6 +21,10 @@
 //!                                  [--addr ADDR] [--fido2-rp-id RP [--uv]]
 //! household_checker client posture --token-file F [--addr ADDR]
 //! ```
+//!
+//! The KEK opens the sealed hub keys and card keys, so the commands that sign
+//! or touch those take `--kek`: `init`, `roster genesis`, `roster apply`,
+//! `card provision` and `serve`. The rest read only public material.
 //!
 //! Nothing this program logs names a handle, a credential id or a tap.
 
@@ -31,7 +35,7 @@ use household_keys::client::{self, Binding, SoftCredential};
 use household_keys::roster::{
     AdminAlg, AdminEntry, AdminKind, CredentialClass, MemberAlg, MemberEntry, MemberKind, Roster,
 };
-use household_keys::secrets::{self, CardStore, Kek};
+use household_keys::secrets::{self, CardStore, HubKeys, Kek};
 use household_keys::server::{self, DirReload, Server, ServerConfig, SystemClock};
 use household_keys::store::{self, DataDir, Pending};
 use household_keys::{hex, posture, rng, wire, Error, Result};
@@ -56,7 +60,7 @@ impl Args {
             let Some(name) = a.strip_prefix("--") else {
                 return Err(format!("unexpected argument '{a}'"));
             };
-            let takes_value = !matches!(name, "allow-lan-plaintext" | "uv")
+            let takes_value = !matches!(name, "allow-lan-plaintext" | "uv" | "reset")
                 && !(name == "physical-confirm"
                     && raw.get(i + 1).is_none_or(|n| n.starts_with("--")));
             if takes_value {
@@ -165,8 +169,10 @@ fn main() {
 fn cmd_init(a: &Args) -> Result<i32> {
     let dir_path = a.path("data-dir")?;
     let kek_path = a.path("kek")?;
-    let d = DataDir::create(&dir_path)?;
-    if secrets::is_inside(&kek_path, d.root())? {
+    // The directory first, so the KEK path can be checked against it; the
+    // household goes in only once the KEK is in hand to seal its keys.
+    store::mkdir_private(&dir_path)?;
+    if secrets::is_inside(&kek_path, &dir_path)? {
         return Err(Error::Invalid(
             "the KEK must not live inside the data directory",
         ));
@@ -176,13 +182,14 @@ fn cmd_init(a: &Args) -> Result<i32> {
         store::write_atomic(&kek_path, k.to_hex().as_bytes())?;
         eprintln!("household_checker: wrote a new KEK file (keep it outside backups of the data directory)");
     }
-    secrets::load_kek(&kek_path, d.root())?;
+    let kek = secrets::load_kek(&kek_path, &dir_path)?;
+    let d = DataDir::create(&dir_path, &kek)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "household": hex::encode(&d.household()?),
-            "posture_public_key": hex::encode(&d.posture_key()?.verifying_key().to_bytes()),
-            "roster_public_key": hex::encode(&d.roster_key()?.verifying_key().to_bytes()),
+            "posture_public_key": hex::encode(&d.posture_public_key()?.to_bytes()),
+            "roster_public_key": hex::encode(&d.roster_public_key()?.to_bytes()),
         }))
         .unwrap_or_default()
     );
@@ -256,6 +263,14 @@ fn open_dir(a: &Args) -> Result<DataDir> {
     DataDir::open(&a.path("data-dir")?)
 }
 
+/// Load the KEK named by `--kek` and open the hub keys with it (which also
+/// proves the KEK belongs to this household).
+fn open_keys(a: &Args, d: &DataDir) -> Result<(Kek, HubKeys)> {
+    let kek = secrets::load_kek(&a.path("kek")?, d.root())?;
+    let keys = d.hub_keys(&kek)?;
+    Ok((kek, keys))
+}
+
 fn current(d: &DataDir) -> Result<Roster> {
     d.current_roster()?
         .ok_or(Error::Invalid("no roster yet: run `roster genesis` first"))
@@ -263,6 +278,7 @@ fn current(d: &DataDir) -> Result<Roster> {
 
 fn cmd_genesis(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
+    let (_, hub) = open_keys(a, &d)?;
     if d.current_roster()?.is_some() {
         return Err(Error::Invalid("this household already has a roster"));
     }
@@ -295,7 +311,7 @@ fn cmd_genesis(a: &Args) -> Result<i32> {
         physical_confirm: a.has("physical-confirm"),
     };
     change::check_genesis(&g, &approvals, mode)?;
-    let s = d.accept(g, approvals, None)?;
+    let s = d.accept(&hub, g, approvals, None)?;
     println!(
         "{}",
         json!({"epoch": s.roster.epoch, "digest": hex::encode(&digest)})
@@ -473,6 +489,7 @@ fn cmd_approve(a: &Args) -> Result<i32> {
 
 fn cmd_apply(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
+    let (kek, hub) = open_keys(a, &d)?;
     let dg = a.req("proposal")?.to_string();
     let p = d.load_pending(&dg)?;
     let r = current(&d)?;
@@ -484,8 +501,8 @@ fn cmd_apply(a: &Args) -> Result<i32> {
         proposed_at: p.proposed_at,
         physical_confirm: confirm,
     };
-    change::check_change(&r, &p.roster, &p.approvals, p.holder_proof.as_ref(), mode)?;
-    let s = d.accept(p.roster, p.approvals, p.holder_proof)?;
+    let kind = change::check_change(&r, &p.roster, &p.approvals, p.holder_proof.as_ref(), mode)?;
+    let s = d.accept(&hub, p.roster, p.approvals, p.holder_proof)?;
     d.remove_pending(&dg)?;
     // Proposals built on the old epoch can never apply now.
     for other in d.list_pending()? {
@@ -495,8 +512,30 @@ fn cmd_apply(a: &Args) -> Result<i32> {
             }
         }
     }
-    println!("{}", json!({"epoch": s.roster.epoch}));
-    Ok(0)
+    if kind == change::ChangeKind::RevokeMembers {
+        // Tokens are deliberately not linked to members, so the hub cannot
+        // tell which pairing (if any) belonged to the revoked credential.
+        eprintln!(
+            "household_checker: LAN pairings are separate from the roster. If a revoked \
+             credential's device was paired, run `household_checker pair --reset` and pair \
+             the clients you keep again: an old token still reads the posture."
+        );
+    }
+    let epoch = s.roster.epoch;
+    match prune_cards(&d, &kek, &s.roster) {
+        Ok(removed) => {
+            println!("{}", json!({"epoch": epoch, "card_keys_removed": removed}));
+            Ok(0)
+        }
+        Err(e) => {
+            println!("{}", json!({"epoch": epoch}));
+            eprintln!(
+                "household_checker: epoch {epoch} is applied, but removing card keys no member \
+                 or proposal names failed: {e}"
+            );
+            Ok(1)
+        }
+    }
 }
 
 fn load_cards(d: &DataDir, kek: &Kek) -> Result<CardStore> {
@@ -508,9 +547,36 @@ fn load_cards(d: &DataDir, kek: &Kek) -> Result<CardStore> {
     CardStore::open(&b, kek, &d.household()?)
 }
 
+/// Drop every sealed card key whose handle is neither a card member of
+/// `roster` nor a card member of a pending proposal, so the hub does not keep
+/// a revoked card's key (the only thing that can recognize or clone it).
+fn prune_cards(d: &DataDir, kek: &Kek, roster: &Roster) -> Result<usize> {
+    if !d.cards_path().exists() {
+        return Ok(0);
+    }
+    let mut keep: std::collections::BTreeSet<[u8; 16]> = std::collections::BTreeSet::new();
+    let mut add = |r: &Roster| {
+        for m in r.members.iter().filter(|m| m.kind == MemberKind::Card) {
+            keep.insert(m.handle);
+        }
+    };
+    add(roster);
+    for dg in d.list_pending()? {
+        add(&d.load_pending(&dg)?.roster);
+    }
+    let mut cards = load_cards(d, kek)?;
+    let removed = cards.retain(|h| keep.contains(h));
+    if removed > 0 {
+        store::write_atomic(&d.cards_path(), &cards.seal(kek, &d.household()?)?)?;
+    }
+    Ok(removed)
+}
+
 fn cmd_card(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
-    let kek = secrets::load_kek(&a.path("kek")?, d.root())?;
+    // Opening the hub keys proves the KEK is this household's, so a card is
+    // never sealed under a KEK the server cannot open.
+    let (kek, _) = open_keys(a, &d)?;
     let h: [u8; 16] = hex::decode_array(a.req("handle")?)?;
     let is_card = |r: &Roster| r.member(&h).is_some_and(|m| m.kind == MemberKind::Card);
     let known = d.current_roster()?.is_some_and(|r| is_card(&r))
@@ -522,8 +588,23 @@ fn cmd_card(a: &Args) -> Result<i32> {
             "that handle is not a card member of the roster or a pending proposal",
         ));
     }
-    let (key, generated) = match a.get("key-hex") {
-        Some(k) => (Zeroizing::new(hex::decode_array::<16>(k)?), false),
+    // A key handed in comes from a file, never the command line, which would
+    // put it in the shell history and in /proc/<pid>/cmdline. The old flag is
+    // refused rather than ignored: ignoring it would seal a fresh random key
+    // in place of the one the operator meant.
+    if a.has("key-hex") {
+        return Err(Error::Invalid(
+            "--key-hex is not accepted (a key on the command line lands in shell history); \
+             put the key in a file and pass --key-file",
+        ));
+    }
+    let (key, generated) = match a.get("key-file") {
+        Some(f) => {
+            let raw = Zeroizing::new(store::read_bounded(Path::new(f), 128)?);
+            let text =
+                std::str::from_utf8(&raw).map_err(|_| Error::Invalid("key file is not text"))?;
+            (Zeroizing::new(hex::decode_array::<16>(text.trim())?), false)
+        }
         None => (Zeroizing::new(rng::array::<16>()?), true),
     };
     let mut cards = load_cards(&d, &kek)?;
@@ -552,7 +633,7 @@ fn cmd_pair(a: &Args) -> Result<i32> {
 
 fn cmd_serve(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
-    let kek = secrets::load_kek(&a.path("kek")?, d.root())?;
+    let (kek, hub) = open_keys(a, &d)?;
     let roster = current(&d)?;
     let cards = load_cards(&d, &kek)?;
     let ttl: u64 = a
@@ -561,7 +642,7 @@ fn cmd_serve(a: &Args) -> Result<i32> {
         .transpose()?
         .unwrap_or(posture::DEFAULT_HOME_TTL_SECS);
     let checker = Checker::new(
-        d.posture_key()?,
+        hub.posture,
         roster,
         cards,
         d.last_seq()?,

@@ -36,6 +36,10 @@ pub const HOME_MAX_SECS: u64 = 86_400;
 pub const DEFAULT_HOME_TTL_SECS: u64 = 43_200;
 /// `not_after` meaning "never lapses" (allowed for away and night only).
 pub const NEVER: u64 = u64::MAX;
+/// How far ahead of the witness's clock `issued_at` may be (rule 7): five
+/// minutes. A hub whose clock runs ahead can therefore stretch a `home`
+/// lifetime on the witness's clock by this much and no more.
+pub const MAX_SKEW_SECS: u64 = 300;
 
 /// The household posture. Never call this bare "posture" in code: that word
 /// already means body posture in Vision events.
@@ -126,6 +130,10 @@ pub enum Reject {
     /// Rule 6: a `home` statement lives longer than [`HOME_MAX_SECS`] (this
     /// includes `home` with [`NEVER`]).
     HomeTooLong,
+    /// Rule 7: `issued_at` is more than [`MAX_SKEW_SECS`] ahead of the
+    /// witness's clock (a hub clock running ahead, or a statement signed for
+    /// later).
+    FromFuture,
 }
 
 impl Statement {
@@ -185,16 +193,23 @@ impl Statement {
         out
     }
 
-    /// Whether this statement is current at `now_unix` (rule 5).
+    /// Whether this statement is current at `now_unix`: rules 5 and 7, and
+    /// for `home` the lifetime bound rule 6 implies on this clock.
     ///
     /// [`verify`] is for a statement the witness has not accepted yet: it
     /// rejects any `seq` at or below the last accepted one, so it must not be
     /// re-run on a byte-identical re-read of the held statement (spec §3.2).
     /// For the held statement the witness keeps calling this on its own
     /// trusted clock (and treats "no clock" as not current), so a held `home`
-    /// stops counting at its lapse even if no newer statement ever arrives.
+    /// stops counting at its lapse even if no newer statement ever arrives,
+    /// and stops at once if the clock steps back far enough to put the
+    /// statement in the future. The hub's own lapse tick calls it too.
     pub fn is_current(&self, now_unix: u64) -> bool {
-        now_unix < self.not_after
+        if now_unix >= self.not_after || self.issued_at > now_unix.saturating_add(MAX_SKEW_SECS) {
+            return false;
+        }
+        self.posture != HouseholdPosture::Home
+            || self.not_after <= now_unix.saturating_add(HOME_MAX_SECS + MAX_SKEW_SECS)
     }
 }
 
@@ -241,7 +256,7 @@ pub fn decode_structure(bytes: &[u8]) -> std::result::Result<Statement, Reject> 
     Ok(st)
 }
 
-/// Every witness-side check of draft §3.2, in order.
+/// Every witness-side check of spec §3.2, in order.
 ///
 /// - `expected_household`: the household the witness was paired into;
 /// - `pinned`: the hub posture key pinned at pairing;
@@ -278,6 +293,12 @@ pub fn verify(
             Some(life) if life <= HOME_MAX_SECS => {}
             _ => return Err(Reject::HomeTooLong),
         }
+    }
+    // Rules 5 and 6 compare the statement with itself; this one compares it
+    // with the witness's clock. Without it a `home` signed while the hub's
+    // clock ran a month fast stays current here for a month.
+    if st.issued_at > now.saturating_add(MAX_SKEW_SECS) {
+        return Err(Reject::FromFuture);
     }
     Ok(st)
 }
@@ -486,6 +507,71 @@ mod tests {
         st.not_after = st.issued_at.saturating_sub(1);
         let b = st.sign(&key());
         assert!(verify(&b, &HH, &vk(), None, Some(st.not_after.saturating_sub(10))).is_err());
+    }
+
+    #[test]
+    fn rule7_a_statement_from_the_future_is_refused() {
+        // The hub's clock runs 30 days fast when a member sets home.
+        let ahead = T0 + 30 * 86_400;
+        let st =
+            Statement::issue(HouseholdPosture::Home, HH, 5, ahead, DEFAULT_HOME_TTL_SECS).unwrap();
+        let b = st.sign(&key());
+        assert_eq!(
+            verify(&b, &HH, &vk(), None, Some(T0)),
+            Err(Reject::FromFuture)
+        );
+        assert_eq!(
+            effective_posture(&b, &HH, &vk(), None, Some(T0)),
+            HouseholdPosture::Away
+        );
+        assert!(!st.is_current(T0), "held future-dated home still current");
+        // Up to MAX_SKEW_SECS ahead is accepted; a minute more is not.
+        let base = T0 - T0 % 60;
+        let edge = Statement::issue(
+            HouseholdPosture::Home,
+            HH,
+            6,
+            base + MAX_SKEW_SECS,
+            DEFAULT_HOME_TTL_SECS,
+        )
+        .unwrap();
+        assert!(verify(&edge.sign(&key()), &HH, &vk(), None, Some(base)).is_ok());
+        assert!(edge.is_current(base));
+        let past = Statement::issue(
+            HouseholdPosture::Home,
+            HH,
+            7,
+            base + MAX_SKEW_SECS + 60,
+            DEFAULT_HOME_TTL_SECS,
+        )
+        .unwrap();
+        assert_eq!(
+            verify(&past.sign(&key()), &HH, &vk(), None, Some(base)),
+            Err(Reject::FromFuture)
+        );
+        // A future-dated away is refused too, which changes nothing: a
+        // refusal already means "behave as away".
+        let away = Statement::issue(HouseholdPosture::Away, HH, 8, ahead, 60).unwrap();
+        let b = away.sign(&key());
+        assert_eq!(
+            verify(&b, &HH, &vk(), None, Some(T0)),
+            Err(Reject::FromFuture)
+        );
+        assert_eq!(
+            effective_posture(&b, &HH, &vk(), None, Some(T0)),
+            HouseholdPosture::Away
+        );
+    }
+
+    #[test]
+    fn a_held_home_stops_counting_when_the_clock_steps_back() {
+        let (st, b) = home(5);
+        let held = verify(&b, &HH, &vk(), None, Some(st.issued_at)).unwrap();
+        assert!(held.is_current(st.issued_at));
+        // The witness's clock is corrected a year backward.
+        assert!(!held.is_current(st.issued_at - 365 * 86_400));
+        // A small step back, inside the skew, keeps it.
+        assert!(held.is_current(st.issued_at - MAX_SKEW_SECS));
     }
 
     #[test]

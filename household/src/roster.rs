@@ -527,6 +527,20 @@ impl Roster {
             if self.members.iter().any(|m| m.handle == a.handle) {
                 return Err(Error::Invalid("a handle is both an admin and a member"));
             }
+            // One credential is never both an admin and a member. A FIDO2
+            // authenticator signs whatever clientDataHash the relaying device
+            // hands it, so a credential enrolled in both lists would let a
+            // compromised relay turn an ordinary door touch into an admin
+            // approval. (Distinct credentials on one authenticator are still
+            // only as safe as the device relaying them: spec §5.2.)
+            if self.members.iter().any(|m| {
+                m.public_key.as_deref() == Some(&a.public_key[..])
+                    || (a.credential_id.is_some() && m.credential_id == a.credential_id)
+            }) {
+                return Err(Error::Invalid(
+                    "a credential is enrolled as both an admin and a member",
+                ));
+            }
         }
         // One key is never two admins: approvals are counted by handle, so a
         // key enrolled under two handles would count twice.
@@ -695,6 +709,50 @@ pub(crate) mod tests {
         r.members.push(card(0x20));
         r.validate().unwrap();
         r
+    }
+
+    #[test]
+    fn one_credential_is_never_both_admin_and_member() {
+        // An es256 key enrolled as a FIDO2 admin and as a FIDO2 member.
+        let mut r = sample();
+        let shared = p256_pub(0x41);
+        r.admins.push(AdminEntry {
+            handle: [3; 16],
+            alg: AdminAlg::Es256,
+            kind: AdminKind::Fido2,
+            public_key: shared.clone(),
+            rp_id: Some("hk.example".into()),
+            credential_id: Some(vec![9; 8]),
+        });
+        r.members.push(MemberEntry {
+            handle: [0x30; 16],
+            kind: MemberKind::Fido2,
+            class: CredentialClass::Intent,
+            alg: MemberAlg::Fido2Es256,
+            public_key: Some(shared),
+            rp_id: Some("hk.example".into()),
+            credential_id: Some(vec![8; 8]),
+            not_after: None,
+        });
+        r.sort();
+        assert!(r.validate().is_err(), "shared key accepted");
+        // Different keys, same credential id: refused too.
+        let m = r
+            .members
+            .iter_mut()
+            .find(|m| m.handle == [0x30; 16])
+            .unwrap();
+        m.public_key = Some(p256_pub(0x42));
+        m.credential_id = Some(vec![9; 8]);
+        assert!(r.validate().is_err(), "shared credential id accepted");
+        // Distinct key and credential id: fine.
+        let m = r
+            .members
+            .iter_mut()
+            .find(|m| m.handle == [0x30; 16])
+            .unwrap();
+        m.credential_id = Some(vec![8; 8]);
+        r.validate().unwrap();
     }
 
     #[test]

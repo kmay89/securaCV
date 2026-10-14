@@ -8,23 +8,46 @@
 //!
 //! Every route needs a paired bearer token (`Authorization: Bearer …`,
 //! paired with `household_checker pair`); the token's SHA-256 is the session
-//! a challenge is bound to. **Every rejection on these routes is the same
-//! `401` with the same body**, whether the token was wrong, the door was
-//! cooling down, the challenge was used, the handle unknown, the signature
-//! bad or the class not allowed: no response says whether a handle exists.
+//! a challenge is bound to. A token cannot change the posture, but it does
+//! read it: `GET /v1/posture` tells its holder the household posture and the
+//! minute it last changed. `pair --reset` unpairs every client while the
+//! server runs. **Every rejection on these routes is the same `401` with the
+//! same body**, whether the token was wrong, `home` was refused during a
+//! cooldown, the challenge was used, the handle unknown, the signature bad or
+//! the class not allowed: no response says whether a handle exists.
 //! `not_after` is `null` for a statement that never lapses.
+//!
+//! A missing or wrong token is refused before anything is counted: it never
+//! reaches the request cap or the door limiter, so a client with no token
+//! cannot crowd paired clients out or start a cooldown. Nor does a body that
+//! does not parse. Only a response to a live challenge is counted
+//! ([`crate::ratelimit`]), and even then a cooldown refuses only `home`.
 //!
 //! Patterned on the kernel's `src/api/mod.rs`: a request is at most
 //! [`MAX_REQUEST_BYTES`] including a body of at most [`MAX_BODY_BYTES`]; every
-//! connection has read/write timeouts and an absolute budget; one request per
-//! connection; a global request-rate cap; no chunked bodies. It binds
-//! loopback unless the caller explicitly allows a LAN address. There is no
-//! TLS in v0: on a LAN bind the bearer token and the posture cross the
-//! network in cleartext (a signature still has to come from an enrolled key).
+//! connection has an absolute budget of [`CONNECTION_BUDGET`] that each read
+//! and write timeout is cut to; one request per connection; a request-rate
+//! cap for paired clients; no chunked bodies. Connections are served on
+//! their own threads, at most [`MAX_CONNECTIONS`] at once and
+//! [`MAX_CONNECTIONS_PER_PEER`] from one address, so one slow peer cannot
+//! hold the API for everyone.
+//!
+//! It binds loopback unless the caller explicitly allows a LAN address, and
+//! on any bind it answers only peers on the home network
+//! ([`is_home_network`]): loopback, private and link-local addresses. A peer
+//! from anywhere else, the CGNAT range Tailscale uses included, is dropped at
+//! accept. A proxy, VPN or ingress that re-originates traffic from a private
+//! address defeats this, so the LAN API must not sit behind one.
+//!
+//! There is no TLS in v0: on a LAN bind every request crosses the network in
+//! cleartext, including each client's bearer token (stable per client) and,
+//! in a command, the member handle. A passive listener on the LAN can
+//! therefore link acts to a device and to a member. A signature still has to
+//! come from an enrolled key.
 //!
 //! The server logs nothing per request: no handles, no credential ids, no
-//! per-command lines. Its only log lines are startup, shutdown and storage
-//! failures.
+//! per-command lines, no peer addresses. Its only log lines are startup,
+//! shutdown, reload trouble and storage failures.
 
 use crate::challenge::{SessionId, CHALLENGE_TTL_SECS};
 use crate::checker::{Checker, CommandRequest};
@@ -37,22 +60,28 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Largest request (head and body) read.
 pub const MAX_REQUEST_BYTES: usize = 8192;
 /// Largest body accepted.
 pub const MAX_BODY_BYTES: usize = 4096;
-/// Per-operation socket timeout.
+/// Longest a single read or write may block (always cut to what is left of
+/// the connection budget).
 pub const IO_TIMEOUT: Duration = Duration::from_secs(3);
-/// Absolute budget for one connection.
+/// Absolute budget for one connection, reads and write included.
 pub const CONNECTION_BUDGET: Duration = Duration::from_secs(5);
-/// Most requests served per minute (all clients together).
+/// Most requests served per minute (all paired clients together).
 pub const MAX_REQUESTS_PER_MINUTE: usize = 600;
+/// Most connections served at once.
+pub const MAX_CONNECTIONS: usize = 16;
+/// Most connections served at once for one peer address.
+pub const MAX_CONNECTIONS_PER_PEER: usize = 4;
 /// The one rejection body.
 pub const REJECTED_BODY: &str = r#"{"error":"rejected"}"#;
 
@@ -62,6 +91,23 @@ pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// A log sink that writes to standard error.
 pub fn stderr_log() -> LogSink {
     Arc::new(|line: &str| eprintln!("household_checker: {line}"))
+}
+
+/// Whether `ip` is on the home network: loopback, a private IPv4 range (RFC
+/// 1918), IPv4 link-local, or an IPv6 unique-local or link-local address
+/// (IPv4-mapped IPv6 counts as its IPv4 address). Everything else is
+/// refused, the shared address space 100.64.0.0/10 (Tailscale, carrier NAT)
+/// included, so a key does nothing from outside the home network even on a
+/// LAN bind. A home LAN reached only over public IPv6 addresses is refused
+/// too: bind an IPv4 LAN address.
+pub fn is_home_network(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_home_network(IpAddr::V4(v4)),
+            None => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+        },
+    }
 }
 
 /// The server's clocks.
@@ -94,21 +140,29 @@ impl Clock for SystemClock {
     }
 }
 
-/// Changes picked up between requests.
+/// Changes picked up between requests. Each part is `None` when its file did
+/// not change, and an error when it changed but did not load; a part that
+/// fails never holds up another.
 #[derive(Default)]
 pub struct Reload {
-    /// A newer roster that passed the chain checks.
-    pub roster: Option<Roster>,
-    /// A newer card store.
-    pub cards: Option<CardStore>,
-    /// A newer set of bearer hashes.
-    pub bearers: Option<Vec<[u8; 32]>>,
+    /// A newer roster that passed the chain checks, or why the changed chain
+    /// did not load. On an error the checker refuses `home` until a roster
+    /// verifies ([`Checker::mark_roster_stale`]); `away` and `night` keep
+    /// working against the last roster that verified.
+    pub roster: Option<Result<Roster>>,
+    /// A newer card store, or why it did not open (the old keys are kept;
+    /// revocation does not depend on them, the roster does).
+    pub cards: Option<Result<CardStore>>,
+    /// A newer set of bearer hashes, or why they did not load (the old
+    /// pairings are kept).
+    pub bearers: Option<Result<Vec<[u8; 32]>>>,
 }
 
 /// Something that can report roster, card and pairing changes.
 pub trait ReloadSource: Send {
-    /// Check for changes. Errors are logged and the old state is kept.
-    fn poll(&mut self) -> Result<Reload>;
+    /// Check for changes. A part that failed is reported again on the next
+    /// poll until it loads.
+    fn poll(&mut self) -> Reload;
 }
 
 /// Server configuration.
@@ -120,19 +174,86 @@ pub struct ServerConfig {
     pub allow_lan: bool,
 }
 
+/// Which reload parts are failing (so trouble is logged once, not every
+/// second).
+#[derive(Default)]
+struct ReloadTrouble {
+    roster: bool,
+    cards: bool,
+    bearers: bool,
+}
+
+/// Log `line` only when `failing` was not already set, and set it.
+fn first_trouble(failing: &mut bool, log: &LogSink, line: &str) {
+    if !std::mem::replace(failing, true) {
+        log(line);
+    }
+}
+
 struct State {
     checker: Checker,
     bearers: Vec<[u8; 32]>,
     reload: Option<Box<dyn ReloadSource>>,
+    trouble: ReloadTrouble,
     window: std::collections::VecDeque<u64>,
+}
+
+/// What the accept loop and the connection threads share.
+struct Shared {
+    state: Mutex<State>,
+    clock: Arc<dyn Clock>,
+    log: LogSink,
+    /// Open connections, per peer address. Entries leave when their count
+    /// reaches zero, so this never holds more than [`MAX_CONNECTIONS`]
+    /// addresses, and it is never logged.
+    conns: Mutex<HashMap<IpAddr, usize>>,
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+/// A connection slot, released on drop.
+struct Slot {
+    shared: Arc<Shared>,
+    ip: IpAddr,
+}
+
+impl Slot {
+    fn take(shared: &Arc<Shared>, ip: IpAddr) -> Option<Slot> {
+        let mut c = lock(&shared.conns);
+        let total: usize = c.values().sum();
+        let mine = c.get(&ip).copied().unwrap_or(0);
+        if total >= MAX_CONNECTIONS || mine >= MAX_CONNECTIONS_PER_PEER {
+            return None;
+        }
+        c.insert(ip, mine + 1);
+        Some(Slot {
+            shared: shared.clone(),
+            ip,
+        })
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut c = lock(&self.shared.conns);
+        if let Some(n) = c.get_mut(&self.ip) {
+            *n -= 1;
+            if *n == 0 {
+                c.remove(&self.ip);
+            }
+        }
+    }
 }
 
 /// A bound server.
 pub struct Server {
     listener: TcpListener,
-    state: Arc<Mutex<State>>,
-    clock: Arc<dyn Clock>,
-    log: LogSink,
+    shared: Arc<Shared>,
 }
 
 /// A running server thread.
@@ -178,14 +299,18 @@ impl Server {
             .map_err(Error::io("set the listener nonblocking"))?;
         Ok(Server {
             listener,
-            state: Arc::new(Mutex::new(State {
-                checker,
-                bearers,
-                reload,
-                window: Default::default(),
-            })),
-            clock,
-            log,
+            shared: Arc::new(Shared {
+                state: Mutex::new(State {
+                    checker,
+                    bearers,
+                    reload,
+                    trouble: ReloadTrouble::default(),
+                    window: Default::default(),
+                }),
+                clock,
+                log,
+                conns: Mutex::new(HashMap::new()),
+            }),
         })
     }
 
@@ -204,28 +329,46 @@ impl Server {
             } else {
                 "LAN (cleartext)"
             };
-            (self.log)(&format!("LAN API listening on {scope} port {}", a.port()));
+            (self.shared.log)(&format!("LAN API listening on {scope} port {}", a.port()));
         }
         let mut last_tick = Instant::now() - Duration::from_secs(10);
         while !stop.load(Ordering::SeqCst) {
             if last_tick.elapsed() >= Duration::from_secs(1) {
                 last_tick = Instant::now();
-                self.housekeeping();
+                self.shared.housekeeping();
             }
             match self.listener.accept() {
-                Ok((stream, _peer)) => {
-                    // Errors on one connection are that connection's problem
-                    // and are not logged (a log line per request is exactly
-                    // what this server must not write).
-                    let _ = self.handle(stream);
-                }
+                Ok((stream, peer)) => self.admit(stream, peer),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(100)),
             }
         }
-        (self.log)("LAN API stopped");
+        (self.shared.log)("LAN API stopped");
+    }
+
+    /// Hand an accepted connection to its own thread, or drop it: a peer
+    /// off the home network, or one over the connection caps, is closed
+    /// without a response. Errors on one connection are that connection's
+    /// problem and are not logged (a log line per request is exactly what
+    /// this server must not write).
+    fn admit(&self, stream: TcpStream, peer: SocketAddr) {
+        if !is_home_network(peer.ip()) {
+            return;
+        }
+        let Some(slot) = Slot::take(&self.shared, peer.ip()) else {
+            return;
+        };
+        let shared = self.shared.clone();
+        // If the thread cannot be spawned, the closure (slot and stream) is
+        // dropped: the slot is released and the connection closed.
+        let _ = std::thread::Builder::new()
+            .name("household-lan-conn".into())
+            .spawn(move || {
+                let _slot = slot;
+                let _ = shared.handle(stream);
+            });
     }
 
     /// Run on a new thread.
@@ -243,31 +386,56 @@ impl Server {
             thread: Some(thread),
         })
     }
+}
 
+impl Shared {
     fn housekeeping(&self) {
         let now = self.clock.unix();
-        let mut st = match self.state.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut guard = lock(&self.state);
+        let st = &mut *guard;
         if let Some(src) = st.reload.as_mut() {
-            match src.poll() {
-                Ok(r) => {
-                    if let Some(roster) = r.roster {
-                        if st.checker.set_roster(roster).is_err() {
-                            (self.log)("refused a reloaded roster");
+            let r = src.poll();
+            if let Some(roster) = r.roster {
+                let ok = roster.and_then(|roster| st.checker.set_roster(roster));
+                match ok {
+                    Ok(()) => {
+                        if std::mem::take(&mut st.trouble.roster) {
+                            (self.log)("the roster on disk verifies again; home is accepted");
                         }
                     }
-                    if let Some(c) = r.cards {
-                        st.checker.set_cards(c);
-                    }
-                    if let Some(b) = r.bearers {
-                        st.bearers = b;
+                    Err(_) => {
+                        st.checker.mark_roster_stale();
+                        if !std::mem::replace(&mut st.trouble.roster, true) {
+                            (self.log)(
+                                "the roster on disk did not load or verify; refusing home until it does",
+                            );
+                        }
                     }
                 }
-                Err(_) => {
-                    (self.log)("reload failed; keeping the previous roster, cards and pairings")
+            }
+            match r.cards {
+                Some(Ok(c)) => {
+                    st.checker.set_cards(c);
+                    st.trouble.cards = false;
                 }
+                Some(Err(_)) => first_trouble(
+                    &mut st.trouble.cards,
+                    &self.log,
+                    "the card store did not reload; keeping the previous card keys",
+                ),
+                None => {}
+            }
+            match r.bearers {
+                Some(Ok(b)) => {
+                    st.bearers = b;
+                    st.trouble.bearers = false;
+                }
+                Some(Err(_)) => first_trouble(
+                    &mut st.trouble.bearers,
+                    &self.log,
+                    "the pairings did not reload; keeping the previous pairings",
+                ),
+                None => {}
             }
         }
         if st.checker.tick(now).is_err() {
@@ -280,12 +448,6 @@ impl Server {
         stream
             .set_nonblocking(false)
             .map_err(Error::io("set blocking"))?;
-        stream
-            .set_read_timeout(Some(IO_TIMEOUT))
-            .map_err(Error::io("set timeout"))?;
-        stream
-            .set_write_timeout(Some(IO_TIMEOUT))
-            .map_err(Error::io("set timeout"))?;
         let mut stream = stream;
         let (status, body) = match read_request(&mut stream, deadline) {
             Ok(req) => self.route(&req),
@@ -293,7 +455,7 @@ impl Server {
             Err(RequestError::Bad) => (400, r#"{"error":"bad_request"}"#.to_string()),
             Err(RequestError::Io) => return Ok(()),
         };
-        write_response(&mut stream, status, &body)
+        write_response(&mut stream, status, &body, deadline)
     }
 
     fn route(&self, req: &Request) -> (u16, String) {
@@ -313,11 +475,17 @@ impl Server {
         }
         let now_ms = self.clock.mono_ms();
         let now_unix = self.clock.unix();
-        let mut st = match self.state.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
+        let mut guard = lock(&self.state);
+        let st = &mut *guard;
+        // Paired clients only, before anything is counted.
+        let session = req
+            .bearer
+            .as_deref()
+            .and_then(|t| crate::store::match_bearer(&st.bearers, t));
+        let Some(session) = session else {
+            return (401, REJECTED_BODY.into());
         };
-        // Global request cap.
+        // Request cap, paired clients together.
         while st
             .window
             .front()
@@ -329,14 +497,6 @@ impl Server {
             return (401, REJECTED_BODY.into());
         }
         st.window.push_back(now_ms);
-        let session = req
-            .bearer
-            .as_deref()
-            .and_then(|t| crate::store::match_bearer(&st.bearers, t));
-        let Some(session) = session else {
-            st.checker.record_rejection(&LAN_DOOR_ID, now_ms);
-            return (401, REJECTED_BODY.into());
-        };
         let out = match req.path.as_str() {
             "/v1/challenge" => challenge(&mut st.checker, &req.body, session, now_ms),
             "/v1/command" => command(&mut st.checker, &req.body, session, now_ms, now_unix),
@@ -344,21 +504,14 @@ impl Server {
         };
         match out {
             Ok(body) => (200, body),
-            Err(RouteError::Rejected) => (401, REJECTED_BODY.into()),
-            Err(RouteError::Malformed) => {
-                st.checker.record_rejection(&LAN_DOOR_ID, now_ms);
-                (401, REJECTED_BODY.into())
-            }
+            Err(Refused) => (401, REJECTED_BODY.into()),
         }
     }
 }
 
-enum RouteError {
-    /// The checker refused (and already counted it).
-    Rejected,
-    /// The body did not parse (counted here).
-    Malformed,
-}
+/// A route refused the request (the checker counted it if it was a response
+/// to a live challenge; nothing else is counted).
+struct Refused;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -381,12 +534,12 @@ fn challenge(
     body: &[u8],
     session: SessionId,
     now_ms: u64,
-) -> std::result::Result<String, RouteError> {
-    let b: ChallengeBody = serde_json::from_slice(body).map_err(|_| RouteError::Malformed)?;
-    let purpose = Purpose::from_word(&b.purpose).map_err(|_| RouteError::Malformed)?;
+) -> std::result::Result<String, Refused> {
+    let b: ChallengeBody = serde_json::from_slice(body).map_err(|_| Refused)?;
+    let purpose = Purpose::from_word(&b.purpose).map_err(|_| Refused)?;
     let ch = c
         .issue_challenge(purpose, LAN_DOOR_ID, session, now_ms)
-        .map_err(|_| RouteError::Rejected)?;
+        .map_err(|_| Refused)?;
     Ok(json!({
         "challenge_id": hex::encode(&ch.id),
         "msg_b64": B64.encode(&ch.msg),
@@ -409,8 +562,8 @@ fn command(
     session: SessionId,
     now_ms: u64,
     now_unix: u64,
-) -> std::result::Result<String, RouteError> {
-    let b: CommandBody = serde_json::from_slice(body).map_err(|_| RouteError::Malformed)?;
+) -> std::result::Result<String, Refused> {
+    let b: CommandBody = serde_json::from_slice(body).map_err(|_| Refused)?;
     let req = (|| {
         Some(CommandRequest {
             challenge_id: hex::decode_array(&b.challenge_id).ok()?,
@@ -422,10 +575,10 @@ fn command(
             },
         })
     })()
-    .ok_or(RouteError::Malformed)?;
+    .ok_or(Refused)?;
     let st = c
         .command(&req, &session, &LAN_DOOR_ID, now_ms, now_unix)
-        .map_err(|_| RouteError::Rejected)?;
+        .map_err(|_| Refused)?;
     Ok(json!({"posture": st.posture.word(), "not_after": not_after_json(&st)}).to_string())
 }
 
@@ -458,6 +611,34 @@ fn find_head_end(b: &[u8]) -> Option<usize> {
     b.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+/// What is left of the connection budget for one blocking operation: at
+/// most [`IO_TIMEOUT`], and `None` once the budget is spent, so no read or
+/// write can outlast [`CONNECTION_BUDGET`].
+fn time_left(deadline: Instant) -> Option<Duration> {
+    let left = deadline.checked_duration_since(Instant::now())?;
+    if left.is_zero() {
+        None
+    } else {
+        Some(left.min(IO_TIMEOUT))
+    }
+}
+
+/// One bounded read.
+fn read_some(
+    stream: &mut TcpStream,
+    buf: &mut [u8],
+    deadline: Instant,
+) -> std::result::Result<usize, RequestError> {
+    let t = time_left(deadline).ok_or(RequestError::Io)?;
+    stream
+        .set_read_timeout(Some(t))
+        .map_err(|_| RequestError::Io)?;
+    match stream.read(buf) {
+        Ok(0) | Err(_) => Err(RequestError::Io),
+        Ok(n) => Ok(n),
+    }
+}
+
 fn read_request(
     stream: &mut TcpStream,
     deadline: Instant,
@@ -471,14 +652,8 @@ fn read_request(
         if data.len() > MAX_REQUEST_BYTES {
             return Err(RequestError::TooLarge);
         }
-        if Instant::now() >= deadline {
-            return Err(RequestError::Io);
-        }
-        match stream.read(&mut buf) {
-            Ok(0) => return Err(RequestError::Io),
-            Ok(n) => data.extend_from_slice(&buf[..n]),
-            Err(_) => return Err(RequestError::Io),
-        }
+        let n = read_some(stream, &mut buf, deadline)?;
+        data.extend_from_slice(&buf[..n]);
     };
     let head = std::str::from_utf8(&data[..head_end]).map_err(|_| RequestError::Bad)?;
     let mut lines = head.split("\r\n");
@@ -522,14 +697,8 @@ fn read_request(
         return Err(RequestError::Bad);
     }
     while body.len() < len {
-        if Instant::now() >= deadline {
-            return Err(RequestError::Io);
-        }
-        match stream.read(&mut buf) {
-            Ok(0) => return Err(RequestError::Io),
-            Ok(n) => body.extend_from_slice(&buf[..n]),
-            Err(_) => return Err(RequestError::Io),
-        }
+        let n = read_some(stream, &mut buf, deadline)?;
+        body.extend_from_slice(&buf[..n]);
         if body.len() > len {
             return Err(RequestError::Bad);
         }
@@ -542,7 +711,12 @@ fn read_request(
     })
 }
 
-fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> Result<()> {
+fn write_response(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+    deadline: Instant,
+) -> Result<()> {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -556,6 +730,10 @@ fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> Result<()>
         "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
+    let t = time_left(deadline).ok_or(Error::Invalid("the connection budget is spent"))?;
+    stream
+        .set_write_timeout(Some(t))
+        .map_err(Error::io("set timeout"))?;
     stream
         .write_all(head.as_bytes())
         .and_then(|_| stream.write_all(body.as_bytes()))
@@ -570,7 +748,10 @@ type FileStamp = (u64, SystemTime);
 type Stamp = (Option<String>, Option<FileStamp>, Option<FileStamp>);
 
 /// Reloads the roster chain, the sealed card store and the pairings from a
-/// data directory when their files change.
+/// data directory when their files change. Each part loads on its own: a
+/// card store or pairing file that fails never holds up a roster change (a
+/// revocation), and a part that fails is retried on every poll until it
+/// loads.
 pub struct DirReload {
     dir: crate::store::DataDir,
     kek: crate::secrets::Kek,
@@ -608,30 +789,46 @@ impl DirReload {
             Self::file_stamp(&self.dir.path("bearers.json")),
         )
     }
+
+    fn load_cards(&self) -> Result<CardStore> {
+        let p = self.dir.cards_path();
+        if !p.exists() {
+            return Ok(CardStore::new());
+        }
+        let b = crate::store::read_bounded(&p, crate::secrets::MAX_SEALED_BYTES)?;
+        CardStore::open(&b, &self.kek, &self.dir.household()?)
+    }
 }
 
 impl ReloadSource for DirReload {
-    fn poll(&mut self) -> Result<Reload> {
+    fn poll(&mut self) -> Reload {
         let now = self.stamp();
         let mut out = Reload::default();
         if now.0 != self.seen.0 {
-            out.roster = self.dir.current_roster()?;
+            let r = self
+                .dir
+                .current_roster()
+                .and_then(|r| r.ok_or(Error::Rejected("the roster chain is empty")));
+            if r.is_ok() {
+                self.seen.0 = now.0;
+            }
+            out.roster = Some(r);
         }
         if now.1 != self.seen.1 {
-            let p = self.dir.cards_path();
-            let household = self.dir.household()?;
-            out.cards = Some(if p.exists() {
-                let b = crate::store::read_bounded(&p, crate::secrets::MAX_SEALED_BYTES)?;
-                CardStore::open(&b, &self.kek, &household)?
-            } else {
-                CardStore::new()
-            });
+            let r = self.load_cards();
+            if r.is_ok() {
+                self.seen.1 = now.1;
+            }
+            out.cards = Some(r);
         }
         if now.2 != self.seen.2 {
-            out.bearers = Some(self.dir.bearer_hashes()?);
+            let r = self.dir.bearer_hashes();
+            if r.is_ok() {
+                self.seen.2 = now.2;
+            }
+            out.bearers = Some(r);
         }
-        self.seen = now;
-        Ok(out)
+        out
     }
 }
 
@@ -652,6 +849,144 @@ mod tests {
             crate::checker::tests::T0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn home_network_is_private_loopback_and_link_local_only() {
+        let yes = [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.9",
+            "172.31.255.1",
+            "192.168.1.20",
+            "169.254.3.4",
+            "::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "::ffff:192.168.1.20",
+        ];
+        let no = [
+            "100.64.0.1",
+            "100.101.102.103",
+            "8.8.8.8",
+            "172.32.0.1",
+            "192.169.0.1",
+            "2001:db8::1",
+            "2606:4700::1111",
+            "::ffff:8.8.8.8",
+            "::ffff:100.64.0.1",
+        ];
+        for a in yes {
+            assert!(is_home_network(a.parse().unwrap()), "{a} refused");
+        }
+        for a in no {
+            assert!(!is_home_network(a.parse().unwrap()), "{a} accepted");
+        }
+    }
+
+    fn served(token: &str) -> (ServerHandle, SocketAddr) {
+        let cfg = ServerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_lan: false,
+        };
+        let hash: [u8; 32] =
+            sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(token)).into();
+        let srv = Server::bind(
+            &cfg,
+            checker(),
+            vec![hash],
+            None,
+            Arc::new(SystemClock::default()),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+        let h = srv.spawn().unwrap();
+        let a = h.addr();
+        (h, a)
+    }
+
+    #[test]
+    fn a_silent_connection_does_not_hold_the_api() {
+        let (h, a) = served("t0ken");
+        // Two connections that never send a byte...
+        let idle1 = TcpStream::connect(a).unwrap();
+        let idle2 = TcpStream::connect(a).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        // ...do not delay a real request behind them.
+        let started = Instant::now();
+        let r = raw(
+            a,
+            b"GET /v1/posture HTTP/1.1\r\nAuthorization: Bearer t0ken\r\n\r\n",
+        );
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "served behind the idle connections"
+        );
+        drop((idle1, idle2));
+        h.stop();
+    }
+
+    #[test]
+    fn one_peer_holds_at_most_its_share_of_connections() {
+        let (h, a) = served("t0ken");
+        let idle: Vec<TcpStream> = (0..MAX_CONNECTIONS_PER_PEER)
+            .map(|_| TcpStream::connect(a).unwrap())
+            .collect();
+        std::thread::sleep(Duration::from_millis(150));
+        // Over the per-peer cap: closed at accept, no response.
+        let r = raw(
+            a,
+            b"GET /v1/posture HTTP/1.1\r\nAuthorization: Bearer t0ken\r\n\r\n",
+        );
+        assert!(r.is_empty(), "served over the per-peer cap: {r}");
+        // Closing them frees the slots.
+        drop(idle);
+        let mut served = false;
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(20));
+            let r = raw(
+                a,
+                b"GET /v1/posture HTTP/1.1\r\nAuthorization: Bearer t0ken\r\n\r\n",
+            );
+            if r.starts_with("HTTP/1.1 200") {
+                served = true;
+                break;
+            }
+        }
+        assert!(served, "slots were not released");
+        h.stop();
+    }
+
+    #[test]
+    fn the_connection_budget_is_absolute() {
+        let (h, a) = served("t0ken");
+        // A client that trickles one header byte every 2 s would keep each
+        // read under IO_TIMEOUT forever; the budget still closes it.
+        let mut s = TcpStream::connect(a).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let started = Instant::now();
+        let trickle = std::thread::spawn({
+            let mut w = s.try_clone().unwrap();
+            move || {
+                for b in b"GET /v1/posture HTTP/1.1\r\nX: aaaaaaaa" {
+                    if w.write_all(&[*b]).is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+            }
+        });
+        let mut out = Vec::new();
+        let _ = s.read_to_end(&mut out);
+        let took = started.elapsed();
+        assert!(
+            took < CONNECTION_BUDGET + Duration::from_millis(1500),
+            "connection held for {took:?}"
+        );
+        drop(s);
+        let _ = trickle.join();
+        h.stop();
     }
 
     #[test]

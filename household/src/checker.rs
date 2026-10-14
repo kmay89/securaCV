@@ -3,13 +3,21 @@
 //!
 //! The policy, in full:
 //!
-//! 1. A door cooling down (five rejections in ten minutes) refuses
-//!    everything for 60 seconds ([`crate::ratelimit`]).
+//! 1. **Nothing blocks raising sensing.** Five rejected responses on one
+//!    lane of one door in ten minutes cool that lane for 60 seconds
+//!    ([`crate::ratelimit`]), and a roster on disk that no longer verifies
+//!    marks the checker's roster stale ([`Checker::mark_roster_stale`]).
+//!    Either refuses `home`, the posture that lowers sensing, and nothing
+//!    else on the signature lane: `away` and `night` still go through, so a
+//!    denial of service cannot hold a house in `home`. The card lane carries
+//!    `away` and `night` only and stays under its cooldown.
 //! 2. The challenge is taken (single use) and must be unexpired, from the
 //!    same session and door, and from the current roster epoch.
 //! 3. The handle must name a current member of the **current** roster.
-//!    An unknown handle runs a dummy verification, so the time taken does
-//!    not say whether the handle exists.
+//!    Every response runs exactly one P-256 verification, against a dummy
+//!    key when the handle is unknown, expired, a card, or does not match the
+//!    binding the request used, so the time taken does not say whether the
+//!    handle exists.
 //! 4. The credential must verify over the challenge under its own binding:
 //!    `es256` over `msg`; `fido2-es256` with `clientDataHash = SHA-256(msg)`
 //!    and UV required when the credential is `intent`; cards through
@@ -20,16 +28,18 @@
 //! 6. The result is a fresh statement: `seq` persisted first, then signed,
 //!    then published through [`Persist`] (the file seam). A `home`
 //!    statement lapses; [`Checker::tick`] replaces a lapsed `home` with
-//!    `away`.
+//!    `away`. An accepted `away` or `night` that changes nothing publishes
+//!    nothing, so the seam does not reveal a tap that left the posture as it
+//!    was; `home` is always reissued, because that renews its lapse.
 //!
 //! The checker starts in `away`, the fail-safe, whatever it said before a
 //! restart. It records nothing about who presented what: no counters, no
-//! history, and the rejection limiter is keyed by door only.
+//! history, and the rejection limiter is keyed by door and lane only.
 
 use crate::challenge::{ChallengeBook, ChallengeId, SessionId};
 use crate::ntag424::{Ev2Auth, Ev2Step};
 use crate::posture::{HouseholdPosture, Statement, HOME_MAX_SECS, STATEMENT_LEN};
-use crate::ratelimit::DoorLimiter;
+use crate::ratelimit::{DoorLimiter, Lane};
 use crate::roster::{CredentialClass, Handle, MemberAlg, MemberEntry, MemberKind, Roster};
 use crate::secrets::CardStore;
 use crate::wire::Purpose;
@@ -129,6 +139,7 @@ pub struct Checker {
     current_bytes: [u8; STATEMENT_LEN],
     persist: Box<dyn Persist>,
     dummy_key: Vec<u8>,
+    roster_stale: bool,
 }
 
 impl std::fmt::Debug for Checker {
@@ -191,6 +202,7 @@ impl Checker {
                 .to_sec1_point(false)
                 .as_bytes()
                 .to_vec(),
+            roster_stale: false,
         };
         c.issue(HouseholdPosture::Away, now_unix)?;
         Ok(c)
@@ -233,7 +245,22 @@ impl Checker {
         }
         self.book.set_epoch(roster.epoch);
         self.roster = roster;
+        self.roster_stale = false;
         Ok(())
+    }
+
+    /// The roster on disk changed but did not load or verify. Until a roster
+    /// that verifies is set, `home` is refused; `away` and `night` are still
+    /// checked against the last roster that verified, because raising
+    /// sensing is safe whoever asks (even a member the unreadable roster may
+    /// have revoked).
+    pub fn mark_roster_stale(&mut self) {
+        self.roster_stale = true;
+    }
+
+    /// Whether `home` is refused because the roster on disk did not verify.
+    pub fn roster_is_stale(&self) -> bool {
+        self.roster_stale
     }
 
     /// Replace the card keys.
@@ -254,7 +281,10 @@ impl Checker {
         Ok(st)
     }
 
-    /// Replace a lapsed `home` with `away`. Call periodically.
+    /// Replace a `home` that is no longer current with `away`. Call
+    /// periodically. "Current" is [`Statement::is_current`] on the hub's own
+    /// clock, so a `home` also lapses at once if that clock steps back more
+    /// than [`crate::posture::MAX_SKEW_SECS`] behind its `issued_at`.
     pub fn tick(&mut self, now_unix: u64) -> Result<()> {
         if self.current.posture == HouseholdPosture::Home && !self.current.is_current(now_unix) {
             self.issue(HouseholdPosture::Away, now_unix)?;
@@ -262,15 +292,20 @@ impl Checker {
         Ok(())
     }
 
-    /// Record a rejection at `door` that happened outside the checker (a bad
-    /// bearer at the LAN API, a malformed request).
-    pub fn record_rejection(&mut self, door: &[u8; 16], now_ms: u64) {
-        self.limiter.record_rejection(door, now_ms);
+    /// Whether `lane` at `door` is cooling down.
+    pub fn is_cooling(&mut self, door: &[u8; 16], lane: Lane, now_ms: u64) -> bool {
+        self.limiter.is_cooling(door, lane, now_ms)
     }
 
-    /// Whether `door` is cooling down.
-    pub fn is_cooling(&mut self, door: &[u8; 16], now_ms: u64) -> bool {
-        self.limiter.is_cooling(door, now_ms)
+    /// Why `home` is refused right now at `door`, if it is (policy rule 1).
+    fn home_refusal(&mut self, door: &[u8; 16], now_ms: u64) -> Option<Error> {
+        if self.limiter.is_cooling(door, Lane::Signature, now_ms) {
+            return Some(Error::Rejected("door is cooling down"));
+        }
+        if self.roster_stale {
+            return Some(Error::Rejected("the roster on disk did not verify"));
+        }
+        None
     }
 
     /// Issue a challenge for `purpose` at `door`, bound to `session`.
@@ -281,8 +316,10 @@ impl Checker {
         session: SessionId,
         now_ms: u64,
     ) -> Result<IssuedChallenge> {
-        if self.limiter.is_cooling(&door, now_ms) {
-            return Err(Error::Rejected("door is cooling down"));
+        if purpose == Purpose::Home {
+            if let Some(e) = self.home_refusal(&door, now_ms) {
+                return Err(e);
+            }
         }
         let c = self.book.issue(purpose, door, session, now_ms)?;
         Ok(IssuedChallenge {
@@ -291,28 +328,49 @@ impl Checker {
         })
     }
 
-    fn verify_member(&self, m: &MemberEntry, msg: &[u8], req: &CommandRequest) -> bool {
-        let Some(pk) = m.public_key.as_deref() else {
-            return false;
-        };
-        match (m.alg, &req.authenticator_data) {
-            (MemberAlg::Es256, None) => verify::es256(pk, msg, &req.signature),
-            (MemberAlg::Fido2Es256, Some(ad)) => {
-                let Some(rp) = m.rp_id.as_deref() else {
-                    return false;
-                };
+    /// Check a response against the member its handle names, if any.
+    ///
+    /// Every path runs exactly one P-256 verification over input of the same
+    /// shape: against the member's key when the member is current, is not a
+    /// card, and every check but the signature passes for the binding the
+    /// request used; against the dummy key otherwise. The result is read only
+    /// after that verification, so the time taken does not say whether the
+    /// handle exists, is current, or is enrolled with another binding.
+    fn check_response(
+        &self,
+        member: Option<&MemberEntry>,
+        msg: &[u8],
+        req: &CommandRequest,
+        now_unix: u64,
+    ) -> bool {
+        let candidate = member.filter(|m| m.is_current(now_unix) && m.kind != MemberKind::Card);
+        let (signed, shape_ok) = match &req.authenticator_data {
+            None => (
+                msg.to_vec(),
+                candidate.is_some_and(|m| m.alg == MemberAlg::Es256),
+            ),
+            Some(ad) => {
                 let cdh: [u8; 32] = Sha256::digest(msg).into();
-                verify::fido2_es256(
-                    pk,
-                    rp,
-                    &cdh,
+                let fido = candidate.filter(|m| m.alg == MemberAlg::Fido2Es256);
+                let rp = fido.and_then(|m| m.rp_id.as_deref()).unwrap_or("");
+                let rp_hash: [u8; 32] = Sha256::digest(rp.as_bytes()).into();
+                let auth_ok = verify::fido2_auth_data_ok(
+                    &rp_hash,
                     ad,
-                    &req.signature,
-                    m.class == CredentialClass::Intent,
+                    fido.is_some_and(|m| m.class == CredentialClass::Intent),
+                );
+                (
+                    verify::fido2_signed_bytes(ad, &cdh),
+                    fido.is_some_and(|m| m.rp_id.is_some()) && auth_ok,
                 )
             }
-            _ => false,
-        }
+        };
+        let key = match candidate.and_then(|m| m.public_key.as_deref()) {
+            Some(pk) if shape_ok => pk,
+            _ => &self.dummy_key[..],
+        };
+        let sig_ok = verify::es256(key, &signed, &req.signature);
+        shape_ok && sig_ok
     }
 
     /// Answer a challenge with a member credential over the LAN API (or a
@@ -325,45 +383,46 @@ impl Checker {
         now_ms: u64,
         now_unix: u64,
     ) -> Result<Statement> {
-        if self.limiter.is_cooling(door, now_ms) {
-            return Err(Error::Rejected("door is cooling down"));
+        let ch = match self.book.take(&req.challenge_id, session, door, now_ms) {
+            Ok(ch) => ch,
+            Err(e) => {
+                self.limiter.record_rejection(door, Lane::Signature, now_ms);
+                return Err(e);
+            }
+        };
+        if ch.purpose == Purpose::Home {
+            // Refusals for a cooldown or a stale roster are not counted: they
+            // say nothing about the credential.
+            if let Some(e) = self.home_refusal(door, now_ms) {
+                return Err(e);
+            }
         }
-        let r = self.command_inner(req, session, door, now_ms, now_unix);
+        let member = self.roster.member(&req.handle).cloned();
+        let r = if self.check_response(member.as_ref(), &ch.msg(), req, now_unix) {
+            match member {
+                Some(m) if ch.purpose == Purpose::Home && m.class != CredentialClass::Intent => {
+                    Err(Error::Rejected("a possession credential cannot set home"))
+                }
+                Some(_) => self.apply(ch.purpose, now_unix),
+                None => Err(Error::Rejected("credential refused")),
+            }
+        } else {
+            Err(Error::Rejected("credential refused"))
+        };
         if r.is_err() {
-            self.limiter.record_rejection(door, now_ms);
+            self.limiter.record_rejection(door, Lane::Signature, now_ms);
         }
         r
     }
 
-    fn command_inner(
-        &mut self,
-        req: &CommandRequest,
-        session: &SessionId,
-        door: &[u8; 16],
-        now_ms: u64,
-        now_unix: u64,
-    ) -> Result<Statement> {
-        let ch = self.book.take(&req.challenge_id, session, door, now_ms)?;
-        let msg = ch.msg();
-        let member = self.roster.member(&req.handle).cloned();
-        let ok = match &member {
-            Some(m) if m.is_current(now_unix) && m.kind != MemberKind::Card => {
-                self.verify_member(m, &msg, req)
-            }
-            _ => {
-                // Same work as a real check, then refuse.
-                let _ = verify::es256(&self.dummy_key, &msg, &req.signature);
-                false
-            }
-        };
-        let member = match (ok, member) {
-            (true, Some(m)) => m,
-            _ => return Err(Error::Rejected("credential refused")),
-        };
-        if ch.purpose == Purpose::Home && member.class != CredentialClass::Intent {
-            return Err(Error::Rejected("a possession credential cannot set home"));
+    /// Carry out an accepted purpose: reissue `home` (renewing its lapse);
+    /// publish nothing for an `away` or `night` that changes nothing.
+    fn apply(&mut self, purpose: Purpose, now_unix: u64) -> Result<Statement> {
+        let target = purpose.target();
+        if target == self.current.posture && target != HouseholdPosture::Home {
+            return Ok(self.current);
         }
-        self.issue(ch.purpose.target(), now_unix)
+        self.issue(target, now_unix)
     }
 
     /// Start an NTAG 424 DNA authentication for a challenge. Returns the
@@ -376,7 +435,7 @@ impl Checker {
         now_ms: u64,
         now_unix: u64,
     ) -> Result<(CardSession, Vec<u8>)> {
-        if self.limiter.is_cooling(door, now_ms) {
+        if self.limiter.is_cooling(door, Lane::Card, now_ms) {
             return Err(Error::Rejected("door is cooling down"));
         }
         let r = (|| {
@@ -402,7 +461,7 @@ impl Checker {
             ))
         })();
         if r.is_err() {
-            self.limiter.record_rejection(door, now_ms);
+            self.limiter.record_rejection(door, Lane::Card, now_ms);
         }
         r
     }
@@ -432,11 +491,11 @@ impl Checker {
                     _ => return Err(Error::Rejected("card is no longer enrolled")),
                 }
                 let purpose = ch.purpose;
-                Ok(CardProgress::Done(self.issue(purpose.target(), now_unix)?))
+                Ok(CardProgress::Done(self.apply(purpose, now_unix)?))
             }
         })();
         if r.is_err() {
-            self.limiter.record_rejection(&door, now_ms);
+            self.limiter.record_rejection(&door, Lane::Card, now_ms);
         }
         r
     }
@@ -584,8 +643,8 @@ pub(crate) mod tests {
     fn seq_strictly_increases_and_floor_survives_a_rollback() {
         let mut c = checker();
         let mut last = c.current().seq;
-        for _ in 0..3 {
-            let req = es256_req(&mut c, Purpose::Night, INTENT, 0x31, 0);
+        for p in [Purpose::Night, Purpose::Away, Purpose::Night] {
+            let req = es256_req(&mut c, p, INTENT, 0x31, 0);
             let st = c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
             assert!(st.seq > last);
             last = st.seq;
@@ -683,29 +742,221 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn five_rejections_cool_the_door_and_not_another() {
+    fn five_rejections_cool_home_at_the_door_and_not_another() {
         let mut c = checker();
         for i in 0..5 {
             let req = es256_req(&mut c, Purpose::Night, INTENT, 0x99, i);
             assert!(c.command(&req, &S, &LAN_DOOR_ID, i, T0).is_err());
         }
         assert!(
-            c.issue_challenge(Purpose::Night, LAN_DOOR_ID, S, 10)
+            c.issue_challenge(Purpose::Home, LAN_DOOR_ID, S, 10)
                 .is_err(),
-            "cooling door issued"
+            "cooling door issued a home challenge"
         );
         assert!(
-            c.issue_challenge(Purpose::Night, [5; 16], S, 10).is_ok(),
+            c.issue_challenge(Purpose::Home, [5; 16], S, 10).is_ok(),
             "other door blocked"
         );
         assert!(c
             .issue_challenge(
-                Purpose::Night,
+                Purpose::Home,
                 LAN_DOOR_ID,
                 S,
                 10 + crate::ratelimit::COOLDOWN_MS
             )
             .is_ok());
+    }
+
+    #[test]
+    fn a_cooldown_never_blocks_away_or_night() {
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        for i in 0..5 {
+            let req = es256_req(&mut c, Purpose::Night, INTENT, 0x99, i);
+            assert!(c.command(&req, &S, &LAN_DOOR_ID, i, T0).is_err());
+        }
+        assert!(c.is_cooling(&LAN_DOOR_ID, Lane::Signature, 10));
+        // The household leaves: away and night still work while cooling...
+        let req = es256_req(&mut c, Purpose::Night, POSSESSION, 0x32, 10);
+        assert_eq!(
+            c.command(&req, &S, &LAN_DOOR_ID, 11, T0).unwrap().posture,
+            HouseholdPosture::Night
+        );
+        let req = es256_req(&mut c, Purpose::Away, INTENT, 0x31, 12);
+        assert_eq!(
+            c.command(&req, &S, &LAN_DOOR_ID, 13, T0).unwrap().posture,
+            HouseholdPosture::Away
+        );
+        // ...and home does not, even with a good intent credential.
+        assert!(c
+            .issue_challenge(Purpose::Home, LAN_DOOR_ID, S, 14)
+            .is_err());
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn a_stale_roster_refuses_home_and_nothing_else() {
+        let mut c = checker();
+        c.mark_roster_stale();
+        assert!(c.roster_is_stale());
+        assert!(c.issue_challenge(Purpose::Home, LAN_DOOR_ID, S, 0).is_err());
+        let req = es256_req(&mut c, Purpose::Night, INTENT, 0x31, 0);
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_ok());
+        // A home challenge issued before the roster went stale is refused
+        // when answered, and the refusal is not counted.
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.mark_roster_stale();
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_err());
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+        // A roster that verifies clears it.
+        let next = c.roster.successor().unwrap();
+        c.set_roster(next).unwrap();
+        assert!(!c.roster_is_stale());
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_ok());
+    }
+
+    #[test]
+    fn an_away_that_changes_nothing_publishes_nothing() {
+        let mut c = checker();
+        let before = c.current_bytes();
+        for p in [Purpose::Away, Purpose::Away] {
+            let req = es256_req(&mut c, p, INTENT, 0x31, 0);
+            let st = c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 600).unwrap();
+            assert_eq!(st.posture, HouseholdPosture::Away);
+        }
+        assert_eq!(c.current_bytes(), before, "a no-op away was published");
+        let req = es256_req(&mut c, Purpose::Night, INTENT, 0x31, 0);
+        let night = c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 600).unwrap();
+        let night_bytes = c.current_bytes();
+        let req = es256_req(&mut c, Purpose::Night, POSSESSION, 0x32, 0);
+        assert_eq!(
+            c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 1200).unwrap(),
+            night
+        );
+        assert_eq!(c.current_bytes(), night_bytes);
+        // Home is always reissued: that renews its lapse.
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        let h1 = c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 1200).unwrap();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        let h2 = c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 1800).unwrap();
+        assert!(h2.seq > h1.seq && h2.not_after > h1.not_after);
+    }
+
+    #[test]
+    fn every_refusal_runs_exactly_one_p256_verification() {
+        use crate::verify::ES256_RUNS;
+        let mut c = checker();
+        // An expired member, and a card handle.
+        let mut next = c.roster.successor().unwrap();
+        next.members
+            .push(phone(0x20, 0x34, CredentialClass::Intent));
+        for m in &mut next.members {
+            if m.handle == [0x20; 16] {
+                m.not_after = Some(T0);
+            }
+        }
+        next.sort();
+        c.set_roster(next).unwrap();
+        let fido_ad = |rp: &str, flags: u8| crate::verify::build_auth_data(rp, flags, 1);
+        // (what, handle byte, signing-key seed, authenticator data, accepted)
+        type Case = (&'static str, u8, u8, Option<Vec<u8>>, bool);
+        let cases: Vec<Case> = vec![
+            ("current es256", INTENT, 0x31, None, true),
+            ("wrong key", INTENT, 0x44, None, false),
+            ("unknown handle", 0x77, 0x31, None, false),
+            ("expired member", 0x20, 0x34, None, false),
+            ("card handle", CARD, 0x31, None, false),
+            (
+                "es256 member sent authenticator data",
+                INTENT,
+                0x31,
+                Some(fido_ad(RP, FLAG_UP | FLAG_UV)),
+                false,
+            ),
+            (
+                "fido2 member without authenticator data",
+                FIDO_UV,
+                0x33,
+                None,
+                false,
+            ),
+            (
+                "fido2 member, wrong rp",
+                FIDO_UV,
+                0x33,
+                Some(fido_ad("elsewhere.example", FLAG_UP | FLAG_UV)),
+                false,
+            ),
+            (
+                "fido2 intent member without UV",
+                FIDO_UV,
+                0x33,
+                Some(fido_ad(RP, FLAG_UP)),
+                false,
+            ),
+            (
+                "unparsable authenticator data",
+                FIDO_UV,
+                0x33,
+                Some(vec![1, 2, 3]),
+                false,
+            ),
+        ];
+        for (name, h, seed, ad, want) in cases {
+            let ch = c
+                .issue_challenge(Purpose::Night, LAN_DOOR_ID, S, 0)
+                .unwrap();
+            let signed = match &ad {
+                None => ch.msg.clone(),
+                Some(ad) => {
+                    let cdh: [u8; 32] = Sha256::digest(&ch.msg).into();
+                    crate::verify::fido2_signed_bytes(ad, &cdh)
+                }
+            };
+            let sig: p256::ecdsa::Signature = pkey(seed).sign(&signed);
+            let req = CommandRequest {
+                challenge_id: ch.id,
+                handle: [h; 16],
+                signature: sig.to_der().as_bytes().to_vec(),
+                authenticator_data: ad,
+            };
+            let before = ES256_RUNS.with(|r| r.get());
+            let ok = c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_ok();
+            let runs = ES256_RUNS.with(|r| r.get()) - before;
+            assert_eq!(ok, want, "{name}");
+            assert_eq!(runs, 1, "{name}: {runs} P-256 verifications");
+            // Keep the door out of cooldown (it would not change the count,
+            // but it keeps the cases independent).
+            c.limiter = DoorLimiter::new();
+        }
+    }
+
+    #[test]
+    fn home_lapses_when_the_hub_clock_steps_back() {
+        // Issued while the hub's clock ran a year fast; the clock is then
+        // corrected. The next tick replaces it with away.
+        let mut c = checker();
+        let ahead = T0 + 365 * 86_400;
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        let st = c.command(&req, &S, &LAN_DOOR_ID, 1, ahead).unwrap();
+        assert_eq!(st.posture, HouseholdPosture::Home);
+        c.tick(T0).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+        // And a witness with a correct clock never accepted it.
+        let b = st.sign(&c.posture_key);
+        assert_eq!(
+            posture::verify(&b, &[0xaa; 16], &c.posture_public_key(), None, Some(T0)),
+            Err(posture::Reject::FromFuture)
+        );
+        // A small step back inside the skew keeps a home that is current.
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        let st = c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        c.tick(st.issued_at - 60).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Home);
     }
 
     fn run_card(c: &mut Checker, purpose: Purpose, card: &mut CardSimulator) -> Result<Statement> {

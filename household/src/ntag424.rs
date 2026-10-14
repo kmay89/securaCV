@@ -72,17 +72,27 @@ pub const DEFAULT_KEY_NO: u8 = 0x00;
 /// An AES-128 card key, zeroized on drop.
 pub type CardKeyBytes = Zeroizing<[u8; 16]>;
 
+/// The IV of every AES-128-CBC operation in `AuthenticateEV2First`: sixteen
+/// zero bytes, fixed by the card's protocol (NXP AN12196 gives `IV = 0` for
+/// both authentication messages), so the hub cannot choose another and still
+/// talk to a real card. It is not a key and not a secret: secrecy comes from
+/// the card's own AES key, and freshness from `RndA` and `RndB`, which the
+/// two sides draw anew for every exchange (each message encrypts at most two
+/// blocks, the first of them fresh random bytes).
+// codeql[rust/hard-coded-cryptographic-value]
+const EV2_AUTH_IV: [u8; 16] = [0u8; 16];
+
 fn cbc_encrypt(key: &[u8; 16], buf: &mut [u8]) {
     let len = buf.len();
     debug_assert!(len.is_multiple_of(16));
-    let enc = cbc::Encryptor::<Aes128>::new(key.into(), &[0u8; 16].into());
+    let enc = cbc::Encryptor::<Aes128>::new(key.into(), &EV2_AUTH_IV.into());
     // NoPadding over a whole number of blocks cannot fail.
     let _ = enc.encrypt_padded::<NoPadding>(buf, len);
 }
 
 fn cbc_decrypt(key: &[u8; 16], buf: &mut [u8]) {
     debug_assert!(buf.len().is_multiple_of(16));
-    let dec = cbc::Decryptor::<Aes128>::new(key.into(), &[0u8; 16].into());
+    let dec = cbc::Decryptor::<Aes128>::new(key.into(), &EV2_AUTH_IV.into());
     let _ = dec.decrypt_padded::<NoPadding>(buf);
 }
 
@@ -443,6 +453,8 @@ mod tests {
     /// transcript, replayed through the state machine byte for byte.
     #[test]
     fn an12196_key0_full_transcript() {
+        // AN12196's published example key: all zero, not a secret.
+        // codeql[rust/hard-coded-cryptographic-value]
         let key = [0u8; 16];
         let rnd_a = h::<16>("13C5DB8A5930439FC3DEF9A4C675360F");
         let cands = vec![Candidate {
@@ -478,6 +490,8 @@ mod tests {
     /// AN12196 key-0x00 example: the decrypted RndB and both session vectors.
     #[test]
     fn an12196_key0_rnd_b_and_session_vectors() {
+        // AN12196's published example key: all zero, not a secret.
+        // codeql[rust/hard-coded-cryptographic-value]
         let key = [0u8; 16];
         let rnd_a = h::<16>("13C5DB8A5930439FC3DEF9A4C675360F");
         let (_, rnd_b) = part2_apdu(&key, &rnd_a, &h::<16>("A04C124213C186F22399D33AC2A30215"));
@@ -496,6 +510,8 @@ mod tests {
     /// response, TI, session vectors and session keys.
     #[test]
     fn an12196_key3_part2_ti_and_session_keys() {
+        // AN12196's published example key: all zero, not a secret.
+        // codeql[rust/hard-coded-cryptographic-value]
         let key = [0u8; 16];
         let rnd_a = h::<16>("B98F4C50CF1C2E084FD150E33992B048");
         let (apdu, rnd_b) = part2_apdu(&key, &rnd_a, &h::<16>("B875CEB0E66A6C5CD00898DC371F92D1"));
@@ -600,7 +616,7 @@ mod tests {
         let m2 = crate::wire::build_msg(crate::wire::Purpose::Night, &[7; 16], 3, &[9; 32]);
         assert_ne!(rnd_a_for(&m1), rnd_a_for(&m2));
         // A card response recorded under one challenge does not finish another.
-        let key = [0x51u8; 16];
+        let key: [u8; 16] = crate::rng::array().unwrap();
         let mut resp = [0u8; 32];
         resp[4..20].copy_from_slice(&rotl1(&rnd_a_for(&m1)));
         cbc_encrypt(&key, &mut resp);

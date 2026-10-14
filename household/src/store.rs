@@ -2,32 +2,43 @@
 //!
 //! ```text
 //! <data_dir>/                    0700
-//!   household.json               {"household": hex}            (immutable)
-//!   posture.key                  hub Ed25519 posture key, 32 raw bytes, 0600
-//!   roster.key                   hub Ed25519 roster key, 32 raw bytes, 0600
+//!   household.json               {"household": hex}            (immutable; written last at init)
+//!   hub_keys.json                the hub's two PUBLIC keys: posture (witnesses pin it) and roster
+//!   hub_keys.sealed              the hub's two signing keys, sealed under the KEK (see crate::secrets)
 //!   highwater.json               {"epoch", "digest"}: highest roster ever accepted
 //!   seq.json                     {"last_seq"}: last posture statement seq
 //!   roster/chain/<epoch>.json    every accepted signed roster, genesis first
 //!   pending/<digest>.json        proposals awaiting approval
 //!   bearers.json                 SHA-256 of each paired LAN bearer token
-//!   cards.sealed                 card keys, sealed (see crate::secrets)
+//!   cards.sealed                 card keys, sealed under the KEK (see crate::secrets)
 //!   household_posture.bin        THE OUTPUT SEAM: the current 112-byte statement
 //! ```
 //!
 //! Every write is atomic (temp file in the same directory, mode 0600, fsync,
-//! rename, fsync the directory). Every read is bounded. Nothing here records
-//! when a credential was used: there are no counters, no tap log and no
-//! per-member timestamps. The only timestamp kept is a proposal's
-//! `proposed_at` (an admin act, needed for the 24-hour rule), deleted when
-//! the proposal is applied.
+//! rename, fsync the directory). Every read is bounded.
 //!
-//! Exclude this directory from backups. A restored copy rolls the roster
-//! high-water mark back with it; v0 has no satellite to remember it (see the
-//! README's limitations).
+//! Nothing here records which credential was used: there are no counters,
+//! no tap log and no per-member timestamps. What the directory does say
+//! about time, in full:
+//!
+//! - the output seam holds the current statement only. Its `issued_at` and
+//!   `not_after`, and `seq.json`'s `last_seq` (whose value `>> 10` is that
+//!   minute), state the minute of the last posture change, and both files'
+//!   modification times state its second. That change was a command, a
+//!   lapse or a restart. It is the time of the last act, not a history;
+//! - a proposal's `proposed_at` (an admin act, needed for the 24-hour rule),
+//!   deleted when the proposal is applied.
+//!
+//! Exclude this directory from backups: v0 does not, and cannot, do it for
+//! you. A restored copy rolls the roster high-water mark back with it; v0 has
+//! no satellite to remember it (see the README's limitations). The KEK lives
+//! outside it, so a copy of the directory alone does not open the sealed
+//! files.
 
 use crate::admin::Approval;
 use crate::change::{self, HighWater, SignedRoster};
 use crate::roster::Roster;
+use crate::secrets::{HubKeys, Kek};
 use crate::{hex, rng, Error, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -111,7 +122,8 @@ fn write_json(path: &Path, v: &Value) -> Result<()> {
     write_atomic(path, &b)
 }
 
-fn mkdir_private(p: &Path) -> Result<()> {
+/// Create a directory (and its parents) with mode 0700.
+pub fn mkdir_private(p: &Path) -> Result<()> {
     let mut b = std::fs::DirBuilder::new();
     b.recursive(true);
     #[cfg(unix)]
@@ -175,9 +187,10 @@ pub struct DataDir {
 }
 
 impl DataDir {
-    /// Create a new data directory: household id, posture key, roster key.
+    /// Create a new data directory: household id and the hub's two keys,
+    /// sealed under `kek` (whose file must live outside the directory).
     /// Refuses a directory that already holds a household.
-    pub fn create(root: &Path) -> Result<DataDir> {
+    pub fn create(root: &Path, kek: &Kek) -> Result<DataDir> {
         mkdir_private(root)?;
         let d = DataDir {
             root: root.to_path_buf(),
@@ -190,12 +203,18 @@ impl DataDir {
         mkdir_private(&d.path("roster/chain"))?;
         mkdir_private(&d.path("pending"))?;
         let household: [u8; 16] = rng::array()?;
-        let pk = Zeroizing::new(rng::array::<32>()?);
-        write_atomic(&d.path("posture.key"), &pk[..])?;
-        let rk = Zeroizing::new(rng::array::<32>()?);
-        write_atomic(&d.path("roster.key"), &rk[..])?;
+        let keys = HubKeys::generate()?;
+        write_atomic(&d.path("hub_keys.sealed"), &keys.seal(kek, &household)?)?;
+        write_json(
+            &d.path("hub_keys.json"),
+            &json!({
+                "posture_public_key": hex::encode(&keys.posture.verifying_key().to_bytes()),
+                "roster_public_key": hex::encode(&keys.roster.verifying_key().to_bytes()),
+            }),
+        )?;
         write_json(&d.path("seq.json"), &json!({"last_seq": 0}))?;
         write_json(&d.path("bearers.json"), &json!({"tokens": []}))?;
+        // Last: a directory without household.json is an unfinished init.
         write_json(
             &d.path("household.json"),
             &json!({"household": hex::encode(&household)}),
@@ -246,23 +265,45 @@ impl DataDir {
         )
     }
 
-    fn key(&self, name: &str) -> Result<ed25519_dalek::SigningKey> {
-        let b = Zeroizing::new(read_bounded(&self.path(name), 32)?);
-        let a: [u8; 32] = b[..]
-            .try_into()
-            .map_err(|_| Error::Invalid("a hub key file is not 32 bytes"))?;
-        let a = Zeroizing::new(a);
-        Ok(ed25519_dalek::SigningKey::from_bytes(&a))
+    fn public_key(&self, field: &str) -> Result<ed25519_dalek::VerifyingKey> {
+        let v = read_json(&self.path("hub_keys.json"))?;
+        let b: [u8; 32] = hex::decode_array(
+            v[field]
+                .as_str()
+                .ok_or(Error::Invalid("hub_keys.json is missing a key"))?,
+        )?;
+        ed25519_dalek::VerifyingKey::from_bytes(&b)
+            .map_err(|_| Error::Invalid("hub_keys.json holds an invalid key"))
     }
 
-    /// The hub posture key.
-    pub fn posture_key(&self) -> Result<ed25519_dalek::SigningKey> {
-        self.key("posture.key")
+    /// The hub posture public key witnesses pin (no KEK needed).
+    pub fn posture_public_key(&self) -> Result<ed25519_dalek::VerifyingKey> {
+        self.public_key("posture_public_key")
     }
 
-    /// The hub roster key.
-    pub fn roster_key(&self) -> Result<ed25519_dalek::SigningKey> {
-        self.key("roster.key")
+    /// The hub roster public key the chain is checked against (no KEK
+    /// needed).
+    pub fn roster_public_key(&self) -> Result<ed25519_dalek::VerifyingKey> {
+        self.public_key("roster_public_key")
+    }
+
+    /// Open the hub's signing keys with `kek`. Refuses a KEK that does not
+    /// open them (so this is also the check that a KEK belongs to this
+    /// household), and keys whose public halves differ from `hub_keys.json`.
+    pub fn hub_keys(&self, kek: &Kek) -> Result<HubKeys> {
+        let b = read_bounded(
+            &self.path("hub_keys.sealed"),
+            crate::secrets::MAX_SEALED_BYTES,
+        )?;
+        let keys = HubKeys::open(&b, kek, &self.household()?)?;
+        if keys.posture.verifying_key() != self.posture_public_key()?
+            || keys.roster.verifying_key() != self.roster_public_key()?
+        {
+            return Err(Error::Rejected(
+                "the sealed hub keys do not match hub_keys.json",
+            ));
+        }
+        Ok(keys)
     }
 
     /// The last posture statement seq.
@@ -348,7 +389,7 @@ impl DataDir {
             }
             return Ok(None);
         }
-        let hub = self.roster_key()?.verifying_key();
+        let hub = self.roster_public_key()?;
         let r = change::verify_chain(&chain, &hub)?.clone();
         self.raise_high_water(&r)?;
         Ok(Some(r))
@@ -358,12 +399,13 @@ impl DataDir {
     /// signature, chain file, high-water mark.
     pub fn accept(
         &self,
+        keys: &HubKeys,
         roster: Roster,
         approvals: Vec<Approval>,
         holder_proof: Option<Approval>,
     ) -> Result<SignedRoster> {
         let digest = roster.digest()?;
-        let hub_sig = crate::admin::hub_sign(&self.roster_key()?, &digest);
+        let hub_sig = crate::admin::hub_sign(&keys.roster, &digest);
         let s = SignedRoster {
             roster,
             approvals,
@@ -493,21 +535,47 @@ pub(crate) mod tests {
         ))
     }
 
+    pub fn kek() -> Kek {
+        Kek::generate().unwrap()
+    }
+
     #[test]
     fn create_open_and_keys() {
         let p = tmpdir("store");
-        let d = DataDir::create(&p).unwrap();
-        assert!(DataDir::create(&p).is_err(), "second create accepted");
+        let k = kek();
+        let d = DataDir::create(&p, &k).unwrap();
+        assert!(DataDir::create(&p, &k).is_err(), "second create accepted");
         let d2 = DataDir::open(&p).unwrap();
         assert_eq!(d.household().unwrap(), d2.household().unwrap());
-        assert_ne!(
-            d.posture_key().unwrap().to_bytes(),
-            d.roster_key().unwrap().to_bytes()
+        let keys = d.hub_keys(&k).unwrap();
+        assert_ne!(keys.posture.to_bytes(), keys.roster.to_bytes());
+        assert_eq!(
+            keys.posture.verifying_key(),
+            d.posture_public_key().unwrap()
         );
+        // No plaintext secret key anywhere in the directory.
+        for e in std::fs::read_dir(&p).unwrap() {
+            let path = e.unwrap().path();
+            if path.is_file() {
+                let b = std::fs::read(&path).unwrap();
+                for secret in [keys.posture.as_bytes(), keys.roster.as_bytes()] {
+                    assert!(!b.windows(32).any(|w| w == secret), "{path:?}");
+                    let hx = hex::encode(secret);
+                    assert!(!String::from_utf8_lossy(&b).contains(&hx), "{path:?}");
+                }
+            }
+        }
+        // Another KEK does not open them.
+        assert!(d.hub_keys(&kek()).is_err());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            for f in ["posture.key", "roster.key", "household.json", "seq.json"] {
+            for f in [
+                "hub_keys.sealed",
+                "hub_keys.json",
+                "household.json",
+                "seq.json",
+            ] {
                 let m = std::fs::metadata(d.path(f)).unwrap().permissions().mode();
                 assert_eq!(m & 0o777, 0o600, "{f}");
             }
@@ -521,9 +589,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn swapped_public_keys_are_refused() {
+        let p = tmpdir("swap");
+        let k = kek();
+        let d = DataDir::create(&p, &k).unwrap();
+        let other = HubKeys::generate().unwrap();
+        write_json(
+            &d.path("hub_keys.json"),
+            &json!({
+                "posture_public_key": hex::encode(&other.posture.verifying_key().to_bytes()),
+                "roster_public_key": hex::encode(&other.roster.verifying_key().to_bytes()),
+            }),
+        )
+        .unwrap();
+        assert!(d.hub_keys(&k).is_err(), "mismatched public record accepted");
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[test]
     fn bearer_list_is_capped_and_resettable() {
         let p = tmpdir("bearer-cap");
-        let d = DataDir::create(&p).unwrap();
+        let d = DataDir::create(&p, &kek()).unwrap();
         for _ in 0..MAX_BEARERS {
             d.add_bearer().unwrap();
         }
@@ -538,7 +624,7 @@ pub(crate) mod tests {
     #[test]
     fn bearer_tokens_are_stored_hashed() {
         let p = tmpdir("bearer");
-        let d = DataDir::create(&p).unwrap();
+        let d = DataDir::create(&p, &kek()).unwrap();
         let t = d.add_bearer().unwrap();
         let file = std::fs::read_to_string(d.path("bearers.json")).unwrap();
         assert!(!file.contains(t.as_str()));
@@ -565,20 +651,22 @@ pub(crate) mod tests {
         use crate::roster::tests::{ed_admin, phone};
         use crate::roster::CredentialClass;
         let p = tmpdir("rollback");
-        let d = DataDir::create(&p).unwrap();
+        let k = kek();
+        let d = DataDir::create(&p, &k).unwrap();
+        let hub = d.hub_keys(&k).unwrap();
         let key = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
         let g = Roster::genesis(d.household().unwrap(), vec![ed_admin(1, 1)], 1).unwrap();
         let a = vec![sign_cli(&key, &[1; 16], &g.digest().unwrap())];
-        d.accept(g.clone(), a, None).unwrap();
+        d.accept(&hub, g.clone(), a, None).unwrap();
         let mut n = g.successor().unwrap();
         n.members.push(phone(0x10, 0x31, CredentialClass::Intent));
         let a = vec![sign_cli(&key, &[1; 16], &n.digest().unwrap())];
-        d.accept(n.clone(), a, None).unwrap();
+        d.accept(&hub, n.clone(), a, None).unwrap();
         assert_eq!(d.current_roster().unwrap().unwrap(), n);
         assert_eq!(d.high_water().unwrap().unwrap().epoch, 2);
         // Re-accepting epoch 1 is refused.
         let a = vec![sign_cli(&key, &[1; 16], &g.digest().unwrap())];
-        assert!(d.accept(g, a, None).is_err());
+        assert!(d.accept(&hub, g, a, None).is_err());
         // Restoring an older chain (deleting epoch 2) is refused at load.
         std::fs::remove_file(d.chain_path(2)).unwrap();
         assert!(d.current_roster().is_err(), "rolled-back chain loaded");
@@ -596,11 +684,13 @@ pub(crate) mod tests {
         use crate::admin::sign_cli;
         use crate::roster::tests::ed_admin;
         let p = tmpdir("tamper");
-        let d = DataDir::create(&p).unwrap();
+        let k = kek();
+        let d = DataDir::create(&p, &k).unwrap();
+        let hub = d.hub_keys(&k).unwrap();
         let key = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
         let g = Roster::genesis(d.household().unwrap(), vec![ed_admin(1, 1)], 1).unwrap();
         let a = vec![sign_cli(&key, &[1; 16], &g.digest().unwrap())];
-        d.accept(g, a, None).unwrap();
+        d.accept(&hub, g, a, None).unwrap();
         let path = d.chain_path(1);
         let text = std::fs::read_to_string(&path).unwrap();
         // Add insignificant whitespace to the stored JSON.

@@ -15,9 +15,23 @@ pub fn fill(buf: &mut [u8]) -> Result<()> {
 }
 
 /// An array of `N` bytes from the OS random number generator.
+///
+/// Built byte by byte from OS draws, never as a zeroed buffer filled
+/// afterwards, so no all-zero array exists on any path that leads to a key
+/// or a nonce (the shape `rust/hard-coded-cryptographic-value` flags; the
+/// kernel's `vault::crypto::random_bytes` does the same).
 pub fn array<const N: usize>() -> Result<[u8; N]> {
-    let mut out = [0u8; N];
-    fill(&mut out)?;
+    let mut failed = false;
+    let out: [u8; N] = std::array::from_fn(|_| match SysRng.try_next_u32() {
+        Ok(v) => v.to_le_bytes()[0],
+        Err(_) => {
+            failed = true;
+            u8::MAX
+        }
+    });
+    if failed {
+        return Err(Error::Rng);
+    }
     Ok(out)
 }
 
