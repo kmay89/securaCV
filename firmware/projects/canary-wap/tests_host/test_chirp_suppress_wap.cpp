@@ -63,6 +63,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -151,6 +152,19 @@ int g_checks = 0;
                    __LINE__, (unsigned)(sec), #c);                                       \
       std::exit(1);                                                                      \
     }                                                                                    \
+  } while (0)
+
+// The same, naming the filter scene: where in uptime the nonce went in, the
+// traffic pattern, and how long after it went in the lookup was.
+#define CHECK_HELD(off, pattern, after, c)                                                   \
+  do {                                                                                       \
+    ++g_checks;                                                                              \
+    if (!(c)) {                                                                              \
+      std::fprintf(stderr, "FAIL %s:%d (in at %u ms after boot, pattern %d, looked up %u ms " \
+                   "later): %s\n", __FILE__, __LINE__, (unsigned)(off), (int)(pattern),       \
+                   (unsigned)(after), #c);                                                   \
+      std::exit(1);                                                                          \
+    }                                                                                        \
   } while (0)
 
 namespace cc = chirp_channel;
@@ -813,6 +827,72 @@ void test_a_suppressed_chirp_stops_at_once() {
   }
 }
 
+// The suppressed row is the one that leaves, wherever it sits: five chirps
+// from five originators, held in arrival order, and the middle one
+// suppressed at 3 rows. The other four stay, once each and in their order,
+// the slot the table no longer uses is zeroed, the route lists the four, a
+// confirmation still validates and relays the row that moved into the hole,
+// and a new chirp is stored after them. The cases above suppress the only or
+// the last row, where dropping the last row whatever was voted down, or
+// moving the last row into the hole, looks the same as dropping the right one
+// (F269's review: both passed every Chirp suite).
+void test_a_suppressed_row_leaves_its_neighbors_in_order() {
+  boot_enabled();
+  const std::vector<Neighbor> nearby = fill_nearby(3);
+  std::vector<std::vector<uint8_t>> nonces;
+  for (uint8_t i = 0; i < 5; ++i) {
+    const Neighbor o = neighbor_of((uint8_t)(0xD0 + i));
+    host_sim::now_ms += 1000;
+    const std::vector<uint8_t> w = witness_of(o, (uint8_t)(0x30 + i));
+    deliver(o, w);
+    nonces.emplace_back(w.begin() + offsetof(cc::ChirpHeader, nonce),
+                        w.begin() + offsetof(cc::ChirpHeader, nonce) + 8);
+  }
+  CHECK(cc::g_recent_chirp_count == 5);
+  for (size_t i = 0; i < 5; ++i) CHECK(memcmp(cc::g_recent_chirps[i].nonce, nonces[i].data(), 8) == 0);
+
+  host_sim::now_ms += 1000;
+  for (size_t v = 0; v < 3; ++v) deliver(nearby[v], vote_of(nearby[v], nonces[2].data()));
+  CHECK(!table_holds(nonces[2].data()));
+  CHECK(cc::g_recent_chirp_count == 4);
+  const size_t kept[] = {0, 1, 3, 4};
+  for (size_t j = 0; j < 4; ++j) {
+    const uint8_t* n = nonces[kept[j]].data();
+    CHECK(memcmp(cc::g_recent_chirps[j].nonce, n, 8) == 0);   // in arrival order
+    CHECK(rows_holding(n) == 1);
+    CHECK(cc::g_recent_chirps[j].suppress_count == 0);
+  }
+  static const uint8_t kZero[sizeof(cc::ReceivedChirp)] = {};
+  CHECK(memcmp(&cc::g_recent_chirps[4], kZero, sizeof kZero) == 0);
+
+  cc::update();
+  cc::RecentTable t;
+  memset(&t, 0xA5, sizeof t);
+  cc::read_recent(&t);
+  CHECK(t.count == 4);
+  for (size_t j = 0; j < 4; ++j) CHECK(memcmp(t.chirps[j].nonce, nonces[kept[j]].data(), 8) == 0);
+
+  // Two rows confirm the chirp now in the hole (infrastructure: two
+  // validate it, spec §3.4): it is validated and relayed at hop 1.
+  const size_t before = host_sim::espnow->sent.size();
+  deliver(nearby[0], confirm_of(nearby[0], nonces[3].data()));
+  deliver(nearby[1], confirm_of(nearby[1], nonces[3].data()));
+  CHECK(cc::g_recent_chirps[2].validated && cc::g_recent_chirps[2].relayed);
+  CHECK(sent_of_type(before, cc::CHIRP_MSG_WITNESS, /*relays_only=*/true) == 1);
+  const cc::ChirpHeader* h =
+      reinterpret_cast<const cc::ChirpHeader*>(host_sim::espnow->sent.back().bytes.data());
+  CHECK(h->hop_count == 1 && memcmp(h->nonce, nonces[3].data(), 8) == 0);
+  for (size_t j : {0u, 1u, 3u}) CHECK(!cc::g_recent_chirps[j].validated);
+
+  // A new chirp is stored after the four.
+  const Neighbor late = neighbor_of(0xD5);
+  host_sim::now_ms += 1000;
+  const std::vector<uint8_t> w = witness_of(late, 0x35);
+  deliver(late, w);
+  CHECK(cc::g_recent_chirp_count == 5);
+  CHECK(memcmp(cc::g_recent_chirps[4].nonce, w.data() + offsetof(cc::ChirpHeader, nonce), 8) == 0);
+}
+
 // ── One nonce, one chirp (sweep F270) ────────────────────────────────────
 
 // The item's probe, the wall clock moving with uptime: a chirp heard 250 s
@@ -876,8 +956,9 @@ void test_a_suppressed_chirp_is_not_stored_again() {
 // whole second and the wall clock's seconds starting 1 ms before the uptime
 // clock's. Then the frame is heard again at the last millisecond the window
 // takes it: refused, every time. A half of 330 s (no second's margin) fails
-// here, at a frame heard at 329.999 s; the old filter, cleared whole past
-// every 300 s, at one heard at 300.999 s.
+// here, at a frame heard at 329.999 s; the old filter, cleared whole at the
+// first lookup 300 s or more after its last clearing, fails at every offset,
+// from the first (heard 0.999 s after boot).
 void test_a_nonce_outlives_the_freshness_window() {
   const time_t w0 = 1760000000;
   for (uint32_t k = 1; k <= 700; ++k) {
@@ -939,6 +1020,136 @@ void test_a_held_chirp_takes_no_second_row() {
   CHECK(recent_route_shows(nonce) == 0);
 }
 
+// ── How long the filter holds a nonce (sweep F270, spec §5.3) ───────────
+
+// An 8-byte nonce no frame in this file carries, numbered.
+void filter_nonce(uint32_t id, uint8_t out[8]) {
+  out[0] = 0xF1;
+  out[1] = 0x7E;
+  memcpy(out + 2, &id, sizeof id);
+  out[6] = (uint8_t)(id * 7u);
+  out[7] = 0x5A;
+}
+
+// The filter finds a nonce at every lookup up to NONCE_FILTER_HALF_MS
+// (331 s) after it went in and at none from twice that (662 s) on, however
+// sparse or busy the lookups between, and once it has forgotten a nonce it
+// does not find it again. Each scene boots the receiver, puts one nonce in
+// at an offset from boot across three halves (slot edges included, with no
+// lookup before it, so an insert past a due turn must take that turn
+// itself), then looks it up at each delay of one pattern, each lookup
+// turning the halves as a witness's would. The patterns: one lookup at a
+// half; one at two halves; one a half and a millisecond in, then two halves
+// (the turn taken a whole half late); one a millisecond short of a half,
+// then two halves; one a millisecond short of two halves, then two halves;
+// one every 81 s to past two halves; and 1 ms, a half, a half and 1 ms, two
+// halves less 1 ms and two halves. The turn was dated when it was taken, so
+// the third pattern found a nonce put in at a half's start 662 s later, and
+// up to 993 s with sparser frames (F270's review); a turn that cleared
+// nothing, a lookup or an insert that took no turn, and a long gap that
+// cleared only one half each fail here too.
+void test_the_filter_holds_a_nonce_one_half_to_two() {
+  const uint32_t H = cc::NONCE_FILTER_HALF_MS;
+  const uint32_t offsets[] = {0,         1,     999,       H / 2,     H - 1,         H,
+                              H + 1,     2 * H - 1, 2 * H, 2 * H + 1, 5 * H / 2,     3 * H - 1};
+  std::vector<std::vector<uint32_t>> patterns = {
+      {H},
+      {2 * H},
+      {H + 1, 2 * H},
+      {H - 1, 2 * H},
+      {2 * H - 1, 2 * H},
+      {},
+      {1, H, H + 1, 2 * H - 1, 2 * H},
+  };
+  for (uint32_t d = 81000; d <= 2 * H + 81000; d += 81000) patterns[5].push_back(d);
+  uint32_t id = 0;
+  for (const uint32_t off : offsets) {
+    for (size_t p = 0; p < patterns.size(); ++p) {
+      const uint32_t t0 = boot_enabled();
+      uint8_t n[8];
+      filter_nonce(++id, n);
+      host_sim::now_ms = t0 + off;
+      cc::cache_nonce(n);   // the frame's insert, the first filter call since boot
+      bool forgotten = false;
+      for (const uint32_t after : patterns[p]) {
+        host_sim::now_ms = t0 + off + after;
+        const bool found = cc::is_nonce_seen(n);
+        if (after <= H) CHECK_HELD(off, p, after, found);              // held a half
+        if (after >= 2 * H) CHECK_HELD(off, p, after, !found);         // gone at two
+        if (forgotten) CHECK_HELD(off, p, after, !found);              // and stays gone
+        forgotten = forgotten || !found;
+      }
+    }
+  }
+}
+
+// The loop's pass turns the halves too, on or off, so a channel that hears
+// no witness for 49.7 days still forgets on time across uptime's wrap: a
+// nonce put in just after boot is gone at a lookup 2^32 ms and 20 s later,
+// which, by itself, reads 20 s since the last turn it knows of. The passes
+// run every 30 s here; the loop's run far more often.
+void test_the_filter_turns_on_a_quiet_channel() {
+  for (const bool on : {true, false}) {
+    const uint32_t t0 = boot_enabled();
+    if (!on) cc::disable();
+    uint8_t n[8];
+    filter_nonce(on ? 0xA11CEu : 0xB0B0u, n);
+    cc::cache_nonce(n);
+    uint64_t elapsed = 0;
+    while (elapsed < (1ull << 32)) {
+      elapsed += 30000;
+      host_sim::now_ms = t0 + (uint32_t)elapsed;
+      cc::update();
+    }
+    host_sim::now_ms = t0 + 20000;   // 2^32 ms + 20 s after it went in
+    CHECK(cc::is_enabled() == on);
+    CHECK(!cc::is_nonce_seen(n));
+  }
+}
+
+// Under steady traffic the filter keeps forgetting: a witness's lookup and
+// insert every 81 ms for five halves (4,096 nonces a half, the most spec
+// §5.3 sizes for), the nonces random as a sender's are, then 2,000 nonces
+// never heard. Spec §5.3 puts a half's false-positive rate at 4,096 nonces
+// near 2.4 % and a lookup reads both halves, so up to about twice that: at
+// most 4.8 % of the flood's own lookups after its first two halves may come
+// back as repeats, and of the 2,000, looked up with both halves full (4.7 %
+// expected), at most 6 %, room for the sample. A filter whose turns cleared
+// nothing kept the whole flood and took about four new nonces in ten for
+// repeats (F270's review).
+void test_the_filter_forgets_under_steady_traffic() {
+  const uint32_t t0 = boot_enabled();
+  const uint32_t H = cc::NONCE_FILTER_HALF_MS;
+  std::mt19937 rng(270);
+  const auto random_nonce = [&rng](uint8_t out[8]) {
+    for (int i = 0; i < 8; ++i) out[i] = (uint8_t)rng();
+  };
+  size_t late_lookups = 0;
+  size_t late_repeats = 0;
+  for (uint32_t at = 0; at < 5 * H; at += 81) {
+    host_sim::now_ms = t0 + at;
+    uint8_t n[8];
+    random_nonce(n);
+    const bool seen = cc::is_nonce_seen(n);
+    if (at >= 2 * H) {
+      ++late_lookups;
+      late_repeats += seen ? 1 : 0;
+    }
+    cc::cache_nonce(n);
+  }
+  size_t repeats = 0;
+  for (int i = 0; i < 2000; ++i) {
+    uint8_t n[8];
+    random_nonce(n);
+    repeats += cc::is_nonce_seen(n) ? 1 : 0;
+  }
+  std::printf("  steady traffic: %zu of %zu flood lookups and %zu of 2000 new nonces read as repeats\n",
+              late_repeats, late_lookups, repeats);
+  CHECK(late_lookups > 12000);
+  CHECK(late_repeats * 1000 <= late_lookups * 48);
+  CHECK(repeats <= 120);
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -956,6 +1167,11 @@ const Test kTests[] = {
     {"a_suppressed_chirp_is_not_stored_again", test_a_suppressed_chirp_is_not_stored_again},
     {"a_nonce_outlives_the_freshness_window", test_a_nonce_outlives_the_freshness_window},
     {"a_held_chirp_takes_no_second_row", test_a_held_chirp_takes_no_second_row},
+    {"a_suppressed_row_leaves_its_neighbors_in_order",
+     test_a_suppressed_row_leaves_its_neighbors_in_order},
+    {"the_filter_holds_a_nonce_one_half_to_two", test_the_filter_holds_a_nonce_one_half_to_two},
+    {"the_filter_turns_on_a_quiet_channel", test_the_filter_turns_on_a_quiet_channel},
+    {"the_filter_forgets_under_steady_traffic", test_the_filter_forgets_under_steady_traffic},
 };
 
 }  // namespace chirp_suppress

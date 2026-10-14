@@ -105,17 +105,23 @@ static size_t g_nearby_count = 0;
 // stored a second time while still fresh, and a community-suppressed chirp
 // came back unsuppressed with no votes (sweep F270).
 //
-// Now a nonce goes into the current half, and every NONCE_FILTER_HALF_MS
-// (331 s) the older half is cleared and becomes current; a lookup reads
-// both. A nonce is held from the moment it goes in until the half it went
-// into is cleared: at least NONCE_FILTER_HALF_MS, at most twice that. That
-// is longer than any frame stays fresh (a timestamp up to 30 s ahead and up
-// to 300 s behind the wall clock: 330 s from the earliest moment it is
-// accepted, mesh_network.h), so a fresh frame's nonce is never forgotten.
-// The halves turn when a witness's lookup finds the current one due, which
-// can only lengthen how long a nonce is held; when both are due (no turn for
-// two halves' time) both are cleared, as every nonce in them went in more
-// than a half ago by then (an insert always turns a due half first).
+// Now time since init() is cut into NONCE_FILTER_HALF_MS (331 s) slots, a
+// nonce goes into the half of the slot it is heard in, and at each slot's
+// start the older half is cleared and becomes current; a lookup reads both.
+// So a nonce heard at t in the slot that started at s is found by every
+// lookup before s + 2 * NONCE_FILTER_HALF_MS and by none from then on: more
+// than NONCE_FILTER_HALF_MS after t, and at most twice that. That is longer
+// than any frame stays fresh (a timestamp up to 30 s ahead and up to 300 s
+// behind the wall clock: 330 s from the earliest moment it is accepted,
+// mesh_network.h), so a fresh frame's nonce is never forgotten.
+// The halves turn at the first lookup, insert or loop pass (update()) past
+// a slot's start, and the turn is dated at that start, not then, so how
+// sparse the frames are changes nothing: dated when it was taken, a turn a
+// whole half late kept a nonce findable for up to three halves, 993 s, and
+// the bound above was false (F270's review). When both halves' slots are
+// past, both are cleared. update()'s turn keeps a due turn from waiting a
+// whole uptime wrap (49.7 days) on a quiet channel, where a gap of 2^32 ms
+// would read as no time at all.
 //
 // Sizing, per half: m = 32768 bits (4 KB), k = 4 hashes; 8 KB in all,
 // allocated once in PSRAM (the filter was 4 KB). With n nonces in a half,
@@ -131,7 +137,7 @@ static const size_t BLOOM_BYTES = BLOOM_BITS / 8;   // per half
 static const uint8_t BLOOM_HASHES = 4;
 static uint8_t* g_bloom = nullptr;                  // two halves, 2 * BLOOM_BYTES
 static uint8_t g_bloom_current = 0;                 // the half new nonces go into
-static uint32_t g_bloom_turned_ms = 0;              // when that half became current
+static uint32_t g_bloom_turned_ms = 0;              // the start of that half's slot
 
 // Per-pubkey rate-limit tracking (audit C14).
 // LRU of recently-originating pubkeys with a sliding-hour witness count.
@@ -522,20 +528,21 @@ static uint32_t bloom_hash(const uint8_t* nonce, uint32_t salt) {
 
 static uint8_t* bloom_half(uint8_t which) { return g_bloom + (size_t)which * BLOOM_BYTES; }
 
-// Turns the halves when the current one has been current for
-// NONCE_FILTER_HALF_MS: the older half is cleared and takes the new nonces
-// (sweep F270; it cleared the one filter whole every CHIRP_TTL_MS).
+// Turns the halves once the current one's slot has ended: the older half is
+// cleared and takes the new nonces, and the new slot starts where the last
+// one ended, not now (sweep F270; it cleared the one filter whole every
+// CHIRP_TTL_MS). Called before every lookup and insert, and by update().
 static void bloom_turn_if_due() {
-  const uint32_t now = millis();
-  const uint32_t since = now - g_bloom_turned_ms;
+  if (!g_bloom) return;
+  const uint32_t since = millis() - g_bloom_turned_ms;
   if (since < NONCE_FILTER_HALF_MS) return;
   if (since >= 2 * NONCE_FILTER_HALF_MS) {
-    memset(g_bloom, 0, 2 * BLOOM_BYTES);   // both halves are past
+    memset(g_bloom, 0, 2 * BLOOM_BYTES);   // both halves' slots are past
   } else {
     g_bloom_current ^= 1;
     memset(bloom_half(g_bloom_current), 0, BLOOM_BYTES);
   }
-  g_bloom_turned_ms = now;
+  g_bloom_turned_ms += since - since % NONCE_FILTER_HALF_MS;
 }
 
 static bool bloom_half_has(const uint8_t* half, const uint8_t* nonce) {
@@ -1528,6 +1535,9 @@ void update() {
   // The owner's commands first, and before the early return below: a
   // disabled channel still runs CHIRP_CMD_ENABLE (sweep F111).
   g_commands.drain(run_command);
+  // The nonce filter turns at every pass, on or off, so a quiet channel's
+  // due turn never waits for uptime to wrap (sweep F270's review).
+  bloom_turn_if_due();
 
   if (g_state == CHIRP_DISABLED) {
     publish_view();
