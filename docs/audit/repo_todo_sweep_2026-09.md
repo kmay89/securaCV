@@ -1166,8 +1166,31 @@ so — see D2 below.)
   dashboard's canary gate row had read ✅ before any canary code existed; it
   reads ⚠️ until the U1 bench pass (one tap → one receipt, a second GET → 403)
   (#1704). Carrying over the WAP's session-cookie model, so a LAN reload stops
-  needing a tap, is a Phase 6 follow-up. Next: gap #10 (`hardware_state` safe
-  mode), then the unstarted phases.
+  needing a tap, is a Phase 6 follow-up.
+  *Partly done (#1802), gap #10 reconciled (slice a; option "⚠️ with what is
+  missing", maintainer to confirm):* `firmware/canary/CONSOLIDATION.md`'s row
+  reads ⚠️, as `FEATURES.md`'s Hardware state row has since
+  `common/health/boot_guard.h` landed: an NVS count of boots that never
+  reached healthy (a power-on reset does not count), started over by a
+  different image (an OTA install, a rollback, a re-flash; images are told
+  apart by `app_elf_sha256`, so two builds that both leave it zero look like
+  one image), and at 4 such boots a serial safe-mode console (never for an
+  image still pending OTA confirmation: the bootloader's rollback owns that
+  case) that brings nothing else up until the owner clears it (serial `c` then
+  `y`, or BOOT held 2 s); host-tested
+  (`firmware/tests_host/test_boot_policy.cpp`, `test_boot_guard.cpp`),
+  CI-compiled, no bench pass. The row names what is still missing against the
+  canary-wap's `hardware_state.h`: per-peripheral state (its GPS state machine
+  and camera present/standby record in one `HardwareState`) and its degraded
+  safe mode (optional peripherals off while the core witness runs, bounded
+  automatic recovery reboots, `POST /api/safe-mode/retry`); the SD three-state
+  is already ported (`securacv_storage`'s mount worker, `storage_sd_state()`).
+  Docs only. Rejected: ✅ (most of `hardware_state.h` is not ported) and
+  leaving ❌ (it contradicted FEATURES.md's Hardware state row and the code).
+  Not taken: the rest of that port, the other per-gap ports and Phase 8. Next:
+  the two Low-complexity rows still at ❌, #12 (audible chirp) and #14 (system
+  monitor), then #15 (log acknowledgment and categories, Medium, already
+  partial), then the unstarted phases.
 - [ ] **F21 [code] canary-wap enterprise readiness** —
   `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md`. §1
   (security/privacy) is done. Reconciled in #1704: every tick carries its
@@ -1419,6 +1442,81 @@ so — see D2 below.)
   advert cannot win the window (it needs the advert payload passed into
   `ble_scout_on_advert()`, which today takes only MAC, RSSI and time). The
   WAP carries the same pairing module and could adopt the route after.
+  *Partly done (#1802), the payload-filter half; option "only the fleet's own
+  formats", maintainer to confirm:* the Scout's proximity pairing window no
+  longer offers an advert in the fleet's own formats.
+  `ble_scout_advert_kind.h` (a pure header, committed byte-identically in
+  `firmware/canary/lib/securacv_ble_scan/src/` and the canary-wap sketch
+  folder, and in `check_ble_scan_sync.sh`'s BYTE_FILES) classifies an advert's
+  manufacturer data as a presence beacon (company 0xFFFF, type 0x10, 11 or 13
+  bytes; the version byte is not read, so a newer schema at either length is
+  still refused) or a Chirp (company 0xFFFF, 17 bytes, type 0x01..0x05).
+  `ble_scout_on_advert()` gains an `offerable` flag and hands
+  `pairing::offer()` only offerable adverts from unpaired devices; tracking a
+  paired device never reads it. Both trees' scan callbacks read the
+  manufacturer data once and pass `advert_kind::offerable()` (the canary's
+  fleet roster feed reuses the same read); the canary-wap has no pairing
+  route, and its copies match the canary's after the sync script's
+  normalization. Not excluded (a choice): any advert without fleet-format
+  manufacturer data, a Canary's included. Read from the source, a Canary sends
+  one in at least these cases: a canary-wap DEV-profile build's Bluetooth
+  channel advert (`bluetooth_channel.cpp`'s `SERVICE_UUID`; that profile has
+  no Opera beacon), the legacy service-UUID advert the beacon code falls back
+  to when its advert data is refused (`securacv_ble_status.cpp` in the canary;
+  `ble_opera.h`, and `ble_chirp.h`'s restore with Opera compiled out, in the
+  canary-wap), and a Sense or Vision Improv setup door's flags-and-name advert
+  when no beacon was handed to it (`common/network/improv_ble.cpp`). In a FULL
+  canary-wap the Opera beacon takes the primary advert and the service UUIDs
+  ride the scan response, which the passive Scout (`setActiveScan(false)`)
+  never requests. Rejected: a service-UUID rule (it would copy UUID strings
+  from canary-wap-only headers into the canary tree with nothing holding the
+  copies together, and would still miss the name-only advert), refusing every
+  company-0xFFFF advert (0xFFFF is the Bluetooth testing id, which other
+  people's hobby tags use too), and classifying with `fleet_beacon_parse()`
+  (it refuses a schema version it does not know, says nothing about Chirps,
+  and would need the fleet_link include path on firmware.yml's host compile
+  lines). Host-tested in plain g++ with firmware.yml's run_test recipe:
+  `test_ble_scout_pairing.cpp` holds the constants to `fleet_beacon.h` and to
+  the Chirp shape `fleet_roster_feed.cpp` tables and the canary-wap's
+  `ble_config.h` sends (both read from disk), refuses every blob
+  `fleet_beacon_parse()` accepts, counts refusals over every length 0..40 and
+  every type byte, classifies 19 near misses from exact-size heap copies,
+  drives `ble_scout_on_advert()` so strong beacon and Chirp adverts from
+  unpaired advertisers never pair while the near misses and adverts with no
+  manufacturer data still do, and reads both trees' `ble_scout_nimble.cpp`
+  (comments stripped) to hold each scan callback to one manufacturer-data
+  read, `advert_kind::offerable(mfg_bytes, mfg.size())` and the verdict passed
+  by the only `ble_scout_on_advert()` call; `test_ble_scout_broadcast.cpp`
+  shows a paired device whose adverts are not offerable arriving, departing
+  and broadcasting call for call like one whose adverts are. Both fail on the
+  old code (it does not compile against the new call; with the flag ignored,
+  the pairing test fails); 18 mutants of the filter, the gate and the pinned
+  sources, and 14 mutants of the scan callback written into both trees, each
+  fail a test or the sync check; before the callback pin, 10 of those 14
+  passed every gate. On the integrated tree the pairing suite passes with that
+  recipe and `check_ble_scan_sync.sh` holds. The `[env:full]` and canary-wap
+  Arduino compiles are CI's; no bench pass. A phone, a stranger's tag, or a
+  Canary advert without fleet-format manufacturer data held close can still
+  win the window: that is the documented limit. The Scout limits paragraph of
+  `docs/csi_developer_api.md` and the threat note in both copies of
+  `ble_scout_pairing.h` still say a neighboring Canary's advert can pair;
+  their new text, and a U1 row, are handed to the integrator. Still open (U1):
+  the N-advert confirmation (several qualifying adverts from one `hashed_id`
+  before it pairs), which waits for real advert rates from the bench, and
+  whether the Canary adverts above reach a passive Scout at pairing strength.
+  Found here: F316.
+- [ ] **F316 [code] One header for the BLE Chirp advert's shape.** The 17-byte
+  Chirp (company 0xFFFF, type 0x01..0x05, fp2 at [15-16]) is spelled out
+  separately by its sender (the canary-wap's `ble_config.h` / `ble_chirp.h`),
+  by each roster that reads it (`fleet_roster_feed.cpp` in the canary tree,
+  the canary-sense and canary-vision `fleet_roster_scan.cpp` copies, the
+  display's `chirp_scan.cpp`) and now by `ble_scout_advert_kind.h`; only
+  `test_ble_scout_pairing.cpp` holds two of those together, by reading their
+  source as text. A `fleet_link` header beside `fleet_beacon.h` (constants, a
+  builder and a parser, host round-tripped) would let every copy include one
+  definition, after which the pairing test includes it instead of reading
+  files. Wave 18's F272 does not cover it (it is the community Chirp channel's
+  C-ABI header, not this advert). Found by F36 (#1802).
 - [x] **F37 [code] Canary SD event log + reconnect backfill (F29 follow-up,
   "F29b" in #1704's commits).** F29 chose persistence option (a): a
   committed event outlives a broker outage only as far as the 12-slot
@@ -1914,7 +2012,7 @@ so — see D2 below.)
   holds on the canary too, inside a bundle's ten minutes. Host-tested; the
   PlatformIO builds are CI's; not bench-verified (U1). Found here: F90 (which
   #1763 filed too), F91, F92 and F93.
-- [ ] **F82 [code+decision] Nothing warns before the event-id space runs
+- [x] **F82 [code+decision] Nothing warns before the event-id space runs
   out.** The allocator has 2^30 ids from 0xC0000000 (F46), about 16.5 years at
   the most a device can commit (since F80; recomputed in #1762). At
   exhaustion ids restart at 1, and each later boot first reissues
@@ -1944,6 +2042,24 @@ so — see D2 below.)
   `hardware_verification_checklist.md`, which names each device's keys: the
   canary's floor and ceiling are `securacv`/`csi.evid` and `csi.evsent`, the
   canary-wap's `csi`/`ev.next` and `csi.evsent`).
+  *Done (#1802), as a decision:* nothing resets the event-id space
+  automatically and no route does. Recovery is an owner action that clears the
+  id floor and the delivery ceiling together, then a re-pin: on a canary, a
+  factory reset (BOOT held, `main.cpp`'s `factory_reset()`) clears its NVS
+  namespace `securacv`, `csi.evid` and `csi.evsent` with it; a canary-wap has
+  no reset path, so its owner flashes it with the flasher's full erase, which
+  clears all of NVS, `csi`/`ev.next` and `csi.evsent` included, and does not
+  restore the flasher's pre-erase backup afterwards (it would bring the
+  counter back). Either way the allocator starts again at `kIdSpaceBase`,
+  below the mark Home Assistant holds, so the owner then re-pins the device in
+  Home Assistant. Rejected: a device route or command that resets the floor
+  (it would let ids rewind under Home Assistant's replay gate without the
+  re-pin). Written at `space_low()` in `csi_event_id_floor.h` (both trees; the
+  `kIdSpaceBase` line kept byte for byte for `gen_wap.py` and `wap.test.js`)
+  and in `docs/csi_developer_api.md`; the matching note for
+  `docs/homeassistant_setup.md`'s `event_id_space_low` bullet, which still
+  says the recovery is not decided, is handed to the integrator. Comment and
+  docs only.
 - [x] **F83 [code] The canary-wap can commit an event before its id floor
   is restored.** `csi_integration::init` calls `register_v1_modules()`
   before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
@@ -2540,7 +2656,7 @@ so — see D2 below.)
   the one retry accepted. Decide, and say so in `csi_mqtt.h`. From source (the
   CONNACK wait at esp-mqtt 6af4446; auth.py only in the review's saved copy,
   not upstream); not probed. Found by F112's review (#1762).
-- [ ] **F90 [code+decision] An hour of unbroken presence fills a 6/hour
+- [x] **F90 [code+decision] An hour of unbroken presence fills a 6/hour
   ceiling by itself.** A bundle closes at its 10-minute window even while
   the room stays occupied, and the next refresh opens a new one: a new row,
   which spends a ceiling slot (F80 made that true on every path). So
@@ -2565,7 +2681,63 @@ so — see D2 below.)
   full ceiling only an emit that needs a slot, decided from the admit's
   outcome as the refund now is, and extend `test_csi_bundler_ceiling.cpp`.
   Filed by both PRs: found doing F80 (#1763), and by F80 and F81 (#1762).
-- [ ] **F132 [code+decision] The hourly ceiling's hour is six 10-minute
+  *Done (#1802):* a refresh that would merge into its key's open bundle is
+  never refused by the hourly ceiling and spends no slot. `csi_event_emit()`
+  decides the ceiling after its sanitize and allow-list, from
+  `csi_bundler_peek()`: what `csi_bundler_admit()` would answer, without side
+  effects, by admit's own expiry (a bundle past its quiet gap or its window is
+  not mergeable). A refresh merges through `csi_bundler_refresh()`, which
+  merges or does nothing, so a peek that went stale before the merge (the
+  clock moved on, another task's admit closed or evicted the bundle) is
+  decided as an opening, the full ceiling and the last-slot rule included.
+  Decision, a default for the maintainer to revisit: `core.presence` stays at
+  6/hour, and with a ceiling of 2 or more a module's last slot goes only to a
+  bundle opening whose (type, state) differs from the module's most recent
+  opening, which each `ModuleCounter` now remembers; a ceiling of 1 behaves as
+  before; a row that commits at the emit (ambient, or no state name) is not an
+  opening, takes any free slot and leaves the remembered opening alone. The
+  rule is every capped module's, not only presence's: a `system.integrity`
+  tamper (12/hour) or an `anomaly.baseline` kind (10/hour) repeated in one
+  state, each sealed at once, now gets the ceiling less one an hour (a
+  reviewer's host probe: 11 of 12), the last slot kept for a different kind;
+  whether ANOMALY rows should be exempt is F314. Rejected, for the maintainer
+  to revisit: the continuation rule (a window rollover of a bundle still
+  inside its quiet gap counted as the same presence: the held state's
+  committed rows could then exceed the ceiling, which is the ceiling's whole
+  promise) and raising `core.presence` to 12/hour (a change to the privacy
+  contract's per-module rate, not a fix of the chokepoint). So a state held on
+  its own opens at most five of its own bundles in each of the counter's hours
+  (120 a day at 6/hour; `test_a_gap_reopen_spends_exactly_the_ceiling` pinned
+  144 and now pins 120), goes once an hour without an open bundle until a slot
+  ages out (up to about a bucket plus one refresh interval: 597 to 604 s
+  measured on the host), and the transition out of it is admitted at once. A
+  side effect, pinned: Quiet Hours, which sit after the ceiling, now hold and
+  count a refresh at a full ceiling, as below it.
+  `test_csi_bundler_ceiling.cpp` holds one state one, two and three hours at
+  eight clock phases (a refresh every 7 s, the bundler ticked every second):
+  no refresh of an open bundle refused (1275 in three hours), each merges into
+  it, the change is admitted at once, at most the ceiling's openings in any
+  six buckets and at most 144 a day; alternating states for a day stay at 144;
+  ceilings 1 and 255; the peek against admit and its expiry, on the sanitized
+  state; ambient and stateless rows outside the rule; both halves of the rule
+  (a second state-bearing type's same state name is a change; a refresh of an
+  older open bundle does not move the remembered opening); and the stale peek,
+  reached on the real library with a clock that moves 1 ms per read, plus the
+  race, driven by a commit hook that opens the same key through the bundler
+  between the chokepoint's refresh and its admit: the admit merges, the slot
+  it took goes back (the MERGED-admit refund) and no opening is remembered. A
+  real second task racing an emit is not host-tested.
+  `test_csi_modules_integration.cpp` holds a state one to three hours on the
+  canary bridge's fake clock: no open-bundle refresh refused, and the walk-out
+  opens its bundle within the two windows of hysteresis. Every new case fails
+  on the library at add8140c (the peek case does not build there), and fifteen
+  mutants of the new code are each killed. Both trees run the same library
+  (`check_csi_sync.sh`). `library.json` and `library.properties` are not
+  bumped (F126). On the integrated tree `test_csi_bundler_ceiling` passes its
+  667 checks. Host-tested; the ESP32 compiles are CI's; not bench-tested (U1:
+  a corrected F81 transition row and a new held-presence row are handed to the
+  integrator for `hardware_verification_checklist.md`).
+- [x] **F132 [code+decision] The hourly ceiling's hour is six 10-minute
   buckets, so a sliding 60 minutes can hold twice the ceiling.**
   `csi_event.cpp`'s per-module counter keeps six 10-minute buckets, the
   current one and the five before it, and refuses an emit when they already
@@ -2595,6 +2767,26 @@ so — see D2 below.)
   decided with this one. Not a regression: before F80 the 121 s and window
   probes committed 714 and 286 rows a day. Found by the review of the #1763
   merge into #1762.
+  *Done (#1802), as a decision:* the hour stays the counter's six 10-minute
+  buckets. Any six consecutive buckets hold at most the ceiling's new rows; a
+  sliding 60 minutes can hold up to twice it, and a bundled row commits when
+  its bundle closes, after the bucket that counted it. Rejected: a
+  sliding-hour counter (more per-module state for a bound the docs and
+  `test_a_sliding_hour_can_hold_twice_the_ceiling` already state).
+  `csi_event_set_module_ceiling()` in `csi_event.h` (both trees) now says so,
+  as do `csi_event.cpp`'s counter comment, `docs/csi_modules.md` and
+  `docs/csi_developer_api.md`. No behavior change. F90's fix, which this item
+  asked to be decided with it, keeps the same counter.
+- [ ] **F314 [decision] Whether ANOMALY-category rows follow F90's last-slot
+  rule.** Since F90 a module with a ceiling of 2 or more keeps its last slot
+  for an opening whose (type, state) differs from its most recent one, so
+  `system.integrity`'s tamper (12/hour) and `anomaly.baseline` (10/hour) now
+  admit at most the ceiling less one of a repeated kind per counter hour (a
+  host probe: 11 of 12), keeping the last slot for a different kind. For
+  tamper that can be a gain (a flapping SD card no longer takes the slot
+  another tamper kind needs), but it changes life-safety-category rows; decide
+  whether `CSI_CATEGORY_ANOMALY` should be exempt from the last-slot rule.
+  Found reviewing F90 (#1802).
 - [ ] **F91 [decision] Anomaly rows wait in an open bundle.** Every
   non-ambient row with a state goes through the bundler, ANOMALY rows
   included, and commits only when its bundle closes. `anomaly.baseline`'s
@@ -2821,13 +3013,23 @@ so — see D2 below.)
   minutes per state, which needs F77's bundles, or a `duration_sec` sum) and
   where a reader sees it (a wire field, Home Assistant attributes, the Today
   sheet). Found by F121 (#1762).
-- [ ] **F122 [code+decision] wifi.channel_activity's three tunables have no
+- [x] **F122 [code+decision] wifi.channel_activity's three tunables have no
   NVS row.** `wifi_channel_activity.cpp` documents `spike_ratio`,
   `min_activity` and `cooldown_sec` as NVS-backed via the Tuning Lab, but
   neither tree's key map (now `csi_module_settings_nvs.h`) has their keys, and
   the Tuning Lab lists none, so they always read their defaults (pinned in
   `test_csi_module_boot.cpp`). Add rows and Tuning Lab entries, or drop the
   claim. Found by F93 (#1762).
+  *Done (#1802), as a decision:* the claim is dropped. `spike_ratio` (250,
+  2.5x), `min_activity` (25) and `cooldown_sec` (5 s) stay compile-time
+  defaults on both devices: no row in either tree's
+  `csi_module_settings_nvs.h` and no Tuning Lab entry, so they always read
+  their defaults. `wifi_channel_activity.cpp` (both trees) and the
+  `wifi.channel_activity` row of `docs/csi_modules.md` say so. Rejected:
+  adding NVS rows and Lab entries for an ambient glow that commits nothing.
+  `test_csi_module_boot.cpp` pins the defaults; `test_wap_tune_lab.cpp`'s
+  `wifi_channel_activity_has_no_lab_knob` holds the canary-wap's Lab and key
+  map to it. No behavior change.
 - [x] **F123 [code] The Tuning Lab's Quiet Hours defaults disagree with the
   device's.** In the canary-wap's `csi_integration.cpp`, `TUNE_COEFFS`
   declares `core.quiet_hours.start_min` 0 and `end_min` 480, while
@@ -2921,7 +3123,15 @@ so — see D2 below.)
   `library.json` and `library.properties` still say 0.4.0, and the committed
   firmware SBOM pins it. Decide whether to bump the library version and
   regenerate `sbom/sbom-firmware.cdx.json`. Found by F93 (#1762).
-- [ ] **F127 [code+decision] The dashboard's preset and sensitivity do nothing
+  *Note (#1802):* F90 is a second contract change since 0.4.0.
+  `csi_event_emit()` no longer refuses at a full ceiling an emit that would
+  merge into an open bundle, and with a ceiling of 2 or more keeps a module's
+  last slot for an opening whose (type, state) differs from its most recent
+  one; the library gains `csi_bundler_peek()` and `csi_bundler_refresh()`.
+  `library.json` and `library.properties` still say 0.4.0; the bump, and the
+  `sbom/sbom-firmware.cdx.json` regeneration it brings, stay this item's
+  decision.
+- [x] **F127 [code+decision] The dashboard's preset and sensitivity do nothing
   once a threshold row exists.** `core.presence`'s `init()` reads `cp.mt`,
   `cp.at` and `cp.bt` over the preset and sensitivity baseline, which it
   passes only as those reads' default. The canary-wap stores those rows in
@@ -2943,6 +3153,54 @@ so — see D2 below.)
   thresholds the device ran rather than the balanced ones, but they still win
   over a later preset change, and the Lab's per-row reset and Reset all still
   store the balanced default as a row.
+  *Done (#1802), as a decision:* a Tuning Lab reset deletes the row, so the
+  saved preset and sensitivity apply again. `tune_ui.h`'s per-row reset and
+  Reset all POST each knob as JSON `null`; `tune_post()` (`csi_tune_lab.cpp`)
+  treats a `null` for a known key as removing its row (`tune_clear_value()`,
+  behind `isKey()` so Preferences logs no `nvs_erase_key` error for a row that
+  is not there), with the existing `strstr` needle and no new formatted text,
+  and applies it like any change (the module re-runs `init()`, Quiet Hours
+  re-apply). Each reset first drops a slider or toggle save still waiting in
+  `postCoeff()`'s 300 ms timer (it would store the row again after the reset),
+  then reloads the rows from the device; the per-row reset reports a refused
+  POST as a failure. `tune_post()` also reads JSON whitespace with newlines on
+  either side of the colon, so a null or a bool on the next line is read as a
+  number already was. The calibration's apply and a bundle import (`POST
+  /api/tune/preset`) still store rows, and a stored threshold still wins over
+  the preset (`test_a_stored_threshold_wins_over_the_saved_preset` and the
+  canary's twin unchanged). Reset all removes every listed knob's row, the
+  dashboard's preset and sensitivity among them, so it returns the device to
+  balanced at sensitivity 50, and Quiet Hours go back to off (23:00 to 07:00,
+  disabled), as Reset all did before. Rejected: a preset or sensitivity change
+  clearing the direct rows (it would silently discard a calibration).
+  Deferred: a dashboard note driven by `current_source`, the item's third
+  option (F315). `stubs/module_boot/Preferences.h` gains `remove()` and
+  `isKey()` as Arduino-ESP32 models them and counts the calls. New
+  `test_wap_tune_lab.cpp` cases: a reset removes a number's, a bool's and a
+  Quiet Hours knob's row, a reset of a missing row calls no `remove()`, and a
+  null or bool after a newline is read; after the reset of the three
+  thresholds the saved preset applies at once and from the next boot, and
+  after Reset all the next saved preset does; a bundle import still stores
+  every knob and round-trips; `nul`, `nullx`, `"null"`, a bad bool and a null
+  on an unknown or embedded key store and remove nothing; both page handlers
+  POST `null`, drop a waiting save before the POST and reload after it, and
+  the row's reset checks the answer (mutation-checked). The reset, preset and
+  page cases fail on the code before F127, and the newline and timer pins on
+  the code before its review; the import and malformed cases guard unchanged
+  behavior and are mutation-proven. On the integrated tree `test_wap_tune_lab`
+  passes its 625 checks. Three comments that still describe the old reset
+  (`test_wap_module_boot.cpp`, `csi_settings_nvs.h`) and the U1 rows (a new
+  F166-section row, and the two F93 rows F127 makes false) are handed to the
+  integrator. Host-tested; the page is not driven in a browser; the compile is
+  CI's; not bench-tested.
+- [ ] **F315 [code] The dashboard does not say when stored thresholds override
+  its preset.** Since F166 the calibration status carries `current_source`
+  (`stored`, `preset` or `mixed`), but the canary-wap dashboard's preset
+  picker and sensitivity slider show nothing when a stored `core.presence`
+  threshold (a calibration's apply, a bundle import, a Tuning Lab slider) wins
+  over them, so an owner who moves the slider sees no change. F127 made the
+  Lab's reset remove the row; this note was F127's third option, deferred
+  because `web_assets_gz.h` belonged to wave 18. Found doing F127 (#1802).
 - [x] **F128 [code] A Quiet Hours change from the Tuning Lab applies only after
   a reboot.** `TUNE_COEFFS` gives `core.quiet_hours.enabled`, `start_min` and
   `end_min` an empty reinit module, and `handle_tune_post_coefficients()`
@@ -13612,6 +13870,15 @@ so — see D2 below.)
   `chirp_channel::is_active()`, which counts it, has no caller. Show a state
   the device publishes (`active`), and decide whether LISTENING stays in the
   enum and in spec §7.1. Found by HA33 (#1802).
+- [ ] **A108 [code] The Lab's canary-wap sandbox names the WAP's entity ids
+  without the 2025.10 condition.** Its scenario `ha` lines
+  (`binary_sensor.<id>_smoke_alarm -> ON`, `binary_sensor.<id>_co_alarm ->
+  ON`, `switch.<id>_mic_mute -> ON`) are written into
+  `canary-local/devices/wap.json` by `canary-local/tools/gen_wap.py`. HA29
+  left them, since an edit there is `gen_wap.py` then `gen_csp.py`. Say where
+  the page shows them that the ids hold on Home Assistant 2025.10 or later for
+  a newly registered entity, or leave the sandbox as it is. Found by HA29
+  (#1802).
 - [ ] **A77 [human] Run one real `.deb` self-update on Ubuntu 22.04.** Since
   the 2026-10 cleanup the desktop apps' install docs and release bodies say
   the `.deb` updates itself and asks for a password: tauri-plugin-updater
@@ -14349,7 +14616,7 @@ so — see D2 below.)
   the sensor a second time each health cycle, with its thirteen counters.
   Decide whether the counters (and the uptime) go in the entity's
   `_unrecorded_attributes`, which drops their history. Found by HA24 (#1762).
-- [ ] **HA28 [code+decision] Home Assistant's Last event sensor reads
+- [x] **HA28 [code+decision] Home Assistant's Last event sensor reads
   `unknown` for every stateless row.** `csi_event_wire.h` writes the row's
   state as `event_type`, and a stateless row (`meta.daily_summary`'s
   `daily_summary`, `meta.quiet_hours`' `held_summary`) has none, so the canary
@@ -14358,13 +14625,60 @@ so — see D2 below.)
   stateless row's `event_type` falls back to its type (a wire change; the
   signed canonical carries `state`, not `event_type`) or Home Assistant reads
   `type` for such rows. Found by F121 (#1762).
-- [ ] **HA29 [code+decision] Home Assistant before 2025.10 still names the
+  *Done (#1802):* the consumer, not the wire (the default), limited to the
+  summary rows. The canary Last event sensor
+  (`custom_components/securacv/sensor.py`, `_canary_event_name`) names a row
+  by its `type` when its `event_type` is the wire's no-state placeholder
+  `unknown` and the type is `daily_summary` (`meta.daily_summary`, 23:55) or
+  `held_summary` (`meta.quiet_hours`, when a window ends). Every other
+  stateless row still reads `unknown`: `core.activity_ribbon`'s
+  `ribbon_bucket_advanced`, which both trees commit and publish every 15
+  minutes, and `ble.events`' link and discovery rows (declared on the
+  canary-wap; nothing calls their emitters today). So a summary shows until
+  the next ribbon row, at most 15 minutes. An `event_type` that is missing,
+  null or empty (no firmware writes one) falls back to `type`, then `event`
+  (the canary-sense and canary-sentinel dialects), then `unknown`. A stateful
+  row's `event_type` still wins, a replayed older signed row still leaves the
+  newer value, and `_record_last_event` hands the voice brief the same value:
+  the casual and night answers say "daily summary"; the last-event answer
+  reads the dictionary's label, which for a type it does not list is the id
+  (HA42). The integration's timeline card reads this sensor too and drops only
+  `unknown`, so it now lists the summaries under their raw ids (HA41). The
+  wire (`csi_event_wire.h`, byte-identical in both trees), the kernel's Last
+  event sensor and the signed canonical (it carries `state`, not the label:
+  HA43) are unchanged. Rejected: the fallback on the wire, writing the row's
+  type as `event_type` (a firmware change in both trees; `state` stays
+  `unknown` in the signed canonical), left for the maintainer; and taking
+  `type` for every stateless row, which would have put the ribbon's
+  quarter-hourly row in Last event, the voice brief and the timeline for most
+  of a quiet day. The premise understated it: the sensor read `unknown` every
+  15 minutes (the ribbon), not only at 23:55, and still does between summaries
+  (HA40). The plan read a stateless row as sending an empty `event_type`;
+  `build_event_body` writes `unknown` there (`test_csi_event_wire.cpp` and
+  `test_csi_daily_summary.cpp` pin it), so a plain `event_type or type` chain
+  would have left the sensor at `unknown`. Test:
+  `custom_components/securacv/tests/test_last_event_stateless.py` (30 cases:
+  the bodies `build_event_body` writes for both summaries, a presence row and
+  the ribbon row, a builder-shaped BLE row, real Ed25519 envelopes for the
+  replay cases, the three voice answers, and in the monorepo the placeholder
+  held to `test_csi_event_wire.cpp`'s own pin); 17 fail on the old sensor and
+  7 on the first, broader version, and all 30 pass on the integrated tree. The
+  Last Event row of `docs/homeassistant_setup.md` is handed to the integrator.
+  Host-tested on the stubbed Home Assistant harness; `tests/ha` is CI's; not
+  seen in a running Home Assistant. `sensor.py` and the new test reach the
+  HACS mirror with the carry that follows #1802's merge (U6). Found here:
+  HA40, HA41, HA42, HA43.
+- [x] **HA29 [code+decision] Home Assistant before 2025.10 still names the
   WAP's and the kernel's MQTT entities from the device and entity names.**
   `default_entity_id` (HA16) is dropped there by the discovery schemas'
   `REMOVE_EXTRA`; those releases read `object_id` (an object id with no
   domain). 2025.10 through 2026.3 accept both, and 2026.4 removed `object_id`.
-  The HACS integration's floor is Home Assistant 2024.4.1 (`hacs.json`).
-  Sending `obj_id` as well would give 2024.4 to 2025.9 the documented ids too,
+  The HACS integration's floor was Home Assistant 2024.4.1 (`hacs.json`)
+  when this was found; #1799 raised it, and the PWK add-on's
+  (`privacy_witness_kernel/config.yaml`), to 2026.5.0, so what is left is
+  installs without the SecuraCV integration on a release before 2025.10: a
+  canary-wap's own discovery, or a kernel bridge run outside the add-on.
+  Sending `obj_id` as well would give those releases the documented ids too,
   at about 40 more bytes per WAP config, and the presence (764) and mic mute
   (757) configs are within 11 bytes of their 768-byte buffers at the longest
   identity (the 32-character prefix `config_load()` can return since F241), so
@@ -14372,6 +14686,81 @@ so — see D2 below.)
   have to grow (`test_ha_discovery_ids.cpp` holds them). Decide between
   sending both and saying in the docs that the ids need 2025.10. Found in HA16
   and its review (#1762).
+  *Done (#1802):* docs only, the default: `def_ent_id` alone, no `obj_id`, so
+  the presence (764 B) and mic mute (757 B) configs stay inside their 768-byte
+  buffers with no firmware change. The premise was partly stale, as wave 19's
+  planning found: `hacs.json` and the PWK add-on's `config.yaml` already said
+  2026.5.0 (#1799), so what is left is installs without the SecuraCV
+  integration on a release before 2025.10 (a canary-wap's own discovery, or a
+  kernel bridge run outside the add-on), which name the entities from the
+  device and entity names; the item text above is corrected in place.
+  `docs/manual_test_plan_mqtt.md` now says, in both of its id lists, that the
+  ids need Home Assistant 2025.10 or later for a newly registered entity, that
+  the add-on its preconditions use already guarantees that, how a zone id
+  becomes `<zone>`, and what to look up by name otherwise (`PWK Last Event`,
+  `PWK <zone name> Events` and `PWK <zone name> Motion` under the Privacy
+  Witness Kernel device, the zone name unslugged). Already saying it:
+  `docs/homeassistant_setup.md`, `docs/network_coexistence.md`,
+  `docs/integrations/apple-home-homekit-bridge.md`,
+  `spec/beacon_channel_v0.md` and the checklist's Chirp/Beacon row. Left: the
+  Lab's WAP sandbox lines (generated by `gen_wap.py`; A108) and the pages that
+  name the `pwk_*` ids only in an add-on or integration context, where the
+  2026.5.0 floor holds (`docs/blueprints/README.md`,
+  `docs/lovelace_timeline.md`, `privacy_witness_kernel/DOCS.md`,
+  `docs/strategy/11-home-assistant-platform-architecture.md`); the canary-wap
+  README names none of the ids. Rejected: sending `obj_id` as well, about 40
+  more bytes per WAP config with both discovery buffers grown, for those
+  installs. Read from Home Assistant core's source (2025.9.0 and 2025.10.0
+  `abbreviations.py`, 2025.10.0 `entity.py`), not seen in a running Home
+  Assistant.
+- [ ] **HA40 [decision] The activity ribbon's quarter-hourly row turns a
+  Canary's Last event and the voice brief to `unknown`.**
+  `core.activity_ribbon` commits `ribbon_bucket_advanced` (no state, P0,
+  category event) every 15 minutes on both trees, both egress paths publish it
+  on the events topic, and `build_event_body` writes `unknown` as its
+  `event_type`; so on a quiet device the canary Last event sensor reads
+  `unknown` most of the day, and the voice brief says "the last thing
+  witnessed was unknown" (casual), "One thing in the last hour: unknown"
+  (night) and "unknown, within the last ten minutes" (last event). This was so
+  before HA28 and still is: HA28 names only the summaries, which therefore
+  show for at most 15 minutes. Decide whether bookkeeping rows move Last event
+  and the voice brief at all: the sensor could keep its previous value for a
+  placeholder row that is not a summary, or the firmware could keep the ribbon
+  row off the events topic. Found by HA28's review (#1802).
+- [ ] **HA41 [code+decision] The timeline card lists a Canary's summary rows
+  under their raw ids.**
+  `custom_components/securacv/www/securacv-timeline-card.js` reads the canary
+  Last event sensor's history, drops `unknown` (`NON_EVENT_STATES`) and labels
+  each state through `eventMeta`, whose `EVENT_TYPE_METADATA` must equal the
+  dictionary's event types. Since HA28 the sensor reads `daily_summary` and
+  `held_summary`, so each summary becomes a row labeled with the id and the
+  default icon. Decide between labeling them (a card-owned `SUMMARY_METADATA`
+  beside `TAMPER_KIND_METADATA`, such as "Daily summary" with
+  `mdi:calendar-check` and "Quiet Hours summary" with `mdi:weather-night`,
+  consulted by `eventMeta` after the dictionary) and hiding them (both ids in
+  the states the card drops). For the label choice, a
+  `securacv-timeline-card.test.js` case that feeds `historyToTimelineItems` a
+  present row, both summaries and the `unknown` rows between them, and expects
+  the two labels, fails on the card today (label `held_summary`) and passes
+  with the map, the card's suite staying 36/36 (the HA28 review proved it on a
+  scratch copy). The SecuraCV dashboard's Canary entities card shows the raw
+  state too. Found by HA28's review (#1802).
+- [ ] **HA42 [code] The voice brief's last-event answer speaks a type the
+  dictionary does not list as its raw id.** `speak_last_event`
+  (`custom_components/securacv/voice.py`) reads
+  `event_type_metadata(...)["label"]`, which for an unlisted type is the id
+  itself, so after a daily summary it says "daily_summary, within the last ten
+  minutes, from Canary ...", while the casual and night answers go through
+  `_spoken_label` and say "daily summary". Route the fallback through
+  `_spoken_label`. Found by HA28's review (#1802).
+- [ ] **HA43 [decision] A Canary's Last event shows fields its signature does
+  not cover beside a verified badge.** The signed canonical carries `state`
+  (`signature.py` `build_event_canonical`), not `event_type` or `type`, so a
+  validly signed body whose `event_type` (before HA28) or a summary's `type`
+  (since HA28) was rewritten on the broker still shows the rewritten label
+  with `verified: true`. Decide whether Last event shows `state`, which the
+  signature covers, or marks the label as unsigned. Found by HA28's review
+  (#1802).
 - [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
   reads an entity no publisher creates.** It reads
   `sensor.pwk_boundary_crossing_count`; the kernel bridge makes
