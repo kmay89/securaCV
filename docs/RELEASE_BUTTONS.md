@@ -155,6 +155,42 @@ workflow calls both, and calls the pointer as a reusable workflow so a broken
 updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
 
+### The kernel: not released yet
+
+The Rust kernel (the `witness-kernel` crate; `Cargo.toml` says `0.8.0` today)
+**has never been released**: no `v*` tag and no `v*` release exist (tags and
+releases API, 2026-10-14). There is no button for it, and the master button
+does not ship it — `.github/release-targets.yml` has no kernel row, on purpose
+(its header says why), so the plan never names the kernel and `only:` has no
+kernel choice.
+
+**How one would be cut.** Only by pushing a `v*` tag: `release.yml` listens
+for that and nothing else (`contents: write`, `packages: write`). It runs the
+crate's fmt, clippy and tests, builds the x86_64 Linux binaries, publishes them
+as one tarball with `sha256sums.txt` and a provenance attestation, puts
+`releases/latest` back on the firmware, and attaches the SBOMs. The tag *is*
+the version: nothing checks it against `Cargo.toml`, and the release notes are
+`CHANGELOG.md`'s `## [<version>]` section, or just "Release <version>" when
+there is none. The same tag also runs `addon-image.yml`, which listens for
+`v*` tags too.
+
+**Don't:** read a moving `Cargo.toml` version as a kernel release. The version
+is shared with the Home Assistant integration and app
+(`scripts/bump_version.sh` writes all four places), and those ship by their
+own routes: the HACS mirror, and the app image `addon-image.yml` publishes
+from `main`. The standalone `witnessd` image ships from `main` too
+(`container-images.yml`, `:latest` and the commit sha, never a version tag).
+
+**The follow-up, when a release is wanted** (sweep CI10, option (a)): give
+`release.yml` a `workflow_dispatch` with a `version` input whose first step
+creates and pushes `v${version}` (checkout and the changelog step then read the
+input, not `GITHUB_REF_NAME`), add a `kernel` row to `release-targets.yml`
+(versioned; version file `Cargo.toml`; tag prefix `v`; watching `src`,
+`Cargo.toml` and `Cargo.lock`), a `test_release_plan.py` case, and `kernel` in
+`release-everything.yml`'s `only` choices. A row added before that dispatch
+exists would plan the first release on the next press with `publish` ticked
+and fail to start it: `release.yml` cannot be dispatched today.
+
 ---
 
 ## Retired buttons, and what to press instead

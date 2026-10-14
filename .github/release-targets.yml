@@ -38,6 +38,20 @@
 #                 reads drafts from the releases API and, when one already holds
 #                 the source version, says "publish it" (DRAFT_PENDING) instead
 #                 of dispatching the same build again.
+#
+# Not a target, on purpose: the kernel (the witness-kernel crate, version in
+# Cargo.toml). It has never been released (no `v*` tag or release exists) and
+# this button does not ship it. It is cut only by pushing a `v*` tag, which
+# .github/workflows/release.yml listens for; that workflow has no
+# workflow_dispatch and takes its version from the tag, so a kernel row here
+# would plan the first release on the next publishing press and then fail to
+# dispatch it.
+# Making it plannable (sweep CI10, option (a)) is: a dispatch `version` input on
+# release.yml whose first step creates and pushes `v${version}`, then a
+# `kernel` row (versioned, Cargo.toml `^version\s*=\s*"([0-9.]+)"`, tag prefix
+# `v`, watching src, Cargo.toml and Cargo.lock), a test_release_plan.py case and
+# a `kernel` choice in release-everything.yml. docs/RELEASE_BUTTONS.md,
+# "The kernel: not released yet", says the same for the operator.
 
 targets:
   - name: firmware
