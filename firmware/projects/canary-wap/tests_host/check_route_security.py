@@ -38,9 +38,8 @@ parenthesis and any `::` qualifier. What it reads, and nothing more:
     (serial, NVS, the AP's own bring-up, a module's init). An unnamed
     reader fails, a reader that reads a secret its entry does not name
     fails, a local use with a writable char or byte buffer parameter (a
-    hand-out in disguise) fails, a secret named outside every function
-    fails unless it is one of the declarations in OUTSIDE_FUNCTION_LINES,
-    and a macro that names a secret or g_device fails.
+    hand-out in disguise) fails, and a secret named outside every function
+    fails unless it is one of the declarations in OUTSIDE_FUNCTION_LINES.
   - An answer sits in, or is called only from, a registered route handler
     whose credential gate is the whole condition of an `if` whose branch
     ends in a return: `if (!gate(...)) return ...;` refuses, and
@@ -55,9 +54,9 @@ parenthesis and any `::` qualifier. What it reads, and nothing more:
     `if (provisioning_gate_take())` whose branch returns; claim_served is
     read only as a condition and written only as `false` and by the claim's
     take. An answer above all of them fails, the top of the handler
-    included. The handler and the
-    answer hold no goto and no preprocessor line, name no gate in the
-    any-session class (called or not), and call nothing but the credential
+    included. The handler and the answer hold no goto and no preprocessor
+    line, name no gate in the any-session class (called or not), and call
+    nothing but the credential
     gates, the answers and ANSWER_CALLS, an allowlist checked against the
     class: so a gate reached through a wrapper, a macro, a pointer, a
     lambda or a template helper fails as a name the answer may not call.
@@ -72,7 +71,9 @@ parenthesis and any `::` qualifier. What it reads, and nothing more:
     credential gate is defined once, in its CREDENTIAL_GATE_HOMES file, and
     named elsewhere only as a call (bare, `::` or `csi_integration::`), a
     `name &&` test of a weak symbol, or a declaration: a second definition,
-    a macro or a local by that name fails.
+    a macro or a local by that name fails. A macro that names a secret
+    (`api_token_str`, `ap_password`, `privkey`, `g_tls_key_der`) or
+    g_device fails.
   - every other sketch file: each line that names a module's copy of the
     token (csi_integration.cpp's g_api_token, a register_routes module's
     auth_token_storage(), csi_mqtt.cpp's s_api_token_provider) has one of
@@ -91,12 +92,17 @@ It is a text check, and these pass it: a secret reached through a name it
 does not know (a copy in a global made by a function allowed to read it, a
 member under another name); what a function ANSWER_CALLS names does inside
 (it is held only to call no gate in the class, so one that calls through a
-pointer, its own or one another function stored, is trusted by name); whether the receipt's
-BOOT tap and setup-door claim decide right; and a gate that decides wrong.
-A gate result stored in a variable and tested later is refused though it
-may be right. The host suites drive the behavior: test_receipt_session the
-receipt's grants and the QR's, with the station link up and down, and
-test_mqtt_reinit the broker save.
+pointer, its own or one another function stored, is trusted by name);
+whether the receipt's BOOT tap and setup-door claim decide right; and a
+gate that decides wrong. A gate result stored in a variable and tested
+later is refused though it may be right. The host suites drive the
+behavior: test_receipt_session the receipt's grants and the QR's, with the
+station link up and down, and test_mqtt_reinit the broker save.
+
+Its fixtures run first, every run: each rule refuses shapes planted for it,
+and tree_problems() (the route table, then rule_problems(), the rest of the
+list above) runs on a planted source set where each of seven plants is
+refused by one rule alone, so a rule dropped from main() fails.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
