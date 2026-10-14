@@ -9393,15 +9393,18 @@
       },
       {
        "name": "board_h",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "PCB thickness — the 1.2 spec, brd_t(\"xiao\"); the cavity, the clip hooks and the pigtail slot all stack on it"
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "clearance each side of the board — the cavity is the board plus 2 x this plus 2 x inner_pad"
       },
       {
        "name": "stack_h",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep"
       },
       {
        "name": "standoff_h",
@@ -9466,7 +9469,8 @@
       },
       {
        "name": "post_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "corner post diameter — four lid-screw posts standing 0.2 into both walls, each piloted screw_d from 2 mm above the floor"
       },
       {
        "name": "pigtail_w",
@@ -9486,7 +9490,8 @@
      "params": [
       {
        "name": "cam_ap_d",
-       "default": "9.0"
+       "default": "9.0",
+       "comment": "camera aperture diameter through the lid at cam_dx/cam_dy (opt_camera)"
       },
       {
        "name": "cam_dx",
@@ -9505,7 +9510,8 @@
       },
       {
        "name": "ko_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "depth of the mock knockout's groove in the lid's outer face (the groove is 0.8 wide, just outside ko_ring_d)"
       }
      ]
     },
@@ -9747,7 +9753,8 @@
       },
       {
        "name": "cam_dy",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "lens center offset from board center, along Y (cam_dx is X) — the disc pocket, aperture and bezel recess follow it"
       }
      ]
     },
@@ -9804,7 +9811,8 @@
       },
       {
        "name": "lid_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "lid plate thickness, 4.0 like the walls; the lens web left under the disc pocket (lid_t - disc_t - 0.2) is asserted >= 1.5"
       },
       {
        "name": "r_in",
@@ -9824,7 +9832,8 @@
      "params": [
       {
        "name": "oring_d",
-       "default": "1.5"
+       "default": "1.5",
+       "comment": "O-ring cord diameter — the squeeze (1 - grv_d/oring_d) is asserted at 15-40 % and the groove fill at <= 90 %"
       },
       {
        "name": "grv_w",
@@ -9849,7 +9858,8 @@
      "params": [
       {
        "name": "lob_d",
-       "default": "9.0"
+       "default": "9.0",
+       "comment": "screw lobe diameter — each lobe is hulled back into the wall as a gusset neck, and the end lobes must clear the corner radius (asserted)"
       },
       {
        "name": "lob_off",
@@ -9905,7 +9915,8 @@
      "params": [
       {
        "name": "vent_d",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "vent hole diameter through the lid; the ePTFE patch's spot-face on the inner face is vent_d + 2.4 wide and 0.9 deep"
       },
       {
        "name": "vent_x",
@@ -10007,7 +10018,8 @@
       },
       {
        "name": "boot_floor",
-       "default": "2.5"
+       "default": "2.5",
+       "comment": "boot floor thickness under the case; the keyhole windows are cut through it"
       },
       {
        "name": "boot_fit",
@@ -10016,7 +10028,8 @@
       },
       {
        "name": "grip_grooves",
-       "default": "3"
+       "default": "3",
+       "comment": "grip grooves round the boot: 1.4 tall at a 5 mm pitch, the first 4 mm above the boot floor"
       }
      ]
     },
@@ -10042,11 +10055,13 @@
      "params": [
       {
        "name": "label_text",
-       "default": "CANARY"
+       "default": "CANARY",
+       "comment": "text debossed on the lid's outer face, mirrored to read from outside; \"\" = no label"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the lid label's font (an OpenSCAD font name)"
       },
       {
        "name": "lid_edge",
@@ -16247,7 +16262,8 @@
       },
       {
        "name": "bz_dep",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "buzzer pocket depth into the plate face"
       },
       {
        "name": "led_w",
@@ -16256,7 +16272,8 @@
       },
       {
        "name": "led_dep",
-       "default": "1.6"
+       "default": "1.6",
+       "comment": "WS2812 breakout pocket depth into the plate face"
       },
       {
        "name": "btn_w",
@@ -16265,7 +16282,8 @@
       },
       {
        "name": "btn_dep",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "tact switch pocket depth into the plate face"
       },
       {
        "name": "reed_l",
@@ -16274,7 +16292,8 @@
       },
       {
        "name": "reed_d",
-       "default": "2.8"
+       "default": "2.8",
+       "comment": "reed glass diameter — the channel bores it + 2 x tol_press and its crown stands 0.3 + tol_press above the face, so the top is open; the slider's relief channel is this + 1.0 wide"
       },
       {
        "name": "mag_d",
@@ -16283,7 +16302,8 @@
       },
       {
        "name": "mag_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "tamper magnet height — not read by the geometry: the slider's pocket runs 10 deep, open at the knob top"
       }
      ]
     },
@@ -16293,15 +16313,18 @@
      "params": [
       {
        "name": "fx_w",
-       "default": "120.0"
+       "default": "120.0",
+       "comment": "plate width (X); the corner holes sit 6 in from each edge"
       },
       {
        "name": "fx_h",
-       "default": "80.0"
+       "default": "80.0",
+       "comment": "plate depth (Y); the corner holes sit 6 in from each edge"
       },
       {
        "name": "fx_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "plate thickness — the pockets, channels and labels are cut down from its top face, and the XIAO rails and clips stand on it"
       },
       {
        "name": "chan_w",
@@ -16310,11 +16333,13 @@
       },
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "station label deboss depth into the plate face"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the station labels' font (an OpenSCAD font name)"
       }
      ]
     }

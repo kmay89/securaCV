@@ -69,7 +69,7 @@ board_w = 17.5;      // board width — the xiao registry record, brd_w("xiao");
 board_h = 1.2;       // PCB thickness — the xiao registry record, brd_t("xiao")
 stack_h = 6.5;       // Sense expansion + camera height above the base PCB
 cam_dx = 0.0;        // lens center offset from board center
-cam_dy = 0.0;
+cam_dy = 0.0;        // lens center offset from board center, along Y (cam_dx is X) — the disc pocket, aperture and bezel recess follow it
 
 /* [Battery] — MEASURE yours; 503035 (500 mAh) default. LiPo: never charge below 0 C */
 batt_l = 35.0;  batt_w = 30.0;  batt_h = 5.0;
@@ -88,18 +88,18 @@ tol_hole  = 0.30;   // catalog default — core_tol_hole() (canary_core_lib)
    depth (the shared T-stud is 3.4 mm tall) while keeping a 1.0 mm ceiling. */
 wall_t  = 4.0;   // deviates: drop-case wall — impact duty is this case's whole intent
 floor_t = 4.5;   // floor thickness — 4.5 so the keyhole pockets reach the standard 3.5 mm depth with a 1.0 mm ceiling
-lid_t   = 4.0;
+lid_t   = 4.0;   // lid plate thickness, 4.0 like the walls; the lens web left under the disc pocket (lid_t - disc_t - 0.2) is asserted >= 1.5
 r_in    = 3.0;       // cavity corner radius
 head_clear = 1.8;    // clearance above the camera stack
 
 /* [O-ring seal] — Ø1.5 cord in a body-rim groove, 27 % squeeze */
-oring_d = 1.5;
+oring_d = 1.5;       // O-ring cord diameter — the squeeze (1 - grv_d/oring_d) is asserted at 15-40 % and the groove fill at <= 90 %
 grv_w   = 2.0;       // groove width
 grv_d   = 1.1;       // groove depth (squeeze = 1 - grv_d/oring_d)
 g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 
 /* [Screw lobes] — 6x M3 heat-set inserts, outboard of the seal line */
-lob_d    = 9.0;
+lob_d    = 9.0;      // screw lobe diameter — each lobe is hulled back into the wall as a gusset neck, and the end lobes must clear the corner radius (asserted)
 lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end
 insert_d = 4.0;     // M3 heat-set HOLE Ø (the short-series insert's knurl is Ø4.6:
@@ -114,7 +114,7 @@ disc_d = 12.0;  disc_t = 2.0;
 ap_d   = 8.0;        // aperture through the web behind the disc
 
 /* [Vent] — Ø3 hole + adhesive ePTFE patch on the INSIDE face */
-vent_d = 3.0;
+vent_d = 3.0;    // vent hole diameter through the lid; the ePTFE patch's spot-face on the inner face is vent_d + 2.4 wide and 0.9 deep
 vent_x = 30.0;   // vent position X — over the plug room beyond the board's USB edge: at (-15, 6) the
                  // membrane sat under the battery's foam-over pad and got pressed
                  // on every close; the lens keep-out and the wall are asserted
@@ -149,9 +149,9 @@ bez_proud = 0.8;     // stand above the face = the inner lip thickness (>= 0.6);
 
 /* [Boot] — TPU 95A impact boot; earns the drop rating */
 boot_w    = 2.5;     // boot wall
-boot_floor = 2.5;
+boot_floor = 2.5;    // boot floor thickness under the case; the keyhole windows are cut through it
 boot_fit  = 0.2;     // stretch interference
-grip_grooves = 3;
+grip_grooves = 3;    // grip grooves round the boot: 1.4 tall at a 5 mm pitch, the first 4 mm above the boot floor
 
 /* [Board cradle] — clips are strain-gated by canary_snap_lib on every render.
    The beam is standoff_h + board_h = 4.2 mm; the 1.5/0.8 this file used to
@@ -169,10 +169,10 @@ clip_w = 8.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear =
 rib_t = 2.0;  rib_h = 8.0;  notch_w = 6.0;  notch_d = 4.0;
 
 /* [Aesthetics] */
-label_text = "CANARY";
+label_text = "CANARY";   // text debossed on the lid's outer face, mirrored to read from outside; "" = no label
 label_size = 5.0;  label_depth = 0.5;
 label_dx = -12.0;  label_dy = -7.0;
-label_font = "Liberation Sans:style=Bold";
+label_font = "Liberation Sans:style=Bold";   // the lid label's font (an OpenSCAD font name)
 lid_edge = 0.64;     // deviates: the TPU boot's retention lip grips this stepped edge (DR-5) — conform only with a boot re-probe
 
 /* [Quality] */

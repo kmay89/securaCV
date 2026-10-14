@@ -169,6 +169,54 @@ class Meanings(_Case):
                 self.assertEqual(L.lint_meanings(path), [], path.name)
 
 
+def knobs_without_help(path: Path) -> list[str]:
+    """The knobs gen_builder_manifest.parse_scad keeps with no help, in file
+    order. An option-list selector (`part`, ...) is not counted: OpenSCAD
+    2021.01's desktop Customizer draws a dropdown only for a bare bracket
+    comment, so the house leaves those bare. A bare range is no help either
+    (the builder strips it, leaving nothing to show)."""
+    return [p["name"] for g in L.gen_builder_manifest.parse_scad(path)
+            for p in g["params"] if not p.get("desc") and "options" not in p]
+
+
+# C10c: the development cases' knobs with no help, per file, counted as above.
+# Shrink-only: write help and lower the number in the same change; a knob that
+# loses its help, or a new knob without one, fails. The three monorepo-only dev
+# cases (C10c-1) carry help on every knob alone on its line. What is left is
+# handed up rather than done, because writing it moves catalog.json: each
+# remaining knob shares its line with another (`lip_w = 1.5;  lip_h = 2.0;`),
+# and a one-per-line split makes the Lab parser read knobs it skips today
+# (gen_enclosures.py reads one assignment per line), which moves the catalog's
+# engineering_param_count; field_case's bez_on is a catalog option whose help
+# would become its label.
+HELP_DEBT = {
+    "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
+    "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
+    "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
+}
+
+
+class HelpDebt(_Case):
+    """C10c: the dev cases' help debt only shrinks."""
+
+    def test_the_count_skips_selectors_and_counts_bare_ranges(self):
+        p = self.scad('/* [What to render] */\npart = "all";  // ["a","b","all"]\n'
+                      '/* [G] */\nhelped = 1.0;  // has help\nbare = 2.0;\n'
+                      'ranged = 3.0;  // [1:0.5:5]\nshared_a = 1.0;  shared_b = 2.0;\n'
+                      '/* [Hidden] */\nsecret = 4.0;\n')
+        self.assertEqual(knobs_without_help(p), ["bare", "ranged", "shared_a", "shared_b"])
+
+    def test_the_ledger_matches_the_tree(self):
+        for name, owed in sorted(HELP_DEBT.items()):
+            missing = knobs_without_help(L.ENC / name)
+            self.assertLessEqual(len(missing), owed,
+                                 f"{name}: {len(missing)} knobs without help, the ledger allows "
+                                 f"{owed} — write help for {missing}")
+            self.assertEqual(len(missing), owed,
+                             f"{name}: only {len(missing)} knobs without help now — lower "
+                             f"HELP_DEBT['{name}'] to {len(missing)} (it only shrinks)")
+
+
 class InterfaceGroup(_Case):
     """Fifth rule: the stud/keyhole interface keeps one group name."""
 

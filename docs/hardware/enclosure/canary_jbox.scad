@@ -45,9 +45,9 @@ board_l = 21.0;      // board length — the 21 spec, brd_l("xiao"), canary_boar
 board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); a real board mics 17.8
                      // (brd_xiao_w_measured()) and the clips' clip_clear absorbs the
                      // difference, so the spec default stands
-board_h = 1.2;
-board_clear = 0.6;
-stack_h = 8.0;
+board_h = 1.2;       // PCB thickness — the 1.2 spec, brd_t("xiao"); the cavity, the clip hooks and the pigtail slot all stack on it
+board_clear = 0.6;   // clearance each side of the board — the cavity is the board plus 2 x this plus 2 x inner_pad
+stack_h = 8.0;       // height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep
 standoff_h = 3.5;    // 3.5: the clip beam (standoff + PCB) keeps the measured
                      // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
@@ -66,16 +66,16 @@ lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the l
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.2;
-post_d = 5.0;
+post_d = 5.0;        // corner post diameter — four lid-screw posts standing 0.2 into both walls, each piloted screw_d from 2 mm above the floor
 pigtail_w = 10.5;    // pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it
 pigtail_h = 6.5;     // pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)
 
 /* [Camera knockout] */
-cam_ap_d   = 9.0;
+cam_ap_d   = 9.0;    // camera aperture diameter through the lid at cam_dx/cam_dy (opt_camera)
 cam_dx     = 0.0;    // aperture offset from the board center — MEASURE: the XIAO
 cam_dy     = 0.0;    // Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center
 ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
-ko_depth   = 0.8;
+ko_depth   = 0.8;    // depth of the mock knockout's groove in the lid's outer face (the groove is 0.8 wide, just outside ko_ring_d)
 
 /* [Print tolerances] */
 tol_slide = 0.20;  tol_hole = 0.30;
