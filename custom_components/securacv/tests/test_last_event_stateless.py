@@ -205,8 +205,13 @@ def test_a_stateless_row_that_is_not_a_summary_still_reads_unknown(body) -> None
         ({"event_id": 7, "event_type": "", "type": "unknown", "event": "x"}, "unknown"),
         # A placeholder row whose type is not a string is no summary.
         ({"event_id": 7, "event_type": "unknown", "type": ["daily_summary"]}, "unknown"),
+        # The limit reads the row's type, not its module.
+        ({"event_id": 7, "event_type": "unknown", "type": "daily_summary"}, "daily_summary"),
     ],
-    ids=["empty-takes-any-type", "missing-takes-any-type", "type-unknown-kept", "type-a-list"],
+    ids=[
+        "empty-takes-any-type", "missing-takes-any-type", "type-unknown-kept", "type-a-list",
+        "summary-without-module",
+    ],
 )
 def test_where_the_summary_limit_applies(body, expected) -> None:
     ent = _sensor(_hass())
