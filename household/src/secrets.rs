@@ -182,13 +182,14 @@ impl HubKeys {
     /// Open a sealed `hub_keys.sealed`.
     pub fn open(sealed: &[u8], kek: &Kek, household: &[u8; 16]) -> Result<HubKeys> {
         let pt = kek.open(sealed, household, HUB_MAGIC, HUB_INFO)?;
+        let wrong = || Error::Invalid("sealed hub keys have the wrong length");
         if pt.len() != 64 {
-            return Err(Error::Invalid("sealed hub keys have the wrong length"));
+            return Err(wrong());
         }
-        let mut p = Zeroizing::new([0u8; 32]);
-        p.copy_from_slice(&pt[..32]);
-        let mut r = Zeroizing::new([0u8; 32]);
-        r.copy_from_slice(&pt[32..]);
+        // Built straight from the plaintext, never as zeroed buffers filled
+        // afterwards (see rng::array).
+        let p: Zeroizing<[u8; 32]> = Zeroizing::new(pt[..32].try_into().map_err(|_| wrong())?);
+        let r: Zeroizing<[u8; 32]> = Zeroizing::new(pt[32..].try_into().map_err(|_| wrong())?);
         Ok(HubKeys {
             posture: ed25519_dalek::SigningKey::from_bytes(&p),
             roster: ed25519_dalek::SigningKey::from_bytes(&r),
