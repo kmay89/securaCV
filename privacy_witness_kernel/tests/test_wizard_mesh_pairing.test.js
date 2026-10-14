@@ -333,54 +333,64 @@ test("a body about another pairing cancels the side still running this one", asy
   assert.ok(!p.calls.includes("api/mesh/pair/cancel init"), "pairing #4 is someone else's");
 });
 
-test("giving up cancels what the last poll saw still running this pairing", async () => {
+// F163 pinned that a timeout acts on its final poll's reads; since F215 it
+// reads both Canaries once more (meshCancelLeftRunning, F200's cleanup) and
+// acts on that. Three of this test's four cases change on purpose: a side
+// running beside one that reports the pairing paired is now spared (it was
+// canceled), and a last poll that did not read both now leaves the cleanup
+// to cancel the side the fresh read finds still running (nothing was).
+test("giving up reads both once more and cancels what is still running this pairing", async () => {
+  const cancelsOf = (p) => p.calls.filter((c) => c.startsWith("api/mesh/pair/cancel"));
   // The confirm wait: the existing Canary never finishes; the new one has.
+  // Changed by F215: the new one reports paired, so the existing one is
+  // completing, not stuck (F134), and nothing is canceled (it was).
   let p = await toCodes(Object.assign({}, F133, {
     confirm: { init: [piom("PAIRING_CONFIRM", 3, "running")], join: [piom("CONNECTING", 1, "paired")] },
   }));
   await p.t.meshConfirm();
-  assert.strictEqual(p.polls.confirm.init, 30);
+  assert.strictEqual(p.polls.confirm.init, 31, "thirty polls, then the one read");
   assert.strictEqual(p.el("mesh-error").textContent,
     "Pairing did not complete. Check both Canaries and retry.");
-  assert.ok(p.calls.includes("api/mesh/pair/cancel init"), p.calls.join(", "));
-  assert.ok(!p.calls.includes("api/mesh/pair/cancel join"), "a finished side is left as it finished");
+  assert.deepStrictEqual(cancelsOf(p), [], "nothing beside a side that reports the pairing paired");
 
-  // The code wait: neither ever shows a code.
+  // The code wait: neither ever shows a code. Both still canceled, now from
+  // the fresh read (one more read of each).
   p = page(Object.assign({}, F133, {
     codes: { init: [piom("PAIRING_INIT", 3, "running")], join: [piom("PAIRING_JOIN", 1, "running")] },
   }));
   await p.t.meshStartPairing();
   await settle();
-  assert.strictEqual(p.polls.codes.init, 60);
+  assert.strictEqual(p.polls.codes.init, 61);
   assert.strictEqual(p.el("mesh-error").textContent,
     "Timed out waiting for the pairing code. Try again.");
-  assert.ok(p.calls.includes("api/mesh/pair/cancel init"));
-  assert.ok(p.calls.includes("api/mesh/pair/cancel join"));
+  assert.deepStrictEqual(cancelsOf(p), ["api/mesh/pair/cancel init", "api/mesh/pair/cancel join"]);
 
-  // A last poll that did not read both cancels nothing: an older read may
-  // be about a pairing that has since ended.
+  // A last poll that did not read both. Changed by F215: the fresh read
+  // finds the new Canary still running this pairing and cancels it; the
+  // existing one still answers no body and is left alone (nothing was
+  // canceled before).
   const running = Array(29).fill(piom("PAIRING_CONFIRM", 3, "running"));
   p = await toCodes(Object.assign({}, F133, {
     confirm: { init: running.concat([{ ok: false, error: "unreachable" }]),
                join: [piom("PAIRING_CONFIRM", 1, "running")] },
   }));
   await p.t.meshConfirm();
-  assert.strictEqual(p.polls.confirm.init, 30);
+  assert.strictEqual(p.polls.confirm.init, 31);
   assert.strictEqual(p.el("mesh-error").textContent,
     "Pairing did not complete. Check both Canaries and retry.");
-  assert.ok(!p.calls.some((c) => c.startsWith("api/mesh/pair/cancel")), p.calls.join(", "));
+  assert.deepStrictEqual(cancelsOf(p), ["api/mesh/pair/cancel join"]);
 
-  // The same in the code wait.
+  // The same in the code wait (changed by F215 the same way).
   p = page(Object.assign({}, F133, {
     codes: { init: Array(59).fill(piom("PAIRING_INIT", 3, "running")).concat([{ ok: false }]),
              join: [piom("PAIRING_JOIN", 1, "running")] },
   }));
   await p.t.meshStartPairing();
   await settle();
-  assert.strictEqual(p.polls.codes.init, 60);
+  assert.strictEqual(p.polls.codes.init, 61);
   assert.strictEqual(p.el("mesh-error").textContent,
     "Timed out waiting for the pairing code. Try again.");
-  assert.ok(!p.calls.some((c) => c.startsWith("api/mesh/pair/cancel")), p.calls.join(", "));
+  assert.deepStrictEqual(cancelsOf(p), ["api/mesh/pair/cancel join"]);
 });
 
 test("Canaries from before F133 are read the old way: done once both read ACTIVE", async () => {
@@ -403,7 +413,7 @@ test("Canaries from before F133 are read the old way: done once both read ACTIVE
     confirm: { init: [legacy("CONNECTING")], join: [legacy("CONNECTING")] },
   }));
   await p.t.meshConfirm();
-  assert.strictEqual(p.polls.confirm.init, 30);
+  assert.strictEqual(p.polls.confirm.init, 31, "thirty polls, then the timeout's one read (F215)");
   assert.strictEqual(p.el("mesh-error").textContent,
     "Pairing did not complete. Check both Canaries and retry.");
   assert.ok(!p.calls.some((c) => c.startsWith("api/mesh/pair/cancel")),
@@ -415,7 +425,7 @@ test("Canaries from before F133 are read the old way: done once both read ACTIVE
     confirm: { init: [piom("CONNECTING", 9, "paired")], join: [legacy("ACTIVE")] },
   }));
   await p.t.meshConfirm();
-  assert.strictEqual(p.polls.confirm.init, 30, "not done: CONNECTING, and no number of its own");
+  assert.strictEqual(p.polls.confirm.init, 31, "not done: CONNECTING, and no number of its own");
 });
 
 test("a Canary that reports its outcome beside one that does not", async () => {
@@ -682,6 +692,63 @@ test("five unreadable polls in the confirm wait cancel nothing beside a side tha
     "A Canary became unreachable while completing. Try again.");
   assert.strictEqual(p.polls.confirm.init, 6);
   assert.deepStrictEqual(cancels(p), [], "the new Canary is completing, not stuck");
+});
+
+// F215: either wait's timeout reads both Canaries once more and cancels a
+// side that still reports this pairing running, and nothing beside a side
+// that reports it paired, from that read, not the last poll's.
+test("each wait's timeout cancels from a fresh read, not from its final poll (F215)", async () => {
+  const atTimeout = async (wait, init, join) => {
+    let p;
+    if (wait === "confirm") {
+      p = await toCodes(Object.assign({}, F133, { confirm: { init, join } }));
+      await p.t.meshConfirm();
+      assert.strictEqual(p.el("mesh-error").textContent,
+        "Pairing did not complete. Check both Canaries and retry.");
+    } else {
+      p = page(Object.assign({}, F133, { codes: { init, join } }));
+      await p.t.meshStartPairing();
+      await settle();
+      assert.strictEqual(p.el("mesh-error").textContent,
+        "Timed out waiting for the pairing code. Try again.");
+    }
+    return p;
+  };
+  for (const [wait, polls] of [["confirm", 30], ["codes", 60]]) {
+    const run = wait === "confirm" ? piom("PAIRING_CONFIRM", 3, "running")
+                                   : piom("PAIRING_INIT", 3, "running");
+    const runJ = wait === "confirm" ? piom("PAIRING_CONFIRM", 1, "running")
+                                    : piom("PAIRING_JOIN", 1, "running");
+
+    // A final poll that failed on the network: the fresh read reaches both,
+    // both still run this pairing, both are canceled. On the final poll's
+    // reads (F163) nothing was: that poll read neither.
+    let p = await atTimeout(wait, Array(polls - 1).fill(run).concat([THROW, run]), [runJ]);
+    assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel init", "api/mesh/pair/cancel join"], wait);
+    cancelsBeforeTheMessage(p);
+
+    // A joiner still running beside an initiator that reports the pairing
+    // paired: it is completing (the initiator re-sends the opera key until it
+    // lands, F134), so nothing is canceled. On the final poll's reads the
+    // joiner was canceled, leaving a member that never joined.
+    p = await atTimeout(wait, [piom("CONNECTING", 3, "paired")], [runJ]);
+    assert.deepStrictEqual(cancels(p), [], wait);
+    assert.match(p.el("mesh-status-line").innerHTML, /Checking both Canaries…/);
+
+    // A Canary answering errors (the proxy's error body): it is left alone,
+    // the other is read and canceled. The confirm wait counts no error
+    // answer toward its five, so it gets here every time; the code wait does
+    // when the errors are spaced out. On the final poll's reads nothing was
+    // canceled.
+    const errs = wait === "confirm"
+      ? [{ ok: false, error: "Device HTTP error 502" }]
+      : Array.from({ length: polls }, (_, k) => (k % 2 ? { ok: false, error: "timeout" } : run));
+    p = await atTimeout(wait, errs, [runJ]);
+    assert.deepStrictEqual(cancels(p), ["api/mesh/pair/cancel join"], wait);
+    cancelsBeforeTheMessage(p);
+    assert.strictEqual(p.polls[wait].join, polls + 1,
+      "the other Canary is read at every poll and once more at the timeout");
+  }
 });
 
 // A gate the test opens by hand: wait() parks until open() is called.
