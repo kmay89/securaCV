@@ -3916,6 +3916,7 @@ test("A86: the Flasher's vocabulary rule is the browser's and the Lab's, product
     const sent = [];
     const fn = new Function("$", "document", "state", "invoke", "setStatus",
       [fnSource(appJs, "monitorVocabulary"), fnSource(appJs, "monitorProductOnBench"),
+       fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject"),
        fnSource(appJs, "requiresLiveReceipt"), fnSource(appJs, "renderMonitorCmds")].join("\n") +
       "\nreturn renderMonitorCmds;")((id) => nodes[id], { createElement: mk },
       { catalog, monitoring: true, ...benchState },
@@ -3948,6 +3949,69 @@ test("A86: the Flasher's vocabulary rule is the browser's and the Lab's, product
   assert.deepStrictEqual(local.chips, [], "a local file names no product: no chips");
   assert.strictEqual(local.placeholder, catalog.monitor_unknown.placeholder);
   assert.deepStrictEqual(draw({}).chips, [], "nothing chosen, nothing flashed: no chips");
+
+  // Before a flash, the firmware the passport read off the board wins over
+  // the card: "Ask it for its self-check" opens this monitor with no card
+  // chosen, and a card is only what the user means to write next.
+  const chipsOf = (id) => catalogMonitor(id).cmds.map(([c, l]) => [c, `${l} (${c})`]);
+  const wapRead = { version: "2.0.0", projectName: "canary_wap", product: byId("securacv-canary-wap") };
+  const residentCases = [
+    ["a resident WAP, no card", { resident: { ...wapRead } }, "securacv-canary-wap"],
+    ["a resident WAP, the Sense card chosen", { resident: { ...wapRead }, product: byId("securacv-canary-sense") }, "securacv-canary-wap"],
+    ["a resident WAP, then a Sense flash", { resident: { ...wapRead }, product: byId("securacv-canary-sense"),
+      vision: { hostFlash: { product_id: "securacv-canary-sense" } } }, "securacv-canary-sense"],
+    ["a resident WAP this bench wrote over (no receipt), the Sense card", { resident: { ...wapRead, overwritten: true },
+      product: byId("securacv-canary-sense") }, "securacv-canary-sense"],
+    ["an unread resident, the Sense card", { resident: { unknown: true }, product: byId("securacv-canary-sense") }, "securacv-canary-sense"],
+    ["a display read as canary_display, the flagship card", { resident: { projectName: "canary_display", product: byId("securacv-canary") },
+      product: byId("securacv-canary") }, "securacv-canary-display-watch"],
+    ["a resident Vision XIAO S3", { resident: { projectName: "canary-vision-xiao-s3" } }, "securacv-canary-vision-xiao-s3"],
+  ];
+  for (const [what, st, want] of residentCases) {
+    const out = draw(st);
+    assert.deepStrictEqual(out.chips, chipsOf(want), `${what}: the Flasher's chips must be ${want}'s`);
+    assert.strictEqual(out.placeholder, catalogMonitor(want).placeholder, `${what}: the box`);
+    assert.strictEqual(out.receiptHidden, byId(want).serial_receipt === false, `${what}: "Print receipt (j)"`);
+  }
+  for (const [what, st] of [["a blank board, the Sense card", { resident: { blank: true }, product: byId("securacv-canary-sense") }],
+                            ["foreign firmware, the WAP card", { resident: { projectName: "esp32-hello" }, product: byId("securacv-canary-wap") }]]) {
+    const out = draw(st);
+    assert.deepStrictEqual(out.chips, [], `${what}: no chips — the board runs neither`);
+    assert.strictEqual(out.placeholder, catalog.monitor_unknown.placeholder, `${what}: the box`);
+  }
+
+  // Every write the bench starts marks the passport's read overwritten — and
+  // the read-only health check does not.
+  const noted = new Function("state", fnSource(appJs, "noteBoardWritten") + "\nreturn noteBoardWritten;");
+  const st = { resident: { ...wapRead } };
+  noted(st)();
+  assert.strictEqual(st.resident.overwritten, true);
+  noted({ resident: null })(); // no read yet: nothing to mark, no throw
+  for (const fn of ["onFlash", "onFlashLocalFile", "onRescueRestore", "onRescueErase"]) {
+    assert.match(fnSource(appJs, fn), /\bnoteBoardWritten\(\);/, `${fn} writes to the board and must say so`);
+  }
+  assert.doesNotMatch(fnSource(appJs, "onHealthCheck"), /noteBoardWritten/, "a health check reads; it overwrites nothing");
+  assert.doesNotMatch(fnSource(appJs, "onRescueBackup"), /noteBoardWritten/, "a backup reads; it overwrites nothing");
+
+  // "Ask it for its self-check" asks for j only where the firmware answers it.
+  const asks = (benchState) => {
+    const timers = [], sent = [];
+    const fn = new Function("state", "invoke", "startMonitor", "setTimeout", "$",
+      [fnSource(appJs, "monitorProductOnBench"), fnSource(appJs, "matchProjectToProduct"),
+       fnSource(appJs, "productForProject"), fnSource(appJs, "requiresLiveReceipt"),
+       "async " + fnSource(appJs, "askSelfCheck")].join("\n") + "\nreturn askSelfCheck;")(
+      { catalog, monitoring: true, busy: false, ...benchState },
+      async (cmd, args) => { sent.push(args.command); }, async () => {},
+      (f, ms) => { timers.push(ms); f(); }, () => ({ scrollIntoView() {} }));
+    return fn().then(() => ({ timers, sent }));
+  };
+  return Promise.all([
+    asks({ resident: { ...wapRead } }).then((r) => assert.deepStrictEqual(r.sent, [], "the WAP sketch has no j to ask")),
+    asks({ resident: { projectName: "canary_display" } }).then((r) => assert.deepStrictEqual(r.sent, [], "a display reads no j")),
+    asks({ resident: { projectName: "canary-sense" } }).then((r) => assert.deepStrictEqual(r.sent, [], "Sense's console has no j")),
+    asks({ resident: { projectName: "canary" } }).then((r) => assert.deepStrictEqual(r.sent, ["j\n", "j\n"], "the flagship answers j")),
+    asks({ resident: { projectName: "canary-vision" } }).then((r) => assert.deepStrictEqual(r.sent, ["j\n", "j\n"], "Vision answers j")),
+  ]);
 });
 
 test("A86: the Lab's receipt card shows the flashed product's own commands, and none for a display", async () => {
@@ -3979,22 +4043,130 @@ test("A86: the Lab's receipt card shows the flashed product's own commands, and 
   }
 });
 
-test("A86: the browser flasher's monitor reads the flashed or identified product's commands", () => {
+// The display-aware descriptor matcher both flashers resolve a board with.
+// A display build whose name carries no flavor ("canary_display") matches
+// only the flagship's "canary" stem in the plain substring matcher; it is a
+// display, and a display reads no serial commands.
+const A86_DESCRIPTORS = [
+  // [projectName, product id it must resolve to (null: no catalog product)]
+  ["canary_display", "securacv-canary-display-watch"],
+  ["canary-display", "securacv-canary-display-watch"],
+  ["CANARY_DISPLAY", "securacv-canary-display-watch"],
+  ["canary-display-dash", "securacv-canary-display-dash"],
+  ["canary_display_dash", "securacv-canary-display-dash"],
+  ["canary-display-nightstand-c6", "securacv-canary-display-nightstand-c6"],
+  ["canary_wap", "securacv-canary-wap"],
+  ["canary-sense", "securacv-canary-sense"],
+  ["canary-sense-wellbeing", "securacv-canary-sense-wellbeing"],
+  ["canary_vision", "securacv-canary-vision"],
+  ["canary-vision-xiao-s3", "securacv-canary-vision-xiao-s3"],
+  ["canary", "securacv-canary"],
+  ["canary-wroom", "securacv-canary-wroom"],
+  ["something_else", null],
+  ["", null],
+];
+
+test("A86: both flashers resolve a board's descriptor to its product, a flavorless display build to a display", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desk = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")].join("\n") +
+    "\nreturn productForProject;")();
+  for (const [name, want] of A86_DESCRIPTORS) {
+    const got = core.productForProject(catalog, name);
+    assert.strictEqual(got ? got.id : null, want, `flash-core productForProject(${JSON.stringify(name)})`);
+    const d = desk(catalog, name);
+    assert.strictEqual(d ? d.id : null, want, `the Flasher's productForProject(${JSON.stringify(name)})`);
+    if (core.looksLikeDisplayProject(name)) {
+      assert.strictEqual(got.role, "display", `${name} is a display build, so it resolves to a display`);
+    }
+  }
+  // The plain matcher is what was wrong: it names the flagship.
+  assert.strictEqual(core.matchProjectToProduct(catalog, "canary_display").id, "securacv-canary");
+  // A catalog with no display entries still never names the flagship.
+  const bare = { ...catalog, displays: [] };
+  assert.strictEqual(core.productForProject(bare, "canary_display").role, "display");
+  assert.strictEqual(desk(bare, "canary_display").role, "display");
+  const noDisplays = { ...catalog, displays: [], products: catalog.products.filter((p) => p.role !== "display") };
+  assert.strictEqual(core.productForProject(noDisplays, "canary_display"), null);
+  assert.strictEqual(desk(noDisplays, "canary_display"), null);
+});
+
+test("A86: the browser flasher's monitor offers the flashed or the identified board's own commands", async () => {
   const flashJs = read(join(CANARY, "assets/flash.js"));
-  const phase = fnSource(flashJs, "phaseMonitor");
-  // The chips and the box come from the catalog record, through the shared rule.
-  assert.match(phase, /const vocab = core\.monitorVocabulary\(state\.catalog, "product" in opts \? opts\.product : boardProduct\(\)\);/,
-    "the browser monitor must take the flashed product when it follows a flash, else the board's identified one");
-  assert.match(phase, /for \(const \[cmd, label\] of vocab\.cmds\)/);
-  assert.match(phase, /send\(cmd \+ "\\n"\)/, "a chip sends its command and the newline a word console needs");
-  // After a flash the monitor is handed the flashed product — or, for a backup
-  // or a local file, an explicit null (no chips), never the pre-flash board's.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  // flash.js's own boardProduct and monitorProduct, over a stand-in state.
+  const choose = (current, opts = {}) => new Function("state", "core",
+    [fnSource(flashJs, "boardProduct"), fnSource(flashJs, "monitorProduct")].join("\n") + "\nreturn monitorProduct;")(
+    { catalog, current }, core)(opts);
+  const vocabFor = (current, opts) => core.monitorVocabulary(catalog, choose(current, opts));
+  for (const [name, want] of A86_DESCRIPTORS) {
+    const v = vocabFor({ version: "1.0.0", projectName: name });
+    assert.deepStrictEqual(v, want ? catalogMonitor(want) : catalog.monitor_unknown,
+      `the browser monitor for a board whose descriptor reads ${JSON.stringify(name)}`);
+  }
+  for (const name of ["canary_display", "canary-display", "canary-display-dash"]) {
+    const v = vocabFor({ projectName: name });
+    assert.strictEqual(v.kind, "none", `${name}: a display's monitor offers no commands`);
+    assert.deepStrictEqual(v.cmds, []);
+    assert.match(v.placeholder, /reads no serial commands/);
+  }
+  assert.deepStrictEqual(vocabFor({ unknown: true }), catalog.monitor_unknown, "an unread descriptor names no product");
+  assert.deepStrictEqual(vocabFor(null), catalog.monitor_unknown, "no board read at all");
+  // After a flash, the flashed product — over whatever the board ran before —
+  // and for a backup or a local file an explicit null: no chips.
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  assert.deepStrictEqual(vocabFor({ projectName: "canary" }, { product: wap }), catalogMonitor("securacv-canary-wap"));
+  assert.deepStrictEqual(vocabFor({ projectName: "canary" }, { product: null }), catalog.monitor_unknown);
   assert.match(flashJs, /const flashed = \(opts\.product && !opts\.isBackup && !opts\.isLocal\) \? opts\.product : null;\s*return openMonitor\(\{[^}]*hatchProduct: flashed, product: flashed \}\)/,
     "the post-flash monitor must be told which product it is watching");
-  // The board's identified product is read from its app descriptor, the
-  // catalog's own matcher.
-  assert.match(fnSource(flashJs, "boardProduct"),
-    /core\.matchProjectToProduct\(state\.catalog, state\.current\.projectName\)/);
+  // phaseMonitor draws its chips and box from that choice, through the shared rule.
+  const phase = fnSource(flashJs, "phaseMonitor");
+  assert.match(phase, /const monProduct = monitorProduct\(opts\);\s*const vocab = core\.monitorVocabulary\(state\.catalog, monProduct\);/);
+  assert.match(phase, /for \(const \[cmd, label\] of vocab\.cmds\)/);
+  assert.match(phase, /send\(cmd \+ "\\n"\)/, "a chip sends its command and the newline a word console needs");
+  assert.match(phase, /input\.placeholder = vocab\.placeholder;/);
+  // The role line names the same product the monitor does.
+  assert.match(fnSource(flashJs, "renderRoleLine"), /const prod = core\.productForProject\(state\.catalog, cur\.projectName\);/);
+  // The identity ask (j) goes only to a firmware that answers it.
+  assert.match(phase, /if \(opts\.proveIdentity && !mon\.askedManifest && core\.requiresLiveReceipt\(monProduct\)\) \{/,
+    "the browser must not ask a WAP, a Sense or a display for a j it does not have");
+});
+
+test("A86: the browser monitor's status lines name the firmware's own menu command, or none", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  for (const p of catalog.products) {
+    const v = p.monitor;
+    const connected = core.monitorStatusText(v, "connected", 115200);
+    const quiet = core.monitorStatusText(v, "quiet", 115200);
+    assert.match(connected, /^Connected at 115200 — the board is talking\./);
+    assert.match(quiet, /built without a serial console/);
+    if (v.kind === "keys") {
+      assert.match(connected, /Press a command, or h for its menu\.$/, `${p.id}: a key console's menu is h`);
+      assert.match(quiet, /send h for its menu/);
+    } else if (v.kind === "words") {
+      assert.match(connected, /Press a command, or help for its list\.$/, `${p.id}: the tuning console answers help, not h`);
+      assert.match(quiet, /send help for its list/);
+    } else {
+      assert.strictEqual(connected, "Connected at 115200 — the board is talking.", `${p.id}: a display reads no commands`);
+      assert.doesNotMatch(quiet, /speak when asked|\bsend\b/, `${p.id}: nothing to send a display`);
+    }
+    // Whatever the line names is one of the product's own chips.
+    const named = /or (\S+) for its/.exec(connected);
+    if (named) assert.ok(v.cmds.some(([c]) => c === named[1]), `${p.id}: "${named[1]}" is not one of its chips`);
+  }
+  for (const v of [catalog.monitor_unknown, null]) {
+    assert.strictEqual(core.monitorStatusText(v, "connected", 9600), "Connected at 9600 — the board is talking.");
+    assert.doesNotMatch(core.monitorStatusText(v, "quiet", 9600), /speak when asked/);
+  }
+  // A key vocabulary without h names no menu key (the line names chips only).
+  assert.strictEqual(core.monitorStatusText({ kind: "keys", cmds: [["j", "install receipt"]] }, "connected", 1),
+    "Connected at 1 — the board is talking.");
+  // The browser monitor shows these lines, and no hard-coded h hint remains.
+  const phase = fnSource(flashJs, "phaseMonitor");
+  assert.match(phase, /setStatus\(core\.monitorStatusText\(vocab, "connected", baud\)\);/);
+  assert.match(phase, /setStatus\(core\.monitorStatusText\(vocab, "quiet", baud\)\);/);
+  assert.doesNotMatch(flashJs, /h for its menu/, "flash.js must not tell every firmware to press h");
 });
 
 // ── The derived birth certificate: one bird, one name, three surfaces ─────

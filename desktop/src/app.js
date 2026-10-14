@@ -1690,6 +1690,28 @@ function matchProjectToProduct(catalog, projectName) {
   return best;
 }
 
+// The catalog product a board's app descriptor names, display-aware — the
+// twin of flash-core.js productForProject (desktop_parity.test.js runs both
+// over the same names). matchProjectToProduct is a substring match where the
+// longest asset_stem wins, so a display build whose name carries no flavor
+// ("canary_display", "canary-display") matches only the flagship's "canary".
+// A name the browser counts as a display (it says "display") resolves to the
+// display product it names, else the catalog display entry it matches, else
+// the first display product — never the flagship. Every display firmware
+// reads the same serial console (none), so the monitor's commands are right
+// either way.
+function productForProject(catalog, projectName) {
+  const match = matchProjectToProduct(catalog, projectName);
+  const name = String(projectName || "").toLowerCase();
+  if (!/display/.test(name)) return match;
+  const isDisplay = (p) => (p.role || (/display|watch|dash/.test(String(p.id || "")) ? "display" : "")) === "display";
+  if (match && isDisplay(match)) return match;
+  const products = (catalog && catalog.products) || [];
+  const displays = (catalog && Array.isArray(catalog.displays)) ? catalog.displays : [];
+  const d = displays.find((x) => name === x.id) || displays.find((x) => x.match && name.includes(x.match));
+  return (d && products.find((p) => p.id === d.flash_product)) || products.find(isDisplay) || null;
+}
+
 // Semver-ish compare returning -1/0/1, or null when either side can't be
 // parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
 function compareVersions(a, b) {
@@ -3407,6 +3429,7 @@ async function onFlash() {
   // Reflash must start from a clean slate — never show the PREVIOUS flash's
   // green result, receipts, certificate, or a stale "Broken pipe" monitor line.
   resetOutcome();
+  noteBoardWritten(); // what the passport read is about to be overwritten
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
@@ -4394,6 +4417,7 @@ async function onRescueRestore() {
   }
   if (!ok) { cancelRescue(); return; }
   await runRescue("Restore", async () => {
+    noteBoardWritten(); // the image going on is not the one the passport read
     await invoke("write_local_image", {
       port,
       path,
@@ -4424,6 +4448,7 @@ async function onRescueErase() {
   }
   if (!ok) { cancelRescue(); return; }
   await runRescue("Erase", async () => {
+    noteBoardWritten(); // nothing the passport read survives an erase
     await invoke("erase_chip", { port });
     return "Chip erased — factory-fresh. Flash any image next.";
   });
@@ -4694,6 +4719,7 @@ async function onFlashLocalFile() {
   $("dev-channel").disabled = true;
   setStatus("local-result", "");
   resetOutcome();
+  noteBoardWritten(); // what the passport read is about to be overwritten
   state.busy = true; // pause the watcher so it can't grab the port
   await stopMonitor();
 
@@ -5037,11 +5063,16 @@ async function askSelfCheck() {
   state.selfCheckAsked = true; // the answer is a self-check, not a boot receipt
   if (!state.monitoring) await startMonitor();
   if (!state.monitoring) return;
-  const ask = () => {
-    if (state.monitoring) invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
-  };
-  setTimeout(ask, 900);
-  setTimeout(ask, 2600);
+  // Only a firmware that answers j is asked for it (parity: the browser's
+  // monitor gates its identity ask the same way) — the WAP sketch, Sense's
+  // tuning console and a display would answer "unknown command" twice.
+  if (requiresLiveReceipt(monitorProductOnBench())) {
+    const ask = () => {
+      if (state.monitoring) invoke("serial_monitor_send", { command: "j\n" }).catch(() => {});
+    };
+    setTimeout(ask, 900);
+    setTimeout(ask, 2600);
+  }
   $("serial-monitor").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -5255,13 +5286,37 @@ function monitorVocabulary(catalog, product) {
   return { kind: "unknown", cmds: [], placeholder: "type a command" };
 }
 
-// The product whose firmware the monitor is watching: the last host flash
-// wins, else the chosen product card — the radar suite's and the field
-// bench's rule. A local file or a backup names no catalog product: null.
+// The product whose firmware the monitor is watching — the browser
+// flasher's rule (flash.js phaseMonitor):
+//   1. the last host flash: the firmware just written. A local file's receipt
+//      names no catalog product (its product_id is the file), so: null.
+//   2. else the firmware the passport read off the board at connect
+//      (state.resident, display-aware through productForProject), until this
+//      bench writes to the board — a flash, a local file, a Rescue restore or
+//      erase marks it overwritten (noteBoardWritten), since a write that left
+//      no host receipt (it failed, or it was a restore) leaves the read
+//      describing bytes that may be gone. A blank board runs nothing, and a
+//      firmware the catalog does not name answers no chip it knows: null.
+//   3. else the chosen product card (the radar suite's and the field bench's
+//      fallback): a board whose read failed, or one this bench wrote.
 function monitorProductOnBench() {
-  const flashedId = state.vision && state.vision.hostFlash && state.vision.hostFlash.product_id;
-  const id = flashedId || (state.product && state.product.id);
-  return (id && ((state.catalog && state.catalog.products) || []).find((p) => p.id === id)) || null;
+  const products = (state.catalog && state.catalog.products) || [];
+  const host = state.vision && state.vision.hostFlash;
+  if (host) return products.find((p) => p.id === host.product_id) || null;
+  const r = state.resident;
+  if (r && !r.unknown && !r.overwritten) {
+    // A blank board, or firmware the catalog does not know: no chips rather
+    // than the card's, which that board does not run.
+    return r.blank ? null : productForProject(state.catalog, r.projectName);
+  }
+  const id = state.product && state.product.id;
+  return (id && products.find((p) => p.id === id)) || null;
+}
+
+// The bench is about to write to the board: what the passport read at
+// connect no longer names what the board runs (monitorProductOnBench).
+function noteBoardWritten() {
+  if (state.resident) state.resident.overwritten = true;
 }
 
 function renderMonitorCmds() {
