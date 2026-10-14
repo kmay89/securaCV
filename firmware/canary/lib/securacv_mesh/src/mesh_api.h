@@ -159,22 +159,24 @@ bool build_mesh_peers_json(char*  out,
                            const PeerView* peers,
                            size_t          count);
 
-/* F161 — the rows of GET /api/mesh/peers: one per persisted member pubkey
- * (`count` of them, PUBKEY_LEN bytes each, in their NVS order), joined by
- * fingerprint against the members of the view the main loop published.
- * A member the view lists takes its alerts_received from it; one the view
- * marks live takes its state ("CONNECTED" for an ACTIVE transport entry,
- * "STALE", else "OFFLINE"), RSSI and last_seen_sec, the age of its
- * last_seen_ms at `now_ms` (uptime, counted at the read). Any other row is
- * "OFFLINE", last_seen_sec 0xFFFFFFFF ("never"), RSSI 0, no alerts. Names
- * are "" (the handler has no name source). Writes `count` rows to `out`
- * (the caller's array holds them) and returns `count`; 0 for a null `out`,
- * or null `pubkeys` with a count. Until F161 handle_mesh_peers did this
- * join itself on the httpd task, against the session's peer links and the
- * transport table read live. */
-size_t peer_views_from_status(const mesh_session::StatusView& view,
-                              const uint8_t* pubkeys, size_t count,
-                              uint32_t now_ms, PeerView* out);
+/* F199 — the rows of GET /api/mesh/peers: one per member of the view the
+ * main loop published (view.member_count of them, at most
+ * MAX_TRUSTED_PEERS, in the session's table order): the members this
+ * device enforces, so the rows equal GET /api/mesh's peers_total and no
+ * NVS is read (the route answers on a board without flash encryption).
+ * A member the view marks live takes its state ("CONNECTED" for an ACTIVE
+ * transport entry, "STALE", else "OFFLINE"), RSSI and last_seen_sec, the
+ * age of its last_seen_ms at `now_ms` (uptime, counted at the read); any
+ * other member is "OFFLINE", last_seen_sec 0xFFFFFFFF ("never"), RSSI 0.
+ * Every row carries the member's alerts_received. Names are "" (the
+ * handler has no name source). Writes at most `cap` rows to `out` and
+ * returns how many; 0 for a null `out`. Until F199 the rows were the
+ * persisted pubkeys (mesh_state::load_trusted_peers, refused without flash
+ * encryption: 500 load_failed) joined against the view, so after an NVS
+ * write that failed the list and peers_total disagreed until a reboot;
+ * until F161 handle_mesh_peers did that join itself on the httpd task. */
+size_t peer_views_from_status(const mesh_session::StatusView& view, uint32_t now_ms,
+                              PeerView* out, size_t cap);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * GET /api/mesh/alerts — received alert history (F10)

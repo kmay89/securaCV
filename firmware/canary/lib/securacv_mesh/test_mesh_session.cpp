@@ -6819,7 +6819,7 @@ void test_a_join_waits_for_a_leave() {
  * pipes, in lockstep, one loop pass each per step (main.cpp's order: the
  * transport pass, then process()). The child answers each step with what it
  * sent; a failed assert in it closes the pipe and fails the parent. */
-std::string peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms);   /* below */
+std::string peers_body(uint32_t now_ms);   /* below */
 
 namespace two_canaries {
 
@@ -6950,8 +6950,7 @@ size_t count_heartbeats(const std::vector<OutFrame>& v, const uint8_t to[6]) {
 }
 
 /* The joiner's side: steps until told to quit. */
-[[noreturn]] void run_joiner(int rd, int wr, const uint8_t j_pub[32], const uint8_t j_priv[32],
-                             const uint8_t i_pub[32]) {
+[[noreturn]] void run_joiner(int rd, int wr, const uint8_t j_pub[32], const uint8_t j_priv[32]) {
   boot(j_pub, j_priv, nullptr, 0);
   for (;;) {
     uint8_t cmd = 0;
@@ -6962,7 +6961,7 @@ size_t count_heartbeats(const std::vector<OutFrame>& v, const uint8_t to[6]) {
     if (cmd == REPORT) {
       mesh_transport::test::set_now_ms(t);
       put_str(wr, status_body());
-      put_str(wr, peers_body(i_pub, 1, t));
+      put_str(wr, peers_body(t));
       continue;
     }
     uint8_t req = 0;
@@ -7011,7 +7010,7 @@ struct Joiner {
   }
 };
 
-Joiner fork_joiner(const uint8_t j_pub[32], const uint8_t j_priv[32], const uint8_t i_pub[32]) {
+Joiner fork_joiner(const uint8_t j_pub[32], const uint8_t j_priv[32]) {
   int down[2], up[2];
   assert(pipe(down) == 0 && pipe(up) == 0);
   std::fflush(stdout);
@@ -7021,7 +7020,7 @@ Joiner fork_joiner(const uint8_t j_pub[32], const uint8_t j_priv[32], const uint
   if (pid == 0) {
     close(down[1]);
     close(up[0]);
-    run_joiner(down[0], up[1], j_pub, j_priv, i_pub);
+    run_joiner(down[0], up[1], j_pub, j_priv);
   }
   close(down[0]);
   close(up[1]);
@@ -7050,7 +7049,7 @@ void test_two_paired_canaries_hear_each_other_at_once() {
   uint8_t i_pub[32], i_priv[32], j_pub[32], j_priv[32];
   assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
   assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
-  Joiner joiner = fork_joiner(j_pub, j_priv, i_pub);
+  Joiner joiner = fork_joiner(j_pub, j_priv);
   boot(i_pub, i_priv, S, 0);
 
   using RT = mesh_session::RequestType;
@@ -7098,7 +7097,7 @@ void test_two_paired_canaries_hear_each_other_at_once() {
   joiner.report(11500, &body_j, &peers_j);
   mesh_transport::test::set_now_ms(11500);
   const std::string body_i = status_body();
-  const std::string peers_i = peers_body(j_pub, 1, 11500);
+  const std::string peers_i = peers_body(11500);
   for (const std::string* b : {&body_i, static_cast<const std::string*>(&body_j)}) {
     assert(has(*b, "\"state\":\"ACTIVE\""));
     assert(has(*b, "\"peers_total\":1,\"peers_online\":1"));
@@ -7551,15 +7550,14 @@ void test_concurrent_offer_propagates_and_yields() {
  * what a read must equal right after a pass, and must not show between
  * passes. */
 
-/* GET /api/mesh/peers as handle_mesh_peers builds it since F161: the
- * persisted pubkeys (passed in; the host's NVS is empty) joined against the
- * published view at `now_ms`. */
-std::string peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms) {
+/* GET /api/mesh/peers as handle_mesh_peers builds it since F199: the rows
+ * are the members of the published view at `now_ms`; no store is read. */
+std::string peers_body(uint32_t now_ms) {
   mesh_session::StatusView view;
   mesh_session::read_status(&view);
   mesh_api::PeerView rows[mesh_session::MAX_TRUSTED_PEERS];
-  assert(count <= mesh_session::MAX_TRUSTED_PEERS);
-  assert(mesh_api::peer_views_from_status(view, pubkeys, count, now_ms, rows) == count);
+  const size_t count =
+      mesh_api::peer_views_from_status(view, now_ms, rows, mesh_session::MAX_TRUSTED_PEERS);
   char body[mesh_api::PEERS_JSON_CAP];
   assert(mesh_api::build_mesh_peers_json(body, sizeof(body), rows, count));
   return body;
@@ -7639,6 +7637,15 @@ std::string fp_hex_of(const uint8_t pub[mesh_crypto::PUBKEY_LEN]) {
     std::snprintf(hex + 2 * b, 3, "%02x", fp[b]);
   }
   return hex;
+}
+
+/* The row of `pub`'s fingerprint in the peers body at `now_ms`, or "". */
+std::string peer_row(uint32_t now_ms, const uint8_t pub[mesh_crypto::PUBKEY_LEN]) {
+  const std::string body = peers_body(now_ms);
+  const std::string key = "{\"fingerprint\":\"" + fp_hex_of(pub) + "\"";
+  const size_t at = body.find(key);
+  if (at == std::string::npos) return "";
+  return body.substr(at, body.find('}', at) - at + 1);
 }
 
 /* A trusted member with its keys kept, bound to `mac`. */
@@ -7785,7 +7792,7 @@ void test_a_disabled_session_still_publishes_each_pass() {
   make_member(a, mac_a);
   member_speaks(a, S, 1000, -48);
   mesh_session::process(1000);
-  assert(has(peers_body(a.pub, 1, 2000), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-48"));
+  assert(has(peers_body(2000), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-48"));
   assert(has(status_body(), "\"state\":\"ACTIVE\""));
 
   mesh_session::Request off = make_request(mesh_session::RequestType::SET_ENABLED);
@@ -7800,7 +7807,7 @@ void test_a_disabled_session_still_publishes_each_pass() {
   mesh_transport::test::set_now_ms(later);
   mesh_transport::process();
   mesh_session::process(later);
-  const std::string rows = peers_body(a.pub, 1, later);
+  const std::string rows = peers_body(later);
   assert(has(rows, "\"state\":\"STALE\""));
   assert(rows == live_peers_body(a.pub, 1, later));
   assert(status_body() == live_status_body());
@@ -7880,14 +7887,15 @@ void test_the_view_holds_the_code_only_while_it_is_shown() {
   std::printf("PASS test_the_view_holds_the_code_only_while_it_is_shown\n");
 }
 
-/* GET /api/mesh/peers: one row per persisted pubkey, in the NVS order
- * given, joined against the published members. A member heard a second
- * ago reads CONNECTED with its RSSI; one heard 97 s ago STALE; one bound
- * but never heard OFFLINE, "never"; one heard whose address left the
- * transport table OFFLINE, "never", with its alert still counted; a stored
- * pubkey the session does not trust OFFLINE, "never", no alerts. Each row
- * equals the pre-F161 handler's join of the live state after the same pass
- * (every field kept), and the age is counted at the read. */
+/* GET /api/mesh/peers: one row per member of the published view, in the
+ * session's table order (since F199; it was one per persisted pubkey, in
+ * NVS order, so a stored pubkey the session does not trust had a row, as
+ * this test pinned, and now has none). A member heard a second ago reads
+ * CONNECTED with its RSSI; one heard 97 s ago STALE; one bound but never
+ * heard OFFLINE, "never"; one heard whose address left the transport table
+ * OFFLINE, "never", with its alert still counted. Each row equals the
+ * pre-F161 handler's join of the live state after the same pass (every
+ * field kept), and the age is counted at the read. */
 void test_the_peer_list_joins_each_member_from_the_view() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x1B + i);
@@ -7903,6 +7911,7 @@ void test_the_peer_list_joins_each_member_from_the_view() {
   make_member(c, mac_c);
   make_member(d, mac_d);
   assert(mesh_crypto::ed25519_generate_keypair(e.pub, e.priv));   /* stored, not trusted */
+  (void)e;
   member_speaks(b, S, 1000, -67);
   member_speaks(d, S, 1000, -55);
   mesh_transport::remove_peer(mac_d);
@@ -7912,14 +7921,12 @@ void test_the_peer_list_joins_each_member_from_the_view() {
   mesh_transport::process();
   mesh_session::process(96000);
 
-  uint8_t keys[5 * mesh_crypto::PUBKEY_LEN];
-  const TestMember* order[5] = {&e, &a, &b, &c, &d};
-  for (size_t i = 0; i < 5; ++i) std::memcpy(keys + i * 32, order[i]->pub, 32);
-  const std::string rows = peers_body(keys, 5, 98500);
+  uint8_t keys[4 * mesh_crypto::PUBKEY_LEN];
+  const TestMember* order[4] = {&a, &b, &c, &d};   /* the table order */
+  for (size_t i = 0; i < 4; ++i) std::memcpy(keys + i * 32, order[i]->pub, 32);
+  const std::string rows = peers_body(98500);
   const std::string want =
       "{\"ok\":true,\"peers\":["
-      "{\"fingerprint\":\"" + fp_hex_of(e.pub) + "\",\"name\":\"\",\"state\":\"OFFLINE\","
-      "\"last_seen_sec\":4294967295,\"rssi\":0,\"alerts_received\":0},"
       "{\"fingerprint\":\"" + fp_hex_of(a.pub) + "\",\"name\":\"\",\"state\":\"CONNECTED\","
       "\"last_seen_sec\":3,\"rssi\":-42,\"alerts_received\":2},"
       "{\"fingerprint\":\"" + fp_hex_of(b.pub) + "\",\"name\":\"\",\"state\":\"STALE\","
@@ -7930,18 +7937,19 @@ void test_the_peer_list_joins_each_member_from_the_view() {
       "\"last_seen_sec\":4294967295,\"rssi\":0,\"alerts_received\":1}"
       "]}";
   assert(rows == want);
-  assert(rows == live_peers_body(keys, 5, 98500));
+  assert(!has(rows, fp_hex_of(e.pub).c_str()));
+  assert(rows == live_peers_body(keys, 4, 98500));
   /* Counted at the read: the same view a minute later is a minute older. */
-  assert(has(peers_body(keys + 32, 1, 158500), "\"last_seen_sec\":63,"));
+  assert(has(peer_row(158500, a.pub), "\"last_seen_sec\":63,"));
   assert(has(status_body(), "\"peers_total\":4,\"peers_online\":1,\"alerts_received\":4"));
   assert(status_body() == live_status_body());
 
   /* Between passes the view stands: B speaks again in a transport pass, and
    * until the session pass the row still shows its old sighting. */
   member_speaks(b, S, 97000, -60);
-  assert(has(peers_body(keys + 64, 1, 98500), "\"state\":\"STALE\",\"last_seen_sec\":97,\"rssi\":-67"));
+  assert(has(peer_row(98500, b.pub), "\"state\":\"STALE\",\"last_seen_sec\":97,\"rssi\":-67"));
   mesh_session::process(97000);
-  assert(has(peers_body(keys + 64, 1, 98500), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-60"));
+  assert(has(peer_row(98500, b.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-60"));
 
   /* Unheard past PEER_OFFLINE_AFTER_MS, a member's transport entry turns
    * OFFLINE but stays in the table: the row is still live, so it reads
@@ -7962,24 +7970,96 @@ void test_the_peer_list_joins_each_member_from_the_view() {
     }
     assert(seen_b);
   }
-  const std::string aged_rows = peers_body(keys, 5, gone);
-  assert(aged_rows == live_peers_body(keys, 5, gone));
-  assert(has(peers_body(keys + 64, 1, gone),
-             "\"state\":\"OFFLINE\",\"last_seen_sec\":305,\"rssi\":-60,"));
-  assert(has(peers_body(keys + 32, 1, gone),
-             "\"state\":\"OFFLINE\",\"last_seen_sec\":306,\"rssi\":-42,"));
+  const std::string aged_rows = peers_body(gone);
+  assert(aged_rows == live_peers_body(keys, 4, gone));
+  assert(has(peer_row(gone, b.pub), "\"state\":\"OFFLINE\",\"last_seen_sec\":305,\"rssi\":-60,"));
+  assert(has(peer_row(gone, a.pub), "\"state\":\"OFFLINE\",\"last_seen_sec\":306,\"rssi\":-42,"));
   assert(!has(aged_rows, "CONNECTED") && !has(aged_rows, "STALE"));
   assert(has(status_body(), "\"peers_total\":4,\"peers_online\":0,"));
   assert(status_body() == live_status_body());
 
-  /* Null rows or keys answer nothing. */
+  /* Null rows answer nothing; a short array takes the first rows. */
   mesh_session::StatusView v;
   mesh_session::read_status(&v);
   mesh_api::PeerView one[1];
-  assert(mesh_api::peer_views_from_status(v, keys, 1, 0, nullptr) == 0);
-  assert(mesh_api::peer_views_from_status(v, nullptr, 1, 0, one) == 0);
-  assert(mesh_api::peer_views_from_status(v, nullptr, 0, 0, one) == 0);
+  assert(mesh_api::peer_views_from_status(v, 0, nullptr, 1) == 0);
+  assert(mesh_api::peer_views_from_status(v, 0, one, 0) == 0);
+  assert(mesh_api::peer_views_from_status(v, gone, one, 1) == 1);
+  assert(std::string(one[0].fingerprint) == fp_hex_of(a.pub));
   std::printf("PASS test_the_peer_list_joins_each_member_from_the_view\n");
+}
+
+/* ── F199 — GET /api/mesh/peers lists the members the device holds ────────
+ *
+ * The rows are the published view's members, in the session's table order:
+ * what the device enforces, so they always equal GET /api/mesh's
+ * peers_total, and no store is read. The host's mesh_state stub lists no
+ * stored pubkey (a board without flash encryption is refused the read and
+ * lists none either), and every member still has its row; a member the
+ * session drops leaves the list in the next pass, whatever NVS still holds;
+ * a full table of eight lists eight. Before F199 the rows were the stored
+ * pubkeys, so here there were none, beside peers_total 3 (and on a board
+ * without flash encryption the route answered 500 load_failed). */
+size_t row_count(const std::string& body) {
+  size_t n = 0;
+  for (size_t at = body.find("{\"fingerprint\""); at != std::string::npos;
+       at = body.find("{\"fingerprint\"", at + 1)) {
+    ++n;
+  }
+  return n;
+}
+
+void test_the_peer_list_is_the_members_the_device_holds() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x1C + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  TestMember a, b, c;
+  const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x1C, 0x00, 0x0A};
+  const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x1C, 0x00, 0x0B};
+  const uint8_t mac_c[6] = {0x24, 0x0A, 0xC4, 0x1C, 0x00, 0x0C};
+  make_member(a, mac_a);
+  make_member(b, mac_b);
+  make_member(c, mac_c, /*bind=*/false);   /* trusted, no address */
+  member_speaks(a, S, 1000, -50);
+  mesh_transport::test::set_now_ms(2000);
+  mesh_transport::process();
+  mesh_session::process(2000);
+
+  /* The store the route read before F199 lists nothing here. */
+  uint8_t stored[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
+  size_t n_stored = 99;
+  (void)mesh_state::load_trusted_peers(stored, sizeof(stored), &n_stored);
+  assert(n_stored == 0);
+
+  const std::string rows = peers_body(2500);
+  assert(row_count(rows) == 3 && has(status_body(), "\"peers_total\":3,"));
+  assert(has(peer_row(2500, a.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":1,\"rssi\":-50,"
+                                     "\"alerts_received\":1}"));
+  assert(has(peer_row(2500, b.pub), "\"state\":\"OFFLINE\",\"last_seen_sec\":4294967295,\"rssi\":0,"));
+  assert(has(peer_row(2500, c.pub), "\"state\":\"OFFLINE\",\"last_seen_sec\":4294967295,\"rssi\":0,"));
+  assert(rows.find(fp_hex_of(a.pub)) < rows.find(fp_hex_of(b.pub)) &&
+         rows.find(fp_hex_of(b.pub)) < rows.find(fp_hex_of(c.pub)));   /* table order */
+
+  /* Dropped by the session (a removal whose NVS write failed leaves its
+   * pubkey stored): gone from the list in the next pass. */
+  assert(mesh_session::unregister_trusted_peer(b.fp));
+  assert(!peer_row(2500, b.pub).empty());   /* the view stands until the pass */
+  mesh_session::process(3000);
+  assert(peer_row(3000, b.pub).empty());
+  assert(row_count(peers_body(3000)) == 2 && has(status_body(), "\"peers_total\":2,"));
+
+  /* A full table: eight members, eight rows, in the body's cap. */
+  std::vector<TestMember> more(6);
+  for (size_t i = 0; i < more.size(); ++i) {
+    const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x1C, 0x01, (uint8_t)i};
+    make_member(more[i], mac);
+  }
+  mesh_session::process(4000);
+  assert(mesh_session::trusted_peer_count() == mesh_session::MAX_TRUSTED_PEERS);
+  assert(row_count(peers_body(4000)) == mesh_session::MAX_TRUSTED_PEERS);
+  assert(has(status_body(), "\"peers_total\":8,"));
+  std::printf("PASS test_the_peer_list_is_the_members_the_device_holds\n");
 }
 
 /* Two threads, as on the device: the main loop starts or cancels a pairing
@@ -8185,6 +8265,8 @@ int main() {
   test_deinit_publishes_the_wiped_session();
   test_the_view_holds_the_code_only_while_it_is_shown();
   test_the_peer_list_joins_each_member_from_the_view();
+  /* F199 — the peer list is the members the device holds. */
+  test_the_peer_list_is_the_members_the_device_holds();
   test_status_reads_stay_whole_while_the_main_loop_runs();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;

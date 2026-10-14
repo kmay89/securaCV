@@ -42,8 +42,15 @@ rule 7 holds both locks' shape.
    No allowance: F161 allowed `handle_mesh_alerts`' `get_alerts` until the
    alerts route moved, which F197 did.
 2. `handle_mesh_status` and `handle_mesh_peers` each read the view once
-   (`mesh_session::read_status(&view);`), and `handle_mesh_peers` joins its
-   rows with `mesh_api::peer_views_from_status(view, ...)` once.
+   (`mesh_session::read_status(&view);`), and `handle_mesh_peers` builds its
+   rows from it with `const size_t count =
+   mesh_api::peer_views_from_status(view, ...);` once and hands that
+   `count` to `build_mesh_peers_json` (sweep F199: the rows are the view's
+   members, which equal `peers_total`). It calls no `mesh_state::`
+   function: until F199 it read the persisted pubkeys
+   (`mesh_state::load_trusted_peers`, refused without flash encryption, so
+   a dev board answered 500 `load_failed`) and joined them against the
+   view.
 3. In `mesh_session.cpp`, `process()` calls `publish_status();` right before
    every `return` and as its last statement (a stopped session's transport
    table still ages); `drain_request()` calls it once, after
@@ -299,11 +306,26 @@ def check_network(net_src: str, errors: list[str]) -> None:
     check_alert_clear_route(code, errors)
     peers = bodies.get("handle_mesh_peers")
     if peers is not None:
-        joins = re.findall(r"\bmesh_api::peer_views_from_status\s*\(\s*view\s*,", peers)
-        if len(joins) != 1:
-            errors.append(f"{NETWORK}: handle_mesh_peers() must join its rows against the view "
-                          f"once (`mesh_api::peer_views_from_status(view, ...)`, found "
-                          f"{len(joins)}) (F161)")
+        joins = re.findall(r"\bconst\s+size_t\s+count\s*=\s*"
+                           r"mesh_api::peer_views_from_status\s*\(\s*view\s*,", peers)
+        calls = re.findall(r"\bpeer_views_from_status\s*\(", peers)
+        if len(joins) != 1 or len(calls) != 1:
+            errors.append(f"{NETWORK}: handle_mesh_peers() must build its rows from the view "
+                          f"once (`const size_t count = mesh_api::peer_views_from_status(view, "
+                          f"...);`, found {len(joins)} of {len(calls)} calls) (F161, F199)")
+        builds = re.findall(r"\bmesh_api::build_mesh_peers_json\s*\(\s*body\s*,\s*sizeof\s*\(\s*"
+                            r"body\s*\)\s*,\s*views\s*,\s*count\s*\)", peers)
+        if len(builds) != 1 or len(re.findall(r"\bbuild_mesh_peers_json\s*\(", peers)) != 1:
+            errors.append(f"{NETWORK}: handle_mesh_peers() must build the body from those rows "
+                          f"once (`mesh_api::build_mesh_peers_json(body, sizeof(body), views, "
+                          f"count)`) (F199)")
+        for m in re.finditer(r"\bmesh_state::(\w+)\s*\(", peers):
+            errors.append(f"{NETWORK}: handle_mesh_peers() calls mesh_state::{m.group(1)}( — the "
+                          "rows are the published view's members; no NVS read on the httpd task "
+                          "(F199)")
+        if re.search(r"\bcount\s*=(?!=)", peers.replace("const size_t count =", "", 1)):
+            errors.append(f"{NETWORK}: handle_mesh_peers() sets its row count from something "
+                          "other than the view's rows (F199)")
 
 
 def check_alert_clear_route(code: str, errors: list[str]) -> None:
@@ -599,7 +621,10 @@ def other(path: str, old: str, new: str) -> Mutation:
 STATUS_READ = "  mesh_session::StatusView view;\n  mesh_session::read_status(&view);\n\n  char body[mesh_api::STATUS_JSON_CAP];"
 PEERS_READ = ("  mesh_session::StatusView view;\n  mesh_session::read_status(&view);\n\n"
               "  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];")
-PEERS_JOIN = "  mesh_api::peer_views_from_status(view, pubkeys, count, (uint32_t)millis(), views);"
+PEERS_JOIN = ("  const size_t count =\n"
+              "      mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, "
+              "mesh_state::MAX_TRUSTED_PEERS);")
+PEERS_BUILD = "  if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) {"
 PROC_END = ("   * just before this call (main.cpp), so the view is this whole pass. */\n"
             "  publish_status();\n}")
 PROC_EARLY = "    publish_status();   /* F161: a stopped or disabled session's view too */\n"
@@ -644,7 +669,20 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("peers handler never reads the view",
      raw("network", PEERS_READ, PEERS_READ.replace("  mesh_session::read_status(&view);\n", "  memset(&view, 0, sizeof(view));\n"))),
     ("peers handler joins nothing",
-     raw("network", PEERS_JOIN, "  memset(views, 0, sizeof(views));")),
+     raw("network", PEERS_JOIN, "  memset(views, 0, sizeof(views));\n  const size_t count = 0;")),
+    ("peers handler reads the persisted pubkeys again (F199)",
+     raw("network", PEERS_READ, "  uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * 32];\n  size_t n_keys = 0;\n"
+                                "  if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &n_keys)) {\n"
+                                "    return http_send_error(req, 500, \"load_failed\");\n  }\n" + PEERS_READ)),
+    ("peers handler checks flash encryption through mesh_state (F199)",
+     raw("network", PEERS_READ, PEERS_READ + "\n  (void)mesh_state::load_opera_name(nullptr, 0);")),
+    ("peers handler counts its rows from peers_total (F199)",
+     raw("network", PEERS_BUILD, "  size_t rows = count;\n  rows = view.peers_total;\n"
+                                 "  if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, rows)) {")),
+    ("peers handler overwrites the row count (F199)",
+     raw("network", PEERS_BUILD, "  count = view.member_count;\n" + PEERS_BUILD)),
+    ("peers handler builds the rows twice",
+     raw("network", PEERS_JOIN, PEERS_JOIN + "\n  (void)mesh_api::peer_views_from_status(view, 0, views, 1);")),
     ("process() has no publish at its end",
      raw("session", PROC_END, "   * just before this call (main.cpp), so the view is this whole pass. */\n}")),
     ("process() returns early without a publish",

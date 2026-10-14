@@ -40,8 +40,20 @@ a host, so these cases hold the wiring status_body() mirrors:
   before mesh_pair_refused, whose default would say 400 pair_join_failed
   and leave the owner nothing to act on. test_mesh_session.cpp:
   test_a_join_waits_for_a_leave holds the session's half.
-* GET /api/mesh is served by handle_mesh_status, and the two POST routes by
-  those two handlers.
+* handle_mesh_peers (sweep F199) builds its rows from the view it read,
+  `const size_t count = mesh_api::peer_views_from_status(view,
+  (uint32_t)millis(), views, mesh_state::MAX_TRUSTED_PEERS);`, once and
+  after the read, and hands that count to the one
+  `mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)`. It
+  calls no mesh_state function: until F199 it read the stored pubkeys
+  (mesh_state::load_trusted_peers, refused without flash encryption: 500
+  load_failed) and joined them against the view, so the list could
+  disagree with peers_total. test_mesh_session.cpp:
+  test_the_peer_list_is_the_members_the_device_holds builds the body the
+  same way; firmware/scripts/check_canary_mesh_status.py rule 2 holds it
+  too.
+* GET /api/mesh is served by handle_mesh_status, GET /api/mesh/peers by
+  handle_mesh_peers, and the two POST routes by those two handlers.
 
 The statements are pinned by their exact token sequence (whitespace and
 comments aside), and each rule is shown to fail on a mutation of the real
@@ -60,6 +72,7 @@ REPO = Path(__file__).resolve().parents[2]
 NETWORK = REPO / "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
 
 STATUS_FN = "handle_mesh_status"
+PEERS_FN = "handle_mesh_peers"
 START_FN = "handle_mesh_pair_start"
 JOIN_FN = "handle_mesh_pair_join"
 BUILD = "mesh_api::build_mesh_status_json_from_view"
@@ -163,6 +176,10 @@ VIEW = _seq("mesh_session::StatusView view; mesh_session::read_status(&view);")
 BUFFER = _seq("char body[mesh_api::STATUS_JSON_CAP];")
 SEQ_FIELD = _seq('doc["pairing_seq"] = res.pairing_seq;')
 SERIALIZE = _seq("serializeJson(doc, response);")
+READ = _seq("mesh_session::read_status(&view);")
+PEERS_ROWS = _seq("const size_t count = mesh_api::peer_views_from_status(view, (uint32_t)millis(), "
+                  "views, mesh_state::MAX_TRUSTED_PEERS);")
+PEERS_BUILD = _seq("mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)")
 JOIN_OPERA_EXISTS = _seq('if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) '
                          '{ return http_send_error(req, 409, "opera_exists"); }')
 JOIN_REFUSED = _seq('if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;')
@@ -172,6 +189,7 @@ ROUTES = {
                    '.handler = handle_mesh_pair_start }'),
     JOIN_FN: _seq('.uri = "/api/mesh/pair/join", .method = HTTP_POST, '
                   '.handler = handle_mesh_pair_join }'),
+    PEERS_FN: _seq('.uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers }'),
 }
 
 
@@ -225,6 +243,33 @@ def _seq_answer_problems(code: str, name: str) -> list[str]:
     return []
 
 
+def _peers_problems(code: str) -> list[str]:
+    body = _handler(code, PEERS_FN)
+    if body is None:
+        return [f"{PEERS_FN} is missing"]
+    problems: list[str] = []
+    view = list(re.finditer(READ, body))
+    rows = list(re.finditer(PEERS_ROWS, body))
+    build = list(re.finditer(PEERS_BUILD, body))
+    if len(view) != 1:
+        problems.append(f"{PEERS_FN} does not read the published view once (found {len(view)})")
+    if len(rows) != 1 or len(re.findall(r"\bpeer_views_from_status\s*\(", body)) != 1:
+        problems.append(f"{PEERS_FN} does not build its rows from the view once (`const size_t "
+                        f"count = mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, "
+                        f"mesh_state::MAX_TRUSTED_PEERS);`)")
+    if len(build) != 1 or len(re.findall(r"\bbuild_mesh_peers_json\s*\(", body)) != 1:
+        problems.append(f"{PEERS_FN} does not build the body from those rows once "
+                        f"(`mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)`)")
+    if view and rows and rows[0].start() < view[0].end():
+        problems.append(f"{PEERS_FN} builds its rows before it reads the view")
+    if rows and build and build[0].start() < rows[0].end():
+        problems.append(f"{PEERS_FN} builds the body before its rows")
+    for m in re.finditer(r"\bmesh_state::(\w+)\s*\(", body):
+        problems.append(f"{PEERS_FN} calls mesh_state::{m.group(1)}: the rows are the view's "
+                        f"members, and no NVS is read (F199)")
+    return problems
+
+
 def _join_opera_problems(code: str) -> list[str]:
     body = _handler(code, JOIN_FN)
     if body is None:
@@ -247,6 +292,7 @@ def check(src: str) -> list[str]:
     problems += _seq_answer_problems(code, START_FN)
     problems += _seq_answer_problems(code, JOIN_FN)
     problems += _join_opera_problems(code)
+    problems += _peers_problems(code)
     for fn, route in ROUTES.items():
         if len(re.findall(route, code)) != 1:
             problems.append(f"{fn} is not registered once for its route")
@@ -360,6 +406,42 @@ class MeshStatusWiring(unittest.TestCase):
         src = self.mutate(guard + refused, refused + guard)
         self.assertTrue(any("reaches mesh_pair_refused before" in p for p in check(src)),
                         check(src))
+
+    def test_the_stored_pubkeys_back_in_the_peers_route_fails(self) -> None:
+        old = ("  mesh_session::StatusView view;\n  mesh_session::read_status(&view);\n\n"
+               "  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];")
+        new = ("  uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];\n"
+               "  size_t  n_keys = 0;\n"
+               "  if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &n_keys)) {\n"
+               "    return http_send_error(req, 500, \"load_failed\");\n  }\n" + old)
+        problems = check(self.mutate(old, new))
+        self.assertTrue(any("calls mesh_state::load_trusted_peers" in p for p in problems), problems)
+
+    def test_the_peers_rows_from_another_count_fails(self) -> None:
+        src = self.mutate("mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)",
+                          "mesh_api::build_mesh_peers_json(body, sizeof(body), views, view.peers_total)")
+        self.assertTrue(any("does not build the body from those rows" in p for p in check(src)))
+
+    def test_the_peers_rows_built_before_the_read_fails(self) -> None:
+        old = ("  mesh_session::StatusView view;\n  mesh_session::read_status(&view);\n\n"
+               "  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];\n"
+               "  const size_t count =\n"
+               "      mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, "
+               "mesh_state::MAX_TRUSTED_PEERS);\n")
+        new = ("  mesh_session::StatusView view;\n"
+               "  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];\n"
+               "  const size_t count =\n"
+               "      mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, "
+               "mesh_state::MAX_TRUSTED_PEERS);\n"
+               "  mesh_session::read_status(&view);\n")
+        problems = check(self.mutate(old, new))
+        self.assertTrue(any("builds its rows before it reads the view" in p for p in problems),
+                        problems)
+
+    def test_the_peers_route_moved_fails(self) -> None:
+        src = self.mutate('.uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers }',
+                          '.uri = "/api/mesh/peer", .method = HTTP_GET, .handler = handle_mesh_peers }')
+        self.assertTrue(any(f"{PEERS_FN} is not registered" in p for p in check(src)))
 
     def test_the_status_route_moved_fails(self) -> None:
         src = self.mutate('.uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status }',

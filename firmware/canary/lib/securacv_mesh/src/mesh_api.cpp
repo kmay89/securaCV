@@ -189,41 +189,34 @@ bool build_mesh_status_json_from_view(char* out, size_t cap,
                                 view.alerts_received, view.pairing_code, &last);
 }
 
-size_t peer_views_from_status(const mesh_session::StatusView& view,
-                              const uint8_t* pubkeys, size_t count,
-                              uint32_t now_ms, PeerView* out) {
-  if (out == nullptr || (pubkeys == nullptr && count > 0)) return 0;
-  const size_t members = view.member_count < mesh_session::MAX_TRUSTED_PEERS
-                             ? (size_t)view.member_count
-                             : mesh_session::MAX_TRUSTED_PEERS;
-  for (size_t i = 0; i < count; ++i) {
-    uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
-    mesh_crypto::compute_fingerprint(pubkeys + i * mesh_crypto::PUBKEY_LEN, fp);
+size_t peer_views_from_status(const mesh_session::StatusView& view, uint32_t now_ms,
+                              PeerView* out, size_t cap) {
+  if (out == nullptr) return 0;
+  size_t n = view.member_count < mesh_session::MAX_TRUSTED_PEERS
+                 ? (size_t)view.member_count
+                 : mesh_session::MAX_TRUSTED_PEERS;
+  if (n > cap) n = cap;
+  for (size_t i = 0; i < n; ++i) {
+    const mesh_session::MemberView& mv = view.members[i];
     PeerView& row = out[i];
-    to_hex(row.fingerprint, fp, mesh_crypto::FINGERPRINT_LEN);
+    to_hex(row.fingerprint, mv.fp, mesh_crypto::FINGERPRINT_LEN);
     row.name[0]         = '\0';          /* best-effort: name unknown */
     row.state           = "OFFLINE";     /* until a verified frame joins it */
     row.last_seen_sec   = 0xFFFFFFFFu;   /* "never" (the UI shows 'never') */
     row.rssi            = 0;
-    row.alerts_received = 0;             /* until the view has a row for it */
-    for (size_t m = 0; m < members; ++m) {
-      const mesh_session::MemberView& mv = view.members[m];
-      if (memcmp(mv.fp, fp, mesh_crypto::FINGERPRINT_LEN) != 0) continue;
-      /* Per-peer alert attribution (F11) does not depend on liveness. */
-      row.alerts_received = mv.alerts_received;
-      if (mv.live) {
-        switch (mv.link_state) {
-          case mesh_transport::PeerState::ACTIVE: row.state = "CONNECTED"; break;
-          case mesh_transport::PeerState::STALE:  row.state = "STALE";     break;
-          default:                                row.state = "OFFLINE";   break;
-        }
-        row.last_seen_sec = (now_ms - mv.last_seen_ms) / 1000u;
-        row.rssi          = mv.rssi_dbm;
+    /* Per-peer alert attribution (F11) does not depend on liveness. */
+    row.alerts_received = mv.alerts_received;
+    if (mv.live) {
+      switch (mv.link_state) {
+        case mesh_transport::PeerState::ACTIVE: row.state = "CONNECTED"; break;
+        case mesh_transport::PeerState::STALE:  row.state = "STALE";     break;
+        default:                                row.state = "OFFLINE";   break;
       }
-      break;
+      row.last_seen_sec = (now_ms - mv.last_seen_ms) / 1000u;
+      row.rssi          = mv.rssi_dbm;
     }
   }
-  return count;
+  return n;
 }
 
 static int hex_nibble(char c) {

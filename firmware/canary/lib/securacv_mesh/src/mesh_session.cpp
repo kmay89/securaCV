@@ -104,8 +104,9 @@ struct TrustedPeer {
   bool     in_use;
   /* Liveness (PR-8 follow-up, F70): a fully verified frame (signature +
    * opera_id + replay) has arrived from radio_mac since it was bound. Lets
-   * /api/mesh/peers join the durable membership set against the live
-   * transport table's liveness/RSSI at that address. There is no second,
+   * /api/mesh/peers join each member against the live transport table's
+   * liveness/RSSI at that address (the rows are this table's members since
+   * F199, not the stored pubkeys). There is no second,
    * frame-recorded address: until F70 the session kept one here (`mac`,
    * the source of the last verified frame), any address in the transport
    * table could become it — a pairing partner's, another member's copied

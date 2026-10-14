@@ -5363,24 +5363,22 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  // Trusted peers are the durable membership set (pubkeys, NVS); liveness
-  // comes from the view the main loop published (F161): each member's row
-  // there carries its alerts and, once heard from its binding, the
-  // transport table's state, RSSI and last-seen time as that pass saw them
-  // (see section header + spec §8). The join and the uptime (last_seen_sec
-  // is counted here, at the read) are mesh_api::peer_views_from_status.
-  uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
-  size_t  count = 0;
-  if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
-    return http_send_error(req, 500, "load_failed");
-  }
-  if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
-
+  // The rows are the members the session holds, from the view the main
+  // loop published (F161): what the device enforces, so they equal GET
+  // /api/mesh's peers_total, and no NVS is read here (F199: the persisted
+  // pubkeys needed flash encryption, so a dev board answered 500
+  // load_failed, and an NVS write that failed left the two disagreeing
+  // until a reboot). Each member's row carries its alerts and, once heard
+  // from its binding, the transport table's state, RSSI and last-seen time
+  // as that pass saw them (see section header + spec §8). The rows and the
+  // uptime (last_seen_sec is counted here, at the read) are
+  // mesh_api::peer_views_from_status.
   mesh_session::StatusView view;
   mesh_session::read_status(&view);
 
   mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
-  mesh_api::peer_views_from_status(view, pubkeys, count, (uint32_t)millis(), views);
+  const size_t count =
+      mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, mesh_state::MAX_TRUSTED_PEERS);
 
   // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
   // the pre-F11 row; the alerts_received field needs the headroom.
