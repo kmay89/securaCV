@@ -316,10 +316,13 @@ jobs:
         # design (the early warning for the next core), so a cut release can
         # differ from its PR build's core; firmware/PLATFORMS.md records the
         # decision (sweep F21). Exclusive because this job installs two more
-        # cores, and a cache restored into ~/.arduino15 can carry them in
-        # beside this one: the action uninstalls every other esp32:esp32
-        # version first and fails the step unless 3.3.8 is the one installed
-        # (RELEASE_LESSONS 2026-07-29 (k)).
+        # cores: this row is its first install today, but should a step ever
+        # restore another core's cache into ~/.arduino15 ahead of it, both
+        # releases would sit there (installing one already present is a
+        # no-op) and the unversioned FQBN would take the newer
+        # (RELEASE_LESSONS 2026-07-29 (k)). The action uninstalls the
+        # installed esp32:esp32 release before installing, and fails the step
+        # unless 3.3.8 is the one installed afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "3.3.8"
@@ -352,7 +355,7 @@ jobs:
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "2.0.17"
-          # Exclusive: the wap row above installed the LATEST core into the
+          # Exclusive: the wap row above installed core 3.3.8 into the
           # same ~/.arduino15. Without this, both versions sit there, the
           # unversioned FQBN below takes the newest, and the watch compiles
           # against core 3 with the core-2 library row — which is exactly

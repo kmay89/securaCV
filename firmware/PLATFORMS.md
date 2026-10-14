@@ -142,11 +142,17 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   rows that make or measure what a release ships (`firmware-release.yml`,
   `flasher-release.yml`, `ram_audit.yml`, `csi_module_disable_matrix.yml`)
   pass `core-version: "3.3.8"`, the WAP sketch's pin and the core inside
-  `platform_core3`, so the Arduino-CLI and PlatformIO builds of a release
-  ride one core release. The two release jobs install it with
-  `exclusive-core: "true"`, because they go on to install the display's two
-  cores in the same job and a restored `~/.arduino15` can carry those in
-  beside it (`.github/RELEASE_LESSONS.md` 2026-07-29 (k)). `firmware.yml`'s
+  `platform_core3`, so a release's Arduino-CLI WAP build rides the core the
+  PR's PlatformIO `canary-wap-*` builds and `sketch.yaml` already use (a
+  release builds the WAP through Arduino-CLI only). The two release jobs
+  install it with `exclusive-core: "true"`: they go on to install the
+  display's two cores in the same job, and should a step ever restore
+  another core's cache into `~/.arduino15` ahead of the WAP row, both
+  releases would sit there side by side and an unversioned FQBN would take
+  the newer (`.github/RELEASE_LESSONS.md` 2026-07-29 (k)); today the WAP row
+  is each job's first install. `flasher-release.yml` reads its pin from the
+  dispatch ref, not from the tag it rebuilds, so a refresh of an older tag
+  builds that tag's WAP image on today's pin. `firmware.yml`'s
   PR row (`build-arduino-cli`) keeps passing no `core-version` and builds on
   the action's weekly "latest", on purpose: it is the early warning that the
   next core breaks the sketch, before anyone moves the pin. The cost is
