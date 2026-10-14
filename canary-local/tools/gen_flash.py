@@ -2382,10 +2382,13 @@ def supports_serial_receipt(project: str) -> bool:
 # firmware's own handler does not answer unconditionally (a key behind an
 # `#if` may be compiled out of the very build being watched), and a label
 # whose words are not the firmware's own help-menu words for that command.
-# Chips are read-only asks by choice: the reboot (`x`), the USB-drive mode
-# cycle (`u`), the knob writes (`set`, `reset`) stay in the typed box.
-# desktop_parity.test.js re-derives the same facts from the firmware with its
-# own parser and holds every product's chips to them.
+# Chips change nothing the board keeps, by choice: the reboot (`x`), the
+# USB-drive mode cycle (`u`), the knob writes (`set`, `reset`) stay in the
+# typed box. Sense's `stream on` / `stream off` are the one pair that change
+# anything — the console session's radar line, which a reboot forgets.
+# desktop_parity.test.js re-derives the same facts from the firmware with a
+# second implementation of this reading (the same method, written again) and
+# holds every product's chips to them.
 MONITOR_PLACEHOLDERS = {
     "keys": "type a command — the firmware answers single keys; h shows its menu",
     "words": "type a command — the tuning console reads words; help lists them",

@@ -2665,7 +2665,8 @@ const FLASH_COMMANDS = [
   ["flash", "desktop/src-tauri/src/lib.rs"],
   ["start_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
   // The Lab's post-flash monitor has the Flasher's command row (sweep A67:
-  // the MONITOR_CMDS chips and a typed command), so the command it sends
+  // the product's own monitor chips — flash.json products[].monitor, sweep
+  // A86 — and a typed command), so the command it sends
   // through is back, held to the Flasher's text like the rest;
   // lab_bundle.test.js holds the Lab's registration to that caller.
   ["serial_monitor_send", "desktop/src-tauri/src/serial_monitor.rs"],
@@ -3730,9 +3731,12 @@ test("A85: a second flash leaves one set of monitor listeners, and a re-read lea
 // plus a `j` the sketch does not have) and a "single keys; h shows its menu"
 // placeholder for every product. flash.json now carries each product's own
 // (products[].monitor, gen_flash.py monitor_block). The firmware oracle below
-// is this file's own reading of the firmware, independent of the generator's:
-// every chip must be a command the product's firmware answers with no #if
-// around it, labeled in the firmware's own help-menu words.
+// is a second implementation of the generator's reading (the same method —
+// comments and literals blanked, #if depth counted — written again here, so a
+// generator change that loosens it does not loosen this), not an independent
+// one: a blind spot of the method is shared. Every chip must be a command the
+// product's firmware answers with no #if around it, labeled in the
+// firmware's own help-menu words.
 const A86_ROLE_FIRMWARE = {
   // role -> how its firmware reads the console
   canary: { kind: "keys", handler: "firmware/canary/src/main.cpp" },
@@ -3776,43 +3780,59 @@ const a86Unconditional = ({ raw, stripped }) => {
 const a86Words = (t) => new Set(t.toLowerCase().replace(/-/g, "").split(/[^a-z0-9]+/).filter(Boolean));
 const a86Literals = (t) => [...t.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((m) => m[1]);
 
+// A key console's answers, read from one handler source: the keys
+// handle_serial_commands() takes under no #if opened inside it, and each
+// key's help-line words. { commands: Set, help: Map(key -> Set(words)) }.
+function a86ReadKeys(src) {
+  const commands = new Set(), help = new Map();
+  const body = a86Body(src, "handle_serial_commands");
+  for (const [line, raw] of a86Unconditional(body)) {
+    for (const m of raw.matchAll(/\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'/g)) {
+      if (line[m.index] !== " ") commands.add(m[1] || m[2]);
+    }
+  }
+  let helpText = body.raw;
+  if (/\bprint_help\s*\(/.test(body.stripped)) helpText += a86Body(src, "print_help").raw;
+  for (const lit of a86Literals(helpText)) {
+    const m = /^[\s│]*(\S)(?:\s*\/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$/.exec(lit);
+    if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(m[2])]));
+  }
+  return { commands, help };
+}
+
+// A word console's answers (the tuning console's execute_()): its words, the
+// "word arg" pairs it reads, and each word's print_help() words.
+function a86ReadWords(src) {
+  const commands = new Set(), args = new Set(), help = new Map();
+  let current = null;
+  for (const [line, raw] of a86Unconditional(a86Body(src, "execute_"))) {
+    const live = (re) => [...raw.matchAll(re)].filter((m) => line[m.index] !== " ").map((m) => m[1]);
+    const found = live(/\bieq_\(\s*cmd\s*,\s*"([^"]+)"\s*\)/g);
+    if (found.length) { found.forEach((w) => commands.add(w)); current = found[0]; }
+    for (const a of live(/\bieq_\(\s*tok\[1\]\s*,\s*"([^"]+)"\s*\)/g)) if (current) args.add(`${current} ${a}`);
+  }
+  for (const lit of a86Literals(a86Body(src, "print_help").raw)) {
+    const m = /^\[tune\]\s+(\w+)\b/.exec(lit);
+    if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(lit)]));
+  }
+  return { commands, args, help };
+}
+
+// Whether a project's source feeds its USB console to the tuning console.
+const a86FeedsConsole = (src) => /\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)/.test(a86Strip(src));
+
 // What one role's firmware answers: { commands: Set, args: Set("word arg"), help: Map(cmd -> Set(words)) }.
 function a86Answered(role) {
   const fw = A86_ROLE_FIRMWARE[role];
   assert.ok(fw, `no firmware known for role ${role}`);
-  const commands = new Set(), args = new Set(), help = new Map();
-  if (fw.kind === "keys") {
-    const src = read(join(ROOT, fw.handler));
-    const body = a86Body(src, "handle_serial_commands");
-    for (const [line, raw] of a86Unconditional(body)) {
-      for (const m of raw.matchAll(/\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'/g)) {
-        if (line[m.index] !== " ") commands.add(m[1] || m[2]);
-      }
-    }
-    let helpText = body.raw;
-    if (/\bprint_help\s*\(/.test(body.stripped)) helpText += a86Body(src, "print_help").raw;
-    for (const lit of a86Literals(helpText)) {
-      const m = /^[\s│]*(\S)(?:\s*\/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$/.exec(lit);
-      if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(m[2])]));
-    }
-  } else if (fw.kind === "words") {
-    const src = read(join(ROOT, fw.handler));
-    let current = null;
-    for (const [line, raw] of a86Unconditional(a86Body(src, "execute_"))) {
-      const live = (re) => [...raw.matchAll(re)].filter((m) => line[m.index] !== " ").map((m) => m[1]);
-      const found = live(/\bieq_\(\s*cmd\s*,\s*"([^"]+)"\s*\)/g);
-      if (found.length) { found.forEach((w) => commands.add(w)); current = found[0]; }
-      for (const a of live(/\bieq_\(\s*tok\[1\]\s*,\s*"([^"]+)"\s*\)/g)) if (current) args.add(`${current} ${a}`);
-    }
-    for (const lit of a86Literals(a86Body(src, "print_help").raw)) {
-      const m = /^\[tune\]\s+(\w+)\b/.exec(lit);
-      if (m) help.set(m[1], new Set([...(help.get(m[1]) || []), ...a86Words(lit)]));
-    }
+  if (fw.kind === "keys") return { kind: fw.kind, args: new Set(), ...a86ReadKeys(read(join(ROOT, fw.handler))) };
+  if (fw.kind === "words") {
     // …and the project actually feeds its USB console to it.
-    assert.match(a86Strip(read(join(ROOT, fw.wiring))), /\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)/,
+    assert.ok(a86FeedsConsole(read(join(ROOT, fw.wiring))),
       "the Sense firmware no longer feeds its serial console to the tuning console");
+    return { kind: fw.kind, ...a86ReadWords(read(join(ROOT, fw.handler))) };
   }
-  return { kind: fw.kind, commands, args, help };
+  return { kind: fw.kind, commands: new Set(), args: new Set(), help: new Map() };
 }
 
 // Every reason a product's chips are not its firmware's; [] when they are.
@@ -3891,6 +3911,59 @@ test("A86: every product's monitor chips are commands its own firmware answers, 
   const flagship = catalog.products.find((x) => x.id === "securacv-canary");
   assert.ok(a86Wrong(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["m", "MQTT"]] })
     .some((w) => /"m" is not a command/.test(w)), "a key behind #if FEATURE_HA_MQTT must fail");
+
+  // Each of the oracle's other checks fails on its own, one wrong thing at a time.
+  const only = (product, monitor, re, why) => {
+    const wrong = a86Wrong(product, monitor);
+    assert.strictEqual(wrong.length, 1, `${why}: expected exactly one reason, got ${JSON.stringify(wrong)}`);
+    assert.match(wrong[0], re, why);
+  };
+  const vision = catalog.products.find((x) => x.id === "securacv-canary-vision");
+  const sense = catalog.products.find((x) => x.id === "securacv-canary-sense");
+  only(flagship, { ...flagship.monitor, cmds: [["h", "help"], ["t", "time"]] }, /"t" labeled "time" — not its help line's words/,
+    "a label that is not the firmware's own words for the key");
+  only(sense, { ...sense.monitor, cmds: [["help", "help"], ["stream sometimes", "radar line"]] }, /no sometimes after stream/,
+    "an argument execute_() does not read");
+  only(vision, { ...vision.monitor, cmds: [["j", "install receipt"]] }, /no h, yet the box says h shows the menu/,
+    "a key console offered without h");
+  only(wap, { ...wap.monitor, kind: "words" }, /kind words, its firmware reads keys/, "the wrong kind alone");
+
+  // The readers see code only where the compiler does.
+  const keys = a86ReadKeys([
+    "void handle_serial_commands() {",
+    "  switch (c) {",
+    "    case 'a': Serial.println(\"  a - all\"); break;",
+    "    // case 'q': break;",
+    "    /* case 'r': break; */",
+    "    case 'f': Serial.println(\"case 's': } {\"); break;",
+    "#if FEATURE_X",
+    "    case 't': break;",
+    "#endif",
+    "  }",
+    "}",
+  ].join("\n"));
+  assert.deepStrictEqual([...keys.commands].sort(), ["a", "f"], "commented, quoted and #if-gated keys are not answers");
+  assert.deepStrictEqual([...keys.help.get("a")], ["all"]);
+  const words = a86ReadWords([
+    "void execute_() {",
+    "  if (ieq_(cmd, \"help\")) {}",
+    "  // else if (ieq_(cmd, \"zz\")) {}",
+    "  /* else if (ieq_(cmd, \"yy\")) {} */",
+    "  else if (ieq_(cmd, \"stream\")) { if (ieq_(tok[1], \"on\")) {} } // ieq_(tok[1], \"sometimes\")",
+    "#if FEATURE_X",
+    "  else if (ieq_(cmd, \"xx\")) {}",
+    "#endif",
+    "  Serial.println(\"ieq_(cmd, 'qq')\");",
+    "}",
+    "void print_help() { Serial.println(\"[tune] help - this list\"); }",
+  ].join("\n"));
+  assert.deepStrictEqual([...words.commands].sort(), ["help", "stream"], "commented and #if-gated words are not answers");
+  assert.deepStrictEqual([...words.args], ["stream on"], "a commented argument is not one execute_() reads");
+  // The wiring check: the committed Sense sketch feeds the console, a sketch
+  // that reads Serial some other way (or only in a comment) does not.
+  assert.ok(a86FeedsConsole(read(join(ROOT, A86_ROLE_FIRMWARE.sense.wiring))));
+  assert.ok(!a86FeedsConsole("void loop() { while (Serial.available()) handle(Serial.read()); }"));
+  assert.ok(!a86FeedsConsole("void loop() { // g_console.feed((char)Serial.read());\n}"));
 });
 
 test("A86: the Flasher's vocabulary rule is the browser's and the Lab's, product by product", async () => {

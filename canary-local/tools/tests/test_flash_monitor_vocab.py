@@ -7,10 +7,13 @@ after a flash — from MONITOR_VOCAB, and refuses a chip its firmware does not
 answer: a key handle_serial_commands() does not take with no `#if` around it,
 a tuning-console word or argument execute_() does not read, a label that is
 not the firmware's own help-menu words for that command, a "reads nothing"
-claim about a firmware that reads its console. These pin each refusal against
-the real firmware tree, and the one-table-for-all chips the benches showed
-before (h j i s t w m b, the WAP sketch's menu) against every firmware it was
-shown for.
+claim about a firmware that reads its console, a word console its project
+never feeds. The table refusals run against the real firmware tree; the
+parser readings (comments, literals and #if-gated lines are not answers, a
+handler inside an #if is refused, an unwired tuning console is refused) run
+on synthetic sources. The one-table-for-all chips the benches showed before
+(h j i s t w m b, the WAP sketch's menu) fail against every firmware they
+were shown for.
 
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 """
@@ -128,6 +131,22 @@ class Refusals(VocabCase):
         gf.MONITOR_VOCAB.pop(SENSE)
         self.refuses(SENSE, "a firmware with no vocabulary must be named, not defaulted")
 
+    def test_a_word_console_the_firmware_never_feeds(self):
+        # The tuning console's words are only answers if the project hands
+        # its USB console to it. A project that reads Serial some other way,
+        # or feeds it only inside a comment, must be refused.
+        real = gf.project_source_text
+        for unwired in ("void loop() { while (Serial.available()) handle(Serial.read()); }",
+                        "void loop() {\n  // g_console.feed((char)Serial.read());\n}\n"):
+            gf.project_source_text = lambda project, _src=unwired: _src if project == SENSE else real(project)
+            try:
+                gf._monitor_block.cache_clear()
+                self.refuses(SENSE, f"an unwired tuning console must not pass: {unwired!r}")
+            finally:
+                gf.project_source_text = real
+                gf._monitor_block.cache_clear()
+        self.assertEqual(gf.monitor_block(SENSE)["kind"], "words", "the committed sketch feeds it")
+
 
 class Parsers(unittest.TestCase):
     """The reader sees code the way the compiler does."""
@@ -152,6 +171,27 @@ class Parsers(unittest.TestCase):
     def test_a_handler_inside_a_conditional_is_refused(self):
         with self.assertRaises(SystemExit):
             self.handler("  if (c == 'a') {}", extra="#if FEATURE_CONSOLE\n")
+
+    def test_conditional_and_commented_words_do_not_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "tuning_console.h"
+            f.write_text(
+                "void execute_() {\n"
+                "  if (ieq_(cmd, \"help\")) {}\n"
+                "  // else if (ieq_(cmd, \"zz\")) {}\n"
+                "  /* else if (ieq_(cmd, \"yy\")) {} */\n"
+                "  else if (ieq_(cmd, \"stream\")) { if (ieq_(tok[1], \"on\")) {} } // ieq_(tok[1], \"sometimes\")\n"
+                "#if FEATURE_X\n"
+                "  else if (ieq_(cmd, \"xx\")) {}\n"
+                "#endif\n"
+                "  Serial.println(\"ieq_(cmd, 'qq')\");\n"
+                "}\n"
+                "void print_help() { Serial.println(\"[tune] help - this list\"); }\n",
+                encoding="utf-8")
+            words, args, help_words = gf.answered_words(f, "synthetic")
+        self.assertEqual(words, {"help", "stream"})
+        self.assertEqual(args, {("stream", "on")})
+        self.assertEqual(help_words, {"help": {"tune", "help", "this", "list"}})
 
     def test_raw_strings_do_not_hide_code(self):
         stripped = gf._c_strip('const char* p = R"html(<a href="//x">)html"; Serial.read();')
