@@ -441,3 +441,27 @@ fn a_tokenless_request_stream_cannot_hold_the_house_in_home() {
     );
     h.handle.stop();
 }
+
+/// The cap is charged only after a token matches: a flood of tokenless or
+/// wrong-token requests, more than the cap, all in one minute, never keeps
+/// a paired client out.
+#[test]
+fn a_tokenless_flood_over_the_cap_never_keeps_a_paired_client_out() {
+    let mut h = start();
+    let intent = cred(INTENT, 0x31, Binding::Es256);
+    assert_eq!(h.set(&intent, Purpose::Home).0, 200);
+    let a = h.handle.addr();
+    let n = household_keys::server::MAX_REQUESTS_PER_MINUTE + 50;
+    for i in 0..n {
+        let token = if i % 2 == 0 { None } else { Some("wrong") };
+        let (st, _) = client::http(a, "GET", "/v1/posture", token, None).unwrap();
+        assert_eq!(st, 401);
+    }
+    let (st, body) = h.set(&intent, Purpose::Away);
+    assert_eq!(
+        st, 200,
+        "a paired away was refused after {n} tokenless requests: {body}"
+    );
+    assert_eq!(h.get_posture().0, HouseholdPosture::Away);
+    h.handle.stop();
+}

@@ -8,9 +8,11 @@
 //!    ([`crate::ratelimit`]), and a roster on disk that no longer verifies
 //!    marks the checker's roster stale ([`Checker::mark_roster_stale`]).
 //!    Either refuses `home`, the posture that lowers sensing, and nothing
-//!    else on the signature lane: `away` and `night` still go through, so a
-//!    denial of service cannot hold a house in `home`. The card lane carries
-//!    `away` and `night` only and stays under its cooldown.
+//!    else on the signature lane: `away` and `night` still go through, so
+//!    neither a cooldown nor a stale roster can hold a house in `home`. The
+//!    card lane carries `away` and `night` only and stays under its
+//!    cooldown. (Other denials of service against the LAN API are the
+//!    server's to bound: [`crate::server`].)
 //! 2. The challenge is taken (single use) and must be unexpired, from the
 //!    same session and door, and from the current roster epoch.
 //! 3. The handle must name a current member of the **current** roster.
@@ -29,9 +31,12 @@
 //! 6. The result is a fresh statement: `seq` persisted first, then signed,
 //!    then published through [`Persist`] (the file seam). A `home`
 //!    statement lapses; [`Checker::tick`] replaces a lapsed `home` with
-//!    `away`. An accepted `away` or `night` that changes nothing publishes
-//!    nothing, so the seam does not reveal a tap that left the posture as it
-//!    was; `home` is always reissued, because that renews its lapse.
+//!    `away`, on the wall clock or the monotonic clock, whichever comes
+//!    first, and also ends a `home` once a revocation applies or the roster
+//!    goes stale. An accepted `away` or `night` that changes nothing
+//!    publishes nothing, so the seam does not reveal a tap that left the
+//!    posture as it was, unless a failed publish left the seam unknown;
+//!    `home` is always reissued, because that renews its lapse.
 //!
 //! The checker starts in `away`, the fail-safe, whatever it said before a
 //! restart. It records nothing about who presented what: no counters, no
@@ -141,6 +146,16 @@ pub struct Checker {
     persist: Box<dyn Persist>,
     dummy_key: Vec<u8>,
     roster_stale: bool,
+    /// A publish failed, so the seam may not hold `current`: the next
+    /// command never takes the no-op shortcut, and [`Checker::tick`]
+    /// republishes until a publish succeeds.
+    seam_dirty: bool,
+    /// When the current `home` lapses on the monotonic clock, so it lapses
+    /// on time even if the wall clock is held back.
+    home_deadline_ms: Option<u64>,
+    /// End a current `home` at the next tick: a member was revoked, or the
+    /// roster on disk stopped verifying.
+    end_home: bool,
 }
 
 impl std::fmt::Debug for Checker {
@@ -176,8 +191,14 @@ impl Checker {
             return Err(Error::Invalid("home TTL must be in 1..=86400 seconds"));
         }
         roster.validate()?;
-        let dummy = p256::ecdsa::SigningKey::from_slice(&[0x01; 32])
-            .map_err(|_| Error::Invalid("dummy key"))?;
+        // A dummy key nobody holds: drawn fresh, its private half dropped at
+        // once. (A fixed seed would make its private key public.)
+        let dummy = (0..8)
+            .find_map(|_| {
+                let seed = zeroize::Zeroizing::new(crate::rng::array::<32>().ok()?);
+                p256::ecdsa::SigningKey::from_slice(&seed[..]).ok()
+            })
+            .ok_or(Error::Rng)?;
         let household = roster.household;
         let placeholder = Statement {
             posture: HouseholdPosture::Away,
@@ -204,8 +225,11 @@ impl Checker {
                 .as_bytes()
                 .to_vec(),
             roster_stale: false,
+            seam_dirty: false,
+            home_deadline_ms: None,
+            end_home: false,
         };
-        c.issue(HouseholdPosture::Away, now_unix)?;
+        c.issue(HouseholdPosture::Away, now_unix, None)?;
         Ok(c)
     }
 
@@ -236,6 +260,11 @@ impl Checker {
 
     /// Replace the roster (the caller has run the chain checks on it). Any epoch change
     /// discards every outstanding challenge.
+    ///
+    /// A roster that drops any member also ends a current `home` at the next
+    /// [`Checker::tick`]: nothing records who set it, so a revoked member's
+    /// `home` cannot be told from anyone else's, and ending it is the
+    /// fail-safe. Members still enrolled set it again.
     pub fn set_roster(&mut self, roster: Roster) -> Result<()> {
         roster.validate()?;
         if roster.household != self.household {
@@ -244,9 +273,17 @@ impl Checker {
         if roster.epoch < self.roster.epoch {
             return Err(Error::Rejected("roster epoch went backward"));
         }
+        let dropped = self
+            .roster
+            .members
+            .iter()
+            .any(|m| roster.member(&m.handle).is_none());
         self.book.set_epoch(roster.epoch);
         self.roster = roster;
         self.roster_stale = false;
+        if dropped {
+            self.end_home = true;
+        }
         Ok(())
     }
 
@@ -254,8 +291,12 @@ impl Checker {
     /// that verifies is set, `home` is refused; `away` and `night` are still
     /// checked against the last roster that verified, because raising
     /// sensing is safe whoever asks (even a member the unreadable roster may
-    /// have revoked).
+    /// have revoked). A current `home` ends at the next [`Checker::tick`],
+    /// since the change that did not verify may have revoked whoever set it.
     pub fn mark_roster_stale(&mut self) {
+        if !self.roster_stale {
+            self.end_home = true;
+        }
         self.roster_stale = true;
     }
 
@@ -269,26 +310,66 @@ impl Checker {
         self.cards = cards;
     }
 
-    fn issue(&mut self, posture: HouseholdPosture, now_unix: u64) -> Result<Statement> {
+    /// Issue, persist and publish a statement. `keep_lapse` caps a `home`'s
+    /// `not_after` (a republish never extends a `home`).
+    fn issue(
+        &mut self,
+        posture: HouseholdPosture,
+        now_unix: u64,
+        keep_lapse: Option<u64>,
+    ) -> Result<Statement> {
         let floored = now_unix - now_unix % 60;
         let seq = next_seq(self.last_seq, floored);
-        let st = Statement::issue(posture, self.household, seq, now_unix, self.home_ttl_secs)?;
+        let mut st = Statement::issue(posture, self.household, seq, now_unix, self.home_ttl_secs)?;
+        if let Some(cap) = keep_lapse {
+            st.not_after = st.not_after.min(cap);
+        }
         self.persist.save_seq(seq)?;
         self.last_seq = seq;
         let bytes = st.sign(&self.posture_key);
-        self.persist.publish(&bytes)?;
+        if let Err(e) = self.persist.publish(&bytes) {
+            // The publish may have landed (a rename that succeeded before a
+            // directory sync failed): the seam may now differ from `current`.
+            self.seam_dirty = true;
+            return Err(e);
+        }
+        self.seam_dirty = false;
+        if posture != HouseholdPosture::Home {
+            self.home_deadline_ms = None;
+        }
         self.current = st;
         self.current_bytes = bytes;
         Ok(st)
     }
 
-    /// Replace a `home` that is no longer current with `away`. Call
-    /// periodically. "Current" is [`Statement::is_current`] on the hub's own
-    /// clock, so a `home` also lapses at once if that clock steps back more
-    /// than [`crate::posture::MAX_SKEW_SECS`] behind its `issued_at`.
-    pub fn tick(&mut self, now_unix: u64) -> Result<()> {
-        if self.current.posture == HouseholdPosture::Home && !self.current.is_current(now_unix) {
-            self.issue(HouseholdPosture::Away, now_unix)?;
+    /// Call periodically (the server does, every second). In order:
+    ///
+    /// - a `home` that is no longer current, or past its monotonic deadline,
+    ///   or that a revocation or a stale roster ended, becomes `away`.
+    ///   "Current" is [`Statement::is_current`] on the hub's own clock, so a
+    ///   `home` also lapses at once if that clock steps back more than
+    ///   [`crate::posture::MAX_SKEW_SECS`] behind its `issued_at`; the
+    ///   monotonic deadline makes it lapse on time even if the wall clock is
+    ///   held back;
+    /// - otherwise the current statement is republished, without extending a
+    ///   `home`, when a publish failed (the seam may differ from it) or when
+    ///   its `issued_at` is ahead of the hub's corrected clock (every witness
+    ///   with a correct clock refuses it, rule 7).
+    pub fn tick(&mut self, now_unix: u64, now_ms: u64) -> Result<()> {
+        let end_home = std::mem::take(&mut self.end_home);
+        let cur = self.current;
+        if cur.posture == HouseholdPosture::Home
+            && (end_home
+                || !cur.is_current(now_unix)
+                || self.home_deadline_ms.is_some_and(|d| now_ms >= d))
+        {
+            self.issue(HouseholdPosture::Away, now_unix, None)?;
+            return Ok(());
+        }
+        let from_future = cur.issued_at > now_unix.saturating_add(crate::posture::MAX_SKEW_SECS);
+        if self.seam_dirty || from_future {
+            let keep = (cur.posture == HouseholdPosture::Home).then_some(cur.not_after);
+            self.issue(cur.posture, now_unix, keep)?;
         }
         Ok(())
     }
@@ -367,11 +448,15 @@ impl Checker {
                 )
             }
         };
-        let key = match candidate.and_then(|m| m.public_key.as_deref()) {
+        let member_key = candidate.and_then(|m| m.public_key.as_deref());
+        let shape_ok = shape_ok && member_key.is_some();
+        let key = match member_key {
             Some(pk) if shape_ok => pk,
             _ => &self.dummy_key[..],
         };
         let sig_ok = verify::es256(key, &signed, &req.signature);
+        // The dummy key's verdict is never read: only a member's key can
+        // authorize (and nobody holds the dummy's private half anyway).
         shape_ok && sig_ok
     }
 
@@ -405,7 +490,7 @@ impl Checker {
                 Some(m) if ch.purpose == Purpose::Home && m.class != CredentialClass::Intent => {
                     Err(Error::Rejected("a possession credential cannot set home"))
                 }
-                Some(_) => self.apply(ch.purpose, now_unix),
+                Some(_) => self.apply(ch.purpose, now_unix, now_ms),
                 None => Err(Error::Rejected("credential refused")),
             }
         } else {
@@ -418,13 +503,19 @@ impl Checker {
     }
 
     /// Carry out an accepted purpose: reissue `home` (renewing its lapse);
-    /// publish nothing for an `away` or `night` that changes nothing.
-    fn apply(&mut self, purpose: Purpose, now_unix: u64) -> Result<Statement> {
+    /// publish nothing for an `away` or `night` that changes nothing, unless
+    /// a failed publish left the seam unknown (then it is rewritten).
+    fn apply(&mut self, purpose: Purpose, now_unix: u64, now_ms: u64) -> Result<Statement> {
         let target = purpose.target();
-        if target == self.current.posture && target != HouseholdPosture::Home {
+        if target == self.current.posture && target != HouseholdPosture::Home && !self.seam_dirty {
             return Ok(self.current);
         }
-        self.issue(target, now_unix)
+        let st = self.issue(target, now_unix, None)?;
+        if target == HouseholdPosture::Home {
+            self.home_deadline_ms =
+                Some(now_ms.saturating_add(self.home_ttl_secs.saturating_mul(1000)));
+        }
+        Ok(st)
     }
 
     /// Start an NTAG 424 DNA authentication for a challenge. Returns the
@@ -493,7 +584,7 @@ impl Checker {
                     _ => return Err(Error::Rejected("card is no longer enrolled")),
                 }
                 let purpose = ch.purpose;
-                Ok(CardProgress::Done(self.apply(purpose, now_unix)?))
+                Ok(CardProgress::Done(self.apply(purpose, now_unix, now_ms)?))
             }
         })();
         if r.is_err() {
@@ -634,9 +725,9 @@ pub(crate) mod tests {
         let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
         let st = c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
         assert_eq!(st.not_after, st.issued_at + posture::DEFAULT_HOME_TTL_SECS);
-        c.tick(st.not_after - 1).unwrap();
+        c.tick(st.not_after - 1, 2).unwrap();
         assert_eq!(c.current().posture, HouseholdPosture::Home);
-        c.tick(st.not_after).unwrap();
+        c.tick(st.not_after, 2).unwrap();
         assert_eq!(c.current().posture, HouseholdPosture::Away);
         assert!(c.current().seq > st.seq);
     }
@@ -906,6 +997,27 @@ pub(crate) mod tests {
                 Some(vec![1, 2, 3]),
                 false,
             ),
+            (
+                "unknown handle sent authenticator data",
+                0x77,
+                0x33,
+                Some(fido_ad(RP, FLAG_UP | FLAG_UV)),
+                false,
+            ),
+            (
+                "expired member sent authenticator data",
+                0x20,
+                0x34,
+                Some(fido_ad(RP, FLAG_UP | FLAG_UV)),
+                false,
+            ),
+            (
+                "card handle sent authenticator data",
+                CARD,
+                0x33,
+                Some(fido_ad(RP, FLAG_UP | FLAG_UV)),
+                false,
+            ),
         ];
         for (name, h, seed, ad, want) in cases {
             let ch = c
@@ -945,19 +1057,19 @@ pub(crate) mod tests {
         let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
         let st = c.command(&req, &S, &LAN_DOOR_ID, 1, ahead).unwrap();
         assert_eq!(st.posture, HouseholdPosture::Home);
-        c.tick(T0).unwrap();
+        c.tick(T0, 2).unwrap();
         assert_eq!(c.current().posture, HouseholdPosture::Away);
         // And a witness with a correct clock never accepted it.
         let b = st.sign(&c.posture_key);
         assert_eq!(
             posture::verify(&b, &[0xaa; 16], &c.posture_public_key(), None, Some(T0)),
-            Err(posture::Reject::FromFuture)
+            Err(posture::Reject::FromFuture { seq: st.seq })
         );
         // A small step back inside the skew keeps a home that is current.
         let mut c = checker();
         let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
         let st = c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
-        c.tick(st.issued_at - 60).unwrap();
+        c.tick(st.issued_at - 60, 2).unwrap();
         assert_eq!(c.current().posture, HouseholdPosture::Home);
     }
 
@@ -1003,6 +1115,201 @@ pub(crate) mod tests {
         assert!(run_card(&mut c, Purpose::Night, &mut good).is_err());
     }
 
+    /// A Persist that counts writes, can fail the next publish after it has
+    /// "landed" (the rename succeeded, the directory sync did not), and
+    /// shares what it holds with the test.
+    #[derive(Clone, Default)]
+    struct Probe(std::sync::Arc<std::sync::Mutex<ProbeState>>);
+    #[derive(Default)]
+    struct ProbeState {
+        seam: Option<[u8; STATEMENT_LEN]>,
+        seq_writes: usize,
+        publishes: usize,
+        fail_next_publish: bool,
+    }
+    impl Persist for Probe {
+        fn save_seq(&mut self, _: u64) -> Result<()> {
+            self.0.lock().unwrap().seq_writes += 1;
+            Ok(())
+        }
+        fn publish(&mut self, b: &[u8; STATEMENT_LEN]) -> Result<()> {
+            let mut st = self.0.lock().unwrap();
+            st.seam = Some(*b);
+            st.publishes += 1;
+            if std::mem::take(&mut st.fail_next_publish) {
+                return Err(Error::Invalid("the directory sync failed after the rename"));
+            }
+            Ok(())
+        }
+    }
+
+    fn probed() -> (Checker, Probe) {
+        let probe = Probe::default();
+        let mut cards = CardStore::new();
+        cards.insert([CARD; 16], [0xC0; 16]);
+        let c = Checker::new(
+            ed25519_dalek::SigningKey::from_bytes(&[9; 32]),
+            roster(),
+            cards,
+            0,
+            posture::DEFAULT_HOME_TTL_SECS,
+            Box::new(probe.clone()),
+            T0,
+        )
+        .unwrap();
+        (c, probe)
+    }
+
+    #[test]
+    fn a_no_op_writes_neither_the_seam_nor_seq_json() {
+        let (mut c, p) = probed();
+        let (seqs, pubs) = {
+            let s = p.0.lock().unwrap();
+            (s.seq_writes, s.publishes)
+        };
+        let req = es256_req(&mut c, Purpose::Away, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0 + 600).unwrap();
+        let s = p.0.lock().unwrap();
+        assert_eq!((s.seq_writes, s.publishes), (seqs, pubs), "a no-op wrote");
+    }
+
+    #[test]
+    fn a_failed_publish_never_lets_a_no_op_leave_home_on_the_seam() {
+        // The verified regression: home's publish lands but reports failure;
+        // memory still says away, so an away looked like a no-op and left the
+        // seam saying home until it lapsed.
+        let (mut c, p) = probed();
+        p.0.lock().unwrap().fail_next_publish = true;
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_err());
+        let seam = |p: &Probe| {
+            posture::decode_structure(&p.0.lock().unwrap().seam.unwrap())
+                .unwrap()
+                .posture
+        };
+        assert_eq!(seam(&p), HouseholdPosture::Home, "the probe did not land");
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+        let req = es256_req(&mut c, Purpose::Away, POSSESSION, 0x32, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        assert_eq!(
+            seam(&p),
+            HouseholdPosture::Away,
+            "away left home on the seam"
+        );
+        // And with no command at all, the next tick heals it.
+        let (mut c, p) = probed();
+        p.0.lock().unwrap().fail_next_publish = true;
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_err());
+        c.tick(T0, 2).unwrap();
+        assert_eq!(seam(&p), HouseholdPosture::Away);
+        // The card lane takes the same path.
+        let (mut c, p) = probed();
+        p.0.lock().unwrap().fail_next_publish = true;
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_err());
+        let mut good = CardSimulator::new([0xC0; 16]);
+        run_card(&mut c, Purpose::Away, &mut good).unwrap();
+        assert_eq!(seam(&p), HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn a_card_tap_that_changes_nothing_publishes_nothing() {
+        let (mut c, p) = probed();
+        let before = p.0.lock().unwrap().publishes;
+        let mut good = CardSimulator::new([0xC0; 16]);
+        run_card(&mut c, Purpose::Away, &mut good).unwrap();
+        assert_eq!(p.0.lock().unwrap().publishes, before);
+    }
+
+    #[test]
+    fn home_lapses_on_the_monotonic_clock_when_the_wall_clock_is_held() {
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1_000, T0).unwrap();
+        let ttl_ms = posture::DEFAULT_HOME_TTL_SECS * 1000;
+        // The wall clock never moves (held by a spoofed time source).
+        c.tick(T0, 1_000 + ttl_ms - 1).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Home);
+        c.tick(T0, 1_000 + ttl_ms).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn a_revocation_or_a_stale_roster_ends_home() {
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        let mut next = c.roster.successor().unwrap();
+        next.members.retain(|m| m.handle != [POSSESSION; 16]);
+        c.set_roster(next).unwrap();
+        c.tick(T0, 2).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+        // A change that adds only does not end it.
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 3, T0).unwrap();
+        let mut next = c.roster.successor().unwrap();
+        next.members
+            .push(phone(0x40, 0x41, CredentialClass::Intent));
+        next.sort();
+        c.set_roster(next).unwrap();
+        c.tick(T0, 4).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Home);
+        c.mark_roster_stale();
+        c.tick(T0, 5).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn a_future_dated_away_is_reissued_once_the_clock_is_corrected() {
+        let mut c = checker();
+        let ahead = T0 + 86_400;
+        let req = es256_req(&mut c, Purpose::Night, INTENT, 0x31, 0);
+        let st = c.command(&req, &S, &LAN_DOOR_ID, 1, ahead).unwrap();
+        c.tick(T0, 2).unwrap();
+        let now = c.current();
+        assert_eq!(now.posture, HouseholdPosture::Night);
+        assert!(now.seq > st.seq && now.issued_at <= T0);
+        assert!(posture::verify(
+            &c.current_bytes(),
+            &[0xaa; 16],
+            &c.posture_public_key(),
+            Some(st.seq),
+            Some(T0)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_cooldown_refuses_home_at_the_command_too_and_does_not_count_it() {
+        let mut c = checker();
+        // A home challenge issued before the door cooled...
+        let home = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        for i in 0..5 {
+            let req = es256_req(&mut c, Purpose::Night, INTENT, 0x99, i);
+            assert!(c.command(&req, &S, &LAN_DOOR_ID, i, T0).is_err());
+        }
+        // ...is refused when answered during the cooldown.
+        assert!(c.command(&home, &S, &LAN_DOOR_ID, 10, T0).is_err());
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn a_member_without_a_key_never_authorizes() {
+        // Validation forbids it; the checker does not rely on that.
+        let mut c = checker();
+        for m in &mut c.roster.members {
+            if m.handle == [INTENT; 16] {
+                m.public_key = None;
+            }
+        }
+        for seed in [0x31, 0x01] {
+            let req = es256_req(&mut c, Purpose::Night, INTENT, seed, 0);
+            assert!(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).is_err());
+            c.limiter = DoorLimiter::new();
+        }
+    }
+
     /// SENTINEL: a planted marker handle never appears in a statement, a
     /// published seam write, or the checker's Debug output, through every
     /// outcome (accepted, refused, lapsed).
@@ -1043,7 +1350,7 @@ pub(crate) mod tests {
             let e = c.command(&bad, &S, &LAN_DOOR_ID, 1, T0).unwrap_err();
             outs.push(format!("{e} {e:?}").into_bytes());
         }
-        c.tick(T0 + 3600).unwrap();
+        c.tick(T0 + 3600, 2).unwrap();
         outs.push(format!("{c:?}").into_bytes());
         outs.extend(published.lock().unwrap().iter().cloned());
         let raw = [MARK; 16];

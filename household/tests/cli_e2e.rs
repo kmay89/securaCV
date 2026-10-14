@@ -250,6 +250,27 @@ fn binary_end_to_end() {
     let card_handle = p["new_member_handle"].as_str().unwrap().to_string();
     let card_key = base.join("card.key");
     std::fs::write(&card_key, "00112233445566778899aabbccddeeff\n").unwrap();
+    // A key file others can read is refused, like a KEK at that mode.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&card_key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let o = run(&[
+            "card",
+            "provision",
+            "--data-dir",
+            s(&data),
+            "--kek",
+            s(&kek),
+            "--handle",
+            &card_handle,
+            "--key-file",
+            s(&card_key),
+        ]);
+        assert_ne!(o.code, 0, "a world-readable key file was accepted");
+        assert!(!data.join("cards.sealed").exists());
+        std::fs::set_permissions(&card_key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let other_kek = base.join("other.kek");
     std::fs::write(
         &other_kek,
@@ -293,8 +314,29 @@ fn binary_end_to_end() {
     ]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert!(o.stdout.trim().is_empty(), "a supplied key was echoed");
-    assert_ne!(
-        run(&[
+    // The sealed key is the one in the file.
+    let sealed_key = |handle: &str| -> Option<[u8; 16]> {
+        let kek_k = household_keys::secrets::load_kek(&kek, &data).unwrap();
+        let hh: [u8; 16] =
+            household_keys::hex::decode_array(init["household"].as_str().unwrap()).unwrap();
+        let bytes = std::fs::read(data.join("cards.sealed")).unwrap();
+        let store = household_keys::secrets::CardStore::open(&bytes, &kek_k, &hh).unwrap();
+        let h: [u8; 16] = household_keys::hex::decode_array(handle).unwrap();
+        store.keys_for(&[h]).first().map(|(_, k)| **k)
+    };
+    assert_eq!(
+        sealed_key(&card_handle),
+        Some(household_keys::hex::decode_array::<16>("00112233445566778899aabbccddeeff").unwrap())
+    );
+    let before = std::fs::read(data.join("cards.sealed")).unwrap();
+    // The old flag, a misspelled flag and the old flag in `=` form are all
+    // refused, the store is untouched, and the key never reaches stderr.
+    for bad in [
+        vec!["--key-hex", "ffeeddccbbaa99887766554433221100"],
+        vec!["--key-fle", "/nonexistent"],
+        vec!["--key-hex=ffeeddccbbaa99887766554433221100"],
+    ] {
+        let mut args = vec![
             "card",
             "provision",
             "--data-dir",
@@ -303,13 +345,30 @@ fn binary_end_to_end() {
             s(&kek),
             "--handle",
             &card_handle,
-            "--key-hex",
-            "00112233445566778899aabbccddeeff",
-        ])
-        .code,
-        0,
-        "--key-hex is gone"
-    );
+        ];
+        args.extend(bad.iter().copied());
+        let o = run(&args);
+        assert_ne!(o.code, 0, "{bad:?} accepted");
+        assert!(
+            !o.stderr.contains("ffeeddcc"),
+            "a key reached stderr: {}",
+            o.stderr
+        );
+        assert_eq!(std::fs::read(data.join("cards.sealed")).unwrap(), before);
+    }
+    // Re-keying an existing card needs --replace.
+    let o = run(&[
+        "card",
+        "provision",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--handle",
+        &card_handle,
+    ]);
+    assert_ne!(o.code, 0, "a card was re-keyed without --replace");
+    assert_eq!(std::fs::read(data.join("cards.sealed")).unwrap(), before);
     ok(&[
         "roster",
         "approve",
@@ -366,6 +425,14 @@ fn binary_end_to_end() {
     assert_eq!(o.code, 0, "{}", o.stderr);
     let v: serde_json::Value = serde_json::from_str(o.stdout.trim()).unwrap();
     assert_eq!(v["card_keys_removed"], 1, "a revoked card's key was kept");
+    assert_eq!(
+        sealed_key(&card_handle),
+        None,
+        "the pruned store was not written"
+    );
+    // The retry path runs, and has nothing left to do.
+    let pruned = ok(&["card", "prune", "--data-dir", s(&data), "--kek", s(&kek)]);
+    assert_eq!(pruned["card_keys_removed"], 0);
     assert!(
         o.stderr.contains("pair --reset"),
         "no pairing hint: {}",

@@ -31,15 +31,29 @@
 //! and write timeout is cut to; one request per connection; a request-rate
 //! cap for paired clients; no chunked bodies. Connections are served on
 //! their own threads, at most [`MAX_CONNECTIONS`] at once and
-//! [`MAX_CONNECTIONS_PER_PEER`] from one address, so one slow peer cannot
-//! hold the API for everyone.
+//! [`MAX_CONNECTIONS_PER_PEER`] from one peer (an IPv4 address or an IPv6
+//! /64). When a newcomer finds a cap reached, the oldest connection that has
+//! not finished sending its request is shut down to make room, so idle or
+//! trickling connections never keep out a client that sends its request at
+//! once; a newcomer is turned away only when every counted connection is
+//! already serving a whole request. Requests reach the checker in the order
+//! of their timestamps: the clock is read under the state lock.
+//!
+//! What a network attacker can still do: a host that opens connections as
+//! fast as the accept loop takes them can still contend with a client for a
+//! slot, and anyone holding a paired token can spend the shared request cap
+//! (refusing every route for a minute) or start a signature-lane cooldown
+//! (refusing `home`). Each holds the current posture; a `home` still lapses
+//! on time, on both the wall and the monotonic clock, so a short
+//! `--home-ttl` bounds it.
 //!
 //! It binds loopback unless the caller explicitly allows a LAN address, and
 //! on any bind it answers only peers on the home network
 //! ([`is_home_network`]): loopback, private and link-local addresses. A peer
-//! from anywhere else, the CGNAT range Tailscale uses included, is dropped at
-//! accept. A proxy, VPN or ingress that re-originates traffic from a private
-//! address defeats this, so the LAN API must not sit behind one.
+//! from anywhere else, Tailscale's ranges included (the IPv4 shared address
+//! space and its IPv6 `fd7a:115c:a1e0::/48`), is dropped at accept. A proxy,
+//! VPN or ingress that re-originates traffic from a private address defeats
+//! this, so the LAN API must not sit behind one.
 //!
 //! There is no TLS in v0: on a LAN bind every request crosses the network in
 //! cleartext, including each client's bearer token (stable per client) and,
@@ -62,7 +76,6 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,8 +95,12 @@ pub const CONNECTION_BUDGET: Duration = Duration::from_secs(5);
 pub const MAX_REQUESTS_PER_MINUTE: usize = 600;
 /// Most connections served at once.
 pub const MAX_CONNECTIONS: usize = 16;
-/// Most connections served at once for one peer address.
+/// Most connections served at once for one peer: one IPv4 address, or one
+/// IPv6 /64.
 pub const MAX_CONNECTIONS_PER_PEER: usize = 4;
+/// How long a response may take to write once its request has been routed,
+/// even past [`CONNECTION_BUDGET`].
+pub const RESPONSE_WINDOW: Duration = Duration::from_secs(1);
 /// The one rejection body.
 pub const REJECTED_BODY: &str = r#"{"error":"rejected"}"#;
 
@@ -109,9 +126,19 @@ pub fn is_home_network(ip: IpAddr) -> bool {
         IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
             Some(v4) => is_home_network(IpAddr::V4(v4)),
-            None => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+            None => {
+                (v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local())
+                    && !is_tailscale_v6(&v6)
+            }
         },
     }
+}
+
+/// Tailscale's IPv6 range, `fd7a:115c:a1e0::/48`: unique-local in form, but
+/// a tailnet reaches it from anywhere, so it is not the home network.
+fn is_tailscale_v6(v6: &std::net::Ipv6Addr) -> bool {
+    let s = v6.segments();
+    s[0] == 0xfd7a && s[1] == 0x115c && s[2] == 0xa1e0
 }
 
 /// The server's clocks.
@@ -207,10 +234,47 @@ struct Shared {
     state: Mutex<State>,
     clock: Arc<dyn Clock>,
     log: LogSink,
-    /// Open connections, per peer address. Entries leave when their count
-    /// reaches zero, so this never holds more than [`MAX_CONNECTIONS`]
-    /// addresses, and it is never logged.
-    conns: Mutex<HashMap<IpAddr, usize>>,
+    /// Open connections. Never more than [`MAX_CONNECTIONS`] entries, and
+    /// never logged.
+    conns: Mutex<ConnTable>,
+}
+
+/// Which connections count together toward [`MAX_CONNECTIONS_PER_PEER`]:
+/// one IPv4 address, or one IPv6 /64 (a single IPv6 host can hold any
+/// number of addresses in its /64).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PeerGroup {
+    V4(std::net::Ipv4Addr),
+    V6Prefix(u64),
+}
+
+impl PeerGroup {
+    fn of(ip: IpAddr) -> PeerGroup {
+        match ip {
+            IpAddr::V4(v4) => PeerGroup::V4(v4),
+            IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                Some(v4) => PeerGroup::V4(v4),
+                None => PeerGroup::V6Prefix((v6.to_bits() >> 64) as u64),
+            },
+        }
+    }
+}
+
+/// One open connection.
+struct ConnEntry {
+    id: u64,
+    group: PeerGroup,
+    /// Set once the whole request has arrived. Until then the connection is
+    /// the one evicted when a newcomer finds the caps reached.
+    request_read: Arc<AtomicBool>,
+    /// A handle to shut the connection down from outside its thread.
+    stream: TcpStream,
+}
+
+#[derive(Default)]
+struct ConnTable {
+    next_id: u64,
+    entries: Vec<ConnEntry>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -223,34 +287,60 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// A connection slot, released on drop.
 struct Slot {
     shared: Arc<Shared>,
-    ip: IpAddr,
+    id: u64,
+    request_read: Arc<AtomicBool>,
 }
 
 impl Slot {
-    fn take(shared: &Arc<Shared>, ip: IpAddr) -> Option<Slot> {
-        let mut c = lock(&shared.conns);
-        let total: usize = c.values().sum();
-        let mine = c.get(&ip).copied().unwrap_or(0);
-        if total >= MAX_CONNECTIONS || mine >= MAX_CONNECTIONS_PER_PEER {
-            return None;
+    /// Admit a connection from `ip`. When a cap is reached, the oldest
+    /// connection that has not finished sending its request (within the
+    /// peer's group when the per-peer cap is the one reached, otherwise
+    /// overall) is shut down to make room: an idle or trickling connection
+    /// never keeps out a client that sends its request at once, which is
+    /// what a paired client does. Only when every counted connection is
+    /// already serving a whole request is the newcomer turned away.
+    fn take(shared: &Arc<Shared>, ip: IpAddr, stream: &TcpStream) -> Option<Slot> {
+        let handle = stream.try_clone().ok()?;
+        let group = PeerGroup::of(ip);
+        let mut t = lock(&shared.conns);
+        let mine = t.entries.iter().filter(|e| e.group == group).count();
+        let scope_is_group = mine >= MAX_CONNECTIONS_PER_PEER;
+        if scope_is_group || t.entries.len() >= MAX_CONNECTIONS {
+            // Entries are in admission order, so the first match is the
+            // oldest.
+            let victim = t.entries.iter().position(|e| {
+                !e.request_read.load(Ordering::SeqCst) && (!scope_is_group || e.group == group)
+            })?;
+            let e = t.entries.remove(victim);
+            let _ = e.stream.shutdown(std::net::Shutdown::Both);
+            if t.entries.iter().filter(|e| e.group == group).count() >= MAX_CONNECTIONS_PER_PEER
+                || t.entries.len() >= MAX_CONNECTIONS
+            {
+                return None;
+            }
         }
-        c.insert(ip, mine + 1);
+        t.next_id += 1;
+        let id = t.next_id;
+        let request_read = Arc::new(AtomicBool::new(false));
+        t.entries.push(ConnEntry {
+            id,
+            group,
+            request_read: request_read.clone(),
+            stream: handle,
+        });
         Some(Slot {
             shared: shared.clone(),
-            ip,
+            id,
+            request_read,
         })
     }
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        let mut c = lock(&self.shared.conns);
-        if let Some(n) = c.get_mut(&self.ip) {
-            *n -= 1;
-            if *n == 0 {
-                c.remove(&self.ip);
-            }
-        }
+        let mut t = lock(&self.shared.conns);
+        // An evicted connection's entry is already gone.
+        t.entries.retain(|e| e.id != self.id);
     }
 }
 
@@ -313,7 +403,7 @@ impl Server {
                 }),
                 clock,
                 log,
-                conns: Mutex::new(HashMap::new()),
+                conns: Mutex::new(ConnTable::default()),
             }),
         })
     }
@@ -361,7 +451,7 @@ impl Server {
         if !is_home_network(peer.ip()) {
             return;
         }
-        let Some(slot) = Slot::take(&self.shared, peer.ip()) else {
+        let Some(slot) = Slot::take(&self.shared, peer.ip(), &stream) else {
             return;
         };
         let shared = self.shared.clone();
@@ -370,8 +460,8 @@ impl Server {
         let _ = std::thread::Builder::new()
             .name("household-lan-conn".into())
             .spawn(move || {
-                let _slot = slot;
-                let _ = shared.handle(stream);
+                let _ = shared.handle(stream, &slot.request_read);
+                drop(slot);
             });
     }
 
@@ -394,8 +484,9 @@ impl Server {
 
 impl Shared {
     fn housekeeping(&self) {
-        let now = self.clock.unix();
         let mut guard = lock(&self.state);
+        let now = self.clock.unix();
+        let now_ms = self.clock.mono_ms();
         let st = &mut *guard;
         if let Some(src) = st.reload.as_mut() {
             let r = src.poll();
@@ -442,24 +533,30 @@ impl Shared {
                 None => {}
             }
         }
-        if st.checker.tick(now).is_err() {
+        if st.checker.tick(now, now_ms).is_err() {
             (self.log)("failed to publish a lapse statement");
         }
     }
 
-    fn handle(&self, stream: TcpStream) -> Result<()> {
+    fn handle(&self, stream: TcpStream, request_read: &AtomicBool) -> Result<()> {
         let deadline = Instant::now() + CONNECTION_BUDGET;
         stream
             .set_nonblocking(false)
             .map_err(Error::io("set blocking"))?;
         let mut stream = stream;
-        let (status, body) = match read_request(&mut stream, deadline) {
+        let read = read_request(&mut stream, deadline);
+        request_read.store(true, Ordering::SeqCst);
+        let (status, body) = match read {
             Ok(req) => self.route(&req),
             Err(RequestError::TooLarge) => (413, r#"{"error":"too_large"}"#.to_string()),
             Err(RequestError::Bad) => (400, r#"{"error":"bad_request"}"#.to_string()),
             Err(RequestError::Io) => return Ok(()),
         };
-        write_response(&mut stream, status, &body, deadline)
+        // The request may already have changed the posture, so its response
+        // gets a write window of its own even if reading used up the budget
+        // (it is a few hundred bytes: it fits the socket buffer).
+        let write_by = deadline.max(Instant::now() + RESPONSE_WINDOW);
+        write_response(&mut stream, status, &body, write_by)
     }
 
     fn route(&self, req: &Request) -> (u16, String) {
@@ -477,9 +574,12 @@ impl Shared {
         if !method_ok {
             return (405, r#"{"error":"method_not_allowed"}"#.into());
         }
+        // The clock is read under the lock, so requests reach the checker in
+        // the order of their timestamps (connections run on their own
+        // threads).
+        let mut guard = lock(&self.state);
         let now_ms = self.clock.mono_ms();
         let now_unix = self.clock.unix();
-        let mut guard = lock(&self.state);
         let st = &mut *guard;
         // Paired clients only, before anything is counted.
         let session = req
@@ -761,19 +861,33 @@ type Stamp = (Option<String>, Option<FileStamp>, Option<FileStamp>);
 pub struct DirReload {
     dir: crate::store::DataDir,
     kek: crate::secrets::Kek,
+    roster_key: ed25519_dalek::VerifyingKey,
     seen: Stamp,
+    /// Parts (roster, cards, pairings) whose last load failed: retried on
+    /// every poll, whatever their stamp says, until they load.
+    failing: [bool; 3],
 }
 
 impl DirReload {
-    /// Watch `dir`, opening the card store with `kek`.
-    pub fn new(dir: crate::store::DataDir, kek: crate::secrets::Kek) -> Self {
-        let mut r = DirReload {
+    /// Watch `dir`, opening the card store with `kek` and checking the
+    /// roster chain against `roster_key`, the public half of the roster key
+    /// the server opened under the KEK at startup (never re-read from the
+    /// plaintext `hub_keys.json` while it runs).
+    ///
+    /// Nothing counts as seen yet, so the first poll loads every part: a
+    /// change applied while the server was starting is never missed.
+    pub fn new(
+        dir: crate::store::DataDir,
+        kek: crate::secrets::Kek,
+        roster_key: ed25519_dalek::VerifyingKey,
+    ) -> Self {
+        DirReload {
             dir,
             kek,
+            roster_key,
             seen: (None, None, None),
-        };
-        r.seen = r.stamp();
-        r
+            failing: [false; 3],
+        }
     }
 
     fn file_stamp(p: &std::path::Path) -> Option<FileStamp> {
@@ -782,11 +896,14 @@ impl DirReload {
     }
 
     fn stamp(&self) -> Stamp {
+        // Only names the chain loader reads count: a stray file sorting
+        // above them would otherwise freeze the stamp.
         let last = std::fs::read_dir(self.dir.path("roster/chain"))
             .ok()
             .and_then(|it| {
                 it.filter_map(|e| e.ok())
                     .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| crate::store::is_chain_file_name(n))
                     .max()
             });
         (
@@ -810,25 +927,28 @@ impl ReloadSource for DirReload {
     fn poll(&mut self) -> Reload {
         let now = self.stamp();
         let mut out = Reload::default();
-        if now.0 != self.seen.0 {
+        if now.0 != self.seen.0 || self.failing[0] {
             let r = self
                 .dir
-                .current_roster()
+                .current_roster_with(&self.roster_key)
                 .and_then(|r| r.ok_or(Error::Rejected("the roster chain is empty")));
+            self.failing[0] = r.is_err();
             if r.is_ok() {
                 self.seen.0 = now.0;
             }
             out.roster = Some(r);
         }
-        if now.1 != self.seen.1 {
+        if now.1 != self.seen.1 || self.failing[1] {
             let r = self.load_cards();
+            self.failing[1] = r.is_err();
             if r.is_ok() {
                 self.seen.1 = now.1;
             }
             out.cards = Some(r);
         }
-        if now.2 != self.seen.2 {
+        if now.2 != self.seen.2 || self.failing[2] {
             let r = self.dir.bearer_hashes();
+            self.failing[2] = r.is_err();
             if r.is_ok() {
                 self.seen.2 = now.2;
             }
@@ -881,6 +1001,8 @@ mod tests {
             "2606:4700::1111",
             "::ffff:8.8.8.8",
             "::ffff:100.64.0.1",
+            "fd7a:115c:a1e0::1",
+            "fd7a:115c:a1e0:ab12::7",
         ];
         for a in yes {
             assert!(is_home_network(a.parse().unwrap()), "{a} refused");
@@ -934,64 +1056,147 @@ mod tests {
     }
 
     #[test]
-    fn one_peer_holds_at_most_its_share_of_connections() {
+    fn idle_connections_never_keep_out_a_real_request() {
+        // The default deployment: every local client is 127.0.0.1, the
+        // attacker included. Idle sockets at the per-peer cap are evicted,
+        // oldest first, to admit a request.
         let (h, a) = served("t0ken");
         let idle: Vec<TcpStream> = (0..MAX_CONNECTIONS_PER_PEER)
             .map(|_| TcpStream::connect(a).unwrap())
             .collect();
         std::thread::sleep(Duration::from_millis(150));
-        // Over the per-peer cap: closed at accept, no response.
         let r = raw(
             a,
             b"GET /v1/posture HTTP/1.1\r\nAuthorization: Bearer t0ken\r\n\r\n",
         );
-        assert!(r.is_empty(), "served over the per-peer cap: {r}");
-        // Closing them frees the slots.
-        drop(idle);
-        let mut served = false;
-        for _ in 0..50 {
-            std::thread::sleep(Duration::from_millis(20));
-            let r = raw(
-                a,
-                b"GET /v1/posture HTTP/1.1\r\nAuthorization: Bearer t0ken\r\n\r\n",
-            );
-            if r.starts_with("HTTP/1.1 200") {
-                served = true;
-                break;
+        assert!(
+            r.starts_with("HTTP/1.1 200"),
+            "kept out by idle sockets: {r}"
+        );
+        // The oldest idle socket was the one closed.
+        let mut first = idle.into_iter().next().unwrap();
+        first
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            first.read(&mut buf).unwrap_or(0),
+            0,
+            "oldest idle socket kept"
+        );
+        h.stop();
+    }
+
+    /// Admission without the network: `Slot::take` with chosen peer
+    /// addresses (any address can be named here, unlike a real connect).
+    fn admission_harness() -> (Arc<Shared>, TcpListener, SocketAddr) {
+        let srv = Server::bind(
+            &ServerConfig {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                allow_lan: false,
+            },
+            checker(),
+            vec![],
+            None,
+            Arc::new(SystemClock::default()),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let a = l.local_addr().unwrap();
+        (srv.shared.clone(), l, a)
+    }
+
+    fn conn(l: &TcpListener, a: SocketAddr) -> (TcpStream, TcpStream) {
+        let client = TcpStream::connect(a).unwrap();
+        let (server_side, _) = l.accept().unwrap();
+        (client, server_side)
+    }
+
+    #[test]
+    fn admission_evicts_the_oldest_incomplete_connection_in_scope() {
+        let (shared, l, a) = admission_harness();
+        let ip = |s: &str| -> IpAddr { s.parse().unwrap() };
+        // Fill the whole table: 4 peers x 4 connections.
+        let mut held = Vec::new();
+        for p in 1..=4 {
+            for _ in 0..MAX_CONNECTIONS_PER_PEER {
+                let (c, sv) = conn(&l, a);
+                let slot = Slot::take(&shared, ip(&format!("10.0.0.{p}")), &sv).unwrap();
+                held.push((c, sv, slot));
             }
         }
-        assert!(served, "slots were not released");
-        h.stop();
+        assert_eq!(lock(&shared.conns).entries.len(), MAX_CONNECTIONS);
+        // A fifth peer evicts the oldest incomplete connection overall.
+        let (_c, sv) = conn(&l, a);
+        let s5 = Slot::take(&shared, ip("10.0.0.9"), &sv).expect("newcomer refused");
+        let ids: Vec<u64> = lock(&shared.conns).entries.iter().map(|e| e.id).collect();
+        assert!(!ids.contains(&held[0].2.id), "oldest not evicted");
+        let mut buf = [0u8; 1];
+        held[0]
+            .0
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(
+            held[0].0.read(&mut buf).unwrap_or(0),
+            0,
+            "evicted socket open"
+        );
+        // Once every connection is serving a whole request, a newcomer is
+        // turned away instead.
+        for (_, _, slot) in &held {
+            slot.request_read.store(true, Ordering::SeqCst);
+        }
+        s5.request_read.store(true, Ordering::SeqCst);
+        let (_c, sv) = conn(&l, a);
+        assert!(Slot::take(&shared, ip("10.0.0.10"), &sv).is_none());
+        drop(held);
+        drop(s5);
+        assert!(lock(&shared.conns).entries.is_empty(), "slots leaked");
+    }
+
+    #[test]
+    fn one_ipv6_slash_64_counts_as_one_peer() {
+        let (shared, l, a) = admission_harness();
+        let ip = |s: &str| -> IpAddr { s.parse().unwrap() };
+        let mut held = Vec::new();
+        for i in 1..=MAX_CONNECTIONS_PER_PEER {
+            let (c, sv) = conn(&l, a);
+            let slot = Slot::take(&shared, ip(&format!("fd00:1:2:3::{i}")), &sv).unwrap();
+            held.push((c, sv, slot));
+        }
+        // A fifth address in the same /64 is the same peer: it evicts one of
+        // that peer's connections, not someone else's.
+        let (_c, sv) = conn(&l, a);
+        let other = Slot::take(&shared, ip("fd00:1:2:4::1"), &sv).unwrap();
+        let (_c2, sv2) = conn(&l, a);
+        let fifth = Slot::take(&shared, ip("fd00:1:2:3::99"), &sv2).unwrap();
+        let ids: Vec<u64> = lock(&shared.conns).entries.iter().map(|e| e.id).collect();
+        assert!(ids.contains(&other.id), "another /64 was evicted");
+        assert!(!ids.contains(&held[0].2.id));
+        assert!(ids.contains(&fifth.id));
     }
 
     #[test]
     fn the_connection_budget_is_absolute() {
         let (h, a) = served("t0ken");
-        // A client that trickles one header byte every 2 s would keep each
-        // read under IO_TIMEOUT forever; the budget still closes it.
+        // Half a head at once, one more byte just before the budget ends,
+        // then nothing. Checking the deadline only before each read would
+        // let that last read block a full IO_TIMEOUT past the budget; each
+        // read's timeout is cut to what is left instead.
         let mut s = TcpStream::connect(a).unwrap();
         s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         let started = Instant::now();
-        let trickle = std::thread::spawn({
-            let mut w = s.try_clone().unwrap();
-            move || {
-                for b in b"GET /v1/posture HTTP/1.1\r\nX: aaaaaaaa" {
-                    if w.write_all(&[*b]).is_err() {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_secs(2));
-                }
-            }
-        });
+        s.write_all(b"GET /v1/posture HTTP/1.1\r\n").unwrap();
+        std::thread::sleep(CONNECTION_BUDGET - Duration::from_millis(500));
+        s.write_all(b"X").unwrap();
         let mut out = Vec::new();
         let _ = s.read_to_end(&mut out);
         let took = started.elapsed();
         assert!(
-            took < CONNECTION_BUDGET + Duration::from_millis(1500),
+            took < CONNECTION_BUDGET + Duration::from_millis(700),
             "connection held for {took:?}"
         );
-        drop(s);
-        let _ = trickle.join();
         h.stop();
     }
 
@@ -1075,5 +1280,147 @@ mod tests {
             assert!(r.ends_with(REJECTED_BODY), "{r}");
         }
         h.stop();
+    }
+
+    /// A data directory with a genesis roster and one member, for the
+    /// reload tests.
+    fn reload_dir(
+        tag: &str,
+    ) -> (
+        crate::store::DataDir,
+        crate::secrets::Kek,
+        std::path::PathBuf,
+    ) {
+        use crate::admin::sign_cli;
+        use crate::roster::tests::{ed_admin, phone};
+        use crate::roster::CredentialClass;
+        let p = crate::store::tests::tmpdir(tag);
+        let kek = crate::secrets::Kek::generate().unwrap();
+        let d = crate::store::DataDir::create(&p, &kek).unwrap();
+        let hub = d.hub_keys(&kek).unwrap();
+        let admin = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+        let g = Roster::genesis(d.household().unwrap(), vec![ed_admin(1, 1)], 1).unwrap();
+        let a = vec![sign_cli(&admin, &[1; 16], &g.digest().unwrap())];
+        d.accept(&hub, g.clone(), a, None).unwrap();
+        let mut n = g.successor().unwrap();
+        n.members.push(phone(0x10, 0x31, CredentialClass::Intent));
+        let a = vec![sign_cli(&admin, &[1; 16], &n.digest().unwrap())];
+        d.accept(&hub, n, a, None).unwrap();
+        (d, kek, p)
+    }
+
+    fn revoke_all(d: &crate::store::DataDir, kek: &crate::secrets::Kek) -> u64 {
+        let hub = d.hub_keys(kek).unwrap();
+        let admin = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+        let cur = d.current_roster().unwrap().unwrap();
+        let mut n = cur.successor().unwrap();
+        n.members.clear();
+        let a = vec![crate::admin::sign_cli(
+            &admin,
+            &[1; 16],
+            &n.digest().unwrap(),
+        )];
+        d.accept(&hub, n.clone(), a, None).unwrap();
+        n.epoch
+    }
+
+    #[test]
+    fn the_first_poll_loads_everything() {
+        let (d, kek, p) = reload_dir("reload-first");
+        let key = d.roster_public_key().unwrap();
+        let mut r = DirReload::new(d.clone(), kek, key);
+        let first = r.poll();
+        assert_eq!(first.roster.unwrap().unwrap().epoch, 2);
+        assert!(first.cards.is_none(), "no card store yet, nothing to load");
+        assert!(first.bearers.unwrap().is_ok());
+        let second = r.poll();
+        assert!(second.roster.is_none() && second.bearers.is_none());
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[test]
+    fn a_stray_file_in_the_chain_never_freezes_a_revocation() {
+        let (d, kek, p) = reload_dir("reload-stray");
+        let key = d.roster_public_key().unwrap();
+        let mut r = DirReload::new(d.clone(), kek.clone_for_test(), key);
+        let _ = r.poll();
+        std::fs::create_dir(d.path("roster/chain/old")).unwrap();
+        std::fs::write(d.path("roster/chain/README.txt"), b"notes").unwrap();
+        let epoch = revoke_all(&d, &kek);
+        assert_eq!(r.poll().roster.unwrap().unwrap().epoch, epoch);
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[test]
+    fn a_roster_that_failed_to_load_is_retried_until_it_loads() {
+        let (d, kek, p) = reload_dir("reload-retry");
+        let key = d.roster_public_key().unwrap();
+        let mut r = DirReload::new(d.clone(), kek.clone_for_test(), key);
+        let _ = r.poll();
+        // The newest chain file goes missing (the high-water mark makes the
+        // shorter chain a refused rollback), then comes back: the stamp is
+        // the one already seen, and the roster must still be reloaded.
+        let newest = d.path("roster/chain/00000000000000000002.json");
+        let aside = d.path("aside.json");
+        std::fs::rename(&newest, &aside).unwrap();
+        assert!(r.poll().roster.unwrap().is_err());
+        std::fs::rename(&aside, &newest).unwrap();
+        assert_eq!(r.poll().roster.unwrap().unwrap().epoch, 2);
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    /// A ReloadSource that hands out scripted results.
+    struct Scripted(std::collections::VecDeque<Reload>);
+    impl ReloadSource for Scripted {
+        fn poll(&mut self) -> Reload {
+            self.0.pop_front().unwrap_or_default()
+        }
+    }
+
+    #[test]
+    fn housekeeping_applies_each_part_on_its_own_and_fails_closed_for_home() {
+        let base = roster();
+        let mut next = base.successor().unwrap();
+        next.members
+            .retain(|m| m.class != crate::roster::CredentialClass::Intent);
+        let script = Scripted(
+            [
+                // A roster that does not load: stale, home refused.
+                Reload {
+                    roster: Some(Err(Error::Rejected("chain did not verify"))),
+                    ..Default::default()
+                },
+                // A roster that loads beside a card store that does not: the
+                // roster is applied anyway, and stale clears.
+                Reload {
+                    roster: Some(Ok(next.clone())),
+                    cards: Some(Err(Error::Rejected("card store did not open"))),
+                    ..Default::default()
+                },
+            ]
+            .into(),
+        );
+        let srv = Server::bind(
+            &ServerConfig {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                allow_lan: false,
+            },
+            checker(),
+            vec![],
+            Some(Box::new(script)),
+            Arc::new(SystemClock::default()),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+        srv.shared.housekeeping();
+        assert!(lock(&srv.shared.state).checker.roster_is_stale());
+        srv.shared.housekeeping();
+        let st = lock(&srv.shared.state);
+        assert!(!st.checker.roster_is_stale());
+        assert_eq!(
+            st.checker.epoch(),
+            next.epoch,
+            "roster held up by the card store"
+        );
     }
 }

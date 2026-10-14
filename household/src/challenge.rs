@@ -52,8 +52,17 @@ impl Challenge {
         wire::build_msg(self.purpose, &self.door_id, self.epoch, &self.n_h)
     }
 
+    /// Whether the challenge may no longer be answered at `now_ms`: its TTL
+    /// has passed, or `now_ms` is before it was issued (a clock that cannot
+    /// be trusted for this answer).
     fn expired(&self, now_ms: u64) -> bool {
-        now_ms.saturating_sub(self.issued_ms) >= CHALLENGE_TTL_MS || now_ms < self.issued_ms
+        self.aged_out(now_ms) || now_ms < self.issued_ms
+    }
+
+    /// Whether its TTL has passed. Pruning uses only this, so a caller whose
+    /// `now_ms` is a little behind another's never deletes a live challenge.
+    fn aged_out(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.issued_ms) >= CHALLENGE_TTL_MS
     }
 }
 
@@ -97,10 +106,17 @@ impl ChallengeBook {
     }
 
     fn prune(&mut self, now_ms: u64) {
-        self.pending.retain(|_, c| !c.expired(now_ms));
+        self.pending.retain(|_, c| !c.aged_out(now_ms));
     }
 
     /// Issue a challenge.
+    ///
+    /// A session at [`MAX_PER_SESSION`] loses its oldest outstanding
+    /// challenge rather than being refused: otherwise anyone holding a
+    /// session's token could keep that session from ever getting a challenge
+    /// by holding its slots, a cheap way to block `away`. Displacing a
+    /// challenge the session's owner is about to answer takes a request rate
+    /// the shared request cap bounds.
     pub fn issue(
         &mut self,
         purpose: Purpose,
@@ -109,19 +125,19 @@ impl ChallengeBook {
         now_ms: u64,
     ) -> Result<Challenge> {
         self.prune(now_ms);
-        if self.pending.len() >= MAX_OUTSTANDING {
-            return Err(Error::Rejected("too many outstanding challenges"));
-        }
-        if self
+        let mine: Vec<(u64, ChallengeId)> = self
             .pending
             .values()
             .filter(|c| c.session == session)
-            .count()
-            >= MAX_PER_SESSION
-        {
-            return Err(Error::Rejected(
-                "too many outstanding challenges for this session",
-            ));
+            .map(|c| (c.issued_ms, c.id))
+            .collect();
+        if mine.len() >= MAX_PER_SESSION {
+            if let Some((_, oldest)) = mine.iter().min() {
+                self.pending.remove(oldest);
+            }
+        }
+        if self.pending.len() >= MAX_OUTSTANDING {
+            return Err(Error::Rejected("too many outstanding challenges"));
         }
         let c = Challenge {
             id: rng::array()?,
@@ -245,15 +261,22 @@ mod tests {
     #[test]
     fn outstanding_is_bounded() {
         let mut b = ChallengeBook::new(1);
-        for _ in 0..MAX_PER_SESSION {
-            b.issue(Purpose::Away, LAN_DOOR_ID, S1, 0).unwrap();
+        let first = b.issue(Purpose::Away, LAN_DOOR_ID, S1, 0).unwrap();
+        for i in 1..MAX_PER_SESSION as u64 {
+            b.issue(Purpose::Away, LAN_DOOR_ID, S1, i).unwrap();
         }
-        assert!(b.issue(Purpose::Away, LAN_DOOR_ID, S1, 0).is_err());
+        // A full session is never refused: its oldest challenge goes.
+        let newest = b.issue(Purpose::Away, LAN_DOOR_ID, S1, 10).unwrap();
+        assert_eq!(
+            b.pending.values().filter(|c| c.session == S1).count(),
+            MAX_PER_SESSION
+        );
+        assert!(
+            b.take(&first.id, &S1, &LAN_DOOR_ID, 11).is_err(),
+            "oldest kept"
+        );
+        assert!(b.take(&newest.id, &S1, &LAN_DOOR_ID, 11).is_ok());
         assert!(b.issue(Purpose::Away, LAN_DOOR_ID, S2, 0).is_ok());
-        // Expired ones are pruned and free their slots.
-        assert!(b
-            .issue(Purpose::Away, LAN_DOOR_ID, S1, CHALLENGE_TTL_MS)
-            .is_ok());
         let mut b = ChallengeBook::new(1);
         for i in 0..MAX_OUTSTANDING {
             let mut s = [0u8; 32];
@@ -261,5 +284,18 @@ mod tests {
             b.issue(Purpose::Away, LAN_DOOR_ID, s, 0).unwrap();
         }
         assert!(b.issue(Purpose::Away, LAN_DOOR_ID, [0xff; 32], 0).is_err());
+    }
+
+    #[test]
+    fn a_caller_a_little_behind_never_prunes_a_live_challenge() {
+        // Two connections read the clock, then take the lock in the other
+        // order: the second issue runs with an earlier now_ms.
+        let mut b = ChallengeBook::new(1);
+        let later = b.issue(Purpose::Away, LAN_DOOR_ID, S1, 5_000).unwrap();
+        b.issue(Purpose::Away, LAN_DOOR_ID, S2, 4_990).unwrap();
+        assert!(b.take(&later.id, &S1, &LAN_DOOR_ID, 5_010).is_ok());
+        // A take that is earlier than the issue is still refused.
+        let c = b.issue(Purpose::Away, LAN_DOOR_ID, S1, 6_000).unwrap();
+        assert!(b.take(&c.id, &S1, &LAN_DOOR_ID, 5_999).is_err());
     }
 }

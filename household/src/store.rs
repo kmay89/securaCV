@@ -58,6 +58,12 @@ pub const MAX_CHAIN: usize = 100_000;
 /// [`MAX_JSON_BYTES`], so the file can always be read back.
 pub const MAX_BEARERS: usize = 32;
 
+/// Whether `name` is a roster chain file name: twenty ASCII digits (the
+/// epoch) and `.json`.
+pub fn is_chain_file_name(name: &str) -> bool {
+    name.len() == 25 && name.ends_with(".json") && name[..20].bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Write `bytes` to `path` atomically with mode 0600.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or(Error::Invalid("path has no parent"))?;
@@ -358,9 +364,7 @@ impl DataDir {
             .map_err(Error::io("list the roster chain"))?
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| {
-                n.len() == 25 && n.ends_with(".json") && n[..20].bytes().all(|b| b.is_ascii_digit())
-            })
+            .filter(|n| is_chain_file_name(n))
             .collect();
         if names.len() > MAX_CHAIN {
             return Err(Error::Invalid("roster chain is too long"));
@@ -378,9 +382,16 @@ impl DataDir {
         Ok(out)
     }
 
-    /// Load, re-verify and rollback-check the current roster. Returns `None`
-    /// before genesis.
+    /// Load, re-verify and rollback-check the current roster against the
+    /// roster public key in `hub_keys.json`. Returns `None` before genesis.
     pub fn current_roster(&self) -> Result<Option<Roster>> {
+        self.current_roster_with(&self.roster_public_key()?)
+    }
+
+    /// As [`DataDir::current_roster`], against a roster public key the
+    /// caller already holds (the running server's, opened under the KEK at
+    /// startup), so a rewritten `hub_keys.json` cannot change what verifies.
+    pub fn current_roster_with(&self, hub: &ed25519_dalek::VerifyingKey) -> Result<Option<Roster>> {
         let chain = self.load_chain()?;
         if chain.is_empty() {
             if self.high_water()?.is_some() {
@@ -390,8 +401,7 @@ impl DataDir {
             }
             return Ok(None);
         }
-        let hub = self.roster_public_key()?;
-        let r = change::verify_chain(&chain, &hub)?.clone();
+        let r = change::verify_chain(&chain, hub)?.clone();
         self.raise_high_water(&r)?;
         Ok(Some(r))
     }
@@ -486,9 +496,11 @@ impl DataDir {
         Ok(token)
     }
 
-    /// Unpair every LAN client; returns how many were removed.
-    pub fn reset_bearers(&self) -> Result<usize> {
-        let n = self.bearer_hashes()?.len();
+    /// Unpair every LAN client; returns how many were removed, or `None` when
+    /// `bearers.json` could not be read (it is rewritten empty either way, so
+    /// a damaged pairing file is repaired rather than blocking the reset).
+    pub fn reset_bearers(&self) -> Result<Option<usize>> {
+        let n = self.bearer_hashes().ok().map(|h| h.len());
         write_json(&self.path("bearers.json"), &json!({"tokens": []}))?;
         Ok(n)
     }
@@ -616,7 +628,12 @@ pub(crate) mod tests {
         }
         assert!(d.add_bearer().is_err(), "the cap refuses, it never evicts");
         assert_eq!(d.bearer_hashes().unwrap().len(), MAX_BEARERS);
-        assert_eq!(d.reset_bearers().unwrap(), MAX_BEARERS);
+        assert_eq!(d.reset_bearers().unwrap(), Some(MAX_BEARERS));
+        // A damaged pairing file does not block the reset; it is repaired.
+        std::fs::write(d.path("bearers.json"), b"{not json").unwrap();
+        assert!(d.bearer_hashes().is_err());
+        assert_eq!(d.reset_bearers().unwrap(), None);
+        assert!(d.bearer_hashes().unwrap().is_empty());
         assert!(d.bearer_hashes().unwrap().is_empty());
         assert!(d.add_bearer().is_ok());
         std::fs::remove_dir_all(&p).unwrap();

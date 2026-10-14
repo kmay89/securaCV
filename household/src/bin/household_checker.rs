@@ -13,7 +13,8 @@
 //! household_checker roster propose set-threshold --data-dir D --threshold N
 //! household_checker roster approve --data-dir D --proposal DIGEST (--admin-key FILE | --approval-file F | --holder-proof-file F)
 //! household_checker roster apply --data-dir D --kek K --proposal DIGEST [--physical-confirm DIGEST8]
-//! household_checker card provision --data-dir D --kek K --handle H [--key-file F]
+//! household_checker card provision --data-dir D --kek K --handle H [--key-file F] [--replace]
+//! household_checker card prune --data-dir D --kek K
 //! household_checker pair --data-dir D [--reset]
 //! household_checker serve --data-dir D --kek K [--bind ADDR] [--allow-lan-plaintext] [--home-ttl SECS]
 //! household_checker client keygen --out FILE
@@ -27,6 +28,10 @@
 //! `card provision` and `serve`. The rest open no sealed material (some read
 //! or write the caller's own key file: an admin key, a client key, a bearer
 //! token).
+//!
+//! Every command accepts only its own options: an unknown or misspelled one
+//! is refused, never ignored, and no error message repeats an option's
+//! value.
 //!
 //! Nothing this program logs names a handle, a credential id or a tap.
 
@@ -59,10 +64,19 @@ impl Args {
         let mut i = 0;
         while i < raw.len() {
             let a = &raw[i];
+            // Never echo an argument: it may be a key typed in the wrong place.
             let Some(name) = a.strip_prefix("--") else {
-                return Err(format!("unexpected argument '{a}'"));
+                return Err(format!(
+                    "argument {} is not an option (options start with --)",
+                    i + 1
+                ));
             };
-            let takes_value = !matches!(name, "allow-lan-plaintext" | "uv" | "reset")
+            if let Some((flag, _)) = name.split_once('=') {
+                return Err(format!(
+                    "--{flag}: give an option's value as the next argument, not after '='"
+                ));
+            }
+            let takes_value = !matches!(name, "allow-lan-plaintext" | "uv" | "reset" | "replace")
                 && !(name == "physical-confirm"
                     && raw.get(i + 1).is_none_or(|n| n.starts_with("--")));
             if takes_value {
@@ -139,6 +153,66 @@ fn main() {
         }
     };
     let words: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+    let allowed: &[&str] = match words.as_slice() {
+        ["init"] => &["data-dir", "kek"],
+        ["admin-keygen"] | ["client", "keygen"] => &["out"],
+        ["roster", "genesis"] => &[
+            "data-dir",
+            "kek",
+            "admin-key",
+            "threshold",
+            "physical-confirm",
+        ],
+        ["roster", "show"] | ["roster", "pending"] => &["data-dir"],
+        ["roster", "propose", _] => &[
+            "data-dir",
+            "kind",
+            "class",
+            "public-key",
+            "rp-id",
+            "credential-id",
+            "not-after",
+            "handle",
+            "alg",
+            "threshold",
+        ],
+        ["roster", "approve"] => &[
+            "data-dir",
+            "proposal",
+            "admin-key",
+            "approval-file",
+            "holder-proof-file",
+        ],
+        ["roster", "apply"] => &["data-dir", "kek", "proposal", "physical-confirm"],
+        ["card", "provision"] => &["data-dir", "kek", "handle", "key-file", "replace"],
+        ["card", "prune"] => &["data-dir", "kek"],
+        ["pair"] => &["data-dir", "reset"],
+        ["serve"] => &["data-dir", "kek", "bind", "allow-lan-plaintext", "home-ttl"],
+        ["client", "command"] => &[
+            "key",
+            "handle",
+            "token-file",
+            "purpose",
+            "addr",
+            "fido2-rp-id",
+            "uv",
+        ],
+        ["client", "posture"] => &["token-file", "addr"],
+        _ => &[],
+    };
+    if let Some((bad, _)) = args
+        .flags
+        .iter()
+        .find(|(k, _)| !allowed.contains(&k.as_str()))
+    {
+        let hint = if bad == "key-hex" {
+            " (a key on the command line lands in shell history: put it in a file and pass --key-file)"
+        } else {
+            ""
+        };
+        eprintln!("household_checker: --{bad} is not an option of this command{hint}");
+        std::process::exit(2);
+    }
     let r = match words.as_slice() {
         ["init"] => cmd_init(&args),
         ["admin-keygen"] => cmd_admin_keygen(&args),
@@ -149,6 +223,7 @@ fn main() {
         ["roster", "approve"] => cmd_approve(&args),
         ["roster", "apply"] => cmd_apply(&args),
         ["card", "provision"] => cmd_card(&args),
+        ["card", "prune"] => cmd_card_prune(&args),
         ["pair"] => cmd_pair(&args),
         ["serve"] => cmd_serve(&args),
         ["client", "keygen"] => cmd_client_keygen(&args),
@@ -174,6 +249,11 @@ fn cmd_init(a: &Args) -> Result<i32> {
     // The directory first, so the KEK path can be checked against it; the
     // household goes in only once the KEK is in hand to seal its keys.
     store::mkdir_private(&dir_path)?;
+    if dir_path.join("household.json").exists() {
+        return Err(Error::Invalid(
+            "this data directory already holds a household",
+        ));
+    }
     if secrets::is_inside(&kek_path, &dir_path)? {
         return Err(Error::Invalid(
             "the KEK must not live inside the data directory",
@@ -533,7 +613,8 @@ fn cmd_apply(a: &Args) -> Result<i32> {
             println!("{}", json!({"epoch": epoch}));
             eprintln!(
                 "household_checker: epoch {epoch} is applied, but removing card keys no member \
-                 or proposal names failed: {e}"
+                 or proposal names failed: {e}; fix the cause and run `household_checker card \
+                 prune` to retry"
             );
             Ok(1)
         }
@@ -564,7 +645,14 @@ fn prune_cards(d: &DataDir, kek: &Kek, roster: &Roster) -> Result<usize> {
     };
     add(roster);
     for dg in d.list_pending()? {
-        add(&d.load_pending(&dg)?.roster);
+        match d.load_pending(&dg) {
+            Ok(p) => add(&p.roster),
+            // A proposal file that does not load cannot apply either, so it
+            // keeps no card key; say which file, so it can be removed.
+            Err(e) => eprintln!(
+                "household_checker: skipped pending/{dg}.json while pruning card keys: {e}"
+            ),
+        }
     }
     let mut cards = load_cards(d, kek)?;
     let removed = cards.retain(|h| keep.contains(h));
@@ -590,18 +678,11 @@ fn cmd_card(a: &Args) -> Result<i32> {
             "that handle is not a card member of the roster or a pending proposal",
         ));
     }
-    // A key handed in comes from a file, never the command line, which would
-    // put it in the shell history and in /proc/<pid>/cmdline. The old flag is
-    // refused rather than ignored: ignoring it would seal a fresh random key
-    // in place of the one the operator meant.
-    if a.has("key-hex") {
-        return Err(Error::Invalid(
-            "--key-hex is not accepted (a key on the command line lands in shell history); \
-             put the key in a file and pass --key-file",
-        ));
-    }
+    // A key handed in comes from a file (or a pipe), never the command line,
+    // which would put it in the shell history and in /proc/<pid>/cmdline.
     let (key, generated) = match a.get("key-file") {
         Some(f) => {
+            check_key_file(Path::new(f), d.root())?;
             let raw = Zeroizing::new(store::read_bounded(Path::new(f), 128)?);
             let text =
                 std::str::from_utf8(&raw).map_err(|_| Error::Invalid("key file is not text"))?;
@@ -610,6 +691,11 @@ fn cmd_card(a: &Args) -> Result<i32> {
         None => (Zeroizing::new(rng::array::<16>()?), true),
     };
     let mut cards = load_cards(&d, &kek)?;
+    if cards.contains(&h) && !a.has("replace") {
+        return Err(Error::Invalid(
+            "that card already has a key; pass --replace to re-key it",
+        ));
+    }
     cards.insert(h, *key);
     store::write_atomic(&d.cards_path(), &cards.seal(&kek, &d.household()?)?)?;
     if generated {
@@ -621,11 +707,49 @@ fn cmd_card(a: &Args) -> Result<i32> {
     Ok(0)
 }
 
+/// Refuse a card-key file that group or others can read, or one inside the
+/// data directory: it holds a clone-capable key, so it gets the same rule as
+/// the KEK. A pipe or FIFO (`--key-file /dev/stdin`, `<(...)`) is accepted;
+/// delete a key file once the card is provisioned.
+fn check_key_file(path: &Path, data_dir: &Path) -> Result<()> {
+    let meta = std::fs::metadata(path).map_err(Error::io("stat the key file"))?;
+    if !meta.is_file() {
+        return Ok(());
+    }
+    if secrets::is_inside(path, data_dir)? {
+        return Err(Error::Invalid(
+            "the key file must not live inside the data directory",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(Error::Invalid(
+                "the key file must not be readable by group or others (chmod 600, or pipe it in)",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn cmd_card_prune(a: &Args) -> Result<i32> {
+    let d = open_dir(a)?;
+    let (kek, _) = open_keys(a, &d)?;
+    let removed = prune_cards(&d, &kek, &current(&d)?)?;
+    println!("{}", json!({"card_keys_removed": removed}));
+    Ok(0)
+}
+
 fn cmd_pair(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
     if a.has("reset") {
-        let n = d.reset_bearers()?;
-        eprintln!("unpaired {n} client(s); pair each again to use the LAN API");
+        match d.reset_bearers()? {
+            Some(n) => eprintln!("unpaired {n} client(s); pair each again to use the LAN API"),
+            None => eprintln!(
+                "the pairing file did not read; it is now empty, so every client is unpaired"
+            ),
+        }
         return Ok(0);
     }
     let t = d.add_bearer()?;
@@ -636,6 +760,7 @@ fn cmd_pair(a: &Args) -> Result<i32> {
 fn cmd_serve(a: &Args) -> Result<i32> {
     let d = open_dir(a)?;
     let (kek, hub) = open_keys(a, &d)?;
+    let roster_key = hub.roster.verifying_key();
     let roster = current(&d)?;
     let cards = load_cards(&d, &kek)?;
     let ttl: u64 = a
@@ -661,7 +786,7 @@ fn cmd_serve(a: &Args) -> Result<i32> {
         bind,
         allow_lan: a.has("allow-lan-plaintext"),
     };
-    let reload = Box::new(DirReload::new(d.clone(), kek));
+    let reload = Box::new(DirReload::new(d.clone(), kek, roster_key));
     let srv = Server::bind(
         &cfg,
         checker,

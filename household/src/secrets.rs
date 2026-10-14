@@ -65,6 +65,12 @@ impl Kek {
         Kek(Zeroizing::new(b))
     }
 
+    /// A copy of the KEK, for tests that need two owners of one key.
+    #[cfg(test)]
+    pub(crate) fn clone_for_test(&self) -> Kek {
+        Kek(Zeroizing::new(*self.0))
+    }
+
     /// A fresh random KEK.
     pub fn generate() -> Result<Kek> {
         Ok(Kek(Zeroizing::new(rng::array()?)))

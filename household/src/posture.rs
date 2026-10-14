@@ -133,7 +133,16 @@ pub enum Reject {
     /// Rule 7: `issued_at` is more than [`MAX_SKEW_SECS`] ahead of the
     /// witness's clock (a hub clock running ahead, or a statement signed for
     /// later).
-    FromFuture,
+    ///
+    /// The statement passed rules 1 to 4: it is authentic, this household's,
+    /// and newer than anything accepted. The witness MUST still record `seq`
+    /// as its last accepted sequence number (spec §3.2), so the statement can
+    /// never be accepted later, when its `issued_at` has arrived: refusing it
+    /// only now would postpone a future-dated `home`, not void it.
+    FromFuture {
+        /// The refused statement's `seq`, for the witness to record.
+        seq: u64,
+    },
 }
 
 impl Statement {
@@ -298,7 +307,7 @@ pub fn verify(
     // with the witness's clock. Without it a `home` signed while the hub's
     // clock ran a month fast stays current here for a month.
     if st.issued_at > now.saturating_add(MAX_SKEW_SECS) {
-        return Err(Reject::FromFuture);
+        return Err(Reject::FromFuture { seq: st.seq });
     }
     Ok(st)
 }
@@ -518,7 +527,7 @@ mod tests {
         let b = st.sign(&key());
         assert_eq!(
             verify(&b, &HH, &vk(), None, Some(T0)),
-            Err(Reject::FromFuture)
+            Err(Reject::FromFuture { seq: 5 })
         );
         assert_eq!(
             effective_posture(&b, &HH, &vk(), None, Some(T0)),
@@ -547,7 +556,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             verify(&past.sign(&key()), &HH, &vk(), None, Some(base)),
-            Err(Reject::FromFuture)
+            Err(Reject::FromFuture { seq: 7 })
         );
         // A future-dated away is refused too, which changes nothing: a
         // refusal already means "behave as away".
@@ -555,12 +564,48 @@ mod tests {
         let b = away.sign(&key());
         assert_eq!(
             verify(&b, &HH, &vk(), None, Some(T0)),
-            Err(Reject::FromFuture)
+            Err(Reject::FromFuture { seq: 8 })
         );
         assert_eq!(
             effective_posture(&b, &HH, &vk(), None, Some(T0)),
             HouseholdPosture::Away
         );
+    }
+
+    #[test]
+    fn a_refused_future_statement_can_never_be_replayed_later() {
+        // A witness that records the seq a rule-7 refusal carries (spec
+        // §3.2) refuses the same statement once its issued_at has arrived.
+        let ahead = T0 + 2 * 86_400;
+        let st =
+            Statement::issue(HouseholdPosture::Home, HH, 9, ahead, DEFAULT_HOME_TTL_SECS).unwrap();
+        let b = st.sign(&key());
+        let mut last_seq = Some(4u64);
+        match verify(&b, &HH, &vk(), last_seq, Some(T0)) {
+            Err(Reject::FromFuture { seq }) => last_seq = Some(seq),
+            other => panic!("expected FromFuture, got {other:?}"),
+        }
+        // Two days later the captured statement is replayed.
+        assert_eq!(
+            verify(&b, &HH, &vk(), last_seq, Some(ahead + 10)),
+            Err(Reject::Seq)
+        );
+        // A witness that did not record it would have accepted it: the
+        // recording is what voids it.
+        assert!(verify(&b, &HH, &vk(), Some(4), Some(ahead + 10)).is_ok());
+    }
+
+    #[test]
+    fn a_held_statement_stops_counting_just_past_the_skew() {
+        // The issued_at clause of is_current, pinned at its edge (a home
+        // whose lifetime bound alone would still hold).
+        let base = T0 - T0 % 60;
+        let st = Statement::issue(HouseholdPosture::Home, HH, 3, base, 600).unwrap();
+        assert!(st.is_current(base - MAX_SKEW_SECS));
+        assert!(!st.is_current(base - MAX_SKEW_SECS - 1));
+        let night = Statement::issue(HouseholdPosture::Night, HH, 4, base, 600).unwrap();
+        assert!(night.is_current(base - MAX_SKEW_SECS));
+        assert!(!night.is_current(base - MAX_SKEW_SECS - 1));
     }
 
     #[test]
