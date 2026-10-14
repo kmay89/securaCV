@@ -353,6 +353,11 @@ static int test_a_string_holding_a_byte_no_writer_puts_there_is_refused() {
       const std::string value = std::string("a") + (char)c + "b";
       const bool want = c >= 0x20 && c <= 0x7E && c != '\\' && c != '{';
       const bool got = parse(field_line(key, value).c_str(), &rec);
+      // The tail scans' reading of the same line: its id, whatever the
+      // field holds, but for the '{' well_formed() refuses (the review of
+      // sweep F264: an edited last line still marks the card's end).
+      CHECK(csi_event_log_line::record_id(field_line(key, value).c_str()) ==
+            (c == '{' ? 0u : 12345u));
       if (got != want) {
         std::fprintf(stderr, "FAIL field %s byte 0x%02X: parse() %s\n", key, c,
                      got ? "took it" : "refused it");
@@ -386,6 +391,37 @@ static int test_a_string_holding_a_byte_no_writer_puts_there_is_refused() {
   return 0;
 }
 
+// record_id() (the tail scans' reader, the review of sweep F264) refuses
+// exactly what parse() refuses before it reads a string field, so the only
+// lines it takes that parse() does not are the ones json_str() refuses.
+static int test_record_id_reads_what_parse_reads_before_the_strings() {
+  using csi_event_log_line::record_id;
+  const char* const refused[] = {
+    "{\"id\":-5,\"first\":1,\"last\":1}",
+    "{\"id\":4294967296,\"first\":1,\"last\":1}",
+    "{\"id\":0,\"first\":1,\"last\":1}",
+    "{\"id\":,\"first\":1}",
+    "{\"id\":12,\"first\":-1,\"last\":1}",
+    "{\"id\":12,\"first\":1,\"last\":4294967296}",
+    "{\"id\":12,\"fir",                                  // torn
+    "{\"id\":12,\"first\":1}{\"id\":13,\"first\":1}",     // glued
+    " {\"id\":12}",                                       // not at the start
+    "",
+  };
+  csi_event_record_t rec;
+  for (const char* line : refused) {
+    CHECK(record_id(line) == 0 && !parse(line, &rec));
+  }
+  CHECK(record_id(nullptr) == 0);
+  CHECK(record_id("{\"id\":12}") == 12 && parse("{\"id\":12}", &rec));
+  CHECK(record_id("{\"id\":4294967295,\"first\":1,\"last\":2}") == 4294967295u);
+  // A string field parse() refuses: record_id() still reads the id.
+  CHECK(record_id(field_line("state", "occ\\").c_str()) == 12345);
+  CHECK(!parse(field_line("state", "occ\\").c_str(), &rec));
+  CHECK(record_id(field_line("module", std::string("a\x01" "b")).c_str()) == 12345);
+  return 0;
+}
+
 int main() {
   if (test_presence_golden()) return 1;
   if (test_integrity_golden_and_empty_strings()) return 1;
@@ -396,6 +432,7 @@ int main() {
   if (test_uint32_fields_survive_a_32_bit_long()) return 1;
   if (test_signed_and_overflowing_numbers_are_refused()) return 1;
   if (test_a_string_holding_a_byte_no_writer_puts_there_is_refused()) return 1;
+  if (test_record_id_reads_what_parse_reads_before_the_strings()) return 1;
   std::printf("test_csi_event_log_line: %d checks passed\n", g_checks);
   return 0;
 }

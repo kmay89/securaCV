@@ -481,6 +481,16 @@ static int test_last_line_id() {
   CHECK(last_line_id(sealed.data(), sealed.size()) == 42);
   CHECK(last_line_id("", 0) == 0);
   CHECK(last_line_id(nullptr, 10) == 0);
+  // A record whose string field parse() refuses (sweep F264) is the last
+  // record all the same: the walk must reach it to skip and count it.
+  csi_event_record_t r3 = row(43, 3);
+  std::strcpy(r3.values.state_name, "occ\\");
+  char c[256];
+  const size_t n3 = csi_event_log_line::marshal(&r3, c, sizeof(c));
+  std::string edited = log + std::string(c, n3);
+  csi_event_record_t probe;
+  CHECK(!csi_event_log_line::parse(std::string(c, n3 - 1).c_str(), &probe));
+  CHECK(last_line_id(edited.data(), edited.size()) == 43);
   return 0;
 }
 
@@ -972,8 +982,7 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   CHECK(q.stats().live == live_before + 1 && each_once(w.ha, 12, 12));
   CHECK(w.bodies_not_json == 0 && w.ha.refused.empty());
 
-  // A reboot: the tail scan takes no id from the refused line, and nothing
-  // is sent again.
+  // A reboot: nothing is sent again.
   Planner r;
   a.boot();
   r.begin(w.nvs_ceiling, a.stored, w);
@@ -983,6 +992,73 @@ static int test_a_line_no_writer_could_spell_is_skipped_not_sent() {
   CHECK(h2.drain() < 1000);
   CHECK(w.ha.accepted.size() == before_reboot);
   CHECK(times_accepted(w.ha, 5) == 0 && times_accepted(w.ha, 7) == 0 && times_accepted(w.ha, 11) == 0);
+  return 0;
+}
+
+// The tail scan needs only a line's id (the review of sweep F264). The last
+// n held rows are edited on the card, and from n = 4 they fill the whole of
+// the canary's tail read (kTailRead; a line here is about 220 bytes). When
+// last_line_id() went through parse(), it found no id in that window, so
+// card_open() took the card as caught up: every unedited row before them
+// stayed on the card unwalked, unsent and uncounted, and the next row went
+// live past them. At n = 3 it took the last unedited row's id, so the walk
+// stopped short of the card's end, and an edited line beyond the read it
+// was in went uncounted. Now the scan takes the id of the card's last
+// record whatever its strings hold (csi_event_log_line::record_id()): the
+// walk reaches the end, sends every unedited row once and in order, and
+// skips and counts every edited one.
+static int test_edited_lines_filling_the_tail_read_hide_no_row() {
+  for (uint32_t n = 1; n <= 6; ++n) {
+    World w; Allocator a;
+    w.build_bodies = true;
+    Planner p;
+    a.boot();
+    p.begin(w.nvs_ceiling, a.stored, w);
+    open_card(w, p, a);
+    {
+      Host h{w, p, a};
+      for (int i = 0; i < 3; ++i) h.tick(1);    // live: 1..3
+      w.connected = false;
+      for (int i = 0; i < 13; ++i) h.tick(1);   // held on the card: 4..16
+    }
+    p.card_close();
+    for (uint32_t k = 0; k < n; ++k) CHECK(edit_state(w, 16 - k, "occ\\"));
+    // From n = 4 on, the tail read starts inside or after the last unedited
+    // line: it holds edited lines only.
+    const size_t tail = std::min(w.log.size(), kTailRead);
+    const size_t last_unedited = w.log.find("{\"id\":" + std::to_string(16 - n) + ",");
+    CHECK((last_unedited < w.log.size() - tail) == (n >= 4));
+    CHECK(last_line_id(w.log.data() + (w.log.size() - tail), tail) == 16);
+    open_card(w, p, a);
+    CHECK(p.pending());
+    Host h{w, p, a};
+    w.connected = true;
+    CHECK(h.drain() < 1000);
+    CHECK(!p.pending());
+    if (!each_once(w.ha, 4, 16 - n) || p.stats().skipped != 3 + n) {
+      std::fprintf(stderr, "n=%u: accepted %zu skipped %u\n", (unsigned)n, w.ha.accepted.size(),
+                   (unsigned)p.stats().skipped);
+    }
+    CHECK(each_once(w.ha, 1, 16 - n));
+    for (uint32_t k = 0; k < n; ++k) CHECK(times_accepted(w.ha, 16 - k) == 0);
+    CHECK(w.bodies_not_json == 0 && w.ha.refused.empty() && strictly_rising(w.ha.accepted));
+    // Every edited line counted, with the three delivered ones the walk
+    // passes on its way from the card's start.
+    CHECK(p.stats().skipped == 3 + n && p.stats().replayed == 13 - n);
+    CHECK(p.watermark() == 16 - n);              // never past an unsent id by itself
+    const uint32_t live_before = p.stats().live;
+    h.tick(1);                                    // 17: live, not held
+    CHECK(p.stats().live == live_before + 1 && each_once(w.ha, 17, 17));
+    // A reboot sends nothing again.
+    Planner r;
+    a.boot();
+    r.begin(w.nvs_ceiling, a.stored, w);
+    open_card(w, r, a);
+    Host h2{w, r, a};
+    const size_t before_reboot = w.ha.accepted.size();
+    CHECK(h2.drain() < 1000);
+    CHECK(w.ha.accepted.size() == before_reboot);
+  }
   return 0;
 }
 
@@ -1932,6 +2008,7 @@ int main() {
   RUN(test_a_bad_sector_mid_row_gives_up_once);
   RUN(test_isolated_failures_while_skipping_delivered_rows);
   RUN(test_a_line_no_writer_could_spell_is_skipped_not_sent);
+  RUN(test_edited_lines_filling_the_tail_read_hide_no_row);
   std::printf("test_csi_event_backfill: %d checks passed\n", g_checks);
   return 0;
 }

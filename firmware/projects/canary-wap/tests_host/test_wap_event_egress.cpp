@@ -909,6 +909,59 @@ static void test_card_line_no_writer_could_spell_is_skipped() {
   CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
 }
 
+/* The review of F264: the card's LAST rows edited. The tail scan
+ * (last_row_id(), back a window at a time up to TAIL_SCAN_MAX) went
+ * through parse(), so it took the last unedited row for the card's newest:
+ * the walk stopped there, and an edited row after it was never counted.
+ * With more edited rows at the end than the scan reads back, it found no
+ * row at all, and every unsent row before them was taken as delivered. It
+ * now reads only each line's id (csi_event_log_line::record_id()), so the
+ * walk reaches the card's end: every unedited row goes once, in order, and
+ * every edited one is skipped and counted. */
+static void test_card_lines_edited_at_the_end_are_skipped() {
+  printf("-- the card's last rows edited: every row before them still goes, each edited one is counted (F264)\n");
+  {
+    fresh_device();
+    std::vector<uint32_t> ids;
+    for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // held
+    CHECK(edit_card_state(ids[5], "occ\\"), "the last row edited on the card");
+    boot();
+    connect();
+    drain();
+    CHECK(exactly(W.ha.accepted, {ids[0], ids[1], ids[2], ids[3], ids[4]}),
+          "every row before it arrives once, in order");
+    CHECK(W.bodies_not_json == 0, "and every events body sent parses");
+    printf("     skipped=%lu\n", (unsigned long)csi_event_egress::stats().planner.skipped);
+    CHECK(csi_event_egress::stats().planner.skipped == 1, "the edited last row is skipped and counted");
+    const uint32_t c = emit_ping();
+    drain(4);
+    CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
+  }
+  {
+    fresh_device();
+    std::vector<uint32_t> ids;
+    for (int i = 0; i < 6; ++i) { ids.push_back(emit_ping()); loop_pass(); }   // held, kept
+    const size_t line = SD.files["/EVENTS/today.ndjson"].size() / 6;
+    const size_t edited = csi_event_log::TAIL_SCAN_MAX / line + 4;   // more than the scan reads back
+    std::vector<uint32_t> tail;
+    for (size_t i = 0; i < edited; ++i) { tail.push_back(emit_ping()); loop_pass(); }
+    bool all = true;
+    for (uint32_t id : tail) all = edit_card_state(id, "occ\\") && all;
+    CHECK(all, "every row after the first six edited on the card");
+    boot();
+    connect();
+    drain();
+    CHECK(exactly(W.ha.accepted, ids), "the six unedited rows arrive once, in order");
+    CHECK(W.bodies_not_json == 0, "and every events body sent parses");
+    printf("     edited=%zu skipped=%lu\n", edited,
+           (unsigned long)csi_event_egress::stats().planner.skipped);
+    CHECK(csi_event_egress::stats().planner.skipped == edited, "every edited row is skipped and counted");
+    const uint32_t c = emit_ping();
+    drain(4);
+    CHECK(W.ha.accepted.back() == c && W.ha.refused.empty(), "and the next row goes out live");
+  }
+}
+
 static void test_upgrade_floor_without_a_ceiling() {
   printf("-- an upgrade's first boot (an id floor in NVS, no delivery ceiling): the card's older rows count as delivered\n");
   fresh_device();
@@ -1521,6 +1574,7 @@ int main() {
   test_steady_state_is_live();
   test_reboot_mid_backlog();
   test_card_line_no_writer_could_spell_is_skipped();
+  test_card_lines_edited_at_the_end_are_skipped();
   test_no_broker_is_not_owed();
   test_dismissal_is_not_replayed();
   test_send_failure_keeps_the_row();

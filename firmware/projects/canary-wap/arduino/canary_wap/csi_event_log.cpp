@@ -430,7 +430,9 @@ bool card_present() {
 
 /* The id of the last row in buf[0..n): the last whole, well-formed line
  * that is not a dismissal; 0 when there is none. `head_is_line_start` says
- * whether buf[0] starts a line (the file's start) or may be mid-line. */
+ * whether buf[0] starts a line (the file's start) or may be mid-line. A row
+ * whose string field parse() refuses counts (csi_event_log_line::record_id(),
+ * sweep F264): the backfill must walk to it to skip and count it. */
 uint32_t last_row_in(const char* buf, size_t n, bool head_is_line_start) {
   size_t end = n;
   while (end > 0 && buf[end - 1] != '\n') --end;   /* drop a torn fragment */
@@ -444,9 +446,10 @@ uint32_t last_row_in(const char* buf, size_t n, bool head_is_line_start) {
       char line[csi_event_log_line::kLineMax];
       memcpy(line, buf + start, len);
       line[len] = '\0';
-      csi_event_record_t rec;
-      if (csi_event_log_line::parse(line, &rec) && rec.values.dismissed == 0) {
-        return rec.event_id;
+      const uint32_t id = csi_event_log_line::record_id(line);
+      /* parse()'s reading of the flag: a dismissal is a copy of an older row */
+      if (id != 0 && (uint8_t)csi_event_log_line::json_int(line, "dismissed", 0) == 0) {
+        return id;
       }
     }
     end = start;

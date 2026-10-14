@@ -51,8 +51,9 @@
  * ring rows a load restores reach the REST answers the same way. Refused,
  * the line is a line the readers already pass over: the backfill skips it
  * and counts it (Stats::skipped), never sends or credits it and walks on to
- * the rows behind it; the load counts it refused; the tail scans take the id
- * of the last line before it.
+ * the rows behind it; the load counts it refused. The tail scans read only
+ * its id (record_id(), below), so an edited line at the end of the log
+ * still marks where the card's records end, and the walk reaches it.
  */
 
 #ifndef SECURACV_CSI_EVENT_LOG_LINE_H
@@ -211,26 +212,45 @@ inline bool well_formed(const char* line) {
   return strchr(line + 1, '{') == nullptr;
 }
 
+/* The id of a line that is one record by everything parse() holds a line
+ * to before its string fields: one well-formed record, whose id is a
+ * uint32 above 0 and whose `first` / `last`, when there, are uint32s. 0
+ * when it is not.
+ *
+ * The tail scans read this, not parse() (the review of sweep F264): they
+ * need only where the card's records end, and a line parse() refuses for a
+ * byte in a name is still the card's newest record. Through parse(), a run
+ * of edited lines at the end of the log that filled a tail read left the
+ * scan no id, and the planner took the card as caught up, so the unsent
+ * rows before them were never walked. Taking the edited line's id, the
+ * planner's card_open() bounds it as it bounds any card id (an id this
+ * device never handed out is clamped below the trust bound), and the
+ * backfill walk reaches the line, refuses it through parse() and skips
+ * and counts it. */
+inline uint32_t record_id(const char* line) {
+  if (!line || !well_formed(line)) return 0;
+  uint32_t id = 0;
+  if (json_u32(line, "id", &id) != U32::kOk || id == 0) return 0;
+  uint32_t ms = 0;
+  if (json_u32(line, "first", &ms) == U32::kBad ||
+      json_u32(line, "last",  &ms) == U32::kBad) return 0;
+  return id;
+}
+
 /* Parse one line (without its '\n') into `out`. False for a line that is
  * not one well-formed record, whose id is 0 (no such event) or not a
  * uint32, whose `first` / `last` is there but not a uint32 (a missing
- * one reads 0, as before), or whose string field holds a byte json_str()
- * refuses (sweep F264). */
+ * one reads 0, as before), all of which record_id() refuses, or whose
+ * string field holds a byte json_str() refuses (sweep F264). */
 inline bool parse(const char* line, csi_event_record_t* out) {
   if (!line || !out) return false;
   memset(out, 0, sizeof(*out));
-  if (!well_formed(line)) return false;
-  uint32_t id = 0;
-  if (json_u32(line, "id", &id) != U32::kOk || id == 0) {
-    memset(out, 0, sizeof(*out));
-    return false;
-  }
+  const uint32_t id = record_id(line);
+  if (id == 0) return false;
   out->event_id = id;
-  if (json_u32(line, "first", &out->first_seen_ms) == U32::kBad ||
-      json_u32(line, "last",  &out->last_seen_ms)  == U32::kBad) {
-    memset(out, 0, sizeof(*out));
-    return false;
-  }
+  /* record_id() held both to a uint32 or missing (left 0). */
+  (void)json_u32(line, "first", &out->first_seen_ms);
+  (void)json_u32(line, "last",  &out->last_seen_ms);
   out->bundled_count = (uint16_t)json_int(line, "bundled",  1);
   char cat[12]  = {};
   char priv[4]  = {};
