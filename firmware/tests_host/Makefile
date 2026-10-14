@@ -18,11 +18,12 @@ NODE     ?= node
 # deleted one is no error, and the `-include` at the end of this file reads
 # them back. So an edit to any header a suite compiles, one a forced include
 # reaches too, rebuilds that suite whether or not its rule lists the header,
-# and a new rule needs nothing more. `override`, so a CXXFLAGS given to make
-# keeps it. One command that compiles several sources writes that one file
-# once per source, each over the last (GCC and clang alike), so such a recipe
-# runs as $(call with_deps,<the compile>): the compile, then the same flags
-# and sources with -MM in place of its output, which writes $@.d again with
+# and a new rule that compiles one source with $(CXXFLAGS) needs nothing
+# more. `override`, so a CXXFLAGS given to make keeps it. One command that
+# compiles several sources writes that one file once per source, each over
+# the last (GCC and clang alike), so such a recipe runs as
+# $(call with_deps,<the compile>): the compile, then the same flags and
+# sources with -MM in place of its output, which writes $@.d again with
 # every source's headers. A comma in the compile goes through a variable, as
 # $(call) splits on commas. scripts/tests/test_vision_core_make_deps.py builds
 # every suite and holds each compile's headers, by `g++ -MM`, to what make

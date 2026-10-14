@@ -38,9 +38,10 @@ override CXXFLAGS += $(ARDUINO_GLOBALS)
 # deleted one is no error, and the `-include` at the end of this file reads
 # them back. So an edit to any header a suite compiles, the forced
 # arduino_globals.h among them, rebuilds that suite whether or not its rule
-# lists the header, and a new rule needs nothing more. One command that
-# compiles several sources writes that one file once per source, each over
-# the last (GCC and clang alike), so such a recipe runs as
+# lists the header, and a new rule that compiles one source with $(CXXFLAGS)
+# needs nothing more. One command that compiles several sources writes that
+# one file once per source, each over the last (GCC and clang alike), so such
+# a recipe runs as
 # $(call with_deps,<the compile>): the compile, then the same flags and
 # sources with -MM in place of its output, which writes $@.d again with every
 # source's headers. A comma in the compile goes through a variable, as
