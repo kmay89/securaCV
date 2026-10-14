@@ -127,7 +127,11 @@ Run `docker exec <container> <tool> --help` for the full flags of each tool
 The Witness Wall walks the sealed log with a **viewer token**, a bearer the
 kernel honors on `GET /api/sealed-log` and nowhere else. The image ships
 `witness_api` for its operator subcommands; `witnessd` stays the
-entrypoint and still does all the serving.
+entrypoint and still does all the serving. Always name a subcommand: run
+bare, `witness_api` is the Event API daemon and tries to serve beside
+`witnessd`. An image pulled before `witness_api` joined it answers
+`docker exec … witness_api` with "executable file not found": pull
+`:latest` again and re-create the container first.
 
 1. Start the container with a token path, so `witnessd` knows where the
    viewer-token file lives — add
@@ -150,14 +154,28 @@ entrypoint and still does all the serving.
 
 `docker exec` runs in the container's environment (every `WITNESS_API_*`
 variable and `DEVICE_KEY_SEED`, if you set one), in its working directory
-`/data`, and as the image's user (UID 1001), which owns `/data`. So
+`/data`, and as the container's user (UID 1001 unless `docker run --user`
+named another), the same user `witnessd` writes `/data` as. So
 `witness_api` opens the same database, finds the seed `witnessd` persisted
 beside it with no `DEVICE_KEY_SEED=$(cat …)` prefix, and writes the
-viewer-token file `witnessd` reads. Two things break that: `docker exec -u
-root` writes a root-owned `0600` file the kernel cannot read (it then
-refuses every viewer token), and `docker exec -e` pointing a `WITNESS_API_*`
-path somewhere else mints into a file `witnessd` never opens, because it
-reads only the path it started with.
+viewer-token file `witnessd` reads. Three things break that:
+
+- `docker exec -u root` writes a root-owned `0600` file the kernel cannot
+  read. `witnessd` then refuses every viewer token, and every later mint or
+  revoke as the container's user fails to open the file. Minting again does
+  not repair it; give the file back with
+  `docker exec -u root <container> chown 1001:1001 /data/viewer_tokens.json`
+  (your `--user` IDs if you set them).
+- `docker exec -e` pointing a `WITNESS_API_*` path somewhere else mints
+  into a file `witnessd` never opens, because it reads only the path it
+  started with.
+- A container started with `WITNESS_CONFIG` naming a file written for
+  `witnessd` (one with an `[rtsp]` block, say). `docker exec` passes that
+  variable on, and `witness_api` reads the same file, knows only its
+  `db_path`, `ruleset_id`, `api`, `zones` and `retention` keys, and refuses
+  any other, so every subcommand fails at load. This mint path needs the
+  environment-only setup this page gives, or a config file holding only
+  those keys.
 
 **No restart.** `witnessd` re-reads the viewer-token file on every request,
 so a new token works on the first request that carries it. The exception is a container
