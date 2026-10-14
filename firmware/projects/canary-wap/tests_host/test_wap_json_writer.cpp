@@ -59,8 +59,40 @@ static void test_between_passes();
 
 #include "fleet_scan_cache.h"
 #include "identity_json.h"
+#include "browser_utf8.h"
 #include "json_strict.h"
 #include "wap_json_writer.h"
+
+// The sketch's scan cache and its lock, as canary_wap.ino lays them out
+// (test_the_sketch_reads_a_post_back_to_the_cached_network() reads the
+// sketch's own declarations and holds these to them), for its
+// scan_cache_listed_ssid(), cut verbatim below. The lock is taken unless
+// the test refuses it, and each take and give is counted.
+#ifndef CANARY_WAP_INO
+#error "CANARY_WAP_INO (absolute path to canary_wap.ino) must be defined"
+#endif
+static const int SCAN_CACHE_MAX = 20;
+struct ScanCacheEntry {
+  char ssid[33];
+  int32_t rssi;
+  int32_t channel;
+  char security[12];
+};
+static ScanCacheEntry g_scan_cache[SCAN_CACHE_MAX];
+static int g_scan_cache_count = 0;
+static const uint32_t SCAN_CACHE_WAIT_HTTPD_MS = 1000;
+static bool g_scan_cache_lock_refused = false;
+static int g_scan_cache_takes = 0;
+static int g_scan_cache_gives = 0;
+static uint32_t g_scan_cache_wait = 0;
+static bool scan_cache_take(uint32_t wait_ms) {
+  g_scan_cache_wait = wait_ms;
+  if (g_scan_cache_lock_refused) return false;
+  ++g_scan_cache_takes;
+  return true;
+}
+static void scan_cache_give() { ++g_scan_cache_gives; }
+#include "test_wap_json_writer_listed.inc"
 
 namespace {
 
@@ -620,73 +652,13 @@ void test_replaced_text_cuts_on_a_character_boundary() {
 // shown (the answer decoded, JSON.parse, JSON.stringify of the same string,
 // encoded as UTF-8 again): that text names the listed network, which is
 // joined by its own bytes.
-//
-// What a browser's UTF-8 decoder reads (the WHATWG Encoding Standard's
-// "UTF-8 decoder", which fetch().json() and TextDecoder run), written back
-// out as UTF-8: each ill-formed sequence's maximal subpart as U+FFFD.
-std::string browser_utf8(const std::string& in) {
-  std::string out;
-  uint32_t cp = 0;
-  int needed = 0, seen = 0;
-  unsigned lower = 0x80, upper = 0xBF;
-  auto put = [&](uint32_t c) {
-    if (c < 0x80) {
-      out.push_back((char)c);
-    } else if (c < 0x800) {
-      out.push_back((char)(0xC0 | (c >> 6)));
-      out.push_back((char)(0x80 | (c & 0x3F)));
-    } else if (c < 0x10000) {
-      out.push_back((char)(0xE0 | (c >> 12)));
-      out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
-      out.push_back((char)(0x80 | (c & 0x3F)));
-    } else {
-      out.push_back((char)(0xF0 | (c >> 18)));
-      out.push_back((char)(0x80 | ((c >> 12) & 0x3F)));
-      out.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
-      out.push_back((char)(0x80 | (c & 0x3F)));
-    }
-  };
-  for (size_t i = 0; i < in.size();) {
-    const unsigned b = (unsigned char)in[i];
-    if (needed == 0) {
-      ++i;
-      if (b <= 0x7F) { put(b); }
-      else if (b >= 0xC2 && b <= 0xDF) { needed = 1; cp = b & 0x1F; }
-      else if (b >= 0xE0 && b <= 0xEF) {
-        if (b == 0xE0) lower = 0xA0;
-        if (b == 0xED) upper = 0x9F;
-        needed = 2; cp = b & 0xF;
-      } else if (b >= 0xF0 && b <= 0xF4) {
-        if (b == 0xF0) lower = 0x90;
-        if (b == 0xF4) upper = 0x8F;
-        needed = 3; cp = b & 0x7;
-      } else { put(0xFFFD); }
-      continue;
-    }
-    if (b < lower || b > upper) {        // the byte is read again (not consumed)
-      cp = 0; needed = 0; seen = 0; lower = 0x80; upper = 0xBF;
-      put(0xFFFD);
-      continue;
-    }
-    ++i;
-    lower = 0x80; upper = 0xBF;
-    cp = (cp << 6) | (b & 0x3F);
-    if (++seen == needed) {
-      put(cp);
-      cp = 0; needed = 0; seen = 0;
-    }
-  }
-  if (needed != 0) put(0xFFFD);          // the stream ended inside a sequence
-  return out;
-}
 
 // What a page posts back for the SSID `raw` it was shown: replaced_text()'s
 // whole text, written by ArduinoJson into `{"ssid":...}`, the answer's
 // bytes decoded as a browser decodes them (fetch().json(), a TextDecoder),
 // JSON.parse, and the string encoded as UTF-8 again (JSON.stringify writes
 // \b \f \n \r \t as escapes ArduinoJson reads back to the bytes, and every
-// other character as it is). browser_utf8() above was checked against
-// Node 22's TextDecoder on 200 000 seeded byte strings, every one equal.
+// other character as it is; browser_utf8.h is the decoder).
 std::string posted_back(const std::string& raw) {
   Exact e(wap_json::replaced_cap(raw.size()));
   CHECK(wap_json::replaced_text(e.buf, e.cap, raw.c_str()));
@@ -822,6 +794,70 @@ void test_listed_by_shown_prefers_a_name_that_is_its_own_text() {
   CHECK(wap_json::shows_as("\xF4\x90\x80\x80", "\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"));
 }
 
+// The sketch's read-back (the F262 review): canary_wap.ino's
+// scan_cache_listed_ssid(), which POST /api/wifi/connect runs on the posted
+// SSID before its 1-32 byte test, finds the cached network the wizard's or
+// the dashboard's post names and hands back that network's own bytes, under
+// the cache's lock (taken with the httpd task's wait, given back once); a
+// post no cached network shows as, a busy lock and a buffer too small for
+// the name answer false and leave the buffer alone. Without it the post is
+// joined as the page wrote it: the U+FFFD text, which names no network, or
+// 96 bytes for 32 control bytes, which the route refuses.
+std::string read_file(const char* path) {
+  std::string out;
+  if (FILE* f = std::fopen(path, "rb")) {
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+    std::fclose(f);
+  }
+  return out;
+}
+
+void test_the_sketch_reads_a_post_back_to_the_cached_network() {
+  // The stand-ins above are the sketch's own layout.
+  const std::string ino = read_file(CANARY_WAP_INO);
+  CHECK(ino.find("static const int SCAN_CACHE_MAX = 20;\nstruct ScanCacheEntry {\n  char ssid[33];\n") !=
+        std::string::npos);
+  CHECK(ino.find("static const uint32_t SCAN_CACHE_WAIT_HTTPD_MS = 1000;") != std::string::npos);
+  CHECK(ino.find("static ScanCacheEntry g_scan_cache[SCAN_CACHE_MAX];") != std::string::npos);
+
+  const std::vector<std::string> names = {"kit\x01" "chen", "Caf\xE9", std::string(32, '\x01'),
+                                          "Caf\xC3\xA9", "a\tb", std::string(32, 'W')};
+  g_scan_cache_count = (int)names.size();
+  for (size_t i = 0; i < names.size(); ++i) {
+    std::memset(g_scan_cache[i].ssid, 0, sizeof(g_scan_cache[i].ssid));
+    std::memcpy(g_scan_cache[i].ssid, names[i].data(), names[i].size());
+  }
+  for (const std::string& raw : names) {
+    const std::string posted = posted_back(raw);
+    char out[sizeof(ScanCacheEntry::ssid)];
+    g_scan_cache_takes = g_scan_cache_gives = 0;
+    CHECK(scan_cache_listed_ssid(posted.c_str(), out, sizeof(out)));
+    CHECK(std::string(out) == raw);
+    CHECK(g_scan_cache_takes == 1 && g_scan_cache_gives == 1 && g_scan_cache_wait == SCAN_CACHE_WAIT_HTTPD_MS);
+  }
+  char keep[sizeof(ScanCacheEntry::ssid)] = "untouched";
+  // A post no cached network shows as: false, the buffer left alone.
+  g_scan_cache_takes = g_scan_cache_gives = 0;
+  CHECK(!scan_cache_listed_ssid("Neighbor", keep, sizeof(keep)) && std::string(keep) == "untouched");
+  CHECK(g_scan_cache_takes == 1 && g_scan_cache_gives == 1);
+  CHECK(!scan_cache_listed_ssid(nullptr, keep, sizeof(keep)) && std::string(keep) == "untouched");
+  // A buffer too small for the cached name.
+  const std::string ones = posted_back(std::string(32, '\x01'));
+  CHECK(!scan_cache_listed_ssid(ones.c_str(), keep, 32) && std::string(keep) == "untouched");
+  CHECK(!scan_cache_listed_ssid(ones.c_str(), keep, 0) && std::string(keep) == "untouched");
+  // The lock busy past the httpd task's wait: false, nothing given back.
+  g_scan_cache_lock_refused = true;
+  g_scan_cache_takes = g_scan_cache_gives = 0;
+  CHECK(!scan_cache_listed_ssid(ones.c_str(), keep, sizeof(keep)) && std::string(keep) == "untouched");
+  CHECK(g_scan_cache_gives == 0);
+  g_scan_cache_lock_refused = false;
+  // An empty cache names nothing.
+  g_scan_cache_count = 0;
+  CHECK(!scan_cache_listed_ssid(ones.c_str(), keep, sizeof(keep)));
+}
+
 }  // namespace
 
 int main() {
@@ -837,6 +873,7 @@ int main() {
   test_replaced_text_cuts_on_a_character_boundary();
   test_a_listed_name_is_read_back_to_its_own_bytes();
   test_listed_by_shown_prefers_a_name_that_is_its_own_text();
+  test_the_sketch_reads_a_post_back_to_the_cached_network();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;

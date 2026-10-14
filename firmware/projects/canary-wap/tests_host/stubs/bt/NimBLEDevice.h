@@ -230,6 +230,13 @@ class NimBLECharacteristic {
   std::string getValue() const { return value_; }
   void notify() { ++notifies; }
   unsigned notifies = 0;
+  // A peer's write as NimBLE delivers it (the BLE provisioning harness,
+  // test_ble_provision.cpp): the value set, then the callbacks' onWrite().
+  void host_write(const std::string& v) {
+    value_ = v;
+    NimBLEConnInfo info;
+    if (cb_) cb_->onWrite(this, info);
+  }
  private:
   NimBLECharacteristicCallbacks* cb_ = nullptr;
   std::string value_;

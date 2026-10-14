@@ -354,6 +354,12 @@ class JsonVariant {
   T as() const {
     return as_impl(static_cast<T*>(nullptr));
   }
+  // `doc["k"] | "default"`: the string when the value is one, else the
+  // default (the BLE provisioning harness reads its CREDS so).
+  const char* operator|(const char* def) const {
+    const char* v = as<const char*>();
+    return v ? v : def;
+  }
 
  private:
   host_json::Node* found() const {
@@ -492,10 +498,29 @@ inline DeserializationError deserializeJson(JsonDocument& doc, const char* input
   return DeserializationError::Ok;
 }
 
+// The sized read (ArduinoJson reads at most `size` bytes; the stand-in reads
+// a copy of them, so a NUL among them ends the text as it ends the copy).
+inline DeserializationError deserializeJson(JsonDocument& doc, const char* input, size_t size) {
+  if (input == nullptr) return deserializeJson(doc, nullptr);
+  const std::string copy(input, size);
+  return deserializeJson(doc, copy.c_str());
+}
+
 inline size_t measureJson(const JsonDocument& doc) {
   std::string text;
   host_json::write(doc.root(), &text);
   return text.size();
+}
+// Into a buffer, as ArduinoJson 7.4.1's serialize() into a char array: at
+// most `size` bytes, a NUL after them only when one fits (not counted), and
+// the bytes written returned.
+inline size_t serializeJson(const JsonDocument& doc, char* out, size_t size) {
+  std::string text;
+  host_json::write(doc.root(), &text);
+  const size_t n = text.size() < size ? text.size() : size;
+  if (n) memcpy(out, text.data(), n);
+  if (n < size) out[n] = '\0';
+  return n;
 }
 inline size_t serializeJson(const JsonDocument& doc, String& out) {
   std::string text;

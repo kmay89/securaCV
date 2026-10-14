@@ -498,16 +498,27 @@ clean: clean-receipt-authority
 WRITER_BIN = test_wap_json_writer
 WRITER_SRC = test_wap_json_writer.cpp
 
-$(WRITER_BIN): $(WRITER_SRC) json_strict.h arduino_globals.h $(SRC_DIR)/wap_json_writer.h \
-               $(SRC_DIR)/identity_json.h $(SRC_DIR)/fleet_scan_cache.h
+# And the sketch's read-back of a posted SSID (the F262 review):
+# canary_wap.ino's scan_cache_listed_ssid(), cut verbatim (the cut is
+# test_wap_json_writer_listed.inc), over the scan cache and its lock as the
+# test lays them out, the cache's layout read from canary_wap.ino.
+WRITER_LISTED = test_wap_json_writer_listed.inc
+
+$(WRITER_LISTED): $(SRC_DIR)/canary_wap.ino ../../../tests_host/cut_functions.awk Makefile
+	awk -v 'sigs=static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {' \
+	  -f ../../../tests_host/cut_functions.awk $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(WRITER_BIN): $(WRITER_SRC) $(WRITER_LISTED) json_strict.h browser_utf8.h arduino_globals.h \
+               $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/identity_json.h $(SRC_DIR)/fleet_scan_cache.h \
+               $(SRC_DIR)/canary_wap.ino
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address -fno-omit-frame-pointer \
-	  -I $(SRC_DIR) -o $@ $(WRITER_SRC)
+	  -I $(SRC_DIR) -I . -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(WRITER_SRC)
 
 .PHONY: run-wap-json-writer clean-wap-json-writer
 run-wap-json-writer: $(WRITER_BIN)
 	$(call run_marked,$(WRITER_BIN))
 clean-wap-json-writer:
-	rm -f $(WRITER_BIN)
+	rm -f $(WRITER_BIN) $(WRITER_LISTED)
 
 run: run-wap-json-writer
 clean: clean-wap-json-writer
@@ -1226,6 +1237,35 @@ clean-bt-commands:
 
 run: run-bt-commands
 clean: clean-bt-commands
+
+# The BLE provisioning service (the F262 review): the REAL ble_provision.cpp,
+# #included and compiled on the host over stubs/bt (NimBLE, ArduinoJson and
+# FreeRTOS stand-ins) and stubs/ble_prov (WiFi). Every scan list it publishes
+# for 0 to 25 networks of every shape fits MAX_RESULTS_PAYLOAD (480), parses
+# as a phone reads it (browser_utf8.h, json_strict.h) and keeps the
+# strongest rows that fit, each whole (the old trim kept 8 rows unmeasured,
+# up to 1151 bytes once an SSID's control bytes are U+FFFD); and a CREDS
+# write of the text the phone was shown joins the listed network by its own
+# bytes. Built with AddressSanitizer.
+BLE_PROV_BIN  = test_ble_provision
+BLE_PROV_SRC  = test_ble_provision.cpp
+BLE_PROV_DEPS = $(BLE_PROV_SRC) $(wildcard stubs/bt/*.h stubs/bt/freertos/*.h stubs/ble_prov/*.h) \
+                browser_utf8.h json_strict.h arduino_globals.h $(SRC_DIR)/ble_provision.cpp \
+                $(SRC_DIR)/ble_provision.h $(SRC_DIR)/wap_json_writer.h $(SRC_DIR)/health_log.h \
+                $(SRC_DIR)/log_level.h $(SRC_DIR)/build_config.h
+
+$(BLE_PROV_BIN): $(BLE_PROV_DEPS)
+	$(CXX) $(CXXFLAGS) -g -Werror -fsanitize=address -fno-omit-frame-pointer -I stubs/ble_prov -I stubs/bt \
+	  -I $(SRC_DIR) -I . -DBLE_PROVISION_CPP='"$(abspath $(SRC_DIR))/ble_provision.cpp"' -o $@ $(BLE_PROV_SRC)
+
+.PHONY: run-ble-provision clean-ble-provision
+run-ble-provision: $(BLE_PROV_BIN)
+	$(call run_marked,$(BLE_PROV_BIN))
+clean-ble-provision:
+	rm -f $(BLE_PROV_BIN)
+
+run: run-ble-provision
+clean: clean-ble-provision
 
 # The MQTT bridge re-inits on the loop task (sweep F106): the REAL
 # csi_mqtt.cpp over stubs/mqtt (an in-memory NVS, a request/response httpd,

@@ -6385,6 +6385,26 @@ static String scan_cache_json(bool from_cache, uint32_t now) {
   return out;
 }
 
+// The cached network a posted SSID names (the F262 review). The list above
+// shows each network's control bytes as U+FFFD and a browser shows any byte
+// that is not UTF-8 the same way, so the wizard and the dashboard post back
+// a text no access point broadcasts. When `posted` is a cached network's
+// name as a page shows it (wap_json::listed_by_shown()), that network's own
+// bytes are copied to out[cap] and the answer is true; a name no cached
+// network shows as (typed by hand, a hidden network, a cache swept since,
+// or a cache busy past the httpd task's wait) answers false, and the
+// caller joins the name as posted.
+static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
+  if (out == nullptr || cap == 0 || !scan_cache_take(SCAN_CACHE_WAIT_HTTPD_MS)) return false;
+  const int i = wap_json::listed_by_shown(posted, g_scan_cache_count,
+                                          [](int k) { return (const char*)g_scan_cache[k].ssid; });
+  const size_t len = i >= 0 ? strlen(g_scan_cache[i].ssid) : 0;
+  const bool found = i >= 0 && len < cap;
+  if (found) memcpy(out, g_scan_cache[i].ssid, len + 1);
+  scan_cache_give();
+  return found;
+}
+
 // A request that asked for the device by its real name (vs a captive-portal
 // assistant probing a hijacked foreign domain). Same gate the "/" redirect
 // uses before minting a pairing token into the wizard URL.
@@ -6650,7 +6670,12 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
-  const char* ssid = body["ssid"] | "";
+  // A network the scan list showed is joined by its own bytes: the page
+  // posts back the text it was shown, U+FFFD and all (the F262 review).
+  const char* posted_ssid = body["ssid"] | "";
+  char listed_ssid[sizeof(ScanCacheEntry::ssid)];
+  const char* ssid = scan_cache_listed_ssid(posted_ssid, listed_ssid, sizeof(listed_ssid))
+                         ? listed_ssid : posted_ssid;
   const char* password = body["password"] | "";
 
   if (strlen(ssid) == 0 || strlen(ssid) > 32) {
@@ -7406,6 +7431,15 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
 
   url_decode_inplace(ssid);
   url_decode_inplace(pass);
+
+  // The Fleet sheet fills the name in from GET /api/wifi, which shows the
+  // home network's control bytes as U+FFFD (F262): that text is the home
+  // network, and the scanning Canary joins by what the code says, so it
+  // carries the network's own bytes (the F262 review).
+  if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) {
+    strncpy(ssid, g_wifi_creds.ssid, sizeof(ssid) - 1);
+    ssid[sizeof(ssid) - 1] = '\0';
+  }
 
   // The SECURACV: payload is ';'-delimited and the scanner's parser has no
   // escape sequence — credentials containing ';' would encode a QR that
