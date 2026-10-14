@@ -24,7 +24,10 @@
  *
  * Every advert in B and C goes through scan_advert(), which does what
  * ble_scout_nimble.cpp does with one: classify its manufacturer data and
- * pass the verdict as ble_scout_on_advert()'s `offerable`.
+ * pass the verdict as ble_scout_on_advert()'s `offerable`. That callback
+ * needs NimBLE and is compiled out here, so C also reads both trees' copies
+ * of it and holds them to that shape (one read, the whole blob classified,
+ * the verdict passed by the one call).
  *
  * Run it from the repository root (the C pins open source files by the path
  * this file was compiled as), as firmware.yml's run_test does.
@@ -62,6 +65,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef CSI_TEST_HOST_BUILD
 extern "C" int test_ble_scout_pairing_run() { return 0; }
@@ -446,11 +450,14 @@ void test_near_misses_are_offerable() {
   const std::size_t n = near_misses(table);
   CHECK(n == 19);
   for (std::size_t i = 0; i < n; ++i) {
-    if (!AK::offerable(table[i].bytes, table[i].len)) {
+    /* An exact-size heap copy, so a sanitizer build sees any read past the
+     * advert's last byte (the truncated shapes are 1, 2 and 3 bytes long). */
+    const std::vector<uint8_t> exact(table[i].bytes, table[i].bytes + table[i].len);
+    if (!AK::offerable(exact.data(), exact.size())) {
       std::fprintf(stderr, "near miss refused: %s\n", table[i].name);
     }
-    CHECK(AK::offerable(table[i].bytes, table[i].len));
-    CHECK(AK::classify(table[i].bytes, table[i].len) == AK::Kind::NOT_FLEET);
+    CHECK(AK::offerable(exact.data(), exact.size()));
+    CHECK(AK::classify(exact.data(), exact.size()) == AK::Kind::NOT_FLEET);
   }
   /* No manufacturer data: NimBLE's empty string, or no buffer at all. */
   const uint8_t none[1] = {0};
@@ -471,7 +478,7 @@ std::string dir_of_this_file() {
   return slash == std::string::npos ? std::string(".") : f.substr(0, slash);
 }
 
-std::string read_collapsed(const std::string& path) {
+std::string read_raw(const std::string& path) {
   std::ifstream in(path);
   if (!in) {
     std::fprintf(stderr, "cannot open %s (run from the repository root)\n", path.c_str());
@@ -479,7 +486,10 @@ std::string read_collapsed(const std::string& path) {
   }
   std::ostringstream ss;
   ss << in.rdbuf();
-  const std::string raw = ss.str();
+  return ss.str();
+}
+
+std::string collapse(const std::string& raw) {
   std::string out;
   bool space = false;
   for (char ch : raw) {
@@ -492,6 +502,42 @@ std::string read_collapsed(const std::string& path) {
     out += ch;
   }
   return out;
+}
+
+std::string read_collapsed(const std::string& path) { return collapse(read_raw(path)); }
+
+/* The code alone: every comment becomes one space, string and character
+ * literals are kept whole (a comment opener inside one is not a comment),
+ * then whitespace is collapsed. For counting calls and declarations, where a
+ * comment that names a function must not count as a call to it. */
+std::string read_code(const std::string& path) {
+  const std::string raw = read_raw(path);
+  std::string out;
+  std::size_t i = 0;
+  while (i < raw.size()) {
+    const char c = raw[i];
+    const char next = i + 1 < raw.size() ? raw[i + 1] : '\0';
+    if (c == '/' && next == '/') {
+      while (i < raw.size() && raw[i] != '\n') ++i;
+      out += ' ';
+    } else if (c == '/' && next == '*') {
+      const std::size_t end = raw.find("*/", i + 2);
+      i = end == std::string::npos ? raw.size() : end + 2;
+      out += ' ';
+    } else if (c == '"' || c == '\'') {
+      out += c;
+      ++i;
+      while (i < raw.size() && raw[i] != c && raw[i] != '\n') {
+        if (raw[i] == '\\' && i + 1 < raw.size()) out += raw[i++];
+        out += raw[i++];
+      }
+      if (i < raw.size()) out += raw[i++];
+    } else {
+      out += c;
+      ++i;
+    }
+  }
+  return collapse(out);
 }
 
 bool has(const std::string& text, const std::string& needle) {
@@ -507,6 +553,15 @@ std::size_t count_of(const std::string& text, const std::string& needle) {
     ++n;
   }
   return n;
+}
+
+bool count_is(const std::string& text, const std::string& needle, std::size_t want,
+              const std::string& where) {
+  const std::size_t n = count_of(text, needle);
+  if (n == want) return true;
+  std::fprintf(stderr, "%s: \"%s\" occurs %zu times, want %zu\n", where.c_str(),
+               needle.c_str(), n, want);
+  return false;
 }
 
 void test_chirp_shape_held_to_roster_and_sender() {
@@ -557,6 +612,57 @@ void test_chirp_shape_held_to_roster_and_sender() {
   std::printf("PASS test_chirp_shape_held_to_roster_and_sender\n");
 }
 
+/* ── The scan callback itself: ScoutScanCallbacks::onResult() in
+ *    ble_scout_nimble.cpp, both trees. It needs NimBLE, so the host build
+ *    compiles it out and scan_advert() below stands in for it. This pin holds
+ *    both copies to what scan_advert() does: one manufacturer-data read, the
+ *    classifier asked about the whole blob (company id included), and its
+ *    verdict passed unchanged by the one call into ble_scout_on_advert(),
+ *    with no way out of onResult() before that call but a null device.
+ *    check_ble_scan_sync.sh catches one copy drifting from the other; this
+ *    catches the two drifting together. `call` is each tree's own spelling
+ *    of the call (the canary names `now` for its fleet roster feed too). */
+void check_scan_callback(const std::string& path, const std::string& call) {
+  const std::string src = read_code(path);
+  CHECK(has(src, "#include \"ble_scout_advert_kind.h\""));
+  const std::size_t cb = src.find("void onResult(");
+  CHECK(cb != std::string::npos);
+  const std::size_t cb_end = src.find("void onScanEnd(", cb);
+  CHECK(cb_end != std::string::npos);
+  const std::string on_result = src.substr(cb, cb_end - cb);
+
+  const std::string verdict =
+      "const std::string mfg = device->haveManufacturerData() ? "
+      "device->getManufacturerData() : std::string(); "
+      "const uint8_t* mfg_bytes = reinterpret_cast<const uint8_t*>(mfg.data()); "
+      "const bool offerable = advert_kind::offerable(mfg_bytes, mfg.size()); ";
+  if (on_result.find(verdict + call) == std::string::npos) {
+    std::fprintf(stderr, "scan callback drifted: %s\n", path.c_str());
+  }
+  CHECK(has(on_result, verdict + call));
+  CHECK(has(on_result, "if (!device) return;"));
+  CHECK(count_is(on_result, "return", 1, path));
+
+  /* Once each in the whole file: no second read, no second call, no second
+   * (shadowing) flag. */
+  CHECK(count_is(src, "haveManufacturerData(", 1, path));
+  CHECK(count_is(src, "getManufacturerData(", 1, path));
+  CHECK(count_is(src, "advert_kind::", 1, path));
+  CHECK(count_is(src, "bool offerable", 1, path));
+  CHECK(count_is(src, "ble_scout_on_advert(", 1, path));
+}
+
+void test_scan_callbacks_pass_the_verdict() {
+  check_scan_callback(dir_of_this_file() + "/src/ble_scout_nimble.cpp",
+                      "const uint32_t now = millis(); "
+                      "ble_scout_on_advert(mac, rssi, now, offerable);");
+  check_scan_callback(
+      dir_of_this_file() +
+          "/../../../projects/canary-wap/arduino/canary_wap/ble_scout_nimble.cpp",
+      "ble_scout_on_advert(mac, rssi, millis(), offerable);");
+  std::printf("PASS test_scan_callbacks_pass_the_verdict\n");
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  * B. Integration through ble_scout.cpp (one process, shared state — each
  *    test builds on the registry the previous ones left).
@@ -594,7 +700,8 @@ bool snapshot_free_of(const uint8_t mac[MAC_LEN]) {
 }
 
 /* What ble_scout_nimble.cpp does with one advert: classify its manufacturer
- * data (none by default, as for a tag) and pass the verdict along. */
+ * data (none by default, as for a tag) and pass the verdict along.
+ * test_scan_callbacks_pass_the_verdict holds both trees' callbacks to it. */
 void scan_advert(const uint8_t mac[MAC_LEN], int8_t rssi, uint32_t now,
                  const uint8_t* mfg = nullptr, size_t mfg_len = 0) {
   ble_scout::ble_scout_on_advert(mac, rssi, now, AK::offerable(mfg, mfg_len));
@@ -851,6 +958,7 @@ int main() {
   test_refusals_counted_exhaustively();
   test_near_misses_are_offerable();
   test_chirp_shape_held_to_roster_and_sender();
+  test_scan_callbacks_pass_the_verdict();
 
   test_window_before_init_is_not_ready();
   test_window_pairs_first_strong_unpaired_advert();
