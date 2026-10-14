@@ -96,13 +96,19 @@ or a USB-RS485 dongle running a slave sim answering **slave 1, holding register
 
 **Pass:** the first PROBE prints `[RS485] up on A/B (TX=44 RX=43) @ 9600 8N1`
 once; each PROBE then prints `PG1 <ms> EVT rs485 slave=1 reg=0 val=<n> crc=ok`
-and the station shows the value. A quiet bus — or anything other than one good
-register back within the 300 ms reply window (a bad CRC, another slave, a
-Modbus exception) — prints `PG1 <ms> EVT rs485 slave=1 reply=none`.
+and the station shows the value. A slave that answers with a Modbus
+exception (five bytes, CRC good) prints `PG1 <ms> EVT rs485 slave=1
+exception=<code>` as soon as it is in (`2` is an illegal data address: the
+slave is there, register 0 is not; the station's tile still reads "no reply").
+A quiet bus — or anything else that is not one good register back within the
+300 ms reply window (a bad CRC, another slave, a cut-short or corrupted
+exception) — prints `PG1 <ms> EVT rs485 slave=1 reply=none` after the window.
 
 **Fail → fix:** no reply with a known-good slave → **swap A/B** (or the
 TX/RX orientation) and re-test; the `pins.h` RS485 orientation note is
-`VERIFY`-tagged for exactly this. Confirm the far end is 9600 8N1 and shares a
+`VERIFY`-tagged for exactly this. An `exception=<code>` line means the wiring
+works and the slave refused the read: point its simulator at holding register 0
+(or read the code against the slave's manual). Confirm the far end is 9600 8N1 and shares a
 ground reference. Once a register reads back correctly, retire the RS485
 orientation VERIFY note and (optionally) raise the default baud.
 
@@ -130,12 +136,22 @@ acknowledged it; a send the driver refuses (the transmit queue still full after
 50 ms, or the controller not running) prints
 `PG1 <ms> EVT can tx=fail (bus quiet? need another node/ack)`. Received frames
 print `PG1 <ms> EVT can rx id=0x... ext=0 rtr=0 dlc=N data=...` (up to 8 every
-100 ms) and count on the station. Nothing recovers a controller that has gone
-**bus-off** in this build: once it has, every later send fails until a reboot.
+100 ms) and count on the station. A controller driven **bus-off** (H/L
+swapped, no termination, no node to acknowledge) recovers on its own: the
+station's 100 ms drain initiates the controller's standard recovery once
+(`[CAN] bus-off - initiating recovery`, `PG1 <ms> EVT can bus=off
+recovery=started`), waits while the controller sees the bus free 128 times,
+and restarts it (`[CAN] recovered - restarted`, `PG1 <ms> EVT can bus=on
+recovered`). Sends fail while it recovers; recovery itself sends nothing, so
+the next frame on the wire is the next SEND FRAME. A bus that never frees (a
+short, a live fault) keeps it recovering.
 
 **Fail → fix:** no frames / sends failing from the first tap → check
 **termination** (both ends, and/or the jumper), confirm the far end is 500
-kbit/s, and verify H/L aren't swapped; reboot after a bus-off. Retire the CAN
+kbit/s, and verify H/L aren't swapped; after a fix the station comes back
+without a reboot. Recovery is host-tested against a stand-in driver only:
+watch for both recovery lines the first time a bench drives the controller
+bus-off (pull the termination, tap SEND FRAME a few times, restore it). Retire the CAN
 timing/terminator VERIFY notes in `pins.h` once frames flow cleanly. For another
 standard rate, change the rate the station passes to `can_begin` in
 `src/playground/playground.cpp` (and the inline transport's timing preset next
