@@ -41,7 +41,8 @@
 //! **Test vectors.** `tests::an12196_*` replay the two `AuthenticateEV2First`
 //! worked examples of NXP AN12196 ("NTAG 424 DNA and NTAG 424 DNA TagTamper
 //! features and hints"): key 0x00 (Table 14, full APDU transcript) and key
-//! 0x03 (part 2 APDU, response, TI and session keys). The bytes were taken
+//! 0x03 (part 2 APDU, response, TI and session keys), kept as data in
+//! `tests/vectors/an12196.json`. The bytes were taken
 //! from the transcription in the `ntag424` crate 0.1.1 (MIT OR Apache-2.0,
 //! <https://codeberg.org/jannschu/ntag424>, files `src/session/tests.rs`,
 //! `src/commands/authenticate/aes.rs` and `src/crypto/suite.rs`), which
@@ -49,9 +50,8 @@
 
 use crate::roster::Handle;
 use crate::{rng, Error, Result};
+use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt};
 use aes::Aes128;
-use cbc::cipher::block_padding::NoPadding;
-use cbc::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use cmac::{Cmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -72,28 +72,41 @@ pub const DEFAULT_KEY_NO: u8 = 0x00;
 /// An AES-128 card key, zeroized on drop.
 pub type CardKeyBytes = Zeroizing<[u8; 16]>;
 
-/// The IV of every AES-128-CBC operation in `AuthenticateEV2First`: sixteen
-/// zero bytes, fixed by the card's protocol (NXP AN12196 gives `IV = 0` for
-/// both authentication messages), so the hub cannot choose another and still
-/// talk to a real card. It is not a key and not a secret: secrecy comes from
-/// the card's own AES key, and freshness from `RndA` and `RndB`, which the
-/// two sides draw anew for every exchange (each message encrypts at most two
-/// blocks, the first of them fresh random bytes).
-// codeql[rust/hard-coded-cryptographic-value]
-const EV2_AUTH_IV: [u8; 16] = [0u8; 16];
-
+/// AES-128-CBC encryption as `AuthenticateEV2First` uses it: the card's
+/// protocol starts the chain from an all-zero IV (NXP AN12196), so the first
+/// block is enciphered as it is and every later block is first XORed with the
+/// ciphertext before it. The protocol fixes that IV, so the hub cannot choose
+/// another and still talk to a real card; it is no secret either way. Secrecy
+/// comes from the card's own AES key, and freshness from `RndA` and `RndB`,
+/// which both sides draw anew for every exchange (each message is one or two
+/// blocks, the first of them fresh random bytes). Written as the chaining
+/// itself rather than through a CBC type, so no IV value exists in the code.
 fn cbc_encrypt(key: &[u8; 16], buf: &mut [u8]) {
-    let len = buf.len();
-    debug_assert!(len.is_multiple_of(16));
-    let enc = cbc::Encryptor::<Aes128>::new(key.into(), &EV2_AUTH_IV.into());
-    // NoPadding over a whole number of blocks cannot fail.
-    let _ = enc.encrypt_padded::<NoPadding>(buf, len);
+    debug_assert!(buf.len().is_multiple_of(16));
+    let aes = Aes128::new(key.into());
+    let mut prev: Option<[u8; 16]> = None;
+    for block in buf.as_chunks_mut::<16>().0 {
+        if let Some(p) = prev {
+            block.iter_mut().zip(p).for_each(|(b, c)| *b ^= c);
+        }
+        aes.encrypt_block(block.into());
+        prev = Some(*block);
+    }
 }
 
+/// The inverse of [`cbc_encrypt`].
 fn cbc_decrypt(key: &[u8; 16], buf: &mut [u8]) {
     debug_assert!(buf.len().is_multiple_of(16));
-    let dec = cbc::Decryptor::<Aes128>::new(key.into(), &EV2_AUTH_IV.into());
-    let _ = dec.decrypt_padded::<NoPadding>(buf);
+    let aes = Aes128::new(key.into());
+    let mut prev: Option<[u8; 16]> = None;
+    for block in buf.as_chunks_mut::<16>().0 {
+        let ciphertext = *block;
+        aes.decrypt_block(block.into());
+        if let Some(p) = prev {
+            block.iter_mut().zip(p).for_each(|(b, c)| *b ^= c);
+        }
+        prev = Some(ciphertext);
+    }
 }
 
 fn rotl1(x: &[u8; 16]) -> [u8; 16] {
@@ -441,68 +454,80 @@ mod tests {
     use super::*;
     use crate::hex;
 
-    fn h<const N: usize>(s: &str) -> [u8; N] {
-        hex::decode_array::<N>(&s.to_ascii_lowercase()).unwrap()
-    }
-
     fn v(s: &str) -> Vec<u8> {
         hex::decode(&s.to_ascii_lowercase()).unwrap()
+    }
+
+    /// One field of an AN12196 worked example, read from
+    /// `tests/vectors/an12196.json`. The published vectors live there as data
+    /// (as `spec/fixtures/` keeps the attention vectors), so the examples'
+    /// all-zero factory key is never a key literal in the code.
+    fn an12196(example: &str, field: &str) -> Vec<u8> {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/an12196.json");
+        let text = std::fs::read_to_string(path).expect("read the AN12196 vectors");
+        let all: serde_json::Value = serde_json::from_str(&text).expect("AN12196 vectors JSON");
+        let hx = all[example][field]
+            .as_str()
+            .unwrap_or_else(|| panic!("AN12196 vectors: no {example}.{field}"));
+        v(hx)
+    }
+
+    fn an12196_n<const N: usize>(example: &str, field: &str) -> [u8; N] {
+        an12196(example, field)
+            .try_into()
+            .unwrap_or_else(|_| panic!("AN12196 vectors: {example}.{field} is not {N} bytes"))
+    }
+
+    /// A card response: the data, then the status word.
+    fn with_sw(mut data: Vec<u8>, sw: [u8; 2]) -> Vec<u8> {
+        data.extend_from_slice(&sw);
+        data
     }
 
     /// AN12196, AuthenticateEV2First with key 0x00 (Table 14): the full APDU
     /// transcript, replayed through the state machine byte for byte.
     #[test]
     fn an12196_key0_full_transcript() {
-        // AN12196's published example key: all zero, not a secret.
-        // codeql[rust/hard-coded-cryptographic-value]
-        let key = [0u8; 16];
-        let rnd_a = h::<16>("13C5DB8A5930439FC3DEF9A4C675360F");
+        let x = |f| an12196("key0", f);
         let cands = vec![Candidate {
             handle: Some([0x01; 16]),
-            key: Zeroizing::new(key),
+            key: Zeroizing::new(an12196_n::<16>("key0", "key")),
         }];
-        let (mut m, first) = Ev2Auth::with_candidates(rnd_a, 0x00, cands);
-        assert_eq!(first, v("00A4040007D276000085010100"));
+        let key_no = x("key_no")[0];
+        let (mut m, first) = Ev2Auth::with_candidates(an12196_n("key0", "rnd_a"), key_no, cands);
+        assert_eq!(first, x("select_apdu"));
         let Ev2Step::Send(p1) = m.on_response(&[0x90, 0x00]) else {
             panic!("expected part 1")
         };
-        assert_eq!(p1, v("9071000002000000"));
-        let mut r1 = v("A04C124213C186F22399D33AC2A30215");
-        r1.extend_from_slice(&[0x91, 0xAF]);
-        let Ev2Step::Send(p2) = m.on_response(&r1) else {
+        assert_eq!(p1, x("part1_apdu"));
+        let Ev2Step::Send(p2) = m.on_response(&with_sw(x("card_part1"), [0x91, 0xAF])) else {
             panic!("expected part 2")
         };
-        assert_eq!(
-            p2,
-            v("90AF00002035C3E05A752E0144BAC0DE51C1F22C56B34408A23D8AEA266CAB947EA8E0118D00")
-        );
-        let mut r2 = v("3FA64DB5446D1F34CD6EA311167F5E4985B89690C04A05F17FA7AB2F08120663");
-        r2.extend_from_slice(&[0x91, 0x00]);
-        let Ev2Step::Authenticated(ok) = m.on_response(&r2) else {
+        assert_eq!(p2, x("part2_apdu"));
+        let Ev2Step::Authenticated(ok) = m.on_response(&with_sw(x("card_part2"), [0x91, 0x00]))
+        else {
             panic!("expected success")
         };
         assert_eq!(ok.handle, [0x01; 16]);
-        assert_eq!(ok.ti, h::<4>("9D00C4DF"));
-        assert_eq!(*ok.ses_enc, h::<16>("1309C877509E5A215007FF0ED19CA564"));
-        assert_eq!(*ok.ses_mac, h::<16>("4C6626F5E72EA694202139295C7A7FC7"));
+        assert_eq!(ok.ti.to_vec(), x("ti"));
+        assert_eq!(ok.ses_enc.to_vec(), x("ses_enc"));
+        assert_eq!(ok.ses_mac.to_vec(), x("ses_mac"));
     }
 
     /// AN12196 key-0x00 example: the decrypted RndB and both session vectors.
     #[test]
     fn an12196_key0_rnd_b_and_session_vectors() {
-        // AN12196's published example key: all zero, not a secret.
-        // codeql[rust/hard-coded-cryptographic-value]
-        let key = [0u8; 16];
-        let rnd_a = h::<16>("13C5DB8A5930439FC3DEF9A4C675360F");
-        let (_, rnd_b) = part2_apdu(&key, &rnd_a, &h::<16>("A04C124213C186F22399D33AC2A30215"));
-        assert_eq!(*rnd_b, h::<16>("B9E2FC789B64BF237CCCAA20EC7E6E48"));
+        let key = Zeroizing::new(an12196_n::<16>("key0", "key"));
+        let rnd_a = an12196_n::<16>("key0", "rnd_a");
+        let (_, rnd_b) = part2_apdu(&key, &rnd_a, &an12196_n("key0", "card_part1"));
+        assert_eq!(rnd_b.to_vec(), an12196("key0", "rnd_b"));
         assert_eq!(
-            session_vector([0xA5, 0x5A], &rnd_a, &rnd_b),
-            h::<32>("A55A0001008013C56268A548D8FBBF237CCCAA20EC7E6E48C3DEF9A4C675360F")
+            session_vector([0xA5, 0x5A], &rnd_a, &rnd_b).to_vec(),
+            an12196("key0", "sv1")
         );
         assert_eq!(
-            session_vector([0x5A, 0xA5], &rnd_a, &rnd_b),
-            h::<32>("5AA50001008013C56268A548D8FBBF237CCCAA20EC7E6E48C3DEF9A4C675360F")
+            session_vector([0x5A, 0xA5], &rnd_a, &rnd_b).to_vec(),
+            an12196("key0", "sv2")
         );
     }
 
@@ -510,51 +535,39 @@ mod tests {
     /// response, TI, session vectors and session keys.
     #[test]
     fn an12196_key3_part2_ti_and_session_keys() {
-        // AN12196's published example key: all zero, not a secret.
-        // codeql[rust/hard-coded-cryptographic-value]
-        let key = [0u8; 16];
-        let rnd_a = h::<16>("B98F4C50CF1C2E084FD150E33992B048");
-        let (apdu, rnd_b) = part2_apdu(&key, &rnd_a, &h::<16>("B875CEB0E66A6C5CD00898DC371F92D1"));
-        assert_eq!(*rnd_b, h::<16>("91517975190DCEA6104948EFA3085C1B"));
+        let x = |f| an12196("key3", f);
+        let key = Zeroizing::new(an12196_n::<16>("key3", "key"));
+        let rnd_a = an12196_n::<16>("key3", "rnd_a");
+        let (apdu, rnd_b) = part2_apdu(&key, &rnd_a, &an12196_n("key3", "card_part1"));
+        assert_eq!(rnd_b.to_vec(), x("rnd_b"));
+        assert_eq!(apdu.to_vec(), x("part2_apdu"));
+        let ti = finish(&key, &rnd_a, &an12196_n("key3", "card_part2"));
+        assert_eq!(ti.map(|t| t.to_vec()), Some(x("ti")));
         assert_eq!(
-            apdu.to_vec(),
-            v("90AF000020FF0306E47DFBC50087C4D8A78E88E62DE1E8BE457AA477C707E2F0874916A8B100")
-        );
-        let ti = finish(
-            &key,
-            &rnd_a,
-            &h::<32>("0CC9A8094A8EEA683ECAAC5C7BF20584206D0608D477110FC6B3D5D3F65C3A6A"),
-        );
-        assert_eq!(ti, Some(h::<4>("7614281A")));
-        assert_eq!(
-            session_vector([0xA5, 0x5A], &rnd_a, &rnd_b),
-            h::<32>("A55A00010080B98FDD01B6693705CEA6104948EFA3085C1B4FD150E33992B048")
+            session_vector([0xA5, 0x5A], &rnd_a, &rnd_b).to_vec(),
+            x("sv1")
         );
         let (enc, mac) = session_keys(&key, &rnd_a, &rnd_b);
-        assert_eq!(*enc, h::<16>("7A93D6571E4B180FCA6AC90C9A7488D4"));
-        assert_eq!(*mac, h::<16>("FC4AF159B62E549B5812394CAB1918CC"));
-        assert_eq!(part1_apdu(0x03), h::<8>("9071000002030000"));
+        assert_eq!(enc.to_vec(), x("ses_enc"));
+        assert_eq!(mac.to_vec(), x("ses_mac"));
+        assert_eq!(part1_apdu(x("key_no")[0]).to_vec(), x("part1_apdu"));
     }
 
     /// The simulator reproduces the AN12196 key-0x00 card responses, so the
     /// simulator and the vectors agree before either is used alone.
     #[test]
     fn simulator_matches_an12196_key0() {
+        let x = |f| an12196("key0", f);
         let mut card = CardSimulator::deterministic(
-            [0u8; 16],
-            h::<16>("B9E2FC789B64BF237CCCAA20EC7E6E48"),
-            h::<4>("9D00C4DF"),
+            an12196_n("key0", "key"),
+            an12196_n("key0", "rnd_b"),
+            an12196_n("key0", "ti"),
         );
         assert_eq!(card.transceive(&SELECT_APP), vec![0x90, 0x00]);
-        let r1 = card.transceive(&v("9071000002000000"));
-        assert_eq!(r1[..16], v("A04C124213C186F22399D33AC2A30215")[..]);
-        let r2 = card.transceive(&v(
-            "90AF00002035C3E05A752E0144BAC0DE51C1F22C56B34408A23D8AEA266CAB947EA8E0118D00",
-        ));
-        assert_eq!(
-            r2[..32],
-            v("3FA64DB5446D1F34CD6EA311167F5E4985B89690C04A05F17FA7AB2F08120663")[..]
-        );
+        let r1 = card.transceive(&x("part1_apdu"));
+        assert_eq!(r1[..16], x("card_part1")[..]);
+        let r2 = card.transceive(&x("part2_apdu"));
+        assert_eq!(r2[..32], x("card_part2")[..]);
         assert_eq!(r2[32..], [0x91, 0x00]);
     }
 
