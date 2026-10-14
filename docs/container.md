@@ -155,9 +155,9 @@ variable and `DEVICE_KEY_SEED`, if you set one), in its working directory
 beside it with no `DEVICE_KEY_SEED=$(cat …)` prefix, and writes the
 viewer-token file `witnessd` reads. Two things break that: `docker exec -u
 root` writes a root-owned `0600` file the kernel cannot read (it then
-refuses every viewer token), and `docker exec -e WITNESS_API_…=` mints into
-a file `witnessd` never opens, because it reads only the path it started
-with.
+refuses every viewer token), and `docker exec -e` pointing a `WITNESS_API_*`
+path somewhere else mints into a file `witnessd` never opens, because it
+reads only the path it started with.
 
 **No restart.** `witnessd` re-reads the viewer-token file on every request,
 so a new token works on the first request that carries it. The exception is a container
