@@ -50,7 +50,13 @@ rule 7 holds both locks' shape.
    function: until F199 it read the persisted pubkeys
    (`mesh_state::load_trusted_peers`, refused without flash encryption, so
    a dev board answered 500 `load_failed`) and joined them against the
-   view.
+   view. Its answers are 200 with the rows, or the one 500 `encode_failed`
+   when `build_mesh_peers_json` cannot fit them (F199's review): its
+   `return` statements are exactly the rate-limit and auth gates' two
+   `return ESP_OK;`, that error inside the build's failure branch, and
+   `return http_send_json(req, body);`, and it names neither
+   `esp_flash_encryption_enabled` nor an `httpd_resp_` call, so no gate on
+   flash encryption or on an empty view can answer for it.
 3. In `mesh_session.cpp`, `process()` calls `publish_status();` right before
    every `return` and as its last statement (a stopped session's transport
    table still ages); `drain_request()` calls it once, after
@@ -326,6 +332,41 @@ def check_network(net_src: str, errors: list[str]) -> None:
         if re.search(r"\bcount\s*=(?!=)", peers.replace("const size_t count =", "", 1)):
             errors.append(f"{NETWORK}: handle_mesh_peers() sets its row count from something "
                           "other than the view's rows (F199)")
+        check_peers_answers(net_src, code, errors)
+
+
+PEERS_RETURNS = ["return ESP_OK;", "return ESP_OK;",
+                 'return http_send_error(req, 500, "encode_failed");',
+                 "return http_send_json(req, body);"]
+
+
+def check_peers_answers(net_src: str, code: str, errors: list[str]) -> None:
+    """Rule 2, its answers (F199's review): 200 with the rows, or the one
+    500 encode_failed the body builder's failure gives. `code` is `net_src`
+    blanked, offsets kept: the statements are found there and read, strings
+    and all, from the source at the same offsets."""
+    spans = function_spans(code, r"\bstatic\s+esp_err_t\s+handle_mesh_peers\s*\(\s*httpd_req_t"
+                                 r"\s*\*\s*\w+\s*\)\s*\{")
+    if len(spans) != 1:
+        return   # rule 2's other checks name a missing handler
+    a, b = spans[0]
+    body = code[a:b]
+    rets = [" ".join(net_src[a + m.start():a + m.end()].split())
+            for m in re.finditer(r"\breturn\b[^;]*;", body)]
+    if rets != PEERS_RETURNS:
+        errors.append(f"{NETWORK}: handle_mesh_peers() must answer 200 with the view's rows or "
+                      f"500 encode_failed when they cannot be encoded, nothing else (its returns "
+                      f"{rets}; expected {PEERS_RETURNS}) (F199)")
+    fail = re.search(r"\bif\s*\(\s*!\s*mesh_api::build_mesh_peers_json\s*\([^;{}]*\)\s*\)\s*"
+                     r"\{\s*return\s+http_send_error\s*\(", body)
+    if fail is None:
+        errors.append(f"{NETWORK}: handle_mesh_peers()'s error answer is not the body builder's "
+                      "failure branch (`if (!mesh_api::build_mesh_peers_json(...)) { return "
+                      "http_send_error(...` ) (F199)")
+    for m in re.finditer(r"\b(esp_flash_encryption_enabled|httpd_resp_\w+)\s*\(", body):
+        errors.append(f"{NETWORK}: handle_mesh_peers() calls {m.group(1)}( — it answers 200 "
+                      "without flash encryption, through http_send_json / http_send_error only "
+                      "(F199)")
 
 
 def check_alert_clear_route(code: str, errors: list[str]) -> None:
@@ -683,6 +724,24 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw("network", PEERS_BUILD, "  count = view.member_count;\n" + PEERS_BUILD)),
     ("peers handler builds the rows twice",
      raw("network", PEERS_JOIN, PEERS_JOIN + "\n  (void)mesh_api::peer_views_from_status(view, 0, views, 1);")),
+    ("peers handler refuses a board without flash encryption (F199's review)",
+     raw("network", PEERS_READ, "  if (!esp_flash_encryption_enabled()) return http_send_error(req, 500, "
+                                "\"load_failed\");\n" + PEERS_READ)),
+    ("peers handler checks flash encryption and answers anyway (F199's review)",
+     raw("network", PEERS_READ, "  const bool fe = esp_flash_encryption_enabled();\n  (void)fe;\n" + PEERS_READ)),
+    ("peers handler answers 500 on an empty view (F199's review)",
+     raw("network", PEERS_BUILD, "  if (count == 0) return http_send_error(req, 500, \"load_failed\");\n"
+                                 + PEERS_BUILD)),
+    ("peers handler sets a 500 status without returning (F199's review)",
+     raw("network", PEERS_BUILD, "  if (count == 0) httpd_resp_set_status(req, \"500 Internal Server Error\");\n"
+                                 + PEERS_BUILD)),
+    ("peers handler's encode failure answers another code (F199's review)",
+     raw("network", PEERS_BUILD + "\n    return http_send_error(req, 500, \"encode_failed\");",
+         PEERS_BUILD + "\n    return http_send_error(req, 500, \"load_failed\");")),
+    ("peers handler answers its error outside the builder's failure (F199's review)",
+     raw("network", PEERS_BUILD + "\n    return http_send_error(req, 500, \"encode_failed\");\n  }",
+         "  if (count > mesh_state::MAX_TRUSTED_PEERS) {\n    return http_send_error(req, 500, "
+         "\"encode_failed\");\n  }\n  (void)mesh_api::build_mesh_peers_json(body, sizeof(body), views, count);")),
     ("process() has no publish at its end",
      raw("session", PROC_END, "   * just before this call (main.cpp), so the view is this whole pass. */\n}")),
     ("process() returns early without a publish",

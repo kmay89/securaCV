@@ -51,7 +51,13 @@ a host, so these cases hold the wiring status_body() mirrors:
   disagree with peers_total. test_mesh_session.cpp:
   test_the_peer_list_is_the_members_the_device_holds builds the body the
   same way; firmware/scripts/check_canary_mesh_status.py rule 2 holds it
-  too.
+  too. Its answers are 200 with those rows or 500 encode_failed from the
+  builder's failure branch, nothing else (F199's review): its return
+  statements are exactly the rate-limit and auth gates' two
+  `return ESP_OK;`, `return http_send_error(req, 500, "encode_failed");`
+  in that branch, and `return http_send_json(req, body);`, and it names
+  neither esp_flash_encryption_enabled nor an httpd_resp_ call, so a gate
+  on flash encryption or a 500 on an empty view cannot come back.
 * GET /api/mesh is served by handle_mesh_status, GET /api/mesh/peers by
   handle_mesh_peers, and the two POST routes by those two handlers.
 
@@ -180,6 +186,11 @@ READ = _seq("mesh_session::read_status(&view);")
 PEERS_ROWS = _seq("const size_t count = mesh_api::peer_views_from_status(view, (uint32_t)millis(), "
                   "views, mesh_state::MAX_TRUSTED_PEERS);")
 PEERS_BUILD = _seq("mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)")
+PEERS_FAIL = _seq('if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) '
+                  '{ return http_send_error(req, 500, "encode_failed"); }')
+PEERS_RETURNS = ["return ESP_OK;", "return ESP_OK;",
+                 'return http_send_error(req, 500, "encode_failed");',
+                 "return http_send_json(req, body);"]
 JOIN_OPERA_EXISTS = _seq('if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) '
                          '{ return http_send_error(req, 409, "opera_exists"); }')
 JOIN_REFUSED = _seq('if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;')
@@ -267,6 +278,15 @@ def _peers_problems(code: str) -> list[str]:
     for m in re.finditer(r"\bmesh_state::(\w+)\s*\(", body):
         problems.append(f"{PEERS_FN} calls mesh_state::{m.group(1)}: the rows are the view's "
                         f"members, and no NVS is read (F199)")
+    rets = [" ".join(m.group(0).split()) for m in re.finditer(r"\breturn\b[^;]*;", body)]
+    if rets != PEERS_RETURNS:
+        problems.append(f"{PEERS_FN} answers something other than 200 with the rows or 500 "
+                        f"encode_failed (returns {rets}; expected {PEERS_RETURNS}) (F199)")
+    if len(re.findall(PEERS_FAIL, body)) != 1:
+        problems.append(f"{PEERS_FN}'s 500 encode_failed is not the body builder's failure branch")
+    for m in re.finditer(r"\b(esp_flash_encryption_enabled|httpd_resp_\w+)\s*\(", body):
+        problems.append(f"{PEERS_FN} calls {m.group(1)}: it answers 200 without flash "
+                        f"encryption, through http_send_json / http_send_error only (F199)")
     return problems
 
 
@@ -437,6 +457,40 @@ class MeshStatusWiring(unittest.TestCase):
         problems = check(self.mutate(old, new))
         self.assertTrue(any("builds its rows before it reads the view" in p for p in problems),
                         problems)
+
+    PEERS_VIEW = ("  mesh_session::StatusView view;\n  mesh_session::read_status(&view);\n\n"
+                  "  mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];")
+    PEERS_FAILURE = ("  if (!mesh_api::build_mesh_peers_json(body, sizeof(body), views, count)) {\n"
+                     "    return http_send_error(req, 500, \"encode_failed\");\n  }\n")
+
+    def test_a_flash_encryption_gate_on_the_peers_route_fails(self) -> None:
+        # F199's review: the dev-board 500 F199 removed, back without a
+        # mesh_state call.
+        src = self.mutate(self.PEERS_VIEW,
+                          "  if (!esp_flash_encryption_enabled()) return http_send_error(req, 500, "
+                          "\"load_failed\");\n" + self.PEERS_VIEW)
+        problems = check(src)
+        self.assertTrue(any("answers something other than 200" in p for p in problems), problems)
+        self.assertTrue(any("calls esp_flash_encryption_enabled" in p for p in problems), problems)
+
+    def test_a_500_on_an_empty_view_fails(self) -> None:
+        src = self.mutate(self.PEERS_FAILURE,
+                          "  if (count == 0) return http_send_error(req, 500, \"load_failed\");\n"
+                          + self.PEERS_FAILURE)
+        problems = check(src)
+        self.assertTrue(any("answers something other than 200" in p for p in problems), problems)
+
+    def test_a_peers_status_set_without_a_return_fails(self) -> None:
+        src = self.mutate(self.PEERS_FAILURE,
+                          "  if (count == 0) httpd_resp_set_status(req, \"500 Internal Server Error\");\n"
+                          + self.PEERS_FAILURE)
+        self.assertTrue(any("calls httpd_resp_set_status" in p for p in check(src)), check(src))
+
+    def test_the_peers_encode_failure_answering_another_code_fails(self) -> None:
+        src = self.mutate(self.PEERS_FAILURE, self.PEERS_FAILURE.replace("encode_failed", "load_failed"))
+        problems = check(src)
+        self.assertTrue(any("answers something other than 200" in p for p in problems), problems)
+        self.assertTrue(any("is not the body builder's failure branch" in p for p in problems), problems)
 
     def test_the_peers_route_moved_fails(self) -> None:
         src = self.mutate('.uri = "/api/mesh/peers", .method = HTTP_GET, .handler = handle_mesh_peers }',
