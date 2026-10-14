@@ -2577,15 +2577,24 @@ on a device. Owner: U1.
     is `wrong`, never the stored one. The prefix-only save answers `200`.
     Put the real broker back afterwards.
   - Artifact: `docs/audit/repro/F289/broker-repoint/`.
-- [ ] **On a TLS unit the session cookies are `Secure`**
+- [ ] **When the HTTPS server started the session cookies are `Secure`, and only then**
   - Setup: a unit serving its dashboard over HTTPS (the boot log's
-    "[HTTPS]" line).
+    "[HTTPS] Server started on port 443" line); then the same unit with TLS
+    off, or a boot that logged "[HTTPS] Server start FAILED — falling back to
+    HTTP".
   - Repro: `curl -sk -D - -o /dev/null
     "https://canary-<suffix>.local/?cv_pair=<value>"` (a fresh `cv_pair` from
-    the landing page), and the tap's receipt answer from the row above.
-  - Expected: both `Set-Cookie` lines end `HttpOnly; SameSite=Strict;
-    Path=/; Max-Age=86400; Secure`; on a unit with TLS off (or after the
-    "falling back to HTTP" line) they carry no `Secure`.
+    the landing page), and the tap's receipt answer from the row above; on
+    the HTTP-only boot the same two over `http://`, then sign in from a
+    browser at `http://canary-<suffix>.local/`.
+  - Expected: over HTTPS both `Set-Cookie` lines end `HttpOnly;
+    SameSite=Strict; Path=/; Max-Age=86400; Secure`; on the HTTP-only boot
+    they carry no `Secure` (the certificate may still be loaded: `Secure`
+    follows the HTTPS server, not the certificate), and the browser's
+    sign-in sticks. A build without `esp_https_server.h` is the same case
+    (whether a pinned core lacks the header is not checked here); the host
+    suite pins all three (`test_receipt_session.cpp`
+    `test_cookie_attributes`).
   - Artifact: `docs/audit/repro/F289/cookie-attributes/`.
 
 ## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification

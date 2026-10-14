@@ -3647,13 +3647,16 @@ static esp_err_t handle_ui(httpd_req_t* req) {
         // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
         // SameSite=Strict: cross-origin requests can't carry it (CSRF).
         // Path=/: covers /, /tune, /api/*.
-        // Secure on a TLS unit (sweep F289 review): this route is served on
-        // 443 only then, and port 80 is the redirect server, so a browser
-        // that types http:// never sends the cookie in the clear.
+        // Secure when the HTTPS server started (sweep F289 review): every
+        // route is registered on 443 only then, and port 80 is the redirect
+        // server, so a browser that types http:// never sends the cookie in
+        // the clear. Not g_tls_enabled: that says a certificate loaded, and
+        // a build without esp_https_server.h loads one and still serves this
+        // route over plain HTTP, where a browser drops a Secure cookie.
         char cookie_hdr[160];
         snprintf(cookie_hdr, sizeof(cookie_hdr),
           "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-          session_hex, g_tls_enabled ? "; Secure" : "");
+          session_hex, g_https_server != nullptr ? "; Secure" : "");
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
         httpd_resp_set_hdr(req, "Location", "/");
@@ -8747,15 +8750,15 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // provisioned over the door is as present as the hand on the BOOT button.
   // OWNER: this response carries the bearer token, so the session minted
   // with it stands in for the bearer on grant 1 (sweep F289).
-  // The same attributes as handle_ui's, Secure included on a TLS unit:
-  // this cookie stands in for the bearer for 24 h.
+  // The same attributes as handle_ui's, Secure included when the HTTPS
+  // server started: this cookie stands in for the bearer for 24 h.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   if (csi_integration::session_issue(session_hex, sizeof(session_hex),
                                      cv_session::Origin::OWNER)) {
     char cookie_hdr[160];
     int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
       "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-      session_hex, g_tls_enabled ? "; Secure" : "");
+      session_hex, g_https_server != nullptr ? "; Secure" : "");
     if (cookie_len > 0 && (size_t)cookie_len < sizeof(cookie_hdr)) {
       httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
     }
@@ -9886,6 +9889,7 @@ static void start_http_server() {
       Serial.println("[HTTPS] Server start FAILED — falling back to HTTP");
       log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "HTTPS start failed, using HTTP", nullptr);
       g_tls_enabled = false;
+      g_https_server = nullptr;   // the session cookies' Secure reads it (sweep F289)
     }
   }
 #endif // SECURACV_HAS_HTTPS_SERVER

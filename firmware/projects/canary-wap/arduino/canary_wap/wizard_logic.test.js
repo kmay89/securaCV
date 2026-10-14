@@ -236,9 +236,10 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
   it('the recovery-kit save issues a session cookie that /api/status accepts', () => {
     const ino = fs.readFileSync(INO, 'utf8');
     const receipt = ino.split('static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {')[1].split('\n}\n')[0];
-    // Secure is added on a unit that serves its dashboard over TLS (sweep F289's review);
-    // test_receipt_session.cpp pins every attribute with TLS off and on.
-    assert.match(receipt, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*session_hex, g_tls_enabled \? "; Secure" : ""\)/);
+    // Secure is added when the HTTPS server started (sweep F289's reviews);
+    // test_receipt_session.cpp pins every attribute with no certificate, with a
+    // certificate but no HTTPS server (an HTTP-only build), and over HTTPS.
+    assert.match(receipt, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*session_hex, g_https_server != nullptr \? "; Secure" : ""\)/);
     assert.match(receipt, /httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\)/);
     assert.match(ino, /static esp_err_t handle_status_auth\(httpd_req_t\* req\) \{\n  if \(!api_auth_check\(req, g_device\.api_token_str\)\) return ESP_OK;/);
     const auth = fs.readFileSync(path.join(__dirname, 'api_auth.h'), 'utf8');

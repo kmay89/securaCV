@@ -68,7 +68,8 @@ static struct {
   char mdns_hostname[40];
 } g_device = {};
 
-static bool g_tls_enabled = false;
+static bool g_tls_enabled = false;              // a certificate loaded
+static httpd_handle_t g_https_server = nullptr;  // the HTTPS server started
 static char g_tls_cert_fp_hex[65] = "";
 
 // esp_fill_random: distinct bytes on every call, so every session differs.
@@ -631,12 +632,21 @@ void test_cookie_anywhere_in_the_header() {
 }
 
 // The cookie each mint sets: HttpOnly, SameSite=Strict, Path=/, 24 h, and
-// Secure exactly when the unit serves its dashboard over TLS. The owner's
-// stands in for the bearer for those 24 h; the landing's runs the dashboard.
+// Secure exactly when the HTTPS server started. The owner's stands in for
+// the bearer for those 24 h; the landing's runs the dashboard. Three units:
+// no certificate (TLS off); a certificate and no HTTPS server, which is a
+// build without esp_https_server.h or a start that fell back to HTTP, where
+// every route is served on port 80 and a browser would drop a Secure cookie
+// (sweep F289's second review: Secure used to follow the certificate); and
+// a certificate with the HTTPS server up.
 void test_cookie_attributes() {
-  for (int tls = 0; tls < 2; ++tls) {
+  static int s_https_handle = 0;
+  const struct { bool cert; bool https; } units[] = {{false, false}, {true, false}, {true, true}};
+  for (const auto& unit : units) {
     reset_world();
-    g_tls_enabled = tls != 0;
+    g_tls_enabled = unit.cert;
+    g_https_server = unit.https ? (httpd_handle_t)&s_https_handle : nullptr;
+    const bool tls = unit.https;
     const std::string tail = std::string("; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400") +
                              (tls ? "; Secure" : "");
     // The landing's mint (handle_ui's /?cv_pair= exchange).
@@ -659,11 +669,12 @@ void test_cookie_attributes() {
     CHECK(claimed.set_cookie_hdr == "cv_session=" + claimed.set_cookie + tail);
     if (exchanged.set_cookie_hdr != "cv_session=" + exchanged.set_cookie + tail ||
         tapped.set_cookie_hdr != "cv_session=" + tapped.set_cookie + tail) {
-      std::printf("FAIL: tls=%d landing \"%s\" tap \"%s\"\n", tls,
+      std::printf("FAIL: cert=%d https=%d landing \"%s\" tap \"%s\"\n", unit.cert, unit.https,
                   exchanged.set_cookie_hdr.c_str(), tapped.set_cookie_hdr.c_str());
     }
   }
   g_tls_enabled = false;
+  g_https_server = nullptr;
 }
 
 // A session's 24 h hold across millis()'s wrap (sweep F289's second review).
