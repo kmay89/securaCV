@@ -1300,10 +1300,11 @@ function meshPairingSeq(answer) {
 // "failed" (with pairing_fail_reason), "running", or "other" when the body
 // is about another pairing (a later one, or 0 after a restart), which claims
 // neither. A PlatformIO Canary reads ACTIVE only once it has heard a member
-// this boot, and a new member sends nothing until it has an opera frame to
-// send (F162), so a finished pairing there can read CONNECTING for good. A
-// Canary that reports no number (from before F133, or a canary-wap) is read
-// the old way: done once its state is ACTIVE.
+// this boot. Until F162 a new member sent nothing until it had an opera frame
+// to send, so a finished pairing there could read CONNECTING for good; since
+// F162 each side sends one heartbeat as it pairs, so only a lost one leaves
+// it reading CONNECTING. A Canary that reports no number (from before F133,
+// or a canary-wap) is read the old way: done once its state is ACTIVE.
 function meshSideVerdict(body, seq) {
   const reports = Number.isInteger(body.pairing_seq) && typeof body.pairing_result === "string";
   if (!reports || seq === null) return { kind: "legacy", done: body.state === "ACTIVE" };
@@ -1382,8 +1383,10 @@ async function meshCancelRunning(vi, vj, a) {
 // holding a member that never joined, so then nothing is canceled.
 //
 // Answers "gone" (the attempt ended meanwhile: nothing was sent once it
-// did), "completing" (one side paired, the other paired or running: a lost
-// confirm answer, so the confirm wait can still finish it) or "ended".
+// did), "paired" (both report this pairing finished: a Canary that reports
+// no number counts once it reads ACTIVE, as meshPairVerdict reads it),
+// "completing" (one side paired, the other running: a lost confirm answer,
+// so the confirm wait can still finish it) or "ended".
 async function meshCancelLeftRunning(a) {
   document.getElementById("mesh-status-line").innerHTML =
     '<span class="spinner"></span> Checking both Canaries…';
@@ -1401,11 +1404,36 @@ async function meshCancelLeftRunning(a) {
   if (meshGone(a)) return "gone";
   const is = (v, kind) => v !== null && v.kind === kind;
   if (is(vi, "paired") || is(vj, "paired")) {
+    if (vi !== null && vj !== null && meshPairVerdict(vi, vj).action === "paired") return "paired";
     const live = (v) => is(v, "paired") || is(v, "running");
     return live(vi) && live(vj) ? "completing" : "ended";
   }
   await meshCancelRunning(vi, vj, a);
   return meshGone(a) ? "gone" : "ended";
+}
+
+// What a wait that gave up says (sweep F215 and its review): it ends from
+// the fresh read meshCancelLeftRunning takes, which can find what the last
+// poll could not. A pairing both Canaries report finished is a success. One
+// side finished beside the other still running is completing, not failed: a
+// PlatformIO initiator reports paired once it sends the opera key and
+// re-sends it until the joiner has it (F134), and a retry made after it
+// lands is refused (F136: the new Canary is in the opera by then), so the
+// owner is told to check rather than to retry. Anything else is `failMsg`.
+async function meshEndAtTimeout(a, failMsg) {
+  const left = await meshCancelLeftRunning(a);
+  if (left === "gone") return;
+  if (left === "paired") {
+    meshShowSuccess(true);
+    return;
+  }
+  if (left === "completing") {
+    meshPollFailed("The pairing is still finishing: one Canary reports it done and the other " +
+      "is still taking the opera key. Check both Canaries in a minute. Once each lists the " +
+      "other as a member, the pairing worked, and pairing them again would be refused.");
+    return;
+  }
+  meshPollFailed(failMsg);
 }
 
 // Act on a verdict that ends the wait; false for "wait". A failure, or a
@@ -1462,10 +1490,25 @@ function meshShowError(msg) {
 // Canary that holds an opera refuses a join with 409 opera_exists (the
 // add-on proxy passes the body on: "Device HTTP error 409: {...}"): it
 // leaves that opera first, and a changed-address re-pair is Leave, then
-// Join. A canary-wap answers the same refusal 400 pairing_failed, which
-// names no reason, so that one reads as before.
-function meshJoinRefusedText(err) {
+// Join. canary-wap does not refuse this yet (open); its sketch answers any
+// join refusal 400 pairing_failed, which names no reason, so such a refusal
+// reads as before.
+//
+// `created`: the existing Canary's pair/start founded an opera (it had
+// none). Beside a new Canary in an opera that reads as the two entered the
+// wrong way round (F136's review), so the advice is not to leave the opera
+// that has members: it is to enter that Canary as the existing one, and to
+// leave the opera the other just founded, which has no other member and
+// would refuse the swapped retry's join the same way. The wizard has no
+// route to leave it itself.
+function meshJoinRefusedText(err, created) {
   if (typeof err === "string" && /\bopera_exists\b/.test(err)) {
+    if (created === true) {
+      return "The new Canary is already in an opera and the existing one was not, so the " +
+        "two look swapped. The existing Canary just founded an opera of its own, with no " +
+        "other member: leave that opera on it, then start pairing again with the Canary " +
+        "that is in the opera entered as the existing one.";
+    }
     return "The new Canary is already in an opera. Leave that opera on the new Canary " +
       "first, then start pairing again.";
   }
@@ -1513,7 +1556,7 @@ async function meshStartPairing() {
       // The initiator is already in pairing mode; cancel it (best effort) so
       // an immediate retry isn't blocked until the initiator's own timeout.
       try { await api("api/mesh/pair/cancel", meshInit); } catch (e) { /* best effort */ }
-      meshStartFailed(meshJoinRefusedText(r2.error));
+      meshStartFailed(meshJoinRefusedText(r2.error, r1.created));
       return;
     }
   } catch (e) {
@@ -1629,10 +1672,10 @@ async function meshPollForCodes() {
     // Giving up (sweep F215): read both once more and end a side still
     // running this pairing, or "Try again" is refused until that Canary's
     // own timeout; nothing beside a side that reports it paired. The last
-    // poll's reads are not enough: it may have failed on either side.
+    // poll's reads are not enough: it may have failed on either side. What
+    // the read finds decides what is said (meshEndAtTimeout).
     meshPolling = false;
-    if (await meshCancelLeftRunning(a) === "gone") return;
-    meshPollFailed("Timed out waiting for the pairing code. Try again.");
+    await meshEndAtTimeout(a, "Timed out waiting for the pairing code. Try again.");
   }
 }
 
@@ -1667,7 +1710,7 @@ async function meshConfirm() {
       const which = !c1.ok ? "existing" : "new";
       const left = await meshCancelLeftRunning(a);
       if (left === "gone") return;
-      if (left !== "completing") {
+      if (left !== "completing" && left !== "paired") {
         meshPollFailed("The " + which + " Canary rejected the confirmation: " +
           ((!c1.ok ? c1.error : c2.error) || "unknown error"));
         return;
@@ -1678,7 +1721,7 @@ async function meshConfirm() {
     if (meshGone(a)) return;
     const left = await meshCancelLeftRunning(a);
     if (left === "gone") return;
-    if (left !== "completing") {
+    if (left !== "completing" && left !== "paired") {
       meshPollFailed("Network error during confirm: " + ((e && e.message) || e));
       return;
     }
@@ -1721,8 +1764,7 @@ async function meshConfirm() {
     // no error answer toward its five, so a Canary answering errors gets
     // here too, and is left alone while the other is read.
     meshPolling = false;
-    if (await meshCancelLeftRunning(a) === "gone") return;
-    meshPollFailed("Pairing did not complete. Check both Canaries and retry.");
+    await meshEndAtTimeout(a, "Pairing did not complete. Check both Canaries and retry.");
   }
 }
 
