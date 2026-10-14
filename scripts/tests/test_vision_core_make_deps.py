@@ -395,10 +395,12 @@ def check_tree(rel_tree: str, scratch: Path, makefile_text: str | None = None,
 
 def without_include(text: str) -> str:
     """The Makefile with the line that reads the dependency files back taken
-    out: what make knows from the hand lists alone."""
+    out: what make knows from the hand lists alone. A Makefile that reads no
+    dependency files (one from before sweep F286) is its own hand lists, so
+    the main test names what it misses instead of the setup stopping here."""
     out, n = re.subn(r"^-include \$\(wildcard [^\n]*\.d\)\n", "", text, flags=re.M)
-    if n != 1:
-        raise CheckError(f"expected one `-include $(wildcard ....d)` line, found {n}")
+    if n > 1:
+        raise CheckError(f"expected at most one `-include $(wildcard ....d)` line, found {n}")
     return out
 
 
