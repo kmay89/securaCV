@@ -7190,6 +7190,30 @@ void test_a_reboot_announces_itself_once_to_each_member() {
   g_outs.clear();
   for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
   assert(g_outs.empty());
+
+  /* A boot with the mesh turned off (POST /api/mesh/enable, main.cpp turns
+   * it off before the restore): nothing while it is off, the one heartbeat
+   * at the first pass after it is turned on, and nothing after that. */
+  stand_up_session(S, pub, priv);
+  mesh_session::set_enabled(false);
+  uint8_t off_pub[32], off_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(off_pub, off_priv));
+  assert(mesh_session::register_trusted_peer(off_pub));
+  uint8_t off_fp[1][8];
+  mesh_crypto::compute_fingerprint(off_pub, off_fp[0]);
+  const uint8_t off_mac[1][6] = {{0x24, 0x0A, 0xC4, 0x16, 0x30, 0x0B}};
+  mesh_session::StoredMacVerdict v2[1];
+  assert(mesh_session::restore_peer_macs(off_fp, off_mac, 1, v2) == 1);
+  g_outs.clear();
+  for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
+  assert(g_outs.empty());
+  mesh_session::set_enabled(true);
+  mesh_session::process(62000);
+  assert(g_outs.size() == 1 && is_heartbeat(g_outs[0].bytes));
+  assert(std::memcmp(g_outs[0].mac, off_mac[0], 6) == 0);
+  g_outs.clear();
+  for (uint32_t t = 63000; t <= 123000; t += 1000) mesh_session::process(t);
+  assert(g_outs.empty());
   std::printf("PASS test_a_reboot_announces_itself_once_to_each_member\n");
 }
 
