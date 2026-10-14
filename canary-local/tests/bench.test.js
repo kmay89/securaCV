@@ -118,7 +118,8 @@ test("bench facts cite files that still say them; the Nightlight's says what its
   assert.match(b.backlight.note, /built before it set the level as asked/, "...and what an older emulator did");
   // ...and steps the night floor to the expander's byte as the board writes it
   // (sweep A79), citing the board's compression and the twin's step
-  assert.match(b.backlight.note, /twin's HAL steps the night floor to that byte too/, "the note says the twin steps the night floor");
+  assert.match(b.backlight.note, /twin's HAL steps the night floor to that byte too, in an emulator built since sweep A79 \(an older one passes the duty as asked, and the row cannot tell the two apart\)$/,
+    "the note says the twin steps the night floor, and only an emulator built since A79 does (no binding tells the row which it runs)");
   assert.ok(b.sources.some((x) => x.file === "firmware/projects/canary-display/src/hal/display_1in47.cpp" &&
     x.quote === "uint8_t d8 = (uint8_t)(duty13 >> 5);"), "the bench cites the board's night byte");
   assert.ok(b.sources.some((x) => x.file === "canary-local/emulator/src/emu_hal_display.cpp" && x.quote === "return byte << 5;"),

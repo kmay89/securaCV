@@ -603,7 +603,7 @@
         },
         "backlight": {
           "cap_pct": 50,
-          "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; the twin's display HAL clips it at the same register byte, and the row says so only when the emulator in use does (one built before it set the level as asked). Below the cap the board writes the night floor as one expander byte (the 13-bit duty >> 5, never dark while a glow is asked for), and the twin's HAL steps the night floor to that byte too"
+          "note": "the board's HAL clips the backlight at 50% duty, the nightlight's heat budget in the closed pocket case; the twin's display HAL clips it at the same register byte, and the row says so only when the emulator in use does (one built before it set the level as asked). Below the cap the board writes the night floor as one expander byte (the 13-bit duty >> 5, never dark while a glow is asked for), and the twin's HAL steps the night floor to that byte too, in an emulator built since sweep A79 (an older one passes the duty as asked, and the row cannot tell the two apart)"
         },
         "sources": [
           {

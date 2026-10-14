@@ -86,7 +86,10 @@ if [[ -n "${RUNTIME_TURN_OUT:-}" ]]; then
 else
   OUT="$(mktemp -d)"
   # The compiles below run in the background, and a red one ends the script
-  # while others are still writing objects: wait them out, then remove.
+  # while others are still writing objects: wait them out, then remove. (No
+  # test holds the wait: onboard.test.js's A82 stand-ins fail the first
+  # compile it waits on, and whether a sibling is still writing then is a
+  # race. It keeps rm -rf from racing a compiler that writes into fw/.)
   trap 'wait; [[ -n "$OUT" && -d "$OUT" ]] && rm -rf -- "$OUT"' EXIT
 fi
 mkdir -p "$OUT/lvgl" "$OUT/fw"

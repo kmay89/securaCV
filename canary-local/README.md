@@ -1040,7 +1040,8 @@ fails on byte drift.
   mailbox through `emu-shell.js`'s `requestRotation()`, and the probe watches
   the canvas take the side shape and come back upright with the lit chip the
   turn the HAL announced (the shapes and turns read from the sources by
-  `turned_glass.mjs`); on a dist without the binding no turn is offered and
+  `turned_glass.mjs`), then clicks the lit chip and requires the note to say
+  the glass stays as it is; on a dist without the binding no turn is offered and
   the step prints `BENCH_PROBE_SKIP[nightlight turn]`. The watch's Try it
   offers no turn: its firmware has no mailbox. CI runs this probe on the
   committed dist, before the wasm job's in-job rebuild, so the turn step

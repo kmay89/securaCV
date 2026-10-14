@@ -1430,11 +1430,17 @@ test("A82: the turn scripts remove their default build directory on exit and lea
       assert.match(def.r.stderr, /stand-in (?:LVGL|ArduinoJson|Crypto) \(sweep A82 test\)/,
         `${script} did not reach a compile:\n${def.r.stderr.slice(-2000)}`);
       assert.deepStrictEqual(dirsIn(def.tmp), [], `${script} left its build directory in TMPDIR (${def.tmp})`);
-      // Explicit: the caller's directory, kept with what the script built in it.
+      // Explicit: the caller's directory, left as it is: what it already held
+      // (an earlier run's object, here) and the tree the script made in it.
       const keep = join(base, `keep-${outVar}`);
+      const earlier = join(keep, made, "earlier_run.o");
+      fs.mkdirSync(join(keep, made), { recursive: true });
+      fs.writeFileSync(earlier, "an object an earlier run left (sweep A82 test)\n");
       const exp = run(script, args, outVar, keep);
       assert.notStrictEqual(exp.r.status, 0, `${script} passed with ${outVar} set, against stand-in checkouts`);
       assert.ok(fs.existsSync(join(keep, made)), `${script} removed the ${outVar} directory it was handed`);
+      assert.strictEqual(fs.existsSync(earlier) && fs.readFileSync(earlier, "utf8"), "an object an earlier run left (sweep A82 test)\n",
+        `${script} emptied the ${outVar} directory it was handed (an earlier run's object is gone)`);
       assert.deepStrictEqual(dirsIn(exp.tmp), [], `${script} made a temporary directory although ${outVar} was set`);
     }
   } finally {
