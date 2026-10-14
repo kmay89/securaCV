@@ -128,6 +128,36 @@ class Meanings(_Case):
         bad = self.scad('/* [B] */\nradar_l = 40.0;  // Grove Vision AI V2 long side\n', "canary_bad.scad")
         self.assertEqual(len(L.lint_meanings(bad)), 1)
 
+    def test_a_pigtail_pass_through_is_pigtail_not_usb(self):
+        # C10: the J-box's -X wall slot passes a pigtail cable, never a plug or
+        # its boot, so its help under usb_w is the transfer the rule exists for
+        bad = self.scad('/* [Shell] */\n'
+                        'usb_w = 10.5;  // pigtail pass-through slot width, low on the -X wall\n',
+                        "canary_bad.scad")
+        problems = L.lint_meanings(bad)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("pigtail_w", problems[0])
+        good = self.scad('/* [Shell] */\n'
+                         'pigtail_w = 10.5;  // pigtail pass-through slot width\n'
+                         'pigtail_h = 6.5;   // pigtail pass-through slot height\n',
+                         "canary_good.scad")
+        self.assertEqual(L.lint_meanings(good), [])
+        # and the reverse: boot clearance under the pigtail name sends it back to usb_*
+        rev = self.scad('/* [Shell] */\n'
+                        'pigtail_h = 6.5;  // pigtail opening height: boot clearance\n',
+                        "canary_rev.scad")
+        problems = L.lint_meanings(rev)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("usb_h", problems[0])
+
+    def test_the_jbox_names_its_pass_through(self):
+        groups = L.gen_builder_manifest.parse_scad(L.ENC / "canary_jbox.scad")
+        knobs = {p["name"]: p for g in groups for p in g["params"]}
+        self.assertNotIn("usb_w", knobs)
+        self.assertNotIn("usb_h", knobs)
+        for name in ("pigtail_w", "pigtail_h"):
+            self.assertIn("pigtail", knobs[name].get("desc", ""), name)
+
     def test_no_help_passes_and_range_only_help_is_no_help(self):
         # nothing is said, so nothing can transfer (the builder strips a bare range)
         p = self.scad('/* [B] */\nusb_h  = 6.5;        // [4:0.5:8]\nskirt_t = 1.6;\n')

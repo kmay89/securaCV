@@ -9469,12 +9469,14 @@
        "default": "5.0"
       },
       {
-       "name": "usb_w",
-       "default": "10.5"
+       "name": "pigtail_w",
+       "default": "10.5",
+       "comment": "pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it"
       },
       {
-       "name": "usb_h",
-       "default": "6.5"
+       "name": "pigtail_h",
+       "default": "6.5",
+       "comment": "pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)"
       }
      ]
     },
@@ -9545,7 +9547,7 @@
       },
       {
        "name": "weep_y",
-       "default": "usb_w/2 + weep_d()/2 + 1.5"
+       "default": "pigtail_w/2 + weep_d()/2 + 1.5"
       }
      ]
     }

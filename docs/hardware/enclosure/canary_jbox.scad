@@ -67,8 +67,8 @@ boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.2;
 post_d = 5.0;
-usb_w = 10.5;
-usb_h = 6.5;
+pigtail_w = 10.5;    // pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it
+pigtail_h = 6.5;     // pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;
@@ -123,7 +123,7 @@ assert(abs((screw_d + 2*tol_hole) + 2*screw_head_h - (screw_head_d + 2*tol_hole)
 assert(lid_t - screw_head_h >= 1.0, "the lid seat leaves under 1.0 mm under the head");
 usb_zc = floor_t + standoff_h + board_h + port_usbc_shell_h()/2;
 // the drain: -X wall at the floor, beside the USB slot
-weep_y = usb_w/2 + weep_d()/2 + 1.5;
+weep_y = pigtail_w/2 + weep_d()/2 + 1.5;
 assert(!opt_weep || weep_y + weep_d()/2 + 0.5 <= inner_w/2 - pd, "the weep runs into a corner post");
 // Cantilever snap clip on a board long edge — the compact-WAP idiom, so the
 // drawing now comes from canary_snap_lib like the WAP's own: the insertion-
@@ -161,7 +161,7 @@ module body() {
             }
             translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
                 cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1, floor_cove);
-            // USB pass-through slot, low on the -X short wall: route a pigtail
+            // the pigtail pass-through slot, low on the -X short wall: route a pigtail
             // through it (a plug cannot reach the recessed connector) and dress
             // the cable as conduit. Sheltered mounting only - the slot is open.
             // centered on the connector AXIS (shell/2 above the PCB), not PCB-top + h/2:
@@ -169,7 +169,7 @@ module body() {
             // 45°-chamfered top corners keep the upright wall's bridge to the
             // print-validated span (canary_port_lib; the slot bridged 10.5 flat)
             translate([-out_l/2, 0, usb_zc]) rotate([90, 0, 90])
-                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(usb_w, usb_h);
+                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(pigtail_w, pigtail_h);
             // drain at the low point: the -X wall's floor corner, angled down
             // and out (canary_core_lib weep_cut)
             if (opt_weep)
@@ -232,7 +232,7 @@ module lid() {
             lip_ring(inner_l - 2*tol_slide, inner_w - 2*tol_slide, 0.5, lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy()) translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
             if (lid_key) lid_key_slot(0, inner_w/2, 270, lip_h, lip_t);
-            translate([-inner_l/2, 0, -lip_h/2]) cube([lip_t*4, usb_w + 4, lip_h + 0.2], center = true);
+            translate([-inner_l/2, 0, -lip_h/2]) cube([lip_t*4, pigtail_w + 4, lip_h + 0.2], center = true);
         }
     }
 }
