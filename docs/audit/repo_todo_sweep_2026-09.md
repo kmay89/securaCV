@@ -275,7 +275,9 @@ against a pinned key or a claim proven on hardware — nothing below claims it.)
   rollback anchor (design only); both need the IDF-component toolchain
   (roadmap item 9) and a bench. Also skipped: the canary-wap carry of
   `chain_state.h` (three write sites, a staged copy, a `check_csi_sync.sh`
-  entry) and an entropy self-check. Bench (U1): K1's fresh-unit step (the
+  entry; since done: F59, #1749, carried it, so the sketch writes one
+  `chain_st` blob through a staged `chain_state.h` that `check_csi_sync.sh`
+  holds) and an entropy self-check. Bench (U1): K1's fresh-unit step (the
   keygen's `bootloader_random` pair shares the SAR ADC the battery monitor
   has already opened — does the reading survive?) and K2 (a power cut
   between record and persist never leaves a torn seq/head pair).
@@ -7847,13 +7849,16 @@ so — see D2 below.)
   initiator with a loss still fails as before, which only updating the
   initiator repairs. Differences from canary-wap: PIO members send nothing on
   a timer, so a joiner that took the COMPLETE is usually not heard and the
-  copies run their whole window (F162); a window's end is not logged; and the
+  copies run their whole window (F162; since F162, #1802, the joiner's one
+  heartbeat as it completes ends them, and they run the window only when
+  that frame is lost); a window's end is not logged; and the
   copies' sends are not checked or counted, as no PIO pairing send is. A side
   effect on F94: a joiner whose owner confirms after the initiator completed
   on its own reflected CONFIRM, inside the window, now takes a copy and joins;
   one whose owner never confirms still leaves the initiator holding a member
   that never joined. Not changed (the protocol review's probe; the same before
-  F134): a member that re-pairs into the opera it already holds (F136's path)
+  F134): a member that re-pairs into the opera it already holds (F136's path,
+  closed on the PlatformIO REST route since #1802)
   and sends an ordinary frame before the first copy is due ends the copies, so
   with its first COMPLETE lost its pairing still times out. Pinned by six
   `test_mesh_pairing` tests (among them
@@ -7907,7 +7912,7 @@ so — see D2 below.)
   that stops the copies first, fails the lost-COMPLETE branches. Spec §5.2 and
   THREAT_MODEL say so. Host-tested only; the `[env:full]` compile is CI's; not
   bench-verified (U1).
-- [ ] **F136 [code+decision] PIO: `pair/join` on a Canary already in an opera
+- [x] **F136 [code+decision] PIO: `pair/join` on a Canary already in an opera
   keeps the old opera's members.** `execute_request`'s PAIR_JOIN does not
   check `s_opera_id_set`, and the joiner's PairedCallback (`main.cpp`)
   installs the new opera_secret over the old one while every old trusted peer
@@ -7918,6 +7923,70 @@ so — see D2 below.)
   opera, as the web UI's join button suggests) or replaces the opera (clear
   the old members and their addresses). From code; not probed. Found while
   fixing F118 (#1762).
+  *Done (#1802), PlatformIO:* a join requires leaving first.
+  `execute_request`'s PAIR_JOIN answers OPERA_EXISTS while the session holds
+  an opera, before a pairing number is taken or any member, key or secret is
+  touched, and `handle_mesh_pair_join` maps it to 409 `opera_exists` ahead of
+  `mesh_pair_refused` (pinned by
+  `scripts/tests/test_canary_mesh_status_wiring.py`). The kernel wizard names
+  the refusal: "The new Canary is already in an opera. Leave that opera on the
+  new Canary first, then start pairing again." When the existing Canary's
+  `pair/start` has just founded an opera (`created`) and the new one refuses
+  this way, the two were entered the wrong way round, and that advice would
+  take the Canary with members out of its opera; the wizard then says the two
+  look swapped and to leave the empty opera the existing one just founded (it
+  cannot leave that opera itself: the add-on has no leave route). Rejected: a
+  join that replaces the opera, clearing the old members and their addresses
+  at the COMPLETE. It drops members and their stored keys at a step the owner
+  took to add a device, and the dropped members still count the device as
+  theirs. The refusal's cost, from code (spec section 8.3): a Canary can no
+  longer pair with a second member of the opera it holds, which the old join
+  did as a side effect, so a PlatformIO Canary holds the member it joined
+  through and every Canary that joined through it, and a changed radio address
+  is now Leave then Join, re-bound at the one member joined through (F319).
+  `mesh_session::start_pairing_joiner()` does not check: the REST route is its
+  only caller on the device. canary-wap is not changed (its `pair/join` with
+  an opera still runs; F318), and the PlatformIO dashboard's stale Opera page
+  shows the raw code (F322). Host-tested (`test_a_join_waits_for_a_leave`;
+  `test_get_mesh_tells_each_pairing_outcome` and `test_rest_pairing_requests`
+  changed on purpose; the wizard's node test, the swapped case included); the
+  `[env:full]` compile is CI's; not bench-tested. The THREAT_MODEL sentences
+  and the U1 section for F136, F162, F199 and F215 are handed to the
+  integrator.
+- [ ] **F318 [code+decision] canary-wap: `pair/join` on a Canary that holds an
+  opera still runs and keeps the old members.** `start_pairing_joiner`
+  (`mesh_network.cpp`) does not check `g_opera_config.configured`, and the
+  joiner's COMPLETE (`handle_pair_complete`) installs the new opera while the
+  old `g_peers` stay, as F136 found on the PlatformIO tree. Refusing there
+  (and answering 409 `opera_exists` where the sketch's handler now says 400
+  `pairing_failed` for any refusal) makes the re-pair paths that 19 of
+  `test_mesh_liveness_wap.cpp`'s 73 tests, one in `test_mesh_address_wap.cpp`
+  and one in `test_mesh_commands_wap.cpp` drive unreachable: they re-pair a
+  device that holds its opera, and canary-wap's leave broadcasts a LEAVE every
+  member acts on, so Leave then Join adds a new member where they check a
+  re-bind. Decide whether canary-wap follows the PlatformIO answer and those
+  tests move to Leave then Join (then add the refusal test to
+  `test_mesh_liveness_wap.cpp`), or a join into the opera already held goes
+  through. Host-probed: the refusal was built and reverted (#1802).
+- [ ] **F319 [decision] PlatformIO: since F136 a Canary pairs into an opera
+  once.** A Canary in an opera cannot join a second member, and that member
+  cannot join it (each holds an opera), so a PlatformIO Canary holds the
+  member it joined through and the Canaries that joined through it; the old
+  join paired it with further members of the same opera as a side effect.
+  Alerts go to bound members only (F101) and nothing relays (spec section
+  2.3), so in an opera built as B and C each joining A, B's alerts reach A and
+  not C; and a changed radio address is re-bound at one member. Options: let a
+  join into the opera the device already holds go through (the joiner learns
+  the opera only from the COMPLETE, so this needs the opera named earlier, a
+  wire change: the OFFER carries a name and a member count, no id), or a bind
+  step between two members that needs no Leave. From code; not probed (#1802).
+- [ ] **F322 [code] PlatformIO dashboard: a stale Opera page answers Join with
+  the raw code.** `startPairing()` (`securacv_webui.cpp`) alerts "Failed to
+  start pairing: " + `data.error`, so since F136 a page that still shows Join
+  Opera for a Canary that founded or joined an opera after it loaded (the
+  button is in the no-opera card only) says "Failed to start pairing:
+  opera_exists". Say it in words (leave the opera first) and refresh the card.
+  From code (#1802).
 - [x] **F161 [code] PIO: `GET /api/mesh` and `/api/mesh/peers` read
   `mesh_session`'s state from the HTTP task.** canary-wap's F110 counterpart.
   `handle_mesh_status` and `handle_mesh_peers` (`securacv_network.cpp`) read
@@ -7950,7 +8019,8 @@ so — see D2 below.)
   status body is `mesh_api::build_mesh_status_json_from_view`, and the peers
   join moved out of the handler into the host-tested
   `mesh_api::peer_views_from_status`, the members still the persisted pubkeys
-  (F199) and the age still counted at the read. Every field of both bodies is
+  (F199; the session's members since F199, #1802) and the age still
+  counted at the read. Every field of both bodies is
   unchanged; after a pass they equal the old handlers' bodies byte for byte.
   Neither route waits for the main loop. Cost: 240 B of internal SRAM for the
   view plus its lock, and per pass a build of the view and a 240 B compare
@@ -7984,7 +8054,7 @@ so — see D2 below.)
   the `[env:full]` compile is CI's. Spec §8.1 says so. Host-tested; not
   bench-tested (U1: the F161 row in `hardware_verification_checklist.md`).
   Found here: F197 and F199.
-- [ ] **F162 [code+decision] PIO: a joiner sends nothing after it pairs, so
+- [x] **F162 [code+decision] PIO: a joiner sends nothing after it pairs, so
   its initiator never hears it.** F134's COMPLETE copies end when the joiner
   is heard, and PIO members send no frame on a timer, so after a pairing that
   went well the copies run their whole 5-minute window (149 copies of two
@@ -7995,6 +8065,63 @@ so — see D2 below.)
   after it pairs, once or on a timer; the registry's HEARTBEAT (16) is one a
   PIO receiver already verifies and drops, marking its sender heard. From code
   and the F134 tests; not probed on a radio. Found by F134 (#1762).
+  *Done (#1802):* once, not on a timer. A member sends one signed `HEARTBEAT`
+  (registry 16, empty payload) through `send_to_members`, so to bound members
+  only and never to a pairing partner that is not one (F101): on each side
+  right after NOTIFY_PAIRED when that pairing's member was bound (a refused
+  bind sends none, to anyone), and once on the first `process()` pass that
+  runs after a boot whose `restore_peer_macs()` bound at least one member (a
+  mesh turned off at boot sends it at its first pass after it is turned on);
+  with no member bound nothing is signed and no counter spent. The joiner's
+  ends the initiator's F134 COMPLETE copies within one pass, and each side
+  reads the other CONNECTED once it arrives; a receiver handles it as any
+  verified opera frame. Premise correction: the PlatformIO tree has no airtime
+  governor (`csi_modules_integration.cpp` says so); the heartbeat goes through
+  the transport's storm gate like every opera send. Limits, from code (spec
+  section 7.1): the boot one goes out on the first loop pass, right after
+  `setup()`, which can come before the station joins its router
+  (`WiFi.begin()` is asynchronous; until then the radio is on the softAP's
+  `AP_CHANNEL` 1 and the ESP-NOW peers follow the current channel), so on a
+  board whose router is on another channel it can reach no member and is not
+  re-sent (F320); and when the first COMPLETE is lost, the initiator's
+  heartbeat reaches a joiner that is not a member yet and is dropped, so that
+  joiner reads the initiator OFFLINE until the initiator's next frame (the
+  joiner's own heartbeat still ends the copies). Rejected: a recurring
+  heartbeat (a new periodic RF pattern; the maintainer's call, F324).
+  Host-tested (`test_two_paired_canaries_hear_each_other_at_once`, two
+  sessions in two processes with their frames carried between them;
+  `test_a_reboot_announces_itself_once_to_each_member`;
+  `test_paired_peer_bound_reports_the_bind`'s bound and refused-bind
+  heartbeats; the pairing helpers' frame counts); on the integrated tree
+  `test_mesh_session` passes with firmware.yml's flags. The `[env:full]`
+  compile is CI's; not bench-tested.
+- [ ] **F320 [code] PlatformIO: the boot heartbeat (F162) can go out before
+  the radio is on the opera's channel.** `process()` sends it on its first
+  running pass, which `main.cpp`'s `loop()` reaches right after `setup()`;
+  `WiFi.begin()` (`securacv_network.cpp`) returns before the station joins its
+  router, the softAP sits on `AP_CHANNEL` 1 (`canary_config.h`) and the
+  ESP-NOW peers are registered on channel 0, which follows the current channel
+  (`mesh_transport.cpp`). On a board whose router is on another channel the
+  one frame can reach no member, nothing sends it again, and on a quiet opera
+  the members read this one OFFLINE until its next frame. Arm it once the
+  station is associated (or the channel settled): a `main.cpp` hook such as a
+  session call made when `WiFi.status()` first reads `WL_CONNECTED`, with a
+  host test of the session half; keep a board with no router sending it at
+  once. From code; host tests cannot see it (#1802).
+- [ ] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
+  member is heard once after it pairs and once after a boot (and the boot one
+  can be lost before Wi-Fi association, F320), and otherwise only when it has
+  an alert, a Beacon event or a rotation to send, so a quiet opera's members
+  fall to STALE and OFFLINE in `GET /api/mesh/peers`, and a frame re-sent from
+  a copied address is dispatched until the member's next frame (spec section
+  8.3). canary-wap sends one every 30 s (F76). A timer costs airtime and
+  counters on a tree whose only send limit is the transport's storm gate, and
+  adds a recurring RF pattern. A narrower option for the one case F162 leaves
+  open: when the first COMPLETE is lost, the joiner drops the initiator's
+  heartbeat (not a member yet) and reads it OFFLINE until its next frame; the
+  initiator could send its heartbeat once more when its COMPLETE copies stop
+  on hearing the joiner after at least one copy went out. The maintainer's
+  call (#1802).
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)
@@ -8116,7 +8243,7 @@ so — see D2 below.)
   The scan names one gap rather than fixing it (`KNOWN_UNMATCHED`): F214.
   Host-tested (node); not run on a device (U1: the F198 row). Found here: F214
   and F216.
-- [ ] **F199 [code+decision] PIO `GET /api/mesh/peers` lists its members from
+- [x] **F199 [code+decision] PIO `GET /api/mesh/peers` lists its members from
   NVS, so a board without flash encryption answers 500 `load_failed`, and the
   list can disagree with `GET /api/mesh`'s `peers_total`.** The rows are the
   persisted pubkeys (`mesh_state::load_trusted_peers`, flash-encryption
@@ -8127,6 +8254,36 @@ so — see D2 below.)
   view holds every member the session trusts, so the rows could come from it.
   Decide whether the list is the durable set or the session's. From code; not
   probed. Found by F161 (#1762).
+  *Done (#1802):* the session's list. `GET /api/mesh/peers` builds its rows
+  from the view the main loop published
+  (`mesh_api::peer_views_from_status(view, now_ms, out, cap)`: one row per
+  member the session holds, in the view's order, `last_seen_sec` counted at
+  the read) and reads no NVS on the HTTP task, so a board without flash
+  encryption answers 200 instead of 500 `load_failed`, and the rows always
+  agree with `peers_total`. The durable set was rejected as the source: a
+  stored key the session does not hold is not a member anything hears.
+  `check_canary_mesh_status.py` rule 2 and the wiring test hold the new
+  handler, its every answer included: 200 with the rows, or 500
+  `encode_failed` from `build_mesh_peers_json`'s failure branch, and no
+  `mesh_state::` call, `esp_flash_encryption_enabled` or `httpd_resp_` call in
+  it (68 mutations refused, eleven new). Host-tested
+  (`test_the_peer_list_is_the_members_the_device_holds`;
+  `test_the_peer_list_joins_each_member_from_the_view` changed); the host
+  `mesh_state` stub answers an empty list rather than failing, so the C++ test
+  holds members the store does not, and the handler's 200 without flash
+  encryption rests on the static rule and the wiring test (a review compiled
+  the handler verbatim against a failing store: 200, three rows, no read). On
+  the integrated tree the check refuses its 68 mutations and the wiring test
+  passes. The `[env:full]` compile is CI's; not bench-tested.
+- [ ] **F323 [code]
+  `test_alert_reads_stay_whole_while_the_main_loop_stores_and_clears`
+  (`test_mesh_session.cpp`) depends on the scheduler.** Its reader thread must
+  run while the 16-record history is full, and the writer's 1200 steps can
+  finish first: under load (load average 10 to 13) or at -O1 it fails
+  `reads.load() > 0 && full.load() > 0`, the base binary too; at CI's flags
+  (no -O) it passed every run. Have the writer wait until the reader has seen
+  a full history, or bound the run by reads rather than steps. Found by F162's
+  work (#1802).
 - [x] **F200 [code] The kernel wizard leaves a Canary pairing when the other
   rejects the confirmation or stops answering.** `meshConfirm()` stops on a
   rejected or failed `pair/confirm` ("The ... Canary rejected the
@@ -8160,7 +8317,9 @@ so — see D2 below.)
   is ready again at the codes (it stayed "Confirming..."), Start is ready
   after a success or Cancel (it stayed "Starting..."), and the wait's line is
   reset. Not changed: a timeout still acts only on its final poll's reads and
-  still cancels a side running beside a paired one, as F163 pinned (F215).
+  still cancels a side running beside a paired one, as F163 pinned (F215;
+  since F215, #1802, a timeout reads both once more and says what it found;
+  the five-unreadable-polls exits do not yet, F321).
   `privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js` (23 cases)
   adds the F200 paths, each cancel before its message, a lost confirm beside a
   paired side, Cancel during a cleanup's read and a retry reaching a ready
@@ -8213,7 +8372,7 @@ so — see D2 below.)
   row now reads as host-tested and CI-compiled, not bench-tested. All rerun
   green on the integrated tree. Host-tested; the compiles are CI's; not run on
   a device (U1: the F214/F217 row). Found here: F237-F240.
-- [ ] **F215 [code+decision] The kernel wizard's timeouts still leave or end a
+- [x] **F215 [code+decision] The kernel wizard's timeouts still leave or end a
   pairing on old reads.** F163 pinned that a timeout acts only on its final
   poll's reads: after up to 59 good polls and one that fails on either side, a
   side still running keeps its pairing until its own 5-minute timeout and
@@ -8227,6 +8386,40 @@ so — see D2 below.)
   more, and whether it spares a side running beside a paired one. From code
   and the F163 and F200 tests; not run against a Canary. Found by F200
   (#1762).
+  *Done (#1802):* a timeout reads once more, spares a side running beside a
+  paired one, and says what it found. Both of the wizard's waits (the code
+  wait and the completion wait) now end through `meshEndAtTimeout(a, ...)`,
+  which takes `meshCancelLeftRunning(a)`'s fresh read instead of the final
+  poll's reads (the per-poll `last` bookkeeping is gone): a side still running
+  this pairing is canceled; nothing is canceled beside a side that reports it
+  paired; and the read decides the message: both report it paired is the
+  success screen, one paired beside one still running says the pairing is
+  still finishing (one Canary reports it done and the other is still taking
+  the opera key; check both in a minute, and pairing them again would be
+  refused, F136), anything else the wait's own failure text. A Cancel or a new
+  Start during that read ends it: nothing more is sent or shown. Changed on
+  purpose: the F163 test "giving up reads both once more and cancels what is
+  still running this pairing" (a joiner running beside a paired initiator is
+  now spared and said to be still finishing; a final poll that could not read
+  the existing Canary now cancels the new one still running, from the fresh
+  read; poll counts 30 to 31 and 60 to 61) and the pre-F133 test's poll count
+  (30 to 31). Not changed: the five-unreadable-polls paths still say "Try
+  again" whatever their read finds (F321). Host-tested
+  (`privacy_witness_kernel/tests/test_wizard_mesh_pairing.test.js`, 32 cases
+  on the integrated tree: a failed final poll, a joiner running beside a
+  paired initiator and an error-answering Canary, both paired at the read, and
+  a read the user cancels, at both timeouts); not run against a Canary.
+- [ ] **F321 [code] Kernel wizard: the five-unreadable-polls paths invite a
+  retry beside a pairing that is finishing or done.** Since F215 both waits'
+  timeouts say what their fresh read found (`meshEndAtTimeout`: both paired is
+  a success, one paired beside one running is "still finishing"), but the
+  three F200 paths for five unreadable polls in a row still answer
+  `meshCancelLeftRunning`'s "completing" and "paired" with "A Canary became
+  unreachable ... Try again." / "A Canary stopped responding. Try again."; a
+  retry once the new Canary holds the opera key is refused with F136's "leave
+  that opera" advice. Route those paths through the same helper, and change
+  the pinned case "five unreadable polls in the confirm wait cancel nothing
+  beside a side that reports paired" on purpose. From code (#1802).
 - [x] **F216 [code] The PlatformIO dashboard's Bluetooth settings load has an
   always-false guard.** `loadBtSettings()` (`securacv_webui.cpp`) returns
   early on `!data.enabled === undefined`, which is never true, so an error
@@ -9242,7 +9435,7 @@ so — see D2 below.)
   five on the committed dist. The dist is rebuilt in this PR by CI's pinned
   emsdk after this ledger lands; the rebuilt dist must pass the whole probe,
   and it was not run against it here. Not seen on real glass (U1).
-- [ ] **F155 [code+decision] The 800x480 glass's QR card corners reach past
+- [x] **F155 [code+decision] The 800x480 glass's QR card corners reach past
   its 300 px halo.** The dash line's Join card (232 px, 10 px corners) reaches
   159.9 px from the halo's center (163.5 under Heirloom, where the Join stack
   centers the card 5 px above the ring's center), past the ring's 147..150 px
@@ -9253,6 +9446,23 @@ so — see D2 below.)
   Join title and credentials rows. Either accept it or recompose the wide Join
   scene. `test_onboard_layout` prints the reach on wide glass, and neither it
   nor `test_onboard_scenes` holds it there. Found by F84 (#1762).
+  *Done (#1802):* decision (a default for the maintainer to revisit): the wide
+  Join card's corners stay over the ring; nothing drawn changes. Rejected for
+  now: a ring large enough to clear them (about 330 px), which would cross the
+  Join title and credentials rows, and the floor canvas that keeps the join
+  code's 7 px pitch (203 px), which still reaches about 156 px. A recomposed
+  wide Join scene is left for the maintainer. `test_onboard_layout` turns the
+  printed reach into held ceilings on every glass that runs the wide layout
+  (the dash, dash7 and nightstand7 envs at 800x480 and turned to 480x800, at
+  both ladders: 12 runs): the corners may not reach past 159.9 px from the
+  halo's center at the default ladder or 163.5 under Heirloom, nor past the
+  stroke's inner edge by more than 12.9 px or 16.5 (the stroke is 147..150
+  px), both read to 0.1 px, and the reach is printed as held. Proved by
+  mutation of `onboard_layout.h`: a 234 px card fails 24 ceiling checks, and a
+  298 or 296 px `kWideRingD`, which the old test passed whole, fails 12.
+  `onboard_probe.mjs` still prints the corners on the emulated glass and holds
+  nothing there (A110). Host-only; nothing drawn moves and the dist does not
+  move.
 - [x] **F156 [code] A portrait dash runs its onboarding on 480x800 with Join
   rows wider than the panel.** A dash or 7" glass whose saved rotation is
   portrait wears it before the splash and the onboarding
@@ -11125,7 +11335,7 @@ so — see D2 below.)
   §3-§4, `dev_playground_43b.md` and `dev_playground_todo.md` are corrected.
   Host-tested; the ESP32 compiles of dash-rs485 and dash-can are CI's; not
   bench-tested. Found here: F290-F293.
-- [ ] **F290 [code+decision] The playground's CAN station never recovers a
+- [x] **F290 [code+decision] The playground's CAN station never recovers a
   bus-off controller.** Neither transport calls `twai_initiate_recovery` or
   restarts the driver, so a bench that drives the controller bus-off (H/L
   swapped, no termination) fails every later SEND FRAME until reboot.
@@ -11139,7 +11349,56 @@ so — see D2 below.)
   `twai_get_status_info` and `twai_initiate_recovery`, and `can bus-off is not
   recovered` pins today's behavior), and update the activation checklist §3.
   Found by F253 (#1802).
-- [ ] **F291 [code] A Modbus exception reply reads as no reply after the full
+  *Done (#1802):* decision (a default for the maintainer to revisit): the CAN
+  station recovers, with the controller's standard non-blocking bus-off
+  recovery driven from its 100 ms drain, and still transmits only on a user's
+  SEND. `can_bus.cpp` gains `can_recover()`, one step per call: RUNNING is
+  `CAN_OK`; BUS_OFF calls `twai_initiate_recovery()` once per bus-off
+  (`CAN_RECOVERY_STARTED`, then `CAN_RECOVERING` while the controller still
+  reads bus-off; a refused initiate is `CAN_ERR_BUS` and is tried again on the
+  next call); RECOVERING waits (`CAN_RECOVERING`); STOPPED after a recovery it
+  started calls `twai_start()` (`CAN_RESTARTED`), a refused restart is tried
+  again on the next call, and a stop it did not cause is left alone. It logs
+  the lines F253 deleted with `can_loop()`, `[CAN] bus-off - initiating
+  recovery` and `[CAN] recovered - restarted`. The station's drain takes the
+  step after draining, because `twai_start()` clears the RX queue (both IDF
+  versions' headers say so), and its inline path mirrors the same steps; in
+  both builds the station prints `can bus=off recovery=started` and `can
+  bus=on recovered`. A SEND tap the controller refuses while it is bus-off,
+  recovering or recovered but not yet restarted says `can tx=fail bus=off
+  (recovering)` (new `can_bus_off()`, a status read that takes no step, and an
+  inline twin), not "bus quiet? need another node/ack"; the tap takes no
+  recovery step. Rejected: leaving a bus-off controller for a reboot (the
+  item's complaint); recovering from the SEND tap (a tap would then both
+  recover and transmit, and a station nobody taps would stay bus-off); and
+  uninstalling and reinstalling the driver (that brings the controller back
+  without waiting for the bus to be seen free 128 times, the wait ISO 11898
+  sets before a bus-off node rejoins). Kept by default: the once-per-bus-off
+  latch, which would not initiate again for a controller that still read
+  BUS_OFF after an accepted initiate; the IDF's `twai_initiate_recovery()`
+  moves the controller to RECOVERING inside the call, so that state is not
+  reached on the real driver. `test_fieldbus_glue.cpp`'s `can bus-off is not
+  recovered` pin is replaced in all three builds by five scenarios (recovered
+  from the drain with nothing sent until the next tap; a held-up recovery that
+  waits, initiates once per bus-off, and a second bus-off recovered again; a
+  refused restart retried and a stop not its own left alone; a refused
+  initiate tried again; frames already queued logged before the restart, which
+  would lose them), with the tap's line held while BUS_OFF, RECOVERING and
+  recovered-but-not-restarted; the can build adds driver-API scenarios. The
+  stand-in TWAI driver now empties its receive queue in `twai_start()`, as the
+  IDF does, and can refuse an initiate. All recovery scenarios fail on the
+  pre-F290 sources and the tap line on the pre-fix station; 37 mutants are
+  killed (one more, `can_bus_off()` reading the status before `can_begin()`,
+  is equivalent). cppcheck is clean on the three files in four flag sets; the
+  emulator compiles none of them, so the dist does not move.
+  `board_43b_activation_bench.md` §3 and `dev_playground_43b.md` say so,
+  including that a node alone on the bus goes error-passive and never bus-off,
+  so a bench drives bus-off with another node on the bus;
+  `board_capability_map_43b.md`, which still says nothing recovers a bus-off
+  controller, has its replacement handed to the integrator. Host-tested; the
+  ESP32 compile of dash-can is CI's; recovery on a real bus is not
+  bench-tested (U1). Found here: A109 (the Lab's playground sim).
+- [x] **F291 [code] A Modbus exception reply reads as no reply after the full
   window.** `rs485_read_holding` and the playground's inline probe both wait
   for the normal reply length (`read_response_len(count)`, 7 bytes for one
   register) and only then parse, so a 5-byte exception frame (`fn | 0x80`,
@@ -11150,6 +11409,52 @@ so — see D2 below.)
   station say which exception, and extend the exception case in
   `test_fieldbus_glue.cpp` (it pins `reply=none` today). Found by F253
   (#1802).
+  *Done (#1802):* both RS-485 paths stop waiting once a whole exception is in.
+  Decision (a default for the maintainer to revisit): an exception reply
+  returns `ERR_EXCEPTION` as soon as its five CRC-good bytes are in, on both
+  transports' code paths. `modbus_rtu.h` gains `EXCEPTION_LEN` (5) and
+  `exception_complete(frame, len, slave, fn)`: true once the first five bytes
+  are an exception from the expected slave to the expected function (`fn |
+  0x80`) with a good CRC. `rs485_read_holding()` and the playground's inline
+  path wait for the normal reply's length or for that, whichever comes first,
+  look for the exception before parsing (so an exception with more bytes
+  behind it in the same burst is still the exception), and return
+  `ERR_EXCEPTION` with the code `decode_exception()` reads (the driver through
+  a new optional `exception_code` out-parameter, 0 after any other outcome);
+  the station prints `slave=1 exception=<code>` where it printed `reply=none`
+  and clears `last_ok`, keeping the last good value and the reply count. The
+  300 ms window is unchanged. Rejected: parsing after the full window (the old
+  wait, under which a refusal reads as a dead line for 300 ms), a shorter
+  window for every read (it would cut a slow slave's normal reply), and
+  stopping on any five bytes with the exception bit (a corrupted exception,
+  another slave's or one to another function is not this exchange's answer:
+  each still waits the window out and is no reply). A normal reply is never
+  taken for an exception, even one whose first five bytes carry a good CRC; a
+  full-length reply that fails its checks (a bad CRC, another slave's, another
+  function's) is no reply as soon as its seventh byte is in.
+  `test_fieldbus_glue.cpp`'s exception-as-no-reply pin is replaced in all
+  three builds by scenarios for the early return, a cleared `last_ok`, an
+  exception with bytes behind it, five bad exceptions that wait the window
+  out, three bad full-length replies, and a normal reply with a CRC-good head;
+  the rs485 build adds a driver-API scenario. Against the base sources the
+  exception scenario fails in every build and the driver scenario in the rs485
+  build; 16 mutants are killed. `test_modbus_rtu` covers the helper. The
+  station's tile still says "no reply" after an exception (F317). cppcheck is
+  clean on the three files in four flag sets; the emulator compiles none of
+  them, so the dist does not move. `board_43b_activation_bench.md` §2
+  (including when `reply=none` comes) and `dev_playground_43b.md` say so. On
+  the integrated tree the display host suites pass (fieldbus glue in all three
+  builds, Modbus RTU). Host-tested; the ESP32 compile of dash-rs485 is CI's;
+  not bench-tested (a U1 row is handed to the integrator).
+- [ ] **F317 [code] The 4.3B playground's RS485 tile says "no reply" after a
+  Modbus exception.** `playground_ui.cpp`'s row and tile read only `polls`,
+  `replies` and `last_ok`, so a slave that answers with an exception (F291:
+  the console now prints `slave=1 exception=<code>`) still shows "no reply •
+  check A/B", sending a bench to the wiring when the slave refused the
+  register. Keep the last exception code in `Rs485State`
+  (`include/canary/playground/playground.h`), have both station paths set it,
+  show it on the row and tile ("exception 2 • check the register"), and hold
+  it in `test_fieldbus_glue.cpp`'s three builds. Found by F291 (#1802).
 - [ ] **F292 [decision] `CAN_BITRATE_DEFAULT` is read by no code.** It is
   500000 in `firmware/boards/waveshare-esp32s3-lcd43b/pins/pins.h`, but the
   playground's CAN station asks for 500 kbit/s itself on both transports
@@ -13268,6 +13573,14 @@ so — see D2 below.)
   unturned, 12 landscape), and a mutant whose "phone" lines never ink still
   fails, on the join scene's stuck-phone hint. Run in local Chromium on the
   CI-rebuilt dist; not bench-tested.
+- [ ] **A110 [code] The emulator's onboarding probe still prints the wide Join
+  card's corner reach without holding it.**
+  `canary-local/tests/onboard_probe.mjs` (`cardInHalo` in `onboard_glass.mjs`)
+  prints the corners' reach past the 800 px glass's ring, in both
+  orientations, with comments that call F155 open; `test_onboard_layout` now
+  holds 159.9 px (163.5 under Heirloom) and 12.9 (16.5) px past the stroke's
+  inner edge. Hold the same ceilings on the drawn glass and drop the "F155,
+  open" wording. Found by F155 (#1802).
 - [x] **A64 [code] `glass_turn_test.cpp` does not read the turn the HAL
   announces.** `canary-local/emulator/test/glass_turn_test.cpp` counts
   `js_display_ready` calls, but its stand-in drops the fourth argument, so the
@@ -13879,6 +14192,17 @@ so — see D2 below.)
   the page shows them that the ids hold on Home Assistant 2025.10 or later for
   a newly registered entity, or leave the sandbox as it is. Found by HA29
   (#1802).
+- [ ] **A109 [code] The Lab's playground sim prints neither an exception nor a
+  bus-off.** `canary-local/assets/playground-sim.js` and `gen_playground.py`'s
+  RS485 and CAN stimuli model a good read, a quiet bus, a sent frame and a
+  received one; the firmware station now also prints `rs485 slave=1
+  exception=<code>`, `can bus=off recovery=started` / `can bus=on recovered`
+  and `can tx=fail bus=off (recovering)` (F291, F290). Add a stimulus for
+  each, bring `gen_playground.py`'s `rs485_code` / `can_code` snippets (which
+  the generator calls ports of `playground.cpp`) up to the exception stop and
+  the recovery step, and add a `playground.test.js` pin that every PG1 body
+  the firmware station's `say_evt` calls print is one the sim can print. Found
+  by F290 and F291 (#1802).
 - [ ] **A77 [human] Run one real `.deb` self-update on Ubuntu 22.04.** Since
   the 2026-10 cleanup the desktop apps' install docs and release bodies say
   the `.deb` updates itself and asks for a password: tauri-plugin-updater
@@ -15149,7 +15473,7 @@ so — see D2 below.)
   not a real person or benchmark" label. Each fix has a guard pattern in
   `tests/legal-claims.test.mjs`, and `docs/claims-audit-2026-07.md` gained a
   dated status block naming what stays open (W15, W16). (website PR #201)
-- [ ] **W8 [code] IA deferred editorial pass** (`docs/ia-review-2026-07.md`) —
+- [x] **W8 [code] IA deferred editorial pass** (`docs/ia-review-2026-07.md`) —
   three of the four moved (website PR #201). *Availability vocabulary*, done:
   Available / Maker build / Preview / Concept are defined once in the glossary
   (`/glossary#availability`), mapped onto the fleet ladder on `/figures`, and
@@ -15165,7 +15489,19 @@ so — see D2 below.)
   them, one row per move in `docs/ia-homepage-2026-09.md`. Still open, founder
   calls both: the editorial half (W14; the homepage is nine sections, not
   five, until it lands) and "Witness" as the hero noun (W15).
-- [ ] **W9 [code] `render-roadmap.md` quality items** — (a) and (b) landed
+  *Done (website PR #201; found done when wave 19 was planned, recorded in
+  #1802):* the three moves this item owned landed with website PR #201, as its
+  text says: the availability vocabulary (defined once at
+  `/glossary#availability`, held to `store.json` by
+  `tests/availability.test.mjs`), one owner per message, and the homepage
+  reduction's mechanical half (`docs/ia-homepage-2026-09.md`, one row per
+  move). Its two open parts are their own items, both founder calls: the
+  editorial half is W14, and "Witness" as the hero noun is W15. Checked on the
+  website's main at the merge of securacv_website#228:
+  `tests/availability.test.mjs` reads `store.json`, `glossary.html` carries
+  `#availability`, the store's banner says "Walkthrough" (`js/store.js`), and
+  `docs/ia-homepage-2026-09.md` holds the move table and its open human items.
+- [x] **W9 [code] `render-roadmap.md` quality items** — (a) and (b) landed
   (website PR #201): spot-varnish masks on a part-space UV set (the Vision's
   gloss halos are derived from its ring and pipe radii, and a test measures
   their margins on the built geometry) and a micro-wear roughness map on the
@@ -15173,6 +15509,14 @@ so — see D2 below.)
   path tracer (`three-gpu-pathtracer` on `three-mesh-bvh`, lazily imported on
   opt-in) to a WebGPU rewrite. Building it, and judging the micro-wear map on
   a GPU, is W13.
+  *Done (website PR #201; found done when wave 19 was planned, recorded in
+  #1802):* (a) the spot-varnish masks and (b) the micro-wear roughness map are
+  "Shipped" sections of the website's `docs/render-roadmap.md`, and (c) is the
+  recorded decision there ("prefer a WebGL2 path tracer over a WebGPU
+  rewrite": `three-gpu-pathtracer` on `three-mesh-bvh`, lazily imported on
+  opt-in). What remains needs a GPU session and is W13: building that path
+  tracer, and judging the micro-wear map on a GPU. Checked on the website's
+  main at the merge of securacv_website#228.
 - [ ] **W10 [human] Tizen TV package has `REPLACEME` app IDs**
   (`tv/config.xml`; it was `tv/tizen/config.xml` before the manifests moved)
   — needs Samsung Seller Office issuance before any submission. The same
@@ -15193,6 +15537,13 @@ so — see D2 below.)
   `ANTHROPIC_API_KEY` under Settings → Secrets and variables → Actions in both
   repos (and under Dependabot secrets if bot PRs should be reviewed). Until
   then a green "Canary Reviewer" check means nothing was reviewed.
+  *Note (#1802):* the skip's warning has now been seen on real runs. Canary
+  Reviewer run 38454406746 (monorepo, on #1802's branch) and run 38449430527
+  (website), both 2026-10-13, each ran "Check for API key", skipped the
+  reviewer step and annotated "ANTHROPIC_API_KEY not set — skipping the
+  advisory Canary Reviewer"; both checks were green with nothing reviewed. So
+  the code half works on CI, and on 2026-10-13 the secret was still unset in
+  both repos. Still open: the human half above.
 - [x] **W12 [code] Blender hero bake, milestone 2** (W5 landed milestone 1).
   Written up in `docs/render-roadmap.md` ("the hero's baked AO and a page
   opt-in (milestone 2)") and not built: a scripted Cycles-CPU AO bake exported
@@ -15747,7 +16098,7 @@ so — see D2 below.)
 The canonical ledger is `docs/hardware/enclosure/AUDIT_2026_09.md` ("Open —
 major, by theme") — work its themes, then tick here.
 
-- [ ] **C1 [code] Parametric-UX debt, cheapest first** (audit §"Parametric
+- [x] **C1 [code] Parametric-UX debt, cheapest first** (audit §"Parametric
   UX": 705 of 1704 parameters showed no help, 174 of them because written help
   was mechanically discarded) — wave 1 landed (#1703): every shared-help line
   outside the 7" case is split one knob per line (116 knobs on 39 lines in 14
@@ -15764,6 +16115,13 @@ major, by theme") — work its themes, then tick here.
   `HELP_LINE_DEBT`; the rule is `DESIGN_RULES.md` §10. What remains (the 7"
   case's lines, help for the knobs that never had any, ranges, one two-stud
   group name, presets) is C10.
+  *Done (#1703; found done when wave 19 was planned, recorded in #1802):*
+  everything this item does itself landed in wave 1, as its text says, and it
+  hands the rest to C10 by name. On the #1802 tree
+  `scripts/lint_design_lang.py` still fails a line with two knobs and a
+  trailing help, its `HELP_LINE_DEBT` is empty since C10's wave 2 split the 7"
+  case's lines (#1718), the rule is `DESIGN_RULES.md` §10, and the lint
+  passes. What is left of the parametric-UX debt is C10's.
 - [x] **C2 [code] Naming collisions across case files** — done: each of
   `usb_w`, `vm_*`, `skirt_t` and `clip_w` now means one thing, the minority
   meanings renamed at every use site, comments and assert strings included.
@@ -15882,12 +16240,106 @@ major, by theme") — work its themes, then tick here.
   - Knobs without help: 535 → 347 of 1743. The CSG of every touched part
     is byte-identical to the base.
 
-  Still open: the 336 development-case knobs without help, and a
-  maintainer call. The OpenSCAD 2021.01 desktop Customizer makes a slider
-  or dropdown only for a bare bracket comment, so the house `help // [range]`
-  form gives plain boxes there (`DESIGN_RULES.md` §11). The J-box's pigtail
-  `usb_w`/`usb_h` needs a name of its own, and multi-line group headers are
-  still invisible to the Lab's parser.
+  *Wave 3 (#1802):*
+  - The Lab's group headers (C10a): `canary-local/tools/gen_enclosures.py`
+    imports the web builder's own `GROUP_RE`, so the 52 multi-line `/* [Group]
+    ... */` headers in 10 case files group their knobs in the Lab too. A
+    header's continuation lines become the group's note, with only the comment
+    gutter stripped, and are never read as knobs. 335 Lab knobs changed group,
+    333 of them knobs the builder also reads; the WAP's `tol_slide` now sits
+    in "Print tolerances", not "Shell". One group drops out:
+    `canary_s3_touch169.scad`'s empty [Side cluster] header (C22).
+    `scripts/tests/test_enclosure_parsers.py` holds both parsers to one group
+    for all 1726 knobs they share, holds the committed `enclosures.json` to
+    the builder's groups (1723 knobs), and holds `gen_enclosures.py` to that
+    one import as `GROUP_RE`'s only binding. Only `enclosures.json` moved.
+    Decision (maintainer to confirm): one group rule, the builder's, imported
+    rather than copied. Rejected: a Lab-only multi-line matcher, which would
+    be a second rule to drift. The default "stop at the first module" was not
+    taken: it drops 317 Lab entries (230 names), none read by name by any
+    consumer, but it moves `catalog.json`'s `engineering_param_count` for 13
+    products, which this wave kept byte-identical (C21).
+  - The J-box's pass-through (C10b): `canary_jbox.scad`'s `usb_w`/`usb_h`, the
+    slot a pigtail cable runs out through, are now `pigtail_w`/`pigtail_h`
+    with help, and the file's comments call it the pigtail slot.
+    `KNOB_MEANINGS` refuses a pigtail help under `usb_*` and boot clearance
+    under `pigtail_*`. `opt_weep`'s help, which is also its catalog label,
+    still says "USB slot" and moves with the catalog decision below. Decision
+    (maintainer to confirm): a name of its own. Rejected: keeping `usb_w` with
+    a `deviates:` note, since a name with two meanings is what C2 removed. The
+    `DESIGN_RULES.md` §10 row for the new name is handed to the integrator.
+  - Help for the three monorepo-only dev cases (C10c-1): in
+    `canary_field_case.scad`, `canary_jbox.scad` and
+    `canary_bench_fixture.scad`, every knob alone on its line has help read
+    off the geometry that uses it (27), except the field case's `bez_on` (a
+    catalog option whose help would become its label) and the bare `part`
+    selectors. The bench fixture's `mag_h` says no geometry reads it and where
+    the slider's pocket sits. Writing it corrected one comment: the bench
+    fixture's reed channel axis sits `reed_d/2 - 0.3` below the face (the
+    comment said 0.3). The field case's [Screw lobes] header now says 8x
+    inserts, as `lobes()` places (two docs still say six, C23).
+    `scripts/tests/test_lint_design_lang.py`'s `HELP_DEBT` holds the rest
+    shrink-only at 23/12/7: 41 knobs that share a line, and `bez_on`. Decision
+    (maintainer to confirm): these three cases first, held by a shrink-only
+    table. Rejected: invented ranges (the geometry states none).
+  - No geometry moved: the CSG of all 12 part options of the three cases is
+    byte-identical to the base under OpenSCAD 2021.01, and their 24 PNG
+    previews show no change. The package left `catalog.json`, `build.json`,
+    `workshop.json` and `figures.json` byte-identical. On the integrated tree
+    `test_lint_design_lang.py` and `test_enclosure_parsers.py` pass (33).
+    Host-tested; nothing printed.
+
+  Still open: the remaining development-case knobs without help, the three dev
+  cases' 42 among them, whose shared lines must be split, which moves
+  `catalog.json`'s `engineering_param_count` (a verified patch also gives
+  `bez_on` and `opt_weep` their help, and those helps become their catalog
+  labels; decision pending); the Lab stopping at the first module like the
+  builder (C21, which also moves `engineering_param_count`); and the
+  maintainer call on the OpenSCAD 2021.01 desktop Customizer, which shows
+  plain boxes for the house `help // [range]` form (`DESIGN_RULES.md` §11).
+  *Correction to the wave 3 brief:* stopping the Lab parser at the first
+  module drops 317 entries (230 distinct names), not about 1015. The 1015
+  counts every name the old Lab parser read that the builder does not: 317
+  past the first module, 603 expression-valued (derived) assignments before
+  it, and 95 in [Hidden] groups. The C10c-1 counts (33/21/18) include each
+  file's `part` selector, which the house leaves bare; without the selectors
+  the three files had 32/20/17 knobs without help.
+- [ ] **C21 [code+decision] The Lab's knob list is not the builder's.** After
+  C10a's group fix, `canary-local/tools/gen_enclosures.py`'s `parse_scad`
+  still differs from `gen_builder_manifest.parse_scad` in three ways. First,
+  it reads one `name = value;` per line, so 136 knobs the builder reads are
+  missing from `enclosures.json`, all on shared lines (`lip_h = 3.0;  lip_t =
+  1.2;`). Second, it lists the Customizer's [Hidden] groups (95 entries) and
+  expression-valued derived assignments (603 before the first module), which
+  neither the OpenSCAD Customizer nor the builder offers. Third, it reads past
+  the first `module` (317 entries). Each fix moves `catalog.json`'s
+  `engineering_param_count`, which is the decision.
+  `scripts/tests/test_enclosure_parsers.py` would grow a knob-set comparison
+  once the parsers agree. Found by C10a and C10c-1 (#1802).
+- [ ] **C22 [code] The 1.69 case's [Side cluster] header is in the wrong
+  place.** `canary_s3_touch169.scad`'s `/* [Side cluster] ... */` sits
+  directly above `/* [Port / button datums] ... */`, so it holds no knob.
+  `opt_side`, `side_open_h` and `side_open_dy` show under "Port / button
+  datums" in the OpenSCAD Customizer, the builder and, since C10a, the Lab.
+  Before C10a the Lab filed `usb_side` through `side_open_dy` under "Side
+  cluster", which was also wrong. Move the header down to just above
+  `opt_side`, then regenerate `builder_manifest.json` (and its site carry) and
+  `enclosures.json`. Found by C10a (#1802).
+- [ ] **C23 [code] The field case's lobe count in the docs.**
+  `canary_field_case.scad` places eight M3 lobes (`lobes()`), and since #1802
+  its [Screw lobes] header says 8x. `docs/hardware/enclosure/README.md` (the
+  catalog row, "six-lobe clamp") and
+  `docs/hardware/enclosure/field_ratings.md` (the CER-4 row, "6-lobe clamp")
+  still describe the six-lobe layout the eight-lobe one replaced. Change both
+  to eight. Found by C10c-1's review (#1802).
+- [ ] **C24 [code] Long group notes in the Lab's param dump.** Since C10a, the
+  52 multi-line Customizer headers reach `enclosures.json` as group notes, up
+  to 2056 characters (`canary_c3_lcd147.scad`'s "Ventilation"; "USB-A" 1525,
+  "Press dot" 945). `canary-local/assets/enclosure-lab.js`'s `renderParamDump`
+  puts each note in a span inside its group's `<summary>`, so each one is a
+  paragraph on the summary line. Show the note's first sentence in the summary
+  and the full note as the first row inside the details. Found by C10a's
+  review (#1802).
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib
   changed: `DESIGN_RULES.md` §11's "Lid rib proportions" table gives the
