@@ -12,11 +12,13 @@
 // (src/playground/playground.cpp: action_can_send and the loop's drain), which
 // that env compiles through FEATURE_DEVMODE: under FEATURE_CAN the station
 // sends and receives through here, and no other code touches the TWAI
-// controller. Nothing here recovers a controller that has gone bus-off; it
-// stays there until reboot. Host-tested against a stand-in TWAI driver by
-// tests_host/test_fieldbus_glue.cpp. Bench-pending: TX/RX orientation, bit
-// timing, and the terminator jumper are VERIFY-tagged in pins.h until
-// validated on hardware.
+// controller. A controller that has gone bus-off is brought back by
+// can_recover(), one non-blocking step per call from the station's 100 ms
+// drain (F290); it never transmits. Host-tested against a stand-in TWAI
+// driver by tests_host/test_fieldbus_glue.cpp. Bench-pending: TX/RX
+// orientation, bit timing and the terminator jumper are VERIFY-tagged in
+// pins.h until validated on hardware, and bus-off recovery has not yet run
+// on a real bus.
 
 #pragma once
 
@@ -52,6 +54,29 @@ int can_transmit(const can::Frame& f, uint32_t timeout_ms);
 // Receive one frame into `*out`, waiting up to `timeout_ms`. Returns CAN_OK (and
 // fills *out), CAN_ERR_TIMEOUT if the bus was quiet, or another negative code.
 int can_receive(can::Frame* out, uint32_t timeout_ms);
+
+// can_recover() steps that are not failures (CAN_OK is "running").
+enum : int {
+  CAN_RECOVERY_STARTED = 1,  // was bus-off: recovery initiated by this call
+  CAN_RECOVERING = 2,        // recovery under way: waiting for the bus to free
+  CAN_RESTARTED = 3,         // recovery done: restarted by this call, running
+};
+
+// One non-blocking step of the controller's standard bus-off recovery
+// (ISO 11898: after enough transmit errors the controller goes bus-off and
+// neither sends nor receives until it has seen the bus free 128 times):
+//   RUNNING     -> CAN_OK
+//   BUS_OFF     -> twai_initiate_recovery(), once per bus-off ->
+//                  CAN_RECOVERY_STARTED (CAN_RECOVERING after that)
+//   RECOVERING  -> CAN_RECOVERING (wait)
+//   STOPPED     -> after a recovery this driver started, twai_start() ->
+//                  CAN_RESTARTED; a refused restart is CAN_ERR_BUS and is tried
+//                  again on the next call
+// Returns CAN_ERR_NOT_READY before can_begin(), and CAN_ERR_BUS when the status
+// cannot be read, a refused initiate (tried again on the next call), or a stop
+// it did not cause. It never transmits and never waits. The driver logs
+// "[CAN] bus-off - initiating recovery" and "[CAN] recovered - restarted".
+int can_recover();
 
 }  // namespace io
 }  // namespace canary

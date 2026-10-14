@@ -372,9 +372,11 @@ void action_tof_cycle_trip() {
 // reply is in (seven bytes, or the five of a CRC-good exception, which the
 // station names: "slave=1 exception=<code>"), stale bytes drained first;
 // TWAI in normal mode at 500 kbit/s with an accept-all filter, one 0x100 test
-// frame with a 50 ms queue wait, up to 8 frames drained per pass without
-// waiting, and no bus-off recovery (a controller that goes bus-off stays
-// there until reboot). tests_host/
+// frame with a 50 ms queue wait (sent only on a SEND tap), up to 8 frames
+// drained per 100 ms pass without waiting, and after each drain one step of
+// the controller's standard bus-off recovery (initiate once per bus-off, wait
+// while it recovers, restart it once it has: "bus=off recovery=started",
+// "bus=on recovered"). tests_host/
 // test_fieldbus_glue.cpp drives both builds of this file and holds them to
 // that one trace. The driver path adds one console line per bus the first
 // time it comes up ("[RS485] up on A/B ..." / "[CAN] up on H/L ..."), and
@@ -406,7 +408,38 @@ static bool can_begin_once() {
 }
 #endif
 
-// Drain any received CAN frames (non-blocking), logging each. Called from loop.
+// One step of bus-off recovery (F290), after each drain: the controller's
+// standard non-blocking sequence, never a transmit. BUS_OFF: initiate the
+// recovery, once per bus-off. RECOVERING: wait. STOPPED after that recovery:
+// start the controller again. It runs after the drain because twai_start()
+// clears the RX queue, so frames already in it are logged first.
+#if defined(FEATURE_CAN) && FEATURE_CAN
+static void can_keep_running() {
+  const int step = canary::io::can_recover();
+  if (step == canary::io::CAN_RECOVERY_STARTED) say_evt("can", "bus=off recovery=started");
+  if (step == canary::io::CAN_RESTARTED) say_evt("can", "bus=on recovered");
+}
+#else
+static bool s_can_recovering = false;  // a recovery started here, not yet restarted
+static void can_keep_running() {
+  twai_status_info_t st = {};
+  if (twai_get_status_info(&st) != ESP_OK) return;
+  if (st.state == TWAI_STATE_BUS_OFF) {
+    if (!s_can_recovering && twai_initiate_recovery() == ESP_OK) {
+      s_can_recovering = true;
+      say_evt("can", "bus=off recovery=started");
+    }
+  } else if (st.state == TWAI_STATE_STOPPED && s_can_recovering) {
+    if (twai_start() == ESP_OK) {
+      s_can_recovering = false;
+      say_evt("can", "bus=on recovered");
+    }
+  }
+}
+#endif
+
+// Drain any received CAN frames (non-blocking), logging each, then take one
+// recovery step. Called from loop every CAN_DRAIN_MS once the controller is up.
 static void can_drain() {
   if (!g.can.ready) return;
   for (int i = 0; i < 8; i++) {
@@ -430,6 +463,7 @@ static void can_drain() {
     char line[80];
     if (canf::format_frame(f, line, sizeof(line)) > 0) say_evt("can", "rx %s", line);
   }
+  can_keep_running();
 }
 
 void action_rs485_probe() {

@@ -584,22 +584,138 @@ static void can_drain_logs_frames() {
   for (TickType_t t : fake_twai::receive_ticks) CHECK(t == 0);  // never waits
 }
 
-static void can_bus_off_is_not_recovered() {
+// F290: a controller driven bus-off (H/L swapped, no termination, no other
+// node) comes back without a reboot. The station's 100 ms drain takes one step
+// of the controller's standard recovery each pass: BUS_OFF initiates it, once
+// per bus-off; RECOVERING waits; STOPPED after it starts the controller again.
+// At 500 kbit/s a quiet bus frees in a few milliseconds, so the pass after the
+// initiate usually finds the controller STOPPED; the test plays that by moving
+// the stand-in's state, as the controller does on its own. Recovery never
+// transmits: only a SEND tap does. Before F290 nothing initiated a recovery and
+// every later SEND failed until reboot.
+static void can_bus_off_recovers() {
+  pg::action_can_send();  // up, one frame out
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  pg::action_can_send();  // refused while bus-off
+  CHECK(fake_twai::recoveries == 0);  // nothing happens on the tap itself
+  pass();
+  CHECK(fake_twai::recoveries == 1);
+  CHECK(fake_twai::state == TWAI_STATE_RECOVERING);
+  CHECK(fake_twai::starts == 1);
+  fake_twai::state = TWAI_STATE_STOPPED;  // the bus freed: recovery done
+  pass();
+  CHECK(fake_twai::starts == 2);
+  CHECK(fake_twai::state == TWAI_STATE_RUNNING);
+  for (int i = 0; i < 10; i++) pass();
+  CHECK(fake_twai::recoveries == 1 && fake_twai::starts == 2);  // nothing more
+  CHECK(fake_twai::installs == 1 && fake_twai::uninstalls == 0);
+  CHECK(fake_twai::sent.size() == 1);  // recovery sent nothing
+  pg::action_can_send();
+  CHECK(fake_twai::sent.size() == 2);
+  if (fake_twai::sent.size() == 2) expect_test_frame(fake_twai::sent[1]);
+  const auto e = evts();
+  CHECK(e.size() == 5);
+  if (e.size() == 5) {
+    CHECK(e[0] == "can tx id=0x100 dlc=8 ok");
+    CHECK(e[1] == "can tx=fail (bus quiet? need another node/ack)");
+    CHECK(e[2] == "can bus=off recovery=started");
+    CHECK(e[3] == "can bus=on recovered");
+    CHECK(e[4] == "can tx id=0x100 dlc=8 ok");
+  }
+  CHECK(pg::state().can.tx == 2);
+  CHECK(pg::state().can.ready);
+#if defined(FEATURE_CAN) && FEATURE_CAN
+  CHECK(has_line("[CAN] bus-off - initiating recovery"));
+  CHECK(has_line("[CAN] recovered - restarted"));
+  CHECK(lines_starting("[CAN] ") == 3);  // with the bring-up line
+#else
+  CHECK(lines_starting("[CAN] ") == 0);
+#endif
+}
+
+// A recovery the bus holds up waits as long as it takes, initiates once per
+// bus-off however many passes see it, and a later bus-off is recovered again.
+static void can_recovery_waits_and_repeats() {
   pg::action_can_send();
   fake_twai::state = TWAI_STATE_BUS_OFF;
+  pass();
+  CHECK(fake_twai::recoveries == 1);
+  for (int i = 0; i < 20; i++) pass();  // RECOVERING: the bus is not free yet
+  CHECK(fake_twai::recoveries == 1 && fake_twai::starts == 1);
+  pg::action_can_send();  // still refused, still no transmit
+  CHECK(fake_twai::sent.size() == 1);
+  // Even a controller that still reads bus-off after the initiate is not sent
+  // a second one for the same bus-off.
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  for (int i = 0; i < 5; i++) pass();
+  CHECK(fake_twai::recoveries == 1);
+  fake_twai::state = TWAI_STATE_STOPPED;
+  pass();
+  CHECK(fake_twai::starts == 2 && fake_twai::state == TWAI_STATE_RUNNING);
+
+  // A second bus-off, later: a second recovery.
+  for (int i = 0; i < 3; i++) pass();
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  pass();
+  CHECK(fake_twai::recoveries == 2);
+  fake_twai::state = TWAI_STATE_STOPPED;
+  pass();
+  CHECK(fake_twai::starts == 3 && fake_twai::state == TWAI_STATE_RUNNING);
   pg::action_can_send();
-  for (int i = 0; i < 20; i++) pass();
-  pg::action_can_send();
+  CHECK(fake_twai::sent.size() == 2);
   const auto e = evts();
-  CHECK(e.size() == 3);
-  if (e.size() == 3) {
-    CHECK(e[1] == "can tx=fail (bus quiet? need another node/ack)");
-    CHECK(e[2] == "can tx=fail (bus quiet? need another node/ack)");
+  int started = 0, recovered = 0;
+  for (const std::string& l : e) {
+    if (l == "can bus=off recovery=started") started++;
+    if (l == "can bus=on recovered") recovered++;
   }
-  CHECK(fake_twai::recoveries == 0);
-  CHECK(fake_twai::starts == 1);
-  CHECK(fake_twai::state == TWAI_STATE_BUS_OFF);
-  CHECK(pg::state().can.tx == 1);
+  CHECK(started == 2 && recovered == 2);
+  CHECK(!e.empty() && e.back() == "can tx id=0x100 dlc=8 ok");
+}
+
+// A refused restart is tried again on the next pass; a stopped controller this
+// station did not put through a recovery is left as it is.
+static void can_restart_refused_then_retried() {
+  pg::action_can_send();
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  pass();
+  fake_twai::state = TWAI_STATE_STOPPED;
+  fake_twai::start_answer = ESP_FAIL;
+  pass();
+  CHECK(fake_twai::starts == 2 && fake_twai::state == TWAI_STATE_STOPPED);
+  fake_twai::start_answer = ESP_OK;
+  pass();
+  CHECK(fake_twai::starts == 3 && fake_twai::state == TWAI_STATE_RUNNING);
+  CHECK(fake_twai::uninstalls == 0);
+  auto e = evts();
+  int recovered = 0;
+  for (const std::string& l : e) recovered += (l == "can bus=on recovered");
+  CHECK(recovered == 1);
+
+  fake_twai::state = TWAI_STATE_STOPPED;  // stopped, with no bus-off behind it
+  for (int i = 0; i < 5; i++) pass();
+  CHECK(fake_twai::starts == 3 && fake_twai::recoveries == 1);
+  CHECK(fake_twai::state == TWAI_STATE_STOPPED);
+}
+
+// The drain runs before the recovery step: twai_start() clears the RX queue
+// (both IDF versions' headers say so), so frames received before the bus-off
+// are logged in the pass that restarts the controller, ahead of its line.
+static void can_drain_before_restart() {
+  pg::action_can_send();
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  pass();
+  fake_twai::state = TWAI_STATE_STOPPED;
+  fake_twai::inbox.push_back(msg(0x321, false, false, 2, 0x10));
+  Serial.text.clear();
+  pass();
+  const auto e = evts();
+  CHECK(e.size() == 2);
+  if (e.size() == 2) {
+    CHECK(e[0] == "can rx id=0x321 ext=0 rtr=0 dlc=2 data=10 11");
+    CHECK(e[1] == "can bus=on recovered");
+  }
+  CHECK(pg::state().can.rx == 1);
 }
 
 // ── The RS-485 driver's API (dash-rs485 build) ──────────────────────────────
@@ -813,6 +929,48 @@ static void can_driver_receive() {
   fake_twai::installed = false;  // the driver went away under it
   CHECK(io::can_receive(&f, 0) == io::CAN_ERR_BUS);
 }
+
+// F290 at the driver: can_recover()'s steps and return codes.
+static void can_driver_recover() {
+  CHECK(io::can_recover() == io::CAN_ERR_NOT_READY);
+  CHECK(io::can_begin(canf::BITRATE_500K));
+  CHECK(io::can_recover() == io::CAN_OK);
+  CHECK(io::can_recover() == io::CAN_OK);
+  CHECK(fake_twai::recoveries == 0 && fake_twai::starts == 1);
+
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  CHECK(io::can_recover() == io::CAN_RECOVERY_STARTED);
+  CHECK(fake_twai::recoveries == 1 && fake_twai::state == TWAI_STATE_RECOVERING);
+  CHECK(io::can_recover() == io::CAN_RECOVERING);
+  fake_twai::state = TWAI_STATE_BUS_OFF;  // still reads bus-off: no second initiate
+  CHECK(io::can_recover() == io::CAN_RECOVERING);
+  CHECK(fake_twai::recoveries == 1);
+  fake_twai::state = TWAI_STATE_STOPPED;
+  fake_twai::start_answer = ESP_FAIL;
+  CHECK(io::can_recover() == io::CAN_ERR_BUS);  // refused restart, tried again
+  fake_twai::start_answer = ESP_OK;
+  CHECK(io::can_recover() == io::CAN_RESTARTED);
+  CHECK(fake_twai::starts == 3 && fake_twai::state == TWAI_STATE_RUNNING);
+  CHECK(io::can_recover() == io::CAN_OK);
+  CHECK(fake_twai::sent.empty());  // recovery never transmits
+  CHECK(has_line("[CAN] bus-off - initiating recovery"));
+  CHECK(has_line("[CAN] recovered - restarted"));
+  CHECK(lines_starting("[CAN] bus-off") == 1 && lines_starting("[CAN] recovered") == 1);
+
+  fake_twai::state = TWAI_STATE_STOPPED;  // a stop it did not cause
+  CHECK(io::can_recover() == io::CAN_ERR_BUS);
+  CHECK(fake_twai::starts == 3);
+  fake_twai::state = TWAI_STATE_RUNNING;
+  CHECK(io::can_recover() == io::CAN_OK);
+
+  // A second bus-off is a second recovery.
+  fake_twai::state = TWAI_STATE_BUS_OFF;
+  CHECK(io::can_recover() == io::CAN_RECOVERY_STARTED);
+  CHECK(fake_twai::recoveries == 2);
+
+  fake_twai::installed = false;  // status unreadable
+  CHECK(io::can_recover() == io::CAN_ERR_BUS);
+}
 #endif
 
 int main() {
@@ -832,7 +990,10 @@ int main() {
   fails += run("can refused install fails the tap and retries on the next", can_install_refused_then_retried);
   fails += run("can refused start uninstalls and retries", can_start_refused_uninstalls);
   fails += run("can drain: eight frames a pass, unpacked and logged", can_drain_logs_frames);
-  fails += run("can bus-off is not recovered", can_bus_off_is_not_recovered);
+  fails += run("can bus-off is recovered from the drain, sending nothing", can_bus_off_recovers);
+  fails += run("can recovery waits, initiates once per bus-off, repeats", can_recovery_waits_and_repeats);
+  fails += run("can refused restart is retried; a stop not ours is left", can_restart_refused_then_retried);
+  fails += run("can drain logs queued frames before the restart", can_drain_before_restart);
 #if defined(FEATURE_RS485) && FEATURE_RS485
   fails += run("rs485 driver refuses before begin", rs485_driver_refuses_before_begin);
   fails += run("rs485 driver begin is idempotent", rs485_driver_begin);
@@ -850,6 +1011,7 @@ int main() {
   fails += run("can driver 1M preset", can_driver_1m);
   fails += run("can driver transmit packs frames and maps results", can_driver_transmit);
   fails += run("can driver receive unpacks frames and maps results", can_driver_receive);
+  fails += run("can driver recover steps a bus-off back to running", can_driver_recover);
 #endif
   if (fails) {
     std::printf("%d FIELDBUS GLUE SCENARIO(S) FAILED (%s)\n", fails, BUILD_NAME);

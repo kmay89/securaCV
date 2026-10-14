@@ -22,6 +22,9 @@ namespace io {
 
 namespace {
 bool s_ready = false;
+// A bus-off recovery this driver initiated that has not been restarted yet:
+// it makes the initiate once per bus-off and the restart only after it.
+bool s_recovering = false;
 
 // Map a standard ISO 11898 bit rate to the matching TWAI timing preset. Returns
 // false for anything without a preset, so can_begin() refuses to guess.
@@ -109,6 +112,31 @@ int can_receive(can::Frame* out, uint32_t timeout_ms) {
   if (r != ESP_OK) return CAN_ERR_BUS;
   *out = from_twai(m);
   return CAN_OK;
+}
+
+int can_recover() {
+  if (!s_ready) return CAN_ERR_NOT_READY;
+  twai_status_info_t status;
+  if (twai_get_status_info(&status) != ESP_OK) return CAN_ERR_BUS;
+  switch (status.state) {
+    case TWAI_STATE_RUNNING:
+      return CAN_OK;
+    case TWAI_STATE_BUS_OFF:
+      if (s_recovering) return CAN_RECOVERING;
+      if (twai_initiate_recovery() != ESP_OK) return CAN_ERR_BUS;
+      s_recovering = true;
+      log_line("CAN", "bus-off - initiating recovery");
+      return CAN_RECOVERY_STARTED;
+    case TWAI_STATE_RECOVERING:
+      return CAN_RECOVERING;
+    case TWAI_STATE_STOPPED:
+      if (!s_recovering || twai_start() != ESP_OK) return CAN_ERR_BUS;
+      s_recovering = false;
+      log_line("CAN", "recovered - restarted");
+      return CAN_RESTARTED;
+    default:
+      return CAN_ERR_BUS;
+  }
 }
 
 }  // namespace io
