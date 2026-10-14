@@ -656,6 +656,50 @@ void test_one_frame_dropout_signs_nothing() {
     std::printf("PASS test_one_frame_dropout_signs_nothing\n");
 }
 
+// The bucket moves only on a frame whose presence flag names a target. The
+// decoder can emit a count beside a cleared flag: a TARGET_COUNT frame that
+// lands after PEOPLE_EXIST(0) and before the next PEOPLE_EXIST(1) carries
+// the radar's count with has_target still false. While Present that frame
+// is a no-target frame like any other: it keeps the last bucket and signs
+// nothing, and if no target returns the clear carries the zero, so the room
+// is never signed as holding 2+ by a frame in which the radar says nobody
+// is there.
+void test_a_count_beside_a_cleared_flag_moves_nothing() {
+    PresenceConfig cfg;
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    uint32_t t = enter_with_one(w, p, 1000);
+    const size_t records = w.records.size(), rows = w.rows.size();
+
+    t += 100;
+    PresenceEvent e = w.drive(decode_one(p, frame_people(false)), t);
+    assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    const uint32_t gone = t;
+    t += 50;
+    const Frame stray = decode_one(p, frame_count(2));
+    assert(!stray.has_target && stray.target_count == 2);   // what the decoder emits
+    e = w.drive(stray, t);
+    assert(!e.state_changed && !e.count_changed);
+    assert(fsm.state() == Presence::Present && fsm.count() == CountBucket::One);
+    assert(w.records.size() == records && w.rows.size() == rows);
+
+    // No target returns: the clear timeout runs from the PEOPLE_EXIST(0)
+    // frame, and the tick that turns Clear carries the zero.
+    for (t = gone + 100; t < gone + cfg.clear_timeout_ms; t += 100) {
+        e = w.drive(decode_one(p, frame_people(false)), t);
+        assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    }
+    e = w.drive(decode_one(p, frame_people(false)), t);
+    assert(e.state_changed && e.state == Presence::Clear && e.count == CountBucket::Zero);
+    assert(w.records.size() == records + 1);
+    assert(rec_eq(w.records.back(), "presence_cleared", Presence::Clear, CountBucket::Zero));
+    for (const Record& r : w.records) assert(std::strcmp(r.event, "occupancy_changed") != 0);
+    assert(w.contradicted == 0);
+    std::printf("PASS test_a_count_beside_a_cleared_flag_moves_nothing\n");
+}
+
 // While Clear (or Unknown) the count reads Zero, through the whole Present
 // debounce: no state row counts an occupant beside presence "clear" (the old
 // count followed the first target frame and dirtied a Clear row counting
@@ -751,10 +795,13 @@ void test_stall_drops_the_count() {
 // CountBucket::One)`, so VitalsFSM now sees the debounced count. Decided and
 // pinned here (F131): a held One on a no-target frame inside the clear
 // timeout is still single_target, so a held lock keeps reporting its last
-// BPMs on that tick and an acquiring run is not restarted by a one-frame
-// dropout; the tick that turns Clear zeroes the count and suppresses the
-// BPMs at once. During the Present debounce the count is Zero, so vitals
-// cannot start acquiring before Present is earned.
+// BPMs on that tick, and the presence tick itself no longer restarts an
+// acquiring run; the tick that turns Clear zeroes the count and suppresses
+// the BPMs at once. During the Present debounce the count is Zero, so vitals
+// cannot start acquiring before Present is earned. A one-frame dropout still
+// restarts an acquiring run on the real wire, by another road: the decoder
+// zeroes both rates with the no-target frame, so the first vitals frame after
+// it is implausible (test_vitals_dropout_still_restarts_an_acquiring_run).
 void test_vitals_gate_sees_the_debounced_count() {
     PresenceConfig pcfg;   // 300 debounce, 1500 clear
     VitalsConfig vcfg;     // 4000 confirm, 6000 lost
@@ -820,6 +867,77 @@ void test_vitals_gate_sees_the_debounced_count() {
     assert(!k.vev.bpm_valid && k.vev.breath_bpm == 0 && k.vev.heart_bpm == 0);
     assert(vitals.lock() == VitalsLock::Locked);
     std::printf("PASS test_vitals_gate_sees_the_debounced_count\n");
+}
+
+// Pinned, not changed, by F131: a one-frame dropout during an acquiring run
+// still restarts the run on the real wire. The held One keeps the presence
+// tick from restarting it (single_target stays true on the no-target frame),
+// but the decoder zeroes both rates with PEOPLE_EXIST(0), so the first vitals
+// frame after the return carries one rate at 0, VitalsFSM finds it
+// implausible and the run starts again at the next plausible pair. The lock
+// lands lock_confirm_ms after that pair, not after the first one.
+void test_vitals_dropout_still_restarts_an_acquiring_run() {
+    PresenceConfig pcfg;   // 300 debounce, 1500 clear
+    VitalsConfig vcfg;     // 4000 confirm, 6000 lost
+    PresenceFSM presence(pcfg);
+    VitalsFSM vitals(vcfg);
+    FrameParser p;
+
+    struct Tick { PresenceEvent pev; VitalsEvent vev; };
+    auto drive = [&](const Frame& f, uint32_t t) {
+        Tick k;
+        k.pev = presence.tick(f, t);
+        const bool single_target = (k.pev.count == CountBucket::One);   // main.cpp's gate
+        k.vev = vitals.tick(f, single_target, t);
+        return k;
+    };
+    auto pair = [&](uint32_t t) {
+        (void)drive(decode_one(p, frame_breath(16.0f)), t);
+        return drive(decode_one(p, frame_heart(70.0f)), t);
+    };
+
+    uint32_t t = 1000;
+    presence.reset(t);
+    vitals.reset(t);
+    (void)drive(decode_one(p, frame_people(true)), t);
+    (void)drive(decode_one(p, frame_count(1)), t + 50);
+    (void)drive(decode_one(p, frame_people(true)), t + pcfg.present_debounce_ms);
+    assert(presence.state() == Presence::Present && presence.count() == CountBucket::One);
+
+    // The run starts at the first pair seen while Present.
+    const uint32_t start = t + pcfg.present_debounce_ms + 100;
+    (void)pair(start);
+    (void)pair(start + 1000);
+    assert(vitals.lock() != VitalsLock::Locked);
+
+    // One frame of no target: the presence FSM holds One, so the presence
+    // tick leaves the run alone.
+    Tick k = drive(decode_one(p, frame_people(false)), start + 1500);
+    assert(presence.state() == Presence::Present && k.pev.count == CountBucket::One);
+    (void)drive(decode_one(p, frame_people(true)), start + 1600);
+    (void)drive(decode_one(p, frame_count(1)), start + 1600);
+
+    // The vitals resume: the breath frame's aggregate still carries the heart
+    // rate the dropout zeroed, so it is implausible and the run restarts.
+    const uint32_t resume = start + 1750;
+    const Frame half = decode_one(p, frame_breath(16.0f));
+    assert(half.kind == FrameKind::Vitals && half.breath_rate == 16 && half.heart_rate == 0);
+    k = drive(half, resume);
+    assert(k.pev.count == CountBucket::One && !k.vev.bpm_valid);
+    k = drive(decode_one(p, frame_heart(70.0f)), resume);   // the restarted run's first pair
+    assert(vitals.lock() != VitalsLock::Locked);
+
+    // Past where the unbroken run would have locked (start + lock_confirm_ms):
+    // still acquiring. lock_confirm_ms after the resume: locked.
+    for (t = resume + 1000; t < resume + vcfg.lock_confirm_ms; t += 1000) {
+        k = pair(t);
+        assert(vitals.lock() != VitalsLock::Locked && !k.vev.bpm_valid);
+    }
+    assert(t - 1000 >= start + vcfg.lock_confirm_ms);
+    k = pair(t);
+    assert(vitals.lock() == VitalsLock::Locked && k.vev.bpm_valid);
+    assert(k.vev.breath_bpm == 16 && k.vev.heart_bpm == 70);
+    std::printf("PASS test_vitals_dropout_still_restarts_an_acquiring_run\n");
 }
 
 void test_vitals_fsm_integration() {
@@ -956,10 +1074,12 @@ int main() {
     test_presence_fsm_stall_recovery_never_reports_clear_with_a_target();
     test_emptying_room_signs_presence_cleared_only();
     test_one_frame_dropout_signs_nothing();
+    test_a_count_beside_a_cleared_flag_moves_nothing();
     test_no_occupant_counted_while_clear_during_debounce();
     test_stall_drops_the_count();
 #ifdef CANARY_SENSE_VITALS
     test_vitals_gate_sees_the_debounced_count();
+    test_vitals_dropout_still_restarts_an_acquiring_run();
     test_vitals_fsm_integration();
     test_vitals_lock_survives_interleaved_presence();
     test_vitals_ambiguity_resets_acquiring_run();

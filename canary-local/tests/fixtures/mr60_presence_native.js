@@ -173,6 +173,11 @@ function traces(cfg) {
     // two visits: the second returns to a bucket the first visit had moved to
     revisit: [{ reset: 0 }, off(10), ...enter(1000), on(1500, 2), ...every(1600, 1600 + C, 100, off),
       off(1600 + C), ...enter(4000), on(4500, 2), on(4600, 1)],
+    // a count beside a cleared flag: the radar's TARGET_COUNT frame lands
+    // after PEOPLE_EXIST(0), so the decoder emits the count with has_target
+    // false; it moves no bucket, and no target returns before the clear
+    stray: [{ reset: 0 }, off(10), ...enter(1000), off(1500), { t: 1550, target: false, count: 2, cm: 0 },
+      ...every(1600, 1500 + C, 100, off), off(1500 + C), off(1600 + C)],
   };
 }
 

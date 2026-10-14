@@ -125,9 +125,11 @@ PresenceEvent PresenceFSM::tick(const Frame& frame, uint32_t now_ms) {
     // The count follows the DEBOUNCED state (sweep F131), not each frame:
     // Zero unless Present. While Present a frame that names a count updates
     // the bucket, and a frame that names none keeps the last one — a
-    // no-target frame inside the clear timeout, and a target frame whose
-    // count is 0, which is what the decoder emits after a no-target frame
-    // zeroed its aggregate and before the radar's count frame lands. So a
+    // no-target frame inside the clear timeout, whatever count it carries
+    // (a TARGET_COUNT frame decoded after PEOPLE_EXIST(0) holds the radar's
+    // count beside a cleared flag), and a target frame whose count is 0,
+    // which is what the decoder emits after a no-target frame zeroed its
+    // aggregate and before the radar's count frame lands. So a
     // one-frame dropout moves nothing, an emptying room keeps its count until
     // the tick that turns Clear (which then carries Zero), and no Clear row
     // ever counts an occupant during the Present debounce. A held count does
