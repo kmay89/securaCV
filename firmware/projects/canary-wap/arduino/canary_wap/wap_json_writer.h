@@ -226,12 +226,12 @@ template <typename At>
 inline int listed_by_shown(const char* posted, int count, At at) {
   if (posted == nullptr) return -1;
   for (int i = 0; i < count; ++i) {
-    const char* raw = at(i);
-    if (raw != nullptr && strcmp(raw, posted) == 0) return i;
+    const char* listed = at(i);
+    if (listed != nullptr && strcmp(listed, posted) == 0) return i;
   }
   for (int i = 0; i < count; ++i) {
-    const char* raw = at(i);
-    if (raw != nullptr && shows_as(raw, posted)) return i;
+    const char* listed = at(i);
+    if (listed != nullptr && shows_as(listed, posted)) return i;
   }
   return -1;
 }
