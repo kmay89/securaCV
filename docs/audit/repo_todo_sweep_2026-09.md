@@ -1182,12 +1182,36 @@ so — see D2 below.)
   and its parent, "Simple status language", are ticked (#1704): the strip
   is CI-compiled (the Arduino CLI and PlatformIO canary-wap builds), not yet
   seen on a device, and its label wording is still maintainer to confirm.
-  Still open: the pinning box, which needs the WAP's Arduino-CLI CI rows to
-  pin the core (a maintainer release decision, `firmware/PLATFORMS.md`); the
-  four boxes that are their own change, now F34; and the U1 / human rest —
+  Still open: the three F34 boxes that remain (see F34) and the U1 / human
+  rest —
   the under-10-minute unbox and the Docker + Frigate end-to-end run (the two
   acceptance criteria still unmet), the per-env boot-time budget and a live
   broker-down run.
+  *Partly done (#1802), the pinning box:* the WAP's release rows
+  (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
+  `csi_module_disable_matrix.yml`) pass `core-version: "3.3.8"`, the
+  sketch.yaml pin and `platform_core3`'s core, so a release's Arduino-CLI WAP
+  build (a release builds the WAP through Arduino-CLI only) rides the core the
+  PR's PlatformIO `canary-wap-*` builds already use. The two release jobs
+  install it with `exclusive-core: "true"`: they install the display's 2.0.17
+  and 3.3.10 later in the same job, and should a step ever restore another
+  core's cache into `~/.arduino15` ahead of the WAP row, the two releases
+  would sit side by side and an unversioned FQBN would take the newer
+  (RELEASE_LESSONS 2026-07-29 (k)); today the WAP row is each job's first
+  install. `flasher-release.yml` reads its pin from the dispatch ref, so a
+  refresh of an older tag builds that tag's WAP image on today's pin, not on
+  the core its own release used. `firmware.yml`'s PR row keeps floating on the
+  action's weekly "latest" as the early warning for the next core, so a cut
+  release can differ from its PR build's core. Decision (maintainer to
+  confirm), recorded in `firmware/PLATFORMS.md` with what was rejected
+  (pinning the PR row too, which loses the warning; leaving every row on
+  latest, which builds a release on whatever core the action resolved that
+  week). `ENTERPRISE_READINESS_TODO.md`'s pinning box and its parent are
+  ticked; `test_gen_firmware_sbom.py` holds each WAP row to its side of the
+  split, and the SBOM lists the four rows under arduino-esp32@3.3.8. The
+  libraries stay unversioned in rows and profile. Checked here by actionlint
+  and the SBOM; the release rows compile only on dispatch or tag, and the
+  pinned core resolves only in CI. A cache cost the pin exposes is CI19.
 - [ ] **F22 [code+human] canary-sentinel is Phase 0** — Phase 1a landed
   (#1703), compile-gated in CI and NOT released: canary-sense's
   network/witness path carried and pinned by `check_sentinel_net_sync.sh`
@@ -1327,6 +1351,47 @@ so — see D2 below.)
   firmware-side MQTT contract fixture (the WAP's `csi_mqtt.cpp` discovery /
   retained templates checked against the HA parsers in pytest, with QoS
   written down as the delivery bound).
+  *Partly done (#1802), the backend audit trail:*
+  `docs/security/backend_audit.md` has one row per backend module in
+  `src/detect/backends/` (the motion-only `cpu` and `stub` backends, their
+  shared `motion.rs` engine, and `tract` behind `backend-tract`, which
+  `detect-eval` also enables), each listing the build crates the module names
+  and whether any of them builds native code, from a source reading: nothing
+  ran on a camera, and the tract crate tree was read from Cargo.lock only.
+  `scripts/tests/test_backend_feature_gates.py` (unittest, in `lint.yml`'s
+  `scripts/tests` discover; 37 cases) is driven from `mod.rs`: each `mod
+  name;` resolves to `name.rs` or `name/mod.rs`, and every `.rs` under the
+  module's directory is read. It fails a backend that names an optional crate,
+  or a crate whose `Cargo.lock` tree holds `cc`, `cmake`, `bindgen`,
+  `pkg-config` or `vcpkg`, without a `cfg(feature)` on its `mod` item or file
+  (and one gated on a feature that does not pull its optional crate in); a
+  default feature set that enables a backend's gate or optional crate
+  (transitively); a backend with no row, a stale row, or a row whose feature
+  cell disagrees, whose "Crates it names" cell does not list exactly the
+  crates the module names, or whose "Native code" cell says none for a native
+  one; a file no declared module owns, or a declared module with no file; and
+  `mod.rs` naming an optional or native crate itself. It refuses what it
+  cannot read: an `any(...)` or bare `not(...)` gate, an undeclared feature, a
+  `#[path]` or `cfg_attr` on a module, `include!`, an inline module in
+  `mod.rs`, a missing `Cargo.lock` or a crate it does not list. Either gate
+  site alone (the `mod` item or the file's `#![cfg]`) is accepted, as in Rust,
+  so dropping one of tract's two is caught by the tree-facts case rather than
+  by the rule. Decision (maintainer to confirm): a static Python test, not the
+  `cargo test` this item named; the kernel's crates are not fetchable
+  everywhere the check should run, the property lives in the source text and
+  the lock, and `rust.yml` keeps compiling the default and `backend-tract`
+  sets. Second decision (maintainer to confirm): "non-pure-Rust" is read off
+  `Cargo.lock` as above, for optional and required crates alike (a backend
+  calling `rusqlite`, which builds bundled SQLCipher, needs a gate); rejected:
+  "needs an optional crate" alone, reading each crate's source language (no
+  crate source offline), and counting every `-sys` crate (`linux-raw-sys` is
+  pure Rust); the lock reading cannot see prebuilt native code, or a build
+  script that runs a compiler with none of those tools in its tree. It passes
+  on the old tree, so it is proven by mutation: 30 cases plant each break on
+  copies of the real inputs, and thirteen mutations of the checker each fail a
+  case. `ENTERPRISE_READINESS_TODO.md`'s box is ticked. Still open in F34: the
+  factory-reset and setup-preset decisions and the MQTT contract fixture.
+  Found here: A102 (the tract model is not hashed at load).
 - [x] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
   loop-task SD read bridge `docs/design/witness_history_bridge.md` specifies
   over F26's walker: one outstanding request (a second gets
@@ -9777,7 +9842,7 @@ so — see D2 below.)
   F185 (no tail drawn) is not rendered here. Natively on a 64-bit host, not an
   ESP32; not bench-tested. The emulator dist does not move. Found here: A82
   (the LVGL 8.4 scripts' temporary build directories).
-- [ ] **F247 [code+decision] The PlatformIO LVGL 9 envs float past the release
+- [x] **F247 [code+decision] The PlatformIO LVGL 9 envs float past the release
   CI renders.** `canary-display.ini` asks for `lvgl/lvgl@^9.5.0` in the dash
   env (dash7 and nightstand7 inherit it) and in nightstand-c6; a caret admits
   any 9.x, and v9.6.0 is tagged, so those three releases (built by `pio run`)
@@ -9790,6 +9855,29 @@ so — see D2 below.)
   stop (exit 2) on a bump until they learn the new layout. Pin the PlatformIO
   rows exactly (9.5.0, as `sketch.yaml` does) or render both releases. Found
   by F225 (#1762).
+  *Done (#1802):* both PlatformIO LVGL 9 rows, `[env:canary-display-dash]`
+  (dash7 and nightstand7 inherit it) and `[canary_display_c6_core3]`
+  (nightstand-c6's base), ask for exactly `lvgl/lvgl@9.5.0`, as sketch.yaml
+  pins; the `^8.4.0` rows are unchanged. `glass_turn_lvgl9.sh` used to require
+  the caret; it now requires the exact pin in both rows and refuses any other
+  spelling (a caret, another range, a bare or spaced row, a second row beside
+  the exact one, a missing row) with exit 2, naming the row and what it asks
+  for. `glass_turn_lvgl9.test.js` holds both rows to the pin, reads every
+  `lib_deps` entry in the .ini that names LVGL in any spelling (with or
+  without the owner, a range, a git URL) and accepts only an 8.x row or
+  exactly `lvgl/lvgl@9.5.0`, and runs the script's env checks on a copy of the
+  files they read: the exact pins reach the library, and a caret, a bare name,
+  a spaced spec or a second row planted in either row stops the script there.
+  The case fails on the old .ini, on the old script, on a script whose row
+  grep sees only `lvgl/lvgl@`, and on a third env asking for `lvgl@9.6.0`. The
+  script passed end to end on the package's tree against LVGL 9.5.0 (dash 169
+  checks, nightstand-c6 25, the splash tail). The SBOM records
+  `lib:lvgl/lvgl@9.5.0` as an exact pin. Decision (maintainer to confirm): pin
+  exactly. Rejected: rendering both 9.5 and 9.6 (a second LVGL build per run,
+  and 9.6 moves `lv_version.h` and `lv_draw_sw_utils.c`, which the harness
+  cannot read yet). A move to 9.6 is one bump of sketch.yaml, both rows and
+  the harness together. What `pio run` resolves is proven only by CI's
+  PlatformIO builds. The emulator dist does not move.
 - [x] **F248 [code] nightstand-c6's LVGL 9.5 path is rendered by no check.**
   `glass_turn_lvgl9.sh` builds the dash config only; the C6 nightstand
   compiles `lvgl_port.cpp`'s 9.x branch as the nightstand flavor (a lean
@@ -10269,7 +10357,7 @@ so — see D2 below.)
   `dwell_ended` and `presence_ended` starts a second dwell in the same visit
   (F186, found by the review, as old as the FSM). Host-tested, compile-tested
   by CI, not bench-tested. Found here: F182 and F186.
-- [ ] **F131 [code+decision] The Sense count follows every radar frame, so a
+- [x] **F131 [code+decision] The Sense count follows every radar frame, so a
   room that empties records an `occupancy_changed` to 0 while still
   Present.** `mr60_presence.cpp` sets `count_` from each presence frame
   (`has_target ? bucket_of(...) : Zero`) while the state waits out its
@@ -10285,6 +10373,83 @@ so — see D2 below.)
   the debounced state; the Lab's radar lab keeps the count until Clear and its
   MQTT note names the omission. A firmware change: host-testable against
   `mr60_presence.cpp`, compile-tested by CI. Found by A30's review (#1762).
+  *Done (#1802):* decided that the occupancy count follows the debounced
+  presence state. `mr60_presence.cpp` reads the bucket as Zero unless the
+  state is Present; while Present a frame that names a count updates it and a
+  frame that names none keeps it: a no-target frame inside the clear timeout,
+  whatever count it carries (a TARGET_COUNT frame decoded after
+  PEOPLE_EXIST(0) holds the radar's count beside a cleared flag), and a target
+  frame whose count is 0, which is what the decoder emits after a no-target
+  frame zeroed its aggregate and before the radar's count frame lands (without
+  that, a one-frame dropout still signed two occupancy events on the real
+  wire). The tick that turns Clear, or stalls, zeroes the count in the same
+  tick, and a tick that changes the state carries its count and reports
+  `count_changed` false, so `presence_detected` carries the bucket Present was
+  entered with, `presence_cleared` carries the zero, and canary-sense
+  `main.cpp` (its `occupancy_changed` gate is `state() == Present`) needs no
+  change: no `occupancy_changed` to 0 is signed while Present, and entering
+  Present signs `presence_detected` alone. Range still follows each frame.
+  Rejected: keeping per-frame counting and gating the record in `main.cpp`
+  (the state row and the heartbeat would still count an occupant while Clear
+  during the debounce), and a truthful `count_changed` on transition ticks
+  (with Zero until Present, every entry would sign `presence_detected` and
+  `occupancy_changed` together). The vitals gate (`single_target = (pev.count
+  == CountBucket::One)`) now sees the debounced count, decided and pinned: a
+  held One on a no-target frame inside the clear timeout is still
+  single_target, so a held lock keeps reporting its last BPMs on those ticks
+  (for up to the 1.5 s clear timeout after the radar's last target frame), and
+  the presence tick itself no longer restarts an acquiring run. A one-frame
+  dropout still restarts an acquiring run on the real wire, by another road:
+  the decoder zeroes both rates with the no-target frame, so the first vitals
+  frame after it is implausible and the lock lands `lock_confirm_ms` after the
+  resumed pair, as before. The Clear tick suppresses the BPMs at once while
+  the lock rides out `lost_ms` as before, and nothing acquires during the
+  Present debounce, so a lock lands at least `lock_confirm_ms` after Present
+  rather than after the first target frame. Rejected: feeding the vitals the
+  raw frame's count, which needs a `main.cpp` change and flaps `bpm_valid` on
+  the dropout the rule exists to absorb. For the maintainer: a held count does
+  not decay while Present (F312); Present can still read 0 when the radar's
+  count frame never lands (the 2026-07 audit's unverified `TARGET_COUNT`), as
+  before; and Home Assistant's Occupants sensor reads 0 for one debounce (300
+  ms) on entry, while the Presence (occupancy) sensor is unchanged. The Lab's
+  two ports keep the same rule: `sense-sim.js` (the Sense Lab and the radar
+  dev bench) and `sense-ui.js` (the radar lab), whose band now follows each
+  frame as the firmware's does and whose publish gate is `drive_fsms`' own (it
+  used to skip a second visit's move back to a bucket an earlier visit had
+  published). `firmware/tests_host/test_mr60_uart.cpp` drives the FSM the way
+  `drive_fsms` signs: an emptying room signs `presence_cleared` only; a
+  one-frame dropout, its count-0 return frame included, signs nothing; a count
+  beside a cleared flag moves nothing; no row counts an occupant while Clear
+  during the debounce; a stall drops the count in its own tick; the vitals
+  gate sees the debounced count. Each fails on the old FSM, and every mutant
+  of the rule the build and its reviews ran is killed by one of them, the
+  `has_target` half of the guard included. A seventh case pins the unchanged
+  decoder road by which a dropout still restarts an acquiring vitals run.
+  `canary-local/tests/fixtures/mr60_presence_native.js` builds
+  `mr60_presence.cpp` with the host's g++ beside a trace driver that signs by
+  `main.cpp`'s rule (its gate lines held verbatim), and `sense.test.js` and
+  `senselab.test.js` play six traces through the firmware and each port and
+  compare every tick (state, count, band, both change flags, stall, and the
+  Sense Lab pipeline's records); both fail on the old ports and on each port's
+  `has_target` mutant. `gen_sense.py` pins the new count lines; the MQTT pane
+  note no longer names the `occupancy_changed` to 0 as a step the lab leaves
+  out, and names the one it still leaves out (the `presence_cleared` the
+  device records when the radar's first frame finds the room empty, at boot
+  and after a stall, A106), held by `sense.test.js` to `main.cpp` and
+  `sense-ui.js`; `sense.json` regenerated, `senselab.json` unchanged. No dist
+  moves (`build.sh` compiles no Sense code). On the integrated tree both MR60
+  builds pass and the two node suites pass 65 of 65. Host-tested,
+  compile-tested by CI, not bench-tested. Found here: F312, A106, A107.
+- [ ] **F312 [decision] Whether the Sense's held occupancy count should decay
+  while Present.** Since F131 a frame that names no count keeps the bucket
+  while Present, so a room that keeps reporting a target whose count frames
+  stop arriving (or arrive as 0) holds its last bucket, 2+ included, until the
+  clear timeout or a stall; and Present entered on a target frame whose count
+  is still 0 reads 0 occupants until a count frame lands (the 2026-07 audit's
+  unverified `TARGET_COUNT`). Options: keep holding (today), decay a held 2+
+  to 1 after a window, or read One whenever Present names no count. A bench
+  capture of the MR60's real frame order settles which matters. Found by F131
+  (#1802).
 - [x] **F181 [code] Discovery's device object truncates for long device ids,
   which makes every entity's config invalid.** `publish_discovery` builds
   `devObj` (256 bytes in canary-vision and canary-sense, 384 in
@@ -10325,7 +10490,7 @@ so — see D2 below.)
   formatting the real format strings and by the compile-time assert on the
   host, not on a device; the three firmware compiles are CI's; not
   bench-tested. Found here: F203.
-- [ ] **F182 [code+decision] canary-vision's flavor config names interaction
+- [x] **F182 [code+decision] canary-vision's flavor config names interaction
   settings nothing reads.** `firmware/configs/canary-vision/default/config.h`
   defines `CONFIG_DWELL_END_GRACE_MS`,
   `CONFIG_INTERACTION_AFTER_LEAVE_WINDOW_MS` and `CONFIG_ZONE_INTERACTION_MS`
@@ -10335,6 +10500,67 @@ so — see D2 below.)
   have a reader, `gen_flash.py`, and those seed values duplicate the project's
   too). Decide which file owns them, then wire the project constants to the
   flavor macros or drop the dead ones. Found by F154 (#1762).
+  *Done (#1802):* decided that the project's own headers own every value the
+  flavor file named: `firmware/projects/canary-vision/include/canary/config.h`
+  (identity, detection and dwell defaults, voxel grid, frame size, timing,
+  MQTT buffer, discovery prefix) and `include/canary/topics.h` (the topic
+  patterns); `firmware/configs/canary-vision/default/config.h` keeps, and
+  owns, only the `FEATURE_*` flags and `CV_WATCHDOG_TIMEOUT_SEC`, beside five
+  seeds that tools read there. Seventeen `CONFIG_*` macros nothing read are
+  deleted from it: three of the four identity strings (`CONFIG_DEVICE_ID`,
+  `CONFIG_MANUFACTURER`, `CONFIG_MODEL`), `CONFIG_DWELL_END_GRACE_MS`,
+  `CONFIG_INTERACTION_AFTER_LEAVE_WINDOW_MS`, `CONFIG_ZONE_INTERACTION_MS`,
+  the voxel grid, the frame size, the invoke period, the heartbeat, the MQTT
+  buffer, the discovery prefix and the three topic patterns, each re-grepped
+  as a whole word over every tracked source, script, workflow and data file
+  (`-D` build flags included) before it went. Integration corrected the
+  package: it had also deleted `CONFIG_DEVICE_TYPE` as unread, but
+  `canary-local/tools/figures/gen_figures.mjs` (`walkConfigs`) reads any
+  `#define ...DEVICE_TYPE` by pattern to key a flavor's figure, so the Vision
+  boards dropped out of `figures.json` and `gen_figures.mjs --check` went red.
+  The define is back (f5d0afac) as a copy of the project's `DEVICE_TYPE`, so
+  the flavor file holds five seeds under a heading that names them copies: the
+  device type for the fleet figures and the four detection defaults
+  `gen_flash.py` reads (`CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`,
+  `CONFIG_LOST_TIMEOUT_MS`, `CONFIG_DWELL_START_MS`; the item named two
+  readers, and `gen_flash.py` reads four). Every `FEATURE_*` line and
+  `CV_WATCHDOG_TIMEOUT_SEC` stay byte-identical (`feature_sanity.h`,
+  `gen_enclosures.py` and `main.cpp` read them; `workshop.json` does not
+  move). Rejected: wiring the project constants to the flavor macros, which
+  would give every value two homes and make the flavor file an override path
+  the firmware never had; and deleting the seeds now, which needs their
+  readers repointed (F313).
+  `scripts/tests/test_vision_flavor_config_readers.py` (10 tests) fails on a
+  `CONFIG_*` left in the flavor file with no reader outside it (a second
+  `#define` of the name is not a read; a pattern reader counts only through
+  its `PATTERN_READERS` entry, and only while that tool still holds the
+  pattern and the pattern matches the macro's line) and on a seed that differs
+  from the same-named `static constexpr` in the project config, refusing a
+  seed with no owner or an owner it cannot read as a literal; its self-tests
+  run the checkers on synthetic inputs, so they hold the checkers rather than
+  the tree. `gen_flash.py --check`, `gen_vision.py` and `gen_enclosures.py
+  --check` leave `flash.json`, `vision.json` and `workshop.json`
+  byte-unchanged, and `gen_figures.mjs --check` is up to date on the
+  integrated tree. The Vision README and the flavor file's header say which
+  header owns what and name the five seeds. A `firmware/CONFIG_CHANGES.md`
+  entry for the removal and two pointer lines in the flavor directory's README
+  are handed to the integrator. Dist: no deleted macro was read, so no
+  compiled byte moves. Host-tested; the ESP32 compiles are CI's; not
+  bench-tested. Found here: F313.
+- [ ] **F313 [code] Repoint the Vision flavor seeds' readers and drop the
+  seeds.** `canary-local/tools/gen_flash.py`'s `vision_detect_block` reads
+  `CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS` and
+  `CONFIG_DWELL_START_MS` from
+  `firmware/configs/canary-vision/default/config.h`, and `gen_figures.mjs`'s
+  `walkConfigs` reads `CONFIG_DEVICE_TYPE` there; all five are copies of
+  `include/canary/config.h` constants that
+  `scripts/tests/test_vision_flavor_config_readers.py` holds equal. Read the
+  four detection defaults from the project config (`gen_flash.py`'s
+  `read_const` already parses a `constexpr T NAME = value;`), give the figures
+  generator the Vision's device type another way or keep that one seed, delete
+  the rest, and rewrite the test's seed list to match. `flash.json` and
+  `figures.json` must not move. Wave 18's `gen_flash.py` changes (A86) are on
+  #1802, so nothing blocks it. Found by F182 (#1802).
 - [x] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
   and `presence_ended` starts a second dwell in the same visit, so the
   lingering alert pages twice.** After `dwell_ended`, `PresenceFSM::tick`
@@ -11078,6 +11304,74 @@ so — see D2 below.)
   `witness_api` binary. Both are documented limits: those installs show
   the Wall the roll-call, never a walk. Decide where minting lives, then
   build it.
+  *Partly done (#1802), the root-image half; the add-on half is open:* the
+  root `witnessd` image now ships `witness_api` beside the seven operator
+  tools (the release build already compiled it; its `[[bin]]` has no
+  required-features), and `container-images.yml`'s smoke step checks it like
+  every shipped binary and runs `witness_api help`, which must exit 0 and name
+  `mint-viewer-token`. `docs/container.md` gives the mint path, `docker exec
+  <container> witness_api mint-viewer-token --label <s>`: exec inherits the
+  container's `WITNESS_API_*`, `WITNESS_CONFIG` and `DEVICE_KEY_SEED`, its
+  working directory and its user (UID 1001 unless `docker run --user` named
+  another, the user `witnessd` writes `/data` as), so it finds the seed beside
+  the database, and `witnessd` re-reads the viewer file per request, so
+  neither a mint nor a revoke (`revoke-viewer-token <id>`) needs a restart,
+  provided the container started with `WITNESS_API_TOKEN_PATH` (or the viewer
+  path); without one `witness_api` refuses to mint. The page names three ways
+  to break it: `exec -u root` (a root-owned `0600` file that `witnessd` and
+  later mints cannot open; the page gives the `chown` that undoes it), `exec
+  -e` pointing a path elsewhere, and a container started with a
+  `WITNESS_CONFIG` written for `witnessd` (`witness_api` refuses its unknown
+  keys, A103). It also says a bare `witness_api` is the API daemon, and that
+  an image pulled before this change has no `witness_api`. Decision (a default
+  for a maintainer): minting lives in `docker exec`, with no new port and no
+  new runtime dependency. Not built: the add-on panel's mint button, which
+  waits for a maintainer's yes (HA34's `serve_wizard.py` change, which it
+  would sit beside, is now on #1802). Both jobs of `container-images.yml` are
+  pinned to `ubuntu-24.04` (CI11). The image build and smoke run are proven
+  only by `container-images.yml` in CI; the mint flow on a running container
+  is not exercised; a stand-in run of the smoke script fails on the old
+  Dockerfile and passes on the new one. The kernel claims come from reading
+  the code; cargo was not run. Found here: A103, A104, A105.
+- [ ] **A102 [code+decision] witnessd loads the tract model without checking
+  its hash.** `scripts/fetch_detection_model.sh` checks tiny-YOLOv2 against a
+  pinned SHA-256 once, at fetch; `TractBackend::tiny_yolov2` and
+  `TractBackend::new` load whatever file is at `detect.tract_model` (default
+  `vendor/models/tinyyolov2-8.onnx`), so a model replaced on disk after the
+  fetch runs as given. Decide whether witnessd re-hashes the model at load and
+  refuses a mismatch (with an operator override for a custom model), or the
+  docs state the boundary. From code. Found by F34's backend audit (#1802,
+  `docs/security/backend_audit.md`).
+- [ ] **A103 [code+decision] `witness_api` refuses a `witnessd` config file.**
+  `WitnessApiConfigFile` (`src/config.rs`) has `deny_unknown_fields` and
+  accepts only `db_path`, `ruleset_id`, `api`, `zones` and `retention`, and
+  `witness_api` loads `WITNESS_CONFIG` before it dispatches any subcommand
+  (`src/bin/witness_api.rs`), so a `WITNESS_CONFIG` written for `witnessd`
+  (the `[rtsp]` example in `docs/rtsp_setup.md`) makes every subcommand, the
+  mint and `help` included, fail at load, while `docs/homeassistant_setup.md`
+  says the mint "runs with the same `WITNESS_CONFIG` ... as the serving
+  kernel". The root image as `docs/container.md` configures it (environment
+  only) is not affected; a root container started with `WITNESS_CONFIG` naming
+  a `witnessd` file is, because `docker exec` passes the variable through
+  (`docs/container.md` says so), and so is a `witnessd` host configured by
+  file. Decide whether the subcommands skip `witnessd`-only blocks or the docs
+  name a second config. From code; not run (no cargo here). Found by A18
+  (#1802).
+- [ ] **A104 [code] `examples/witnessd.service` starts the root image with no
+  token path.** Its `docker run` sets only `WITNESS_RTSP_URL`, so the stock
+  unit has no viewer-token file and no pairing files: `witness_api
+  mint-viewer-token` refuses ("no viewer token file is configured") and `POST
+  /api/pair` stays off. Add `-e WITNESS_API_TOKEN_PATH=/data/api_token` to its
+  `ExecStart` (the step `docs/container.md` gives). Found by A18 (#1802).
+- [ ] **A105 [code] Three Wall pairing pointers lag the root image.** The tvOS
+  Wall's Verification help text
+  (`tvos/WitnessWall/Sources/WitnessWall/WallSettingsView.swift`) and
+  `tvos/README.md`'s pairing paragraph name `witness_api mint-viewer-token`
+  and the sidecar's `entrypoint.sh`, not `docker exec <container> witness_api
+  mint-viewer-token` for the root image, and `docs/frigate_integration.md`
+  says the Wall takes the receipt "under Settings → Pair" while the section is
+  Settings → Verification (`tvos/README.md`, `WallSettingsView.swift`). Found
+  by A18 (#1802).
 - [ ] **A19 [decision] The kernel's auth lockout also closes `/api/fleet`
   and `/health`.** The per-address lockout is checked before routing, so a
   tokenless poller that trips it locks itself out of the roll-call too. The
@@ -11585,6 +11879,27 @@ so — see D2 below.)
   `gen_sense.py`'s `EX_FP` (and an elided health key) to it and add the Sense
   page to `fingerprint_examples.test.js`'s test-key check. Found by A26
   (#1762).
+- [ ] **A106 [code] The Sense radar lab publishes no `presence_cleared` where
+  the device records one.** `canary-local/assets/sense-ui.js`'s
+  `buildRadarLab` publishes `presence_cleared` only when the state it leaves
+  was present (`lastState === "present"`), but canary-sense `main.cpp`'s
+  `drive_fsms` records it on every tick that turns Clear, Unknown to Clear
+  included: the boot's first no-target frame, and a radar that returns from a
+  stall to an empty room. The MQTT pane note names the step (F131), and
+  `sense.test.js` holds the note's sentence to both code lines, so a port
+  fails the test until the sentence goes. Port `drive_fsms`' rule into the
+  lab, recount the sandbox scenes' `seq` values in `gen_sense.py`
+  (`sense.json`), and drop the sentence. Found by F131's parity work (#1802).
+- [ ] **A107 [code] Hold the Sense Lab's vitals path to the firmware's own.**
+  `canary-local/tests/senselab.test.js` builds its parity pipeline as
+  `SensePipeline(cfg, vitals, false)`, so nothing holds `sense-sim.js`'s side
+  of F131's vitals decision (`bpm_valid` held on dropout ticks, cut at the
+  Clear tick, no acquisition during the Present debounce) to
+  `mr60_vitals.cpp`; a review probe found no difference today across 149
+  loops. Build `mr60_vitals.cpp` with `-DCANARY_SENSE_VITALS` beside the
+  presence driver in `tests/fixtures/mr60_presence_native.js`, add vitals
+  frames to its traces, and compare the lock, `bpm_valid` and the BPMs every
+  tick. Found by F131's review (#1802).
 - [x] **A35 [code] Two firmware comments and a test fixture show WAP names no
   Canary prints.**
   `firmware/projects/canary-wap/arduino/canary_wap/csi_dashboard_html.h:3365`
@@ -15835,7 +16150,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `test_a_walked_directory_reads_text_files` plants a banned form in a
   `CMakeLists.txt` and a `notes.txt` and expects exit 1; the old lint exits 0
   on them. Host-tested.
-- [ ] **CI10 [code+decision] The kernel's release workflow has never run, and
+- [x] **CI10 [code+decision] The kernel's release workflow has never run, and
   the planner cannot reach it.** `release.yml` fires only on a pushed `v*`
   tag, no `v*` release exists (releases API, 2026-10-10), and
   `.github/release-targets.yml` has no kernel row, so "Update everything"
@@ -15851,7 +16166,31 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `kernel` in `release-everything.yml`'s `only` choices (`release.yml` already
   calls `sbom.yml`); or (b) say "not released yet" in `release-targets.yml`
   and `RELEASE_BUTTONS.md`.
-- [ ] **CI11 [code+human] `ubuntu-latest` moves to Ubuntu 26.04 from
+  *Done (#1802), option (b):* `.github/release-targets.yml` gains a header
+  comment, not a row: the kernel is not a target, has never been released (no
+  `v*` tag or release, and `release.yml` has no recorded run: tags, releases
+  and Actions API, 2026-10-14), and is cut only by a pushed `v*` tag, which
+  `release.yml` listens for; a row today would plan the first release on the
+  next publishing press and fail to dispatch it, because `release.yml` has no
+  `workflow_dispatch`. `docs/RELEASE_BUTTONS.md` gains "The kernel: not
+  released yet": how a release is cut today and what `release.yml` then does
+  (nothing checks the tag against `Cargo.toml`; the notes are the
+  `CHANGELOG.md` section, so add it before tagging), that `addon-image.yml`
+  and `docker-sidecar.yml` run on the same tag and re-push their `:<version>`
+  and `:latest` images from it (so tag current `main`), why a moving
+  `Cargo.toml` version (shared with the integration and app by
+  `scripts/bump_version.sh`) and `CHANGELOG.md`'s dated `## [0.1.0]` through
+  `## [0.7.0]` headings are not releases, and option (a) written out as the
+  follow-up: a dispatch `version` input whose first step pushes `v<version>`,
+  with the changelog step, the release step's `tag_name` and the `sbom` job's
+  `tag` all reading the input (a tag pushed with `GITHUB_TOKEN` starts no
+  other workflow, so the image workflows would not run on that path). The
+  master button's "Use it" line points at the section. Rejected for now:
+  option (a), a dispatchable kernel target, until a release is wanted. No
+  release machinery changed: the catalog parses to the same object, the
+  planner's dev and publish plans are byte-identical before and after, and
+  `test_release_plan.py` passes unchanged.
+- [x] **CI11 [code+human] `ubuntu-latest` moves to Ubuntu 26.04 from
   2026-10-19.** Only `enclosure.yml`'s render and fit jobs are pinned (to
   `ubuntu-24.04`, for OpenSCAD 2021.01, in the 2026-10 cleanup). The jobs most
   likely to notice a new image: `rust.yml`'s GStreamer, ffmpeg and mosquitto
@@ -15861,6 +16200,73 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `ubuntu-latest` jobs. Open one throwaway PR that runs a copy of each on
   `ubuntu-26.04`, then fix or pin what breaks, with a reason comment per pin.
   (`desktop-flasher-release.yml`'s Linux leg is already on `ubuntu-22.04`.)
+  *Done (#1802, the website PR, securacv_website#228, and the mirror PR,
+  securacv-homeassistant#29, both merged 2026-10-14), the pin half; the 26.04
+  trial is CI17:* every job in the three repos that floated on `ubuntu-latest`
+  now runs on `ubuntu-24.04`, ahead of the 2026-10-19 image move, each with a
+  reason comment (pinned ahead of the 26.04 image move; revisit before 24.04
+  retires). In the monorepo the ci-pins package pinned 80 runner values in 41
+  workflows (78 `runs-on`, `addon-image.yml`'s amd64 matrix row, CodeQL's
+  Linux leg), kernel-ops pinned `container-images.yml`'s two jobs, and the
+  integrator's commit 278145bc ("ci: pin the last five workflows to
+  ubuntu-24.04 and empty R11's allowlist (CI11)") pinned the 14 runner lines
+  left in `lint.yml`, `lab-lint.yml`, `desktop-hub-core.yml`, `viewer.yml` and
+  `canary-local.yml`, wave 18's new jobs included. macOS, Windows and the
+  deliberate `ubuntu-22.04` / `ubuntu-24.04-arm` rows are unchanged.
+  `ci_policy_check.py` gains R11: no repo workflow names `ubuntu-latest`, in
+  any letter case (runner labels are case-insensitive), anywhere outside a
+  job's `steps` (`runs-on` in any form, the `strategy` a matrix `runs-on`
+  reads, input defaults, a reusable call's `with:`, and any other job or
+  workflow key; comments and step scripts are free). Its exemption list,
+  `ci-policy.yml` -> `ubuntu_latest_ok`, held seven files while other changes
+  owned them and is empty now, so R11 holds every workflow
+  (`ci_policy_check.py`: 51 workflows conform). R11 reads the repo's own
+  workflows only (from `main()`), so `test_ci_policy_check.py`'s synthetic
+  workflows keep `ubuntu-latest`; its eight new cases fail on the old checker
+  (a planted bare runner passes `main()` there), and its mixed-case rows fail
+  without the rule's case-insensitive match. The website's and the mirror's
+  workflows were pinned in their PRs and name `ubuntu-latest` nowhere on their
+  main branches. Decision (maintainer to confirm): pin now, trial later.
+  Rejected: running the 26.04 trial first (it cannot finish before
+  2026-10-19), leaving jobs on `ubuntu-latest` (every job would change image
+  at once, unreviewed), and narrowing R11 to the keys that choose a runner (a
+  job `name:` naming the label is refused too, which errs on the safe side).
+  Runner resolution is proven only by CI. The R11 row for `.github/CI.md` is
+  handed to the integrator. Found here: CI17 (the 26.04 trial), CI18 (a stale
+  `ubuntu_latest_ok` entry), CI19 (a release job's core cache).
+- [ ] **CI17 [code] Trial the jobs on `ubuntu-26.04` before 24.04 retires.**
+  CI11 (#1802) pinned every job that floated on `ubuntu-latest` to
+  `ubuntu-24.04` in all three repos, ahead of the 2026-10-19 image move, and
+  deferred the trial its own text asked for: one throwaway PR that runs a copy
+  of each Linux job on `ubuntu-26.04`, then a fix, or a reviewed move of the
+  pin, for what breaks. The jobs most likely to notice are the ones CI11
+  named: `rust.yml`'s GStreamer, ffmpeg and mosquitto apt jobs,
+  `desktop-hub-core.yml`, `desktop-lab-check.yml`, `ram_audit.yml`, and every
+  job that relies on the image's `jq`, `gh` or `xvfb`. Each pin's reason
+  comment says to revisit before 24.04 retires. Found by CI11 (#1802).
+- [ ] **CI18 [code] R11 should refuse a stale `ubuntu_latest_ok` entry.**
+  `check_floating_runners()` (`.github/scripts/ci_policy_check.py`) skips
+  every file the list names, and nothing asks whether a listed file still
+  names `ubuntu-latest`, so an entry added for a change in flight would stay
+  after that change pins its file. The list is empty since #1802 (CI11), so
+  the rule costs nothing today: refuse an entry whose file names no
+  `ubuntu-latest`, so the list can only shrink as each owner pins. Found by
+  CI11's review (#1802).
+- [ ] **CI19 [code] A release job can save one esp32 core under another core's
+  cache key.** `setup-arduino-esp32` restores and saves `~/.arduino15` per
+  `core-version` key with `actions/cache`, which saves a key it missed at job
+  end with whatever the job last installed; in `firmware-release.yml` and
+  `flasher-release.yml` that is the display's 3.3.10. A release dispatched on
+  main that misses `arduino-esp32-Linux-core-3.3.8` (or `-core-2.0.17`)
+  therefore stores 3.3.10 under that key. A later row on the key still builds
+  on its own core, because `arduino-cli core install` replaces the single
+  installed release (its "Replacing platform" path in arduino-cli 1.x); but
+  the entry now hits and is never saved again, so every such run
+  (`ram_audit.yml`, `csi_module_disable_matrix.yml`, `firmware.yml`'s pinned
+  core legs) re-downloads the toolchain, over 1 GB, until the entry is
+  evicted. Options: split the action's cache into a restore and a save right
+  after the install, or skip the save in jobs that install more than one core.
+  Found by F21 (#1802).
 - [x] **CI12 [code] No lint keeps dead code out of the Lab's browser assets.**
   The 2026-10 cleanup removed unused functions, constants and CSS from
   `canary-local/assets` by hand and left it clean (78 files, no
