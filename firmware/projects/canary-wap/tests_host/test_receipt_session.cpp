@@ -13,7 +13,8 @@
 // session), handle_provisioning_receipt() (the grant order), handle_pairing_qr()
 // and secure_zero(). Faked: the clock (one 64-bit count that millis() reads
 // the low 32 bits of, as on the device, and esp_timer the whole of), the
-// RNG, the landing page's HTML, the BOOT tap's gate, the receipt and QR writers (each records
+// RNG, the station link (up, or down for the SoftAP-only setup phase), the
+// landing page's HTML, the BOOT tap's gate, the receipt and QR writers (each records
 // what it was asked to answer and puts the token and the AP password in the
 // body, as the real ones do), and the rest of the sketch's world.
 //
@@ -122,8 +123,12 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 struct StubIP {
   std::string toString() const { return "192.168.4.1"; }
 };
+// The station link: up (joined to the home network) unless a case takes it
+// down. Down is the setup phase, the SoftAP alone, where the receipt is most
+// exposed: test_sta_down_setup_phase drives every grant there.
+static bool g_sta_connected = true;
 static struct {
-  bool isConnected() const { return true; }
+  bool isConnected() const { return g_sta_connected; }
   StubIP softAPIP() const { return StubIP{}; }
 } WiFi;
 
@@ -268,6 +273,7 @@ void reset_world() {
   g_tap_takes = 0;
   g_receipts = 0;
   g_qrs = 0;
+  g_sta_connected = true;
   stub_receipt::now_ms += 3600000;   // past any lockout a previous case left
 }
 
@@ -841,6 +847,64 @@ void test_empty_device_token_is_no_token() {
   }
 }
 
+// The setup phase: the station is down and the SoftAP is the only link, the
+// hour the receipt is most exposed (F289's landing-page caller sits on that
+// SoftAP). The link is no grant: with no bearer, no claim and no tap, a
+// request with no session and one with the landing's session each get the
+// BOOT-tap refusal and neither secret, and the QR is a 401. Every other case
+// runs with the station up, so an answer the handler gave on a down link
+// alone would pass them all; this one fails it. Each grant still serves on
+// the SoftAP alone, so the refusal is the grants' doing, not the link's.
+void test_sta_down_setup_phase() {
+  reset_world();
+  g_sta_connected = false;
+  const Reply anon = call(handle_provisioning_receipt, "", "", "");
+  CHECK(anon.status == "403 Forbidden");
+  CHECK(anon.body.find("physical_confirmation_required") != std::string::npos);
+  CHECK(!carries_secret(anon));
+  CHECK(g_receipts == 0);
+  CHECK(g_tap_takes == 1);
+  CHECK(anon.set_cookie.empty());
+
+  const std::string landing = landing_session();
+  CHECK(landing.size() == cv_session::TOK_HEX_LEN);
+  const Reply landed = call(handle_provisioning_receipt, "", landing, "");
+  CHECK(landed.status == "403 Forbidden");
+  CHECK(!carries_secret(landed));
+  CHECK(g_receipts == 0);
+
+  const Reply qr = call(handle_pairing_qr, "", "", "");
+  CHECK(qr.status == "401 Unauthorized" && !carries_secret(qr));
+  const Reply qr_landed = call(handle_pairing_qr, "", landing, "");
+  CHECK(qr_landed.status == "401 Unauthorized" && !carries_secret(qr_landed));
+  CHECK(g_qrs == 0);
+
+  // The grants, each on the SoftAP alone.
+  reset_world();
+  g_sta_connected = false;
+  const Reply by_bearer = call(handle_provisioning_receipt, "", "", bearer());
+  CHECK(by_bearer.status == "200 OK" && carries_secret(by_bearer));
+  CHECK(g_last_grant == receipt_authority::Grant::BEARER);
+  const Reply qr_bearer = call(handle_pairing_qr, "", "", bearer());
+  CHECK(qr_bearer.status == "200 OK" && qr_bearer.body.find(kToken) != std::string::npos);
+  CHECK(qr_bearer.body.find("192.168.4.1") != std::string::npos);   // the SoftAP's address, not .local
+
+  reset_world();
+  g_sta_connected = false;
+  const std::string claim = mint_claim();
+  const Reply by_claim = call(handle_provisioning_receipt, "claim=" + claim, "", "");
+  CHECK(by_claim.status == "200 OK" && carries_secret(by_claim));
+  CHECK(g_last_grant == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+
+  reset_world();
+  g_sta_connected = false;
+  g_tap_open = true;
+  const Reply by_tap = call(handle_provisioning_receipt, "", "", "");
+  CHECK(by_tap.status == "200 OK" && carries_secret(by_tap));
+  CHECK(g_last_grant == receipt_authority::Grant::BOOT_TAP);
+  CHECK(g_receipts == 1 && g_tap_takes == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -866,6 +930,7 @@ int main() {
   test_pair_token_ends_across_the_millis_wrap();
   test_cookie_name_is_the_whole_name();
   test_empty_device_token_is_no_token();
+  test_sta_down_setup_phase();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;

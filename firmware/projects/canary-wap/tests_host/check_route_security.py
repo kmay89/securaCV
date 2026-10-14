@@ -43,9 +43,14 @@ parenthesis and any `::` qualifier. What it reads, and nothing more:
     anywhere else (a stored result, a second term, outside an if) fails,
     and so does a refusal or grant that does not return. Each answer site
     (a secret the handler reads, or its call of the answer) comes after a
-    refusal at the top of the handler's body or inside a grant's branch,
-    unless OTHER_GRANTS names the handler (the receipt: its BOOT tap and
-    setup-door claim are test_receipt_session's). The handler and the
+    refusal at the top of the handler's body or inside a grant's branch.
+    For the receipt, OTHER_GRANTS adds one refusal and two grants it cannot
+    read as a credential gate: `if (!claim_served && !provisioning_gate_take())`
+    at the top of the body, returning, and an `if (claim_served)` or
+    `if (provisioning_gate_take())` whose branch returns; claim_served is
+    read only as a condition and written only as `false` and by the claim's
+    take. An answer above all of them fails, the top of the handler
+    included. The handler and the
     answer hold no goto and no preprocessor line, name no gate in the
     any-session class (called or not), and call nothing but the credential
     gates, the answers and ANSWER_CALLS, an allowlist checked against the
@@ -81,10 +86,12 @@ It is a text check, and these pass it: a secret reached through a name it
 does not know (a copy in a global made by a function allowed to read it, a
 member under another name); what a function ANSWER_CALLS names does inside
 (it is held only to call no gate in the class, so one that calls through a
-pointer another function stored is trusted by name); the receipt's BOOT-tap
-and claim grants; and a gate that decides wrong. A gate result stored in a
-variable and tested later is refused though it may be right. The host
-suites (test_receipt_session, test_mqtt_reinit) drive the behavior.
+pointer, its own or one another function stored, is trusted by name); whether the receipt's
+BOOT tap and setup-door claim decide right; and a gate that decides wrong.
+A gate result stored in a variable and tested later is refused though it
+may be right. The host suites drive the behavior: test_receipt_session the
+receipt's grants and the QR's, with the station link up and down, and
+test_mqtt_reinit the broker save.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -251,13 +258,27 @@ ANSWER_CALLS = frozenset((
     "send_qr_svg", "http_send_error", "secure_zero", "log_health", "request_reach", "device_id_hex",
     "write", "provisioning_receipt", "provisioning_gate_take", "take", "session_issue",
 ))
-# Handlers whose answers also stand behind something this check cannot read
-# as a credential gate: those answer sites need not follow a refusal or sit
-# in a grant's branch. The handler still needs its credential gate in an
-# `if` of the shape below, and every other rule holds.
+# Handlers whose answers also stand behind grants this check cannot read as
+# a credential gate. The handler still needs its credential gate in an `if`
+# of the shape below, and every other rule holds; the entry names where else
+# an answer may sit. "refusal": the whole condition (spaces aside) of an
+# `if` at the top of the handler's body whose branch returns, the refusal on
+# those grants: an answer after it is the host suite's. "grants": the whole
+# conditions of an `if` whose returning branch is one of those grants: an
+# answer inside one is the suite's too. "flag": the variable a grant sets,
+# read only as a condition (`!flag`, `flag &&`, `flag ?`, `if (flag)`) and
+# written only by the "writes" statements (one ending in `(` is that call,
+# whole, then `;`). An answer before the refusal and outside every grant's
+# branch, the top of the handler included, fails like any other handler's.
 OTHER_GRANTS = {
-    "handle_provisioning_receipt": "the BOOT tap (provisioning_gate_take()) and the setup-door claim "
-                                   "(claim_ticket::take()), which test_receipt_session drives",
+    "handle_provisioning_receipt": {
+        "refusal": "!claim_served && !provisioning_gate_take()",
+        "grants": ("claim_served", "provisioning_gate_take()"),
+        "flag": "claim_served",
+        "writes": ("bool claim_served = false;", "claim_served = canary::net::claim_ticket::take("),
+        "why": "the BOOT tap (provisioning_gate_take()) and the setup-door claim (claim_ticket::take()), "
+               "which test_receipt_session drives with the station link up and down",
+    },
 }
 # Names `_strict_calls` sees as calls that are not calls.
 _NOT_CALLS = frozenset(("if", "for", "while", "switch", "return", "sizeof", "alignof", "decltype",
@@ -531,6 +552,62 @@ def _brace_depth(code: str, pos: int) -> int:
     return code.count("{", 0, pos) - code.count("}", 0, pos)
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _other_grant_ifs(handler: str, code: str, entry: dict):
+    """The refusal and the grants OTHER_GRANTS names for `handler` in its
+    body (string-blanked): (ends of each returning refusal at the top of the
+    body, spans of each returning grant's branch, problems). An `if` on one
+    of those conditions whose branch does not return is neither (a log line
+    on the flag is not a grant); no returning refusal at the top, and the
+    flag read or written other than as the entry allows, are problems."""
+    refused, granted, problems = [], [], []
+    refusal, grants = _squash(entry["refusal"]), {_squash(g) for g in entry["grants"]}
+    for m in re.finditer(r"\bif\s*\(", code):
+        close = _close(code, m.end() - 1)
+        if close < 0:
+            continue
+        cond = _squash(code[m.end():close])
+        if cond != refusal and cond not in grants:
+            continue
+        start, end, returns = _returns(code, close + 1)
+        if not returns:
+            continue
+        if cond != refusal:
+            granted.append((start, end))
+        elif _brace_depth(code, m.start()) == 0:
+            refused.append(end)
+    if not refused:
+        problems.append(f"{handler}() has no `if ({entry['refusal']}) {{ ... return ...; }}` at the top of "
+                        f"its body: OTHER_GRANTS lets its answers stand after that refusal, not anywhere")
+    flag = entry["flag"]
+    for m in re.finditer(r"\b" + re.escape(flag) + r"\b", code):
+        before, after = code[:m.start()].rstrip(), code[m.end():].lstrip()
+        if (re.search(r"(?:!|&&|\|\||==|!=)$", before) or re.match(r"(?:&&|\|\||\?|==|!=)", after)) \
+                and not re.search(r"(?<!&)&$", before):
+            continue  # an operand of !, &&, ||, ?: or a comparison: a read
+        if re.search(r"\bif\s*\($", before) and after.startswith(")"):
+            continue  # if (flag)
+        start = max(code.rfind(c, 0, m.start()) for c in ";{}") + 1
+        end = _statement_end(code, start)
+        stmt = " ".join(code[start:end + 1].split()) if end >= 0 else ""
+        ok = False
+        for allowed in entry["writes"]:
+            if not allowed.endswith("("):
+                ok = ok or stmt == allowed
+            elif stmt.startswith(allowed):
+                call_close = _close(stmt, len(allowed) - 1)
+                ok = ok or (call_close >= 0 and stmt[call_close + 1:] == ";")
+        if not ok:
+            lineno = code.count("\n", 0, m.start()) + 1
+            problems.append(f"{handler}() names {flag} (body line {lineno}) other than as a condition or in "
+                            f"{' / '.join(repr(w) for w in entry['writes'])}: OTHER_GRANTS trusts that flag "
+                            f"to say a grant was given, so only the grant may set it")
+    return refused, granted, problems
+
+
 def _is_declaration(code: str, start: int, end: int) -> bool:
     """Whether the name at code[start:end] (string-blanked, outside every
     function) is declared there and nothing more: a type before it, its
@@ -785,12 +862,15 @@ def credential_problems(ino: str, handlers: set, sources: dict = None) -> list:
         refused = [branch[1] for pos, refusal, _g, _c, branch, returns in ifs
                    if refusal and returns and _brace_depth(code, pos) == 0]
         granted = [branch for _p, refusal, _g, _c, branch, returns in ifs if not refusal and returns]
-        if handler not in OTHER_GRANTS:
-            for site in answer_sites(handler, answer, code):
-                if not any(site >= end for end in refused) and not _inside(site, granted):
-                    lineno = found[0].count("\n", 0, site) + 1
-                    out.append(f"{handler}() answers a credential (body line {lineno}) before any "
-                               f"refusal at the top of its body and outside every grant's branch")
+        if handler in OTHER_GRANTS:
+            other_refused, other_granted, other_problems = _other_grant_ifs(handler, code, OTHER_GRANTS[handler])
+            refused, granted = refused + other_refused, granted + other_granted
+            out.extend(other_problems)
+        for site in answer_sites(handler, answer, code):
+            if not any(site >= end for end in refused) and not _inside(site, granted):
+                lineno = found[0].count("\n", 0, site) + 1
+                out.append(f"{handler}() answers a credential (body line {lineno}) before any "
+                           f"refusal at the top of its body and outside every grant's branch")
         return out + answer_code(handler, code)
 
     for name, (kind, _reads, _why, _gives) in sorted(CREDENTIAL_READERS.items()):
@@ -898,11 +978,22 @@ def _assert_credential_rule() -> None:
         "static esp_err_t send_provisioning_receipt(httpd_req_t* req, Grant g) {\n"
         "  in.token = g_device.api_token_str;\n  in.ap_password = g_device.ap_password;\n}\n"
         "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {\n"
+        "  g_health.http_requests++;\n"
         "  if (api_auth_check_credential_optional(req, g_device.api_token_str)) {\n"
         "    return send_provisioning_receipt(req, Grant::BEARER);\n  }\n"
-        "  if (!provisioning_gate_take()) return ESP_OK;\n"
+        "  bool claim_served = false;\n"
+        "  {\n"
+        "    if (httpd_query_key_value(qs, \"claim\", presented, sizeof(presented)) == ESP_OK) {\n"
+        "      claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());\n"
+        "      if (!claim_served) log_health(2, 7, \"claim spent\", nullptr);\n"
+        "    }\n"
+        "  }\n"
+        "  if (!claim_served && !provisioning_gate_take()) {\n"
+        "    httpd_resp_set_status(req, \"403 Forbidden\");\n"
+        "    return httpd_resp_sendstr(req, body);\n  }\n"
         "  csi_integration::session_issue(hex, sizeof(hex), cv_session::Origin::OWNER);\n"
-        "  return send_provisioning_receipt(req, Grant::BOOT_TAP);\n}\n"
+        "  return send_provisioning_receipt(req, claim_served ? Grant::SETUP_DOOR_CLAIM : Grant::BOOT_TAP);\n"
+        "}\n"
         "static esp_err_t handle_pairing_qr(httpd_req_t* req) {\n"
         "  if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;\n"
         "  snprintf(p, n, \"%s\", g_device.api_token_str);\n}\n"
@@ -959,7 +1050,7 @@ def _assert_credential_rule() -> None:
         "the pairing QR's old gate": good.replace(
             "api_auth_check_credential(req", "api_auth_check(req"),
         "a credential gate beside a session gate": good.replace(
-            "  return send_provisioning_receipt(req, Grant::BOOT_TAP);",
+            "  return send_provisioning_receipt(req, claim_served ? Grant::SETUP_DOOR_CLAIM : Grant::BOOT_TAP);",
             "  if (cv_session_validate(req)) return send_provisioning_receipt(req, Grant::BEARER);"),
         "a new answer nobody classified": good + (
             "static esp_err_t handle_leak(httpd_req_t* req) {\n"
@@ -1112,6 +1203,50 @@ def _assert_credential_rule() -> None:
     }
     for why, text in shapes.items():
         assert credential_problems(text, handlers), f"credential rule passed {why}"
+
+    # The receipt (OTHER_GRANTS): its BOOT-tap and claim grants are the host
+    # suite's, but only after the refusal on them or inside a grant's own
+    # branch. The fourth review's plant (an answer on a down station link at
+    # the top of the handler) and its kin fail; the grants' branches pass.
+    receipt_top = "  g_health.http_requests++;\n"
+    grant1_end = "    return send_provisioning_receipt(req, Grant::BEARER);\n  }\n"
+    tap_refusal = "  if (!claim_served && !provisioning_gate_take()) {\n"
+    refusal_end = "    return httpd_resp_sendstr(req, body);\n  }\n"
+    take_line = "      claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());\n"
+    leak = "  if (!WiFi.isConnected()) return send_provisioning_receipt(req, Grant::BEARER);\n"
+    receipt_bad = {
+        "an answer at the top of the receipt on a down station link": good.replace(
+            receipt_top, receipt_top + leak),
+        "an answer between the receipt's credential grant and its claim": good.replace(
+            grant1_end, grant1_end + leak),
+        "an answer between the claim and the tap refusal": good.replace(tap_refusal, leak + tap_refusal),
+        "an answer inside the claim's block": good.replace(take_line, take_line + "    " + leak),
+        "the tap refusal widened": good.replace(
+            tap_refusal, "  if (!claim_served && !provisioning_gate_take() && WiFi.isConnected()) {\n"),
+        "the tap refusal inside a branch of its own": good.replace(
+            tap_refusal, "  if (WiFi.isConnected()) {\n" + tap_refusal).replace(refusal_end, refusal_end + "  }\n"),
+        "the tap refusal falls through": good.replace(refusal_end, refusal_end.replace("return ", "")),
+        "the claim flag set by the link": good.replace(
+            "  bool claim_served = false;\n", "  bool claim_served = !WiFi.isConnected();\n"),
+        "the claim flag OR'd with the link": good.replace(
+            take_line, take_line.replace("millis());", "millis()) || !WiFi.isConnected();")),
+        "the claim flag written through a pointer": good.replace(
+            tap_refusal, "  bool* served = &claim_served;\n  *served = true;\n" + tap_refusal),
+        "the claim flag set again": good.replace(tap_refusal, "  claim_served = true;\n" + tap_refusal),
+    }
+    for why, text in receipt_bad.items():
+        assert text != good, f"receipt fixture did not apply: {why}"
+        assert credential_problems(text, handlers), f"credential rule passed {why}"
+    receipt_good = {
+        "a BOOT-tap grant's own branch": good.replace(tap_refusal, (
+            "  if (provisioning_gate_take()) {\n    return send_provisioning_receipt(req, Grant::BOOT_TAP);\n  }\n"
+            + tap_refusal)),
+        "a claim grant's own branch": good.replace(tap_refusal, (
+            "  if (claim_served) {\n    return send_provisioning_receipt(req, Grant::SETUP_DOOR_CLAIM);\n  }\n"
+            + tap_refusal)),
+    }
+    for why, text in receipt_good.items():
+        assert text != good and credential_problems(text, handlers) == [], (why, credential_problems(text, handlers))
 
     # An any-session gate is named only in the functions and macros the
     # class is derived from, or in a declaration (or a raw string).
