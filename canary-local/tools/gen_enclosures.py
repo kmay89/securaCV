@@ -343,6 +343,18 @@ def parse_tables(md: str):
 
 
 # ── .scad customizer annotations ─────────────────────────────────────────
+# The group header is the web builder's own pattern (its parse_scad's
+# GROUP_RE): a `/* [Name]` opener, the comment free to run on for lines.
+# This parser used to match only a header closed on its own line, so the 52
+# multi-line headers in 10 case files (the WAP's "Print tolerances", the
+# Vision's "USB-C ports", ...) were invisible and their knobs sat in whatever
+# group came before: the WAP's tol_slide showed under "Shell" here and under
+# "Print tolerances" in the builder (C10). scripts/tests/test_enclosure_parsers.py
+# holds the two parsers to one group for every knob.
+sys.path.insert(0, str(ENC))
+from gen_builder_manifest import GROUP_RE  # noqa: E402
+
+
 def parse_scad(path: Path):
     text = path.read_text(errors="replace")
     lines = text.splitlines()
@@ -360,12 +372,22 @@ def parse_scad(path: Path):
 
     groups = []
     cur = None
+    in_header = False
     for ln in lines:
-        g = re.match(r"^/\*\s*\[(.+?)\]\s*(?:—|-)?\s*(.*?)\s*\*/", ln)
+        if in_header:
+            # A multi-line group header runs on until its `*/`; its lines
+            # finish the group's note, and none of them is a knob.
+            body, closed, _ = ln.partition("*/")
+            cur["note"] = " ".join(filter(None, (cur["note"], body.strip(" -—*/"))))
+            in_header = not closed
+            continue
+        g = GROUP_RE.search(ln)
         if g:
-            cur = {"name": g.group(1).strip(), "note": g.group(2).strip(" -—*/"),
+            rest, closed, _ = ln[g.end():].partition("*/")
+            cur = {"name": g.group(1).strip(), "note": rest.strip(" -—*/"),
                    "params": []}
             groups.append(cur)
+            in_header = not closed
             continue
         p = re.match(
             r"^(\w+)\s*=\s*([^;]+);\s*(?://\s*(.*))?$", ln)
@@ -406,8 +428,8 @@ def parse_scad(path: Path):
 # ── preview mesh rendering (openscad; coarse curves, binary STL) ─────────
 # The render goes through docs/hardware/enclosure/scad_probe.py — the same
 # clean-render rule (ERROR/WARNING in the log = nothing was rendered) and the
-# same STL reader gen_assembled_dims.py measures with.
-sys.path.insert(0, str(ENC))
+# same STL reader gen_assembled_dims.py measures with (ENC is on sys.path
+# since the group header's import above).
 import scad_probe  # noqa: E402
 
 # bbox agreement --check-previews requires, mm (gen_assembled_dims.py's TOL)

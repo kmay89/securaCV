@@ -11,8 +11,17 @@ knobs a slider in the builder and a raw "// [..]" tail on the Lab's help
 (C10). These tests hold the two to one answer — range and help — for every
 knob in the tree, and for the three forms a range is written in.
 
+They disagreed on groups too: the Lab matched a `/* [Group] */` header only
+when it closed on its own line, so the 52 multi-line headers in 10 case files
+were invisible to it and 333 knobs sat in the group before (the WAP's
+tol_slide under "Shell", where the builder says "Print tolerances"). The Lab
+now takes the builder's own GROUP_RE, and Groups holds the two parsers to one
+group for every knob both read.
+
 gen_enclosures.py runs its writers at import, so its parse_scad is lifted
-out of the source with `ast` rather than imported.
+out of the source with `ast` rather than imported, together with the
+module-level imports it reads from gen_builder_manifest (its GROUP_RE) — the
+binding the generator really runs, not one this test supplies.
 
 Run:  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 """
@@ -34,10 +43,14 @@ import gen_builder_manifest  # noqa: E402
 
 def _lab_parse_scad():
     src = (ROOT / "canary-local" / "tools" / "gen_enclosures.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.parse(src).body
+    body = ast.parse(src).body
+    fn = next(n for n in body
               if isinstance(n, ast.FunctionDef) and n.name == "parse_scad")
+    # what the generator imports from the builder's parser, as it imports it
+    shared = [n for n in body
+              if isinstance(n, ast.ImportFrom) and n.module == "gen_builder_manifest"]
     ns = {"re": re, "Path": Path}
-    exec(compile(ast.Module([fn], []), "gen_enclosures.parse_scad", "exec"), ns)
+    exec(compile(ast.Module([*shared, fn], []), "gen_enclosures.parse_scad", "exec"), ns)
     return ns["parse_scad"]
 
 
@@ -86,6 +99,59 @@ class Tree(unittest.TestCase):
                 if b != lab:
                     bad.append(f"{path.name}:{name}: builder {b} vs Lab {lab}")
         self.assertEqual(bad, [], "\n".join(bad))
+
+
+def groups_of(path: Path) -> tuple[dict, dict]:
+    """({knob: group} as the builder reads it, {knob: group} as the Lab
+    does). A knob either parser reads twice keeps the group of its last
+    reading, the way each parser's consumers look a knob up by name."""
+    builder = {p["name"]: g["name"]
+               for g in gen_builder_manifest.parse_scad(path) for p in g["params"]}
+    lab = {p["name"]: g["name"] for g in LAB_PARSE(path)["groups"] for p in g["params"]}
+    return builder, lab
+
+
+class Groups(unittest.TestCase):
+    def test_both_parsers_put_every_knob_in_one_group(self):
+        bad, both = [], 0
+        for path in sorted(ENC.glob("canary_*.scad")):
+            builder, lab = groups_of(path)
+            for name in builder.keys() & lab.keys():
+                both += 1
+                if builder[name] != lab[name]:
+                    bad.append(f"{path.name}:{name}: builder '{builder[name]}' vs Lab '{lab[name]}'")
+        self.assertGreater(both, 1000, "the parsers should share well over a thousand knobs")
+        self.assertEqual(bad, [], "\n".join(bad))
+
+    def test_the_wap_tolerances_are_print_tolerances(self):
+        # The WAP's header is two lines long; before C10 the Lab filed these
+        # under "Shell", the group before it.
+        builder, lab = groups_of(ENC / "canary_wap_enclosure.scad")
+        for name in ("tol_slide", "tol_press", "tol_hole"):
+            self.assertEqual(lab[name], "Print tolerances", name)
+            self.assertEqual(builder[name], "Print tolerances", name)
+
+    def test_header_forms(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "canary_probe.scad"
+            p.write_text("/* [One line] — the whole note */\n"
+                         "a = 1;  // in the one-line group\n"
+                         "/* [Two lines] — the note starts here\n"
+                         "ghost = 2;\n"
+                         "   and closes here */\n"
+                         "b = 3;  // in the two-line group\n"
+                         "/*[Tight]*/\n"
+                         "c = 4;\n", encoding="utf-8")
+            builder, lab = groups_of(p)
+            lab_groups = {g["name"]: g for g in LAB_PARSE(p)["groups"]}
+        want = {"a": "One line", "b": "Two lines", "c": "Tight"}
+        self.assertEqual(lab, want)
+        self.assertEqual(builder, want)
+        self.assertNotIn("ghost", lab, "a header's own lines are never a knob")
+        self.assertEqual(lab_groups["One line"]["note"], "the whole note")
+        self.assertEqual(lab_groups["Two lines"]["note"],
+                         "the note starts here ghost = 2; and closes here")
+        self.assertEqual(lab_groups["Tight"]["note"], "")
 
 
 if __name__ == "__main__":
