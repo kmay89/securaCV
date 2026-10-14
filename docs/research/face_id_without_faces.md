@@ -306,9 +306,11 @@ The legal research converged on the distinction §1 draws:
 Canaries are untouched. A door Canary keeps reporting `Person` at the front
 door in a coarse time window, exactly as today, whether or not a key was used.
 The household sees both facts — "Person at front door" and, on its own line,
-"Posture: Home" (no door, no credential, a coarse time) — and the system never
-puts them side by side; any inference is the human's. That is Free Signals
-Invariant D as written: "Canary presents signals; humans interpret meaning."
+"Posture: Home" (no door, no credential, a coarse time — a display not built
+yet; the statement behind it states the minute of the change, §6.4 rule 4) —
+and the system never puts them side by side; any inference is the human's.
+That is Free Signals Invariant D as written: "Canary presents signals; humans
+interpret meaning."
 
 No Canary applies a household posture yet, so the hub's attention engine
 stands in: while a valid Home is current, an indoor witness's non-critical
@@ -357,7 +359,7 @@ disarms, because "a voice command carries no signature").
 | Drive "quiet when home" (indoor witnesses drop to tamper-only while Home) — less witnessing of the family at home — but only from a credential that proves intent (a phone or watch key with user presence, a FIDO2 key with user verification); a card or fob is possession, not intent (§6.5), so it may raise sensing (Away, Night) and never lower it | Mute tamper, integrity, offline or pattern pokes, or stop an outdoor witness |
 | Be revoked in one step, by epoch | Name anyone, anywhere — no label, handle or per-person count in any output |
 | | Unlock a door or actuate anything on a Canary (Free Signals D) |
-| | Work passively, or from outside the home network |
+| | Work passively, or from outside the home network — the checker closes any connection from a peer that is not on it, a peer-address check that a proxy or VPN re-originating traffic from a private address defeats (§6.4 rule 7) |
 
 ### 6.4 The household-key contract (the load-bearing part)
 
@@ -379,38 +381,55 @@ Modeled on the voice contract in
    change, which applies to every event equally. It never joins to a witnessed
    event.
 4. **Transient by default.** Challenges are single-use, live ≤ 10 s, in RAM;
-   no per-credential counter, usage tally or arrival history exists. If
-   posture changes are journaled at all, it is as a new sealed-log record type
-   — a ruleset change ([`spec/event_contract.md`](../../spec/event_contract.md)
+   no per-credential counter, usage tally or arrival history exists (the rate
+   limiter counts rejections per door and lane, in RAM, never per credential).
+   If posture changes are journaled at all, it is as a new sealed-log record
+   type — a ruleset change ([`spec/event_contract.md`](../../spec/event_contract.md)
    §9) that starts in the dictionary (AGENTS.md rule 5) — with only a coarse
    time bucket, *without* the credential, the door or a precise time. Whether
    even that is too much (a daily posture change is a coarse arrival diary) is
-   for the posture RFC; the checker as built journals nothing.
+   for the posture RFC; the checker as built journals nothing. It does not
+   blur the latest change, though: the current statement states its minute
+   (`issued_at`), the statement file's modification time states its second,
+   and any live reader of that file or of `GET /v1/posture` learns each change
+   — a command, a lapse or a restart — to its own polling precision. That too
+   is for the posture RFC, next to Home Assistant's exact-time diary.
 5. **No who, in any output** — journal, alert ledger, digests, Watch
    snapshots, MQTT, Home Assistant, logs. The roster holds random handles and
    refuses any field that could hold a name. Every tap gets the same neutral
    "read" feedback at the door; acceptance shows only on the presenter's phone,
    so the street never learns who is "authorized."
-6. **Fail toward today, and Home lapses.** Jamming, a dead satellite or a
-   missing key never lower sensing; a failed tap changes nothing. Home is the
-   one state below today's — left set on an empty house, it is less witnessing
-   than today — so it lapses to full sensing on its own (at most 24 h, 12 h by
-   default, on each witness's own clock), the hub restarts in Away, and a
-   statement a witness cannot verify reads as Away: a forgotten Home is
-   bounded, not removed. Home silences nothing the relay carries and adds no
-   remote poke class (widening the relay's vocabulary "is a privacy decision,
-   not a tweak" — [`src/relay/mod.rs`](../../src/relay/mod.rs)).
+6. **Fail toward today, and Home lapses.** Jamming, a dead satellite, a
+   flooded LAN API or a missing key never lower sensing — they hold the
+   current posture, and a held Home still lapses; a failed tap changes
+   nothing. Home is the one state below today's — left set on an empty house,
+   it is less witnessing than today — so it lapses to full sensing on its own
+   (12 h by default, at most 24 h after it was issued), the hub restarts in
+   Away, and a statement a witness cannot verify reads as Away: a forgotten
+   Home is bounded, not removed. A witness refuses a statement issued more
+   than 5 minutes ahead of its own clock, so a Home counts for at most 24 h
+   5 min of each witness's own clock, whatever the hub's clock said; a hub
+   clock more than 5 minutes ahead is refused (witnesses behave as Away), and
+   one running behind lapses Home early. Home silences nothing the relay carries and adds no remote poke
+   class (widening the relay's vocabulary "is a privacy decision, not a
+   tweak" — [`src/relay/mod.rs`](../../src/relay/mod.rs)).
 7. **Local only, forever.** No cloud, no Apple or Google service, no passkey
    "hybrid" tunnel, no URL on any tag (a background-NDEF universal link would
    bring in Apple's associated-domains CDN and a public hostname). Off the home
-   network, a key does nothing.
+   network, a key does nothing: on any bind the checker closes, without a
+   response, every connection from a peer that is not loopback, private or
+   link-local (the 100.64.0.0/10 range Tailscale and carrier NAT use is
+   refused too). That is a peer-address check — a strong default, not a
+   cryptographic guarantee. A proxy, VPN or ingress that re-originates
+   traffic from a private or loopback address defeats it, so the hub's LAN
+   API must not sit behind one that accepts peers from elsewhere.
 
 ### 6.5 Components
 
 | Piece | What it is | Notes |
 |---|---|---|
 | **Key satellite** (not built) | XIAO ESP32-C3 (already in the repo) + ST25R3916 NFC front end; MCU inside the wall, antenna outside | Its own device class, like the voice satellite, secure by default on ESP-IDF (spec §6.3): NVS encryption, Secure Boot v2 RSA-3072, flash encryption in release mode, secure download mode — still open, like any C3, to AR2023-007 given days of access — a tamper switch, and a first-boot identity drawn inside `bootloader_random_enable()`/`disable()` as `firmware/projects/canary-vision/src/witness.cpp` does. No member material. A padded uplink metronome keeps its own traffic from timing taps (Invariant III; the [`src/bridge/homekit.rs`](../../src/bridge/homekit.rs) pacer); indoor witnesses going quiet after a tap is a separate signal the posture RFC must pace. |
-| **Hub checker** (built) | [`household/`](../../household/): its own crate and process, not `witnessd` | Roster in a private data directory excluded from backups; card keys sealed under a key held outside it. The crate split stops kernel code calling it; keeping witnessd's Unix user out of its files, and giving it no internet route, are `won't`s the deployment configures, not `can't`s. |
+| **Hub checker** (built) | [`household/`](../../household/): its own crate and process, not `witnessd` | Roster in a private data directory; card keys and the hub's own signing keys (the posture key witnesses pin, the roster key that countersigns every accepted roster) sealed under a key-encryption key held outside it. Sealing protects a copy of the directory, not a disk image that also holds that key, and keeping the directory and that key out of backups is the operator's job: v0 does not, and cannot, enforce it. The crate split stops kernel code calling it; keeping witnessd's Unix user out of its files, and giving it no internet route, are `won't`s the deployment configures, not `can't`s. |
 | **Phone and watch keys** (apps not built) | Android Keystore/StrongBox P-256 behind a Class 3 biometric; iOS Secure Enclave P-256 behind `.userPresence` — never "express" keys | A foreground NFC reader session against the satellite's emulated ISO 7816-4 card — iPhone: Core NFC `NFCISO7816Tag` on a custom AID under `com.apple.developer.nfc.readersession.iso7816.select-identifiers` (the self-service Tag Reading capability, not the NFC & SE Platform entitlement); Android: reader-mode `IsoDep`, no HCE. The challenge lives only in the RF field, so it cannot be stockpiled. |
 | **Cards** | NTAG 424 DNA (AES-128, ~$0.45–1 a sticker, ~$2.50–5 a PVC card) or DESFire EV3 (EAL5+, relay-resistant proximity check) | *Possession, not intent* — a card answers any reader field — so Away or Night only; offer shielding sleeves. Random ID on, so the hub trial-authenticates each enrolled card's own key, bounded by the roster (16 in v0, always 16 attempts); check the failed-authentication counter first. Never diversified from the UID; no class key. |
 | **FIDO2 keys** | Any NFC key speaking FIDO2's CTAP2 (Client to Authenticator Protocol), $15–29 | With no keypad on the satellite, user verification (UV) needs a key with its own fingerprint sensor, registered `credProtect` 3 as *intent*. A plain key is `credProtect` 2, *possession*, and its holder is told a harvested credential ID and relying-party ID let anyone recognize it later with a silent `up=false` probe. No signature counter is stored (clone detection traded for no usage tally). |
@@ -440,9 +459,15 @@ purpose, then signs a new statement.
 - **Changes.** Adding a member takes m-of-n admins and a physical confirm on
   the *inside* (v0: an operator command on the hub host). Revoking is cheap on
   purpose — any one admin, or the holder. Changing the admin set or threshold
-  takes m-of-n current admins and 24 hours pending, so one stolen admin phone
-  cannot take over (the notice to every admin is not built). Every epoch bump
-  discards outstanding challenges.
+  takes m-of-n current admins and 24 hours pending, so with a threshold of 2
+  or more one stolen admin phone cannot take over. Genesis defaults to
+  threshold 1, where one admin key alone makes every change — removing every
+  other admin included, once the 24 hours pass — and nothing announces the
+  pending change beyond `roster pending` (the notice to every admin is not
+  built). With exactly two admins, threshold 2 leaves no way to remove a lost
+  admin key (removal needs two current admins), so threshold 2 wants at least
+  three admins.
+  Every epoch bump discards outstanding challenges.
 - **No guest passes in v0.** A guest pass's use log is attendance tracking of a
   cleaner, caregiver or dog walker; if ever added, no per-use record.
 - **Never on a chain** (§9). Nothing anchors the roster today: the RFC 3161
@@ -505,7 +530,7 @@ Illinois, Texas, Portland and Quebec.
 | Arm when we leave, disarm when we're back, without a geofence | Away / Home / Night by a signed act; the apps hold no location permission | **Full** once a witness honors the household posture (the hub side is built; no Canary does yet) |
 | Tell me when someone who isn't us is at the door | Every `Person` at the door is reported exactly as today — a notice to phones on the home network; off the LAN nothing, because the relay carries no `Person` and this design adds none (§6.4 rule 6) | **Same as today** — nothing here tells "not us" apart, and the system never says "stranger" or "unknown": a Canary "does not accuse," and a forgotten card would make that word a false alarm about your own child |
 | Kids without phones | A sticker or card, or a one-button fob — possession: Away or Night, never Home | **Full** — stickers and cards have no battery or radio, so cannot become locators; a fob (an nRF52840) stays silent until pressed |
-| Remove someone (a lost phone, a roommate moving out) | Revoke the key; the roster moves to a new epoch | **Full, and better** — a key can be taken back; a face cannot |
+| Remove someone (a lost phone, a roommate moving out) | Revoke the key; the roster moves to a new epoch. LAN pairings are separate from the roster (tokens are not linked to members), so a paired device keeps reading the posture — never changing it — until `household_checker pair --reset` unpairs every client and the household pairs again the ones it keeps | **Full, and better** — a key can be taken back; a face cannot |
 | Packages, people, vehicles, animals, zones | Already the witness vocabulary | **Full**, unchanged |
 | Name the person at the door ("Alex is home") | — | **Refused.** A key is not a person (a borrowed card, a child with a parent's fob), and a name in a notification is an arrival diary on every recipient's phone |
 | Recognize grandparents, the caregiver, the cleaner | They are a `Person`, like anyone | **Refused** — naming someone who carries nothing needs a template of everyone who walks up |
@@ -530,7 +555,12 @@ vendor cloud to breach.
    never have. AES cards are the exception, said out loud: checking one needs
    that card's AES key on the hub, which is clone-capable.
    Card keys live only in the checker's private data, sealed under a key kept
-   outside it and its backups, and a hub compromise means re-keying every card.
+   outside it (keeping both out of backups is the operator's job), and a hub
+   compromise means re-keying every card. They are not the hub's only secret:
+   its posture signing key, sealed beside them, alone decides whether indoor
+   witnesses sense — whoever holds it can sign Home without any intent
+   credential — so a hub compromise also means a new posture key and
+   re-pairing every witness.
 2. **Any biometric is local user verification on the member's own device**
    (Face ID, Android Class 3, a fingerprint FIDO key) unlocking the key — the
    FIDO/WebAuthn architecture, where the relying party sees a signature and
