@@ -8,19 +8,27 @@ sources build.sh's Vision flavor hands em++, and its list missed the box
 pipeline the bindings include, so after a pipeline edit `make` rebuilt
 test_vision_detection_pipeline and reran a stale test_vision_core_bindings
 that still passed (sweep F249). Fourteen more suites there missed headers
-they compile, the canary-wap Bluetooth suite missed a dozen, most canary-wap
-suites named no header at all, and an edit to arduino_globals.h, which every
-canary-wap compile force-includes (F229), rebuilt four suites (sweep F286).
-CI builds fresh and never saw any of it.
+they compile, the canary-wap Bluetooth suite missed a dozen, 27 of the 87
+canary-wap suites named no header at all, and an edit to arduino_globals.h,
+which every canary-wap compile force-includes (F229), rebuilt only the five
+suites that listed it (sweep F286). CI builds fresh and never saw any of it.
 
 Now every compile writes its own dependency file (-MMD -MP, and -MM after a
 command that compiles several sources: the Makefiles' DEPFLAGS and
-with_deps), and each Makefile reads them back. This test holds that to the
-two tools that decide, not to a list kept by hand, for every compile of
-both Makefiles' default goal:
+with_deps), and each Makefile reads them back and gives every source they
+name a rule, as -MP gives every header one. This test holds that to the two
+tools that decide, not to a list kept by hand, for every compile of both
+Makefiles:
 
   * make, for the plan: every command the default goal runs (`make -n -B
-    --trace`), and the target whose recipe runs it;
+    --trace`), and the target whose recipe runs it; then the same for any
+    other target with a recipe of its own that the default goal does not
+    reach, so a suite not hooked into `run` is held too;
+  * the plan alone: every compile of a non-phony target writes a dependency
+    file, CXXFLAGS given on make's command line or not (`override`); one
+    that compiles several sources is followed by a -M/-MM listing for its
+    target; and no compile writes a dependency file it has no -o to name
+    after (it would land in the tests_host directory);
   * the build: every one of those targets is built, as `make` builds it, in
     a scratch copy of the tests_host directory (the directory copied, every
     file around it linked, so the Makefile's relative paths still reach the
@@ -28,19 +36,28 @@ both Makefiles' default goal:
   * the compiler, for every file the compile reads: the same command, its
     output and dependency-file flags dropped, with -MM;
   * make again, for what it knows after the build: every target is up to
-    date (`make -q`), and the prerequisites make's database holds for it
-    (`make -p`), the dependency files included, name every file the
-    compile read (compared by real path, as one file can be spelled two
-    ways).
+    date (`make -q`); the default goal is the one it was before any
+    dependency file existed; the prerequisites make's database holds for
+    each target (`make -p`), the dependency files included, name every file
+    the compile read (compared by real path, as one file can be spelled two
+    ways); and each of those files is itself the target of a rule, so one
+    moved or deleted since its dependency file was written is a rebuild and
+    not "No rule to make target".
 
 A target make always remakes (a .PHONY one, such as the tsan builds and the
-syntax checks) cannot run stale and is passed over.
+syntax checks) cannot run stale and is passed over, except that it too may
+not write a dependency file it has no -o for.
 
-The self-test reads the same build through each Makefile with its
-`-include` line taken out, which leaves only the hand lists, and requires the
-check to name the Vision pipeline headers for the bindings suite (F249) and
-the headers BT_CMD_DEPS once missed for the Bluetooth suite (F286): a check
-that stopped seeing a missing dependency is a red test, not a silent hole.
+The self-test reads the same build through each Makefile changed one line
+at a time (MUTATIONS), and requires each check to refuse its change: with
+the `-include` line taken out, which leaves only the hand lists, the Vision
+pipeline headers for the bindings suite (F249) and the headers BT_CMD_DEPS
+once missed for the Bluetooth suite (F286); with the source rules taken out,
+the sources; with the `-include` above `all`, the default goal; without
+`override`, the compiles that then write no dependency file; with with_deps
+running the compile alone, the bindings suite; and with the syntax checks
+keeping DEPFLAGS, their litter. A check that stopped seeing what it guards is
+a red test, not a silent hole.
 
 Run on its own, it takes a Makefile to read instead of each tree's own
 (`--makefile <tree>=<path>`), and prints what it finds:
@@ -204,6 +221,8 @@ class Compile:
     argv: list[str]             # as make prints it, the sentinel first
     sources: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    depfile: bool = False       # writes a dependency file (-MD, -MMD)
+    named: bool = False         # an -o or -MF names that file
 
 
 def split_compile(target: str, argv: list[str]) -> Compile | None:
@@ -212,6 +231,8 @@ def split_compile(target: str, argv: list[str]) -> Compile | None:
     if any(a in DEP_LISTING for a in argv[1:]):
         return None
     c = Compile(target, argv)
+    c.depfile = any(a in ("-MD", "-MMD") for a in argv[1:])
+    c.named = any(a == "-o" or a.startswith("-MF") for a in argv[1:])
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -229,16 +250,25 @@ def split_compile(target: str, argv: list[str]) -> Compile | None:
     return c
 
 
-def plan(cwd: Path, makefile: str) -> list[Compile]:
-    """Every compile `make` runs for its default goal, and its target."""
+@dataclass
+class Plan:
+    compiles: list[Compile] = field(default_factory=list)
+    traced: set[str] = field(default_factory=set)   # every target whose recipe runs
+    listed: set[str] = field(default_factory=set)   # targets whose recipe runs a -M/-MM listing
+
+
+def plan(cwd: Path, makefile: str, *args: str, require: bool = True) -> Plan:
+    """Every compile `make` runs for its default goal (or for the targets and
+    variables in args), and its target."""
     proc = make(cwd, "-f", makefile, "-n", "-B", "--trace",
-                f"CXX={SENTINEL_CXX}", f"CC={SENTINEL_CC}")
+                f"CXX={SENTINEL_CXX}", f"CC={SENTINEL_CC}", *args)
     target = ""
-    compiles: list[Compile] = []
+    out = Plan()
     for line in proc.stdout.replace("\\\n", " ").splitlines():
         m = TRACE.match(line)
         if m:
             target = m["target"]
+            out.traced.add(target)
             continue
         if not line.strip():
             continue
@@ -251,40 +281,83 @@ def plan(cwd: Path, makefile: str) -> list[Compile]:
         for argv in commands:
             if argv[0] in (SENTINEL_CXX, SENTINEL_CC) or COMPILER.match(argv[0]):
                 c = split_compile(target, argv)
-                if c is not None:
-                    if not target:
-                        raise CheckError(f"a compile before any target: {line}")
-                    compiles.append(c)
+                if not target:
+                    raise CheckError(f"a compile before any target: {line}")
+                if c is None:
+                    out.listed.add(target)
+                else:
+                    out.compiles.append(c)
             elif any(SENTINEL_CXX in w or SENTINEL_CC in w for w in argv):
                 raise CheckError(f"a command that names the compiler and is not a compile: {line}")
-    if not compiles:
+    if require and not out.compiles:
         raise CheckError(f"make -n -B in {cwd} printed no compile")
-    return compiles
+    return out
 
 
-def database(cwd: Path, makefile: str) -> tuple[dict[str, set[str]], set[str]]:
-    """make's rule database: each target's normal prerequisites (order-only
-    ones never make a target out of date), and the .PHONY targets."""
+@dataclass
+class Db:
+    """make's rule database (`make -p`)."""
+    # each target's normal prerequisites (order-only ones never make a target
+    # out of date)
+    prereqs: dict[str, set[str]] = field(default_factory=dict)
+    phony: set[str] = field(default_factory=set)
+    targets: set[str] = field(default_factory=set)   # every file a rule names as its target
+    recipes: set[str] = field(default_factory=set)   # the targets with a recipe of their own
+    goal: str = ""                                   # .DEFAULT_GOAL
+
+
+def database(cwd: Path, makefile: str) -> Db:
+    """Each target's normal prerequisites, the .PHONY targets, every file a
+    rule names as its target (not "# Not a target:", a file only named as a
+    prerequisite, which make cannot remake and stops on when it is gone),
+    the targets with a recipe of their own, and the default goal."""
     proc = make(cwd, "-f", makefile, "-p", "-q", check=False)
     lines = proc.stdout.splitlines()
     try:
         start = lines.index("# Files")
     except ValueError:
         raise CheckError(f"make -p in {cwd} printed no database:\n{proc.stderr[-2000:]}")
-    prereqs: dict[str, set[str]] = {}
-    phony: set[str] = set()
-    for line in lines[start:]:
-        if not line or line[0] in "#\t ":
+    db = Db()
+    for line in lines[:start]:
+        if line.startswith(".DEFAULT_GOAL := "):
+            db.goal = line[len(".DEFAULT_GOAL := "):].strip()
+    current = ""
+    for prev, line in zip(lines[start - 1:], lines[start:]):
+        if not line:
+            current = ""
+            continue
+        if line[0] == "\t":
+            if current:
+                db.recipes.add(current)
+            continue
+        if line[0] in "# ":
             continue
         m = re.match(r"^(?P<t>[^:=]+?)::?(?![=:])(?P<rest>.*)$", line)
         if not m or "=" in m["rest"]:
             continue    # not a rule, or a target-specific variable (`t: VAR = x`)
-        target = m["t"].strip()
+        current = m["t"].strip()
         normal = m["rest"].split("|", 1)[0].split()
-        if target == ".PHONY":
-            phony.update(normal)
-        prereqs.setdefault(target, set()).update(normal)
-    return prereqs, phony
+        if current == ".PHONY":
+            db.phony.update(normal)
+        db.prereqs.setdefault(current, set()).update(normal)
+        if prev != "# Not a target:":
+            db.targets.add(current)
+    return db
+
+
+def full_plan(cwd: Path, makefile: str, db: Db) -> Plan:
+    """The default goal's plan, and then any other target with a recipe of
+    its own that the default goal does not reach: a suite not hooked into
+    `run` is held to the same rules."""
+    p = plan(cwd, makefile)
+    extra = sorted(t for t in db.recipes - p.traced - db.phony if not t.startswith("."))
+    if extra:
+        more = plan(cwd, makefile, *extra, require=False)
+        have = {c.target for c in p.compiles}
+        p.compiles += [c for c in more.compiles if c.target not in have]
+        p.traced |= more.traced
+        p.listed |= more.listed
+    return p
 
 
 class Paths:
@@ -323,6 +396,11 @@ def closure(cwd: Path, c: Compile, paths: Paths) -> dict[str, str]:
 
 # ── the check ────────────────────────────────────────────────────────────
 
+# What a plan with CXXFLAGS given on make's command line passes, so that only
+# an `override` keeps the Makefile's own additions to it.
+CMDLINE_CXXFLAGS = "CXXFLAGS=-std=c++17"
+
+
 @dataclass
 class Result:
     compiles: int = 0
@@ -330,7 +408,15 @@ class Result:
     files: int = 0
     # target -> files its compile reads that no prerequisite of it names
     missing: dict[str, list[str]] = field(default_factory=dict)
+    # target -> files its compile reads that no rule names as its target, so
+    # make stops ("No rule to make target") once one is moved or deleted
+    unruled: dict[str, list[str]] = field(default_factory=dict)
     stale: list[str] = field(default_factory=list)   # out of date right after the build
+    nodeps: list[str] = field(default_factory=list)  # a compile that writes no dependency file
+    unlisted: list[str] = field(default_factory=list)  # several sources and no -M/-MM listing
+    litter: list[str] = field(default_factory=list)  # a dependency file with no -o to name it
+    goal_before: str = ""                            # the default goal with no dependency file
+    goal: str = ""                                   # ... and after the build
     closures: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
@@ -345,22 +431,44 @@ def build(cwd: Path, makefile: str, targets: list[str]) -> None:
     make(cwd, "-f", makefile, f"-j{jobs()}", *targets)
 
 
+def plan_faults(cwd: Path, makefile: str, db: Db, result: Result) -> None:
+    """What the plan alone shows: each compile of a non-phony target writes
+    a dependency file, CXXFLAGS on make's command line or not; one that
+    compiles several sources is followed by a listing of its target's
+    headers; and no compile writes a dependency file it has no -o for."""
+    for args, how in (((), ""), ((CMDLINE_CXXFLAGS,), f" (with {CMDLINE_CXXFLAGS} given to make)")):
+        p = full_plan(cwd, makefile, db) if not args else plan(cwd, makefile, *args)
+        for c in p.compiles:
+            real = [s for s in c.sources if s != "/dev/null"]
+            if c.target not in db.phony and not c.depfile:
+                result.nodeps.append(c.target + how)
+            if c.target not in db.phony and len(real) > 1 and c.target not in p.listed and not how:
+                result.unlisted.append(c.target)
+            if c.depfile and not c.named:
+                result.litter.append(f"{c.target}{how}: {' '.join(c.argv)}")
+    for name in ("nodeps", "unlisted", "litter"):
+        setattr(result, name, sorted(set(getattr(result, name))))
+
+
 def read(cwd: Path, makefile: str, compiles: list[Compile],
-         closures: dict[int, dict[str, str]], paths: Paths) -> Result:
+         closures: dict[int, dict[str, str]], paths: Paths, goal_before: str) -> Result:
     """What make knows through `makefile`, against what each compile read."""
-    prereqs, phony = database(cwd, makefile)
-    result = Result()
+    db = database(cwd, makefile)
+    result = Result(goal_before=goal_before, goal=db.goal)
+    plan_faults(cwd, makefile, db, result)
+    ruled = {paths.canon(cwd / t) for t in db.targets}
     for i, c in enumerate(compiles):
-        if c.target in phony:
+        if c.target in db.phony:
             continue
         result.compiles += 1
-        known = {paths.canon(cwd / p) for p in prereqs.get(c.target, ())}
+        known = {paths.canon(cwd / p) for p in db.prereqs.get(c.target, ())}
         got = closures[i]
         result.closures.setdefault(c.target, {}).update(got)
-        lost = sorted(rel(p) for p in got if p not in known)
-        if lost:
-            result.missing.setdefault(c.target, [])
-            result.missing[c.target] = sorted(set(result.missing[c.target]) | set(lost))
+        for name, lost in (("missing", [p for p in got if p not in known]),
+                           ("unruled", [p for p in got if p not in ruled])):
+            if lost:
+                table = getattr(result, name)
+                table[c.target] = sorted(set(table.get(c.target, [])) | {rel(p) for p in lost})
     result.targets = len(result.closures)
     result.files = len({p for got in result.closures.values() for p in got})
     return result
@@ -375,22 +483,40 @@ def check_tree(rel_tree: str, scratch: Path, makefile_text: str | None = None,
     paths = Paths(scratch)
     if makefile_text is not None:
         (cwd / "Makefile").write_text(makefile_text, encoding="utf-8")
-    compiles = plan(cwd, "Makefile")
-    _prereqs, phony = database(cwd, "Makefile")
-    targets = sorted({c.target for c in compiles if c.target not in phony})
+    before = database(cwd, "Makefile")
+    compiles = full_plan(cwd, "Makefile", before).compiles
+    targets = sorted({c.target for c in compiles if c.target not in before.phony})
     build(cwd, "Makefile", targets)
     with ThreadPoolExecutor(max_workers=jobs()) as pool:
         got = list(pool.map(lambda c: closure(cwd, c, paths), compiles))
     closures = dict(enumerate(got))
-    results = {"Makefile": read(cwd, "Makefile", compiles, closures, paths)}
+    results = {"Makefile": read(cwd, "Makefile", compiles, closures, paths, before.goal)}
     q = make(cwd, "-f", "Makefile", "-q", *targets, check=False)
     if q.returncode != 0:
         results["Makefile"].stale = [t for t in targets
                                      if make(cwd, "-f", "Makefile", "-q", t, check=False).returncode != 0]
     for name, text in (also or {}).items():
         (cwd / name).write_text(text, encoding="utf-8")
-        results[name] = read(cwd, name, compiles, closures, paths)
+        results[name] = read(cwd, name, compiles, closures, paths, before.goal)
     return results
+
+
+# ── the self-test: Makefiles each check must refuse ─────────────────────
+#
+# Each is the tree's Makefile with one line changed, read against the same
+# build (the dependency files are the real ones). `None` from a mutation
+# means its line is not in this Makefile, and the self-test then says which
+# line is gone rather than the whole class failing to set up.
+
+INCLUDE_LINE = re.compile(r"^-include \$\(wildcard [^\n]*\.d\)\n", re.M)
+SOURCE_RULE_LINE = re.compile(r"^\$\(filter %\.c %\.cpp,\$\(shell cat [^\n]*\.d\)[^\n]*\)\):\n", re.M)
+
+
+def one(pattern: re.Pattern, text: str) -> re.Match | None:
+    found = list(pattern.finditer(text))
+    if len(found) > 1:
+        raise CheckError(f"expected one line matching {pattern.pattern!r}, found {len(found)}")
+    return found[0] if found else None
 
 
 def without_include(text: str) -> str:
@@ -398,9 +524,62 @@ def without_include(text: str) -> str:
     out: what make knows from the hand lists alone. A Makefile that reads no
     dependency files (one from before sweep F286) is its own hand lists, so
     the main test names what it misses instead of the setup stopping here."""
-    out, n = re.subn(r"^-include \$\(wildcard [^\n]*\.d\)\n", "", text, flags=re.M)
+    out, n = INCLUDE_LINE.subn("", text)
     if n > 1:
         raise CheckError(f"expected at most one `-include $(wildcard ....d)` line, found {n}")
+    return out
+
+
+def without_source_rules(text: str) -> str | None:
+    """No rule for the sources the dependency files name."""
+    m = one(SOURCE_RULE_LINE, text)
+    return None if m is None else text[:m.start()] + text[m.end():]
+
+
+def include_first(text: str) -> str | None:
+    """The dependency files read in front of `all`, the first rule."""
+    m = one(INCLUDE_LINE, text)
+    if m is None or ".PHONY: all " not in text:
+        return None
+    rest = text[:m.start()] + text[m.end():]
+    anchor = rest.index(".PHONY: all ")
+    return rest[:anchor] + m.group(0) + rest[anchor:]
+
+
+def no_override(text: str) -> str | None:
+    """DEPFLAGS added to CXXFLAGS without `override`."""
+    out, n = re.subn(r"^override CXXFLAGS \+= \$\(DEPFLAGS\)$", "CXXFLAGS += $(DEPFLAGS)", text, flags=re.M)
+    return out if n == 1 else None
+
+
+def no_listing(text: str) -> str | None:
+    """with_deps runs the compile alone."""
+    out, n = re.subn(r"^with_deps = .*$", "with_deps = $(1)", text, flags=re.M)
+    return out if n == 1 else None
+
+
+def syntax_checks_write_deps(text: str) -> str | None:
+    """The syntax checks, which have no -o, keep DEPFLAGS."""
+    out, n = re.subn(r"^run-syntax-checks: DEPFLAGS =\n", "", text, flags=re.M)
+    return out if n == 1 else None
+
+
+MUTATIONS = {
+    "Makefile.hand_lists": without_include,
+    "Makefile.no_source_rules": without_source_rules,
+    "Makefile.include_first": include_first,
+    "Makefile.no_override": no_override,
+    "Makefile.no_listing": no_listing,
+    "Makefile.syntax_deps": syntax_checks_write_deps,
+}
+
+
+def mutants(text: str) -> dict[str, str]:
+    out = {}
+    for name, mutate in MUTATIONS.items():
+        mutated = mutate(text)
+        if mutated is not None:
+            out[name] = mutated
     return out
 
 
@@ -415,8 +594,7 @@ class TestsHostMakeDeps(unittest.TestCase):
         cls.results = {}
         for i, tree in enumerate(TREES):
             text = (REPO / tree / "Makefile").read_text(encoding="utf-8")
-            cls.results[tree] = check_tree(tree, Path(cls._tmp.name) / str(i),
-                                           also={"Makefile.hand_lists": without_include(text)})
+            cls.results[tree] = check_tree(tree, Path(cls._tmp.name) / str(i), also=mutants(text))
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -435,6 +613,31 @@ class TestsHostMakeDeps(unittest.TestCase):
                     "several sources run through $(call with_deps,...)?):\n" + "\n".join(
                         f"  {t}: {', '.join(fs)}" for t, fs in sorted(r.missing.items())))
 
+    def test_a_moved_header_or_source_is_a_rebuild(self) -> None:
+        for tree in TREES:
+            with self.subTest(tree=tree):
+                r = self.results[tree]["Makefile"]
+                self.assertEqual(
+                    r.unruled, {},
+                    f"{tree}: make stops with \"No rule to make target\" once one of these files "
+                    "a suite's dependency file names is moved or deleted (does DEPFLAGS keep -MP? "
+                    "does the line after the -include still give each source a rule?):\n" + "\n".join(
+                        f"  {t}: {', '.join(fs)}" for t, fs in sorted(r.unruled.items())))
+
+    def test_the_rules_every_compile_keeps(self) -> None:
+        for tree in TREES:
+            with self.subTest(tree=tree):
+                r = self.results[tree]["Makefile"]
+                self.assertEqual(r.goal, r.goal_before,
+                                 f"{tree}: a rule from a dependency file became the default goal "
+                                 "(is the -include still after `all`?)")
+                self.assertEqual(r.nodeps, [], f"{tree}: these compiles write no dependency file "
+                                 "(do they pass $(CXXFLAGS) or $(DEPFLAGS)? is it still `override`?)")
+                self.assertEqual(r.unlisted, [], f"{tree}: these compile several sources and list "
+                                 "no dependencies after (run them through $(call with_deps,...))")
+                self.assertEqual(r.litter, [], f"{tree}: these write a dependency file into the "
+                                 "directory, having no -o to name it after (set DEPFLAGS empty for them)")
+
     def test_vision_core_bindings_read_the_pipeline(self) -> None:
         r = self.results[FIRMWARE_HOST]["Makefile"]
         read_files = {rel(p) for p in r.closures[VISCORE]}
@@ -448,10 +651,44 @@ class TestsHostMakeDeps(unittest.TestCase):
         for f in PIPELINE:
             self.assertIn(f, hand.missing.get(VISCORE, []),
                           "with the hand lists alone the check must name the pipeline headers")
+            self.assertIn(f, hand.unruled.get(VISCORE, []),
+                          "with no dependency files read, no rule names the pipeline headers")
         hand = self.results[WAP_HOST]["Makefile.hand_lists"]
         for f in BT_UNLISTED:
             self.assertIn(f, hand.missing.get(BT_SUITE, []),
                           "with the hand lists alone the check must name the Bluetooth headers")
+
+    def test_the_check_refuses_each_mutation(self) -> None:
+        for tree in TREES:
+            with self.subTest(tree=tree):
+                rs = self.results[tree]
+                main = rs["Makefile"]
+                lost = [name for name in MUTATIONS if name not in rs and name != "Makefile.syntax_deps"]
+                self.assertEqual(lost, [], f"{tree}: the line each of these changes is not in the Makefile")
+                # No rule for the sources: exactly the files each compile names
+                # on its command line, as -MP gives every header one.
+                cut = rs["Makefile.no_source_rules"]
+                self.assertTrue(cut.unruled, "no source rule, and the check saw none missing")
+                self.assertEqual(cut.missing, main.missing)
+                for t, fs in cut.unruled.items():
+                    for f in fs:
+                        self.assertRegex(f, r"\.(?:c|cpp)$", f"{t}: a header without a rule: {f}")
+                first = rs["Makefile.include_first"]
+                self.assertNotEqual(first.goal, main.goal_before,
+                                    "the dependency files read first, and the default goal held")
+                self.assertTrue(rs["Makefile.no_override"].nodeps,
+                                "DEPFLAGS without override, and every compile still wrote its file")
+                self.assertTrue(rs["Makefile.no_listing"].unlisted,
+                                "with_deps without its listing, and no compile was named")
+        fw = self.results[FIRMWARE_HOST]
+        # firmware/tests_host has no earlier `override` of CXXFLAGS, so without
+        # this one only a CXXFLAGS given to make loses DEPFLAGS.
+        self.assertTrue(all(t.endswith(f"(with {CMDLINE_CXXFLAGS} given to make)")
+                            for t in fw["Makefile.no_override"].nodeps), fw["Makefile.no_override"].nodeps)
+        self.assertIn(VISCORE, fw["Makefile.no_listing"].unlisted)
+        self.assertIn(VISCORE, fw["Makefile.no_source_rules"].unruled)
+        self.assertTrue(any(x.startswith("run-syntax-checks") for x in fw["Makefile.syntax_deps"].litter),
+                        "the syntax checks kept DEPFLAGS, and no litter was named")
 
 
 def report(argv: list[str]) -> int:
@@ -465,12 +702,20 @@ def report(argv: list[str]) -> int:
         for i, tree in enumerate(TREES):
             r = check_tree(tree, Path(tmp) / str(i), overrides.get(tree))["Makefile"]
             print(f"{tree}: {r.compiles} compiles of {r.targets} suites read {r.files} files; "
-                  f"{len(r.missing)} suites miss some, {len(r.stale)} out of date after the build")
+                  f"{len(r.missing)} suites miss some, {len(r.unruled)} name a file with no rule, "
+                  f"{len(r.stale)} out of date after the build; default goal {r.goal_before!r} "
+                  f"before the build, {r.goal!r} after")
             for t, fs in sorted(r.missing.items()):
                 print(f"  {t}: {', '.join(fs)}")
+            for t, fs in sorted(r.unruled.items()):
+                print(f"  no rule, {t}: {', '.join(fs)}")
             for t in r.stale:
                 print(f"  stale: {t}")
-            bad += len(r.missing) + len(r.stale)
+            for name in ("nodeps", "unlisted", "litter"):
+                for x in getattr(r, name):
+                    print(f"  {name}: {x}")
+            bad += (len(r.missing) + len(r.unruled) + len(r.stale) + len(r.nodeps)
+                    + len(r.unlisted) + len(r.litter) + (r.goal != r.goal_before))
     return 1 if bad else 0
 
 
