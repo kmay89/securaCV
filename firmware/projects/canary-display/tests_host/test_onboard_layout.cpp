@@ -41,7 +41,10 @@
 // its body's. They are fitted inside the halo's chord in the small glass's
 // faces now, and here every line must read whole there, no title's box may
 // overlap its body's (on any glass), and the Join rows and the bird's seat
-// must keep clear of the stroke. test_onboard_scenes.cpp holds
+// must keep clear of the stroke. Its QR card's corners stay over the stroke
+// by decision (F155), held at the reach they have: 159.9 px from the
+// halo's center at the default ladder, 163.5 under Heirloom, against the
+// 147..150 px stroke. test_onboard_scenes.cpp holds
 // onboard_ui.cpp to the same rules, reading what it draws.
 // The panels main.cpp turns before provision_run() run every check too,
 // held like any other glass: the dash line's 480x800 portrait, where the
@@ -897,12 +900,27 @@ static int ring_side(int w, int d, int top, const Box& b, int x = 0) {
   return 0;
 }
 
+// F155 (a decision, for the maintainer to revisit): on wide glass the Join
+// card's rounded corners stay over the 300 px ring's stroke, where the
+// white card has painted over the ring at its four diagonals since F84
+// (159.9 px from the ring's center at the default ladder, 163.5 under
+// Heirloom, where the Join stack seats the card 5 px above the ring's
+// center, against the stroke's 147..150 px). A ring large enough to clear
+// them (about 330 px) would cross the Join title and credentials rows, and
+// the floor canvas that keeps the join code's 7 px pitch (203 px) still
+// reaches about 156 px; a recomposed wide Join scene is the alternative
+// left open. What stands is held as a ceiling: the reach may not grow (a
+// bigger card, or one moved off the ring's center), nor its overlap past
+// the stroke's inner edge (a smaller ring). Both are read to 0.1 px.
+static const double kWideCardReach[2] = {159.9, 163.5};  // default, Heirloom
+static const double kWideStrokeInner = 147.0;  // kWideRingD / 2 - kRingStroke when held
+
 // F66: no row of any scene, nor the bird at either of its seats, crosses the
 // halo's stroke on small glass: each is wholly inside the stroke's inner
 // circle or wholly outside its outer one; the QR card is inside. F84: the
 // same on wide glass, with its 300 px halo, its Join rows (no note row
-// there) and its one bird seat; its card's rounded corners are not held
-// (they reach past that ring's stroke: filed).
+// there) and its one bird seat; its card's rounded corners reach past that
+// ring's stroke, and F155 holds how far.
 static void check_ring(const Env& e, int which, const Stack& s,
                        const Rows& r, const Glass& g, const Ring& ring,
                        const Column& col, bool wide, std::vector<Box> boxes) {
@@ -968,9 +986,21 @@ static void check_ring(const Env& e, int which, const Stack& s,
           "from the halo's center; its stroke starts at %.1f", n, lad_name,
           s.card, s.card_top, kCardRadius, reach, r_in);
     if (wide) {
+      // F155: the ceilings, at 0.1 px (half a tenth of slack for rounding).
+      const double ceil = kWideCardReach[which == 0 ? 0 : 1];
+      const double over = reach - r_in;
+      const double over_ceil = ceil - kWideStrokeInner;
+      CHECK(reach <= ceil + 0.05,
+            "%s/%s: the QR card (%d px at y %d, %d px corners) reaches %.1f px "
+            "from the halo's center, past its %.1f px ceiling (F155)", n,
+            lad_name, s.card, s.card_top, kCardRadius, reach, ceil);
+      CHECK(over <= over_ceil + 0.05,
+            "%s/%s: the QR card's corners reach %.1f px past the %d px "
+            "halo's stroke (inner edge %.1f), past their %.1f px ceiling "
+            "(F155)", n, lad_name, over, ring.d, r_in, over_ceil);
       std::printf("  %20s card corners reach %.1f px from the halo's center"
-                  " (stroke %.1f..%.1f): not held on wide glass\n", "",
-                  reach, r_in, r_out);
+                  " (stroke %.1f..%.1f): held at <= %.1f (F155)\n", "",
+                  reach, r_in, r_out, ceil);
     }
   }
   // The bird, breathing (+-2 px) at each seat bird_seat() names: the
