@@ -53,6 +53,9 @@
 #include <thread>
 #include <vector>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #ifndef CSI_TEST_HOST_BUILD
 extern "C" int test_mesh_session_run() { return 0; }
 #else
@@ -131,6 +134,16 @@ void reset_world() {
   mesh_session::set_failed_callback(on_failed);
   mesh_session::set_code_ready_callback(on_code_ready);
   assert(mesh_session::start());
+}
+
+/* F162: a signed HEARTBEAT as it goes on the air: the version byte, type
+ * 16, no payload, the signature. A session sends one to every bound member
+ * right after NOTIFY_PAIRED and once after a boot restore with members. */
+bool is_heartbeat(const std::vector<uint8_t>& f) {
+  return f.size() == mesh_envelope::MIN_FRAME_LEN &&
+         f[mesh_envelope::OFFSET_VERSION] == mesh_envelope::OPERA_VERSION &&
+         f[mesh_envelope::OFFSET_MSG_TYPE] ==
+             static_cast<uint8_t>(mesh_envelope::MsgType::HEARTBEAT);
 }
 
 /* A trusted member bound to `mac`. The opera senders reach bound members
@@ -3679,11 +3692,15 @@ void test_pairing_over_the_air_joiner_confirms_first() {
   mesh_session::RequestResult res;
   assert(mesh_session::take_request_result(&res));
   assert(res.status == mesh_session::RequestStatus::OK);
-  assert(g_outs.size() == 2);
+  /* Since F162 the same pass's NOTIFY_PAIRED sends the new member one
+   * heartbeat, after the two pairing frames. */
+  assert(g_outs.size() == 3);
   assert(std::memcmp(g_outs[0].mac, mac_j, 6) == 0);
   assert(std::memcmp(g_outs[1].mac, mac_j, 6) == 0);
+  assert(std::memcmp(g_outs[2].mac, mac_j, 6) == 0);
   assert(g_outs[0].bytes == conf_j);                  /* the hash is the same both ways */
   assert(g_outs[1].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  assert(is_heartbeat(g_outs[2].bytes));
   assert(g_paired_fired);
   assert(mesh_session::trusted_peer_count() == 1);
   assert(transport_has(mac_j));
@@ -4223,9 +4240,12 @@ bool pair_from(const uint8_t S[32], const uint8_t me[6], const uint8_t mac_j[6],
     assert(!g_paired_fired && g_bound_calls.size() == bound_before);
     return false;
   }
+  /* The COMPLETE went with the confirm; since F162 the NOTIFY_PAIRED below
+   * sends a heartbeat after it, to a member that was bound. */
+  const std::vector<uint8_t> complete = last_to(mac_j);
   mesh_session::process(t + 4);
   assert(g_paired_fired);
-  feed_pure(cj, me, last_to(mac_j), t + 5, &a);
+  feed_pure(cj, me, complete, t + 5, &a);
   assert(a.type == mesh_pairing::ActionType::NOTIFY_PAIRED);
   return true;
 }
@@ -5670,8 +5690,10 @@ size_t sends_to_mark() {
 
 /* This session as the INITIATOR at loop time T0, the joiner's owner first,
  * its own owner's confirm through the REST slot at T0 + 10: the CONFIRM
- * and the COMPLETE go to mac_j and NOTIFY_PAIRED runs in the same pass.
- * Returns those two frames; nothing is delivered to the joiner. */
+ * and the COMPLETE go to mac_j and NOTIFY_PAIRED runs in the same pass,
+ * which since F162 sends one heartbeat to every bound member, the joiner
+ * among them when it was bound. Returns the two pairing frames; nothing is delivered to the
+ * joiner. */
 std::vector<std::vector<uint8_t>> initiator_completes(const uint8_t S[32], const uint8_t me[6],
                                                       const uint8_t mac_j[6],
                                                       const uint8_t j_pub[32],
@@ -5687,10 +5709,18 @@ std::vector<std::vector<uint8_t>> initiator_completes(const uint8_t S[32], const
   assert(rest_confirm(T0 + 10) == mesh_session::RequestStatus::OK);
   assert(g_paired_fired);
   std::vector<std::vector<uint8_t>> sent;
+  size_t heartbeats_to_j = 0;
   for (const auto& o : g_outs) {
+    if (is_heartbeat(o.bytes)) {   /* F162 */
+      if (std::memcmp(o.mac, mac_j, 6) == 0) ++heartbeats_to_j;
+      continue;
+    }
     assert(std::memcmp(o.mac, mac_j, 6) == 0);
     sent.push_back(o.bytes);
   }
+  /* F162: one to the joiner when the pairing bound it, none when not. */
+  assert(!g_bound_calls.empty());
+  assert(heartbeats_to_j == (g_bound_calls.back().bound ? 1u : 0u));
   assert(sent.size() == 2);
   assert(sent[0][0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
   assert(sent[1][0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
@@ -6775,6 +6805,395 @@ void test_a_join_waits_for_a_leave() {
   std::printf("PASS test_a_join_waits_for_a_leave\n");
 }
 
+/* ── F162 — a member announces itself once: after it pairs, after a boot ──
+ *
+ * One signed HEARTBEAT (registry 16, no payload) to every bound member, on
+ * each side right after NOTIFY_PAIRED and once in the first running pass
+ * after a boot restore that bound a member; nothing on a timer. Before F162
+ * a PIO member sent nothing after it paired: the initiator's COMPLETE copies
+ * ran their whole 5-minute window, and both sides read CONNECTING with the
+ * other OFFLINE ("never") until one of them sent an opera frame. */
+
+/* Two booted sessions in two processes: mesh_session is a singleton, so the
+ * joiner runs in a child of this process and the two trade every frame over
+ * pipes, in lockstep, one loop pass each per step (main.cpp's order: the
+ * transport pass, then process()). The child answers each step with what it
+ * sent; a failed assert in it closes the pipe and fails the parent. */
+std::string peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms);   /* below */
+
+namespace two_canaries {
+
+const uint8_t MAC_I[6] = {0x24, 0x0A, 0xC4, 0x16, 0x20, 0x01};
+const uint8_t MAC_J[6] = {0x24, 0x0A, 0xC4, 0x16, 0x20, 0x02};
+const uint8_t BCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+enum Cmd : uint8_t { STEP = 1, REPORT = 2, QUIT = 3 };
+
+void put(int fd, const void* p, size_t n) {
+  const uint8_t* b = static_cast<const uint8_t*>(p);
+  while (n > 0) {
+    const ssize_t w = ::write(fd, b, n);
+    assert(w > 0);
+    b += w;
+    n -= (size_t)w;
+  }
+}
+bool get(int fd, void* p, size_t n) {
+  uint8_t* b = static_cast<uint8_t*>(p);
+  while (n > 0) {
+    const ssize_t r = ::read(fd, b, n);
+    if (r <= 0) return false;
+    b += r;
+    n -= (size_t)r;
+  }
+  return true;
+}
+void put_frames(int fd, const std::vector<OutFrame>& v) {
+  const uint32_t n = (uint32_t)v.size();
+  put(fd, &n, sizeof(n));
+  for (const auto& f : v) {
+    const uint32_t len = (uint32_t)f.bytes.size();
+    put(fd, f.mac, 6);
+    put(fd, &len, sizeof(len));
+    put(fd, f.bytes.data(), len);
+  }
+}
+std::vector<OutFrame> get_frames(int fd) {
+  uint32_t n = 0;
+  assert(get(fd, &n, sizeof(n)));
+  std::vector<OutFrame> v(n);
+  for (auto& f : v) {
+    uint32_t len = 0;
+    assert(get(fd, f.mac, 6) && get(fd, &len, sizeof(len)));
+    f.bytes.resize(len);
+    assert(get(fd, f.bytes.data(), len));
+  }
+  return v;
+}
+void put_str(int fd, const std::string& s) {
+  const uint32_t n = (uint32_t)s.size();
+  put(fd, &n, sizeof(n));
+  put(fd, s.data(), n);
+}
+std::string get_str(int fd) {
+  uint32_t n = 0;
+  assert(get(fd, &n, sizeof(n)));
+  std::string s(n, '\0');
+  assert(get(fd, &s[0], n));
+  return s;
+}
+
+/* A Canary booting: the transport and the session up, main.cpp's
+ * PairedCallback stand-in (set the joiner's secret, register the partner),
+ * the opera's secret and name when it holds one. */
+void boot(const uint8_t pub[32], const uint8_t priv[32], const uint8_t* secret, uint32_t t) {
+  reset_world();
+  mesh_session::deinit();
+  assert(mesh_session::init(pub, priv));
+  mesh_session::set_paired_callback(on_paired_register);
+  mesh_session::set_failed_callback(on_failed);
+  mesh_session::set_code_ready_callback(on_code_ready);
+  assert(mesh_session::start());
+  if (secret != nullptr) {
+    assert(mesh_session::set_opera_secret(secret));
+    mesh_session::set_opera_name("Den");
+  }
+  mesh_transport::test::set_now_ms(t);
+}
+
+/* One loop pass on this side: the frames the other side sent this way
+ * arrive from `from`, then the transport pass, then process(), with a REST
+ * request in the slot first when `req` is not NONE. Returns what this side
+ * sent and the request's status (OK when none was asked). */
+std::vector<OutFrame> pass(const uint8_t from[6], const std::vector<OutFrame>& in, uint32_t t,
+                           mesh_session::RequestType req, const uint8_t* secret,
+                           mesh_session::RequestStatus* status) {
+  mesh_transport::test::set_now_ms(t);
+  g_outs.clear();
+  for (const auto& f : in) mesh_transport::test::inject_recv(from, f.bytes.data(), f.bytes.size(), -40);
+  mesh_transport::process();
+  if (req != mesh_session::RequestType::NONE) {
+    mesh_session::Request r = make_request(req);
+    if (secret != nullptr) std::memcpy(r.opera_secret, secret, sizeof(r.opera_secret));
+    assert(mesh_session::submit_request(r));
+  }
+  mesh_session::process(t);
+  *status = mesh_session::RequestStatus::OK;
+  mesh_session::RequestResult res;
+  if (req != mesh_session::RequestType::NONE) {
+    assert(mesh_session::take_request_result(&res));
+    *status = res.status;
+  }
+  std::vector<OutFrame> out = g_outs;
+  g_outs.clear();
+  return out;
+}
+
+/* The frames among `sent` addressed to `to` (or broadcast), as they arrive. */
+std::vector<OutFrame> towards(const std::vector<OutFrame>& sent, const uint8_t to[6]) {
+  std::vector<OutFrame> v;
+  for (const auto& f : sent) {
+    if (std::memcmp(f.mac, to, 6) == 0 || std::memcmp(f.mac, BCAST, 6) == 0) v.push_back(f);
+  }
+  return v;
+}
+
+size_t count_type(const std::vector<OutFrame>& v, mesh_session::MsgType t) {
+  size_t n = 0;
+  for (const auto& f : v) n += (!f.bytes.empty() && f.bytes[0] == static_cast<uint8_t>(t)) ? 1 : 0;
+  return n;
+}
+size_t count_heartbeats(const std::vector<OutFrame>& v, const uint8_t to[6]) {
+  size_t n = 0;
+  for (const auto& f : v) n += (is_heartbeat(f.bytes) && std::memcmp(f.mac, to, 6) == 0) ? 1 : 0;
+  return n;
+}
+
+/* The joiner's side: steps until told to quit. */
+[[noreturn]] void run_joiner(int rd, int wr, const uint8_t j_pub[32], const uint8_t j_priv[32],
+                             const uint8_t i_pub[32]) {
+  boot(j_pub, j_priv, nullptr, 0);
+  for (;;) {
+    uint8_t cmd = 0;
+    if (!get(rd, &cmd, 1)) _exit(3);
+    if (cmd == QUIT) _exit(0);
+    uint32_t t = 0;
+    assert(get(rd, &t, sizeof(t)));
+    if (cmd == REPORT) {
+      mesh_transport::test::set_now_ms(t);
+      put_str(wr, status_body());
+      put_str(wr, peers_body(i_pub, 1, t));
+      continue;
+    }
+    uint8_t req = 0;
+    assert(get(rd, &req, 1));
+    const std::vector<OutFrame> in = get_frames(rd);
+    mesh_session::RequestStatus st;
+    const std::vector<OutFrame> out =
+        pass(MAC_I, in, t, static_cast<mesh_session::RequestType>(req), nullptr, &st);
+    const uint8_t st_b = static_cast<uint8_t>(st);
+    put(wr, &st_b, 1);
+    put_frames(wr, out);
+  }
+}
+
+struct Joiner {
+  int to_child = -1, from_child = -1;
+  pid_t pid = -1;
+  std::vector<OutFrame> step(uint32_t t, mesh_session::RequestType req,
+                             const std::vector<OutFrame>& in,
+                             mesh_session::RequestStatus* st) {
+    const uint8_t cmd = STEP, r = static_cast<uint8_t>(req);
+    put(to_child, &cmd, 1);
+    put(to_child, &t, sizeof(t));
+    put(to_child, &r, 1);
+    put_frames(to_child, in);
+    uint8_t st_b = 0;
+    assert(get(from_child, &st_b, 1));   /* EOF: the joiner's assert failed */
+    *st = static_cast<mesh_session::RequestStatus>(st_b);
+    return get_frames(from_child);
+  }
+  void report(uint32_t t, std::string* status, std::string* peers) {
+    const uint8_t cmd = REPORT;
+    put(to_child, &cmd, 1);
+    put(to_child, &t, sizeof(t));
+    *status = get_str(from_child);
+    *peers  = get_str(from_child);
+  }
+  void quit() {
+    const uint8_t cmd = QUIT;
+    put(to_child, &cmd, 1);
+    int wst = 0;
+    assert(waitpid(pid, &wst, 0) == pid);
+    assert(WIFEXITED(wst) && WEXITSTATUS(wst) == 0);
+    close(to_child);
+    close(from_child);
+  }
+};
+
+Joiner fork_joiner(const uint8_t j_pub[32], const uint8_t j_priv[32], const uint8_t i_pub[32]) {
+  int down[2], up[2];
+  assert(pipe(down) == 0 && pipe(up) == 0);
+  std::fflush(stdout);
+  std::fflush(stderr);
+  const pid_t pid = fork();
+  assert(pid >= 0);
+  if (pid == 0) {
+    close(down[1]);
+    close(up[0]);
+    run_joiner(down[0], up[1], j_pub, j_priv, i_pub);
+  }
+  close(down[0]);
+  close(up[1]);
+  Joiner j;
+  j.to_child = down[1];
+  j.from_child = up[0];
+  j.pid = pid;
+  return j;
+}
+
+}  /* namespace two_canaries */
+
+/* Two booted Canaries pair through the REST requests, every frame carried
+ * between them. Each side's NOTIFY_PAIRED sends the other one heartbeat:
+ * the joiner's reaches the initiator in the next pass and ends its COMPLETE
+ * copies there, and no copy goes out after it (the first would be due 2 s
+ * after the COMPLETE); both read ACTIVE and see the other CONNECTED, with a
+ * real age, not OFFLINE "never". Then nothing more from either over ten
+ * idle minutes: no recurring frame. On the code before F162 the joiner
+ * sends no heartbeat, the copies run, and both read CONNECTING with the
+ * other OFFLINE "never". */
+void test_two_paired_canaries_hear_each_other_at_once() {
+  using namespace two_canaries;
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x62 + i);
+  uint8_t i_pub[32], i_priv[32], j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  Joiner joiner = fork_joiner(j_pub, j_priv, i_pub);
+  boot(i_pub, i_priv, S, 0);
+
+  using RT = mesh_session::RequestType;
+  mesh_session::RequestStatus st_i, st_j;
+  std::vector<OutFrame> to_i, to_j, sent_i, sent_j;
+  /* One step: the initiator's pass, then the joiner's, each taking what
+   * the other sent in its last pass. */
+  auto step = [&](uint32_t t, RT req_i, RT req_j) {
+    sent_i = pass(MAC_J, to_i, t, req_i, req_i == RT::PAIR_START ? S : nullptr, &st_i);
+    to_j = towards(sent_i, MAC_J);
+    sent_j = joiner.step(t, req_j, to_j, &st_j);
+    to_i = towards(sent_j, MAC_I);
+  };
+
+  step(1000, RT::PAIR_START, RT::PAIR_JOIN);   /* the DISCOVER */
+  assert(st_i == mesh_session::RequestStatus::OK && st_j == mesh_session::RequestStatus::OK);
+  step(1100, RT::NONE, RT::NONE);              /* OFFER, ACCEPT: the codes */
+  step(1200, RT::NONE, RT::NONE);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::AWAITING_CONFIRM);
+  step(1300, RT::PAIR_CONFIRM, RT::PAIR_CONFIRM);   /* both owners confirm */
+  assert(st_i == mesh_session::RequestStatus::OK && st_j == mesh_session::RequestStatus::OK);
+
+  /* The initiator takes the joiner's CONFIRM: CONFIRM + COMPLETE, then its
+   * NOTIFY_PAIRED's heartbeat. The joiner takes the COMPLETE, pairs, sends
+   * its own heartbeat, and takes the initiator's. */
+  step(1400, RT::NONE, RT::NONE);
+  assert(g_paired_fired && mesh_session::trusted_peer_count() == 1);
+  assert(count_type(sent_i, mesh_session::MsgType::PAIR_COMPLETE) == 1);
+  assert(count_heartbeats(sent_i, MAC_J) == 1 && sent_i.size() == 3);
+  assert(is_heartbeat(sent_i.back().bytes));            /* after the COMPLETE */
+  assert(count_heartbeats(sent_j, MAC_I) == 1 && sent_j.size() == 1);
+
+  /* The next pass takes it; from then on neither side sends anything: no
+   * copy at 2 s, none for the rest of the window. */
+  size_t later_i = 0, later_j = 0, copies = 0;
+  for (uint32_t t = 1500; t <= 1400 + 10000; t += 100) {
+    step(t, RT::NONE, RT::NONE);
+    later_i += sent_i.size();
+    later_j += sent_j.size();
+    copies += count_type(sent_i, mesh_session::MsgType::PAIR_COMPLETE);
+  }
+  assert(copies == 0 && later_i == 0 && later_j == 0);
+
+  std::string body_j, peers_j;
+  joiner.report(11500, &body_j, &peers_j);
+  mesh_transport::test::set_now_ms(11500);
+  const std::string body_i = status_body();
+  const std::string peers_i = peers_body(j_pub, 1, 11500);
+  for (const std::string* b : {&body_i, static_cast<const std::string*>(&body_j)}) {
+    assert(has(*b, "\"state\":\"ACTIVE\""));
+    assert(has(*b, "\"peers_total\":1,\"peers_online\":1"));
+  }
+  for (const std::string* p : {&peers_i, static_cast<const std::string*>(&peers_j)}) {
+    assert(has(*p, "\"state\":\"CONNECTED\",\"last_seen_sec\":10,"));
+    assert(!has(*p, "OFFLINE"));
+  }
+
+  /* Ten idle minutes, a pass a second: not one frame from either. */
+  size_t idle = 0;
+  for (uint32_t t = 12000; t <= 12000 + 600000; t += 1000) {
+    step(t, RT::NONE, RT::NONE);
+    idle += sent_i.size() + sent_j.size();
+  }
+  assert(idle == 0);
+  joiner.quit();
+  std::printf("PASS test_two_paired_canaries_hear_each_other_at_once\n");
+}
+
+/* A reboot: main.cpp registers the stored members and restore_peer_macs()
+ * binds their stored addresses, as setup() does. The first pass sends
+ * exactly one heartbeat to each bound member, signed by this device under
+ * the opera with a counter past the restored one, and to nobody else (not
+ * a pairing partner whose address the transport holds: F101); a member the
+ * restore could not bind gets none. Then nothing over an hour of passes,
+ * and nothing either from a boot whose restore bound no member. On the code
+ * before F162 the first pass sends nothing. */
+void test_a_reboot_announces_itself_once_to_each_member() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x91 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::restore_outbound_counter(4000);
+  const uint8_t macs[3][6] = {{0x24, 0x0A, 0xC4, 0x16, 0x30, 0x01},
+                              {0x24, 0x0A, 0xC4, 0x16, 0x30, 0x02},
+                              {0x24, 0x0A, 0xC4, 0x16, 0x30, 0x03}};
+  uint8_t fps[4][8];
+  uint8_t stored_macs[4][6];
+  for (int m = 0; m < 4; ++m) {
+    uint8_t mp[32], mk[32];
+    assert(mesh_crypto::ed25519_generate_keypair(mp, mk));
+    assert(mesh_session::register_trusted_peer(mp));
+    mesh_crypto::compute_fingerprint(mp, fps[m]);
+    std::memcpy(stored_macs[m], macs[m < 3 ? m : 2], 6);   /* the 4th shares the 3rd's */
+  }
+  mesh_session::StoredMacVerdict verdicts[4];
+  /* Members 0 and 1 bound; 2 and 3 share an address, so neither is (F119). */
+  assert(mesh_session::restore_peer_macs(fps, stored_macs, 4, verdicts) == 2);
+
+  /* A pairing partner's address in the transport table before the first
+   * pass: an outsider answering a pairing this device started. */
+  const uint8_t mac_o[6] = {0x24, 0x0A, 0xC4, 0x16, 0x30, 0x0F};
+  outsider_answers_the_pairing(S, mac_o);
+  assert(mesh_transport::has_peer(mac_o));
+  g_outs.clear();
+
+  mesh_session::process(5000);
+  std::vector<OutFrame> beats;
+  for (const auto& o : g_outs) {
+    if (is_heartbeat(o.bytes)) beats.push_back(o);
+  }
+  assert(beats.size() == 2);   /* none to the partner, none to the unbound */
+  for (int m = 0; m < 2; ++m) {
+    assert(std::memcmp(beats[m].mac, macs[m], 6) == 0);
+    mesh_envelope::Header h;
+    const uint8_t* payload = nullptr;
+    size_t payload_len = 99;
+    assert(mesh_envelope::parse_and_verify(beats[m].bytes.data(), beats[m].bytes.size(), pub,
+                                           &h, &payload, &payload_len));
+    assert(payload_len == 0 && h.counter > 4000);
+    uint8_t id[mesh_crypto::OPERA_ID_LEN];
+    assert(mesh_session::get_opera_id(id) && std::memcmp(h.opera_id, id, sizeof(id)) == 0);
+  }
+  mesh_session::cancel_pairing();
+
+  g_outs.clear();
+  for (uint32_t t = 6000; t <= 6000 + 3600000; t += 1000) mesh_session::process(t);
+  assert(g_outs.empty());
+
+  /* A boot whose restore bound nobody owes nobody. */
+  stand_up_session(S, pub, priv);
+  uint8_t lone_pub[32], lone_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(lone_pub, lone_priv));
+  assert(mesh_session::register_trusted_peer(lone_pub));
+  const uint8_t one_mac[1][6] = {{0x24, 0x0A, 0xC4, 0x16, 0x30, 0x0A}};
+  const uint8_t one_fp[1][8] = {{0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A}};   /* not a member (F120) */
+  mesh_session::StoredMacVerdict v1[1];
+  assert(mesh_session::restore_peer_macs(one_fp, one_mac, 1, v1) == 0);
+  g_outs.clear();
+  for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
+  assert(g_outs.empty());
+  std::printf("PASS test_a_reboot_announces_itself_once_to_each_member\n");
+}
+
 void test_rest_pairing_requests() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xE1 + i);
@@ -7753,6 +8172,9 @@ int main() {
   test_rest_pair_start_creates_opera();
   /* F136 — a Canary in an opera leaves it before it joins one. */
   test_a_join_waits_for_a_leave();
+  /* F162 — a member announces itself once, after it pairs and after boot. */
+  test_two_paired_canaries_hear_each_other_at_once();
+  test_a_reboot_announces_itself_once_to_each_member();
   /* F33 part 6 — the revocation deny-list; concurrent removals. */
   test_revocation_deny_list();
   test_concurrent_offer_propagates_and_yields();
