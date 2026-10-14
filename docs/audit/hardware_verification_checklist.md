@@ -774,7 +774,8 @@ reads the body with `http_body_reader.h`'s `read_all()` until it is whole;
 `firmware/common/csi/src/csi_event_log_line.h` (staged in the sketch:
 `parse()` refuses a line whose string field holds a backslash or a byte
 outside printable ASCII, which the backfill skips and counts and the boot
-load leaves out of the ring). Host-tested
+load leaves out of the ring; the tail scan reads only a line's id,
+`record_id()`, so an edited last line still marks the card's end). Host-tested
 (`tests_host/test_mqtt_reinit.cpp`:
 `the_config_post_reads_a_body_that_arrives_in_pieces`,
 `the_config_post_refuses_a_body_past_its_cap`,
@@ -812,16 +813,21 @@ load leaves out of the ring). Host-tested
 - [ ] **An events-log line edited on the card is skipped, not published**
   - Setup: a canary-wap board with a card and a broker, `mosquitto_sub -v
     -t '<prefix>/#'` on a laptop.
-  - Repro: stop the broker, let three or more events commit, power off,
-    and on a computer change one line's `"state":"…"` in
-    `/EVENTS/today.ndjson` to `"state":"occ\"`; put the card back, boot,
-    start the broker.
+  - Repro: stop the broker, let six or more events commit, power off, and
+    on a computer change the `"state":"…"` of one held line that is not the
+    last in `/EVENTS/today.ndjson` to `"state":"occ\"`; put the card back,
+    boot, start the broker. Then do it again, editing the last held line
+    instead.
   - Expected: every other held row arrives on `<prefix>/<id>/events` once,
-    in order, and each body parses (`jq .`); the edited row never does, and
-    `GET /api/csi/events/today` parses and does not list it; the retained
-    `<prefix>/<id>/egress` topic's `planner.skipped` counts it (before this
-    fix the edited row went out as a body `jq` refuses, and the ring row
-    made the events-today answer unparseable).
+    in order, and each body parses (`jq .`); no edited row ever does, and
+    `GET /api/events/today` parses and does not list one. In the retained
+    `<prefix>/<id>/egress` topic, `csi_event_egress.planner.replayed`
+    counts the held rows that arrived from the card (the edited ones are
+    not among them) and `planner.skipped` is at least the number of edited
+    lines (it also counts every line delivered before the outage that the
+    walk passes from the card's start, so on a card with history it reads
+    far higher). Before this fix the edited row went out as a body `jq`
+    refuses and the ring row made the events-today answer unparseable.
   - Artifact: `docs/audit/repro/F264/edited-card-line/`.
 
 ## canary-wap loop-task ownership (F96, F106) — on-device verification

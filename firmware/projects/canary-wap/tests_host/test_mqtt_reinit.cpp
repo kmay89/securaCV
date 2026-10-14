@@ -1265,6 +1265,31 @@ void test_an_unconfigured_bridge_reads_its_settings_without_an_error_line() {
   CHECK(stub_nvs_error_logs() == before_some);
   CHECK(std::string(some.host) == "10.0.0.7" && std::string(some.prefix) == "attic");
   CHECK(some.user[0] == '\0' && some.pass[0] == '\0');
+
+  // The user without the password (config_save() writes all four, so a
+  // first save cut by a power loss between those two writes leaves this),
+  // and the password without the user: each read behind its own key.
+  for (int which = 0; which < 2; ++which) {
+    stub_nvs().clear();
+    stub_nvs_created().clear();
+    {
+      Preferences p;
+      CHECK(p.begin("csi", false));
+      CHECK(p.putString(which == 0 ? csi_mqtt::NVS_KEY_USER : csi_mqtt::NVS_KEY_PASS,
+                        which == 0 ? "ada" : "s3cret") > 0);
+      p.end();
+    }
+    const int before_one = stub_nvs_error_logs();
+    csi_mqtt::Config one;
+    CHECK(csi_mqtt::config_load(&one));
+    CHECK(stub_nvs_error_logs() == before_one);
+    if (which == 0) {
+      CHECK(std::string(one.user) == "ada" && one.pass[0] == '\0');
+    } else {
+      CHECK(std::string(one.pass) == "s3cret" && one.user[0] == '\0');
+    }
+    CHECK(one.host[0] == '\0' && std::string(one.prefix) == "securacv");
+  }
   stub_nvs().clear();
   stub_nvs_created().clear();
   std::printf("PASS an_unconfigured_bridge_reads_its_settings_without_an_error_line\n");

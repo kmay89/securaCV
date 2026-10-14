@@ -2098,7 +2098,7 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "tamper_events_module's literal kinds"),
     ("csi_integration.cpp", "handle_events_today"): (
         ("active", "r->module_id", "r->type_name", "r->values.confidence", "r->values.state_name"),
-        "GET /api/csi/events/today, chunked: rows from the event ring (the modules' labels; a row the "
+        "GET /api/events/today, chunked: rows from the event ring (the modules' labels; a row the "
         "boot load restored from the card passed csi_event_log_line::parse(), which refuses a backslash or "
         "a byte outside printable ASCII in its strings, sweep F264) and active, "
         "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),

@@ -2162,9 +2162,12 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * without a word; and a body past the cap was cut at it, not refused as
    * this comment said. http_body::read_all() (the Beacon routes' reader,
    * beacon_api.h's read_body()) loops until Content-Length bytes are in,
-   * never asks for more than is owed, and gives up after three socket
-   * timeouts. Heap, not stack: these 10 KB (the body and the CA) on the httpd
-   * task's stack are how a settings save becomes a reboot. */
+   * never asks for more than is owed, sits out three socket timeouts and
+   * refuses at the fourth (each is the server's recv_wait_timeout, 30 s in
+   * both of canary_wap.ino's configs, so a stalled sender holds the httpd
+   * task up to about two minutes: the Beacon routes' budget, behind the
+   * same authorization). Heap, not stack: these 10 KB (the body and the CA)
+   * on the httpd task's stack are how a settings save becomes a reboot. */
   struct HeapBuf {
     char* p;
     explicit HeapBuf(size_t n) : p((char*)malloc(n)) {}
@@ -2194,11 +2197,16 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   const http_body::Result read = http_body::read_all(
       [req](char* p, size_t n) { return httpd_req_recv(req, p, n); },
       req->content_len, body, kBodyCap, HTTPD_SOCK_ERR_TIMEOUT, 3, &got);
+  if (read == http_body::TOO_LARGE) {
+    /* Not reached while the Content-Length check above holds (the buffer is
+     * the cap and its NUL); if the two ever part, one limit keeps one
+     * reason. */
+    answer_too_long(req, "body", MAX_CONFIG_BODY_LEN);
+    return ESP_OK;
+  }
   if (read != http_body::OK) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, read == http_body::TOO_LARGE
-                             ? "{\"ok\":false,\"reason\":\"body too large\"}"
-                             : "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
     return ESP_OK;
   }
 
