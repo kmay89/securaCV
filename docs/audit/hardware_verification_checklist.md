@@ -2424,7 +2424,8 @@ turn is not. Compile is CI's. Owner: U1.
     serial monitor (or provisioned, its address on the LAN), "turn with the
     room" on, daytime. Every commit writes one serial line naming the
     rotation, the one before it and who asked, `[orient] IMU -> rotation 1
-    (was 0)` (F285; a triple-press says `triple-press`, the app's picker
+    (was 0)` (F285; a triple-press says `triple-press`, just after its
+    `[input] triple-press -> turn the face` line, and the app's picker
     `app picker`); the committed rotation is also `"orientation"` in
     `GET http://<glass>/api/settings` (`care::nightlight_rotation()`, saved
     by every commit).
