@@ -464,6 +464,7 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
 
 test("the MQTT pane's note names the non-retained topics and what the lab leaves out", async () => {
   const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const native = require("./fixtures/mr60_presence_native.js");
   const live = data.mqtt.topics.filter((t) => !t.retained).map((t) => t.suffix);
   assert.deepStrictEqual(live, ["events", "identify"]);
   await withFakeDom(async () => {
@@ -474,8 +475,17 @@ test("the MQTT pane's note names the non-retained topics and what the lab leaves
     for (const k of ["sig", "public_key", "hash", "fp", "uptime_s", "ts_ms", "bucket_uptime_s"]) assert.ok(note.includes(k), k);
     // the count is no longer a step the lab leaves out (F131): it follows
     // the debounced state on the device and in the lab alike
-    assert.doesNotMatch(note, /left out|lab does not/, "no omission is claimed");
+    assert.doesNotMatch(note, /occupancy_changed to 0 occupants/, "the count is not an omission any more");
     assert.match(note, /0 until presence is confirmed, held while the room empties, and back to 0 with presence_cleared/);
+    // the one step the lab still leaves out, named while the lab still
+    // leaves it out: drive_fsms records presence_cleared on every tick that
+    // turns Clear, Unknown -> Clear included (the boot's first empty frame, a
+    // radar back from a stall to an empty room), and the radar lab publishes
+    // it only from present. Port the device's rule and this note goes with it.
+    assert.match(note, /One step is left out: the device also records a presence_cleared when the radar's first frame finds the room empty \(at boot, and when the radar comes back from a stall\), and the lab does not\./);
+    assert.ok(mainCpp.includes(native.MAIN_GATES[0]), "drive_fsms signs presence_cleared on any tick that turns Clear");
+    assert.ok(read(join(ROOT, "assets/sense-ui.js")).includes('else if (s === "clear" && lastState === "present") publish("presence_cleared"'),
+      "the radar lab still publishes presence_cleared only from present (if it no longer does, the note's omission is gone)");
   });
   assert.doesNotMatch(read(join(ROOT, "assets/sense.js")), /exact MQTT/, "the sandbox lede");
 });
