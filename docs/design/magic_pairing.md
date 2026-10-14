@@ -811,9 +811,9 @@ cannot speak to.
 | The walkthrough's words (pure) | [`ios/Shared/SetupGuide.swift`](../../ios/Shared/SetupGuide.swift) | `SetupGuideTests` |
 | The CoreBluetooth glue | `ios/Sources/SecuraCV/Transport/ImprovClient.swift` | bench |
 | The WAP sequence: claim → receipt → paired (pure) | [`ios/Shared/MagicPairPlan.swift`](../../ios/Shared/MagicPairPlan.swift) | `MagicPairPlanTests` |
-| Which recovery kit moves onto the WAP it was opened for (pure) | `ProvisioningReceipt.rebased` in `ios/Sources/SecuraCV/Transport/DeviceAPI.swift` | `DeviceAPITests` |
+| Which recovery kit moves onto the WAP it was opened for (pure) | `ProvisioningReceipt.rebased` in `ios/Sources/SecuraCV/Transport/DeviceAPI.swift` | `DeviceAPITests`; `PairView`'s call, as source: [`scripts/tests/test_ios_setup_glue.py`](../../scripts/tests/test_ios_setup_glue.py) |
 | The remembered Wi-Fi (device-only Keychain) | `ios/Sources/SecuraCV/Security/HouseholdWiFi.swift` | — |
-| The card | `ios/Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift` | — |
+| The card | `ios/Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift` | its latch (`NearbyOfferLatch`, pure): `NearbyCanaryTests`; the "+" sheet's stand-down wiring, as source: `test_ios_setup_glue.py` |
 | The lessons | [`firmware/LESSONS_LEARNED.md`](../../firmware/LESSONS_LEARNED.md) (three entries dated 2026-10-07) | — |
 | The parity row | [`firmware/FEATURES.md`](../../firmware/FEATURES.md) | the dashboard guard |
 

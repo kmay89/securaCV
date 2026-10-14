@@ -349,7 +349,9 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     section of the walkthrough — which listens before it asks "which
     Canary is it?", because the advert already says). While the "+" sheet
     is up the card stands down, rather than show dimmed behind its
-    half-height detent (`NearbyOfferLatch`, `NearbyCanaryTests`).
+    half-height detent (`NearbyOfferLatch`, `NearbyCanaryTests`; the
+    sheet's and the overlay's wiring held as source by
+    `scripts/tests/test_ios_setup_glue.py`).
   - **One tap, then the Canary's own word.** Continue →
     `Transport/ImprovClient.swift` connects; the first encrypted write (the
     network scan) raises **the iOS Pair sheet**, and the screen says to tap
