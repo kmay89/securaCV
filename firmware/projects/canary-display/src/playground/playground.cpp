@@ -368,11 +368,13 @@ void action_tof_cycle_trip() {
 // (canary/io/modbus_rtu.h, canary/io/can_frame.h) — the "minimal in-repo
 // driver" posture the I2C sensors use. Either way the wire sees the same
 // thing: Serial1 at RS485_BAUD_DEFAULT 8N1 on RS485_PIN_RX/TX, one read of
-// holding register 0 of slave 1 with a 300 ms reply window, stale bytes
-// drained first; TWAI in normal mode at 500 kbit/s with an accept-all
-// filter, one 0x100 test frame with a 50 ms queue wait, up to 8 frames
-// drained per pass without waiting, and no bus-off recovery (a controller
-// that goes bus-off stays there until reboot). tests_host/
+// holding register 0 of slave 1 with a 300 ms reply window that ends when the
+// reply is in (seven bytes, or the five of a CRC-good exception, which the
+// station names: "slave=1 exception=<code>"), stale bytes drained first;
+// TWAI in normal mode at 500 kbit/s with an accept-all filter, one 0x100 test
+// frame with a 50 ms queue wait, up to 8 frames drained per pass without
+// waiting, and no bus-off recovery (a controller that goes bus-off stays
+// there until reboot). tests_host/
 // test_fieldbus_glue.cpp drives both builds of this file and holds them to
 // that one trace. The driver path adds one console line per bus the first
 // time it comes up ("[RS485] up on A/B ..." / "[CAN] up on H/L ..."), and
@@ -435,9 +437,12 @@ void action_rs485_probe() {
   canary::io::rs485_begin(RS485_BAUD_DEFAULT);  // idempotent, as rs485_begin_once was
   g.rs485.ready = canary::io::rs485_ready();
   uint16_t regs[1] = {0};
-  // Drains stale bytes, sends the request, waits out the reply window and
-  // parses it; anything but one register back is "reply=none", as below.
-  const int r = canary::io::rs485_read_holding(1, 0, 1, regs, 1, 300);
+  uint8_t exc = 0;
+  // Drains stale bytes, sends the request, waits for the reply (the window
+  // ends when a whole reply or a whole exception is in) and parses it; an
+  // exception names its code and anything else but one register back is
+  // "reply=none", as below.
+  const int r = canary::io::rs485_read_holding(1, 0, 1, regs, 1, 300, &exc);
   g.rs485.polls++;
 #else
   rs485_begin_once();
@@ -447,23 +452,35 @@ void action_rs485_probe() {
   Serial1.write(req, n);
   Serial1.flush();
   g.rs485.polls++;
+  // The normal reply is 7 bytes; an exception is 5 and ends the wait too.
   const size_t want = mb::read_response_len(1);
   uint8_t resp[mb::MAX_ADU];
   size_t got = 0;
   const uint32_t deadline = millis() + 300;
-  while (got < want && (int32_t)(deadline - millis()) > 0) {
+  while (got < want && !mb::exception_complete(resp, got, 1, mb::FN_READ_HOLDING) &&
+         (int32_t)(deadline - millis()) > 0) {
     while (Serial1.available() && got < sizeof(resp)) resp[got++] = (uint8_t)Serial1.read();
   }
   uint16_t regs[1] = {0};
-  const int r = (got >= want)
-                    ? mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, regs, 1)
-                    : (int)mb::ERR_SHORT;
+  uint8_t exc = 0;
+  int r = (int)mb::ERR_SHORT;
+  if (mb::exception_complete(resp, got, 1, mb::FN_READ_HOLDING)) {
+    exc = mb::decode_exception(resp, mb::EXCEPTION_LEN);
+    r = (int)mb::ERR_EXCEPTION;
+  } else if (got >= want) {
+    r = mb::parse_registers(resp, got, 1, mb::FN_READ_HOLDING, regs, 1);
+  }
 #endif
   if (r == 1) {
     g.rs485.replies++;
     g.rs485.last_val = regs[0];
     g.rs485.last_ok = true;
     say_evt("rs485", "slave=1 reg=0 val=%u crc=ok", (unsigned)regs[0]);
+  } else if (r == (int)mb::ERR_EXCEPTION) {
+    // The slave answered, with a Modbus exception (2 is an illegal data
+    // address): say which, so a bench can tell a refusal from a dead line.
+    g.rs485.last_ok = false;
+    say_evt("rs485", "slave=1 exception=%u", (unsigned)exc);
   } else {
     g.rs485.last_ok = false;
     say_evt("rs485", "slave=1 reply=none");

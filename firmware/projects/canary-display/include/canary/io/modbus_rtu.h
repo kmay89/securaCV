@@ -155,6 +155,24 @@ inline uint8_t decode_exception(const uint8_t* frame, size_t len) {
   return frame[2];
 }
 
+// An exception response is always this long: addr + (fn | 0x80) + code + CRC.
+constexpr size_t EXCEPTION_LEN = 5;
+
+// True once the first EXCEPTION_LEN bytes of `frame` (`len` of them received
+// so far) are a whole exception response from `expect_slave` to
+// `expect_fn`, its CRC good. A transport waiting for a normal reply, which is
+// longer (read_response_len()), stops on this instead of waiting out its
+// window for bytes an exception never sends; decode_exception() then gives
+// the code. A normal reply never matches (its function byte has no exception
+// bit), and neither do a cut-short, corrupted or other slave's exception.
+inline bool exception_complete(const uint8_t* frame, size_t len,
+                               uint8_t expect_slave, uint8_t expect_fn) {
+  if (frame == nullptr || len < EXCEPTION_LEN) return false;
+  if (frame[0] != expect_slave) return false;
+  if (frame[1] != (expect_fn | EXCEPTION_FLAG)) return false;
+  return crc_ok(frame, EXCEPTION_LEN);
+}
+
 // Parse a read-registers response (fn 0x03/0x04). On success returns the number
 // of registers written into `regs` (== the responder's bytecount / 2); on
 // failure returns a negative Status. Validates length, CRC, slave, function,

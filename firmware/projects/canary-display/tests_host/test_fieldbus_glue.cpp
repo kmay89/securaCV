@@ -312,16 +312,117 @@ static void rs485_bad_replies_are_no_reply() {
     Serial1.inject(with_crc({0x02, 0x03, 0x02, 0x12, 0x34}), 10);
   };
   pg::action_rs485_probe();
-  // An exception reply (illegal data address).
-  Serial1.on_frame = [](const std::vector<uint8_t>&) {
-    Serial1.inject(with_crc({0x01, 0x83, 0x02}), 10);
-  };
-  pg::action_rs485_probe();
   const auto e = evts();
-  CHECK(e.size() == 3);
+  CHECK(e.size() == 2);
   for (const std::string& l : e) CHECK(l == "rs485 slave=1 reply=none");
   const auto& s = pg::state().rs485;
-  CHECK(s.polls == 3 && s.replies == 0 && !s.last_ok);
+  CHECK(s.polls == 2 && s.replies == 0 && !s.last_ok);
+}
+
+// F291: a Modbus exception (fn | 0x80, code, CRC: five bytes, two fewer than
+// the normal one-register reply) is decoded as soon as it is in, and the
+// station says which exception it was. The old wait held out for seven bytes,
+// sat through the whole 300 ms window and said "reply=none".
+static void rs485_exception_returns_at_once() {
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x01, 0x83, 0x02}), 10);  // illegal data address
+  };
+  const uint64_t t0 = now_ms();
+  pg::action_rs485_probe();
+  const uint64_t took = now_ms() - t0;
+  CHECK(took >= 10);
+  CHECK(took < 15);  // well before the 300 ms window
+  auto e = evts();
+  CHECK(e.size() == 1 && e[0] == "rs485 slave=1 exception=2");
+  const auto& s = pg::state().rs485;
+  CHECK(s.polls == 1 && s.replies == 0 && !s.last_ok);
+  CHECK(Serial1.tx == kProbeRequest);
+
+  // Another code, arriving a byte at a time: the wait ends on the fifth.
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    const std::vector<uint8_t> b = with_crc({0x01, 0x83, 0x04});  // device failure
+    for (size_t i = 0; i < b.size(); i++) Serial1.inject({b[i]}, (uint32_t)(5 + 5 * i));
+  };
+  const uint64_t t1 = now_ms();
+  pg::action_rs485_probe();
+  const uint64_t took1 = now_ms() - t1;
+  CHECK(took1 >= 25);
+  CHECK(took1 < 30);
+  e = evts();
+  CHECK(e.size() == 2 && e[1] == "rs485 slave=1 exception=4");
+
+  // A good read after an exception reads as it always did.
+  slave_answers(1, {0x0007}, 5);
+  pg::action_rs485_probe();
+  e = evts();
+  CHECK(e.size() == 3 && e[2] == "rs485 slave=1 reg=0 val=7 crc=ok");
+  CHECK(s.polls == 3 && s.replies == 1 && s.last_ok && s.last_val == 7);
+}
+
+// An exception that is not whole and good is not one: it waits out the window
+// and is no reply, as a cut-short normal reply is.
+static void rs485_bad_exceptions_wait_the_window() {
+  struct Case {
+    const char* what;
+    std::vector<uint8_t> bytes;
+  };
+  std::vector<uint8_t> bad_crc = with_crc({0x01, 0x83, 0x02});
+  bad_crc.back() ^= 0x01;
+  std::vector<uint8_t> bad_code = with_crc({0x01, 0x83, 0x02});
+  bad_code[2] = 0x03;
+  std::vector<uint8_t> cut = with_crc({0x01, 0x83, 0x02});
+  cut.resize(4);
+  const std::vector<Case> cases = {
+      {"corrupted CRC", bad_crc},
+      {"code corrupted", bad_code},
+      {"cut short", cut},
+      {"another slave's", with_crc({0x02, 0x83, 0x02})},
+      {"an exception to another function", with_crc({0x01, 0x84, 0x02})},
+  };
+  size_t n = 0;
+  for (const Case& c : cases) {
+    const std::vector<uint8_t> bytes = c.bytes;
+    Serial1.on_frame = [bytes](const std::vector<uint8_t>&) { Serial1.inject(bytes, 10); };
+    const uint64_t t0 = now_ms();
+    pg::action_rs485_probe();
+    const uint64_t waited = now_ms() - t0;
+    n++;
+    if (waited < 300 || waited >= 303) {
+      std::printf("    (%s exception: returned after %llu ms)\n", c.what, (unsigned long long)waited);
+    }
+    CHECK(waited >= 300);
+    CHECK(waited < 303);
+    const auto e = evts();
+    CHECK(e.size() == n && e.back() == "rs485 slave=1 reply=none");
+  }
+  const auto& s = pg::state().rs485;
+  CHECK(s.polls == n && s.replies == 0 && !s.last_ok);
+}
+
+// A normal reply is never taken for an exception, even one whose first five
+// bytes carry a good CRC (its value is the CRC of its own header) and whose
+// last two bytes come later: the probe waits for all seven and reads the value.
+static void rs485_normal_reply_is_not_an_exception() {
+  const uint16_t hc = crc_modbus({0x01, 0x03, 0x02});
+  const uint16_t value = (uint16_t)(((hc & 0xFF) << 8) | (hc >> 8));  // big-endian on the wire
+  const std::vector<uint8_t> whole = with_crc({0x01, 0x03, 0x02, (uint8_t)(hc & 0xFF), (uint8_t)(hc >> 8)});
+  CHECK(crc_modbus(std::vector<uint8_t>(whole.begin(), whole.begin() + 3)) ==
+        (uint16_t)(whole[3] | (whole[4] << 8)));  // the head alone is CRC-good
+  Serial1.on_frame = [whole](const std::vector<uint8_t>&) {
+    Serial1.inject(std::vector<uint8_t>(whole.begin(), whole.begin() + 5), 20);
+    Serial1.inject(std::vector<uint8_t>(whole.begin() + 5, whole.end()), 40);
+  };
+  const uint64_t t0 = now_ms();
+  pg::action_rs485_probe();
+  const uint64_t took = now_ms() - t0;
+  CHECK(took >= 40);
+  CHECK(took < 45);
+  char want[64];
+  std::snprintf(want, sizeof(want), "rs485 slave=1 reg=0 val=%u crc=ok", (unsigned)value);
+  const auto e = evts();
+  CHECK(e.size() == 1 && e[0] == want);
+  const auto& s = pg::state().rs485;
+  CHECK(s.replies == 1 && s.last_ok && s.last_val == value);
 }
 
 // ── CAN station scenarios (every build) ─────────────────────────────────────
@@ -588,6 +689,45 @@ static void rs485_driver_reports_parse_faults() {
   };
   CHECK(io::rs485_read_holding(1, 0, 1, r, 1, 100) == io::RS485_ERR_TIMEOUT);
 }
+
+// F291 at the driver: an exception returns ERR_EXCEPTION and its code as soon
+// as its five bytes are in, for a read of any length; the code is 0 after any
+// other outcome, and a caller may leave it out.
+static void rs485_driver_reports_exception_at_once() {
+  uint8_t code = 0xEE;
+  uint16_t r[3] = {0, 0, 0};
+  CHECK(io::rs485_read_holding(1, 0, 1, r, 3, 100, &code) == io::RS485_ERR_NOT_READY);
+  CHECK(code == 0);
+  io::rs485_begin(0);
+
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x07, 0x83, 0x02}), 8);
+  };
+  code = 0xEE;
+  uint64_t t0 = now_ms();
+  CHECK(io::rs485_read_holding(7, 0x0010, 3, r, 3, 200, &code) == mb::ERR_EXCEPTION);
+  uint64_t took = now_ms() - t0;
+  CHECK(took >= 8 && took < 12);  // not the 200 ms timeout
+  CHECK(code == 0x02);
+  CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0);  // nothing written
+
+  Serial1.on_frame = [](const std::vector<uint8_t>&) {
+    Serial1.inject(with_crc({0x07, 0x83, 0x0B}), 3);
+  };
+  t0 = now_ms();
+  CHECK(io::rs485_read_holding(7, 0, 1, r, 1, 200) == mb::ERR_EXCEPTION);  // no code pointer
+  took = now_ms() - t0;
+  CHECK(took >= 3 && took < 7);
+
+  slave_answers(7, {0x0102}, 4);
+  code = 0xEE;
+  CHECK(io::rs485_read_holding(7, 0, 1, r, 1, 100, &code) == 1);
+  CHECK(code == 0 && r[0] == 0x0102);
+  Serial1.on_frame = nullptr;
+  code = 0xEE;
+  CHECK(io::rs485_read_holding(7, 0, 1, r, 1, 20, &code) == io::RS485_ERR_TIMEOUT);
+  CHECK(code == 0);
+}
 #endif
 
 // ── The CAN driver's API (dash-can build) ───────────────────────────────────
@@ -683,7 +823,10 @@ int main() {
   fails += run("rs485 reply at 250 ms is read", rs485_reply_inside_window);
   fails += run("rs485 reply at 350 ms is no reply", rs485_reply_after_window);
   fails += run("rs485 stale bytes drained before the request", rs485_stale_bytes_drained_first);
-  fails += run("rs485 bad CRC, other slave, exception are no reply", rs485_bad_replies_are_no_reply);
+  fails += run("rs485 bad CRC and another slave's reply are no reply", rs485_bad_replies_are_no_reply);
+  fails += run("rs485 exception returns at once and is named", rs485_exception_returns_at_once);
+  fails += run("rs485 bad, cut-short or foreign exception waits the window", rs485_bad_exceptions_wait_the_window);
+  fails += run("rs485 normal reply with a CRC-good head is not an exception", rs485_normal_reply_is_not_an_exception);
   fails += run("can send brings TWAI up once and sends the test frame", can_send_brings_up_and_transmits);
   fails += run("can send failures say so", can_send_failures);
   fails += run("can refused install fails the tap and retries on the next", can_install_refused_then_retried);
@@ -698,6 +841,7 @@ int main() {
   fails += run("rs485 driver reads several registers", rs485_driver_reads_several_registers);
   fails += run("rs485 driver honors its timeout and yields", rs485_driver_honors_its_timeout);
   fails += run("rs485 driver reports parse faults and a cut-short reply", rs485_driver_reports_parse_faults);
+  fails += run("rs485 driver reports an exception and its code at once", rs485_driver_reports_exception_at_once);
 #endif
 #if defined(FEATURE_CAN) && FEATURE_CAN
   fails += run("can driver refuses an unsupported bitrate", can_driver_refuses_unsupported_bitrate);

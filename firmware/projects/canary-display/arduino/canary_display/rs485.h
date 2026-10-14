@@ -45,8 +45,13 @@ bool rs485_ready();
 // into `regs` (capacity `cap`), waiting up to `timeout_ms` for the reply.
 // Returns the register count on success, or a negative modbus::Status /
 // RS485_ERR_* on failure. Non-blocking beyond the bounded wait; never allocates.
+// The wait ends when the reply is in: the normal reply's whole length, or the
+// five bytes of an exception reply from `slave` to this read, CRC good
+// (modbus::exception_complete). An exception returns modbus::ERR_EXCEPTION at
+// once and, when `exception_code` is given, its code there (0 otherwise).
 int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
-                       uint16_t* regs, size_t cap, uint32_t timeout_ms);
+                       uint16_t* regs, size_t cap, uint32_t timeout_ms,
+                       uint8_t* exception_code = nullptr);
 
 }  // namespace io
 }  // namespace canary
