@@ -246,10 +246,13 @@ def test_the_voice_brief_records_the_same_value() -> None:
     assert _spoken_label(brief["canary_latest"]["event_type"]) == "daily summary"
 
 
-def test_the_raw_payload_fallback_is_unchanged() -> None:
+@pytest.mark.parametrize("payload", ["not json at all", "5", '["daily_summary"]'])
+def test_the_raw_payload_fallback_is_unchanged(payload) -> None:
+    """Junk and JSON that is not an object never reach the fallback chain:
+    the bounded raw-payload state is what it was."""
     ent = _sensor(_hass())
-    ent._handle_message(_msg("not json at all"))
-    assert ent._attr_native_value == "not json at all"
+    ent._handle_message(_msg(payload))
+    assert ent._attr_native_value == payload
 
 
 @pytest.mark.skipif(
