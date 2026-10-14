@@ -34,6 +34,12 @@ a host, so these cases hold the wiring status_body() mirrors:
   `doc["pairing_seq"] = res.pairing_seq;` once, before the answer is
   serialized. Without it the page has no number and cannot tell its own
   pairing's outcome from a later pairing's.
+* handle_mesh_pair_join answers the main loop's OPERA_EXISTS (sweep F136: a
+  Canary that holds an opera leaves it before it joins one) with
+  `http_send_error(req, 409, "opera_exists")`, the create path's answer,
+  before mesh_pair_refused, whose default would say 400 pair_join_failed
+  and leave the owner nothing to act on. test_mesh_session.cpp:
+  test_a_join_waits_for_a_leave holds the session's half.
 * GET /api/mesh is served by handle_mesh_status, and the two POST routes by
   those two handlers.
 
@@ -157,6 +163,9 @@ VIEW = _seq("mesh_session::StatusView view; mesh_session::read_status(&view);")
 BUFFER = _seq("char body[mesh_api::STATUS_JSON_CAP];")
 SEQ_FIELD = _seq('doc["pairing_seq"] = res.pairing_seq;')
 SERIALIZE = _seq("serializeJson(doc, response);")
+JOIN_OPERA_EXISTS = _seq('if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) '
+                         '{ return http_send_error(req, 409, "opera_exists"); }')
+JOIN_REFUSED = _seq('if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;')
 ROUTES = {
     STATUS_FN: _seq('.uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status }'),
     START_FN: _seq('.uri = "/api/mesh/pair/start", .method = HTTP_POST, '
@@ -216,12 +225,28 @@ def _seq_answer_problems(code: str, name: str) -> list[str]:
     return []
 
 
+def _join_opera_problems(code: str) -> list[str]:
+    body = _handler(code, JOIN_FN)
+    if body is None:
+        return []   # _seq_answer_problems names it
+    exists = list(re.finditer(JOIN_OPERA_EXISTS, body))
+    if len(exists) != 1:
+        return [f"{JOIN_FN} answers OPERA_EXISTS with 409 opera_exists {len(exists)} times; "
+                f"expected once (F136: a Canary in an opera leaves it first)"]
+    refused = re.search(JOIN_REFUSED, body)
+    if refused is None or refused.start() < exists[0].end():
+        return [f"{JOIN_FN} reaches mesh_pair_refused before it answers OPERA_EXISTS: "
+                f"the owner would read 400 pair_join_failed, not opera_exists"]
+    return []
+
+
 def check(src: str) -> list[str]:
     """Every rule the wiring breaks, as a message; empty when it holds."""
     code = _strip_comments(src)
     problems = _status_problems(code)
     problems += _seq_answer_problems(code, START_FN)
     problems += _seq_answer_problems(code, JOIN_FN)
+    problems += _join_opera_problems(code)
     for fn, route in ROUTES.items():
         if len(re.findall(route, code)) != 1:
             problems.append(f"{fn} is not registered once for its route")
@@ -309,6 +334,32 @@ class MeshStatusWiring(unittest.TestCase):
                '  doc["pairing_seq"] = res.pairing_seq;   // F133\n')
         self.assertTrue(any("serializes its answer before" in p
                             for p in check(self.mutate(old, new))))
+
+    def test_the_join_without_its_opera_exists_answer_fails(self) -> None:
+        old = ('  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {\n'
+               '    // F136: this Canary holds an opera.')
+        src = self.mutate(old, '  if (false) {\n    // F136: this Canary holds an opera.')
+        self.assertTrue(any("answers OPERA_EXISTS with 409 opera_exists 0 times" in p
+                            for p in check(src)), check(src))
+
+    def test_the_join_answering_another_code_fails(self) -> None:
+        src = self.mutate('    return http_send_error(req, 409, "opera_exists");\n  }\n'
+                          '  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc))',
+                          '    return http_send_error(req, 400, "pair_join_failed");\n  }\n'
+                          '  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc))')
+        self.assertTrue(any("409 opera_exists 0 times" in p for p in check(src)), check(src))
+
+    def test_the_join_refused_before_its_opera_exists_answer_fails(self) -> None:
+        refused = '  if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;\n'
+        guard = ('  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {\n'
+                 '    // F136: this Canary holds an opera. It leaves it first (POST\n'
+                 '    // /api/mesh/leave); a join never runs beside the old opera\'s members.\n'
+                 '    // The create path\'s answer, for the same reason.\n'
+                 '    return http_send_error(req, 409, "opera_exists");\n'
+                 '  }\n')
+        src = self.mutate(guard + refused, refused + guard)
+        self.assertTrue(any("reaches mesh_pair_refused before" in p for p in check(src)),
+                        check(src))
 
     def test_the_status_route_moved_fails(self) -> None:
         src = self.mutate('.uri = "/api/mesh", .method = HTTP_GET, .handler = handle_mesh_status }',

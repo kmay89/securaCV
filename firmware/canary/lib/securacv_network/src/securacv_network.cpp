@@ -5483,6 +5483,12 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   mesh_session::RequestResult res;
   esp_err_t rc = ESP_OK;
   if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {
+    // F136: this Canary holds an opera. It leaves it first (POST
+    // /api/mesh/leave); a join never runs beside the old opera's members.
+    // The create path's answer, for the same reason.
+    return http_send_error(req, 409, "opera_exists");
+  }
   if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;
 
   JsonDocument doc;

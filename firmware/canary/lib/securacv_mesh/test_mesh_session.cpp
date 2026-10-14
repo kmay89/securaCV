@@ -6212,7 +6212,9 @@ void test_get_mesh_tells_each_pairing_outcome() {
   assert(has(status_body(), "\"pairing_seq\":2,\"pairing_result\":\"running\""));
   /* A second start and a join while it runs (a second tab, a double
    * click) are refused, name no number, and leave the count alone: the
-   * first page's poll still reads its own pairing, running. */
+   * first page's poll still reads its own pairing, running. Since F136 the
+   * join is refused as this Canary's opera (OPERA_EXISTS, before the
+   * running pairing is asked); it was REFUSED. */
   for (int k = 0; k < 2; ++k) {
     mesh_session::Request again = make_request(k == 0 ? mesh_session::RequestType::PAIR_START
                                                        : mesh_session::RequestType::PAIR_JOIN);
@@ -6220,7 +6222,9 @@ void test_get_mesh_tells_each_pairing_outcome() {
     assert(mesh_session::submit_request(again));
     mesh_session::process(400010 + k);
     assert(mesh_session::take_request_result(&res));
-    assert(res.status == mesh_session::RequestStatus::REFUSED && res.pairing_seq == 0);
+    assert(res.status == (k == 0 ? mesh_session::RequestStatus::REFUSED
+                                 : mesh_session::RequestStatus::OPERA_EXISTS) &&
+           res.pairing_seq == 0);
     assert(has(status_body(), "\"pairing_seq\":2,\"pairing_result\":\"running\""));
   }
   assert(mesh_session::pairing_seq() == 2);
@@ -6706,11 +6710,79 @@ void test_rest_pair_start_creates_opera() {
   std::printf("PASS test_rest_pair_start_creates_opera\n");
 }
 
+/* ── F136 — a Canary in an opera leaves it before it joins one ───────────
+ *
+ * PAIR_JOIN on a Canary that holds an opera is OPERA_EXISTS (409
+ * opera_exists from POST /api/mesh/pair/join): no pairing number is taken,
+ * nothing is sent, no callback runs, and the opera, its name and its
+ * members stay as they were. Before F136 the join ran beside the old opera:
+ * the joiner's PairedCallback installed the new secret over the old one and
+ * kept every old member, so they sat in the new opera's slots, never heard
+ * (their frames fail the opera_id check). After a LEAVE the same request
+ * starts a joiner. On the code before F136 the first join answers OK with
+ * pairing number 1 and a DISCOVER on the air. */
+void test_a_join_waits_for_a_leave() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x6B + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  mesh_session::set_opera_name("Den");
+  const uint8_t mac_m[6] = {0x02, 0x6B, 0x6B, 0x6B, 0x6B, 0x01};
+  add_bound_member(mac_m);   /* an old member: registered and bound */
+  uint8_t id_before[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(id_before));
+  mesh_session::process(10);
+  g_outs.clear();
+  g_paired_fired = false;
+  g_failed_fired = false;
+
+  mesh_session::RequestResult res;
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  mesh_session::process(20);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.type == mesh_session::RequestType::PAIR_JOIN);
+  assert(res.status == mesh_session::RequestStatus::OPERA_EXISTS);
+  assert(res.pairing_seq == 0 && mesh_session::pairing_seq() == 0);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::IDLE);
+  assert(g_outs.empty());                           /* no DISCOVER */
+  assert(!g_paired_fired && !g_failed_fired);
+  uint8_t id_after[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(id_after));
+  assert(std::memcmp(id_before, id_after, sizeof(id_before)) == 0);
+  char name[mesh_pairing::MAX_OPERA_NAME_LEN + 1];
+  mesh_session::get_opera_name(name, sizeof(name));
+  assert(std::strcmp(name, "Den") == 0);
+  assert(mesh_session::trusted_peer_count() == 1);
+  assert(mesh_transport::has_peer(mac_m));
+  assert(has(status_body(), "\"pairing_seq\":0,\"pairing_result\":\"none\""));
+
+  /* Leave, then join: the same request now starts a joiner. */
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
+  mesh_session::process(30);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && res.notified);
+  assert(!mesh_session::has_opera() && mesh_session::trusted_peer_count() == 0);
+  g_outs.clear();
+  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  mesh_session::process(40);
+  assert(mesh_session::take_request_result(&res));
+  assert(res.status == mesh_session::RequestStatus::OK && res.pairing_seq == 1);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::DISCOVERING_JOINER);
+  static const uint8_t BCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  assert(g_outs.size() == 1 && std::memcmp(g_outs[0].mac, BCAST, 6) == 0);
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_DISCOVER));
+  mesh_session::cancel_pairing();
+  std::printf("PASS test_a_join_waits_for_a_leave\n");
+}
+
 void test_rest_pairing_requests() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xE1 + i);
   uint8_t pub[32], priv[32];
-  stand_up_session(S, pub, priv);
+  /* No opera until the rotation below: since F136 a join on a Canary that
+   * holds one is OPERA_EXISTS (test_a_join_waits_for_a_leave), and the
+   * joins here are about the slot. A start needs none: it carries S. */
+  stand_up_session(nullptr, pub, priv);
   mesh_session::set_failed_callback(on_failed_abandoning);
   mesh_session::set_opera_name("Hearth");
   mesh_session::RequestResult res;
@@ -6810,7 +6882,9 @@ void test_rest_pairing_requests() {
   mesh_session::process(32);
   assert(mesh_session::take_request_result(&res) && res.enabled);
 
-  /* While a rotation runs: start / join say REKEY_IN_FLIGHT. */
+  /* While a rotation runs: start / join say REKEY_IN_FLIGHT (a rotation
+   * needs the opera; the join is asked about the rotation first). */
+  assert(mesh_session::set_opera_secret(S));
   uint8_t b_pub[32], b_priv[32], x_pub[32], x_priv[32];
   assert(mesh_crypto::ed25519_generate_keypair(b_pub, b_priv));
   assert(mesh_crypto::ed25519_generate_keypair(x_pub, x_priv));
@@ -7677,6 +7751,8 @@ int main() {
   /* F33 part 5 — the pairing routes run on the main loop. */
   test_rest_pairing_requests();
   test_rest_pair_start_creates_opera();
+  /* F136 — a Canary in an opera leaves it before it joins one. */
+  test_a_join_waits_for_a_leave();
   /* F33 part 6 — the revocation deny-list; concurrent removals. */
   test_revocation_deny_list();
   test_concurrent_offer_propagates_and_yields();

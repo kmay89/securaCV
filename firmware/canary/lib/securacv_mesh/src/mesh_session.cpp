@@ -2234,6 +2234,18 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
         memcpy(name, s_opera_name, sizeof(name));   /* start_* re-caches it */
         ok = start_pairing_initiator(req.opera_secret, name, now_ms);
       } else {
+        /* F136: a Canary that holds an opera leaves it first. A join here
+         * used to run beside it: the joiner's PairedCallback (main.cpp)
+         * installed the new opera's secret over the old one and kept every
+         * old member registered, bound and stored, so their frames failed
+         * the opera_id check and they sat in the new opera's slots, listed
+         * and never heard. Refused before a pairing number is taken and
+         * before any member, stored key or secret is touched; a changed-MAC
+         * re-pair is Leave, then Join (spec §5.2). */
+        if (s_opera_id_set) {
+          res->status = RequestStatus::OPERA_EXISTS;
+          break;
+        }
         ok = start_pairing_joiner(now_ms);
       }
       if (!ok) res->status = RequestStatus::REFUSED;
