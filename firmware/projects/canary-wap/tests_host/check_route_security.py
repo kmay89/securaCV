@@ -1214,6 +1214,8 @@ def _assert_credential_rule() -> None:
             "static bool provisioning_gate_take() {\n  return V4_ANY_GATE(g_req, g_tok);\n}\n"), {}),
         "C4 a header macro naming the token's member, read in an answer": (status_answers(
             "  return httpd_resp_sendstr(req, g_device.TOKF);\n"), {"api_auth.h": "#define TOKF api_token_str\n"}),
+        "a header macro naming the whole g_device, handed on by a handler": (status_answers(
+            "  dump_identity(&DEV);\n"), {"api_auth.h": "#define DEV g_device\n"}),
     }
     for why, (text, extra) in other_files.items():
         assert credential_problems(text, handlers, {"canary_wap.ino": text, **extra}), \
@@ -1325,6 +1327,9 @@ def _assert_credential_rule() -> None:
         "the claim flag written through a pointer": good.replace(
             tap_refusal, "  bool* served = &claim_served;\n  *served = true;\n" + tap_refusal),
         "the claim flag set again": good.replace(tap_refusal, "  claim_served = true;\n" + tap_refusal),
+        "an answer under a condition that holds the refusal's": good.replace(tap_refusal, (
+            "  if (!claim_served && !provisioning_gate_take() || !WiFi.isConnected()) {\n"
+            "    return send_provisioning_receipt(req, Grant::BOOT_TAP);\n  }\n" + tap_refusal)),
     }
     for why, text in receipt_bad.items():
         assert text != good, f"receipt fixture did not apply: {why}"
@@ -1900,6 +1905,7 @@ def _assert_registration_rule() -> None:
         "httpd_register_uri_handler taken by address": then(
             "  auto reg = httpd_register_uri_handler;\n  reg(server, &status);\n"),
         "a registration in a macro": "#define REG(n) httpd_register_uri_handler(server, &n)\n" + ino,
+        "httpd_register_uri_handler named other than in a call": then("  auto reg = httpd_register_uri_handler;\n"),
     }
     for why, text in bad.items():
         assert text != ino, f"registration fixture did not apply: {why}"
