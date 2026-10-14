@@ -505,6 +505,9 @@ class R11FloatingRunner(unittest.TestCase):
             ("[self-hosted, ubuntu-latest]", "", "jobs.build.runs-on[1]"),
             ("{group: big, labels: ubuntu-latest}", "", "jobs.build.runs-on.labels"),
             ("ubuntu-latest-8-cores", "", "jobs.build.runs-on"),
+            # Runner labels match case-insensitively, so these float too.
+            ("Ubuntu-Latest", "", "jobs.build.runs-on: Ubuntu-Latest"),
+            ("UBUNTU-LATEST", "", "jobs.build.runs-on: UBUNTU-LATEST"),
             ("\"${{ (matrix.lang == 'swift' && 'macos-latest') || 'ubuntu-latest' }}\"",
              "", "jobs.build.runs-on"),
             ("${{ matrix.os }}",

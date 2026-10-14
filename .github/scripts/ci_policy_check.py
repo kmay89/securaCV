@@ -119,8 +119,10 @@ PYTHON_VERSION_LINE_RE = re.compile(r"(?<![\w.-])python-version\s*:(.*)$")
 
 # R11: the floating Ubuntu runner label, as a label: `ubuntu-latest` on its
 # own or as the head of a larger-runner label (`ubuntu-latest-8-cores` floats
-# too), never inside a longer word.
-FLOATING_RUNNER_RE = re.compile(r"(?<![\w.-])ubuntu-latest\b")
+# too), never inside a longer word. In any case: runner labels are
+# case-insensitive (actionlint lowercases one before it matches the hosted
+# labels), so `Ubuntu-Latest` floats exactly as far.
+FLOATING_RUNNER_RE = re.compile(r"(?<![\w.-])ubuntu-latest\b", re.IGNORECASE)
 
 # R10: the toolchains that have a composite action, and how an inline copy
 # of their setup looks in COMMAND position. Each entry: (label, predicate on
