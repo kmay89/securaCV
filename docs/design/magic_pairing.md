@@ -584,8 +584,11 @@ later (the wizard, or `POST /api/device-name`) changes the host. So the
 app moves a kit whose `device_id` is the row's onto the address the WAP
 answers at now, whatever host the kit names, keeping its scheme, port and
 pin (`ProvisioningReceipt.rebased`, A88); a kit with no `device_id` moves
-only off the SoftAP address, and another device's kit is used as it is.
-A kit saved before a rename is dialed at the new name. The app has no BOOT-tap
+only off the SoftAP address, and another device's kit keeps the host it
+names. A kit saved before a rename is dialed at the new name. "The row's
+id" is a 16-bit suffix of the WAP's key fingerprint, so two WAPs in one
+home can share one, and then one's kit moves onto the other (the rebase's
+comment says what follows). The app has no BOOT-tap
 pairing over the LAN: an installed WAP speaks https with no pin the phone
 could hold it to before the first dial (F256).
 
@@ -763,7 +766,11 @@ cannot speak to.
 - [ ] With the card up, the Fleet tab's "+" sheet hides it (nothing dimmed
       behind the half-height sheet, on an iPhone and on an iPad) and lists
       the Canary inline; closing the sheet brings the card back; a Canary
-      first heard while the sheet is up is offered once it closes.
+      first heard while the sheet is up is offered once it closes. On an
+      iPad with two windows the stand-down is app-wide (one flag in
+      `FleetStore`): a "+" sheet in one window hides the card in both, and
+      with a "+" sheet up in each, closing one brings the card back
+      behind the other; note what the bench sees.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
 - [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,

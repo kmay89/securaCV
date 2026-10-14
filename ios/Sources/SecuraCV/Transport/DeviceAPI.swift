@@ -90,6 +90,12 @@ struct ProvisioningReceipt: Codable, Sendable {
     /// moved: its token opens that device, not the one found here, so the
     /// host it names stays its word. Nothing seen on the network, nothing
     /// to move it onto.
+    ///
+    /// "The same id" is as strong as the id: a WAP's `device_id` is a
+    /// 16-bit suffix of its key fingerprint, so two WAPs in one home can
+    /// share one (about n²/131072 for n of them), and a kit of one opened
+    /// from the other's row is then moved onto the other: an https kit
+    /// fails there on its own pin, a plain-http kit sends its token to it.
     func rebased(onto discovered: URL?, discoveredAs discoveredID: String) -> ProvisioningReceipt {
         let thisDevice = !deviceID.isEmpty && deviceID == discoveredID
         let namelessSetupKit = deviceID.isEmpty && baseURL.host == SetupPortal.host

@@ -51,6 +51,10 @@ final class FleetStore: ObservableObject {
     /// itself would show dimmed behind it, so that card stands down — draws
     /// nothing and latches nothing — until the sheet goes (NearbyOfferLatch;
     /// sweep A75). The sheet sets it on appear and clears it on disappear.
+    /// One flag for the app, not per window: on an iPad with two windows a
+    /// "+" sheet in one stands the card down in both, and with a "+" sheet
+    /// up in each, closing one brings the card back behind the other
+    /// (a magic_pairing.md §9 bench row).
     @Published var nearbyOfferStandsDown = false
 
     // Collaborators

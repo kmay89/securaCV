@@ -202,15 +202,19 @@ final class DeviceAPITests: XCTestCase {
     func testANamelessKitMovesOnlyOffTheSetupAddress() throws {
         // No device_id: the kit cannot say whose it is. 192.168.4.1 is every
         // WAP's setup address and names no device either, so it moves (as it
-        // always did); any other host is the kit's word.
+        // always did); any other host is the kit's word. The same holds
+        // from a row whose TXT carried no device_id: the kit's empty id and
+        // the row's are equal strings, but no id is not a match.
         let discovered = DeviceAPI.url(forDiscoveredHost: "canary-ab12")
         let setup = try decodeKit(#"{"base_url":"http://192.168.4.1","token":"t"}"#)
-        XCTAssertEqual(setup.rebased(onto: discovered, discoveredAs: "wap-ab12").baseURL.absoluteString,
-                       "http://canary-ab12.local")
-        for named in ["http://canary-old1.local", "http://192.168.1.20"] {
-            let kit = try decodeKit(#"{"base_url":"\#(named)","token":"t"}"#)
-            XCTAssertEqual(kit.rebased(onto: discovered, discoveredAs: "wap-ab12").baseURL.absoluteString, named,
-                           "a nameless kit naming \(named) is its own word")
+        for row in ["wap-ab12", ""] {
+            XCTAssertEqual(setup.rebased(onto: discovered, discoveredAs: row).baseURL.absoluteString,
+                           "http://canary-ab12.local", "row '\(row)': the setup address moves")
+            for named in ["http://canary-old1.local", "http://192.168.1.20"] {
+                let kit = try decodeKit(#"{"base_url":"\#(named)","token":"t"}"#)
+                XCTAssertEqual(kit.rebased(onto: discovered, discoveredAs: row).baseURL.absoluteString, named,
+                               "row '\(row)': a nameless kit naming \(named) is its own word")
+            }
         }
     }
 
