@@ -10,6 +10,10 @@
  *   3. The same callback fires with (arrived=false, label="kitchen")
  *      on the PRESENT → AWAY (LOST_MS) timeout transition.
  *   4. Unhooking with nullptr silences subsequent transitions.
+ *   5. Tracking does not read the pairing filter (repo sweep F36): a paired
+ *      beacon whose adverts the scan callback marks not offerable (another
+ *      Canary's advert format) arrives and departs, and broadcasts both,
+ *      exactly as one whose adverts are offerable, call for call.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -84,7 +88,8 @@ bool saw_call(bool arrived, const char* label) {
 void drive_to_arrived(const uint8_t mac[ble_scan::MAC_LEN]) {
   for (int i = 0; i < 80; ++i) {
     ble_scout::ble_scout_on_advert(mac, /*rssi_dbm=*/-55,
-                                   /*now_ms=*/(uint32_t)(1000 + i * 100));
+                                   /*now_ms=*/(uint32_t)(1000 + i * 100),
+                                   /*offerable=*/true);
   }
 }
 
@@ -158,11 +163,53 @@ void test_unhook_silences_callback() {
    * already fired in the previous test and won't refire now). */
   for (int i = 0; i < 80; ++i) {
     ble_scout::ble_scout_on_advert(mac, /*rssi_dbm=*/-55,
-                                   /*now_ms=*/(uint32_t)(100000 + i * 100));
+                                   /*now_ms=*/(uint32_t)(100000 + i * 100),
+                                   /*offerable=*/true);
   }
 
   assert(g_call_count == 0);
   std::printf("PASS test_unhook_silences_callback\n");
+}
+
+/* Two paired beacons driven in lockstep from t0, one whose adverts are
+ * offerable and one whose adverts are not (the scan callback found them in
+ * a fleet format), until both arrive and then go silent past LOST_MS. The
+ * one with offerable == false must arrive, depart and broadcast like the
+ * other: the flag gates the pairing window, never presence. */
+void test_fleet_format_adverts_still_tracked() {
+  ble_scout::set_broadcast_callback(test_callback);
+  ble_scout::ble_scout_init();
+
+  const uint8_t tag_mac[ble_scan::MAC_LEN]    = {0x0F, 0xFE, 0x00, 0x00, 0x00, 0x01};
+  const uint8_t canary_mac[ble_scan::MAC_LEN] = {0x0F, 0xFE, 0x00, 0x00, 0x00, 0x02};
+  assert(ble_scout::ble_scout_pair(tag_mac, "porch"));
+  assert(ble_scout::ble_scout_pair(canary_mac, "hall"));
+  reset_captured();
+
+  /* Advert by advert, the two beacons' calls must match: record which
+   * advert index each one's ARRIVED broadcast fired at. */
+  int porch_at = -1;
+  int hall_at  = -1;
+  const uint32_t t0 = 200000;
+  for (int i = 0; i < 80; ++i) {
+    const size_t before = g_call_count;
+    ble_scout::ble_scout_on_advert(tag_mac, -55, t0 + (uint32_t)i * 100, /*offerable=*/true);
+    if (g_call_count > before && porch_at < 0) porch_at = i;
+    const size_t mid = g_call_count;
+    ble_scout::ble_scout_on_advert(canary_mac, -55, t0 + (uint32_t)i * 100, /*offerable=*/false);
+    if (g_call_count > mid && hall_at < 0) hall_at = i;
+  }
+  assert(saw_call(/*arrived=*/true, "porch"));
+  assert(saw_call(/*arrived=*/true, "hall"));
+  assert(porch_at >= 0 && porch_at == hall_at);
+  assert(g_call_count == 2);
+
+  reset_captured();
+  ble_scout::ble_scout_tick(t0 + 80 * 100 + 60000);
+  assert(saw_call(/*arrived=*/false, "porch"));
+  assert(saw_call(/*arrived=*/false, "hall"));
+  std::printf("PASS test_fleet_format_adverts_still_tracked  (arrived at advert %d)\n",
+              hall_at);
 }
 
 }  /* namespace */
@@ -172,6 +219,7 @@ int main() {
   test_arrived_fires_callback();
   test_departed_fires_callback();
   test_unhook_silences_callback();
+  test_fleet_format_adverts_still_tracked();
   std::printf("\nALL BLE_SCOUT_BROADCAST TESTS PASSED\n");
   return 0;
 }

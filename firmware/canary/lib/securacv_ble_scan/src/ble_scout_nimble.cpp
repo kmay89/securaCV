@@ -34,6 +34,7 @@
 
 #include "ble_scout.h"
 #include "ble_scan.h"
+#include "ble_scout_advert_kind.h"  // keeps the fleet's own adverts out of pairing
 #include "fleet_roster_feed.h"   // second consumer of this scan: the fleet roster
 
 #include <Arduino.h>
@@ -70,18 +71,24 @@ class ScoutScanCallbacks : public NimBLEScanCallbacks {
      * agree, and no MAC is ever typed, stored or sent anywhere. */
     const uint8_t* mac  = device->getAddress().getBase()->val;
     const int8_t   rssi = (int8_t)device->getRSSI();
+    /* The manufacturer data, read once (empty when the advert carries none).
+     * An advert in the fleet's own formats — another Canary's presence
+     * beacon or Chirp — is never offered to the pairing window (repo sweep
+     * F36); tracking a paired device is unchanged either way. */
+    const std::string mfg =
+        device->haveManufacturerData() ? device->getManufacturerData() : std::string();
+    const uint8_t* mfg_bytes = reinterpret_cast<const uint8_t*>(mfg.data());
+    const bool offerable = advert_kind::offerable(mfg_bytes, mfg.size());
     const uint32_t now  = millis();
-    ble_scout_on_advert(mac, rssi, now);
+    ble_scout_on_advert(mac, rssi, now, offerable);
 
     /* Second consumer, same advert: offer the manufacturer data to the fleet
      * roster. A fleet-link presence beacon / Chirp is parsed + tabled there;
      * anything else (the paired phones/watches above) is ignored. The roster
      * never sees a raw MAC — only the self-reported fingerprint suffix on the
      * wire. */
-    if (device->haveManufacturerData()) {
-      const std::string m = device->getManufacturerData();
-      fleet_roster_feed::on_advert(
-          reinterpret_cast<const uint8_t*>(m.data()), m.size(), rssi, now);
+    if (!mfg.empty()) {
+      fleet_roster_feed::on_advert(mfg_bytes, mfg.size(), rssi, now);
     }
   }
   void onScanEnd(const NimBLEScanResults& /*results*/, int reason) override {
