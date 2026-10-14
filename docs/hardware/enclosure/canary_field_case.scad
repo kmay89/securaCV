@@ -98,7 +98,7 @@ grv_w   = 2.0;       // groove width
 grv_d   = 1.1;       // groove depth (squeeze = 1 - grv_d/oring_d)
 g_c     = 2.0;       // groove centerline offset outboard of the cavity edge
 
-/* [Screw lobes] — 6x M3 heat-set inserts, outboard of the seal line */
+/* [Screw lobes] — 8x M3 heat-set inserts, outboard of the seal line */
 lob_d    = 9.0;      // screw lobe diameter — each lobe is hulled back into the wall as a gusset neck, and the end lobes must clear the corner radius (asserted)
 lob_off  = 8.0;      // lobe center offset outboard of the cavity edge (keeps the lanyard bore >=1.5 mm off the pressure wall)
 end_lob_y = 8.0;     // Y of the two lobes on each short end

@@ -9854,7 +9854,7 @@
     },
     {
      "name": "Screw lobes",
-     "note": "6x M3 heat-set inserts, outboard of the seal line",
+     "note": "8x M3 heat-set inserts, outboard of the seal line",
      "params": [
       {
        "name": "lob_d",
