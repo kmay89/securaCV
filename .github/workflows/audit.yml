@@ -85,31 +85,43 @@ jobs:
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 
-      # The desktop Flasher/Lab, the hub-io and flash-engine crates, the tvOS
-      # core and the household-key checker (household/) each carry their OWN
-      # Cargo.lock outside the root (no [workspace]), so the root audit above
-      # never touches them. They ship in signed, self-updating apps or guard
-      # the household posture — audit them against the same advisory DB and
-      # fail on any advisory.
+      # The desktop Flasher/Lab, the hub-io and flash-engine crates and the
+      # tvOS core each carry their OWN Cargo.lock outside the root (no
+      # [workspace]), so the root audit above never touches them. They ship
+      # in signed, self-updating apps — audit them against the same advisory
+      # DB and fail on any advisory.
       # `-f <lock>` audits that exact lockfile; the shared .cargo/audit.toml
       # ignore list still applies (run from the repo root).
+      # Every lockfile is audited and reported even when an earlier one
+      # fails (the step fails at the end if any did), and the step runs even
+      # when the root audit above failed: one red lockfile must never hide
+      # another's result.
       # hub-core is intentionally excluded: it is a zero-dependency, pure-`std`
       # crate whose Cargo.lock is gitignored, so there is nothing to audit and
       # `cargo audit -f desktop/hub-core/Cargo.lock` would fail to load the file.
       - name: Audit shipped desktop / tvOS lockfiles
+        if: ${{ !cancelled() }}
         run: |
-          set -e
+          rc=0
           for lock in \
             desktop/src-tauri/Cargo.lock \
             desktop-lab/src-tauri/Cargo.lock \
             desktop/hub-io/Cargo.lock \
             desktop/flash-engine/Cargo.lock \
-            tvos/witness-core/Cargo.lock \
-            household/Cargo.lock; do
+            tvos/witness-core/Cargo.lock; do
             echo "::group::cargo audit -f $lock"
-            cargo audit -f "$lock"
+            cargo audit -f "$lock" || rc=1
             echo "::endgroup::"
           done
+          exit $rc
+
+      # The household-key checker (household/) guards the household posture
+      # and has its own Cargo.lock. Its own step, run whatever the steps above
+      # concluded, so its result is always produced and a desktop advisory
+      # never stands in for it (or hides one in it).
+      - name: Audit the household-key checker lockfile
+        if: ${{ !cancelled() }}
+        run: cargo audit -f household/Cargo.lock
 
   cargo-deny:
     name: cargo deny (licenses / bans / sources)
