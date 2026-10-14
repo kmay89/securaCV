@@ -156,7 +156,10 @@ J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
     `if` whose `&&` holds it, or in the else of `if (!usable(...))` (F265: a
     usable() called and ignored passed). A call is the setter's when it is
     qualified or made unqualified inside namespace `setup_wizard`, in any
-    file (F265), and no using-declaration or using-directive names it. No
+    file (F265), no using-declaration or using-directive names it, no
+    namespace alias names `setup_wizard`, and the setter is never named
+    without being called (its address taken, a pointer or reference bound
+    to it) (the F265 review). No
     file casts `get_device_name()`'s result, or a local holding it, to a
     pointer that is not `const` (F265: a write around the setter). Host-
     tested in tests_host/test_device_name.cpp. POST /api/device-name answers
@@ -166,12 +169,16 @@ J8. The device name holds no control byte (F226): ArduinoJson 7.4.1 writes
 J9. No SSID reaches a JSON text with a raw control byte (F262): an SSID is
     up to 32 bytes an access point broadcast or a person typed, and
     ArduinoJson 7.4.1 writes a control byte other than \b \f \n \r \t raw.
-    Every ArduinoJson value whose key names an SSID (`"ssid"`, `"sta_ssid"`,
-    `"ap_ssid"`) or whose value reads one (an identifier holding `ssid`,
-    `WiFi.SSID(`), in any file of the sketch, is a local buffer declared
-    `char x[wap_json::replaced_cap(...)]` (the whole SSID, every byte a
-    replacement) and filled by `wap_json::replaced_text(x, sizeof(x), ...)`
-    before it, with nothing writing it in between; and every value a printf
+    Every ArduinoJson value (`["key"] = v`, `["key"].set(v)`, `arr.add(v)`)
+    whose key names an SSID (`"ssid"`, `"sta_ssid"`, `"ap_ssid"`) or whose
+    value reads one (an identifier holding `ssid`, `WiFi.SSID(`, or a local
+    of the function that holds an SSID: assigned one, or a buffer one is
+    copied, appended or printed into, the F262 review), in any file of the
+    sketch, is a local buffer declared `char x[wap_json::replaced_cap(...)]`
+    (its size is not measured: a smaller one cuts the text on a character
+    and the JSON stays whole) and filled by `wap_json::replaced_text(x,
+    sizeof(x), ...)` before it, with nothing writing it in between (an
+    assignment, a copy, an append, a memset, a printf); and every value a printf
     (J7's family) or `log_health()` is handed that reads an SSID is such a
     buffer, of any size (the text is cut on a character), unless
     `SSID_RAW` records the function, why the network's own bytes are right
@@ -2509,7 +2516,18 @@ def check_device_name(files: dict[str, str], idx: Index) -> list[str]:
                              r"set_device_name\b)", c):
             errors.append(f"{name}:{c.count(chr(10), 0, m.start()) + 1}: a using-declaration or using-directive names "
                           "setup_wizard's setter: every call of it must be one J8 reads (J8, F265)")
+        # A namespace alias, or the setter named but not called (its address taken, a reference
+        # bound): a call through either is one J8 cannot count (the F265 review).
+        for m in re.finditer(r"\bnamespace\s+\w+\s*=\s*(?:::\s*)?setup_wizard\b", c):
+            errors.append(f"{name}:{c.count(chr(10), 0, m.start()) + 1}: a namespace alias of setup_wizard: a call "
+                          "of the setter through it is one J8 cannot count (J8, F265)")
         spans = namespace_spans(c)
+        for m in re.finditer(r"(?<![\w.>])(?:(?:::\s*)?setup_wizard\s*::\s*)?set_device_name\b(?!\s*\()", c):
+            qualified = "setup_wizard" in m.group(0)
+            if qualified or ns_at(spans, m.start())[:1] == ("setup_wizard",):
+                errors.append(f"{name}:{c.count(chr(10), 0, m.start()) + 1}: setup_wizard's setter named but not "
+                              "called (its address taken or a reference bound to it): a call through it is one J8 "
+                              "cannot count (J8, F265)")
         setter_calls = list(re.finditer(r"\bsetup_wizard\s*::\s*set_device_name\s*\(", c))
         for m in re.finditer(r"(?<![\w:.>])set_device_name\s*\(", c):
             if ns_at(spans, m.start())[:1] != ("setup_wizard",):
@@ -2598,9 +2616,79 @@ def replaced_buffer(code: str, lo: int, at: int, name: str) -> bool:
         return False
     between = code[lo + fills[-1].end():at]
     return not re.search(r"(?<![\w.>])" + re.escape(name) + r"\s*(?:\[[^\]]*\])?\s*=(?!=)"
-                         r"|\b(?:strn?cpy|strn?cat|strlcpy|memcpy|memmove|v?s?n?printf|replaced_text)\s*\("
+                         r"|\b(?:strn?cpy|strn?cat|strlcpy|strlcat|memcpy|memmove|memset|v?s?n?printf|replaced_text)\s*\("
                          r"\s*(?:wap_json\s*::\s*)?" + re.escape(name) + r"\b", between.split(";", 1)[1]
                          if ";" in between else "")
+
+
+# A local that holds an SSID is an SSID too (the F262 review: `const String joined = WiFi.SSID();`
+# and then `joined.c_str()`, or `const char* net = g_wifi_creds.ssid;` and then `doc["network"] =
+# net;`, carried one past the name-based reading): a local assigned an SSID expression, or a buffer
+# an SSID is copied, appended or printed into.
+SSID_ASSIGN = re.compile(r"(?<![\w.>:])(\w+)\s*(?:\[[^\]\[;]*\]\s*)?=(?!=)")
+SSID_COPY = re.compile(r"(?<![\w:.>])(?:strn?cpy|strlcpy|strn?cat|strlcat|memcpy|memmove|v?s?n?printf)\s*\(\s*(\w+)\s*,")
+SSID_SET = re.compile(r'\[\s*"([^"\\\n]*)"\s*\]\s*\.\s*set\s*\(')
+# A name that holds the SSID's text: `ssid`, `posted_ssid`, `staSsid`; not a BSSID, nor a number
+# about one (`ssid_len`, `ssid_cap`, `ssid_start`).
+SSID_NAME = re.compile(r"^\w*?(?<![bB])ssid(?!_?(?:len|length|cap|start|end|size|count|known|idx|index|pos|off|"
+                       r"offset|n)$)\w*$", re.I)
+SSID_ADD = re.compile(r"(?<![\w:])(\w+)\s*\.\s*add\s*\(")
+
+
+def ssid_expr(expr: str, aliases: set[str]) -> bool:
+    """`expr` (strings blanked) is an SSID itself: an SSID read (`WiFi.SSID(...)`, a name or member
+    whose own name holds `ssid`) or a local holding one, through parentheses, a C cast, `String(...)`,
+    `.c_str()` and a top-level ternary's branches."""
+    e = strip_parens(expr)
+    t = top_ternary(e)
+    if t is not None:
+        return ssid_expr(t[0], aliases) or ssid_expr(t[1], aliases)
+    e = re.sub(r"^\(\s*(?:const\s+)?[\w:]+\s*\**\s*(?:const\s*)?\)\s*", "", e)
+    m = re.fullmatch(r"(?:String|std\s*::\s*string)\s*\((.*)\)", e, re.S)
+    if m:
+        e = m.group(1)
+    e = strip_parens(re.sub(r"\s*\.\s*c_str\s*\(\s*\)\s*$", "", e))
+    if re.fullmatch(r"WiFi\s*\.\s*SSID\s*\([^()]*\)", e):
+        return True
+    if not re.fullmatch(r"[\w\s.\->\[\]]+", e):
+        return False
+    last = re.split(r"\.|->", re.sub(r"\[[^\]]*\]", "", e))[-1].strip()
+    return bool(SSID_NAME.search(last)) or last in aliases
+
+
+def ssid_aliases(code: str, lo: int, hi: int) -> set[str]:
+    """The locals in code[lo:hi] that hold an SSID: assigned an SSID expression, or written by a copy,
+    an append or a printf with an SSID among its other arguments (to a fixpoint, so a local holding a
+    local holding one counts too). A buffer replaced_text() just filled is the replaced text, not the
+    SSID's own bytes, wherever it is copied."""
+    body = code[lo:hi]
+    aliases: set[str] = set()
+
+    def raw(expr: str, at: int) -> bool:
+        name = expr.strip()
+        if re.fullmatch(r"\w+", name) and name not in aliases and replaced_buffer(code, lo, lo + at, name):
+            return False
+        return ssid_expr(expr, aliases)
+
+    for _ in range(8):
+        before = len(aliases)
+        for m in SSID_ASSIGN.finditer(body):
+            end = statement_end(body, m.end())
+            if end > 0 and m.group(1) not in KEYWORDS and raw(body[m.end():end], m.start()):
+                aliases.add(m.group(1))
+        for m in SSID_COPY.finditer(body):
+            close = matching_paren(body, body.index("(", m.start()))
+            rest = split_top(body[m.end():close]) if close > 0 else []
+            if any(raw(a, m.start()) for a in rest):
+                aliases.add(m.group(1))
+        if len(aliases) == before:
+            break
+    return aliases
+
+
+def reads_ssid(expr: str, aliases: set[str]) -> bool:
+    """`expr` (strings blanked) reads an SSID: names one (SSID_TOKEN) or a local holding one."""
+    return bool(SSID_TOKEN.search(expr)) or any(re.search(r"\b" + re.escape(a) + r"\b", expr) for a in aliases)
 
 
 def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
@@ -2613,6 +2701,35 @@ def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
         fn = fn_containing(idx, name, at)
         return f"{name}:{code.count(chr(10), 0, at) + 1}: {fn.name if fn else '?'}()", fn
 
+    alias_cache: dict[tuple[str, int], set[str]] = {}
+
+    def aliases_at(name: str, code: str, fn: Fn | None) -> set[str]:
+        if fn is None:
+            return set()
+        key = (name, fn.body[0])
+        if key not in alias_cache:
+            alias_cache[key] = ssid_aliases(code, fn.body[0], fn.body[1])
+        return alias_cache[key]
+
+    def json_value(name: str, code: str, kept: str, at_pos: int, key: str | None, rhs_lo: int, rhs_hi: int,
+                   spelled: str) -> None:
+        """One ArduinoJson value: keyed `key` (None for an array's add()), its text code[rhs_lo:rhs_hi]."""
+        rhs = kept[rhs_lo:rhs_hi].strip()
+        at, fn = where(name, code, at_pos)
+        if fn is None and key is None:
+            return                                          # a page's script, not a C value
+        aliases = aliases_at(name, code, fn)
+        if not ((key is not None and re.search("ssid", key, re.I)) or reads_ssid(code[rhs_lo:rhs_hi], aliases)):
+            return
+        ok = (fn is not None and re.fullmatch(r"\w+", rhs) is not None and rhs not in aliases
+              and replaced_buffer(code, fn.body[0], at_pos, rhs)
+              and re.search(r"\bchar\s+" + rhs + r"\s*\[\s*wap_json\s*::\s*replaced_cap\s*\(",
+                            code[fn.body[0]:at_pos]) is not None)
+        if not ok:
+            errors.append(f"{at}: {spelled}: an SSID written into a JSON value without "
+                          "wap_json::replaced_text() into a `char x[wap_json::replaced_cap(...)]` buffer: "
+                          "ArduinoJson writes its control bytes raw (J9, F262)")
+
     for name, src in files.items():
         code = blank_comments_and_strings(src)
         kept = blank_comments_only(src)
@@ -2622,18 +2739,21 @@ def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
             end = statement_end(code, m.end())
             if end < 0:
                 continue
-            rhs = kept[m.end():end].strip()
-            if not (re.search("ssid", m.group(1), re.I) or SSID_TOKEN.search(code[m.end():end])):
+            json_value(name, code, kept, m.start(), m.group(1), m.end(), end,
+                       f"[\"{m.group(1)}\"] = {kept[m.end():end].strip()}")
+        # The same value through `.set(v)` on a keyed member, or `arr.add(v)` (the F262 review).
+        for m in SSID_SET.finditer(kept):
+            if code[m.start()] != "[":
                 continue
-            at, fn = where(name, code, m.start())
-            ok = (fn is not None and re.fullmatch(r"\w+", rhs) is not None
-                  and replaced_buffer(code, fn.body[0], m.start(), rhs)
-                  and re.search(r"\bchar\s+" + rhs + r"\s*\[\s*wap_json\s*::\s*replaced_cap\s*\(",
-                                code[fn.body[0]:m.start()]) is not None)
-            if not ok:
-                errors.append(f"{at}: [\"{m.group(1)}\"] = {rhs}: an SSID written into a JSON value without "
-                              "wap_json::replaced_text() into a `char x[wap_json::replaced_cap(...)]` buffer: "
-                              "ArduinoJson writes its control bytes raw (J9, F262)")
+            close = matching_paren(code, m.end() - 1)
+            if close > 0:
+                json_value(name, code, kept, m.start(), m.group(1), m.end(), close,
+                           f"[\"{m.group(1)}\"].set({kept[m.end():close].strip()})")
+        for m in SSID_ADD.finditer(code):
+            close = matching_paren(code, m.end() - 1)
+            if close > 0 and kept[m.end():close].strip():
+                json_value(name, code, kept, m.start(), None, m.end(), close,
+                           f"{m.group(1)}.add({kept[m.end():close].strip()})")
     # The printf family's values and log_health()'s message and detail.
     cs = printf_callees(idx)
     sites = [(n, at, c, args, list(range(fi + 1, len(args)))) for n, at, c, args, fi in printf_calls(files, cs)]
@@ -2649,10 +2769,12 @@ def check_ssid_texts(files: dict[str, str], idx: Index) -> list[str]:
         code = blank_comments_and_strings(files[name])
         for i in values:
             arg = LITERAL.sub('""', args[i]).strip()
-            if not SSID_TOKEN.search(arg):
-                continue
             at, fn = where(name, code, at_pos)
-            if fn is not None and re.fullmatch(r"\w+", arg) and replaced_buffer(code, fn.body[0], at_pos, arg):
+            aliases = aliases_at(name, code, fn)
+            if not reads_ssid(arg, aliases):
+                continue
+            if (fn is not None and re.fullmatch(r"\w+", arg) and arg not in aliases
+                    and replaced_buffer(code, fn.body[0], at_pos, arg)):
                 continue
             if fn is not None and (name, fn.name) in SSID_RAW:
                 used.add((name, fn.name))
@@ -3303,6 +3425,39 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(INO, '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n',
             '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n'
             '  strncpy(scanned_ssid, g_qr_scanned_ssid, sizeof(scanned_ssid) - 1);\n')),
+    # J9 reads a local that holds an SSID, .set() and .add() values, and every writer (the F262 review).
+    ("the self-test's Wi-Fi line reads the joined SSID through its local",
+     raw_in(f"{SKETCH}/selftest_api.h", 'set_detail(r, "Joined %s · %lddBm", line_ssid, (long)rssi);',
+            'set_detail(r, "Joined %s · %lddBm", joined.c_str(), (long)rssi);')),
+    ("a JSON value takes an SSID through a local",
+     add_file(f"{SKETCH}/zz_alias_api.h",
+              "namespace zz_api {\ninline void zz_fill(JsonDocument& doc) {\n  const char* zz_net = g_wifi_creds.ssid;\n"
+              "  doc[\"network\"] = zz_net;\n}\n}\n")),
+    ("a JSON value takes an SSID through two locals",
+     add_file(f"{SKETCH}/zz_alias_api.h",
+              "namespace zz_api {\ninline void zz_fill(JsonDocument& doc) {\n  String zz_a = WiFi.SSID();\n"
+              "  const char* zz_b = zz_a.c_str();\n  doc[\"network\"] = zz_b;\n}\n}\n")),
+    ("a health-log detail takes an SSID through a local",
+     add_file(f"{SKETCH}/zz_alias_log.h",
+              "static void zz_log() {\n  const char* zz_net = g_wifi_creds.ssid;\n"
+              "  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, \"Joined\", zz_net);\n}\n")),
+    ("a health-log message has an SSID appended into it raw",
+     add_file(f"{SKETCH}/zz_alias_log.h",
+              "static void zz_log() {\n  char zz_msg[80] = \"Joined \";\n  strcat(zz_msg, g_wifi_creds.ssid);\n"
+              "  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, zz_msg, nullptr);\n}\n")),
+    ("the scan list sets each SSID raw through .set()",
+     raw_in(INO, '    net["ssid"] = ssid;', '    net["ssid"].set(g_scan_cache[i].ssid);')),
+    ("a JSON array adds an SSID raw",
+     add_file(f"{SKETCH}/zz_ssid_list.h",
+              "namespace zz_api {\ninline void zz_list(JsonArray arr) {\n  arr.add(WiFi.SSID());\n}\n}\n")),
+    ("the QR status's buffer is memset between its fill and the answer",
+     raw_in(INO, '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n',
+            '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n'
+            '  memset(scanned_ssid, 1, 4);\n')),
+    ("the QR status's buffer has the raw SSID strlcat'd after its fill",
+     raw_in(INO, '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n',
+            '  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);\n'
+            '  strlcat(scanned_ssid, g_qr_scanned_ssid, sizeof(scanned_ssid));\n')),
     ("the SSID log wrapper logs the SSID raw",
      raw_in(INO, '  log_health(level, category, message, shown);', '  log_health(level, category, message, ssid);')),
     ("a health-log line takes the saved SSID raw again",
@@ -3335,6 +3490,17 @@ MUTATIONS: list[tuple[str, Mutation]] = [
               "  wifi_join_now(s);\n}\n")),
     ("a recorded raw SSID use is gone and its record stays",
      raw_in(INO, '    snprintf(ssid, ssid_cap, "%s", e.ssid);', '    strncpy(ssid, e.ssid, ssid_cap - 1);')),
+    # J8 refuses a namespace alias of setup_wizard and the setter's address (the F265 review).
+    ("a third route renames through a namespace alias, untested",
+     add_file(f"{SKETCH}/zz_name_alias.h",
+              "namespace zz_sw = setup_wizard;\nstatic void zz_rename(const char* n) {\n  zz_sw::set_device_name(n);\n}\n")),
+    ("a third route renames through the setter's address, untested",
+     add_file(f"{SKETCH}/zz_name_ptr.h",
+              "static void zz_rename(const char* n) {\n  auto zz_f = &setup_wizard::set_device_name;\n  zz_f(n);\n}\n")),
+    ("a third route renames through a function pointer to the setter, untested",
+     add_file(f"{SKETCH}/zz_name_ptr.h",
+              "static bool (*zz_set)(const char*) = setup_wizard::set_device_name;\n"
+              "static void zz_rename(const char* n) {\n  zz_set(n);\n}\n")),
     ("a third route sets the name, tested",
      add_file(f"{SKETCH}/zz_name_route.h",
               "static void zz_ble_rename(const char* n) {\n"
