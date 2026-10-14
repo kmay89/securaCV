@@ -35,13 +35,14 @@ override CXXFLAGS += $(ARDUINO_GLOBALS)
 
 # Every compile writes the headers it read beside its binary (sweep F286):
 # -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
-# deleted one is no error, and the `-include` at the end of this file reads
-# them back. So an edit to any header a suite compiles, the forced
-# arduino_globals.h among them, rebuilds that suite whether or not its rule
-# lists the header, and a new rule that compiles one source with $(CXXFLAGS)
-# needs nothing more. One command that compiles several sources writes that
-# one file once per source, each over the last (GCC and clang alike), so such
-# a recipe runs as
+# deleted one is no error, and the end of this file reads them back and
+# gives each source they name the same rule (-MP names none). So an edit to
+# any header a suite compiles, the forced arduino_globals.h among them,
+# rebuilds that suite whether or not its rule lists the header, a header or
+# source moved since is a rebuild and not an error, and a new rule that
+# compiles one source with $(CXXFLAGS) needs nothing more. One command that
+# compiles several sources writes that one file once per source, each over
+# the last (GCC and clang alike), so such a recipe runs as
 # $(call with_deps,<the compile>): the compile, then the same flags and
 # sources with -MM in place of its output, which writes $@.d again with every
 # source's headers. A comma in the compile goes through a variable, as
@@ -1792,9 +1793,14 @@ run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC)
 run: run-arduino-globals
 
 # What each suite's compile read (DEPFLAGS, at the top): last, so that no rule
-# in them can become the default goal. Hooked into `clean` by prerequisite so
-# it adds no hunk to its list.
+# in them can become the default goal. Then an empty rule for each source the
+# files name, as -MP gives each header, so a source moved since they were
+# written rebuilds the suite instead of stopping make with "No rule to make
+# target" (an empty rule with no recipe, so it never overrides a real one).
+# clean-deps is hooked into `clean` by prerequisite so it adds no hunk to its
+# list.
 -include $(wildcard test_*.d)
+$(filter %.c %.cpp,$(shell cat $(wildcard test_*.d) /dev/null)):
 .PHONY: clean-deps
 clean-deps:
 	rm -f test_*.d

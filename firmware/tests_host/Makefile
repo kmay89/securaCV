@@ -15,17 +15,22 @@ NODE     ?= node
 
 # Every compile writes the headers it read beside its binary (sweep F286):
 # -MMD writes $@.d for `-o $@`, -MP gives each header an empty rule so a
-# deleted one is no error, and the `-include` at the end of this file reads
-# them back. So an edit to any header a suite compiles, one a forced include
-# reaches too, rebuilds that suite whether or not its rule lists the header,
-# and a new rule that compiles one source with $(CXXFLAGS) needs nothing
-# more. `override`, so a CXXFLAGS given to make keeps it. One command that
-# compiles several sources writes that one file once per source, each over
-# the last (GCC and clang alike), so such a recipe runs as
-# $(call with_deps,<the compile>): the compile, then the same flags and
-# sources with -MM in place of its output, which writes $@.d again with
-# every source's headers. A comma in the compile goes through a variable, as
-# $(call) splits on commas. scripts/tests/test_vision_core_make_deps.py builds
+# deleted one is no error, and the end of this file reads them back and
+# gives each source they name the same rule (-MP names none). So an edit to
+# any header a suite compiles, one a forced include reaches too, rebuilds
+# that suite whether or not its rule lists the header, a header or source
+# moved since is a rebuild and not an error, and a new rule that compiles
+# one source with $(CXXFLAGS) needs nothing more. `override`, so a CXXFLAGS
+# given to make keeps it; and so any global CXXFLAGS assignment written below
+# this line must be `override` too, or make ignores it without a word (a
+# target-specific one still works). One command that compiles several
+# sources writes that one file once per source, each over the last (GCC and
+# clang alike), so such a recipe runs as $(call with_deps,<the compile>):
+# the compile, then the same flags and sources with -MM in place of its
+# output, which writes $@.d again with every source's headers. A comma in
+# the compile goes through a variable, as $(call) splits on commas. A compile
+# with no -o (the syntax checks) would write its .d into this directory, so
+# it sets DEPFLAGS empty. scripts/tests/test_vision_core_make_deps.py builds
 # every suite and holds each compile's headers, by `g++ -MM`, to what make
 # reads.
 DEPFLAGS = -MMD -MP
@@ -1199,5 +1204,9 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # What each suite's compile read (DEPFLAGS, at the top): last, so that no rule
-# in them can become the default goal.
+# in them can become the default goal. Then an empty rule for each source the
+# files name, as -MP gives each header, so a source moved since they were
+# written rebuilds the suite instead of stopping make with "No rule to make
+# target" (an empty rule with no recipe, so it never overrides a real one).
 -include $(wildcard $(BUILD_DIR)/*.d)
+$(filter %.c %.cpp,$(shell cat $(wildcard $(BUILD_DIR)/*.d) /dev/null)):
