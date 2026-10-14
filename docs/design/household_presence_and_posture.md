@@ -5,7 +5,7 @@ settles Apple Home open decisions #3 and #4 for the household-key path. No
 firmware changes in this record; the firmware work is listed as follow-up
 (§3.3, §9).
 Intended Status: Informative (architecture decision record)
-Last Updated: 2026-10-13
+Last Updated: 2026-10-14
 
 > One paragraph: the canary-wap **household IRK store is dropped**, because it
 > is a stored identifier that changes what the Canary witnesses and household
@@ -337,7 +337,13 @@ not Home Assistant, not voice (`voice.py` already refuses posture-changing
 intents), not a kernel API token, not an MQTT word. So Apple Home's "arrive
 home" (scene 4 in that doc's §4.1) cannot write it: a geofence is passive
 presence, which the research refuses. "Good Night" (scene 5) becomes a
-household-key act.
+household-key act. A LAN client's bearer token binds a challenge to its
+session and reads the posture, but cannot change it; tokens are not linked to
+members, so revoking a member does not unpair its device (`household_checker
+pair --reset` unpairs every client). The LAN API answers only peers on the
+home network, which is enforced by peer address, not by cryptography: a proxy
+or VPN that re-originates traffic from a private or loopback address defeats it
+([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §6.1).
 
 **What it may touch.** The household posture, and nothing else: never the
 chain, Beacon, break-glass, retention or configuration, and never one specific
@@ -350,28 +356,65 @@ event.
    Face ID or a Class 3 biometric, a FIDO2 key with a fingerprint sensor) may
    set `home`. A possession credential (a card, a fob, a FIDO2 key with user
    presence only) may set `away` or `night`. A borrowed or relayed card can
-   raise sensing and never lower it.
+   raise sensing and never lower it. A rate-limit cooldown (five rejected
+   responses on one lane of one door in ten minutes cool that lane for
+   60 s) or a roster on disk that does not verify refuses `home`, but on the
+   signature lane `away` and `night` still go through, so neither can hold a
+   house in `home`. (The card lane carries only `away` and `night` and stays
+   cooled, because each trial touches a real card's failed-authentication
+   counter.)
 2. **Home lapses.** A `home` statement lives at most 24 hours (12 by default)
-   and lapses on each witness's own clock. The hub replaces a lapsed `home`
-   with `away` and starts in `away` after every restart. A forgotten tap
-   leaves an empty house watched less than today only until the lapse.
+   and lapses on each witness's own clock. A witness also refuses a statement
+   issued more than 5 minutes (`MAX_SKEW_SECS`) ahead of its clock, so a
+   `home` counts on a witness for at most 24 hours 5 minutes of that
+   witness's own clock, whatever the hub's clock said
+   ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §3.3). A
+   hub clock more than 5 minutes ahead makes witnesses refuse its statements
+   (they behave as `away`, the fail-safe); a hub clock behind makes `home`
+   lapse early, and at once if it steps back more than 5 minutes behind the
+   statement's `issued_at`, because the hub's own lapse check runs the same
+   test on its clock. Plain NTP is unauthenticated, so the hub should take
+   its time from an authenticated source (for example chrony with NTS). The
+   hub replaces a lapsed `home` with `away` and starts in `away` after every
+   restart. A forgotten tap, or a denial of service against the LAN API
+   (which holds whatever posture is current), leaves an empty house watched
+   less than today only until the lapse, so a short `home_ttl` limits both.
 3. **Statements are signed.** Each is a 112-byte record signed with the hub's
    Ed25519 posture key, which witnesses pin. v0 offers it through a file seam
-   and `GET /v1/posture`, never as an unsigned broker word.
+   and `GET /v1/posture`, never as an unsigned broker word. Whoever holds the
+   posture key can sign `home` past rule 1, and a forged statement with a
+   huge `seq` would lock out every genuine one, so a leaked key means a new
+   posture key and every witness paired again. The checker seals it at rest
+   with the roster key under a key-encryption key kept outside its data
+   directory, which protects a copy of the directory, not a disk image that
+   also holds that key (spec §5.4).
 4. **Witnesses fall to `away` on any doubt.** Missing, lapsed, wrong
-   household, replayed, a bad signature or no trusted clock all read as
-   `away`, which is full sensing.
+   household, replayed, a bad signature, issued more than 5 minutes ahead of
+   the witness's clock, or no trusted clock all read as `away`, which is full
+   sensing.
 5. **No who.** The roster holds random handles and public keys and no field
    that can hold a name. No output says which credential or member acted.
+   v0 has no TLS, though: on a LAN bind each client's bearer token and, in a
+   command, the member handle cross the network in cleartext, so a passive
+   listener on the LAN can link acts to a device and to a member (spec §6.1).
 
 **The physical-confirm idiom.** In the repo the idiom is a press on the device
 itself (announce → press-BOOT; [`test_console.md`](test_console.md),
 [`usb_onboard.md`](usb_onboard.md)). A tap at the door is not that: it
 supplies possession and presence at the door. The idiom applies to
-enrollment: adding a member to a single-admin household needs a confirm at the
-hub. In v0 that confirm is an operator command on the hub host; a button is
-follow-up work. Changing the admin set or the threshold needs `threshold`
-approvals from the current admins and a 24-hour pending period.
+enrollment: creating the household, and adding a member when one admin
+approval is enough (`threshold` 1), need a confirm at the hub. In v0 that
+confirm is an operator command on the hub host; a button is follow-up work.
+Changing the admin set or the threshold needs `threshold` approvals from the
+current admins and a 24-hour pending period. `roster genesis` defaults to
+`threshold` 1, under which one admin's approval is all any change needs,
+including removing every other admin once the pending period has passed, and
+nothing announces that pending change beyond `roster pending`. So "one stolen
+admin key cannot take over" holds only with `threshold` 2 or more, which wants
+at least three admins: with exactly two, losing one key leaves no way to
+remove it ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md)
+§5.3). One credential is never both an admin and a member, because a FIDO2
+authenticator signs whatever its relaying device hands it (spec §5.2).
 
 ### 6.3 What is built, and what it does not authorize
 
@@ -410,15 +453,24 @@ or whether they belong to the household. This is a strengthening change.
      change when indoor witnesses go quiet (Invariant III);
    - decide whether Home Assistant may show the household posture, since its
      recorder keeps an exact-time diary of every change;
+   - next to that, decide whether the change time the hub itself reveals is
+     acceptable: nothing records which credential was used, but the current
+     statement states the minute of the last change (a command, a lapse or a
+     restart), the seam's modification time states its second, and any live
+     reader of the seam or `GET /v1/posture` learns each change's time to its
+     own polling precision;
    - map the household posture onto canary-wap's `notify` Context; and
    - carry the key-satellite device-class contract
      ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §6.3) as
      its own page.
 2. **D2b**, if any reviewer is in doubt (§4.4).
 3. **Any BLE Scout carve-out** (§5).
-4. **Any off-LAN delivery of an `important` tier.** The relay's vocabulary is
-   "the whole vocabulary that may leave the LAN", and widening it is "a privacy
-   decision, not a tweak" ([`src/relay/mod.rs`](../../src/relay/mod.rs));
+4. **Any off-LAN delivery of an `important` tier.** No `important` decision
+   has a cloud poke class today (`cloud_class` in
+   [`src/relay/attention.rs`](../../src/relay/attention.rs)). The relay's
+   vocabulary (`PokeClass`) is "the whole vocabulary that may leave the LAN",
+   and widening it is "a privacy decision, not a tweak"
+   ([`src/relay/mod.rs`](../../src/relay/mod.rs)); it and
    [`alert_relay.md`](alert_relay.md) §1 would be amended first.
 
 ## 9. Follow-up work that needs no RFC

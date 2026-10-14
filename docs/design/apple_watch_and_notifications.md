@@ -82,8 +82,16 @@ every surface (iPhone, Watch, web, HA, displays):
 | Tier | When | iOS/watchOS delivery | Web delivery | Sound/haptic |
 |---|---|---|---|---|
 | **Digest** | Routine: activity on a single weak channel (radio, sound or PIR alone), ambient events, daily summary. No tier keys on who someone is or whether they belong to the household ([decision record](household_presence_and_posture.md) D6) | `.passive` — no light-up, no sound, sits in Notification Center / Smart Stack | No push at all; visible on next open + morning digest | none |
-| **Important** | Corroborated presence (two or more physically independent channels agree, or a camera or radar reports a person — [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2), device offline past tolerance, health warning | `.timeSensitive` — breaks through Focus, once | Web Push, normal | single |
+| **Important** | Corroborated presence (two or more physically independent channels agree, or a camera or radar reports a person — [`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §7.2), device offline past tolerance, health warning | `.timeSensitive` — breaks through Focus, once; a local notification from the LAN, never an APNs push | LAN only: in-page, or over SSE on the home network. No Web Push: no important event has a cloud poke class ([`spec/witness_dictionary.json`](../../spec/witness_dictionary.json) `attention.tiers`) | single |
 | **Critical** | Tamper, chain-integrity failure, heartbeat declared **dark/failed** | `.critical` (entitlement pending — ship `.timeSensitive` until granted, per `iphone_companion_app.md` §10 #6) | Web Push flagged urgent | distinct, repeats until acked |
+
+Corroborated presence and a camera or radar person never take a remote lane
+(APNs, Web Push or ntfy): `cloud_class` in
+[`src/relay/attention.rs`](../../src/relay/attention.rs) gives a poke class to
+critical decisions only, and off-LAN delivery of any important decision needs
+the RFC in [`household_presence_and_posture.md`](household_presence_and_posture.md)
+§8 item 4, with the relay vocabulary (`PokeClass` in
+[`src/relay/mod.rs`](../../src/relay/mod.rs)) amended first.
 
 Doctrine, in five rules (these are the §5b properties made operational):
 
@@ -126,7 +134,13 @@ Doctrine, in five rules (these are the §5b properties made operational):
 
 - **Per-witness, per-tier reach** — `AlertRule.Reach {onWiFiOnly, anywhere}`
   already models "only bother me remotely for X." Surface it as one
-  screen, not a preferences maze.
+  screen, not a preferences maze. `anywhere` applies only to a tier with a
+  cloud poke class, which today is Critical alone; Important stays on the
+  LAN whatever the rule says. (The app already publishes an away wake only
+  at severity `alert` and above, as one of its four wake classes, but
+  `AlertCenter.level(for:)` still arms `alert` — a failed chain, a lost
+  witness, an alarm pattern — at `.important`, a divergence from this table
+  for the app to reconcile.)
 - **Quiet hours affect Digest and Important only.** Critical punches
   through by definition — this is the smoke-alarm posture, and it is also
   exactly what Apple's `.critical` level is for.
@@ -280,17 +294,20 @@ Critical Alerts); they never gate function.
 - **Live**: the SSE witness stream is already built and ticket-authed.
   That's the live view on every browser — no polling, no WebSockets
   needed.
-- **Push**: **Web Push with VAPID keys from the hub/relay** — exactly the
-  proposal already written in `docs/audit/wap_multi_device_ux_audit.md`
-  (zone name + badge + deep link, never pixels, no third party). State of
+- **Push**: **Web Push with VAPID keys from the hub/relay** — the
+  transport proposed in `docs/audit/wap_multi_device_ux_audit.md`, minus
+  two of its claims. A Web Push always goes through the browser vendor's
+  push service (VAPID identifies the hub to it; it does not remove it), so
+  Web Push is a remote lane like APNs, not "no third party"; and its payload
+  is §1.1 rule 5's content-free one, never a zone name. State of
   support: Chrome/Firefox/Edge for years on desktop + Android; Safari on
   macOS; iOS since 16.4 for home-screen web apps (and iOS 26 opens
   home-screen sites as web apps by default). Safari 18.4+ adds
   **Declarative Web Push** (JSON pushes rendered without a service worker)
   — adopt the declarative format as the payload shape and fall back to the
   service-worker path on Chrome/Firefox, so one relay payload serves both.
-  Tier mapping: Digest = no push; Important = normal; Critical = urgency
-  header + `renotify`.
+  Tier mapping: Digest = no push; Important = no push (LAN/SSE only);
+  Critical = urgency header + `renotify`.
 - **Android**: the installed PWA with Web Push *is* the Android app. No
   native Android target is scoped; revisit only if PWA limits actually
   bite.
