@@ -5798,7 +5798,7 @@ so — see D2 below.)
   test, the half-written string, the build returning its length) fails it, the
   first with a heap-buffer-overflow. J6 pins the refused build's `>= need`
   test (one mutation). Host-tested; the compile is CI's; not bench-tested.
-- [ ] **F261 [code] canary-wap: a control byte in the Bluetooth device name
+- [x] **F261 [code] canary-wap: a control byte in the Bluetooth device name
   breaks two answers.** Bluetooth's own name (POST `/api/bluetooth/settings`
   `device_name`; `bluetooth_channel`'s `set_device_name()` tests only its
   length) takes any byte but NUL, and GET `/api/bluetooth/status` and GET
@@ -5808,7 +5808,50 @@ so — see D2 below.)
   what the radio advertises. Refuse a byte below 0x20 where the name is set,
   as `device_name_rule.h` does for the device's friendly name (F226), and
   scrub a stored one. From code; not probed. Found by F226 (#1802).
-- [ ] **F262 [code] canary-wap: an SSID holding a control byte breaks GET
+  *Done (#1802):* the premise held, from code (not probed on a radio):
+  `bluetooth_channel`'s `set_device_name()` and the loop task's settings
+  command tested only the name's length, and GET `/api/bluetooth` (the status
+  route; there is no `/api/bluetooth/status`) and GET
+  `/api/bluetooth/settings` write the name through ArduinoJson 7.4.1.
+  `bluetooth_channel.h`'s `name_storable()` is now
+  `device_name_rule::storable(name, MAX_DEVICE_NAME_LEN)`, the friendly name's
+  own test (F226): 1 to 32 bytes, no byte below 0x20 (DEL and the C1 controls
+  pass, as they do there). `set_device_name()` refuses a name that fails it,
+  and so does the loop task: `BT_CMD_SETTINGS` with `BT_SET_DEVICE_NAME`
+  answers `BT_REFUSED_BAD_NAME` and applies none of its fields, and
+  `BT_CMD_NAME` answers the same refusal. POST `/api/bluetooth/settings`
+  refuses such a name in its handler before it brings anything up or submits
+  anything (it now also refuses an empty name, one over 32 bytes and one that
+  is not a string, which it used to cut to 32 bytes or keep as ""), and it and
+  POST `/api/bluetooth/name` (which answered "Invalid name") answer
+  `DEVICE_NAME_REFUSAL`, "Invalid Bluetooth name: 1 to 32 bytes, no byte below
+  0x20" (the review: "no control characters" would take in DEL, which the rule
+  keeps), whose bound a `static_assert` holds to `MAX_DEVICE_NAME_LEN`
+  (`device_name_rule::states_bound()`). A saved name holding such a byte is
+  not loaded: `load_settings()` keeps the default name, and the loop task's
+  `load_saved()` logs "Saved Bluetooth name held a control byte: the default
+  name is used" at INFO, as the paired list's repairs are logged (the detail
+  is the default name, never the refused bytes); the stored row is rewritten
+  only by a later save, so on a device nobody touches the line comes back at
+  each boot. Host-tested through the real `bluetooth_channel.cpp` and
+  `bluetooth_api.h` in `tests_host/test_bluetooth_commands_wap.cpp`:
+  `a_name_holding_a_control_byte_is_refused` (each byte 0x01 to 0x1f at three
+  places, through both routes and the command: refused in words, nothing
+  applied or written to NVS, both GET answers still parse under
+  `json_strict.h`; every byte 0x20 to 0xff taken; the 32/33-byte, empty and
+  non-string bounds; with Bluetooth saved off and the stack down,
+  `{"enabled":true,"device_name":"Shed\u0001"}` refused with no `init()` and
+  nothing turned on or written, where the same POST with a plain name brings
+  the stack up; `BT_CMD_NAME`'s refusal code) and
+  `a_saved_name_holding_a_control_byte_is_not_loaded` (a stored name holding
+  0x01, 0x1f or a newline loads as the default, logged once on the loop task,
+  and the stand-in radio advertises the default; 0x7f and a plain name load as
+  stored). Both fail with the change reverted, and so do the review's mutants
+  (the refusal moved after `bring_up()`, `BT_CMD_NAME`'s refusal code
+  dropped). `check_wap_loop_commands.py` takes `load_settings()` returning
+  `bool`. Compile-tested by CI; not bench-tested (a row in
+  `hardware_verification_checklist.md`).
+- [x] **F262 [code] canary-wap: an SSID holding a control byte breaks GET
   `/api/wifi/scan`.** The scan answer (`send_scan_cache_json()`) lists each
   network's SSID as `WiFi.SSID(i)` received it, an 802.11 SSID is up to 32
   arbitrary bytes, and ArduinoJson writes a control byte raw, so any access
@@ -5819,14 +5862,105 @@ so — see D2 below.)
   with control bytes as U+FFFD (as the fleet scan cache does since F211), or
   leave such a network out of the list. From code; not probed. Found by F226
   (#1802).
-- [ ] **F263 [code] canary-wap: POST `/api/device-name`'s refusal names a rule
+  *Done (#1802):* the premise held: a scratch probe of the base
+  `scan_cache_json()` over ArduinoJson 7.4.1 (the version `arduino-libs.txt`
+  pins) found 26 of the 255 byte values (each control byte but `\b`, `\f`,
+  `\n`, `\r` and `\t`) made GET `/api/wifi/scan` unparseable under a strict
+  reader; none do now. Written, not left out: a network whose name holds such
+  a byte is listed with U+FFFD in its place, and a pick of it from the setup
+  wizard, the dashboard's Settings list or the phone's BLE provisioning list
+  joins it by its own bytes. `wap_json_writer.h` gains
+  `wap_json::replaced_text(out, cap, s)`, which copies a string with each
+  control byte the F211 writer spells `\ufffd` written as U+FFFD itself
+  (`raw_control()`, now the writer's own test too, so the two cannot
+  disagree), cut before the first character that does not fit whole, and
+  `replaced_cap(n)`, the room for n bytes all replaced (32 bytes of 0x01 are
+  96 bytes of text, 97 with the NUL). Every SSID that reaches JSON goes
+  through it: GET `/api/wifi/scan`'s list, the POST `/api/wifi/connect` and
+  `/api/wifi/reconnect` echoes, GET `/api/wifi/qr-scan`'s `g_qr_scanned_ssid`
+  (the four this item names), and, found by the new rule, GET `/api/wifi`'s
+  `sta_ssid` and `ap_ssid`, the self-test's Wi-Fi metric and line (GET
+  `/api/selftest`), the BLE provisioning scan list, and the health-log lines
+  that carry an SSID (GET `/api/logs`: eight through a new
+  `log_health_ssid()`, plus the two join lines and the AP line, spelled with
+  printf from replaced text). The way back (the review: every page posts back
+  the text it was shown, which names no network, so the first fix listed such
+  a network and could not join it): `wap_json::shows_as()` reads a posted text
+  as a page would have shown a name (U+FFFD for each replaced control byte,
+  and for each ill-formed UTF-8 subpart a browser's WHATWG decoder replaces,
+  so a Latin-1 name is read back too), `listed_by_shown()` picks the listed
+  name a post names (its own bytes first), POST `/api/wifi/connect`
+  (`scan_cache_listed_ssid()`, under the scan cache's lock) and the BLE
+  provisioning CREDS write (over the rows the phone was sent) read the posted
+  SSID back to the listed network's own bytes before their 1 to 32 byte test,
+  and GET `/api/fleet/qr` puts the Fleet sheet's prefill (GET `/api/wifi`'s
+  replaced `sta_ssid`) back to the home network's bytes, since the scanning
+  Canary joins by what the code says. A name nothing lists (typed by hand, a
+  hidden network) is joined as posted; two names that differ only in such
+  bytes show as one, and the first listed (the strongest) is the one joined.
+  The BLE provisioning list now drops rows from the end until it fits its 480
+  bytes, each row whole (the old trim kept 8 rows unmeasured: 639 bytes for 8
+  plain 32-character names, 1151 once each control byte is three bytes). Two
+  uses keep the real bytes and are recorded with why: the Improv setup row (a
+  length-prefixed string the phone's Improv client reads, never JSON) and the
+  provisioning QR payload (the scanning Canary joins by those bytes).
+  Host-tested: `tests_host/test_wap_json_writer.cpp` on the real header (every
+  byte value at three places through a model of ArduinoJson 7.4.1's string
+  spelling, checked against the 7.4.1 header in a scratch probe, then decoded
+  as a browser decodes it by a WHATWG transcription checked against Node 22's
+  TextDecoder on 200 000 byte strings, and parsed; the 96-byte text; 800
+  seeded names; every buffer size for mixed UTF-8, each an exact heap block
+  under AddressSanitizer; and the sketch's own `scan_cache_listed_ssid()`, cut
+  verbatim from `canary_wap.ino`), and `tests_host/test_ble_provision.cpp` on
+  the real `ble_provision.cpp` over stand-ins (every list for 0 to 25 networks
+  of five shapes fits, parses as a phone reads it and keeps the most rows that
+  fit; a CREDS write of the shown text joins the network's own bytes; against
+  the old file 62 lists are over 480 bytes and 4 joins get the wrong bytes).
+  Held by `check_wap_json_answers.py`'s new J9: every ArduinoJson value
+  (`["k"] = v`, `["k"].set(v)`, `arr.add(v)`) keyed or read as an SSID, or
+  read through a local of the function that holds one, in any file of the
+  sketch, is a `char x[wap_json::replaced_cap(...)]` filled by
+  `replaced_text()` with nothing writing it in between; every printf or
+  `log_health()` value that reads an SSID is such a buffer; every posted SSID
+  is read back in the pinned form; a stale record fails; 31 self-test
+  mutations, each passing the base check and refused by this one.
+  Compile-tested by CI; not bench-tested (a row in
+  `hardware_verification_checklist.md`). Found here: a nearby or paired
+  Bluetooth device's name reaches two answers raw (F302); the Opera name, and
+  the health log's other details, take a control byte (F303); and GET
+  `/api/fleet/qr` cuts a long percent-encoded password without a word (F304,
+  found by the review's fix).
+- [x] **F263 [code] canary-wap: POST `/api/device-name`'s refusal names a rule
   the route does not apply.** It answers "Invalid name (1-32 chars,
   letters/digits/hyphen)", but the route takes any byte from 0x20 up so long
   as one is a letter or a digit (a space, a quote and a non-ASCII byte all
   pass, and the mDNS label drops them), now short of a control byte (F226).
   Say what it refuses (1 to 32 bytes, no control characters, a letter or
   digit), or make the rule the message. From code. Found by F226 (#1802).
-- [ ] **F264 [code] canary-wap: a card events-log line read back with a
+  *Done (#1802):* the rule is the message now, from one place:
+  `device_name_rule.h` holds `kRefusal`, "Invalid name: 1 to 32 bytes, no byte
+  below 0x20, and at least one ASCII letter or digit", beside `usable()`, the
+  test POST `/api/device-name` applies, and a `static_assert` holds its "1 to
+  <n> bytes" to `kMaxLen` (`states_bound()`), so the bound cannot change
+  without the words. The words name the bytes exactly (the review: "no control
+  characters" would take in DEL and the C1 controls, which the rule keeps, and
+  "a letter or digit" letters past ASCII, which `usable()` does not count).
+  The route answers `device_name_rule::kRefusal`; it answered "Invalid name
+  (1-32 chars, letters/digits/hyphen)" while taking a space, a quote and any
+  byte from 0x20 up so long as one was an ASCII letter or digit. No page in
+  the tree quotes either wording (`gen_web_assets_gz.py --check` is in sync;
+  nothing to regenerate); the F226 bench row's expected text quotes the new
+  ones. Host-tested in `tests_host/test_device_name.cpp`
+  (`the_refusal_states_the_rule_the_route_applies`: the words name the bound,
+  the bytes below 0x20 and the ASCII letter-or-digit rule, and neither
+  "control" nor a hyphen rule; the route's model answers them for a 33-byte,
+  an empty, a control-byte, a punctuation-only name and two names of letters
+  past ASCII alone, and takes a 32-byte name, a space, a quote, UTF-8, DEL and
+  U+0085; the old words fail `states_bound()`), and pinned by J8 in
+  `check_wap_json_answers.py` (the route must answer `kRefusal`; the mutation
+  restoring the old literal passes the base check and is refused by this one).
+  Compile-tested by CI; not bench-tested.
+- [x] **F264 [code] canary-wap: a card events-log line read back with a
   backslash or a control byte breaks the line rewritten from it and the
   backfill's MQTT body.** `csi_event_log_line::json_str()` reads a string
   field up to its closing quote and keeps a backslash or a control byte, and
@@ -5840,7 +5974,86 @@ so — see D2 below.)
   parses). J7 records both calls with this caveat (F227). Refuse such a field
   in `parse()`, or escape it on both writes. From code and a host probe; not
   bench-tested. Found by the F227 review (#1802).
-- [ ] **F265 [code] `check_wap_json_answers.py`: shapes J5 and J8 still
+  *Done (#1802):* the premise held: a scratch probe of the real `parse()` and
+  `build_event_body()` at the base built, for a state of `occ\` and for one
+  holding 0x01, bodies a strict parser refuses, and the unedited line's body
+  parsed. Refused at the reader, not escaped at the writers: every reader of a
+  card line's record goes through `parse()` (the backfill walk, the boot load
+  into the ring, the dismissal scan), while the record it yields reaches more
+  writers than the two (a restored ring row reaches GET `/api/events/today`,
+  which spells it with `%s`; `csi_event_inject()`'s sanitizer turns a control
+  byte into '?' but keeps a backslash), and an escape on write would need an
+  unescape on read to round-trip. `csi_event_log_line::json_str()` now refuses
+  a string field holding a backslash or a byte outside printable ASCII (0x20
+  to 0x7E), scanning the whole field to its closing quote, past its member's
+  size, and `parse()` refuses that line with the record zeroed. That is wider
+  than this item's backslash and control bytes by 0x7F to 0xFF, for the same
+  reason: every name the format holds is one of `marshal()`'s words, a
+  module's literal id, or a value through the chokepoint, whose
+  `sanitize_string_field()` turns every byte outside printable ASCII into '?',
+  so no writer of this firmware puts such a byte there. The two tail scans
+  (`csi_event_backfill::last_line_id()`, over the canary's last 1 KiB, and the
+  canary-wap's `last_row_in()`, back a window at a time up to 16 KiB) read
+  only a line's id, through the new `csi_event_log_line::record_id()`: exactly
+  what `parse()` holds a line to before its strings (one well-formed record, a
+  uint32 id above 0, `first` / `last` a uint32 or missing), and `parse()` now
+  goes through it. The review of a first version, whose tail scans went
+  through `parse()`, found that edited lines filling the tail read (four on
+  the canary) left the scan no id, so `card_open()` took the card as caught up
+  and the unsent rows before them were never walked, sent or counted; with
+  fewer, the walk could stop short of an edited last line, which went
+  uncounted. So a refused line is one the backfill reaches, skips and counts
+  (`Stats::skipped`, the egress's `planner.skipped`), never sends, credits or
+  retries, and walks past to the rows behind it. Its id falls under the
+  watermark only when a row after it is sent (refused as the last line, the
+  watermark stays below it, nothing is pending once the walk reaches the
+  card's end, and the next row goes live, not held); `card_open()` still
+  clamps a tail id below the trust bound; the delivery ceiling is written only
+  for rows sent, and the allocator's floor never reads the card. The boot load
+  counts it refused and leaves it out of the ring. Both trees share the
+  headers (the staged copies re-staged; `check_csi_sync.sh` passes).
+  `firmware/tests_host/test_csi_event_log_line.cpp` (5446 checks):
+  `test_a_string_holding_a_byte_no_writer_puts_there_is_refused` (the probe;
+  every byte 1 to 255 but the quote, which ends the field, in each of the
+  seven string fields, taken exactly when printable ASCII less the backslash
+  and the '{' that `well_formed()` refuses as a second record's start,
+  `record_id()` reading the id of every such line but the '{' one; then
+  `marshal()`'s line and `build_event_body()`'s body both parse under the
+  canary-wap host tests' strict reader, `json_strict.h`; a backslash past the
+  member's size; an unread key) and
+  `test_record_id_reads_what_parse_reads_before_the_strings`.
+  `test_csi_event_backfill.cpp` (632 checks):
+  `test_a_line_no_writer_could_spell_is_skipped_not_sent` (the real planner,
+  each published body built by the real builder and held strict; two rows
+  edited on the card skipped and counted, the rest once and in order; the
+  refused-last case; a reboot sends nothing again),
+  `test_edited_lines_filling_the_tail_read_hide_no_row` (the last 1 to 6 held
+  rows edited, from 4 on filling the whole tail read: every unedited row once
+  and in order, skipped exactly the three delivered lines the walk passes plus
+  the edited ones, the next row live, a reboot sends nothing again) and an
+  edited last line in `test_last_line_id`. The canary-wap's
+  `test_csi_event_log_load.cpp` keeps both edited lines out of the ring, and
+  `test_wap_event_egress.cpp`'s
+  `test_card_line_no_writer_could_spell_is_skipped` and
+  `test_card_lines_edited_at_the_end_are_skipped` (the last held row edited;
+  then 79 edited rows, more than the 16 KiB scan reads back) run the real
+  egress and SD log with each `publish_event_row()` body built by the real
+  builder and held strict (`planner.skipped` exactly the edited count).
+  Against the base `parse()` each of these fails (the log-line test on the
+  probe's first line, the backfill tests sending the edited rows as bodies
+  that are not JSON, the load test two rows over, the egress tests sending the
+  edited rows and skipping none); against the first version's tail scans the
+  tail tests fail (four edited lines: nothing pending, nine rows never sent;
+  three: five skipped of six; 79 on the canary-wap: the six unedited rows
+  never sent, none skipped). J7's records for `marshal()`,
+  `build_event_body()` and the events-today answer in
+  `check_wap_json_answers.py` now say why a card record's names need no
+  escape. Bench row "An events-log line edited on the card is skipped, not
+  published" (GET `/api/events/today`; `planner.replayed` and a lower bound
+  for `planner.skipped`; repeated with the last held line edited).
+  Host-tested; cppcheck clean; the compile is CI's; not bench-tested. Found
+  here: the chokepoint's sanitizer keeps a quote and a backslash (F301).
+- [x] **F265 [code] `check_wap_json_answers.py`: shapes J5 and J8 still
   pass.** Probes of the F227 review that the extended check does not refuse:
   an answer helper whose text parameter has a default and is sent through a
   ternary (`reply_json(req, const char* json = nullptr)` sending `json ? json
@@ -5855,6 +6068,79 @@ so — see D2 below.)
   calls by name in its own namespace, require the store to sit in the
   `usable()` test's true branch, and refuse a cast of the getter's result.
   From the review's probes. Found by the F227 review (#1802).
+  *Done (#1802):* all four shapes are refused, each by self-test mutations
+  that pass the check as it stood at the base and are refused by it now (16 in
+  all, run with both checks on each mutated tree). J5: `TEXT_PARAM` takes a
+  defaulted text parameter (`const char* json = nullptr`; the old pattern had
+  to match the whole parameter), and a send whose text argument is a top-level
+  ternary with the parameter as a branch (`json ? json : "{}"`, a `(const
+  char*)` cast allowed) makes the helper a send, so a cut answer through such
+  a `reply_json()` is refused (three mutations: the two together and each
+  alone). J8: a call of `set_device_name(` made unqualified inside namespace
+  `setup_wizard`, in `setup_wizard.h` or any file that reopens it, counts as
+  the setter's (the definition aside); a using-declaration or using-directive
+  naming the setter, a namespace alias of `setup_wizard`, and the setter named
+  without being called (its address taken, a function pointer bound to it) are
+  refused (seven mutations); the store must sit on `usable()`'s true branch:
+  after it in a top-level `&&` condition (an `||` decides nothing), in the
+  body of an `if` whose `&&` holds it, or in the else of `if (!usable(...))`,
+  so a `usable()` called and ignored, an `||` and a store on the false branch
+  are refused (three); and a cast of `get_device_name()`'s result, or of a
+  local holding it, to a pointer that is not const (C-style or any `*_cast<>`)
+  is refused (three). The tree passes unchanged (136 mutations refused in
+  all). Statically checked; none of the shapes is in the tree. Not covered
+  (the review's nits): a defaulted text sent through a local holding the
+  ternary, a cast of the getter's result with an arithmetic tail or through
+  two locals.
+- [ ] **F301 [code] CSI chokepoint: `sanitize_string_field()` keeps a quote
+  and a backslash.** It turns every byte outside 0x20 to 0x7E into '?', but a
+  quote or a backslash in a row's state, confidence, dominant-signal or note
+  string reaches the ring, and every writer that spells ring rows with `%s`
+  (`csi_event_log_line::marshal()`, `csi_event_wire::build_event_body()` and
+  its tamper bridge body, GET `/api/events/today`, the stream answer) relies
+  on "chokepoint-sanitized ASCII, no escaping needed". No module emits one
+  today (their names are literals). Since F264 a card line holding one is
+  refused on read, so a live row holding one would be written to the card,
+  published as a body that is not JSON, and refused at the next load. Replace
+  both with '?' in the sanitizer, as it replaces control bytes (both trees
+  share it). From code. Found by F264 (#1802).
+- [ ] **F302 [code] canary-wap: a nearby device's advertised Bluetooth name,
+  or a paired device's, reaches GET `/api/bluetooth/scan/results` and
+  `/api/bluetooth/paired` with its control bytes raw.** `bluetooth_api.h`
+  writes `dev["name"] = devices[i].name` for each scan result (any device
+  advertising in range names itself) and for each paired device, through
+  ArduinoJson 7.4.1, which writes a control byte other than `\b`, `\f`, `\n`,
+  `\r` and `\t` raw, so one advertiser whose name holds 0x01 makes the
+  Bluetooth page's scan list unparseable in the browser. Write each through
+  `wap_json::replaced_text()` as F262 does for SSIDs, read a posted name back
+  with `wap_json::shows_as()` where a page posts one, and hold it with a rule
+  beside J9. From code; not probed. Found by F262 (#1802).
+- [ ] **F303 [code] canary-wap: the Opera name takes a control byte, and the
+  health log carries any detail raw.** POST `/api/mesh/name`
+  (`handle_mesh_name()`) tests only the name's length before `mesh_network`'s
+  `set_opera_name()` stores it, GET `/api/mesh` writes it as `opera_name`, and
+  the route logs it as the detail of "Opera name changed"; GET `/api/logs`
+  writes each entry's message and detail through ArduinoJson 7.4.1, which
+  writes a control byte raw, so a name holding 0x01 makes both answers
+  unparseable in the browser. More generally `log_health()` stores whatever
+  detail it is handed: F262 routes the SSIDs through `log_health_ssid()`, but
+  no rule holds the other callers that log text a person or a radio supplied.
+  Refuse a control byte in the Opera name with `device_name_rule`'s test, and
+  either replace control bytes when the ring stores an entry or hold each
+  caller as J9 holds the SSIDs. From code; not probed. Found by F262 (#1802).
+- [ ] **F304 [code] canary-wap: GET `/api/fleet/qr` reads its `ssid` and
+  `pass` query values into 33- and 65-byte buffers before it percent-decodes
+  them, and ignores `httpd_query_key_value()`'s answer for `pass`.** The Fleet
+  sheet sends them through URLSearchParams, which percent-encodes every byte
+  but letters, digits and `*-._` (three characters each; a space is `+`), so a
+  password whose encoded form passes 64 characters (a 22-character password of
+  symbols, or a long passphrase with a few) is cut where the buffer ends,
+  ESP-IDF answers ESP_ERR_HTTPD_RESULT_TRUNC and the route draws the cut
+  password into the QR code without a word: the Canary that scans it cannot
+  join. An SSID whose encoded form passes 32 characters is answered "ssid is
+  required". Read each value into a buffer sized for its encoded form, refuse
+  a truncated read in words naming the field, and host-test the route's read
+  and decode. From code; not probed. Found by the F262 review's fix (#1802).
 - [x] **F241 [code] canary-wap saves an MQTT topic prefix of 32 characters but
   reads back the default.** `/api/mqtt` accepts and stores `MAX_PREFIX_LEN`
   (32) characters (the settings page's input has no `maxlength`), and
@@ -5942,7 +6228,7 @@ so — see D2 below.)
   (the prefix, the password, a CA chain). Host-tested; cppcheck clean on
   `csi_mqtt.cpp`; the Arduino compile is CI's; not bench-tested (U1). Found
   here: F266, F267 and F268.
-- [ ] **F266 [code] canary-wap: POST `/api/mqtt/config` parses whatever one
+- [x] **F266 [code] canary-wap: POST `/api/mqtt/config` parses whatever one
   `httpd_req_recv()` returns.** `handle_config_post()` reads its body with one
   `httpd_req_recv(req, body, kBodyCap - 1)` and never looks at `content_len`.
   ESP-IDF's recv returns what the socket holds, which can be less than the
@@ -5956,7 +6242,44 @@ so — see D2 below.)
   (the Beacon routes' full-body reader, behind `beacon_api.h`'s `read_body()`)
   and refuse an oversized `content_len`. From code; not probed. Found by F241
   (#1802).
-- [ ] **F267 [code] canary-wap: `config_load()` logs four error lines on a
+  *Done (#1802):* the premise held: `handle_config_post()` parsed what one
+  `httpd_req_recv(req, body, kBodyCap - 1)` returned and never read
+  `content_len`, and its comment said a longer body was refused. It now
+  answers 400 `{"ok":false,"reason":"empty body"}` to a Content-Length of 0
+  and 400 `"body must be at most 6845 bytes"` (`answer_too_long()`, the F241
+  shape) to one past `csi_mqtt::MAX_CONFIG_BODY_LEN` (the old cap less its
+  NUL, now named in `csi_mqtt.h`) before reading any of it or taking a buffer,
+  then reads with `http_body_reader.h`'s `http_body::read_all()`, as
+  `beacon_api.h`'s `read_body()` does: until Content-Length bytes are in,
+  never asking for more than is owed, sitting out three socket timeouts and
+  refusing at the fourth (each the server's 30 s `recv_wait_timeout` in both
+  of `canary_wap.ino`'s configs, so a stalled sender holds the httpd task up
+  to about two minutes: the Beacon routes' budget, behind the same
+  authorization). A peer that closes early, a socket error or a fourth timeout
+  answers 400 `"body read failed"` with nothing stored; `read_all()`'s own
+  TOO_LARGE, which the Content-Length check keeps unreachable, answers through
+  `answer_too_long()` too, so one limit has one reason. 400 is what every
+  other refusal of this handler answers (and the Tuning Lab POST's "empty or
+  too large"); the `/mqtt` page and the setup wizard's Home Assistant step
+  show the reason of any answer that is not ok (the wizard falls back to "HTTP
+  <status>"), so neither needed a change. The handler comment says what it
+  does now. `stubs/mqtt/esp_http_server.h`'s request gains `content_len` and a
+  per-read plan (a cap per read, or an error code returned as is), and its
+  recv never hands back past Content-Length, as IDF's does.
+  `test_mqtt_reinit.cpp`:
+  `the_config_post_reads_a_body_that_arrives_in_pieces` (a 2.4 KB CA split
+  across three reads with the host, port, user and discovery after it, read
+  whole and the client opened with it; three timeouts sat out; a fourth, a
+  socket error and an early close refused with nothing stored) and
+  `the_config_post_refuses_a_body_past_its_cap` (exactly the cap taken; one
+  past and a 1 MB claim refused with no read; no Content-Length refused).
+  Against the old handler the first answers 400 "ca must be a PEM certificate"
+  and the second 200, storing the host from the cut body. 623 checks in 33
+  tests. Bench row "A config body that arrives in several TCP segments is read
+  whole". Host-tested; cppcheck clean; the compile is CI's; not bench-tested.
+  Found here: about forty other POST handlers still read one
+  `httpd_req_recv()` (F300).
+- [x] **F267 [code] canary-wap: `config_load()` logs four error lines on a
   debug build whose MQTT bridge was never configured.** Once anything has
   created the shared `csi` namespace (the egress's ceiling record does at
   boot), `config_load()` reads `mqtt.host`, `mqtt.user`, `mqtt.pass` and
@@ -5970,6 +6293,26 @@ so — see D2 below.)
   `csi_integration.cpp` reads the time zone and `ca_load()` the CA. From code
   and the core's source; host-measured on the stub, not on a device. Found by
   F241 (#1802).
+  *Done (#1802):* the premise held. `config_load()` now reads `mqtt.host`,
+  `mqtt.user`, `mqtt.pass` and `mqtt.prefix` only behind `isKey()`, as
+  `csi_integration.cpp` reads the time zone and `ca_load()` the CA; a missing
+  key leaves its member as the memset left it, as the refused read did (an
+  empty host, user and password, the default prefix), and every other default
+  is unchanged (disabled, port 1883, discovery on, no CA).
+  `test_mqtt_reinit.cpp`'s
+  `an_unconfigured_bridge_reads_its_settings_without_an_error_line`: on a
+  `csi` namespace holding only the egress's delivery ceiling, the stub's error
+  counter reads 0 after `config_load()` and after GET `/api/mqtt/config` (4
+  with the old reads, which fails the test), every default is held; a
+  namespace holding the host and prefix reads those with no line; and one
+  holding the user without the password (a first `config_save()` cut between
+  those two writes), then the password without the user, reads each behind its
+  own key with no line (swapping the two guards passed every test before this
+  case). A value longer than its member is still refused by the core with its
+  one line (`each_setting_reads_back_at_its_limit` unchanged). 623 checks in
+  33 tests. Bench row "A debug build whose MQTT bridge was never configured
+  boots without NVS error lines". Host-tested on the stub; cppcheck clean; the
+  compile is CI's; not measured on a device.
 - [ ] **F268 [decision] canary-wap: the MQTT pages' `maxlength` cuts a longer
   paste without a word.** F241 gave the `/mqtt` page's host, user, password
   and prefix inputs, and the setup wizard's Home Assistant step, a `maxlength`
@@ -5983,6 +6326,17 @@ so — see D2 below.)
   it and let the device's refusal speak; the CA textarea carries none for that
   reason. From a Chromium probe; Firefox and Safari not probed. Found by
   F241's review (#1802).
+- [ ] **F300 [code] canary-wap: about forty POST handlers still parse what one
+  `httpd_req_recv()` returns.** F266 moved POST `/api/mqtt/config` to
+  `http_body_reader.h`'s `read_all()`, as the Beacon routes read; 41
+  single-read call sites remain (`canary_wap.ino` 19, `bluetooth_api.h` 8,
+  `chirp_api.h` 6, `household_api.h` 3, `audible_chirp_api.h` 2,
+  `csi_integration.cpp` 2, `rf_presence_api.h` 1), each parsing whatever the
+  socket held and most cutting a longer body at its buffer without a word.
+  Their bodies are small, so a split is rarer than for a pasted CA, but one
+  that crosses a segment boundary is parsed cut. Give them one reader
+  (`read_all()` behind a helper that answers its TOO_LARGE and READ_FAILED in
+  each route's own error shape). From code; not probed. Found by F266 (#1802).
 - [x] **F231 [code] canary-wap Chirp: the spec describes a three-emoji display
   the canary-wap renders as five.** `generate_emoji_string()` renders five
   emoji from the session id (up to 30 bytes in the 31-byte field), while spec
@@ -6152,7 +6506,7 @@ so — see D2 below.)
   rows: the 3rd vote at 0 to 5 rows, the 4th at 6, the 9th at 17, the 17th at
   32. F233 now tests that a vote must verify (`a_vote_must_verify`: its
   signature and its session id), not who may cast one.
-- [ ] **F269 [code] canary-wap Chirp: a suppressed chirp is still relayed,
+- [x] **F269 [code] canary-wap Chirp: a suppressed chirp is still relayed,
   listed and confirmable until the next prune.** `prune_old_chirps()` drops a
   suppressed chirp only on `update()`'s 30 s cadence, and until then nothing
   on the way out reads `suppressed`: `handle_ack()` validates and relays it,
@@ -6171,7 +6525,31 @@ so — see D2 below.)
   from the table and the route at once (or also filter it in `loadChirps()`,
   then `gen_web_assets_gz.py`); spec §2.5.6's two parentheses on it go with
   the fix. Found by F233 and its review (#1802).
-- [ ] **F270 [code] canary-wap Chirp: the nonce filter's 5-minute wholesale
+  *Done (#1802):* the vote that community-suppresses a chirp takes its row out
+  of the recent table at once (`handle_suppress_vote()` calls the new
+  `drop_recent_at()`, `chirp_channel.cpp`), so nothing on the way out can read
+  it: a later confirmation finds no row and neither validates nor relays it,
+  `confirm_chirp()` and `dismiss_chirp()` refuse it as not found and send
+  nothing, and `GET /api/chirp/recent` and the status view stop listing it at
+  the next loop pass's publish (a dashboard drops it at its next read, every 5
+  s on the Chirp tab, and a confirm from a list read before the vote answers
+  404). `ReceivedChirp::suppressed` stays in the struct and the route but is
+  never true in the table; `web_ui.h` is unchanged. Spec §2.5.6's parentheses
+  say what the receiver does now and did before; the F233 bench row expects
+  the chirp gone at the third dismissal, and a new U1 row covers F269 and
+  F270. Host-tested on the real `chirp_channel.cpp` with real signed frames:
+  `test_chirp_suppress_wap.cpp`'s `a_suppressed_chirp_stops_at_once` (3 votes
+  at 3 rows, then 2 confirmations of an infrastructure chirp, or 1 of an
+  emergency chirp, relay nothing, and a local confirm and dismiss send
+  nothing; 2 votes as a control still validate, relay at hop 1, ACK and vote)
+  fails on the base, the suite's other suppression checks now read the table
+  rather than the flag, and `a_suppressed_row_leaves_its_neighbors_in_order`
+  (the middle of five rows suppressed: the other four stay once each and in
+  order, and a neighbor still validates and relays) fails if the drop takes
+  the last row or moves it into the hole. The Arduino compile is CI's; not
+  bench-tested. Found here: one neighbor's RESOLVED ACK takes any chirp off a
+  receiver (F305).
+- [x] **F270 [code] canary-wap Chirp: the nonce filter's 5-minute wholesale
   reset lets a chirp be stored again.** `bloom_reset_if_due()` clears
   `g_bloom` whole every `CHIRP_TTL_MS` (300 s), as long as the witness
   freshness window, so a signed frame heard again just after a reset
@@ -6187,7 +6565,46 @@ so — see D2 below.)
   until its freshness window has passed, or clear the filter in two halves so
   a nonce outlives the window; spec §2.5.6's parenthesis on it goes with the
   fix. From code and the review's host probes. Found by F233's review (#1802).
-- [ ] **F271 [code] canary-wap tests_host: `test_chirp_security.cpp` and
+  *Done (#1802):* the nonce filter is two 4 KB, 4-hash Bloom halves (8,192
+  bytes in PSRAM, 4,096 more than before) over slots of
+  `NONCE_FILTER_HALF_MS`, 331 s, since the channel started (`mesh_network.h`:
+  the freshness window, 300 s behind and 30 s ahead, plus a second for the
+  wall clock's whole seconds; a `static_assert` keeps it above the window). A
+  nonce goes into the half of the slot it is heard in, a lookup reads both,
+  and at each slot's start the older half is cleared; the turn is taken at the
+  first lookup, insert or loop pass after that start and dated at the start,
+  so a nonce is found by every lookup up to 331 s after it went in and by none
+  from 662 s on, however sparse the frames (dated when taken, as first
+  written, a nonce stayed findable up to 993 s), and `update()`'s turn keeps
+  uptime's 49.7-day wrap from hiding a due turn on a quiet channel. And
+  `handle_witness()` refuses a witness whose nonce a recent-table row holds
+  (one row per nonce, `recent_index_of()`), which also covers a receiver with
+  no wall clock. `check_wap_loop_commands.py`'s CV5 lists the two new table
+  helpers. Spec §5.3 gives the rule, the slots, the false-positive rates (per
+  half about 0.02 % at 1,000 nonces and 2.4 % at 4,096; the old 0.4 % was
+  wrong) and the unsynced limitation; §12.3 counts ~31 KB; §2.5.6's
+  parenthesis is rewritten. Host-tested on the real code:
+  `a_suppressed_chirp_is_not_stored_again` (the item's probe: heard at 250 s
+  and suppressed; the same frame refused at 310 s, a neighbor's relay of it at
+  320 s, the frame at the last second of its freshness window; a new chirp
+  from the same originator still stored),
+  `a_nonce_outlives_the_freshness_window` (first heard at each of 700 offsets,
+  timestamp 30 s ahead, replayed 330.999 s later, refused every time),
+  `a_held_chirp_takes_no_second_row` (no wall clock, 700 s),
+  `a_chirp_heard_again_keeps_one_row_and_its_window`, which replaces
+  `a_second_copy_takes_its_own_votes`,
+  `the_filter_holds_a_nonce_one_half_to_two` (twelve insert offsets across
+  three halves under seven lookup patterns, sparse and busy),
+  `the_filter_turns_on_a_quiet_channel` (loop passes only, across uptime's
+  wrap, on and off) and `the_filter_forgets_under_steady_traffic` (a frame
+  every 81 ms for five halves: 369 of 12,260 lookups and 96 of 2,000 new
+  nonces read as repeats, within twice the per-half rate and 6 %). The first
+  four fail on the base, the two bound cases on the filter as first written,
+  and 18 mutants of the filter and table code each fail a case. Not covered:
+  with no wall clock a replay is stored again once its row has left the table
+  and the filter has forgotten it (spec §5.3; F310). The Arduino compile is
+  CI's; not bench-tested.
+- [x] **F271 [code] canary-wap tests_host: `test_chirp_security.cpp` and
   `test_chirp_protocol_invariants.cpp` test copies, not the code.**
   `test_c11_emoji_size_lifted` compares two literals and
   `test_emoji_display_size_lifted` a literal with itself, and the C7 mirror
@@ -6197,7 +6614,36 @@ so — see D2 below.)
   C7's dedup, signature check and session-id check and C11's size on the real
   `chirp_channel.cpp`. Replace each mirror case with a test of the real code,
   or retire it. From code. Found by F231 and F233 (#1802).
-- [ ] **F272 [code] `firmware/common/chirp/chirp_channel.h`, the canonical
+  *Done (#1802):* both files compile the real `chirp_channel.cpp` through a
+  shared `chirp_host_harness.h` (the `stubs/mesh_net` radio, NVS and clock
+  stand-ins, OpenSSL Ed25519) and drive real signed frames, under `-Werror`
+  with the Makefile's `run_marked` pass check; each file's header says what
+  became of each case. `test_chirp_security.cpp`: `c2_c3_no_self_count`,
+  `c5_ack_dedup_by_pubkey` (with C13's drive-by key),
+  `c8_priority_storage_eviction` (on until the urgent row is the oldest in the
+  table) and `c9_bloom_flood` replace their copies; `c7_suppress_dedup` (an
+  8-key set the firmware no longer has) is retired for the suppress suite's
+  `a_repeated_voter_counts_once`, and `c11_emoji_size_lifted` (two literals)
+  for the commands suite's `every_session_display_is_five_emoji_in_its_field`.
+  `test_chirp_protocol_invariants.cpp`: the version and magic a receiver
+  takes; the witness (73 bytes, timestamp little-endian), ACK (62) and vote
+  (66) canonical bytes written out from the spec and verified against frames
+  the firmware sends; a relay re-signed by the relayer; C1/C6 and C17 on the
+  real `handle_witness()`; `emoji_display_size_lifted` (a literal against
+  itself) is retired for the same commands case. Neither file says drift is
+  caught at code review any more, and `mesh_and_chirp_audit_v1.md` §10 and
+  `v0.3_closeout.md`'s Chirp table name the real-code cases. Proven at the
+  package's head: 16 mutations of `chirp_channel.cpp` (confirmer equal to
+  originator allowed, ACK dedup removed, presence check removed, no nonce
+  caching, one hash, a big-endian timestamp, the ACK domain and type, the
+  vote's field order, version and magic unchecked, no C6, no C1, an unknown
+  template taken, a 26-byte session domain, and oldest-first eviction behind
+  the urgency gate) each fail one of the two suites; the old files compiled no
+  firmware source, so no change to it could fail them. Host-tested. Found
+  here: a relay re-signs with a 15-minute TTL (F306), the nonce filter takes a
+  nonce before its signature is checked (F309), and an ACK counts from a key
+  with no ten minutes of presence (F311).
+- [x] **F272 [code] `firmware/common/chirp/chirp_channel.h`, the canonical
   C-ABI the PlatformIO port is to implement, sizes the session display for
   three emoji.** Its README calls it canonical, but `CHIRP_EMOJI_DISPLAY_SIZE`
   is 20 ("3 multi-byte emoji characters + null"), and it differs from the
@@ -6208,6 +6654,97 @@ so — see D2 below.)
   chirp is the speaker's, `audible_chirp.h`). Bring the header to the v0.2
   reference (five emoji in 31 bytes) or mark which values the port must take
   from it, and fix the index line. From code. Found by F231 (#1802).
+  *Done (#1802):* `firmware/common/chirp/chirp_channel.h` carries the
+  canary-wap v0.2 reference's values, each commented with the reference
+  constant it equals: `CHIRP_EMOJI_DISPLAY_SIZE` 31 (five emoji; was 20),
+  `CHIRP_MAX_RECENT` 16 (was 32), `CHIRP_MAX_NEARBY` 32 (was 16), a 60 s
+  presence beacon (was 15 s) and 180 s nearby timeout (was 45 s), the 64-entry
+  nonce cache replaced by `CHIRP_NONCE_HOLD_MS` 331,000, cooldown tiers 5, 15,
+  60 and 240 min (were 30 s, 5, 30 and 60 min), and the wire values a receiver
+  depends on added (`CHIRP_WIRE_VERSION` 1, `CHIRP_WIRE_MAGIC` 0xC4, key and
+  nonce sizes, the 300 s / 30 s freshness window, the clock floor). The relay
+  delay, which the reference does not have, says so; `chirp_state_t` says it
+  is the API's own (the reference's states differ); and a comment names what
+  the port must take from the reference because the header does not carry it
+  (2 and 1 confirmations, the suppression rule, 4 witnesses per key per hour,
+  10 relays a minute, the night hours, what each signature covers). Every
+  compile of the header keeps compiling: `firmware/tests_host`'s C and C++
+  syntax check, and canary-wap's `test_chirp_protocol_invariants.cpp`, which
+  includes it beside the real `mesh_network.h` and holds each value to the
+  reference by `static_assert`, the enums value for value, the whole template
+  enum (read through a switch that `-Werror=switch` holds to every enumerator)
+  against every id the reference takes, and the mute durations against every
+  one the reference's `mute()` takes (`common_header_matches_the_reference`);
+  against the old header it does not compile. The header and `core/types.h`
+  are now reached by a compiled test, so
+  `check_common_build_reachability.py`'s two waivers left. `spec/README.md`'s
+  index line calls Chirp the community witness channel, signed template alerts
+  over ESP-NOW radio (§2.2), not sound. Host-tested (compile-time and host
+  checks). Found here: `GET /api/chirp/recent` names an all-clear chirp's
+  category "unknown" (F307), and the spec puts Chirp on Wi-Fi channel 6
+  (F308).
+- [ ] **F305 [code] canary-wap Chirp: one neighbor's RESOLVED ACK takes any
+  chirp off a receiver.** `handle_ack()` sets `dismissed` on a signed
+  `CHIRP_ACK_RESOLVED` from any key other than the originator's that holds a
+  nearby row, and `prune_old_chirps()` drops dismissed rows at its next pass
+  (within 30 s), so one neighbor removes a chirp that community suppression
+  needs more than half the nearby rows, at least 3, to remove; no firmware
+  path sends RESOLVED. Host-probed on the real `chirp_channel.cpp` (scratch,
+  not committed): 7 nearby rows, an urgent emergency chirp, one signed
+  RESOLVED ACK: `dismissed` set, `suppress_count` 0, the row gone after a
+  prune. Ignore RESOLVED from the wire (or count it as a suppress vote) and
+  keep `dismissed` for the owner's own dismissal, which itself leaves the row
+  confirmable and relayable until that prune. Found by F269 (#1802).
+- [ ] **F306 [code] canary-wap Chirp: a relay re-signs with `ttl_minutes` 15,
+  so a chirp sent with any other TTL fails origin verification one hop on.**
+  `relay_chirp()` sets `payload->ttl_minutes = 15` while the origin signature
+  covers the value the originator sent, and `POST /api/chirp` accepts any
+  `ttl_minutes`. Host-probed on the real code (scratch, not committed): sent
+  with 15, the relay is stored at the next receiver; sent with 30, it is
+  refused ("rejected relayed witness — bad origin signature"). Keep the
+  received TTL in the relay, or refuse a TTL other than 15 at send. Found by
+  F271 (#1802).
+- [ ] **F307 [code] canary-wap Chirp: `GET /api/chirp/recent` names an
+  all-clear chirp's category "unknown".** `chirp_api.h` derives the category
+  as `template_id >> 4`; the all-clear templates are 0x80 to 0x82, which gives
+  8, while `CHIRP_CAT_ALL_CLEAR` is 5, so `category_name()` answers "unknown".
+  Use the mapping `handle_ack()` uses (`template_to_category()`). From code.
+  Found by F272 (#1802).
+- [ ] **F308 [code] The Chirp spec puts Chirp on Wi-Fi channel 6; the
+  canary-wap sends on the radio's current channel.** `mesh_network.h`'s
+  `CHIRP_CHANNEL = 0` says "follow current radio channel", while spec §2.2's
+  "Separate Channel" bullet, §12.1's `#define CHIRP_CHANNEL 6` and §13.1's
+  "Different channel (6 vs 1)" describe a separate channel. Bring the three to
+  what the code does, or make the channel a decision. From code. Found by F272
+  (#1802).
+- [ ] **F309 [code+decision] canary-wap Chirp: the nonce filter takes a
+  witness's nonce before its signature is checked.** `handle_witness()` calls
+  `cache_nonce()` before `Ed25519::verify()`, so unsigned frames from any
+  device in range fill the filter: a half's false-positive rate is about 2.4 %
+  at 4,096 nonces and climbs toward refusing every new chirp as a repeat under
+  a sustained flood (each half holds a 331 s slot's nonces). Caching only
+  verified nonces costs a signature check per replayed junk frame; which cost
+  to pay is the decision. From code (`test_chirp_security.cpp`'s
+  `c9_bloom_flood` floods 1,000; `test_chirp_suppress_wap.cpp`'s
+  `the_filter_forgets_under_steady_traffic` holds the rate at a frame every 81
+  ms). Found by F271 (#1802).
+- [ ] **F310 [code+decision] canary-wap Chirp: with no wall clock, a replay is
+  stored again once the filter has forgotten it.** A receiver without a synced
+  clock applies no freshness window, so once a chirp's row has left the table
+  and the filter has forgotten its nonce (more than 331 s and at most 662 s
+  after it was heard) the same signed frame is stored as new (spec §5.3 says
+  so since F270). Hold the nonces of chirps stored here for as long as a row
+  can live (30 min, 8 bytes each), or refuse unsynced witnesses; which is the
+  decision. From code. Found by F270 (#1802).
+- [ ] **F311 [code] canary-wap Chirp: an ACK counts from any key with a nearby
+  row, not one present for 10 minutes.** Spec §3.4's rule 4 refuses a
+  confirmer "not seen in `g_nearby_devices` for at least
+  `PRESENCE_REQUIRED_MS`"; `nearby_has_pubkey_with_presence()` checks only
+  that a row exists, and `NearbyDevice` keeps no first-seen time, so a key
+  first heard a second ago counts. `docs/FLEET_SEMANTICS.md` already says the
+  spec's Sybil resistance is not implemented; no sweep item tracks it. Add a
+  first-seen time and check it, or change the rule. From code. Related: F232
+  (who fills the nearby table) and F234 (who may vote). Found by F271 (#1802).
 - [x] **F97 [code] The PIO pairing has F75's deadlock.**
   `either_handle_confirm` acts only in `AWAITING_CONFIRM_PEER`, so it drops a
   peer's CONFIRM that arrives before this device's owner confirms, and
@@ -7583,7 +8120,7 @@ so — see D2 below.)
   pass's, so its history reads newest first (the port's 6f8df9a5). Docs only;
   the dashboard guard sees no downgrade. Found here: D13 (a passage that line
   carries twice).
-- [ ] **F273 [code] The PlatformIO dashboard shows its Opera tab in builds
+- [x] **F273 [code] The PlatformIO dashboard shows its Opera tab in builds
   that register no mesh route.** `securacv_webui.cpp`'s Opera nav button
   always shows; `refreshOpera()` returns on a refused `GET /api/mesh`, and the
   tab's pairing, leave, name, enable and remove controls post to routes
@@ -7593,7 +8130,35 @@ so — see D2 below.)
   start the tab hidden and show it when `GET /api/mesh` answers. Named in
   `test_dashboard_route_match.test.js`'s GATED (gap). From code; not run on a
   device. Found by F238 (#1802).
-- [ ] **F274 [code] Both dashboards' camera panel offers Start where no peek
+  *Done (#1802):* hidden until `GET /api/mesh` answers (F176's shape). The
+  Opera nav button starts hidden (`id="navOpera"`, `display:none`). The page
+  load's one `refreshOpera()` shows it on the first JSON answer
+  (`operaServed`): on `[env:full]`, the one env that registers the mesh, every
+  answer the route gives is JSON, its own refusals included
+  (`rate_limit_check`'s 429, `auth_gate`'s 401/403/503), so a busy or
+  tokenless page load still shows the tab, as the page always did there. In
+  every other env the read gets the GET "/*" fallback's 404 page or its
+  redirect to the wizard, neither JSON (`api()`'s `unrouted`): the tab, the
+  only caller of the other mesh routes, stays hidden and nothing asks the mesh
+  again. A probe that got no verdict (no answer, or another answer that was
+  not JSON) is asked again on the 5 s poll (`operaProbeAgain`) until one
+  comes, and unlocking with a token asks once more; the poll refreshes Opera
+  only once it has answered. `api()` marks the answers it makes up itself
+  (`notJson`, `unanswered`).
+  `firmware/tests_host/test_canary_dashboard_gates.test.js` (run by the
+  tests_host Makefile) lifts the code out of the raw string and feeds it
+  answers made by the page's own `api()` against a stub fetch: the markup
+  starts hidden; a no-route answer (404 page, setup redirect) keeps it hidden
+  with no further request; the route's 401, 429 and 503 show it; no answer or
+  a 500 text page is asked again on the poll until a status shows it or a
+  no-route answer ends it; a status shows it and the poll then refreshes it;
+  an unlock re-asks a probe with no verdict once. 7 of its 11 Opera cases fail
+  on the page before this change. The two older suites that lift the panel
+  poll (`test_canary_community_panel.test.js`,
+  `test_canary_dashboard_routes.test.js`) carry the probe flags it now reads.
+  GATED's entry takes its fixed form. Host-tested (node); the ESP32 compile is
+  CI's; not run on a device.
+- [x] **F274 [code] Both dashboards' camera panel offers Start where no peek
   route is registered.** On a build without FEATURE_CAMERA_PEEK (PlatformIO
   `minimal` and `esp32-wroom`; canary-wap's DEV profile, the
   `canary-wap-mobile` env, and FULL on the XIAO ESP32-C3),
@@ -7603,7 +8168,35 @@ so — see D2 below.)
   not available". Hide the panel, or show its no-camera state, on the refusal.
   Named in GATED (gap) on both pages. From code; not run on a device. Found by
   F238 (#1802).
-- [ ] **F275 [code] The PlatformIO setup page offers its hub box in builds
+  *Done (#1802):* both camera panels show their no-camera state when no route
+  takes the status read. Before any status has answered, a `GET
+  /api/peek/status` that no route took (canary-wap: esp_http_server's 404,
+  which is not JSON; the PlatformIO canary: the GET "/*" fallback's 404 page,
+  or during setup its redirect to the wizard) disables Start ("⚠ No Camera"),
+  says "No camera in this build" and "This firmware was built without the
+  camera preview.", and hides the Camera Controls and Camera Info (PlatformIO:
+  Stream Metrics) cards, which hold every control that calls another camera
+  route. Opening the panel reads the sensor state (`GET /api/peek/sensor`)
+  only once a status has answered, and the first answer pulls it, so a build
+  without the camera is asked only for the status on every open, while a
+  camera build still reads the sensor state once per open. Each page's `api()`
+  marks such an answer `unrouted`; no answer, a token the route wants (401, as
+  on a home-LAN PlatformIO page load before unlock), a 503, a rate-limited
+  sign-in, a text error page from a route that exists (esp_http_server's 500
+  or 408) or a JSON 404 says nothing about the build and changes nothing; once
+  a status has answered (`peekServed`) a failed poll changes nothing; a status
+  after a no-route answer brings the cards back. On canary-wap the state is
+  `WebUiLogic.cameraPanelState`'s new `not_built` gate. Tests:
+  `firmware/tests_host/test_canary_dashboard_gates.test.js` (18 Peek cases)
+  and canary-wap's `dashboard_gates.test.js` (15 Camera cases), both feeding
+  refusals made by the page's own `api()` against a stub fetch and opening the
+  panel through the page's own `switchPanel()` and `refreshSensorState()`, and
+  `web_ui_logic.test.js` (+1); the pages before this change fail 8 and 6 of
+  them, and an `unrouted` widened to every answer that is not JSON, or to
+  every status of 400 and up, fails the 500 and 408 cases. GATED's two entries
+  take their fixed form. Host-tested (node); the ESP32 compile is CI's; not
+  run on a device.
+- [x] **F275 [code] The PlatformIO setup page offers its hub box in builds
   without the hub bridge.** `securacv_setup_page.cpp`'s "Have a SecuraCV hub?"
   box shows in every build, but `/api/mqtt/status`, `/api/mqtt/config` and
   `/api/mqtt/ca` are registered only under FEATURE_HA_MQTT, which only
@@ -7614,7 +8207,19 @@ so — see D2 below.)
   build either. Hide the box when `GET /api/mqtt/status` does not answer JSON,
   or say the image has no bridge. Named in GATED (gap). From code; not run on
   a device. Found by F238 (#1802).
-- [ ] **F276 [code] canary-wap's admin dashboard keeps the Community tab's
+  *Done (#1802):* the hub box shows only where `GET /api/mqtt/status` answers
+  JSON. The box starts hidden in the markup; `loadHub()` shows it on any JSON
+  answer (the `/api/mqtt/*` routes answer JSON, a refusal included) and fills
+  it on `ok`. An image without FEATURE_HA_MQTT answers that read with the GET
+  "/*" fallback's 404 page or its redirect to the wizard, neither JSON, so the
+  box stays hidden there, as it does when the request never reaches the Canary
+  (the page asks once). Save's catch, reached now only where the box shows,
+  says "Couldn’t reach the Canary to save the hub settings — try again."
+  instead of claiming the bridge is off.
+  `firmware/tests_host/test_canary_setup_page.test.js` (18 cases, 5 new; 4
+  fail on the page before this change). GATED's entry takes its fixed form.
+  Host-tested (node); the ESP32 compile is CI's; not run on a device.
+- [x] **F276 [code] canary-wap's admin dashboard keeps the Community tab's
   Opera and Chirp views where no mesh route is registered.** In the DEV
   profile (the `canary-wap-mobile` env, not one of flavors.json's build_envs;
   FEATURE_MESH_NETWORK 0), `refreshOpera()` and `refreshChirpStatus()` return
@@ -7624,6 +8229,24 @@ so — see D2 below.)
   FEATURE_MESH_NETWORK). Gate them on a first answer, as F176 did on the
   PlatformIO page. Named in GATED (gap). From code; not run on a device. Found
   by F238 (#1802).
+  *Done (#1802):* the Opera and Chirp views take F176's shape. Their sub-tabs
+  start hidden and show on their status route's first answer (`operaServed`,
+  `chirpServed`); BLE Discovery is the first view until Opera answers, when
+  Opera takes over as it always opened unless the owner already picked a view;
+  the 5 s poll refreshes only the view on screen, so it never asks for a
+  hidden one; opening the Community panel asks both once more, so a probe a
+  busy load turned away recovers. BLE Discovery's 10 s refresh now runs only
+  while it is on screen (leaving the panel, or picking another view, cancels a
+  refresh already waiting), since it can be the view a build opens on. In the
+  DEV profile (the canary-wap-mobile env) BLE Discovery is unserved too
+  (FEATURE_BLE 0) and reads "Unavailable", as GATED's FEATURE_BLE entry
+  already said (its Alert and Heartbeat buttons are F297). canary-wap's
+  `dashboard_gates.test.js` (11 Community and BLE-timer cases, the panel's
+  re-ask after a load that got no answer among them; 9 fail on the page before
+  this change) runs in `viewer.yml`'s selftest-ui job; `web_assets_gz.h`
+  regenerated. GATED's entry takes its fixed form. Host-tested (node); the
+  ESP32 compile is CI's; not run on a device. Found here: F296 (the view stops
+  refreshing after an empty list) and F297.
 - [ ] **F277 [code+decision] canary-wap's `wap_server.cpp` is a stub server
   API nothing calls, and its `send_json_error()` writes two strings
   unescaped.** `wap_server.h` declares init(), start_http_server(),
@@ -7639,7 +8262,7 @@ so — see D2 below.)
   move the list into a doc; if `send_json_error()` stays, spell it with
   `wap_json_writer.h` before anything calls it. From code. Found by F237, with
   F227's hand-up on `send_json_error()` merged in (#1802).
-- [ ] **F278 [code] Both dashboards' Export fails after a good export.**
+- [x] **F278 [code] Both dashboards' Export fails after a good export.**
   canary-wap's `POST /api/export` writes an export file to the SD card
   (`/EXPORT/bundle_<ms>.json`) and answers `download_url`
   `/api/download?path=<file>`, which nothing registers (the IDF matcher copy
@@ -7655,6 +8278,54 @@ so — see D2 below.)
   response; the fix should add a case for the URL the export answer names.
   `firmware/FEATURES.md`'s `GET /api/download` row already reads ❌ for both
   trees. From code; not run on a device. Found by the review of F238 (#1802).
+  *Done (#1802):* inline, on both trees. canary-wap's `POST /api/export` now
+  answers the bundle header itself (version, device id, firmware, ruleset,
+  export time, chain position, record count, public key) beside `ok:true`, as
+  the PlatformIO canary's `handle_export` already did. Inline over a guarded
+  GET route because the bundle is a fixed set of eight short fields (its
+  longest answer is 356 bytes: a 31-character id, uint32 maxima and the card
+  path), so the handler holds it whole, and a route reading files would serve
+  bytes the handler already has. With a card in, the header is still written
+  to `/EXPORT/bundle_<ms>.json` (the staging area `POST /api/logs/rotate`
+  trims) and named in `card_path` only after a whole write; `sd_available`
+  says whether a card was present and verified, `card_path` whether a copy was
+  kept; a missing, refusing or short-writing card costs the copy, not the
+  export. Both dashboards' `exportWitness()` save the answer as
+  `witness-export-<device>.json` (every character of the id but letters,
+  digits, `_` and `-` made `_`) and alert the device's own reason on a
+  refusal. Neither tree registers `GET /api/download`; FEATURES.md's row stays
+  ❌ and the canary-wap README's `/api/export` row now says what it answers.
+  Tests: `firmware/projects/canary-wap/tests_host/test_export_answer.cpp` (the
+  handler cut verbatim from the sketch; card in, no card, a card that takes
+  nothing, a card that takes part of the write, a card mounted but gone when
+  verified, the longest answer; the old handler fails 82 checks), each page's
+  Export cases (3 each, recording every way a page can send the browser
+  elsewhere), and a case per tree in `test_dashboard_route_match.test.js`:
+  every `/api/` URL the export handler (through its auth wrapper) writes must
+  reach a route that means it, and a page's Export may follow (by `.href`,
+  `.src`, `location =`, `location.assign/replace`, `window.open` or a request)
+  only a field its handler answers with an `/api/` literal a route serves,
+  which today no field is; on the tree before this change it fails on both
+  (canary-wap's `/api/download`, the PlatformIO page's `download_url`).
+  Host-tested (node and g++); the ESP32 compile is CI's; not run on a device.
+- [ ] **F296 [code] canary-wap's BLE Discovery view stops refreshing after one
+  empty nearby list.** `refreshBleDiscovery()` (`web_ui.h`) returns from its
+  empty-list branch ("No nearby Canaries detected") before it schedules its 10
+  s refresh, so a Canary that comes into range afterward shows only when the
+  owner reopens the Community panel or picks the view again. Since F276 it is
+  the Community tab's first view wherever Opera does not answer. Schedule the
+  refresh on every pass while the view is on screen. From code; not run on a
+  device. Found by F276 (#1802).
+- [ ] **F297 [code+decision] canary-wap's Community tab offers BLE Discovery's
+  Alert and Heartbeat in builds without FEATURE_BLE.** The DEV profile (the
+  canary-wap-mobile env) sets FEATURE_BLE 0 as well as FEATURE_MESH_NETWORK 0
+  (`build_config.h`), so since F276 its Community tab opens on BLE Discovery
+  with no other view: it reads "Unavailable" and an empty nearby list (GATED's
+  FEATURE_BLE entry), while its Alert and Heartbeat buttons post to
+  `/api/ble/chirp/send`, which nothing registers there. Decide whether to hide
+  the Community nav button when none of its three views is served, or to gate
+  BLE Discovery's send card on `GET /api/ble/status` answering. From code; not
+  run on a device. Found by F276 (#1802).
 - [x] **F50 [code] The display's other join hints still cut on narrow glass.**
   (#1755, #1727) Found by F45 (#1718). The Fail-stage hints from `join_failure_hint` measure
   175-219 px at 12 px ("your router may be out of addresses" is 219), so
@@ -9196,7 +9867,7 @@ so — see D2 below.)
   2 upside down. Fix `pins.h` until each pose commits its value, then judge
   the bytes (F282). Open: the IMU mapping and the MADCTL bytes need the bench
   (U1); no byte changed. Not bench-tested.
-- [ ] **F279 [code] The canary mark refuses every Tilt and Startle for the
+- [x] **F279 [code] The canary mark refuses every Tilt and Startle for the
   first 8 s of uptime.** `canary_mark_react()` rations small reactions with
   `now - s_last_small_react < 8000`. `s_last_small_react` starts at 0 while
   LVGL's tick is `millis()` from power-on, so each Tilt or Startle before 8 s
@@ -9209,7 +9880,44 @@ so — see D2 below.)
   reacted" would let the first through. That changes what the splash's first
   beats draw, so `test_splash_scenes` and the Lab's boot and onboard probes
   need rereading with it. Found by F242 (#1802).
-- [ ] **F280 [code] The nightlight face shows "wheee!" from 24.8 to 49.7 days
+  *Done (#1802):* the canary mark lets its first reactions through.
+  `canary_mark_react()` now starts the Tilt/Startle ration as "never reacted"
+  (a flag beside the clock), so only a Tilt or Startle that has played refuses
+  the next for 8 s, and the first one after power-on plays whoever sends it:
+  the splash's beats, a touch, a BOOT short press (or the AMOLED's PWR), the
+  all-verified edge's Tilt, the ambient-life flourish and a nightlight turn.
+  `test_canary_mark_seat` reacts 1 s after power-on: the Tilt dips the beak 3
+  px and raises the eye 2 px on a 100 px bird, a Startle a second later is
+  still rationed, and one 8 s after the Tilt hops. `test_nightlight_tumble`
+  turns the real face 7 s after power-on and needs the Startle's hop. Each
+  fails on the old file. Reread with it: `test_splash_scenes` now reads the
+  mark's reactions off the glass, holds the first meeting at power-on to its
+  opening Tilt (940..1620 ms in), and requires that read to run once per
+  build, so a reorder of its plays cannot skip it. On every canvas that first
+  splash draws a Tilt at 940 ms, a Startle at 9720 ms (the Preen beat) and a
+  Tilt at 20000 ms; the old file drew a Tilt at 8320 ms (the "Nothing."
+  punchline) and at 20000 ms. The punchline's Tilt now comes 7.4 s after the
+  opening one and is rationed (whether a scripted beat should be is F298). The
+  item's "Hello again." Tilt is not on the glass: `splash.cpp`'s returning
+  boot hops (Happy) and shows the Character's greeting in the tagline, and
+  `story::kHelloAgain` is played nowhere (F299), so the returning boot's first
+  beats are unchanged. `runtime_turn.sh` (the sources, natively on LVGL 8.4)
+  now turns at 7 s, and all 12 turns hop with the Startle; on the base
+  firmware those 12 fail. The Lab probes read the dist, which only CI's
+  rebuild moves. `boot_probe.mjs` boots returning units (no splash reaction)
+  and reads the face 6.5 s on, and a runtime turn 3 s after the ask, by the
+  bird's box, which a Tilt does not move. `onboard_probe.mjs` reads the first
+  meeting's splash on the turned walks by its lines, their ink and the bird's
+  box on the glass and clear of the lines; the Startle's hop is the same
+  `start_hop()` the script's Happy beats already draw, upward, away from the
+  bubble. Neither asserts a reaction, so neither changed.
+  `glass_turn_lvgl9.sh` (the sources on LVGL 9.5.0) reads the splash's tail
+  and typed lines, not the bird, and passes. The emulator dist moves for all
+  six display flavors (watch, nightstand, nightlight, touch169, amoled241,
+  dash); CI's pinned emsdk rebuilds it on this branch after this push
+  (`emulator-dist-refresh.yml`), and no rebuilt dist was run here. Host-tested
+  and run natively on LVGL 8.4; not bench-tested.
+- [x] **F280 [code] The nightlight face shows "wheee!" from 24.8 to 49.7 days
   of uptime.** `nightlight_ui_create()` zeroes `s_tumble_until`, and
   `nightlight_ui_update()` tests `(int32_t)(now - s_tumble_until) < 0`. Once
   `millis()` passes 2^31 that holds for a zero, so a face built without a turn
@@ -9222,7 +9930,29 @@ so — see D2 below.)
   (`test_nightlight_tumble` holds it at 24.8 days). A flag for "a tumble is
   playing" (or a start time compared by elapsed ms), with a host test past
   2^31, would hold it. Found by F242 (#1802).
-- [ ] **F281 [code] A hop hands a quickened canary back the calm breath.**
+  *Done (#1802):* the nightlight face reads its moments by elapsed ms. The
+  tumble's word and the clock's breath-in (1.4 s from a turn) and the life
+  glance's bright caption (6 s) are each a `Moment`: a flag that it is playing
+  and the ms it began, read by unsigned elapsed ms and cleared once it has
+  run; `nightlight_ui_create()` clears the tumble's. `test_nightlight_tumble`
+  (the real `nightlight_ui.cpp` against fake_lvgl, which now records an
+  object's opacity) holds a boot face at 2^31 + 120 s: it says nothing, a
+  visit dims the clock to 40% and names itself, the visit's end restores the
+  clock, a life glance shows "here with you" 5.9 s on and not 6.1 s on, a turn
+  says "wheee!" and not 1.5 s on, 300 ms into a turn the update leaves the
+  clock to its breath-in (opacity 119, not full), a face rebuilt 300 ms after
+  a turn says nothing and dims the clock for a visit, and a turn 0.5 s before
+  the counter wraps keeps its word 1 s on (across the wrap) and drops it 1.5 s
+  on. A boot face at low uptime says nothing, and so does a face rebuilt after
+  a turn before its first update. The old file fails 7 of these: the item's
+  "wheee!" on a boot face, the visit's caption and clock, the visit's end, the
+  life glance at 0, 5.9 and 6.1 s, and the face rebuilt after a turn. The rest
+  pass on it too; the breath-in, the 5.9 s glance and the rebuilt faces also
+  hold the new code's own windows and reset (a create() that keeps the tumble,
+  a 100 ms glance, and a clock written under the breath-in each fail at least
+  one). Host-tested; not bench-tested. The emulator dist moves for the
+  nightlight flavor; CI's pinned emsdk rebuilds it.
+- [x] **F281 [code] A hop hands a quickened canary back the calm breath.**
   `hop_done()` always starts `start_bob(1400, 2)`. So a bird in Worried,
   Distressed, Searching or Calling, which breathes at 1100 ms, breathes at the
   calm 1400 ms after any hop it makes in that mood (the search flourish's hop,
@@ -9231,6 +9961,18 @@ so — see D2 below.)
   `canary_mark_mood()`) would hold it, with a fake_lvgl check of the breath's
   period after a hop in each mood (`test_canary_mark_seat`'s `check_breath()`
   reads it). Found by F244 (#1802).
+  *Done (#1802):* a hop hands back the breath its mood owns. One table,
+  `mood_breath()`, names each mood's breath before the temperament: Asleep
+  2800 ms at 1 px; Worried, Distressed, Searching and Calling 1100 ms; Idle
+  and Happy 1400 ms. `canary_mark_mood()` starts it when a mood begins and
+  `hop_done()` restarts it when a hop lands. `test_canary_mark_seat` hops the
+  bird in every mood that can hop (a Startle in each, the search flourish's
+  hop, Happy's own hop) and reads the breath it lands into with
+  `check_breath()`; an asleep bird refuses the Startle and keeps its 2800 ms
+  breath. The old file fails 5 of the 8 checks (the four quickened moods'
+  Startles and the search hop, each 1400 ms where 1100 is owed). Host-tested;
+  not bench-tested. The emulator dist moves for all six display flavors
+  (`canary_mark.cpp`).
 - [ ] **F282 [code+human] The nightlight's IMU sign convention and its MADCTL
   table must be settled together.** By `display_1in47.cpp`'s own model of
   MADCTL, rotation 1's 0x28 draws the face upright for a device turned
@@ -9251,6 +9993,9 @@ so — see D2 below.)
   checklist row reads `"orientation"` from `GET /api/settings` after each
   pose. Fix the IMU mapping until each pose commits its value, then the bytes;
   this is F250's open half. Found by F250 (#1802).
+  *Note (#1802, F285):* each orientation commit now writes `[orient] <who> ->
+  rotation R (was P)` to serial, so U1's orientation row reads that line from
+  a serial monitor, or `"orientation"` from `GET /api/settings`.
 - [ ] **F283 [decision] Pay the nightlight tumble's Startle at the landing, or
   keep it with the handling?** Since F242, `nightlight_ui_update()` pays the
   Startle on the face's first render after the turn. So the hop (240 ms up,
@@ -9265,7 +10010,14 @@ so — see D2 below.)
   inside the 1.4 s window. Decide which reads as the honest reaction. If it is
   the landing, hold it in `test_nightlight_tumble` and in `runtime_turn.sh`
   with the apex inside the glass. Found by F242's review (#1802).
-- [ ] **F284 [code] A portrait half turn during a visit drops the companion's
+  *Note (#1802, F279):* `runtime_turn.sh` now turns 7 s after power-on, since
+  F279 lets the first Startle through, and its hop reads differently there:
+  the apex at 185 ms, and the whole bird on the glass in 0 of the hop's 113
+  frames when it enters over the landscape glass's right edge, 54 when it
+  falls onto the landscape glass, 60 from either side of the portrait glass,
+  and all 113 otherwise. The counts move with where the hop falls against the
+  render tick; the question is unchanged.
+- [x] **F284 [code] A portrait half turn during a visit drops the companion's
   visit lift.** `nightlight_ui_tumble()`'s fall from above animates
   `translate_y` to 0 over 700 ms, while `stage_bird()` owns `translate_y` for
   the visit's lift (`bird_lift()`, -66 * h / 320 on the portrait glass).
@@ -9277,7 +10029,25 @@ so — see D2 below.)
   staged lift (or staging after the tumble) with a fake_lvgl check of the
   bird's translate after a half turn mid-visit would hold it
   (`test_nightlight_tumble` builds the face). Found by F242's review (#1802).
-- [ ] **F285 [code] An IMU orientation commit writes nothing to serial.**
+  *Done (#1802):* a fall from above lands on the visit's lift. The bird's
+  translate_y is now the staged lift (`bird_lift()` or 0) plus the fall's
+  offset, written in one place (`place_bird_y()`): `stage_bird()` sets the
+  lift and the fall's animation sets its offset, so the fall ends wherever the
+  visit has the bird. `nightlight_ui_create()` starts the new bird with no
+  fall, since the old bird's animation goes with the old screen and never
+  writes the fall's last 0. In `test_nightlight_tumble` a portrait half turn
+  during a Stretch visit falls from above (translate_y -181 at 200 ms) and
+  lands at the lift (-66), the visit's end puts the bird back at 0, a visit
+  begun mid-fall lands at the lift, and a fall with no visit, or onto the
+  landscape glass (no lift), lands at 0. A face rebuilt 300 ms into a portrait
+  fall, then a visit, sits at the lift and at 0 after it, and a quarter turn
+  onto the landscape glass mid-fall, then a visit, reads 0. The old file
+  leaves the bird at 0 after the half turn and after the mid-fall visit (2
+  checks fail); the rebuild and quarter-turn cases pass on it (it kept no fall
+  offset) and fail 5 checks with the new reset removed. Host-tested; not run
+  natively (runtime_turn.sh plays no visit); not bench-tested. The emulator
+  dist moves for the nightlight flavor.
+- [x] **F285 [code] An IMU orientation commit writes nothing to serial.**
   `nightlight_apply_orientation()` and `care::nightlight_set_rotation()` log
   nothing; the only orientation line is the triple-press's "[input]
   triple-press -> turn the face". So a bench or a user's report cannot tell
@@ -9285,6 +10055,56 @@ so — see D2 below.)
   serial line in the apply path, naming the rotation, the one before it and
   who asked (the IMU, the triple-press or the app's picker), would let U1's
   orientation row run from a serial monitor. Found by F250's review (#1802).
+  *Done (#1802):* every orientation commit writes one serial line.
+  `nightlight_apply_orientation()` takes who asked and prints, in the [input]
+  lines' style (`boot_linef`), `[orient] IMU -> rotation 1 (was 0)` (or
+  `triple-press`, or `app picker` for the mailbox the app's picker writes),
+  and `[orient] app picker -> rotation 1 (already worn)` for an ask of the
+  rotation the glass wears, which turns nothing. The triple-press now logs its
+  `[input] triple-press -> turn the face` line before the turn, so its serial
+  reads the press, then the commit. The emulator's console and the Lab probes
+  only search serial for fixed lines (the boot banner, TOFU, the first-boot
+  AP), so the new line disturbs none; `emu_request_rotation()` writes the
+  picker's mailbox, so its turns log `app picker`. `runtime_turn.sh` builds
+  the real `main.cpp` natively and its driver now reads the firmware's serial:
+  each of the 12 turns writes exactly `[orient] app picker -> rotation R (was
+  P)`, and each reference boot, asked for its own rotation, exactly `...
+  (already worn)` with its companion on stage throughout (140 checks, 0
+  failed; the 16 line checks fail on the base firmware). `onboard.test.js`
+  pins the three askers: the mailbox drain names the picker, the IMU's commit
+  names `IMU`, and the triple-press logs its `[input]` line and then turns the
+  face naming `triple-press` (that pin fails on the previous order). U1's
+  orientation row now reads the `[orient]` line from a serial monitor, or
+  `"orientation"` from `GET /api/settings`. The IMU and triple-press paths are
+  compile-tested by CI only (the emulator has no IMU and the driver presses no
+  button); not bench-tested. The emulator dist moves for the nightlight
+  flavor. Integration (#1802): A80's pin in `onboard.test.js` held
+  `nightlight_apply_orientation()`'s early return for a turn the glass already
+  wears, and this item writes the `(already worn)` line just before that
+  return, so the two packages each passed alone and failed together. The pin
+  now reads the line (82f557c9), and `onboard.test.js` passes on the
+  integrated tree (42 tests).
+- [ ] **F298 [decision] The first meeting's scripted Tilt and Startle beats
+  share the mark's 8 s ration.** `splash.cpp` sends kHello's Tilt beats and
+  its Preen beat (a Startle) through `canary_mark_react()`, which lets one
+  Tilt or Startle through per 8 s. Since F279 a unit's first meeting at
+  power-on draws the opening Tilt at 940 ms, refuses the "Nothing."
+  punchline's Tilt 7.4 s later, and plays the Preen beat's Startle at 9.72 s
+  and the "Dark means all is well" Tilt at 20 s (`test_splash_scenes` prints
+  it); before F279 it drew the punchline's Tilt (8.32 s) and the 20 s one
+  only. Decide whether a scripted story beat should pass the ration (it exists
+  to keep organic reactions rare, and the script is authored), or the script
+  should space its reactions 8 s apart, and hold the chosen schedule in
+  `test_splash_scenes`. Found by F279 (#1802).
+- [ ] **F299 [decision] `story::kHelloAgain` is authored but nothing plays
+  it.** The returning hello (Enter, "Hello again." with a Tilt, Settle) lives
+  in `firmware/common/story/story_scripts.h` and `test_story.cpp` lists it,
+  but `splash.cpp`'s returning boot hops (Happy) and shows the Character's
+  `hello_again` in the tagline, with no bubble and no Tilt, and no Lab page
+  plays it either. F279's item counted its Tilt among the reactions the ration
+  refused; none was ever sent. Decide whether the returning splash should play
+  the scene (it would need the bubble, against "a returning boot must never
+  feel slower than home") or the scene should go. Found by F279 (#1802).
 - [ ] **F67 [code] The C6 builds most likely send `Serial` to UART0 on the
   radar's pins, not to USB.** `firmware/envs/platformio/canary-sense.ini`
   :78 and `canary-sentinel.ini` :67 add `-UARDUINO_USB_CDC_ON_BOOT` (so do

@@ -551,8 +551,11 @@ The Beacon channel (`spec/beacon_channel_v0.md`) is the project's
 harm-reduction broadcast layer. It carries life-safety advisories with
 smoke-detector-grade reliability requirements. Any agent modifying Beacon
 firmware (`firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.{h,cpp}`)
-or the Chirp v0.2 channel (`chirp_channel.cpp` there, with its header at
-`firmware/common/chirp/chirp_channel.h`) MUST observe:
+or the Chirp v0.2 channel (`chirp_channel.cpp` there, declared in that
+folder's `mesh_network.h`; `firmware/common/chirp/chirp_channel.h` is the
+C-ABI API the PlatformIO port is to implement, its values held to this
+reference by canary-wap's `tests_host/test_chirp_protocol_invariants.cpp`)
+MUST observe:
 
 1. **No automatic origination.** Beacons are originated only on explicit
    user action. Sensors (CSI, motion, audio) may prompt a human; sensors
