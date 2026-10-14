@@ -226,10 +226,11 @@ def _canary_event_name(data: dict[str, Any]) -> Any:
     The CSI dialect's `event_type` is the row's state. A row with no state
     of its own carries the wire's placeholder `unknown` there and its name
     only in `type`. Every stateless row does: the summaries, the activity
-    ribbon's ribbon_bucket_advanced every 15 minutes, and the canary-wap's
-    BLE link and discovery rows. Only a summary row is named by its type,
-    so a summary reads `daily_summary` or `held_summary`, and every other
-    stateless row reads `unknown`, as before HA28.
+    ribbon's ribbon_bucket_advanced every 15 minutes, and ble.events' link
+    and discovery rows (declared, though no firmware emits them today).
+    Only a summary row is named by its type, so a summary reads
+    `daily_summary` or `held_summary`, and every other stateless row reads
+    `unknown`, as before HA28.
 
     An `event_type` that is missing, null or empty (no firmware writes the
     last two) falls back to `type`, then to `event` (the canary-sense and

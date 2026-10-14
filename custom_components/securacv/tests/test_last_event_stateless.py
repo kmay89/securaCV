@@ -7,11 +7,12 @@ name rides only in ``type``. Several rows are stateless:
 meta.daily_summary's ``daily_summary`` (every night at 23:55 on a canary or
 canary-wap with a synced clock, since F121), meta.quiet_hours'
 ``held_summary`` (when a Quiet Hours window ends), core.activity_ribbon's
-``ribbon_bucket_advanced`` (every 15 minutes, both trees) and, on the
-canary-wap, ble.events' link and discovery rows (``ble_client_connected``,
-``ble_client_disconnected``, ``canary_discovered``, ``canary_lost``). The
-canary Last event sensor read ``event_type`` first, so it turned
-``unknown`` at each, and the voice brief recorded the same ``unknown``.
+``ribbon_bucket_advanced`` (every 15 minutes, both trees) and ble.events'
+link and discovery rows (``ble_client_connected``,
+``ble_client_disconnected``, ``canary_discovered``, ``canary_lost``, which
+the canary-wap registers but no firmware emits today). The canary Last
+event sensor read ``event_type`` first, so it turned ``unknown`` at each,
+and the voice brief recorded the same ``unknown``.
 
 The sensor now names the two summary rows by their type and leaves every
 other stateless row at ``unknown``, so the ribbon's quarter-hourly row does
@@ -82,8 +83,9 @@ PRESENT_BODY = (
     '"bundled":1,"replay":false,"v":1}'
 )
 # Two stateless rows that are not summaries: core.activity_ribbon's
-# quarter-hourly row (both trees) and a canary-wap ble.events discovery row
-# (its peer hash rides in `note`, which the body does not carry).
+# quarter-hourly row (both trees) and a ble.events discovery row, as the
+# builder would write one (no firmware emits it today; its peer hash rides
+# in `note`, which the body does not carry).
 RIBBON_BODY = (
     '{"event_id":45,"event_type":"unknown","timestamp":87300,"zone":"",'
     '"confidence":"tentative","signed":false,"module":"core.activity_ribbon",'
