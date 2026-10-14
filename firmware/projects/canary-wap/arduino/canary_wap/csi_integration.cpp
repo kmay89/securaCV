@@ -1718,7 +1718,7 @@ bool session_issue(char* hex_out, size_t out_cap, cv_session::Origin origin) {
   esp_fill_random(fresh, cv_session::TOK_BYTES);
   cv_session::issue(g_sessions, session_now_ms(), fresh, origin);
   hex_encode(fresh, cv_session::TOK_BYTES, hex_out);
-  memset(fresh, 0, sizeof(fresh));
+  cv_session::wipe(fresh, sizeof(fresh));
   return true;
 }
 

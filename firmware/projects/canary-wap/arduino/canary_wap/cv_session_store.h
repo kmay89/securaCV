@@ -109,6 +109,14 @@ inline void issue(Store& st, uint64_t now, const uint8_t fresh[TOK_BYTES], Origi
   s->active    = true;
 }
 
+/* Zero `n` bytes at `p` in a way the compiler keeps: a memset on a local
+ * that is dead after it may be dropped (the session bytes a mint leaves on
+ * the stack). */
+inline void wipe(void* p, size_t n) {
+  volatile uint8_t* v = static_cast<volatile uint8_t*>(p);
+  for (size_t i = 0; i < n; ++i) v[i] = 0;
+}
+
 /* The live session `token` names, or nullptr (none, or expired). */
 inline const Slot* find(const Store& st, uint64_t now, const uint8_t token[TOK_BYTES]) {
   for (size_t i = 0; i < SLOTS; ++i) {
@@ -122,13 +130,25 @@ inline const Slot* find(const Store& st, uint64_t now, const uint8_t token[TOK_B
 
 /* The cv_session cookie's value out of a Cookie header ("name=value;
  * name=value; ..."): exactly TOK_HEX_LEN hex characters after the first
- * "cv_session=", ended by ';', ' ' or the end of the header. Anything else
- * is a malformed cookie, and false. */
+ * cookie NAMED cv_session, ended by ';', ' ' or the end of the header.
+ * Anything else is a malformed cookie, and false. The name is the whole
+ * name: it starts the header or follows ';' (spaces or tabs between), so
+ * another cookie whose name ends in it ("xcv_session=") or whose value
+ * holds it ("foo=cv_session=") is not read as the session (sweep F289's
+ * second review). */
 inline bool cookie_hex(const char* cookie_header, char hex_out[TOK_HEX_LEN + 1]) {
   if (!cookie_header || !hex_out) return false;
-  const char* k = strstr(cookie_header, "cv_session=");
+  static const char kName[] = "cv_session=";
+  const char* k = nullptr;
+  for (const char* p = strstr(cookie_header, kName); p; p = strstr(p + 1, kName)) {
+    const char* q = p;
+    while (q > cookie_header && (q[-1] == ' ' || q[-1] == '\t')) --q;
+    if (q == cookie_header || q[-1] == ';') {
+      k = p + (sizeof(kName) - 1);
+      break;
+    }
+  }
   if (!k) return false;
-  k += 11;  /* len("cv_session=") */
   for (size_t i = 0; i < TOK_HEX_LEN; ++i) {
     const char c = k[i];
     const bool is_hex = (c >= '0' && c <= '9') ||

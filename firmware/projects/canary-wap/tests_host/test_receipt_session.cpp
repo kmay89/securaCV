@@ -745,6 +745,102 @@ void test_pair_token_ends_across_the_millis_wrap() {
   CHECK(live == 0);
 }
 
+// The cookie's name is the whole name (sweep F289's second review). The scan
+// used to take the first "cv_session=" anywhere in the header, so another
+// cookie whose name ends in it ("xcv_session=") or whose value holds it
+// ("foo=cv_session=") was read as the session. Not an escalation (the value
+// must still name a live slot), but the header's grammar says a name starts
+// the header or follows ';', and that is what is read now. Between two
+// cv_session pairs the first one wins, as before.
+void test_cookie_name_is_the_whole_name() {
+  reset_world();
+  const std::string landing = landing_session();
+  g_tap_open = true;
+  const std::string owner = call(handle_provisioning_receipt, "", "", "").set_cookie;
+  CHECK(owner.size() == cv_session::TOK_HEX_LEN && landing.size() == cv_session::TOK_HEX_LEN);
+  const std::string not_the_name[] = {
+      "xcv_session=" + owner,
+      "theme=dark; xcv_session=" + owner,
+      "foo=cv_session=" + owner,
+      "theme=dark; foo=cv_session=" + owner + "; lang=en",
+      "a_cv_session=" + owner + ";b=1",
+  };
+  for (const std::string& h : not_the_name) {
+    if (any_session(h)) std::printf("FAIL: Cookie \"%s\" was read as a session\n", h.c_str());
+    CHECK(!any_session(h));
+    CHECK(!owner_session(h));
+    const Reply r = call_raw(handle_provisioning_receipt, "", h, "");
+    CHECK(r.status == "403 Forbidden" && !carries_secret(r));
+  }
+  // A look-alike before the real one does not hide it.
+  CHECK(owner_session("xcv_session=" + landing + "; cv_session=" + owner));
+  CHECK(owner_session("foo=cv_session=" + landing + ";cv_session=" + owner));
+  CHECK(owner_session("  cv_session=" + owner));
+  // The first cv_session pair wins: a landing pair first is a landing session.
+  CHECK(any_session("cv_session=" + landing + "; cv_session=" + owner));
+  CHECK(!owner_session("cv_session=" + landing + "; cv_session=" + owner));
+}
+
+// A unit whose token was never derived holds an empty api_token_str:
+// provision_device() returns before it derives one when the device key cannot
+// be made or stored, and setup() still serves HTTP so the owner can see why.
+// An empty token is no token (sweep F289's second review; csi_mqtt's owner
+// gate already said so): "Bearer " with nothing after it, or ?token= with
+// nothing, matches no credential. Before, each check compared zero bytes and
+// said yes, and the receipt and the QR answered.
+void test_empty_device_token_is_no_token() {
+  const std::string empties[] = {"Bearer ", "Bearer   "};
+  for (const std::string& a : empties) {
+    reset_world();
+    g_device.api_token_str[0] = '\0';
+    const Reply receipt = call(handle_provisioning_receipt, "", "", a);
+    if (receipt.status != "403 Forbidden") {
+      std::printf("FAIL: \"%s\" opened the receipt on an empty token\n", a.c_str());
+    }
+    CHECK(receipt.status == "403 Forbidden");
+    CHECK(receipt.body.find("physical_confirmation_required") != std::string::npos);
+    CHECK(g_receipts == 0);
+    const Reply qr = call(handle_pairing_qr, "", "", a);
+    CHECK(qr.status == "403 Forbidden");
+    CHECK(g_qrs == 0);
+    std::memset(&g_auth, 0, sizeof(g_auth));
+    httpd_req_t req;
+    req.req_hdrs["Authorization"] = a;
+    CHECK(!api_auth_bearer_header_ok(&req, g_device.api_token_str));
+    CHECK(!api_auth_check_optional(&req, g_device.api_token_str));
+    CHECK(!api_auth_check_credential_optional(&req, g_device.api_token_str));
+    CHECK(!api_auth_check_credential(&req, g_device.api_token_str));
+    std::memset(&g_auth, 0, sizeof(g_auth));
+    httpd_req_t req2;
+    req2.req_hdrs["Authorization"] = a;
+    CHECK(!api_auth_check(&req2, g_device.api_token_str));
+    std::memset(&g_auth, 0, sizeof(g_auth));
+    httpd_req_t req3;
+    req3.req_hdrs["Authorization"] = a;
+    CHECK(!api_auth_check_or_query(&req3, g_device.api_token_str));
+  }
+  {
+    reset_world();
+    g_device.api_token_str[0] = '\0';
+    httpd_req_t req;
+    req.query = "token=";
+    CHECK(!api_auth_check_or_query(&req, g_device.api_token_str));
+    CHECK(req.status == "401 Unauthorized");
+  }
+  // What a token-less unit still does: a landing session runs the dashboard,
+  // and the tap serves the receipt (the owner's way back in).
+  {
+    reset_world();
+    g_device.api_token_str[0] = '\0';
+    const std::string landing = landing_session();
+    CHECK(call(handle_ui, "", landing, "").body == "DASHBOARD");
+    g_tap_open = true;
+    const Reply tapped = call(handle_provisioning_receipt, "", "", "");
+    CHECK(tapped.status == "200 OK");
+    CHECK(g_receipts == 1 && g_last_grant == receipt_authority::Grant::BOOT_TAP);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -768,6 +864,8 @@ int main() {
   test_cookie_attributes();
   test_session_ends_across_the_millis_wrap();
   test_pair_token_ends_across_the_millis_wrap();
+  test_cookie_name_is_the_whole_name();
+  test_empty_device_token_is_no_token();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;

@@ -220,8 +220,12 @@ static bool api_auth_check_header(httpd_req_t* req, const char* expected_token) 
   size_t token_len = strlen(token);
   while (token_len > 0 && token[token_len - 1] == ' ') token_len--;
 
-  size_t expected_len = strlen(expected_token);
-  if (token_len != expected_len) {
+  // An empty device token is no token (sweep F289's second review): a unit
+  // whose token was never derived (provision_device() failed and setup()
+  // still serves HTTP) would otherwise take "Bearer " with nothing after it,
+  // a zero-byte compare that says yes.
+  size_t expected_len = expected_token ? strlen(expected_token) : 0;
+  if (expected_len == 0 || token_len != expected_len) {
     auth_record_failure();
     httpd_resp_set_status(req, "403 Forbidden");
     httpd_resp_set_type(req, "application/json");
@@ -275,6 +279,8 @@ static bool api_auth_check_credential(httpd_req_t* req, const char* expected_tok
 // The bearer token in the Authorization header, and nothing else: no
 // cookie, no response sent, no lockout counted.
 static bool api_auth_bearer_header_ok(httpd_req_t* req, const char* expected_token) {
+  // An empty device token is no token (see api_auth_check_header).
+  if (!expected_token || expected_token[0] == '\0') return false;
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
@@ -365,8 +371,10 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
     if (httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
       presented_credential = true;
       size_t token_len = strlen(token);
-      size_t expected_len = strlen(expected_token);
-      if (token_len == expected_len && constant_time_compare(token, expected_token, expected_len)) {
+      size_t expected_len = expected_token ? strlen(expected_token) : 0;
+      // An empty device token is no token: ?token= with nothing matches none.
+      if (expected_len > 0 && token_len == expected_len &&
+          constant_time_compare(token, expected_token, expected_len)) {
         auth_record_success();
         return true;
       }
