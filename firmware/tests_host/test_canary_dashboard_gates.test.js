@@ -505,10 +505,18 @@ function exportKeys() {
 }
 
 function exportPage(answer) {
-  const record = { alerts: [], blobs: [], clicks: [], navigated: null, revoked: [] };
+  const record = { alerts: [], blobs: [], clicks: [], navigated: null, revoked: [], later: [] };
   class Blob {
     constructor(parts, opts) { this.text = parts.join(""); this.type = opts && opts.type; record.blobs.push(this); }
   }
+  // Every way a page sends the browser elsewhere is recorded: location.href,
+  // location = ..., window.location = ..., assign/replace.
+  const loc = {
+    set href(v) { record.navigated = v; }, get href() { return ""; },
+    assign: (v) => { record.navigated = v; }, replace: (v) => { record.navigated = v; },
+  };
+  const nav = { get() { return loc; }, set(v) { record.navigated = v; } };
+  const win = Object.defineProperty({}, "location", nav);
   const ctx = {
     Blob,
     URL: { createObjectURL: (b) => `blob:${record.blobs.indexOf(b)}`, revokeObjectURL: (u) => record.revoked.push(u) },
@@ -516,11 +524,13 @@ function exportPage(answer) {
       createElement: () => ({ click() { record.clicks.push({ href: this.href, download: this.download }); }, remove() {} }),
       body: { appendChild() {} },
     },
-    window: { location: { set href(v) { record.navigated = v; }, get href() { return ""; } } },
+    window: win,
     alert: (m) => record.alerts.push(m),
-    setTimeout: (fn) => fn(),
+    // Timers wait until the test runs them, as a browser's would.
+    setTimeout: (fn) => { record.later.push(fn); return record.later.length; },
     api: async (url, method) => { record.asked = `${method} ${url}`; return answer; },
   };
+  Object.defineProperty(ctx, "location", nav);
   vm.createContext(ctx);
   vm.runInContext(exporter + "\nglobalThis.__t = { exportWitness };\n", ctx);
   return { ctx, record };
@@ -536,7 +546,9 @@ test("handle_export answers the bundle inline and names no URL", () => {
 test("Export saves the answer it got, as a JSON download, and alerts nothing", async () => {
   const answer = {};
   for (const k of exportKeys()) answer[k] = k === "ok" ? true : `${k}-value`;
-  answer.device_id = "canary-s3-4dC2";
+  // An id with characters a file name should not carry, as a device id
+  // set by hand could.
+  answer.device_id = "canary s3/4dC2";
   answer.last_record = { seq: 7, hash: "ab".repeat(32), type: "BOOT", verified: true };
   const p = exportPage(answer);
   await p.ctx.__t.exportWitness();
@@ -546,8 +558,11 @@ test("Export saves the answer it got, as a JSON download, and alerts nothing", a
   assert.strictEqual(p.record.blobs.length, 1);
   assert.strictEqual(p.record.blobs[0].type, "application/json");
   assert.deepStrictEqual(JSON.parse(p.record.blobs[0].text), answer, "the file is the answer, every field");
-  assert.deepStrictEqual(p.record.clicks, [{ href: "blob:0", download: "witness-export-canary-s3-4dC2.json" }]);
-  assert.deepStrictEqual(p.record.revoked, ["blob:0"]);
+  assert.deepStrictEqual(p.record.clicks, [{ href: "blob:0", download: "witness-export-canary_s3_4dC2.json" }],
+    "saved under the id with every other character made _");
+  assert.deepStrictEqual(p.record.revoked, [], "the link is not revoked before the save can start");
+  for (const t of p.record.later) t();
+  assert.deepStrictEqual(p.record.revoked, ["blob:0"], "and is revoked after it");
 });
 
 test("a refused export alerts the device's reason and saves nothing", async () => {

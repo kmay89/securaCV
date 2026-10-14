@@ -353,8 +353,12 @@ test("the Export readers read an answer's keys and URLs, and what a page follows
     'if (doc["ok"] == true) {}',
     'doc["download_url"] = String("/api/download?path=") + export_path;',
     'last_rec["seq"] = 7; doc["note"] = "see /sd/EXPORT";',
+    'if (export_path[0]) doc["card_path"] = export_path;',
   ].join("\n"));
-  assert.deepStrictEqual(answer, { keys: ["download_url", "note", "ok", "seq"], urls: ["/api/download"] });
+  assert.deepStrictEqual(answer, {
+    keys: ["card_path", "download_url", "note", "ok", "seq"], urls: ["/api/download"],
+    urlKeys: { ok: [], download_url: ["/api/download"], seq: [], note: [], card_path: [] },
+  });
   const page = [
     "async function a() { const data = await api('/api/export', 'POST');",
     "  if (data.ok && data.download_url) { window.location.href = data.download_url; } }",
@@ -365,11 +369,25 @@ test("the Export readers read an answer's keys and URLs, and what a page follows
     "  const later = data.download_url; window.location.href = data.after_scope;",
     "async function e() { const data = await api('/api/export', 'POST');",
     "  const url = URL.createObjectURL(blob); a.href = url; a.download = data.device_id; }",
+    "async function f() { const data = await api('/api/export', 'POST');",
+    "  window.location = data.card_path; location = data['other']; if (location == data.x) {} }",
   ].join("\n");
   const got = exportFollows(page);
-  assert.strictEqual(got.calls, 4);
+  assert.strictEqual(got.calls, 5);
   assert.deepStrictEqual(got.follows.map((f) => `${f.key}@${f.line}`),
-    ["download_url@2", "file@4", "thumb@4", "page@4"]);
+    ["download_url@2", "file@4", "thumb@4", "page@4", "card_path@11", "other@11"]);
+  // Only a key the handler answers with a served /api/ literal may be
+  // followed: download_url names /api/download (served here, refused when
+  // not), card_path a file on the card, and other nothing the handler sends.
+  const where = (f) => `line ${f.line}`;
+  const follow = (key) => [{ key, line: 1 }];
+  assert.deepStrictEqual(exportWrongFollows(answer, follow("download_url"), () => true, where), []);
+  assert.deepStrictEqual(exportWrongFollows(answer, follow("download_url"), () => false, where),
+    ["line 1 follows download_url, which the handler answers with no URL a route serves"]);
+  assert.deepStrictEqual(exportWrongFollows(answer, follow("card_path"), () => true, where),
+    ["line 1 follows card_path, which the handler answers with no URL a route serves"]);
+  assert.deepStrictEqual(exportWrongFollows(answer, follow("other"), () => true, where),
+    ["line 1 follows other, which the handler never answers"]);
 });
 
 test("the page reader reads each call form, quote and URL shape", () => {
@@ -619,14 +637,42 @@ function meantRoute(table, method, path) {
 //   - what a page follows: in the scope of each `X = await api('/api/export'
 //     ...)` (or fetch, secureFetch, cvFetch), a field of X handed to a
 //     navigation, a link, an image or a request (`.href =`, `.src =`,
-//     location.assign/replace, window.open, api/fetch/secureFetch/cvFetch).
-//     A field copied to a variable first is not followed here.
+//     `location =`, location.assign/replace, window.open,
+//     api/fetch/secureFetch/cvFetch). A page may follow only a field the
+//     handler answers with an /api/ literal a route serves; today no field
+//     is one, so any follow fails. A field copied to a variable first is
+//     not followed here.
 
 function exportAnswer(text) {
+  const URL_LIT = /"(\/api\/[^"?#\s]*)/g;
+  // Each key's /api/ literals, read from what is assigned to it (up to the
+  // statement's end): the only value a page may follow is one of those.
+  const urlKeys = {};
+  for (const m of text.matchAll(/\[\s*"(\w+)"\s*\]\s*=(?!=)([^;]*);/g)) {
+    const urls = [...m[2].matchAll(URL_LIT)].map((u) => u[1]);
+    urlKeys[m[1]] = [...new Set([...(urlKeys[m[1]] || []), ...urls])].sort();
+  }
   return {
     keys: [...new Set([...text.matchAll(/\[\s*"(\w+)"\s*\]\s*=(?!=)/g)].map((m) => m[1]))].sort(),
-    urls: [...new Set([...text.matchAll(/"(\/api\/[^"?#\s]*)/g)].map((m) => m[1]))].sort(),
+    urls: [...new Set([...text.matchAll(URL_LIT)].map((m) => m[1]))].sort(),
+    urlKeys,
   };
+}
+
+// What a page's Export may follow: a key the handler answers, and only one
+// whose every assigned value is an /api/ literal a route serves (`served`).
+// A card path, a device id or any other field is not a URL to send the
+// browser or a request to.
+function exportWrongFollows(answer, follows, served, where) {
+  const wrong = [];
+  for (const f of follows) {
+    const urls = answer.urlKeys[f.key] || [];
+    if (!answer.keys.includes(f.key)) wrong.push(`${where(f)} follows ${f.key}, which the handler never answers`);
+    else if (!urls.length || !urls.every(served)) {
+      wrong.push(`${where(f)} follows ${f.key}, which the handler answers with no URL a route serves`);
+    }
+  }
+  return wrong;
 }
 
 function exportHandler(table) {
@@ -681,7 +727,7 @@ function exportFollows(text) {
     calls++;
     const v = m[1];
     const scope = text.slice(m.index, scopeEnd(text, m.index));
-    const sink = new RegExp(`(?:\\.(?:href|src)\\s*=(?!=)|\\blocation\\.(?:assign|replace)\\(|\\bwindow\\.open\\(|\\b(?:api|fetch|secureFetch|cvFetch)\\()` +
+    const sink = new RegExp(`(?:\\.(?:href|src)\\s*=(?!=)|\\blocation\\s*=(?!=)|\\blocation\\.(?:assign|replace)\\(|\\bwindow\\.open\\(|\\b(?:api|fetch|secureFetch|cvFetch)\\()` +
       `\\s*${v}\\s*(?:\\.\\s*(\\w+)|\\[\\s*['"](\\w+)['"]\\s*\\])`, "g");
     for (const f of scope.matchAll(sink)) {
       out.push({ key: f[1] || f[2], line: text.slice(0, m.index + f.index).split("\n").length });
@@ -818,9 +864,8 @@ for (const tree of TREES) {
     for (const page of R.PAGES[tree.key]) {
       const got = exportFollows(R.pageText(page));
       calls += got.calls;
-      for (const f of got.follows) {
-        if (!answer.keys.includes(f.key)) wrong.push(`${page.name} (page line ${f.line}) follows ${f.key}, which ${answer.handlers.join(" → ")} never answers`);
-      }
+      wrong.push(...exportWrongFollows(answer, got.follows, (u) => !!meantRoute(table, "GET", u),
+        (f) => `${page.name} (page line ${f.line}), against ${answer.handlers.join(" → ")},`));
     }
     assert.ok(calls >= 1, `a page of the ${tree.name} posts /api/export (${calls})`);
     assert.deepStrictEqual(wrong, []);

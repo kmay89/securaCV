@@ -20,9 +20,11 @@
 //     field, without the answer's ok, sd_available and card_path;
 //   - with no card: the same bundle, ok:true, sd_available:false, no
 //     card_path, nothing written to the card;
-//   - a card that takes nothing (every write fails): the export still
-//     answers the bundle, names no copy, leaves no torn file, and counts the
-//     SD failure;
+//   - a card that takes nothing (every write fails), or takes only part of
+//     the write: the export still answers the bundle, names no copy, leaves
+//     no torn file, and counts the SD failure;
+//   - a card mounted but gone when the sketch verifies it: the bundle,
+//     sd_available:false, no card_path, no write tried;
 //   - the longest answer (a 31-character device id, every counter at its
 //     uint32 maximum, a card path) stays a few hundred bytes, which is what
 //     lets the handler hold it whole.
@@ -150,11 +152,14 @@ inline void hex_to_str(char* out, const uint8_t* d, size_t n) {
   out[2 * n] = '\0';
 }
 
-// The card's state as the sketch's hooks see it: present means mounted and
-// verified (the fake card's own flag); the counters record what was said.
+// The card's state as the sketch's hooks see it: sd_is_available() is the
+// mount (the fake card's own flag), sd_verify_present() the probe the sketch
+// runs before it trusts the mount, which a card pulled since it was mounted
+// fails (g_sd_verify_ok); the counters record what was said.
 static int g_sd_success = 0, g_sd_failure = 0;
+static bool g_sd_verify_ok = true;
 inline bool sd_is_available() { return SD.present; }
-inline bool sd_verify_present() { return SD.present; }
+inline bool sd_verify_present() { return SD.present && g_sd_verify_ok; }
 inline void sd_op_success() { g_sd_success++; }
 inline void sd_op_failure() { g_sd_failure++; }
 inline const char* sd_state_name(int) { return "stub"; }
@@ -179,6 +184,8 @@ static void reset(bool card, const char* id = "canary-s3-4dC2") {
   SD.dirs.clear();
   SD.writes = 0;
   SD.fail_writes = false;
+  SD.short_write_next = 0;
+  g_sd_verify_ok = true;
   g_sd_success = g_sd_failure = 0;
   g_log.clear();
   memset(&g_device, 0, sizeof g_device);
@@ -270,6 +277,36 @@ static void test_card_refuses() {
   CHECK(g_sd_failure == 1 && g_sd_success == 0, "the SD failure is counted");
 }
 
+static void test_card_cuts_the_write_short() {
+  std::printf("export with a card that takes part of the write\n");
+  reset(true);
+  SD.short_write_next = 10;   // the copy stops ten bytes in
+  httpd_req_t req;
+  handle_export(&req);
+  const json_strict::Value v = answer_of(req);
+  check_bundle(v);
+  names_no_url(req, v);
+  CHECK(v.get("card_path") == nullptr, "a torn copy is not named");
+  CHECK(SD.files.empty(), "and is not left on the card");
+  CHECK(g_sd_failure == 1 && g_sd_success == 0, "the SD failure is counted");
+}
+
+static void test_card_gone_at_verify() {
+  std::printf("export with a card mounted but gone when verified\n");
+  reset(true);
+  g_sd_verify_ok = false;
+  httpd_req_t req;
+  handle_export(&req);
+  const json_strict::Value v = answer_of(req);
+  check_bundle(v);
+  names_no_url(req, v);
+  const json_strict::Value* sd = v.get("sd_available");
+  CHECK(sd && sd->kind == json_strict::Value::Bool && !sd->b, "sd_available:false");
+  CHECK(v.get("card_path") == nullptr, "no card_path");
+  CHECK(SD.writes == 0 && SD.files.empty(), "no write is tried");
+  CHECK(g_sd_success == 0 && g_sd_failure == 0, "no SD operation counted");
+}
+
 static void test_longest_answer() {
   std::printf("the longest answer\n");
   reset(true, "abcdefghijklmnopqrstuvwxyz01234");   // 31 characters, the buffer's most
@@ -291,6 +328,8 @@ int main() {
   test_card_in();
   test_no_card();
   test_card_refuses();
+  test_card_cuts_the_write_short();
+  test_card_gone_at_verify();
   test_longest_answer();
   if (failures) {
     std::printf("%d check(s) FAILED\n", failures);

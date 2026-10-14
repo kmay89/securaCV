@@ -149,6 +149,14 @@ function pageContext(answers, extra = {}) {
   class Blob {
     constructor(parts, opts) { this.text = parts.join(''); this.type = opts && opts.type; record.blobs.push(this); }
   }
+  // Every way a page sends the browser elsewhere is recorded: location.href,
+  // location = ..., window.location = ..., assign/replace.
+  const loc = {
+    set href(v) { record.navigated = v; }, get href() { return ''; }, pathname: '/',
+    assign: (v) => { record.navigated = v; }, replace: (v) => { record.navigated = v; },
+  };
+  const nav = { get() { return loc; }, set(v) { record.navigated = v; } };
+  const win = Object.defineProperty({}, 'location', nav);
   const ctx = {
     console, Blob,
     URL: { createObjectURL: (b) => `blob:${record.blobs.indexOf(b)}`, revokeObjectURL: (u) => record.revoked.push(u) },
@@ -160,7 +168,7 @@ function pageContext(answers, extra = {}) {
       createElement: () => ({ click() { record.clicks.push({ href: this.href, download: this.download }); }, remove() {} }),
       body: { appendChild() {} },
     },
-    window: { location: { set href(v) { record.navigated = v; }, get href() { return ''; } } },
+    window: win,
     alert: (m) => record.alerts.push(m),
     confirm: () => true,
     setTimeout: (fn, ms) => { timers.push(ms); later.push(fn); return timers.length; },
@@ -173,6 +181,7 @@ function pageContext(answers, extra = {}) {
     },
     ...extra,
   };
+  Object.defineProperty(ctx, 'location', nav);
   vm.createContext(ctx);
   vm.runInContext(logicBlock.replace(/const WebUiLogic\s*=/, 'globalThis.WebUiLogic ='), ctx);
   return { ctx, el, calls, timers, later, record, navBtns, subPanels };
@@ -540,7 +549,8 @@ describe('Export saves what it exported (F278)', () => {
   it('Export saves the answer it got, as a JSON download, and alerts nothing', async () => {
     const answer = {};
     for (const k of exportKeys()) answer[k] = `${k}-value`;
-    Object.assign(answer, { ok: true, sd_available: true, device_id: 'canary-s3-4dC2', card_path: '/EXPORT/bundle_7.json' });
+    // An id with characters a file name should not carry.
+    Object.assign(answer, { ok: true, sd_available: true, device_id: 'canary s3/4dC2', card_path: '/EXPORT/bundle_7.json' });
     const p = exportPage(answer);
     await p.ctx.__t.exportWitness();
     assert.deepEqual(p.calls, ['POST /api/export']);
@@ -549,7 +559,8 @@ describe('Export saves what it exported (F278)', () => {
     assert.equal(p.record.blobs.length, 1);
     assert.equal(p.record.blobs[0].type, 'application/json');
     assert.deepEqual(JSON.parse(p.record.blobs[0].text), answer, 'the file is the answer, every field');
-    assert.deepEqual(p.record.clicks, [{ href: 'blob:0', download: 'witness-export-canary-s3-4dC2.json' }]);
+    assert.deepEqual(p.record.clicks, [{ href: 'blob:0', download: 'witness-export-canary_s3_4dC2.json' }],
+      'saved under the id with every other character made _');
     assert.deepEqual(p.record.revoked, [], 'the link is not revoked before the save can start');
     for (const t of p.later) t();
     assert.deepEqual(p.record.revoked, ['blob:0'], 'and is revoked after it');
