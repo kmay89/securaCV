@@ -6767,7 +6767,9 @@ void test_a_join_waits_for_a_leave() {
   g_failed_fired = false;
 
   mesh_session::RequestResult res;
-  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  const mesh_session::Request join = make_request(mesh_session::RequestType::PAIR_JOIN);
+  const mesh_session::Request leave = make_request(mesh_session::RequestType::LEAVE);
+  assert(mesh_session::submit_request(join));
   mesh_session::process(20);
   assert(mesh_session::take_request_result(&res));
   assert(res.type == mesh_session::RequestType::PAIR_JOIN);
@@ -6787,13 +6789,13 @@ void test_a_join_waits_for_a_leave() {
   assert(has(status_body(), "\"pairing_seq\":0,\"pairing_result\":\"none\""));
 
   /* Leave, then join: the same request now starts a joiner. */
-  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::LEAVE)));
+  assert(mesh_session::submit_request(leave));
   mesh_session::process(30);
   assert(mesh_session::take_request_result(&res));
   assert(res.status == mesh_session::RequestStatus::OK && res.notified);
   assert(!mesh_session::has_opera() && mesh_session::trusted_peer_count() == 0);
   g_outs.clear();
-  assert(mesh_session::submit_request(make_request(mesh_session::RequestType::PAIR_JOIN)));
+  assert(mesh_session::submit_request(join));
   mesh_session::process(40);
   assert(mesh_session::take_request_result(&res));
   assert(res.status == mesh_session::RequestStatus::OK && res.pairing_seq == 1);
