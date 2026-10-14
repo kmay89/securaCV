@@ -42,10 +42,12 @@ Configuration section:
 
 The compiled constants in `include/canary/config.h` seed the first boot
 only; live values persist across reboots and OTA installs (see
-`include/canary/detect_config.h`). That file owns every compiled setting.
-The flavor file, `firmware/configs/canary-vision/default/config.h`, holds
-only what something reads from it: the `FEATURE_*` flags, the watchdog
-timeout, and four copies of the detection defaults above
+`include/canary/detect_config.h`). `include/canary/config.h` (with
+`include/canary/topics.h` for the topic patterns) holds the compiled
+settings the flavor file used to repeat. The flavor file,
+`firmware/configs/canary-vision/default/config.h`, holds only what
+something reads from it: the `FEATURE_*` flags and the watchdog timeout,
+which it owns, and four copies of the detection defaults above
 (`CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS`,
 `CONFIG_DWELL_START_MS`) that the flasher catalog reads. Change a default
 in `include/canary/config.h` and its copy with it;

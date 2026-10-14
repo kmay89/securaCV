@@ -7,11 +7,14 @@
  *
  * What lives here is what something reads (sweep F182): the FEATURE_* flags
  * (feature_sanity.h checks them against the board; the Lab's workshop.json
- * copies them) and the watchdog timeout. Every other setting the firmware
- * uses is a constant in projects/canary-vision/include/canary/config.h,
- * which owns it; the four seeds below are copies of four of those constants
- * for the flasher catalog (canary-local/tools/gen_flash.py), held equal to
- * them by scripts/tests/test_vision_flavor_config_readers.py.
+ * copies them) and the watchdog timeout, which this file owns. The settings
+ * it used to repeat are set in the project's own headers:
+ * projects/canary-vision/include/canary/config.h (identity, detection and
+ * dwell defaults, voxel grid, frame size, timing, MQTT buffer, discovery
+ * prefix) and include/canary/topics.h (the topic patterns). The four seeds
+ * below are copies of four config.h constants for the flasher catalog
+ * (canary-local/tools/gen_flash.py), held equal to them by
+ * scripts/tests/test_vision_flavor_config_readers.py.
  */
 
 #pragma once

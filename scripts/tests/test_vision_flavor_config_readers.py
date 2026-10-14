@@ -3,14 +3,18 @@
 
 firmware/configs/canary-vision/default/config.h is on every Vision build's
 include path, but the firmware reads its own constants in
-firmware/projects/canary-vision/include/canary/config.h, which own the
-values. The flavor file named eighteen CONFIG_* settings nothing read, so
-editing one changed nothing; they are gone. What is pinned and why:
+firmware/projects/canary-vision/include/canary/config.h (the topic patterns
+in include/canary/topics.h), which own the values. The flavor file named
+eighteen CONFIG_* settings nothing read, so editing one changed nothing;
+they are gone. It still owns the FEATURE_* flags and the watchdog timeout.
+What is pinned and why:
 
   • every CONFIG_* macro left in the flavor file has a reader outside it: a
     tracked file of a kind that can read a macro (C/C++ sources and headers,
     sketches, Python, JS, build and workflow config) that names it as a
-    whole word. Docs are not readers, and neither is this test;
+    whole word anywhere but in the name of its own #define (a second
+    definition is not a read). Docs are not readers, and neither is this
+    test;
   • every one of them is a seed: a copy of the same-named
     `static constexpr` in the project config.h (CONFIG_ dropped), and it
     must hold the same value. Today they are the four gen_flash.py reads
@@ -19,7 +23,10 @@ editing one changed nothing; they are gone. What is pinned and why:
     seed with no same-named constant, or one whose constant is not a plain
     literal this test can compare, is refused rather than passed;
   • the checks fail on what they exist to catch: a planted unread macro, a
-    seed that drifted, a constant spelled as an expression.
+    seed that drifted, a constant spelled as an expression. Those self-tests
+    run the checkers on synthetic inputs, so they hold the checkers and not
+    the tree, and a re-aligned or re-valued project config.h cannot break
+    them.
 
 Repointing gen_flash.py at the project config.h, which would let the four
 seeds go too, waits for the package that owns gen_flash.py (w18-labflash).
@@ -50,6 +57,8 @@ READER_NAMES = {"Makefile", "CMakeLists.txt"}
 SKIP_PREFIXES = ("canary-local/emulator/dist/",)
 
 DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(CONFIG_[A-Za-z0-9_]+)\b[ \t]*(.*)$", re.M)
+# The defined name of any CONFIG_* #define, which names it without reading it.
+DEFINED_NAME = re.compile(r"^([ \t]*#[ \t]*define[ \t]+)CONFIG_[A-Za-z0-9_]+\b", re.M)
 CONSTEXPR = re.compile(
     r"^[ \t]*static[ \t]+constexpr[ \t]+[^=;]*?\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*([^;]*);", re.M)
 
@@ -90,11 +99,12 @@ def project_constants(text: str) -> dict[str, str]:
 
 
 def unread(macros, corpus) -> list[str]:
-    """The macros no reader text names as a whole word."""
+    """The macros no reader text names as a whole word, outside the name of
+    a #define of its own (a body that uses another CONFIG_* still reads it)."""
     found = set()
     pattern = re.compile(r"\bCONFIG_[A-Za-z0-9_]+\b")
     for text in corpus:
-        found.update(pattern.findall(text))
+        found.update(pattern.findall(DEFINED_NAME.sub(r"\1", text)))
     return sorted(name for name in macros if name not in found)
 
 
@@ -165,8 +175,16 @@ class FlavorConfigReaders(unittest.TestCase):
     # ── the checks catch what they exist to catch ─────────────────────────
 
     def test_a_planted_unread_macro_fails(self):
-        planted = self.flavor_text + "\n#define CONFIG_NOBODY_READS_THIS   7\n"
-        self.assertEqual(unread(flavor_macros(planted), self.corpus), ["CONFIG_NOBODY_READS_THIS"])
+        flavor = ("#define FEATURE_X   1\n"
+                  "#define CONFIG_READ_BY_A_TOOL   70   // a seed\n"
+                  "#define CONFIG_NOBODY_READS_THIS   7\n")
+        corpus = ['read_const(VISION_CFG, "CONFIG_READ_BY_A_TOOL")', "# CONFIG_NOBODY_READS_THESE"]
+        self.assertEqual(unread(flavor_macros(flavor), corpus), ["CONFIG_NOBODY_READS_THIS"])
+
+    def test_a_second_definition_is_not_a_reader(self):
+        macros = {"CONFIG_A": "1", "CONFIG_B": "2"}
+        corpus = ["#define CONFIG_A 1\n", "  #  define CONFIG_B (CONFIG_A + 1)\n"]
+        self.assertEqual(unread(macros, corpus), ["CONFIG_B"])
 
     def test_a_name_inside_a_longer_word_is_not_a_reader(self):
         macros = {"CONFIG_ONLY_IN_DOCS": "1"}
@@ -175,11 +193,14 @@ class FlavorConfigReaders(unittest.TestCase):
         self.assertEqual(unread(macros, ['read_const(VISION_CFG, "CONFIG_ONLY_IN_DOCS")']), [])
 
     def test_a_drifted_seed_fails(self):
-        drifted = self.project_text.replace("SCORE_MIN     = 70;", "SCORE_MIN     = 65;")
-        self.assertNotEqual(drifted, self.project_text, "the project config's SCORE_MIN line moved")
-        problems = seed_problems(self.macros, project_constants(drifted))
+        macros = {"CONFIG_SCORE_MIN": "70", "CONFIG_LOST_TIMEOUT_MS": "1500"}
+        owner = ("static constexpr int SCORE_MIN     = {score};       // 0-100\n"
+                 "static constexpr uint32_t LOST_TIMEOUT_MS = 1500;\n")
+        self.assertEqual(seed_problems(macros, project_constants(owner.format(score=70))), [])
+        problems = seed_problems(macros, project_constants(owner.format(score=65)))
         self.assertEqual(len(problems), 1)
         self.assertIn("CONFIG_SCORE_MIN = 70", problems[0])
+        self.assertIn("SCORE_MIN = 65", problems[0])
 
     def test_a_seed_with_no_owner_or_an_expression_owner_is_refused(self):
         self.assertIn("has no `static constexpr",
