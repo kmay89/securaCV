@@ -651,9 +651,11 @@ export const BENCH_FIXES = [
 // it says that board's pin instead (sweep A59).
 // A flow or step that quotes the mask ROM (`rom`: each { kind, quote }) is
 // offered only where the board's ROM voice (bench.js's ROM_VOICES, by its
-// bench block's `rom.chip`) prints a line of that kind holding the quote: the
-// Nightlight's ESP32-C3 prints no restart or download banner the Lab can
-// quote, so no flow tells it to look for one. A step marked `boot` is
+// bench block's `rom.chip`) holds a line of that kind with the quote in it:
+// the voice is the lines the Lab quotes, not all a chip's ROM prints, and for
+// the Nightlight's ESP32-C3 it quotes no restart or download banner (no
+// Espressif source on file quotes a production C3's), so no flow tells that
+// card to look for one. A step marked `boot` is
 // offered only where the board's BOOT button says the running firmware
 // reads it ("read") or never does ("ignored"): `read_while_running`, and
 // neither where the bench block does not say (sweep A83).

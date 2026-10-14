@@ -727,7 +727,9 @@ test("A59: the pages stage each board's own ROM, and the bench and its flows nam
 // names a BOOT_BUTTON_PIN: the watch, the 1.47" stick, the Touch 1.69, the
 // AMOLED 2.41 and the Nightlight; the 4.3" and 7" dashes name none, GPIO0
 // being an RGB data line there), and three flows quoted ESP32-S3 ROM lines the
-// Nightlight's ESP32-C3 card never prints. Each bench block's BOOT button now
+// Lab quotes no source for on the Nightlight's ESP32-C3 card (no Espressif
+// source on file quotes a production C3's download or restart banner, so its
+// ROM_VOICES entry holds neither). Each bench block's BOOT button now
 // says whether the running firmware reads it (`read_while_running`), held
 // here to its note's words and to the firmware; setBootHeld() narrates from
 // it; and the flows read the board's ROM voice for the lines they quote.
@@ -822,7 +824,7 @@ test("A83: holding BOOT narrates each board's own story, read off its bench bloc
   assert.ok(!events.some(([k]) => k === "log"), "no running firmware, no story");
 });
 
-test("A83: the troubleshooter quotes only the ROM lines the board's chip prints, and tells its own BOOT story", async () => {
+test("A83: the troubleshooter quotes only the ROM lines the Lab quotes for the board's chip, and tells its own BOOT story", async () => {
   const { BENCH_FIXES, benchFixesFor } = await importGuides();
   const { ROM_VOICES } = await importBench();
   const voiceText = (chip) => Object.entries(ROM_VOICES[chip] || {})
@@ -846,8 +848,8 @@ test("A83: the troubleshooter quotes only the ROM lines the board's chip prints,
       assert.ok(st.boot === undefined || st.boot === "read" || st.boot === "ignored", `${st.title}: boot is read or ignored`);
     }
   }
-  // per board: no offered text quotes a ROM line its chip does not print,
-  // and the BOOT steps are its own
+  // per board: no offered text quotes a ROM line the Lab does not quote for
+  // its chip (its ROM_VOICES entry), and the BOOT steps are its own
   const offeredOn = {};
   for (const dev of registry().devices) {
     if (!dev.bench) continue;
@@ -857,7 +859,7 @@ test("A83: the troubleshooter quotes only the ROM lines the board's chip prints,
     for (const f of offered) {
       for (const st of f.steps) {
         for (const t of ROM_TOKENS) {
-          assert.ok(!textOf(f, st).includes(t) || voice.includes(t), `${dev.id}: "${f.symptom}" / ${st.title} quotes ${t}, which its ${dev.bench.rom.chip} never prints`);
+          assert.ok(!textOf(f, st).includes(t) || voice.includes(t), `${dev.id}: "${f.symptom}" / ${st.title} quotes ${t}, which the Lab quotes no line of for its ${dev.bench.rom.chip}`);
         }
         if (st.boot) assert.strictEqual(st.boot === "read", reads, `${dev.id}: ${st.title} tells the other boards' BOOT story`);
       }
@@ -867,11 +869,11 @@ test("A83: the troubleshooter quotes only the ROM lines the board's chip prints,
     assert.strictEqual(/never reads it/.test(JSON.stringify(boot.steps.map((st) => st.body))), !reads, `${dev.id}: the BOOT flow says never-read only where it is true`);
     offeredOn[dev.id] = offered.map((f) => `${f.symptom} (${f.steps.length})`);
   }
-  // the Nightlight's C3: no download banner and no restart banner to quote,
+  // the Nightlight's C3: the Lab quotes no download or restart banner for it,
   // so the download flow and both quoting steps are left out; the restore
   // step is not
   const nl = offeredOn["canary-nightlight"];
-  assert.ok(!nl.some((s) => s.startsWith("Serial says 'waiting for download'")), "the C3 card offers no flow for a banner it never prints");
+  assert.ok(!nl.some((s) => s.startsWith("Serial says 'waiting for download'")), "the C3 card offers no flow for a banner the Lab quotes none of for it");
   assert.ok(nl.includes("It reboots by itself (2)"), `the C3 card's reboot flow keeps its countdown and its restore: ${nl}`);
   assert.ok(nl.includes("Screen dark, but the power light is on (1)"), `...and its screen-dark flow drops the download guess: ${nl}`);
   const s3 = offeredOn["canary-display-watch"];
@@ -881,6 +883,77 @@ test("A83: the troubleshooter quotes only the ROM lines the board's chip prints,
   const bare = { ...benchProfile("canary-display-dash"), buttons: [{ id: "boot", label: "BOOT", note: "GPIO0 strapping pin" }, { id: "reset", label: "RESET" }] };
   assert.deepStrictEqual(benchFixesFor(bare).find((f) => f.symptom === "Pressing BOOT does nothing").steps.map((st) => st.title),
     ["Release it before the next reset"]);
+});
+
+// Sweep A83 review: A83 took out benchFixesFor()'s early return, and with it
+// the identity pin a battery S3 board carried (benchFixesFor(dash) ===
+// BENCH_FIXES), so a filter that dropped one more step on every card passed
+// the checks above, which hold only what may NOT be offered. Each card's
+// flows are held here in closed form: every flow and step whose own markers
+// fit the board (`battery`, `rom`, `boot`), in BENCH_FIXES' order, each as
+// written (its strap's pin for GPIO0 where it names the strap), and nothing
+// else; and what each card leaves out is pinned by name.
+test("A83: each card is offered every flow and step that fits it, as written, and nothing else", async () => {
+  const { BENCH_FIXES, benchFixesFor } = await importGuides();
+  const { ROM_VOICES } = await importBench();
+  const quotedFor = (chip) => Object.entries(ROM_VOICES[chip] || {})
+    .filter(([k, v]) => k !== "name" && typeof v === "string").map(([, v]) => v).join("\n");
+  const leftOut = {};
+  for (const dev of registry().devices) {
+    if (!dev.bench) continue;
+    const reads = dev.bench.buttons.find((b) => b.id === "boot").read_while_running;
+    const battery = !!dev.bench.power?.battery;
+    const voice = quotedFor(dev.bench.rom.chip);
+    const quoted = (x) => (x.rom || []).every((q) => voice.includes(q.quote));
+    const otherStory = reads ? "ignored" : "read";
+    const fits = BENCH_FIXES.filter(quoted)
+      .map((f) => ({ f, steps: f.steps.filter((st) => (battery || !st.battery) && quoted(st) && st.boot !== otherStory) }))
+      .filter(({ steps }) => steps.length);
+    const offered = benchFixesFor(dev.bench);
+    assert.deepStrictEqual(offered.map((f) => [f.symptom, f.steps.map((st) => st.title)]),
+      fits.map(({ f, steps }) => [f.symptom, steps.map((st) => st.title)]), `${dev.id}: every flow and step that fits it, and nothing else`);
+    const strap = dev.bench.rom.boot_strap;
+    offered.forEach((f, i) => {
+      assert.strictEqual(f.symptom, fits[i].f.symptom);
+      f.steps.forEach((st, j) => {
+        const src = fits[i].steps[j];
+        if (strap === "GPIO0" || !src.strap) {
+          assert.strictEqual(st, src, `${dev.id}: ${f.symptom} / ${st.title} is offered as written`);
+          return;
+        }
+        for (const k of ["title", "body", "onDevice"]) {
+          assert.strictEqual(st[k], typeof src[k] === "string" ? src[k].split("GPIO0").join(strap) : src[k],
+            `${dev.id}: ${f.symptom} / ${st.title}: its ${k} as written, ${strap} for GPIO0`);
+        }
+        assert.strictEqual(st.stage, src.stage, `${dev.id}: ${st.title} stages as written`);
+      });
+    });
+    const kept = new Set(offered.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)));
+    leftOut[dev.id] = BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)).filter((t) => !kept.has(t));
+  }
+  const IGNORED_STORY = "Pressing BOOT does nothing / Correct — and that's a design fact";
+  const READ_STORY = "Pressing BOOT does nothing / This board's firmware does read it";
+  const BATTERY_STEPS = [
+    "A red light is always on — can I turn it off? / What actually turns them off",
+    "The charge light is flickering / Fit the battery and it settles",
+    "It died the moment I unplugged the cable / The switch only gates the battery",
+    "It died the moment I unplugged the cable / …and the ride-through, done right",
+  ];
+  const ordered = (titles) => BENCH_FIXES.flatMap((f) => f.steps.map((st) => `${f.symptom} / ${st.title}`)).filter((t) => titles.includes(t));
+  assert.deepStrictEqual(leftOut, {
+    "canary-display-watch": [IGNORED_STORY],
+    "canary-display-dash": [READ_STORY],
+    "canary-display-nightstand-s3": ordered([...BATTERY_STEPS, IGNORED_STORY]),
+    "canary-display-touch169": [IGNORED_STORY],
+    "canary-display-amoled241": [IGNORED_STORY],
+    "canary-display-dash7": [READ_STORY],
+    // the C3: no battery, no download or restart banner the Lab quotes for it
+    "canary-nightlight": ordered([...BATTERY_STEPS, IGNORED_STORY,
+      "Screen dark, but the power light is on / Second guess: it's in download mode",
+      "Serial says 'waiting for download' / That's the ROM, not a fault",
+      "Serial says 'waiting for download' / Recovery is one button",
+      "It reboots by itself / Tell deliberate reboots from brownouts"]),
+  }, "what each card leaves out");
 });
 
 // ── the debug curriculum stages cleanly ─────────────────────────────────
