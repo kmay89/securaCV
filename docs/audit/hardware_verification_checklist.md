@@ -64,7 +64,9 @@ host tests assert they do, on real radio.
     frames (mostly with bad signatures so they're dropped at verify,
     but valid magic + version so they hit the dedup path first).
   - Post-fix expected: a legitimate chirp sent immediately afterward
-    is still delivered (Bloom FPR ~0.4%, the legitimate nonce is
+    is still delivered (after 1,000 nonces a half's false-positive
+    rate is about 0.02 %, up to about twice that for a lookup of both
+    halves, spec §5.3; the legitimate nonce is
     not in the filter), and the receiver's free heap is unchanged
     (no malloc churn).
   - Artifact: `docs/audit/repro/C9/`.
@@ -1889,8 +1891,10 @@ not verify, one log line per suppressed chirp). Compile is CI's. Owner: U1.
 Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
 (`handle_suppress_vote()` takes a chirp out of the recent table at the vote
 that suppresses it; `handle_witness()` refuses a frame whose nonce the
-two-half nonce filter or a recent row holds; the filter's halves turn every
-`NONCE_FILTER_HALF_MS`, 331 s, `mesh_network.h`). Host-tested
+two-half nonce filter or a recent row holds; the filter clears its older
+half at the start of each `NONCE_FILTER_HALF_MS` slot, 331 s,
+`mesh_network.h`, so a nonce is held at least 331 s and at most 662 s).
+Host-tested
 (`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, witnesses,
 votes, confirmations and relays; a frame 30 s ahead heard 1 ms before each
 second from 1 to 700 s after boot, refused at the last millisecond of its
@@ -1901,16 +1905,22 @@ window). Compile is CI's. Owner: U1.
     ten minutes on each, each with a GPS fix; a sniffer for ESP-NOW
     broadcasts on A's channel, to see what A sends and to replay a frame.
   - Repro: B sends an infrastructure chirp (Power outage). Dismiss it on C,
-    D and E within two minutes (three of four rows: suppressed on A). Then
-    confirm it on C and D with `POST /api/chirp/confirm` (their dashboards
-    hide a chirp they dismissed), and on A `curl -s -X POST /api/chirp/confirm -d
+    D and E, one right after another, within two minutes of the send (three
+    of four rows: suppressed on A at E's). Then at once confirm it on C and
+    D with `POST /api/chirp/confirm` (their dashboards hide a chirp they
+    dismissed): a board keeps a chirp it dismissed only until its next
+    prune, at most 30 s later, and its confirm then answers 404
+    `not_found` and sends nothing, so if either confirm answers 404, run the
+    scene again. On A `curl -s -X POST /api/chirp/confirm -d
     '{"nonce":"<its nonce>"}'` with the nonce read from A's list before the
     third dismissal. Then, within five minutes of B's send, replay B's frame
     to A from the sniffer capture (or let C relay it, if C validated it).
   - Expected: A's `GET /api/chirp/recent` drops the chirp at the first read
-    after the third dismissal; the confirmations make A send no relay (no
-    hop-1 witness frame from A); A's confirm answers 404
-    `not_found` and sends no ACK; the replayed frame adds no row to A's list.
+    after the third dismissal; C's and D's confirms answer 200 and the
+    sniffer shows each one's signed ACK (confirmed) on the air after E's
+    vote, and they make A send no relay (no hop-1 witness frame from A); A's
+    confirm answers 404 `not_found` and sends no ACK; the replayed frame adds
+    no row to A's list.
     Before F269 A listed it `"suppressed":true`, relayed it after the second
     confirmation, and sent an ACK for the local confirm; before F270 a frame
     replayed just after A's 5-minute filter reset came back unsuppressed.

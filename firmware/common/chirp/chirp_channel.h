@@ -104,8 +104,10 @@ extern "C" {
 #define CHIRP_MAX_NEARBY            32      // MAX_NEARBY_CACHE (was 16)
 // A witness's nonce is refused for at least this long after it is heard,
 // longer than the frame stays fresh (NONCE_FILTER_HALF_MS, spec §5.3; the
-// reference holds nonces in a Bloom filter of two 4 KB halves that turn this
-// often). This header named a 64-entry nonce cache, which 65 frames flush.
+// reference holds nonces in a Bloom filter of two 4 KB halves, the older one
+// cleared at the start of each slot of this length, so a nonce is held at
+// least this long and at most twice this). This header named a 64-entry nonce
+// cache, which 65 frames flush.
 #define CHIRP_NONCE_HOLD_MS         ((CHIRP_WITNESS_MAX_AGE_S + CHIRP_WITNESS_MAX_AHEAD_S + 1) * 1000UL)
 
 // Timing (milliseconds).

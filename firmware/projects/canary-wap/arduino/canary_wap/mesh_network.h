@@ -776,12 +776,13 @@ static const uint32_t PRESENCE_REQUIRED_MS = 600000;   // 10 min presence before
 static const uint32_t WITNESS_MAX_AGE_S = CHIRP_TTL_MS / 1000;   // 300 s
 static const uint32_t WITNESS_MAX_AHEAD_S = 30;
 // The nonce filter's half (sweep F270): a nonce is held from the moment it
-// goes in until the half it went into is cleared, at least this long and at
-// most twice this long. The window above, one second more for the whole
-// seconds the wall clock counts in: 331 s on the uptime clock. A filter
-// cleared whole every CHIRP_TTL_MS forgot a nonce at the next reset, however
-// recent, so a frame heard again just after one was stored again, still
-// fresh, and a suppressed chirp came back with no votes.
+// goes in until the half it went into is cleared, at the start of the slot
+// after next (slots of this length since init(), chirp_channel.cpp), so at
+// least this long and at most twice this long. The window above, one second
+// more for the whole seconds the wall clock counts in: 331 s on the uptime
+// clock. A filter cleared whole every CHIRP_TTL_MS forgot a nonce at the
+// next reset, however recent, so a frame heard again just after one was
+// stored again, still fresh, and a suppressed chirp came back with no votes.
 static const uint32_t NONCE_FILTER_HALF_MS =
     (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S + 1) * 1000;
 static_assert(NONCE_FILTER_HALF_MS > (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S) * 1000,

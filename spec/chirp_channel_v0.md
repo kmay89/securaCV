@@ -400,8 +400,10 @@ On the canary-wap (sweep F233):
 - The chirp is hidden from the receiver's UI. (The canary-wap takes it out
   of its recent table at the vote that suppresses it, sweep F269: `GET
   /api/chirp/recent` does not list it from the loop task's pass that
-  handled the vote, so the dashboard never shows it, and a local confirm or
-  dismiss of it is refused as `not_found` and sends nothing. Before F269 it
+  handled the vote, so the dashboard drops it at its next read of the list
+  (every 5 s on the Chirp tab), and a local confirm or dismiss of it,
+  including one from a list read before the vote, is refused as
+  `not_found` and sends nothing. Before F269 it
   stayed until the next prune, up to 30 s: listed with `suppressed: true`
   and `status: "suppressed"`, which the dashboard's chirp list read neither
   of, still offering Confirm, and a local confirm broadcast a signed ACK. The
@@ -744,11 +746,17 @@ clock and at most 300 s behind it (`CHIRP_TTL_MS`), so one first heard at
 the earliest moment it is accepted stays acceptable for 330 s more.
 
 On the canary-wap (sweep F270) the filter is a Bloom filter in two halves of
-4 KB (32,768 bits, 4 hashes) each. A nonce goes into the current half; every
-`NONCE_FILTER_HALF_MS` (331 s: the 330 s and one more second for the whole
-seconds the wall clock counts in, `mesh_network.h`) the older half is
-cleared and becomes current, and a lookup reads both, so a nonce is held at
-least 331 s and at most 662 s. A witness whose nonce a row of the recent
+4 KB (32,768 bits, 4 hashes) each. Time since the channel started is cut
+into slots of `NONCE_FILTER_HALF_MS` (331 s: the 330 s and one more second
+for the whole seconds the wall clock counts in, `mesh_network.h`). A nonce
+goes into the half of the slot it is heard in; at each slot's start the
+older half is cleared and becomes current, and a lookup reads both. The
+turn is taken at the first lookup, insert or loop pass after the slot's
+start and dated at that start, so however sparse the frames, a nonce is
+found by every lookup up to 331 s after it went in and by none from 662 s
+on (before F270's review a turn was dated when it was taken, and with
+sparse frames a nonce stayed findable for up to three halves, 993 s). A
+witness whose nonce a row of the recent
 table holds is refused too: a row lives up to `DEFAULT_DISPLAY_MS` (30
 min), longer than the filter, and with no wall clock set a frame has no
 freshness window to end it. At n nonces in a half, a half's false-positive
@@ -757,7 +765,9 @@ frame every 81 ms for a whole half); a lookup reads two halves, so up to
 about twice that, and a false positive drops a new witness as a repeat.
 `test_chirp_suppress_wap.cpp` holds a frame 30 s ahead, heard 1 ms before
 each whole second from 1 to 700 s after boot, to refusal at the last
-millisecond of its window.
+millisecond of its window; holds the 331 s and 662 s bounds under sparse
+and busy lookups and across uptime's 49.7-day wrap; and holds a flood of a
+frame every 81 ms for five halves to these false-positive rates.
 
 Before F270 the filter was one 4 KB half cleared whole every
 `CHIRP_TTL_MS`, as long as the freshness window: a frame heard just before
@@ -766,8 +776,9 @@ chirp still held, or, for a suppressed chirp, anew with no votes.
 
 With no wall clock set, a witness is stored with an unverifiable timestamp
 and has no freshness window: once its row has left the table (dismissed,
-suppressed, displaced or past its 30 min) and the filter has turned twice,
-the same frame is stored again.
+suppressed, displaced or past its 30 min) and the filter has forgotten it
+(more than 331 s and at most 662 s after it was heard), the same frame is
+stored again.
 
 ## 6. Privacy Guarantees
 
