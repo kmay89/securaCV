@@ -29,8 +29,8 @@ ticket", "Magic pairing"). The user-facing answers:
 ## 1. Purpose
 
 A brand-new Canary has no Wi-Fi and no screen. Until now the person had to
-find its `SecuraCV-XXXX` setup network, type a key the Flasher printed (or a
-display showed), join it, and fill in a portal. Magic pairing is the one-tap
+find its `SecuraCV-XXXX` setup network, type a key only its serial console
+had printed (or a display showed), join it, and fill in a portal. Magic pairing is the one-tap
 version: the Canary says "I am new and I am listening" over Bluetooth, the
 SecuraCV iPhone app shows a card ("A new Canary is nearby"), the person taps
 it, picks their Wi-Fi from the networks *the Canary itself can see*, types the
@@ -654,7 +654,8 @@ card that names this device.
    and ends in words after 90 s rather than spinning.
 
 Fallbacks, each one named on screen: no card → the setup network (the key
-the Flasher printed — the phone asks the portal's `GET /scan` for the
+the Flasher shows on its card after the flash, read from the Canary's own
+first-boot `[SETUP]` line — the phone asks the portal's `GET /scan` for the
 Canary's own network list), a display's glass QR (the camera is asked for
 at the tap; a good scan starts the join), or a WAP's own setup page;
 "not accepting" → tap BOOT, or power-cycle; a radio that is off or not

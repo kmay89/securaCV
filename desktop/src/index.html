@@ -283,6 +283,11 @@
                      grab it from your router sticker or phone, or just type it.
                      Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password". -->
                 <label>Wi-Fi password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="63" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only to the board.">Use saved</button></span></label>
+                <!-- A name with no password is refused by readProvisioning unless
+                     this is ticked: a forgotten password used to seed an open join
+                     that failed silently on first boot. Same choice, same words, in
+                     the browser flasher (renderWifiFields). -->
+                <label class="check span-2"><input type="checkbox" id="wifi-open"> open network (no password)</label>
                 <label class="broker-only">Home Assistant / MQTT host<input id="mqtt-host" maxlength="63" placeholder="homeassistant.local" autocomplete="off"></label>
                 <label class="broker-only">MQTT port<input id="mqtt-port" type="number" min="1" max="65535" value="1883"></label>
                 <label class="broker-only">MQTT username<input id="mqtt-user" maxlength="32" autocomplete="off"></label>
@@ -584,6 +589,10 @@
               <h3 id="hatch-title">It is alive.</h3>
               <p id="hatch-body"></p>
               <ol id="hatch-steps"></ol>
+              <!-- The setup network and its key, read off the board's own first-boot
+                   line over the serial monitor (app.js feedSetupNetwork) — the only
+                   place that key is ever printed. -->
+              <p id="hatch-setup-net" class="muted hidden" aria-live="polite"></p>
 
               <!-- Birth certificate — the same naming + certificate the web Lab's
                    Hatchery gives, now for the real Canary you just flashed. -->
@@ -940,11 +949,19 @@
                 <div id="hub-fb-qr" class="fb-qr hidden" role="img" aria-label="QR code linking to your hub"></div>
                 <div class="row">
                   <button id="hub-fb-open" class="btn btn-primary hidden">Open your hub →</button>
-                  <input id="hub-fb-host" class="confirm-input hidden" autocomplete="off" spellcheck="false"
-                         placeholder="hub address — an IP works" aria-label="Hub address">
                   <button id="hub-fb-setup" class="btn btn-small hidden">Run self-setup again</button>
                   <button id="hub-fb-stop" class="link-btn">Stop watching</button>
                 </div>
+                <!-- The watch resolves homeassistant.local; some computers never can.
+                     The typed address is offered from the FIRST tick, collapsed — not
+                     only after 25 minutes of silence — and fed into every probe at
+                     once (app.js hubFbHost). The address stays whatever is typed. -->
+                <details id="hub-fb-host-hint" class="fb-host">
+                  <summary>Know its address? Type it here</summary>
+                  <input id="hub-fb-host" class="confirm-input" autocomplete="off" spellcheck="false"
+                         placeholder="hub address — an IP works" aria-label="Hub address">
+                  <span class="muted">From your router's device list (“homeassistant”). The watch uses it on its next tick.</span>
+                </details>
               </div>
             </section>
           </section>

@@ -1637,6 +1637,61 @@ export function parseSelfManifest(text) {
   return null;
 }
 
+// ── the setup network's key, off the board's own first-boot line ────────────
+// A Sense or Vision prints its setup network and its eight-character key
+// exactly once, when the portal comes up (firmware/common/network/
+// setup_portal.cpp: `[SETUP] Setup network up: "SecuraCV-XXXX"  password
+// <key>  (channel N)`); a WAP prints its cv-… key when its AP starts
+// (canary_wap.ino: `[WIFI] AP started: SecuraCV-XXXX (password: cv-…)`).
+// Nothing else ever shows that key — not the Flasher, not a sticker — so
+// the one honest place to hand it to the owner is the done card, read off
+// this line. One parser for both flashers: the desktop inlines the SAME two
+// patterns (desktop/src/app.js, pinned equal by tests/desktop_parity.test.js,
+// which also holds them to the firmware's own printf strings).
+export const SETUP_NETWORK_LINE_RES = [
+  /\[SETUP\] Setup network up: "([^"\n]+)"\s+password (\S+)/g,
+  /\[WIFI\] AP started: (\S+) \(password: ([^)\n]+)\)/g,
+];
+export function parseSetupNetwork(text) {
+  const t = String(text || "");
+  let last = null;
+  for (const re of SETUP_NETWORK_LINE_RES) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t))) last = { ssid: m[1], key: m[2], at: m.index };
+  }
+  return last ? { ssid: last.ssid, key: last.key } : null;
+}
+// The one line both done cards print once the key is heard.
+export function setupNetworkLine(net) {
+  return `Its setup network: ${net.ssid} · key ${net.key}`;
+}
+
+// ── the Bluetooth setup door: when to say "leave the WiFi blank" ───────────
+// `setup_door` is a catalog fact gen_flash.py derives from what each build
+// compiles (improv_ble.cpp; the WAP's FULL profile), never a role guess: a
+// product that wrongly said true would send an owner to wait for a card
+// that never comes. Both flashers show the note only for these products.
+export function hasSetupDoor(product) {
+  return !!(product && product.setup_door === true);
+}
+export const SETUP_DOOR_NOTE =
+  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+
+// ── a network name with no password is a question, not an answer ────────────
+// An SSID typed with the password left empty used to seed an OPEN join: the
+// builder accepts an empty key for genuinely open networks, so a forgotten
+// password became a board that boots, fails to join, and raises its setup
+// network — with no word about why. Both flashers now refuse that unless the
+// owner ticked the explicit open-network choice. Same words in both.
+export const WIFI_PASS_REQUIRED =
+  "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+export function wifiFieldsVerdict(ssid, pass, openNetwork) {
+  if (!ssid) return { ok: true, skipped: true };
+  if (!pass && !openNetwork) return { ok: false, error: WIFI_PASS_REQUIRED };
+  return { ok: true, skipped: false };
+}
+
 // Group a hex fingerprint into readable byte pairs (aa:bb:cc…), capped.
 export function formatFingerprint(hex, maxBytes = 8) {
   const h = String(hex || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();

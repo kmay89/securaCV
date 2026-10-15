@@ -4406,3 +4406,115 @@ test("both flashers name a full-flash backup canary-<mac6>…-backup.bin, and th
   assert.match(libRs, /\.join\(rescue::backup_filename\(&mac, &stamp\.to_string\(\)\)\)/);
   assert.ok(engineRs("rescue").includes('"canary-ddeeff-backup.bin"'), "rescue.rs no longer pins the browser's scheme");
 });
+
+// ── The setup network's key, off the board's own first-boot line ───────────
+//
+// A Sense or Vision prints its setup network and key exactly once, when the
+// portal comes up; a WAP when its AP starts. Nothing else ever shows that key
+// ("the key the Flasher printed" never existed until both flashers read this
+// line). The browser parses it in flash-core.js; the Mac app inlines the SAME
+// two patterns. Hold them equal, hold both to the firmware's own printf
+// strings, and hold both frontends to rendering the result where the hatch
+// steps ask for it.
+test("setup-network key: one parser, both flashers, pinned to the firmware's printf", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const src = read(join(ROOT, "desktop", "src", "app.js"));
+  const block = src.match(
+    /const SETUP_DOOR_NOTE =[\s\S]*?\nfunction setupNetworkLine\([\s\S]*?\n}\n/);
+  assert.ok(block, "desktop/src/app.js no longer carries the inlined setup-network parser block");
+  const native = new Function(`${block[0]}; return { SETUP_DOOR_NOTE, WIFI_PASS_REQUIRED, ` +
+    `SETUP_NETWORK_LINE_RES, parseSetupNetwork, setupNetworkLine };`)();
+
+  // The copy and the patterns, byte for byte.
+  assert.equal(native.SETUP_DOOR_NOTE, core.SETUP_DOOR_NOTE, "the 'leave blank' note drifted between flashers");
+  assert.equal(native.WIFI_PASS_REQUIRED, core.WIFI_PASS_REQUIRED, "the no-password refusal drifted between flashers");
+  assert.deepEqual(native.SETUP_NETWORK_LINE_RES.map((r) => r.source),
+    core.SETUP_NETWORK_LINE_RES.map((r) => r.source), "the setup-network line patterns drifted");
+
+  // The firmware's own format strings — a reworded printf fails here, not on
+  // a bench. The %s slots are rendered with sample values and parsed back.
+  const portal = read(join(ROOT, "firmware/common/network/setup_portal.cpp"));
+  const senseFmt = '[SETUP] Setup network up: \\"%s\\"  password %s  (channel %u)\\n';
+  assert.ok(portal.includes(senseFmt),
+    "setup_portal.cpp no longer prints the `[SETUP] Setup network up` line both flashers parse");
+  const wap = read(join(ROOT, "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"));
+  const wapFmt = "[WIFI] AP started: %s (password: %s)\\n";
+  assert.ok(wap.includes(wapFmt),
+    "canary_wap.ino no longer prints the `[WIFI] AP started` line both flashers parse");
+  const render = (fmt, ...vals) => fmt.replace(/\\"/g, '"').replace(/\\n/g, "\n")
+    .replace(/%[su]/g, () => String(vals.shift()));
+  const senseLog = "rst:0x1 (POWERON)\n[WIFI] No credentials yet — raising the setup network; sensing continues.\n" +
+    render(senseFmt, "SecuraCV-4dC2", "a7Kq2pMx", 1) +
+    "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\n";
+  const wapLog = "[PROV] Deriving device-unique AP password...\n" +
+    render(wapFmt, "SecuraCV-9Fa1", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
+  for (const [label, log, want] of [
+    ["sense/vision", senseLog, { ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }],
+    ["wap", wapLog, { ssid: "SecuraCV-9Fa1", key: "cv-7hJ2kQ9mN4pR" }],
+  ]) {
+    assert.deepEqual(core.parseSetupNetwork(log), want, `browser parser misread the ${label} line`);
+    assert.deepEqual(native.parseSetupNetwork(log), want, `native parser misread the ${label} line`);
+    assert.equal(native.setupNetworkLine(want), core.setupNetworkLine(want), "the rendered line drifted");
+  }
+  assert.equal(core.parseSetupNetwork("just boot text"), null);
+  assert.equal(native.parseSetupNetwork("[SETUP] Join requested: \"Home\""), null,
+    "a different [SETUP] line must not read as the network-up line");
+  assert.match(core.setupNetworkLine({ ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }),
+    /^Its setup network: SecuraCV-4dC2 · key a7Kq2pMx$/);
+
+  // Both frontends LISTEN and RENDER it: the browser's voice/monitor and done
+  // card, the desktop's serial-log listener and hatch card.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+  assert.match(flashJs, /core\.parseSetupNetwork\(v\.buf\)/, "the browser voice no longer parses the key off the stream");
+  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet\)/,
+    "the browser done card no longer listens to the first boot for the key");
+  assert.match(flashJs, /maybeSetupNet\(buf\)/, "the browser monitor no longer renders the key line");
+  assert.match(src, /feedSetupNetwork\(ev\.payload\)/, "the desktop serial:log listener no longer feeds the parser");
+  assert.match(html, /id="hatch-setup-net"/, "the desktop hatch card lost its setup-network line");
+  assert.match(src, /renderSetupNetwork\(\); \/\/ the key, if the first boot has printed it already/,
+    "showHatchCard no longer renders a key that landed before the card");
+});
+
+// ── The Bluetooth setup door: "leave the WiFi blank" only where it is true ──
+test("setup door: catalog-derived, both flashers say it, neither prefills past it", async () => {
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+
+  // Every product carries the derived fact, and the WAP's/all-rounder's
+  // hatch leads with the iPhone card exactly when the door exists.
+  for (const p of catalog.products) {
+    assert.equal(typeof p.setup_door, "boolean", `${p.id}: setup_door must be derived for every product`);
+    if (p.provisioning === "ap") {
+      const leadsWithCard = /iPhone app/.test(p.hatch.steps[0]);
+      assert.equal(leadsWithCard, p.setup_door,
+        `${p.id}: the hatch leads with the iPhone card iff the build compiles the door`);
+      assert.match(p.hatch.steps.join(" "), /key it prints on its serial console/,
+        `${p.id}: the setup-network step must name the key — "nothing to type" was false`);
+      assert.doesNotMatch(p.provisioning_note, /Nothing to type/, `${p.id}: the setup network has a key`);
+    }
+  }
+  assert.ok(catalog.products.some((p) => p.setup_door), "no product derives a setup door — gen_flash.py's has_setup_door broke");
+  assert.ok(catalog.products.filter((p) => p.provisioning === "ap").some((p) => !p.setup_door),
+    "the all-rounder canary compiles no door and must not be told to wait for a card");
+
+  // Both read the catalog fact — never a role guess.
+  assert.match(flashJs, /core\.hasSetupDoor\(product\)/, "browser flasher no longer gates the note on setup_door");
+  assert.match(appJs, /const door = p\.setup_door === true;/, "desktop no longer gates on setup_door");
+  assert.match(appJs, /if \(!door && !\$\("wifi-ssid"\)\.value\) \{\s*\n\s*invoke\("current_ssid"\)/,
+    "desktop prefills the current SSID for a door-bearing product again");
+  // The note sits where the decision is made, in both.
+  assert.match(flashJs, /core\.SETUP_DOOR_NOTE/, "browser flasher lost the 'leave blank' note under WiFi (optional)");
+  assert.match(appJs, /\(door \? " " \+ SETUP_DOOR_NOTE : ""\)/, "desktop provision note lost the 'leave blank' sentence");
+
+  // A name with no password is refused unless the open-network box is ticked,
+  // in both — same words (pinned above), same explicit choice.
+  for (const [label, s] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(s.includes("open network (no password)"), `${label} lost the explicit open-network choice`);
+  }
+  assert.match(flashJs, /core\.wifiFieldsVerdict\(ssid\.value, pass\.value, openChk\.checked\)/,
+    "browser credentials() no longer runs the shared verdict");
+  assert.match(appJs, /if \(\$\("wifi-ssid"\)\.value && !wifiPass && !\(\$\("wifi-open"\) && \$\("wifi-open"\)\.checked\)\) \{\s*\n\s*setStatus\("flash-result", WIFI_PASS_REQUIRED, "err"\)/,
+    "desktop readProvisioning no longer refuses a name with no password");
+});

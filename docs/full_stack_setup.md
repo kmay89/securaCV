@@ -83,11 +83,12 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
   "Preparing Home Assistant" page the OS shows first; the Flasher tells
   the two apart and says "found it, still installing" meanwhile), checks the
   login works, and tells you. Your first visit is then a **sign-in**, not a
-  setup wizard. Closed the Flasher? The **SecuraCV iPhone app** does the
-  same from your pocket: Fleet → Options → *Set up a hub or a Canary* finds
-  the hub on your Wi-Fi, creates the account, and finishes step 3 below
-  through Home Assistant itself. Why a second device is needed at all, and
-  what would make the card alone enough:
+  setup wizard. Closed the Flasher? The **SecuraCV iPhone app** (on
+  TestFlight by invite today; App Store release pending) does the same from
+  your pocket: Fleet → Options → *Set up a hub or a Canary* finds the hub on
+  your Wi-Fi, creates the account, and finishes step 3 below through Home
+  Assistant itself. Why a second device is needed at all, and what would
+  make the card alone enough:
   [a truly headless hub install](hub_headless_install.md).
 
 **Working looks like:** the Home Assistant dashboard in your browser.
@@ -100,9 +101,16 @@ Put the card in the Pi, connect power (and ethernet if you're not using Wi-Fi).
 The hub needs an MQTT broker, then the securaCV kernel that turns detections into
 signed claims.
 
-**The one-command path:** already looking at the Home Assistant dashboard?
-Install the **Terminal & SSH** app (Settings → Apps → App Store), open it,
-and run:
+**The one-click path:** install the **SecuraCV** app (add
+`https://github.com/kmay89/securaCV` as an app repository, Settings → Apps →
+App Store → **SecuraCV** → Install → Start), open the SecuraCV panel in the
+hub's sidebar and press **Install the integration and restart Home
+Assistant** — the app carries the integration and copies it in on that
+click, nothing to type. Mosquitto and Frigate are the two installs below.
+
+**The one-command fallback:** already looking at the Home Assistant
+dashboard and prefer a terminal? Install the **Terminal & SSH** app
+(Settings → Apps → App Store), open it, and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/install.sh | bash
@@ -306,9 +314,11 @@ Set up walkthrough when the Flasher is closed. If a run stops partway it's
 safe to press "Run self-setup again": it never repeats a finished step.
 (Manual fallback from that same console:
 `sh /mnt/boot/CONFIG/securacv/host_provision.sh`.) What it does **not** do
-yet is install the SecuraCV *integration* (the `custom_components` half):
-that is still the one-command installer above, or HACS — see
-[the investigation](hub_headless_install.md) for the add-on-side fix.
+is install the SecuraCV *integration* (the `custom_components` half) — the
+Flasher's finish line says so: one click is still yours. Open the SecuraCV
+panel in the hub's sidebar and press **Install the integration and restart
+Home Assistant**; the terminal one-liner above, or HACS, remains the
+fallback ([the investigation](hub_headless_install.md) has the history).
 
 The self-setup can also install **Pi-hole** (recommended, one untick to
 skip; manual: append `--with pihole`). Why it's paired with securaCV: our

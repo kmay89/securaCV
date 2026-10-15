@@ -11,6 +11,16 @@ Privacy-preserving witness device firmware for ESP32 boards.
 
 ## Quick Start
 
+**Flash it from your browser → [the Lab's start page](https://kmay89.github.io/securaCV/canary-local/start.html)**
+(or the desktop Flasher; [`docs/browser_flasher.md`](../docs/browser_flasher.md)).
+Every released image below is one click there — no toolchain. A Sense,
+Vision or WAP then takes your Wi-Fi from the SecuraCV iPhone app in one tap
+at first power-on; every board also raises its own `SecuraCV-XXXX` setup
+network, with the key the Flasher's done card shows (read off the board's
+first boot).
+
+### Build from source (makers)
+
 Choose your project and board:
 
 | Project | Board | Use Case | Quick Start |
@@ -21,7 +31,7 @@ Choose your project and board:
 | **Canary Display** | ESP32-S3 / C6 / C3 glass: round watch, 4.3" dash, 7" dash7 / nightstand7, 1.47" sticks, Touch 1.69, AMOLED 2.41 (one manifest per product under [`devices/`](../devices/)) | Fleet status glass: MQTT subscribe, on-device Ed25519 chain verify, glance UI | [Get Started →](projects/canary-display/) |
 | **Canary Sentinel** | XIAO ESP32-C3 / C6+MR60 (+S3 hub) | Multi-sensor fusion people detection (PIR + radar + WiFi/BLE + light), Lite/Standard/Heavy — **Phase 1a: compile-gated in CI, not released** (no flasher product, no published OTA channel) | [Get Started →](projects/canary-sentinel/) |
 
-### Canary WAP (Recommended First Project)
+### Canary WAP
 
 ```bash
 cd firmware/projects/canary-wap
@@ -36,12 +46,14 @@ make upload
 make monitor
 ```
 
-Connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the numeric
-fallback http://192.168.4.1)
+Hand it your Wi-Fi from the SecuraCV iPhone app (the *new Canary is nearby*
+card), or connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the
+numeric fallback http://192.168.4.1).
 
 > **Security Note:** The AP password is device-unique (derived from the
-> device key) and printed on the serial console at first boot — there is
-> no shared default. See `secrets/secrets.example.h` for optional overrides.
+> device key) and printed on the serial console at first boot (`[WIFI] AP
+> started: … (password: cv-…)`) — there is no shared default. See
+> `secrets/secrets.example.h` for optional overrides.
 
 ### Canary Vision
 

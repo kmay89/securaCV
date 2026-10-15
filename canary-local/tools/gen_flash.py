@@ -651,9 +651,20 @@ BOARD_ACCESS = {
 }
 
 PROVISIONING = {
-    "ap": "When it boots it hands you a WiFi network of its own — join it and a "
-          "setup page opens automatically. Nothing to type here; no secrets ever "
-          "touch the browser.",
+    # The all-rounder Canary (firmware/canary): a setup network and nothing
+    # else — it compiles no Bluetooth setup door. Its network has a KEY, the
+    # cv-… one its boot banner prints; "nothing to type" was false.
+    "ap": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a "
+          "key it prints on its serial console at boot — join it and a setup page "
+          "opens automatically. No secrets ever touch the browser.",
+    # The WAP: the same setup network, plus the Bluetooth setup door (Improv
+    # Wi-Fi, FULL profile — every shipped WAP image) the iPhone app walks
+    # through. Lead with the door; the network stays as the fallback.
+    "ap-door": "Power it on near the SecuraCV iPhone app and tap the card that appears — "
+               "it hands over your WiFi in one tap. No iPhone? It also raises a WiFi "
+               "network of its own (SecuraCV-XXXX) with a key it prints on its serial "
+               "console at boot — join it and a setup page opens automatically. No "
+               "secrets ever touch the browser.",
     "usb-secrets": "Fill in WiFi during the install and it’s written straight into the "
                    "chip’s settings region — the signed generic release then joins YOUR "
                    "network on first boot, no custom build needed. (Leave it empty and "
@@ -662,6 +673,112 @@ PROVISIONING = {
                 "and the fleet on first boot. Bake WiFi here during the install and it "
                 "skips straight to meeting your Canaries.",
 }
+
+
+def provisioning_note(product_id: str, provisioning: str) -> str:
+    """The confirm card's one-line promise about first boot. Keyed by the
+    provisioning kind, except that the two `ap` families differ in a way an
+    owner feels at once: the WAP opens the Bluetooth setup door and the
+    all-rounder Canary does not, so the WAP leads with the iPhone card."""
+    if provisioning == "ap" and product_role(product_id) == "wap":
+        return PROVISIONING["ap-door"]
+    return PROVISIONING[provisioning]
+
+
+def arduino_feature_on(text: str, feature: str, who: str) -> bool:
+    """Whether `feature` is ON in the WAP sketch's build_config.h for the build
+    the release makes: arduino-cli names no profile and no hardware, so the
+    file's own defaults apply (the `#if !defined(...)` fallbacks — FULL on the
+    XIAO ESP32-S3). The feature's `#define` in the FULL block is evaluated by
+    resolving each identifier through the FULL block's own defines and the
+    default hardware block's (HW_HAS_BLE and friends); `&&`, `||`, `!` and
+    parentheses over 0/1 are the whole grammar. Anything this cannot spell —
+    a missing define, a token outside those blocks, any other operator — is a
+    refusal, not a False: a wrong answer here sends an owner to wait for a
+    card that never comes, or hides a door that is open."""
+    def block(head_re: str) -> str:
+        m = re.search(head_re + r"(.*?)(?=\n#(?:elif|else|endif)\b)", text, re.S)
+        if not m:
+            raise SystemExit(f"gen_flash.py: {who}: build_config.h has no block matching {head_re!r} — "
+                             f"cannot derive {feature}; teach arduino_feature_on the new layout.")
+        return m.group(1)
+    if not re.search(r"#if !defined\(BUILD_PROFILE_MINIMAL\) && !defined\(BUILD_PROFILE_DEV\) && "
+                     r"!defined\(BUILD_PROFILE_FULL\)\n(?:[^\n]*\n)*?#define BUILD_PROFILE_FULL\b", text):
+        raise SystemExit(f"gen_flash.py: {who}: build_config.h no longer defaults to BUILD_PROFILE_FULL — "
+                         f"the release's arduino-cli build names no profile, so {feature} cannot be derived.")
+    if not re.search(r"#if !defined\(HARDWARE_XIAO_ESP32S3\) && !defined\(HARDWARE_XIAO_ESP32C3\)\n"
+                     r"(?:[^\n]*\n)*?#define HARDWARE_XIAO_ESP32S3\b", text):
+        raise SystemExit(f"gen_flash.py: {who}: build_config.h no longer defaults to HARDWARE_XIAO_ESP32S3 — "
+                         f"{feature} cannot be derived without knowing the default board.")
+    scopes = [block(r"#elif defined\(BUILD_PROFILE_FULL\)"), block(r"#elif defined\(HARDWARE_XIAO_ESP32S3\)")]
+
+    def define_of(name: str) -> str | None:
+        for scope in scopes:
+            m = re.search(rf"(?m)^\s*#define\s+{re.escape(name)}\s+(.+?)\s*(?://.*)?$", scope)
+            if m:
+                return m.group(1).strip()
+        return None
+
+    def value(expr: str, depth: int) -> bool:
+        if depth > 8:
+            raise SystemExit(f"gen_flash.py: {who}: {feature} resolves through more than 8 defines — refusing.")
+        tokens = re.findall(r"[A-Za-z_]\w*|\d+|&&|\|\||!|\(|\)", expr)
+        if "".join(tokens).replace("&&", "").replace("||", "") != re.sub(r"\s+", "", expr).replace("&&", "").replace("||", ""):
+            raise SystemExit(f"gen_flash.py: {who}: {feature}'s definition {expr!r} uses an operator this "
+                             f"derivation does not evaluate — refusing rather than guessing.")
+        py = []
+        for t in tokens:
+            if t == "&&": py.append(" and ")
+            elif t == "||": py.append(" or ")
+            elif t == "!": py.append(" not ")
+            elif t in "()": py.append(t)
+            elif t.isdigit(): py.append("True" if int(t) else "False")
+            else:
+                d = define_of(t)
+                if d is None:
+                    raise SystemExit(f"gen_flash.py: {who}: {feature} depends on {t}, which neither the FULL "
+                                     f"profile block nor the XIAO ESP32-S3 hardware block defines — refusing.")
+                py.append("(" + ("True" if value(d, depth + 1) else "False") + ")")
+        return bool(eval("".join(py), {"__builtins__": {}}, {}))  # only True/False/and/or/not/()
+
+    d = define_of(feature)
+    if d is None:
+        raise SystemExit(f"gen_flash.py: {who}: the FULL profile block defines no {feature} — refusing to derive setup_door.")
+    return value(d, 0)
+
+
+def has_setup_door(project: str, env: str) -> bool:
+    """Whether this product's image opens the Bluetooth setup door (Improv
+    Wi-Fi) — the catalog's `setup_door`, read from what the build compiles,
+    never typed. Both flashers gate the "leave the WiFi blank, your iPhone
+    hands it over" note and the first-boot listener on it, so a product
+    that wrongly says True sends an owner to wait for a card that never
+    comes.
+
+    PlatformIO envs (Sense, Vision): the env's resolved sections compile
+    common/network/improv_ble.cpp through build_src_filter. The WAP's
+    Arduino sketch: canary_wap.ino includes ble_improv.h, build_config.h
+    turns FEATURE_IMPROV on in the FULL profile, and a build that names no
+    profile — the release's arduino-cli build — is FULL. Displays and the
+    all-rounder canary compile neither, and get False."""
+    if env.startswith("arduino:"):
+        sketches = list((REPO / project).glob("arduino/*/*.ino"))
+        if not sketches:
+            return False
+        if '#include "ble_improv.h"' not in read(sketches[0]):
+            return False
+        cfg = sketches[0].parent / "build_config.h"
+        if not cfg.exists():
+            return False
+        return arduino_feature_on(read(cfg), "FEATURE_IMPROV", f"{project} ({env})")
+    if env.startswith("profile:"):
+        return False
+    sections = pio_sections(project)
+    for sec in pio_section_chain(sections, f"env:{env}") | pio_section_chain(sections, "env"):
+        filt = pio_value(sections.get(sec, ""), "build_src_filter") or ""
+        if "improv_ble.cpp" in filt and not re.search(r"(?m)^\s*-<[^>]*improv_ble\.cpp>", filt):
+            return True
+    return False
 
 
 def wifi_scheme(project: str) -> str:
@@ -875,12 +992,29 @@ def train_gated_broker_tls(project: str, env: str, fw_train: str) -> tuple[bool,
 # desktop/web UI branches so every flasher surface can share the same first-use
 # promise, and CI's catalog drift gate catches missing metadata for new products.
 HATCH_MOMENTS = {
+    # The all-rounder Canary (firmware/canary): no Bluetooth setup door, so
+    # the setup network IS the first step — with its key, which the board
+    # prints on its serial console (the Password line of its boot banner).
     "ap": {
         "kicker": "Canary hatched",
         "title": "Your Canary is on its perch.",
-        "body": "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+        "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-            "Join the SecuraCV-XXXX Wi-Fi network it creates and open canary.local.",
+            "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+            "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+            "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
+        ],
+    },
+    # The WAP: the Bluetooth setup door first (the iPhone card), the setup
+    # network — with its key — as the fallback. The two flashers print the
+    # key off the board's own first-boot line when they hear it.
+    "ap-door": {
+        "kicker": "Canary hatched",
+        "title": "Your Canary is on its perch.",
+        "body": "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
+        "steps": [
+            "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
+            "No card? Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
             "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
             "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
         ],
@@ -941,6 +1075,8 @@ HATCH_MOMENTS = {
 def hatch_kind(product_id: str, provisioning: str) -> str:
     if "display" in product_id:
         return "display-modes" if "modes" in product_id else "display"
+    if provisioning == "ap" and product_role(product_id) == "wap":
+        return "ap-door"
     if "sense-wellbeing" in product_id:
         return "sense-wellbeing"
     if "sense" in product_id:
@@ -2436,7 +2572,12 @@ def main() -> None:
             "board": p["board"],
             "asset_stem": p["asset_stem"],
             "provisioning": p["provisioning"],
-            "provisioning_note": PROVISIONING[p["provisioning"]],
+            "provisioning_note": provisioning_note(p["id"], p["provisioning"]),
+            # Whether this image opens the Bluetooth setup door (Improv
+            # Wi-Fi) — derived from what the build compiles (has_setup_door).
+            # Both flashers gate the "leave the WiFi blank, your iPhone hands
+            # it over" note and the first-boot key listener on it.
+            "setup_door": has_setup_door(project, p["env"]),
             "wifi_nvs": wifi_scheme(project),
             "broker_nvs": reads_broker(project),
             # Whether a provisioned TLS mode is honored by the PINNED train's

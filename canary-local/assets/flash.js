@@ -1013,7 +1013,7 @@ async function openEsptool(port, statusCb) {
 // first, flashing comes second. Any bootloader action (install, health
 // check, backup, rescue) calls ensureSession(), which quietly hands the
 // port back to the bootloader. No chooser, no gestures.
-async function startVoice(consoleEl, onIdentity) {
+async function startVoice(consoleEl, onIdentity, onSetupNet) {
   // Re-entering the connected phase while a voice is already running (e.g.
   // "not yet" from the confirm card): re-bind the LIVE stream to the fresh
   // console element instead of leaving it talking to a detached node.
@@ -1021,8 +1021,10 @@ async function startVoice(consoleEl, onIdentity) {
     const v0 = state.voice;
     v0.consoleEl = consoleEl;
     v0.onIdentity = onIdentity;
+    v0.onSetupNet = onSetupNet;
     consoleEl.textContent = v0.buf || "listening…";
     if (v0.identity && onIdentity) onIdentity(v0.identity);
+    if (v0.setupNet && onSetupNet) onSetupNet(v0.setupNet);
     return;
   }
   if (!state.session) return;
@@ -1031,7 +1033,7 @@ async function startVoice(consoleEl, onIdentity) {
   // second call must see it and take the re-bind path above, not race the
   // port open.
   const v = { port, alive: true, reader: null, writer: null, identity: null,
-              buf: "", consoleEl, onIdentity };
+              setupNet: null, buf: "", consoleEl, onIdentity, onSetupNet };
   state.voice = v;
   try { await state.session.esploader.after("hard_reset"); } catch {}
   try { await state.session.transport.disconnect(); } catch {}
@@ -1087,6 +1089,12 @@ async function startVoice(consoleEl, onIdentity) {
         if (!v.identity) {
           const m = core.parseSelfManifest(v.buf);
           if (m) { v.identity = m; if (v.onIdentity) v.onIdentity(m); }
+        }
+        // The setup network's key is printed ONCE, at first boot, and the
+        // buffer is a rolling window — latch it the moment it lands.
+        if (!v.setupNet) {
+          const n = core.parseSetupNetwork(v.buf);
+          if (n) { v.setupNet = n; if (v.onSetupNet) v.onSetupNet(n); }
         }
       }
     } catch { /* unplug/re-enumeration — ensureSession or reconnect recovers */ }
@@ -3759,6 +3767,11 @@ function renderWifiFields(box, product) {
   const whd = helpDot("wifi_bake");
   if (whd) wh.append(whd);
   sec.append(wh);
+  // The Bluetooth setup door (catalog setup_door — Sense, Vision, WAP): the
+  // iPhone app hands these their WiFi at first power-on, so typing it here
+  // is optional in a stronger sense. Said under the heading, where the
+  // decision is made — the desktop Flasher's provision note says the same.
+  if (core.hasSetupDoor(product)) sec.append(el("p", "fineprint flash-wifi-door", core.SETUP_DOOR_NOTE));
 
   // A visible "you already typed this" banner so remembering is OBVIOUS — not a
   // silent pre-fill the user re-types board after board out of doubt. (Its
@@ -3818,6 +3831,15 @@ function renderWifiFields(box, product) {
   const rowIn = el("div", "flash-wifi-inputs");
   rowIn.append(ssid, pass, showBtn);
   sec.append(rowIn);
+  // A name with no password is refused (core.wifiFieldsVerdict) unless the
+  // owner says, explicitly, that the network is open — a forgotten password
+  // used to seed an open join that failed silently on first boot.
+  const openRow = el("div", "flash-wifi-remember");
+  const openLabel = el("label", "flash-wifi-remember-label");
+  const openChk = el("input"); openChk.type = "checkbox"; openChk.checked = false;
+  openLabel.append(openChk, document.createTextNode(" open network (no password)"));
+  openRow.append(openLabel);
+  sec.append(openRow);
 
   const err = el("p", "flash-note flash-note-soft flash-hidden");
   sec.append(err);
@@ -4073,6 +4095,12 @@ function renderWifiFields(box, product) {
       // successful read, Wi-Fi typed or not.
       const autoUpdate = otaChk.checked;
       if (!ssid.value) return { ok: true, wifi: null, mqtt, autoUpdate }; // wifi optional — skipped
+      const verdict = core.wifiFieldsVerdict(ssid.value, pass.value, openChk.checked);
+      if (!verdict.ok) {
+        err.textContent = verdict.error;
+        err.classList.remove("flash-hidden");
+        return { ok: false, wifi: null, mqtt: null };
+      }
       try {
         // The builder validates lengths; run it small just for the checks.
         core.buildNvsWifiImage(ssid.value, pass.value, 4096);
@@ -4610,6 +4638,24 @@ function phaseDone(opts) {
   }
 
   const product = opts.product;
+  // Where the key for the setup network gets printed. A Canary with no
+  // network baked in raises SecuraCV-XXXX on this first boot and prints the
+  // network's key on its serial console — the only place it ever appears.
+  // The port is still ours, so listen: the voice (startVoice) reopens it at
+  // console speed across the reset and hands the line over the moment it
+  // lands; the done card then says "Its setup network: … · key …" where the
+  // hatch steps ask for it. No network baked in only — a baked network
+  // joins instead, and the line would be the fallback nobody needs.
+  const setupNetSlot = el("p", "muted flash-setup-net flash-hidden");
+  const wantsSetupKey = product && !opts.isBackup && !opts.isLocal && !opts.wifiSsid &&
+    (product.provisioning === "ap" || core.hasSetupDoor(product));
+  const showSetupNet = (n) => {
+    setupNetSlot.textContent = "";
+    setupNetSlot.append(el("span", "flash-check", "✓"));
+    setupNetSlot.append(document.createTextNode(" " + core.setupNetworkLine(n) +
+      " — read off its first boot, over the cable."));
+    setupNetSlot.classList.remove("flash-hidden");
+  };
   if (opts.wifiSsid) {
     const w = el("p", "muted");
     w.append(el("span", "flash-check", "✓"));
@@ -4629,7 +4675,19 @@ function phaseDone(opts) {
       `No network was baked in — this Canary asks for WiFi itself on first boot ` +
       `(its own screen, or the setup network it raises).`));
     box.append(w);
+    if (wantsSetupKey) {
+      // Listening — said out loud, with the live console under it, so a
+      // silent first boot reads as "waiting", never "frozen".
+      const listen = el("div", "flash-firstboot");
+      listen.append(el("p", "muted flash-firstboot-status",
+        "Listening to its first boot for the setup network's key…"));
+      const vcon = el("pre", "flash-console");
+      listen.append(vcon);
+      box.append(listen);
+      startVoice(vcon, null, showSetupNet);
+    }
   }
+  box.append(setupNetSlot);
   if (opts.provBroker) {
     // What was SEALED for the hub link, in the same words the native
     // Flasher's receipt uses (core.MQTT_TLS_RECEIPT, held equal to
@@ -5625,6 +5683,22 @@ function phaseMonitor(port, opts = {}) {
   // board's own mouth (the same self-verify as securacv.com/canary).
   const idCard = el("div", "flash-identity flash-hidden");
   box.append(idCard);
+  // The setup network's key, if this boot prints it (parity: the done card's
+  // own listener and the desktop's serial log) — once, under the console.
+  const setupNetLine = el("p", "muted flash-setup-net flash-hidden");
+  box.append(setupNetLine);
+  let setupNetShown = false;
+  function maybeSetupNet(text) {
+    if (setupNetShown) return;
+    const n = core.parseSetupNetwork(text);
+    if (!n) return;
+    setupNetShown = true;
+    setupNetLine.textContent = "";
+    setupNetLine.append(el("span", "flash-check", "✓"));
+    setupNetLine.append(document.createTextNode(" " + core.setupNetworkLine(n) +
+      " — read off its boot, over the cable."));
+    setupNetLine.classList.remove("flash-hidden");
+  }
   let identityShown = false;
   function maybeIdentity(text) {
     if (identityShown) return;
@@ -5907,6 +5981,7 @@ function phaseMonitor(port, opts = {}) {
         }
         maybeDiagnose(buf);   // fatal signature → plain-language cause + fix
         maybeIdentity(buf);   // `j` self-manifest → verified-identity card
+        maybeSetupNet(buf);   // first-boot setup network + its key → one line
       }
     } catch { return "error"; }
     return "ended";

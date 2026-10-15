@@ -250,7 +250,9 @@ a bad day:
   door's join path is the portal's; no quiet retry of the saved network
   runs under it) and lowers it again when the door shuts without a join.
 - **Never because a saved network is failing** — that raises the SoftAP
-  recovery portal with its printed key, and nothing else.
+  recovery portal with its key (the one on the Flasher's card after the
+  flash — it reads the `[SETUP]` line from the Canary's first boot; the
+  serial console shows the same line), and nothing else.
 - Bounds while open: 3 s between accepted credential writes, 10 attempts
   per open door (then shut until a tap or a power cycle), a 3-minute idle
   disconnect, ~20 s linger after a join. The result carries an empty URL —

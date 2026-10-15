@@ -2,6 +2,90 @@
 
 ## [Unreleased]
 
+### Ridiculously easy, audited: six onboarding journeys walked tap by tap on the code, and what stood in the way fixed — a Canary takes its hub from the phone, a paired WAP stays reachable, one prompt per tap, the phone listens in your pocket
+
+An adversarial audit walked every onboarding journey as the code runs it
+(a new Sense or Vision, a new WAP, a hub from the Flasher and the phone, the
+words on the site and in the docs, the failure paths, and the Apple bar),
+verified each finding independently, and this change fixes everything the
+audit confirmed that software can fix today. Design: `docs/design/magic_pairing.md`.
+
+- **A Sense or Vision takes its hub from the phone.** The one-tap join
+  ended with a Canary on Wi-Fi and no hub link: its broker and login came
+  only from the Flasher's MQTT fields over USB. Now the companion service
+  beside the Improv door carries a `HUB` characteristic (`8fc1cf02`,
+  encrypted write, one status byte read back, the secret never reads back):
+  after the join the phone writes the Home Assistant host, port 1883 and the
+  broker login it minted, the firmware stores them (`set_mqtt_credentials`,
+  NVS readback) and re-points its MQTT manager, and the done card says it
+  reports to the hub — or exactly what is still owed. Pure parser
+  `common/network/hub_handoff.h` (`test_hub_handoff.cpp`); both NimBLE
+  majors; the Sense at 90.2% flash.
+- **A magic-paired WAP stays reachable.** Its claim and receipt were
+  spelled while the first-boot wizard kept TLS off, so the phone kept an
+  http address with no pin and the WAP rebooted into https-only minutes
+  later: Lost forever. The certificate is now known on the first boot (the
+  HTTPS server still waits for the wizard), the receipt the claim buys names
+  the steady-state https address and its pin, the reboot follows the claim's
+  spend by 10 s, the redirect's Location comes from the request's Host, and
+  the wizard's 15-minute idle restart no longer fires while the door is
+  open (it blinked the card out mid-window). `LESSONS_LEARNED.md` has the entry.
+- **The setup sheet survives its own ceremony.** It hung off a card mounted
+  only while the Canary advertised, and a connected Canary does not — so it
+  vanished 15 s into the password. The card keeps the Canary being set up
+  as a row and every parent mounts it always.
+- **One prompt per tap.** "Find my Canary" raised iOS's Bluetooth and Local
+  Network alerts together; only Bluetooth finds a new Canary. The Wi-Fi
+  browse now starts at its first real consumer (the watch after a join, the
+  Fleet tab with a fleet).
+- **The phone keeps listening in your pocket.** `bluetooth-central`
+  background mode; a second scan filtered on the Improv service when the
+  app leaves the foreground; one local notification per new Canary, only
+  when notifications are already allowed — nothing new is asked.
+- **No guessed network.** The first Canary's picker preselected the
+  strongest network the Canary heard, often a neighbor's; it now opens
+  unselected under "Pick your home Wi-Fi". The remembered household Wi-Fi
+  still preselects, and when the Canary lists it the second Canary
+  auto-joins after a 3 s "Change?" beat — two taps.
+- **The rest of the sheet:** a wrong password costs a retype, not a
+  reconnect; the link is kept alive while the password is looked up; the
+  list can be asked for again after a declined Pair; a 2.4 GHz note; the
+  router's Wi-Fi QR scans into the fields; a WAP's same-network note;
+  Local Network denied named on a failed claim; a WAP that joined but did
+  not pair is still recognized on the network; stage titles and expected
+  durations; unplug-and-replug and the BOOT tap named before the
+  setup-network fallback.
+- **Around the sheet:** "Nothing yet?" after 20 s of listening names the
+  two ways back in; a Canary is "Canary Sense K7MZ" and keeps that name
+  after its door shuts; the offer returns after a replug and a first
+  owner's lone Canary is offered from across the room; the hub walkthrough
+  finishes itself when Home Assistant answers and resumes its watch;
+  "nothing to do here" on the Fleet tab says what is true.
+- **The Flasher stops steering people away from the door.** The catalog
+  gains a derived `setup_door` fact (true for the Sense, Vision and WAP
+  builds that compile the door, never typed); the Flasher no longer prefills
+  the Wi-Fi name for those products and says "Leave blank: your iPhone hands
+  them your Wi-Fi"; a name with no password is refused unless "open network"
+  is ticked; the WAP's hatch steps lead with the iPhone card and the setup
+  network names its key. And the key "the Flasher printed" now is: both
+  flashers listen to the Canary's first boot and show "Its setup network:
+  SecuraCV-XXXX · key …" on the done card (the browser flasher starts
+  listening the moment the write ends), pinned across both frontends by
+  `desktop_parity.test.js`.
+- **The hub path says what is still yours.** "Setup finished" names the one
+  click left (the SecuraCV panel's Install the integration); "Know its
+  address? Type it here" shows from the first tick of the first-boot watch
+  instead of after 25 minutes; the Open button says who to sign in as and
+  copies the username.
+- **Docs and site honesty:** the owner-facing pages name which families
+  have the door (the all-rounder `firmware/canary` has none), drop "FULL
+  build profile", "five minutes" and the protocol nouns from the owner's
+  path (one "For makers:" line keeps them), open the one-tap answer with the
+  honest install line (TestFlight by invite; App Store release pending), and
+  the website gains "Your first Canary — the three phone screens, in words"
+  with its fallback line and a test. The macOS builds stay unsigned, so the
+  quarantine instructions stay.
+
 ### The verified witness log for Frigate and Home Assistant: the SecuraCV app installs the integration on one click, a Docker sidecar pairs with one 6-digit code, every Frigate event lands as Sealed ✓ and earns Verified ✓ from Home Assistant's own chain walk, and one tap exports a signed evidence pack anyone can check offline
 
 The product is one device in Home Assistant — **SecuraCV** — with the chain's
