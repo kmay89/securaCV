@@ -854,6 +854,27 @@ static uint8_t* g_tls_key_der = nullptr;
 static size_t   g_tls_key_der_len = 0;
 static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
 
+// TLS will be on once first-boot setup is over. Two facts, kept apart:
+// g_tls_enabled is "the HTTPS server is up NOW" (held off while the wizard
+// is active, so captive sheets render over plain HTTP); the certificate is
+// known on every initialized boot regardless (init_tls_cert() in setup():
+// loaded from NVS, or generated once and stored), so its fingerprint is
+// known on the first boot too. The Bluetooth setup door's join happens
+// INSIDE that first boot, and the receipt it hands the phone is kept for
+// the life of the pairing — so where an address is spelled for AFTER the
+// reboot that ends setup (the claim's pin, the receipt the claim buys),
+// this is the scheme's fact. False when an HTTPS start failed in steady
+// state (that unit is not TLS later either) and in a build with no HTTPS
+// server at all.
+static inline bool tls_after_setup() {
+#if SECURACV_HAS_HTTPS_SERVER
+  if (g_tls_enabled) return true;
+  return setup_wizard::is_active() && g_tls_cert_fp_hex[0] != '\0';
+#else
+  return false;
+#endif
+}
+
 // Provisioning gate (physical BOOT button). Stores the millis() at which
 // the press landed; 0 means closed. provisioning_gate_is_open() applies
 // the TTL so the gate auto-closes after PROVISIONING_GATE_TTL_MS even if
@@ -1916,6 +1937,21 @@ static void tls_compute_cert_fingerprint() {
 }
 
 #if SECURACV_HAS_TLS_CERTGEN
+// The RNG mbedtls_rsa_gen_key draws from throughout its prime search (a
+// witness per Miller-Rabin round) — the one hook inside a computation that
+// runs for seconds, with a long tail, on the setup task, whose 8 s task
+// watchdog is armed by then (PHASE 2, before the network phase). Fed there,
+// a slow search cannot panic the boot; the key is stored only after the
+// whole certificate is written, so a panic here would have been the same
+// keygen on every boot. The generation runs on the FIRST boot now
+// (init_tls_cert() on every initialized boot — see setup()).
+static int tls_keygen_rng(void* ctx, unsigned char* out, size_t len) {
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+  return mbedtls_ctr_drbg_random(ctx, out, len);
+}
+
 static bool tls_generate_self_signed_cert() {
   Serial.println("[TLS] Generating self-signed certificate (RSA-2048)...");
   Serial.println("[TLS] This takes 30-60 seconds on first boot only.");
@@ -1948,7 +1984,7 @@ static bool tls_generate_self_signed_cert() {
     goto cleanup;
   }
 
-  ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key), mbedtls_ctr_drbg_random,
+  ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key), tls_keygen_rng,
                              &ctr_drbg, 2048, 65537);
   if (ret != 0) {
     Serial.printf("[TLS] RSA keygen failed: -0x%04X\n", (unsigned)-ret);
@@ -6310,12 +6346,23 @@ static uint32_t g_setup_grace_reboot_at_ms = 0;
 // outstanding (claim_ticket::pending(g_improv_claim)): the claim promised
 // the phone expires_in_s = 180, and the deadline is 120 s after the join,
 // so without the hold the WAP rebooted under a phone still resolving
-// <host>.local to spend it. The claim's own TTL bounds the hold; once it is
-// spent or expired the reboot gets a short runway (CLAIM_SETTLED_REBOOT_
-// RUNWAY_MS) so the receipt the claim bought leaves the HTTP task whole
-// before the restart. Loop task only.
+// <host>.local to spend it. The claim's own TTL bounds the hold; once it
+// has expired the reboot gets a short runway (CLAIM_SETTLED_REBOOT_
+// RUNWAY_MS). A claim that is SPENT sets the deadline to that same runway
+// from the spend, wherever it stood (g_improv_claim_spent_at_ms below): the
+// receipt it bought names the steady-state https address, which this boot
+// — HTTP-only, in setup mode — does not answer, so the reboot that makes
+// the receipt true follows within seconds of "Paired", the runway letting
+// that receipt leave the HTTP task whole first. Loop task only.
 static bool g_setup_reboot_held_for_claim = false;
 static const uint32_t CLAIM_SETTLED_REBOOT_RUNWAY_MS = 10000;
+// When a setup-door claim was SPENT — the receipt it bought left on the HTTP
+// task (handle_provisioning_receipt) — as a millis() stamp, never 0
+// (claim_ticket::stamp). The loop task takes it and brings the armed reboot
+// to CLAIM_SETTLED_REBOOT_RUNWAY_MS from then (provisioning_logic::
+// claim_spent_reboot_deadline). Written on the HTTP task, taken on the loop
+// task: atomic, like g_setup_grace_reboot_at_ms.
+static uint32_t g_improv_claim_spent_at_ms = 0;
 
 // Minimum runway to keep after a step-5 self-test poll: enough for the user
 // to read every row and tap "Run again" once before the steady-state reboot.
@@ -6965,6 +7012,14 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
 // the flag is cleared BEFORE the save (the save clears it too), and only a
 // non-empty SSID is saved: an attempt some other path forgot meanwhile
 // (wifi_clear_credentials) has nothing to persist.
+//
+// Leaving first-boot mode is not this function's: neither this path nor the
+// wizard's own /api/wifi/connect calls setup_wizard::mark_complete() —
+// loop() does, on the first pass that sees WL_CONNECTED while the wizard is
+// active, whichever path brought the join, and arms the reboot into steady
+// state there (where init_tls_cert() loads the certificate this boot
+// already knows and the HTTPS server comes up). A door-provisioned WAP
+// leaves first-boot mode exactly as a wizard-provisioned one does.
 bool ble_improv_join_verdict(bool joined) {
   if (!g_improv_join_pending) return false;   // not the door's join: another path owns the credentials
   g_improv_join_pending = false;
@@ -7013,10 +7068,16 @@ size_t ble_improv_reach_url(char* out, size_t cap) {
 //   {"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host",
 //    "expires_in_s"}
 // in that order, nothing omitted, an empty string where a value is not
-// known yet. claim_url is where the phone spends it: the device's .local
-// name (the SoftAP address is gone once the AP drops), https when TLS is
-// up. The bearer token is NOT here; the receipt that carries it is what the
-// claim buys on the LAN. Every value is the sketch's own ASCII (device_id
+// known yet. claim_url is where the phone spends it, within seconds, so it
+// is the address that answers NOW: the device's .local name (the SoftAP
+// address is gone once the AP drops), https only when the HTTPS server is
+// up — during first-boot setup, which is where the door's join happens, the
+// server is held off and claim_url is http. tls_cert_fp is a fact about
+// AFTER setup: the fingerprint of the certificate the WAP serves once it
+// reboots into steady state (tls_after_setup()), so the phone has the pin
+// the receipt's https base_url needs. The bearer token is NOT here; the
+// receipt that carries it is what the claim buys on the LAN. Every value is
+// the sketch's own ASCII (device_id
 // and the mDNS label are sanitized at birth; the fingerprint and the claim
 // are hex; the address is dotted) — wap_json escaping kept all the same.
 // Returns the length written, 0 when `cap` cannot hold the whole document
@@ -7043,7 +7104,7 @@ size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms) {
   wap_json::raw(w, "{\"device_id\":");    wap_json::str(w, g_device.device_id);
   wap_json::raw(w, ",\"claim\":");        wap_json::str(w, g_improv_claim.hex);
   wap_json::raw(w, ",\"claim_url\":");    wap_json::str(w, claim_url);
-  wap_json::raw(w, ",\"tls_cert_fp\":");  wap_json::str(w, g_tls_enabled ? g_tls_cert_fp_hex : "");
+  wap_json::raw(w, ",\"tls_cert_fp\":");  wap_json::str(w, tls_after_setup() ? g_tls_cert_fp_hex : "");
   wap_json::raw(w, ",\"sta_ip\":");       wap_json::str(w, sta_ip);
   wap_json::raw(w, ",\"mdns_host\":");    wap_json::str(w, host);
   wap_json::raw(w, ",\"expires_in_s\":"); wap_json::number(w, canary::net::claim_ticket::TTL_MS / 1000u);
@@ -8268,21 +8329,30 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // `via_claim`: the caller spent a setup-door claim, so it is on the home LAN
-// by construction (claim_ticket.h) — its base_url is the device's .local
-// name while the STA holds one, since the SoftAP address the other two
-// grants answer with is gone once the AP drops. The bearer and BOOT-tap
-// answers are unchanged.
+// by construction (claim_ticket.h), and this receipt is the one the phone
+// KEEPS for the life of the pairing — so it spells the STEADY-STATE address,
+// not this boot's: base_url at the device's .local name (the SoftAP address
+// the other two grants answer with is gone once the AP drops), https with
+// the certificate's fingerprint when TLS will be on after setup
+// (tls_after_setup()). The door joins inside the first-boot wizard, where
+// the HTTPS server is held off; the WAP reboots into https a short runway
+// after this answer leaves (loop(), g_improv_claim_spent_at_ms). A phone
+// that stored this boot's http base_url, as it did, could never reach the
+// device again. The bearer and BOOT-tap answers are unchanged: the servers
+// up now, the SoftAP address (the app rebases it onto the address it
+// discovered).
 static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = false) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
   String authority = WiFi.softAPIP().toString();
-  if (via_claim && WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+  if (via_claim && g_device.mdns_hostname[0] != '\0') {
     authority = String(g_device.mdns_hostname) + ".local";
   }
+  const bool tls = via_claim ? tls_after_setup() : g_tls_enabled;
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
-  in.tls_enabled = g_tls_enabled;
+  in.tls_enabled = tls;
   in.ap_ip       = authority.c_str();
   in.token       = g_device.api_token_str;
   in.pubkey_fp   = g_device.fingerprint_hex;
@@ -8290,7 +8360,10 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = fa
   in.hw_token    = hw_token;
   in.ap_ssid     = g_device.ap_ssid;
   in.ap_password = g_device.ap_password;
-  in.tls_cert_fp = g_tls_cert_fp_hex;
+  // The pin rides with an https base_url ("" is "no pin": an http device —
+  // the iPhone app refuses an https base without one and ignores a pin on
+  // an http one).
+  in.tls_cert_fp = tls ? g_tls_cert_fp_hex : "";
   in.boot_count  = (unsigned long)g_device.boot_count;
 
   // Measured, then written into exactly that much heap (sweep F212). The
@@ -8393,6 +8466,11 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   }
   esp_err_t result = send_provisioning_receipt(req, claim_served);
   if (claim_served) {
+    // The phone holds the steady-state address now; the loop task brings
+    // the reboot that answers it to a short runway from here (HTTP task →
+    // loop task, atomic; never 0 — 0 is "no spend").
+    __atomic_store_n(&g_improv_claim_spent_at_ms,
+                     canary::net::claim_ticket::stamp(millis()), __ATOMIC_RELEASE);
     Serial.println("[AUTH] Provisioning receipt served on a setup-door claim.");
     log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served on a setup-door claim", nullptr);
   } else {
@@ -8407,11 +8485,49 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
+// Port 80 → https, at the address the client used. The Location used to
+// name WiFi.softAPIP(): right for a phone on the SoftAP, dead for one on
+// the LAN — where every client is once the AP drops after setup, and where
+// a paired phone that kept an http base_url landed. So the Host the request
+// carried, when it is one (letters, digits, dots, dashes; an IPv6 literal's
+// brackets and colons; a port is dropped — the HTTPS server is on 443);
+// without one (HTTP/1.0), or with anything else, the STA address when the
+// STA holds one, else the .local name (the captive DNS answers it on the
+// AP). A Host header is attacker-chosen text headed into a response header,
+// so anything outside that alphabet is refused, not forwarded.
+static bool redirect_host_ok(const char* host) {
+  if (host[0] == '\0') return false;
+  for (const char* p = host; *p; ++p) {
+    const unsigned char c = (unsigned char)*p;
+    if (!(isalnum(c) || c == '.' || c == '-' || c == ':' || c == '[' || c == ']')) return false;
+  }
+  return true;
+}
+
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char location[128];
-  snprintf(location, sizeof(location), "https://%s%s",
-           WiFi.softAPIP().toString().c_str(),
-           req->uri);
+  char host[96] = {0};
+  bool have = httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
+              redirect_host_ok(host);
+  if (have) {
+    // Drop a ":port" — not the colons of a bare IPv6 literal, whose port
+    // follows its closing bracket.
+    char* colon = strrchr(host, ':');
+    if (colon && strchr(colon, ']') == nullptr) *colon = '\0';
+    have = host[0] != '\0';
+  }
+  if (!have) {
+    if (WiFi.isConnected()) {
+      snprintf(host, sizeof(host), "%s", WiFi.localIP().toString().c_str());
+    } else {
+      snprintf(host, sizeof(host), "%s.local", g_device.mdns_hostname);
+    }
+  }
+  char location[256];
+  const int n = snprintf(location, sizeof(location), "https://%s%s", host, req->uri);
+  if (n < 0 || (size_t)n >= sizeof(location)) {
+    // A cut URI would redirect to the wrong page: the root instead.
+    snprintf(location, sizeof(location), "https://%s/", host);
+  }
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
@@ -11704,23 +11820,43 @@ void setup() {
   #endif
 
   // ── TLS Certificate Initialization ──
-  // Skip TLS during first-boot setup: the captive-portal flow runs over plain
-  // HTTP on the AP, and a self-signed cert makes captive-portal mini-browsers
-  // (iOS CNA, Android) render a blank white screen. There's no sensitive data
-  // before WiFi is configured and the AP is the security boundary, so HTTP-only
-  // is safe here. Setup completes → reboot → this runs with setup inactive and
-  // HTTPS comes up normally for the dashboard and WiFi provisioning.
+  // Two facts, kept apart. THE CERTIFICATE IS KNOWN on every initialized
+  // boot: init_tls_cert() loads it from NVS, or generates it once and stores
+  // it, so g_tls_cert_fp_hex is populated on the first boot too. THE HTTPS
+  // SERVER IS UP (g_tls_enabled: the port-443 server and the port-80
+  // redirect, init_http_server) only outside first-boot setup: the
+  // captive-portal flow runs over plain HTTP on the AP, and a self-signed
+  // cert makes captive-portal mini-browsers (iOS CNA, Android) render a
+  // blank white screen. There's no sensitive data before WiFi is configured
+  // and the AP is the security boundary, so HTTP-only is safe here. Setup
+  // completes → reboot → this runs with setup inactive and HTTPS comes up
+  // for the dashboard and WiFi provisioning.
+  //
+  // The two used to be one: the certificate was skipped with the server, so
+  // the Bluetooth setup door — whose join happens INSIDE the wizard — handed
+  // the phone a receipt with an http base_url and no fingerprint, and the
+  // reboot that followed made the WAP https-only: every later call failed,
+  // "Lost" forever. Now the door spells the steady-state address and its
+  // pin (tls_after_setup()) while the servers are still HTTP. The one-time
+  // keygen moves to the first boot with this (tls_keygen_rng feeds the
+  // watchdog through it).
   #if FEATURE_WIFI_AP && FEATURE_HTTP_SERVER
-  if (g_device.initialized && !setup_wizard::is_active()) {
-    if (init_tls_cert()) {
-      g_tls_enabled = true;
+  if (g_device.initialized) {
+    const bool cert_known = init_tls_cert();
+    if (!setup_wizard::is_active()) {
+      if (cert_known) {
+        g_tls_enabled = true;
+      } else {
+        Serial.println("[WARN] TLS unavailable — running in HTTP-ONLY mode");
+        Serial.println("[WARN] API traffic is NOT encrypted.");
+        g_tls_enabled = false;
+      }
     } else {
-      Serial.println("[WARN] TLS unavailable — running in HTTP-ONLY mode");
-      Serial.println("[WARN] API traffic is NOT encrypted.");
-      g_tls_enabled = false;
+      Serial.println("[..] SETUP MODE: HTTP-only so the captive portal renders");
+      Serial.println(cert_known
+                         ? "[..] SETUP MODE: certificate known — the setup door's receipt names the https address"
+                         : "[..] SETUP MODE: no certificate — the setup door's receipt stays http");
     }
-  } else if (setup_wizard::is_active()) {
-    Serial.println("[..] SETUP MODE: HTTP-only so the captive portal renders");
   }
   #endif
 
@@ -12440,8 +12576,40 @@ void loop() {
   // s_dns_running), so it answers AP clients in steady state too — not only
   // while the first-boot wizard is active.
   setup_wizard::dns_process();
+  if (!setup_wizard::is_active()) {
+    // A setup-door claim spent (the receipt served on the HTTP task names
+    // the steady-state https address, which this HTTP-only boot does not
+    // answer): the armed reboot comes to a short runway from the spend —
+    // set, not merely floored, so a deadline still 100 s out is brought in.
+    // Taken once the wizard is complete (the WL_CONNECTED branch below arms
+    // the deadline on the pass that completes it; a stamp set before that
+    // pass waits here for it); a spend with no reboot armed (a door opened
+    // by Forget Wi-Fi on a unit already in steady state, already on https)
+    // has nothing to hurry and the stamp is dropped.
+    const uint32_t spent_at =
+        __atomic_exchange_n(&g_improv_claim_spent_at_ms, 0u, __ATOMIC_ACQ_REL);
+    if (spent_at != 0) {
+      const uint32_t brought = provisioning_logic::claim_spent_reboot_deadline(
+          __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE),
+          millis(), CLAIM_SETTLED_REBOOT_RUNWAY_MS);
+      if (brought != 0) {
+        __atomic_store_n(&g_setup_grace_reboot_at_ms, brought, __ATOMIC_RELEASE);
+        g_setup_reboot_held_for_claim = false;
+        Serial.println("[OK] Setup-door claim spent — rebooting into HTTPS after a short runway...");
+        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                   "Setup-door claim spent: rebooting into steady state after a short runway", nullptr);
+      }
+    }
+  }
   if (setup_wizard::is_active()) {
-    setup_wizard::check_timeout();
+    // The wizard's idle restart (15 min after the last sign of life), held
+    // while the Bluetooth setup door is open: a phone working the door is a
+    // sign of life (ble_improv_note_activity), but a person watching the
+    // door's card on their phone, about to tap, has touched nothing — and
+    // the restart landed under them (the WAP gone for ~20 s, the tap finding
+    // nothing). The door's own window bounds the hold; when it shuts, the
+    // idle rule applies again (provisioning_logic::wizard_restart_due).
+    setup_wizard::check_timeout(ble_improv::setup_open());
     if (WiFi.status() == WL_CONNECTED &&
         __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE) == 0) {
       // The join succeeded, but the provisioning phone is mid-handoff: the

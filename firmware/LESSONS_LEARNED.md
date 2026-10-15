@@ -1537,6 +1537,62 @@
   are hardware facts.
 - **Date learned:** 2026-10-07
 
+### A receipt spelled from the boot that served it, not the boot it is used against (the setup door's http receipt)
+- **What happened:** The WAP's first-boot setup skipped TLS whole — no
+  certificate, no HTTPS server — so the captive portal renders (a
+  self-signed certificate is a blank sheet in the iOS and Android captive
+  browsers). The Bluetooth setup door's join happens INSIDE that first
+  boot, so the claim it minted said `http` with `tls_cert_fp: ""`, and the
+  receipt the phone spent the claim on said `base_url: http://<name>.local`
+  with no pin. The phone kept that. Ten seconds to two minutes later the
+  WAP rebooted into steady state, generated its certificate and became
+  HTTPS-only — port 80 redirecting to a `Location` built from the SoftAP
+  address, dead on the LAN. Every later call failed; the WAP showed Lost
+  forever; "Paired with this phone" was followed by a device the phone
+  could never reach again. Beside it: a never-provisioned unit's wizard
+  restarts it every 15 idle minutes — while the door's 30-minute window
+  was open, so a person watching the door's card saw the WAP blink out for
+  ~20 s with no explanation, and a tap found nothing.
+- **Root cause:** two facts were one variable. "The certificate is known"
+  and "the HTTPS server is up" were both `g_tls_enabled`, set only outside
+  the wizard, so the one boot that answers the door had neither — and the
+  receipt, the one document the phone keeps for the life of the pairing,
+  was spelled from the boot that served it rather than the boot it would
+  be used against. The reboot that would have made the device match its
+  receipt was timed from the join (the 120 s grace, floor-extended), not
+  from the spend. And the wizard's idle timer counted a phone AT the door
+  as life but not one LOOKING at it.
+- **Fix:** `init_tls_cert()` runs on every initialized boot (the
+  certificate is NVS-persisted — generated once, the RSA keygen's RNG now
+  feeding the 8 s task watchdog), and only the server stays gated on the
+  wizard; `tls_after_setup()` is the one named fact for "TLS will be on
+  once setup ends". The claim's `claim_url` stays the address that answers
+  NOW (http during setup — it is spent within seconds) and its
+  `tls_cert_fp` is the real pin; the receipt served via the claim spells
+  the STEADY-STATE address (`https://<name>.local`, `tls_enabled` true,
+  the fingerprint); spending the claim brings the armed reboot to a 10 s
+  runway from the spend (`provisioning_logic::claim_spent_reboot_deadline`
+  — set, not floored), so the WAP is on https ~15 s after "Paired". The
+  port-80 redirect builds its `Location` from the request's `Host` (else
+  the STA address or the `.local` name), never the SoftAP address. The
+  wizard's idle restart is not due while the door is open
+  (`wizard_restart_due`; the door's window bounds the hold). Verified, not
+  changed: a door join already leaves first-boot mode correctly — `loop()`
+  marks the wizard complete on the first pass that sees `WL_CONNECTED`,
+  whichever path joined, exactly as for the wizard's own
+  `/api/wifi/connect`.
+- **Regression check:** `tests_host/test_provisioning_logic.cpp` —
+  `wizard_restart_due` (never due with the door open; the idle rule by
+  name with it shut, across a grid) and `claim_spent_reboot_deadline`
+  (brought in from a far deadline, pushed out from a passed one, never
+  arming a disarmed one, never 0). The receipt's shape is
+  `test_identity_json.cpp`'s, unchanged. Bench: pair a fresh WAP over the
+  door and watch the app's next call land on `https://<name>.local` with
+  the pin about 15 s after the card says paired; leave a fresh WAP idle
+  with a phone's card showing and see no restart until the door's window
+  runs out.
+- **Date learned:** 2026-10-15
+
 ---
 
 ## Sensing & Signal Processing
