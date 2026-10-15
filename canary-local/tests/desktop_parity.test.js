@@ -4447,10 +4447,10 @@ test("setup-network key: one parser, both flashers, pinned to the firmware's pri
     render(senseFmt, "SecuraCV-4dC2", "a7Kq2pMx", 1) +
     "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\n";
   const wapLog = "[PROV] Deriving device-unique AP password...\n" +
-    render(wapFmt, "SecuraCV-9Fa1", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
+    render(wapFmt, "SecuraCV-m2G2", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
   for (const [label, log, want] of [
     ["sense/vision", senseLog, { ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }],
-    ["wap", wapLog, { ssid: "SecuraCV-9Fa1", key: "cv-7hJ2kQ9mN4pR" }],
+    ["wap", wapLog, { ssid: "SecuraCV-m2G2", key: "cv-7hJ2kQ9mN4pR" }],
   ]) {
     assert.deepEqual(core.parseSetupNetwork(log), want, `browser parser misread the ${label} line`);
     assert.deepEqual(native.parseSetupNetwork(log), want, `native parser misread the ${label} line`);

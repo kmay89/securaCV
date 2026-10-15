@@ -728,11 +728,16 @@ def arduino_feature_on(text: str, feature: str, who: str) -> bool:
                              f"derivation does not evaluate — refusing rather than guessing.")
         py = []
         for t in tokens:
-            if t == "&&": py.append(" and ")
-            elif t == "||": py.append(" or ")
-            elif t == "!": py.append(" not ")
-            elif t in "()": py.append(t)
-            elif t.isdigit(): py.append("True" if int(t) else "False")
+            if t == "&&":
+                py.append(" and ")
+            elif t == "||":
+                py.append(" or ")
+            elif t == "!":
+                py.append(" not ")
+            elif t in "()":
+                py.append(t)
+            elif t.isdigit():
+                py.append("True" if int(t) else "False")
             else:
                 d = define_of(t)
                 if d is None:
