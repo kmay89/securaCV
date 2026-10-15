@@ -148,6 +148,9 @@ let tlsParked = null;
 // The broker TLS mode, CA and pin are NON-secrets (a public certificate and
 // its hash — docs/flasher_profiles_fleet_book.md), so they live in the same
 // local prefs as the host and never take the OS-secret-store route.
+// True once the person typed a Wi-Fi name in THIS session: a restored or
+// prefilled name is cleared for a door-bearing product, a typed one is kept.
+let wifiTypedThisSession = false;
 const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-user",
   "mqtt-tls", "mqtt-ca", "mqtt-fp"];
 function persistProv() {
@@ -893,6 +896,10 @@ async function boot() {
   };
   $("wifi-ssid").addEventListener("input", wifiQrInvalidate);
   $("wifi-pass").addEventListener("input", wifiQrInvalidate);
+  // A name the person typed this session is theirs to keep across product
+  // picks; one restored from the last flash (PROV_FIELDS) is cleared when a
+  // door-bearing product is chosen (onProductChosen) — see wifiTypedThisSession.
+  $("wifi-ssid").addEventListener("input", () => { wifiTypedThisSession = true; });
   // One-click diagnostic report (parity: browser's diagnosticReportButton).
   // Delegated to a named function because the failed-install card offers the
   // same button — the browser puts it right in the error card, where someone
@@ -3357,6 +3364,16 @@ function onProductChosen(p, ver) {
   // flasher's "WiFi (optional)" heading (flash-core.js SETUP_DOOR_NOTE).
   const door = p.setup_door === true;
   $("wifi-ssid").required = usbSecrets && !door;
+  // A door-bearing product must not inherit the LAST flash's network: the
+  // SSID restores from prefs at launch (PROV_FIELDS) and profileAutofill()
+  // would fill its password from the setup profile, baking a network the
+  // person never typed for this board — the Canary then boots with its
+  // door shut and the iPhone can hand it neither Wi-Fi nor hub. A name typed
+  // in this session is the person's own choice and stays.
+  if (door && !wifiTypedThisSession) {
+    $("wifi-ssid").value = "";
+    $("wifi-pass").value = "";
+  }
   $("provision-note").textContent = (usbSecrets
     ? "The official release image is generic. These values are written directly into this board's settings partition and never logged."
     : broker

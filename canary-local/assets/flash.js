@@ -3805,7 +3805,12 @@ function renderWifiFields(box, product) {
   // Remember-across-boards: pre-fill from the home Wi-Fi we already know — this
   // tab's session, or a copy saved on this computer if the user opted in — so a
   // whole batch of Canaries provisions without re-typing it into each one.
-  const savedWifi = wifiMemory.recall();
+  // Not for a door-bearing product: a remembered network from an earlier
+  // board would be baked in silently, the Canary would boot with its door
+  // shut, and the iPhone could hand it neither its Wi-Fi nor its hub. Blank
+  // is the recommended answer there; the saved network stays one tap away
+  // in the banner's words, never pre-filled.
+  const savedWifi = core.hasSetupDoor(product) ? null : wifiMemory.recall();
   if (savedWifi) { ssid.value = savedWifi.ssid; pass.value = savedWifi.pass; }
   // The banner claims "using your saved Wi-Fi X" only while the fields still hold
   // exactly that network; edit either field and it hides (returns if you undo the

@@ -846,6 +846,13 @@ static httpd_handle_t g_http_server = nullptr;
 // HTTPS server (TLS)
 static httpd_handle_t g_https_server = nullptr;
 static bool g_tls_enabled = false;
+// The certificate the next boot will RELOAD: loaded from NVS, or generated
+// and stored with the store confirmed. A cert generated this boot whose
+// store failed is this boot's alone — its fingerprint must never be handed
+// out as a pin (the setup door's receipt is kept for the life of the
+// pairing, and the next boot would mint a different cert; see
+// tls_after_setup()).
+static bool g_tls_cert_persisted = false;
 
 // TLS certificate (DER-encoded, stored in NVS)
 static uint8_t* g_tls_cert_der = nullptr;
@@ -864,12 +871,16 @@ static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
 // the life of the pairing — so where an address is spelled for AFTER the
 // reboot that ends setup (the claim's pin, the receipt the claim buys),
 // this is the scheme's fact. False when an HTTPS start failed in steady
-// state (that unit is not TLS later either) and in a build with no HTTPS
-// server at all.
+// state (that unit is not TLS later either), in a build with no HTTPS
+// server at all, and when the certificate did NOT persist to NVS
+// (g_tls_cert_persisted): a cert generated this boot whose store failed
+// is replaced on the next boot, so a pin on it would reject the WAP for
+// the life of the pairing — better an unpinned address than a wrong pin.
 static inline bool tls_after_setup() {
 #if SECURACV_HAS_HTTPS_SERVER
+  if (!g_tls_cert_persisted || g_tls_cert_fp_hex[0] == '\0') return false;
   if (g_tls_enabled) return true;
-  return setup_wizard::is_active() && g_tls_cert_fp_hex[0] != '\0';
+  return setup_wizard::is_active();
 #else
   return false;
 #endif
@@ -2069,6 +2080,7 @@ cleanup:
 static bool init_tls_cert() {
   // Try loading from NVS first
   if (tls_load_from_nvs()) {
+    g_tls_cert_persisted = true;
     tls_compute_cert_fingerprint();
     Serial.println("[TLS] Loaded certificate from NVS");
     Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
@@ -2082,9 +2094,14 @@ static bool init_tls_cert() {
     return false;
   }
 
-  // Store in NVS for reuse across reboots
-  if (!tls_store_to_nvs()) {
-    Serial.println("[TLS] WARNING: Failed to store cert in NVS");
+  // Store in NVS for reuse across reboots. Only a confirmed store makes
+  // this cert the one the next boot reloads; a failed store leaves it this
+  // boot's alone (g_tls_cert_persisted false), so nothing pins it.
+  if (tls_store_to_nvs()) {
+    g_tls_cert_persisted = true;
+  } else {
+    g_tls_cert_persisted = false;
+    Serial.println("[TLS] WARNING: Failed to store cert in NVS — this boot's cert only; no pin will be handed out");
   }
 
   tls_compute_cert_fingerprint();

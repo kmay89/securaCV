@@ -101,6 +101,14 @@ final class ImprovClient: NSObject, ObservableObject {
     private var claimWaiter: CheckedContinuation<Data?, Never>?
     private var hub: CBCharacteristic?
     private var hubWaiter: CheckedContinuation<HubHandoffStatus, Never>?
+    /// The hub hand-off's deadline: the firmware's write callback only
+    /// queues the document and leaves the status byte at its PREVIOUS value
+    /// (0, none, on a first hand-off); the loop task parses and stores it a
+    /// beat later. So a status of 0 read right after the write is "not
+    /// processed yet", not the answer — it is read again every 250 ms until
+    /// it is 1, 2 or 3, or the deadline resolves `.unknown`.
+    private var hubDeadline: Date?
+    private static let hubPollEvery: Duration = .milliseconds(250)
 
     /// One request in flight at a time; each resumes exactly once.
     private var readyWaiter: CheckedContinuation<Bool, Never>?
@@ -256,6 +264,8 @@ final class ImprovClient: NSObject, ObservableObject {
         guard let hub else { return .unknown }
         generation += 1
         let gen = generation
+        let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
+        hubDeadline = Date().addingTimeInterval(seconds)
         return await withCheckedContinuation { cont in
             hubWaiter = cont
             peripheral.writeValue(data, for: hub, type: .withResponse)
@@ -263,8 +273,19 @@ final class ImprovClient: NSObject, ObservableObject {
                 try? await Task.sleep(for: timeout)
                 guard let self, self.generation == gen, let w = self.hubWaiter else { return }
                 self.hubWaiter = nil
+                self.hubDeadline = nil
                 w.resume(returning: .unknown)
             }
+        }
+    }
+
+    /// The status byte read 0 before the deadline: the loop task has not
+    /// processed the document yet. Ask again shortly; the waiter stays.
+    private func pollHubStatusAgain() {
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.hubPollEvery)
+            guard let self, self.hubWaiter != nil, let hub = self.hub else { return }
+            self.peripheral.readValue(for: hub)
         }
     }
 
@@ -299,7 +320,7 @@ final class ImprovClient: NSObject, ObservableObject {
         if let w = scanWaiter { scanWaiter = nil; w.resume(returning: networks) }
         if let w = joinWaiter { joinWaiter = nil; w.resume(returning: .failed(why)) }
         if let w = claimWaiter { claimWaiter = nil; w.resume(returning: nil) }
-        if let w = hubWaiter { hubWaiter = nil; w.resume(returning: .unknown) }
+        if let w = hubWaiter { hubWaiter = nil; hubDeadline = nil; w.resume(returning: .unknown) }
     }
 
     private func resolveJoin(_ outcome: Outcome) {
@@ -425,8 +446,17 @@ extension ImprovClient: CBPeripheralDelegate {
 
         case Self.hubUUID:
             if let w = hubWaiter {
+                let status = ImprovWire.parseHubStatus(data)
+                // 0 before the deadline is "not processed yet" (the write
+                // callback only queues; the loop task answers a beat later):
+                // keep the link and read again. Anything else is the verdict.
+                if status == .none, let deadline = hubDeadline, Date() < deadline {
+                    pollHubStatusAgain()
+                    return
+                }
                 hubWaiter = nil
-                w.resume(returning: ImprovWire.parseHubStatus(data))
+                hubDeadline = nil
+                w.resume(returning: status)
             }
 
         case Self.stateUUID:
