@@ -138,7 +138,15 @@ struct FleetView: View {
             .sheet(item: $findTarget) { target in
                 NavigationStack { FindCanaryView(witness: target) }
             }
-            .onAppear { consumeFindRoute(); consumeSetupRoute() }
+            .onAppear {
+                consumeFindRoute(); consumeSetupRoute()
+                // The Fleet tab with a real fleet is the mDNS browse's
+                // consumer ("Ready to pair", "Also on your network", the
+                // rows a hub reports) — the consent tap started only the
+                // Bluetooth scan, so the browse begins here, with the fleet
+                // on screen as its reason.
+                if store.hasRealFleet { store.startLocalNetworkDiscoveryIfConsented() }
+            }
             .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute(); consumeSetupRoute() }
             // A cold-launch link can outrun the first refresh; the fold's
             // arrival retries the still-pending route.
@@ -232,7 +240,7 @@ struct FleetView: View {
                 } header: {
                     Text("Also on your network")
                 } footer: {
-                    Text("Already on your Wi-Fi. These don't pair with a phone — a camera or radar Canary reports to your hub — so there is nothing to do here.")
+                    Text("Already on your Wi-Fi. These don't pair with a phone. A camera or radar Canary reports to your hub once it has the hub's address and login — the setup card hands those over; a Canary that shows no events after a few minutes may need that step (Set up → Add a Canary).")
                 }
             }
             if store.witnesses.isEmpty && unpaired.isEmpty {
@@ -244,7 +252,7 @@ struct FleetView: View {
                     }
                 } description: {
                     Text(store.discoveryConsent == true
-                         ? "Power on a new Canary near this phone — a card appears within seconds. Or look around with sample data first."
+                         ? "Power on a new Canary near this phone — a card appears within seconds — or look around with sample data first."
                          : "Turn on discovery and power on a new Canary near this phone — or look around with sample data first.")
                 } actions: {
                     // The walkthroughs first: a fleet starts with a hub and
@@ -252,8 +260,12 @@ struct FleetView: View {
                     if store.discoveryConsent != true {
                         Button("Find my Canary") { store.setDiscoveryConsent(true) }
                             .buttonStyle(.borderedProminent)
-                    } else if let advice = store.bluetoothAdvice {
-                        RadioAdviceRow(advice: advice)
+                    } else {
+                        // Listening, with its reason when it can't — and,
+                        // after a while of silence, what to try.
+                        ListeningRow(text: "Listening — power it on within a few meters of this phone.",
+                                     advice: store.bluetoothAdvice,
+                                     since: store.listeningSince)
                     }
                     Button("Add a Canary or a hub") {
                         setupTarget = nil

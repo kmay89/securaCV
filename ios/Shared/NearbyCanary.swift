@@ -42,10 +42,13 @@ struct NearbyCanary: Identifiable, Hashable, Sendable {
     var canIdentify: Bool
     var canScanWiFi: Bool
 
-    /// What the card calls it: "Canary Sense AB12", or the raw name.
+    /// What the card calls it: "Canary Sense AB12", or the raw name — the
+    /// family word, not the role ("Radar witness AB12" named the job, not
+    /// the product in the box). One spelling, NearbyCanaries.title, shared
+    /// with the Fleet row a heard-only Canary keeps after its door shuts.
     var title: String {
         if let family {
-            return "\(family.deviceType.role) \(suffix)"
+            return NearbyCanaries.title(family: family, suffix: suffix)
         }
         return displayName
     }
@@ -68,8 +71,7 @@ enum NearbyCanaries {
         let parts = name.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let word = String(parts[0]), suffix = String(parts[1])
-        guard suffix.count == 4,
-              suffix.allSatisfy({ ("0"..."9").contains($0) || ("A"..."Z").contains($0) }) else { return nil }
+        guard isSuffix(suffix) else { return nil }
         let family: CanaryFamily
         switch word {
         case "Sense": family = .sense
@@ -79,6 +81,38 @@ enum NearbyCanaries {
         default: return nil
         }
         return (family, suffix)
+    }
+
+    /// Four characters of 0-9 / A-Z, as the firmware spells a suffix.
+    private static func isSuffix(_ suffix: String) -> Bool {
+        suffix.count == 4 && suffix.allSatisfy { ("0"..."9").contains($0) || ("A"..."Z").contains($0) }
+    }
+
+    /// What every surface calls a Canary heard by its door: "Canary Sense
+    /// K7MZ", "Canary Vision K7MZ", "Canary WAP AB12" — the family word and
+    /// the four characters its setup network and mDNS host share.
+    static func title(family: CanaryFamily, suffix: String) -> String {
+        "Canary \(family.word) \(suffix)"
+    }
+
+    /// `title(family:suffix:)` read back: "Canary Sense K7MZ" → (.sense,
+    /// "K7MZ"). A Fleet row the door named keeps this title after the door
+    /// shuts (FleetMerge), and the dedupe against the same unit's mDNS row
+    /// has to recover the suffix from it. As strict as `parseName`.
+    static func parseTitle(_ title: String) -> (family: CanaryFamily, suffix: String)? {
+        let parts = title.split(separator: " ", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "Canary" else { return nil }
+        let suffix = String(parts[2])
+        guard isSuffix(suffix),
+              let family = CanaryFamily.allCases.first(where: { $0.word == parts[1] && $0.hasBluetoothDoor })
+        else { return nil }
+        return (family, suffix)
+    }
+
+    /// Either spelling a door leaves behind — the advert's own
+    /// ("Sense-K7MZ") or the title a row wears ("Canary Sense K7MZ").
+    static func parseDoorName(_ name: String) -> (family: CanaryFamily, suffix: String)? {
+        parseName(name) ?? parseTitle(name)
     }
 
     /// What one scan result contributed: the pieces the transport collects
@@ -153,19 +187,59 @@ enum NearbyCanaries {
     /// AirPods-style: "close by" or nearer (the same band the card calls
     /// "close by"), i.e. on the table next to the phone, not two rooms away.
     static let closeEnoughDBM = -70
+    /// "In the room" — the band under "close by". The gate for a brand-new
+    /// owner's one Canary: a WAP powered on in its final spot across the
+    /// room is the only Canary in earshot of a phone with no fleet yet, so
+    /// there is no ambiguity for the nearer gate to protect.
+    static let inTheRoomDBM = -85
+
+    /// How strong a Canary must be heard before the card comes by itself.
+    /// With no real fleet and exactly one candidate, "in the room" is
+    /// enough; otherwise "close by", so two Canaries on one table — or a
+    /// neighbor's new one through the wall of a house that already has a
+    /// fleet — never get guessed at.
+    static func offerThreshold(candidateCount: Int, hasRealFleet: Bool) -> Int {
+        (!hasRealFleet && candidateCount == 1) ? inTheRoomDBM : closeEnoughDBM
+    }
 
     /// Which one Canary, if any, the app should offer by itself — the card
     /// that slides up without being asked for. Only when exactly ONE
-    /// candidate the person has not already been offered is close enough:
-    /// two on the table is a choice, and choices belong to the list (the
-    /// inline card, where each row has its own Blink and Set up), never to a
-    /// card that guesses. Once offered — answered or waved away — a suffix
-    /// is not offered again this session; the inline card still lists it.
+    /// candidate the person has not already been offered is close enough
+    /// (`offerThreshold`): two on the table is a choice, and choices belong
+    /// to the list (the inline card, where each row has its own Blink and
+    /// Set up), never to a card that guesses. Once offered — answered or
+    /// waved away — a suffix is not offered again until its door has been
+    /// off the air for a while and come back (NearbyOfferLedger); the inline
+    /// card still lists it.
     static func autoOffer(_ candidates: [NearbyCanary],
                           alreadyOffered: Set<String>,
-                          closeEnough: Int = closeEnoughDBM) -> NearbyCanary? {
-        let close = candidates.filter { $0.rssiDBM >= closeEnough && !alreadyOffered.contains($0.suffix) }
+                          hasRealFleet: Bool = true) -> NearbyCanary? {
+        let threshold = offerThreshold(candidateCount: candidates.count, hasRealFleet: hasRealFleet)
+        let close = candidates.filter { $0.rssiDBM >= threshold && !alreadyOffered.contains($0.suffix) }
         return close.count == 1 ? close[0] : nil
+    }
+
+    // MARK: - the one notification the background scan may post
+
+    /// With the app in the background the phone keeps a narrower scan
+    /// running (BLEConsole's door scan) and, for a Canary it would have
+    /// offered, posts one local notification — once per suffix per session,
+    /// and only when notifications are already allowed (the ask stays with
+    /// the first Test Alert; nothing here prompts). Tapping it opens the
+    /// app, where the foreground scan hears the door again and the card
+    /// comes up as it would have: the background sighting is never counted
+    /// as offered.
+    static let noticeTitle = "A new Canary is nearby"
+    static let noticeThreadID = "nearby-canary"
+
+    static func noticeBody(for canary: NearbyCanary) -> String {
+        "\(canary.title) is ready for your Wi-Fi. Tap to set it up."
+    }
+
+    /// Which candidate earns the notification: the first not yet noticed.
+    static func backgroundNotice(for candidates: [NearbyCanary],
+                                 alreadyNoticed: Set<String>) -> NearbyCanary? {
+        candidates.first { !alreadyNoticed.contains($0.suffix) }
     }
 
     // MARK: - is that THIS Canary?
@@ -198,5 +272,54 @@ enum NearbyCanaries {
         guard let first = rest.split(separator: "-", omittingEmptySubsequences: false).first,
               first.count == 4, first.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         return String(first)
+    }
+}
+
+/// The session's memory behind the card that comes to you: which Canaries
+/// it has already offered, which the person waved away — and when it may
+/// speak again. "Not now" and "already offered" hold while the Canary's
+/// door stays on the air. A suffix whose open door has been off the air for
+/// longer than the freshness window and then returns is a Canary somebody
+/// just replugged (a new first boot — the walkthrough tells people to), or
+/// one whose signal wobbled out and back, so both memories lapse for it and
+/// the card may come once more. Pure; FleetStore drives it from the scan.
+struct NearbyOfferLedger: Equatable, Sendable {
+    /// Offered by the card that slides up (answered or not).
+    private(set) var offered: Set<String> = []
+    /// Waved away with "Not now" — the inline card stays quiet for these too.
+    private(set) var dismissed: Set<String> = []
+    /// When each remembered suffix was last heard with its door open.
+    private var lastOnAir: [String: Date] = [:]
+
+    /// Everything the pop-up card must not offer right now.
+    var suppressed: Set<String> { offered.union(dismissed) }
+
+    mutating func noteOffered(_ suffix: String, now: Date = Date()) {
+        offered.insert(suffix)
+        lastOnAir[suffix] = now
+    }
+
+    mutating func noteDismissed(_ suffix: String, now: Date = Date()) {
+        dismissed.insert(suffix)
+        lastOnAir[suffix] = now
+    }
+
+    /// Feed it the suffixes whose door is open right now (the candidates
+    /// with nothing dismissed — a dismissed Canary on the air is still on
+    /// the air). A remembered suffix absent for longer than `gap` is
+    /// forgotten, so its next appearance is a fresh offer.
+    mutating func observe(onAir: Set<String>, now: Date, gap: TimeInterval = NearbyCanaries.freshFor) {
+        for suffix in onAir { lastOnAir[suffix] = now }
+        for suffix in suppressed where !onAir.contains(suffix) {
+            guard let last = lastOnAir[suffix] else {
+                lastOnAir[suffix] = now
+                continue
+            }
+            if now.timeIntervalSince(last) > gap {
+                offered.remove(suffix)
+                dismissed.remove(suffix)
+                lastOnAir[suffix] = nil
+            }
+        }
     }
 }

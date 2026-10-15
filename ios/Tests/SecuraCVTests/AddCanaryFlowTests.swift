@@ -28,6 +28,63 @@ final class AddCanaryFlowTests: XCTestCase {
         XCTAssertFalse(console.hasManager, "stopping (every backgrounding does) never builds one")
         console.pruneStaleSightings()
         XCTAssertFalse(console.hasManager)
+        // The background door scan rides the consent that already built the
+        // manager; on its own it must never be the prompt's moment.
+        console.startBackgroundDoorScan()
+        XCTAssertFalse(console.hasManager, "a background scan never raises the Bluetooth prompt")
+        XCTAssertFalse(console.doorScanning)
+        console.stopBackgroundDoorScan()
+        XCTAssertFalse(console.hasManager)
+    }
+
+    // MARK: - one prompt per tap
+
+    func testTheConsentTapStartsOnlyTheBluetoothScan() throws {
+        // Bluetooth finds and provisions a brand-new Canary; the mDNS browse
+        // (and iOS's Local Network alert) waits for its first consumer. Two
+        // system alerts stacked on one tap was the first thing a newcomer met.
+        let store = try source("Sources/SecuraCV/App/FleetStore.swift")
+        let start = try XCTUnwrap(store.range(of: "func setDiscoveryConsent(_ granted: Bool) {"))
+        let after = store[start.upperBound...]
+        let end = try XCTUnwrap(after.range(of: "\n    }\n"))
+        let body = after[..<end.lowerBound]
+        XCTAssertTrue(body.contains("ble.startScan()"), "the tap starts the Bluetooth scan")
+        // The browse may only restart here when a consumer already asked
+        // for it this launch — never unconditionally on the tap.
+        XCTAssertTrue(body.contains("if localNetworkWanted { discovery.start() }"),
+                      "the browse is gated on its consumer, not on the tap")
+        XCTAssertFalse(body.contains("\n            discovery.start()"),
+                       "no unconditional browse start in the consent tap")
+        XCTAssertTrue(store.contains("func startLocalNetworkDiscoveryIfConsented()"),
+                      "the browse has its own door, for its first consumer")
+    }
+
+    func testTheConsentCopyPromisesOnePrompt() throws {
+        for file in ["Sources/SecuraCV/Views/TodayView.swift",
+                     "Sources/SecuraCV/Views/CanarySetupView.swift",
+                     "Sources/SecuraCV/Views/Components/DiscoveryConsentCard.swift"] {
+            let text = try source(file)
+            XCTAssertFalse(text.contains("iOS asks for both"), file)
+            XCTAssertTrue(text.contains("iOS asks for Bluetooth next"), file)
+        }
+        // The browse's first consumer says why the second prompt comes there.
+        let walkthrough = try source("Sources/SecuraCV/Views/CanarySetupView.swift")
+        XCTAssertTrue(walkthrough.contains("iOS asks for Local Network so this phone can see it on your Wi-Fi."))
+        XCTAssertTrue(walkthrough.contains("store.startLocalNetworkDiscoveryIfConsented()"))
+        let fleet = try source("Sources/SecuraCV/Views/FleetView.swift")
+        XCTAssertTrue(fleet.contains("store.startLocalNetworkDiscoveryIfConsented()"),
+                      "the Fleet tab with a real fleet is the other consumer")
+    }
+
+    func testTheBackgroundScanIsDeclaredAndStoppedOnReturn() throws {
+        let plist = try source("Support/Info.plist")
+        XCTAssertTrue(plist.contains("<string>bluetooth-central</string>"),
+                      "the door scan needs the background mode, and declares only what it uses")
+        let store = try source("Sources/SecuraCV/App/FleetStore.swift")
+        XCTAssertTrue(store.contains("ble.startBackgroundDoorScan()"))
+        XCTAssertTrue(store.contains("ble.stopBackgroundDoorScan()"))
+        XCTAssertFalse(store.contains("requestAuthorization(options"),
+                       "the store never asks for notifications itself — AlertCenter owns the one ask")
     }
 
     func testOnlyTheConsoleBuildsAManagerAndOnlyOnDemand() throws {
@@ -95,6 +152,15 @@ final class AddCanaryFlowTests: XCTestCase {
                      "a Canary is heard: the nearby card has the moment")
         XCTAssertNil(FirstRunCard.decide(consent: nil, hasRealFleet: true, hearsNearby: false),
                      "a real fleet: Today is about the fleet")
+    }
+
+    func testTheListeningCardPromisesANotificationOnlyWhenItCan() {
+        let promised = FirstRunCard.listeningLine(notificationsAllowed: true)
+        XCTAssertEqual(promised, "Listening — power it on within a few meters. With the app in the background this phone still listens and tells you when it hears one.")
+        let honest = FirstRunCard.listeningLine(notificationsAllowed: false)
+        XCTAssertTrue(honest.hasPrefix("Listening — power it on within a few meters. With the app in the background this phone still listens"))
+        XCTAssertFalse(honest.contains("and tells you"), "no promise the system would not let it keep")
+        XCTAssertTrue(honest.contains("allow notifications"), "and what would make it true")
     }
 
     // MARK: - the camera, asked at the tap

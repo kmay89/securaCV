@@ -158,14 +158,19 @@
   <key>CKSharingSupported</key>
   <true/>
 
-  <!-- Background delivery for the away-path wakes (APNs). ONLY
-       remote-notification: the BLE scan is foreground-only by design
-       (BLEConsole/FleetStore stop it when the scene deactivates), and no
-       code plays background audio — declaring modes nothing uses is an App
-       Review rejection trigger and an overclaim besides. -->
+  <!-- Background delivery for the away-path wakes (APNs), and the one
+       Bluetooth job the background keeps: the narrow door scan
+       (BLEConsole.startBackgroundDoorScan — the Improv Wi-Fi service a
+       brand-new Canary advertises, duplicates off), so a Canary powered on
+       while the phone is in a pocket is still heard and the person told
+       once. The fleet's presence scan stays foreground-only by design
+       (FleetStore stops it when the scene deactivates), and no code plays
+       background audio — declaring modes nothing uses is an App Review
+       rejection trigger and an overclaim besides. -->
   <key>UIBackgroundModes</key>
   <array>
     <string>remote-notification</string>
+    <string>bluetooth-central</string>
   </array>
 
   <key>UILaunchScreen</key>

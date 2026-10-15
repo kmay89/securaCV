@@ -177,7 +177,8 @@ struct AddCanarySheet: View {
                             Label("No new Canaries in sight", systemImage: "dot.radiowaves.left.and.right")
                                 .font(.headline)
                             ListeningRow(text: "Power on a new Canary near this phone — it shows up here within seconds.",
-                                         advice: store.bluetoothAdvice)
+                                         advice: store.bluetoothAdvice,
+                                         since: store.listeningSince)
                             Button("Other ways to add one") { showingSetup = true }
                                 .buttonStyle(.bordered)
                         }

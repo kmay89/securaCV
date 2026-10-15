@@ -98,6 +98,19 @@ enum FirstRunCard: Equatable, Sendable {
         case false?: return .invite
         }
     }
+
+    /// The listening card's line. With the app in the background the phone
+    /// keeps a narrower Bluetooth scan running (BLEConsole's door scan) and
+    /// posts one notification when it hears a new Canary — but only when
+    /// notifications are already allowed, and nothing here asks for them,
+    /// so the card promises the notification only when it can keep that
+    /// promise and otherwise says what would make it true.
+    static func listeningLine(notificationsAllowed: Bool) -> String {
+        let listening = "Listening — power it on within a few meters. With the app in the background this phone still listens"
+        return notificationsAllowed
+            ? listening + " and tells you when it hears one."
+            : listening + "; allow notifications for SecuraCV in Settings and it tells you when it hears one."
+    }
 }
 
 /// What the "Scan the QR on its glass" button does, by camera permission.
