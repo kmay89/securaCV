@@ -161,6 +161,14 @@ static bool g_state_dirty = false;
 // bounded connect attempt happens at most once per backoff window.
 static uint32_t g_mqtt_next_attempt_ms = 0;
 static uint32_t g_mqtt_attempts = 0;
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+// The hub hand-off's one case the MQTT manager cannot absorb in place: a
+// live session to a previous broker (nothing in mqtt_mgr hangs up). That
+// restarts, after the Improv link has lingered and the phone has read its
+// status byte (the store_hub hook in setup()).
+static bool     g_hub_restart_armed = false;
+static uint32_t g_hub_restart_at_ms = 0;
+#endif
 
 // Broker gossip bookkeeping: advertise the working broker on the fleet
 // advert while the link is up, tombstone it the moment it drops
@@ -845,6 +853,34 @@ void setup() {
     id.reach_url        = nullptr;   // no page to send the phone to; it watches mDNS
     id.identify         = [] { identify_start(canary::ms_now()); };
     id.require_encryption = true;
+    // The hub hand-off (hub_handoff.h; magic_pairing.md §3.6): the phone
+    // that just handed this witness its Wi-Fi hands it the hub too — the
+    // broker it found over Bonjour and the login it minted — over the same
+    // encrypted link. Persist it through runtime_config (the flashers' NVS
+    // keys), then point the MQTT manager at it: mqtt_init() re-reads the
+    // cached config (PubSubClient keeps the host POINTER and copies the
+    // port; the transport re-reads its socket mode), and the supervisor's
+    // next attempt — now, not after its backoff — dials the new broker. The
+    // one case that path cannot absorb is a live session to a previous
+    // broker (nothing in mqtt_mgr hangs up): that restarts once the Improv
+    // link has lingered and the phone has read its status byte.
+    id.store_hub = [](const canary::net::hub_handoff::HubHandoff& hub) -> bool {
+      const bool durable = canary::cfg::set_mqtt_credentials(
+          hub.host, hub.port,
+          hub.has_credentials ? hub.user : nullptr,
+          hub.has_credentials ? hub.pass : nullptr,
+          hub.tls);
+      if (canary::net::mqtt_connected()) {
+        g_hub_restart_at_ms = canary::ms_now() + canary::net::improv::Timing{}.provisioned_linger_ms + 5000u;
+        g_hub_restart_armed = true;
+        canary::log_line("MQTT", "Hub handed over while connected to another broker - restarting shortly.");
+      } else {
+        canary::net::mqtt_init(TOPICS);
+        g_mqtt_next_attempt_ms = canary::ms_now();
+        g_mqtt_attempts = 0;
+      }
+      return durable;
+    };
     canary::net::improv_ble::begin(id,
         canary::net::setup_portal_active() && !canary::net::wifi_configured(),
         canary::ms_now());
@@ -1019,6 +1055,13 @@ void loop() {
     if (!canary::net::setup_portal_active() && canary::net::wifi_configured()) canary::net::wifi_open_tap_portal();
   } else {
     canary::net::wifi_close_tap_portal();
+  }
+  if (g_hub_restart_armed && (int32_t)(now - g_hub_restart_at_ms) >= 0) {
+    // The hub hand-off replaced a broker this witness was still talking to;
+    // the phone has had its status byte for a few seconds now.
+    canary::log_line("MQTT", "Restarting onto the handed-over broker.");
+    delay(100);
+    ESP.restart();
   }
 #endif
 
