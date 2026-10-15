@@ -75,9 +75,28 @@ final class SetupPortalTests: XCTestCase {
         let nets = [SetupPortal.Network(ssid: "Home", rssi: -50, secure: true),
                     SetupPortal.Network(ssid: "Attic", rssi: -80, secure: true)]
         XCTAssertEqual(SetupPortal.preselect(nets, remembered: "Attic"), "Attic")
-        XCTAssertEqual(SetupPortal.preselect(nets, remembered: "Home5G"), "Home", "else the strongest it heard")
-        XCTAssertEqual(SetupPortal.preselect(nets, remembered: nil), "Home")
+        // Never the strongest it heard: in a building that is as often a
+        // neighbor's network as yours, one tap from being sent.
+        XCTAssertNil(SetupPortal.preselect(nets, remembered: "Home5G"),
+                     "remembered but not on the list: nothing picked, the hint names it")
+        XCTAssertNil(SetupPortal.preselect(nets, remembered: nil), "nothing remembered: the person picks")
         XCTAssertNil(SetupPortal.preselect([], remembered: "Home"), "no list: the person types a name")
+    }
+
+    func testThePickerAsksInsteadOfGuessing() {
+        // The words under every picker of the Canary's own list, and the
+        // header over an unselected one.
+        XCTAssertEqual(SetupPortal.pickHeader, "Pick your home Wi-Fi")
+        XCTAssertTrue(SetupPortal.pickYoursNote.contains("strongest first"), "why the first row is not the answer")
+        XCTAssertTrue(SetupPortal.pickYoursNote.contains("not a neighbor's"))
+        XCTAssertTrue(SetupPortal.notSeenNote.contains("2.4 GHz"), "the one reason a home network is missing")
+        XCTAssertTrue(SetupPortal.notSeenNote.contains("Another name…"), "and the way around it")
+        XCTAssertTrue(SetupPortal.wapSameNetworkNote.contains("this phone is on"),
+                      "a WAP is paired over the LAN right after it joins")
+        XCTAssertTrue(SetupPortal.wapSameNetworkNote.contains("guest network"))
+        for s in [SetupPortal.pickYoursNote, SetupPortal.notSeenNote, SetupPortal.wapSameNetworkNote] {
+            XCTAssertTrue(s.hasSuffix(".") || s.hasSuffix("…"), "a sentence: \(s)")
+        }
     }
 
     // MARK: - saying what went wrong

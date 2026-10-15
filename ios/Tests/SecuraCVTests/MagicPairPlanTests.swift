@@ -207,4 +207,23 @@ final class MagicPairPlanTests: XCTestCase {
         XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: false), MagicPairPlan.Copy.phoneOffWiFi)
         XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: true), MagicPairPlan.Copy.unreachable)
     }
+
+    func testNothingAnsweredNamesLocalNetworkBeingOffFirst() {
+        // iOS's Local Network switch off for the app makes every dial on
+        // the LAN fail like a Canary's silence — and it used to be reported
+        // as one. It is named first: it stays off whatever the Wi-Fi does.
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: true, localNetworkBlocked: true),
+                       MagicPairPlan.Copy.localNetworkOff)
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: false, localNetworkBlocked: true),
+                       MagicPairPlan.Copy.localNetworkOff, "the switch first, even off Wi-Fi")
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: false, localNetworkBlocked: false),
+                       MagicPairPlan.Copy.phoneOffWiFi)
+        XCTAssertEqual(MagicPairPlan.unreachableNote(phoneOnWiFi: true, localNetworkBlocked: false),
+                       MagicPairPlan.Copy.unreachable)
+        let note = MagicPairPlan.Copy.localNetworkOff
+        XCTAssertTrue(note.contains("Local Network"), "the switch, by its name in Settings")
+        XCTAssertTrue(note.contains("Settings"), "where the fix lives — the sheet puts the button beside it")
+        XCTAssertTrue(note.contains("Try again"), "an unspent claim is retried in place")
+        XCTAssertTrue(MagicPairPlan.Copy.all.contains(note), "swept with the rest")
+    }
 }

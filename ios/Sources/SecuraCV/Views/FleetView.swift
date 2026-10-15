@@ -194,12 +194,14 @@ struct FleetView: View {
                     Text("Discovery is off — SecuraCV isn't looking for Canaries on this network.")
                 }
             }
-            if !store.nearbyCanaries.isEmpty {
-                // A brand-new Canary asking for Wi-Fi over Bluetooth.
-                Section { NearbyCanaryCard() }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-            }
+            // A brand-new Canary asking for Wi-Fi over Bluetooth. Mounted
+            // whether or not one is in earshot: the card renders nothing when
+            // it has no rows, and a conditional mount tore its setup sheet
+            // down 15 s into the ceremony (a connected Canary stops
+            // advertising, so it leaves nearbyCanaries while being set up).
+            Section { NearbyCanaryCard() }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             if !filtered.isEmpty {
                 if store.witnesses.count >= Self.roomGroupThreshold {
                     ForEach(roomGroups, id: \.room) { group in

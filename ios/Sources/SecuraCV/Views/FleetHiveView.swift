@@ -151,13 +151,14 @@ struct AddCanarySheet: View {
         NavigationStack {
             List {
                 let pairable = store.discoveredRows.pairable
-                if !store.nearbyCanaries.isEmpty {
-                    Section {
-                        NearbyCanaryCard()
-                    }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
+                // Always mounted: the card is empty when nothing is in
+                // earshot, and a conditional mount tore its setup sheet down
+                // 15 s into a ceremony (a connected Canary stops advertising).
+                Section {
+                    NearbyCanaryCard()
                 }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
                 if store.discoveryConsent != true {
                     Section {
                         VStack(alignment: .leading, spacing: Theme.s) {

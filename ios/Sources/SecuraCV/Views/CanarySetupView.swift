@@ -60,16 +60,23 @@ struct NearbyListenControl: View {
     var body: some View {
         if store.discoveryConsent != true {
             VStack(alignment: .leading, spacing: Theme.s) {
-                Text("This phone listens for it over Bluetooth and your Wi-Fi — nothing leaves your home. iOS asks for both next.")
+                Text("This phone listens for it over Bluetooth — nothing leaves your home. iOS asks for Bluetooth next.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Find my Canary") { store.setDiscoveryConsent(true) }
                     .buttonStyle(.borderedProminent)
             }
-        } else if store.nearbyCanaries.isEmpty {
-            ListeningRow(text: "Listening — power \(what) on within a few meters of this phone.",
-                         advice: store.bluetoothAdvice)
         } else {
+            // The listening row yields while a ceremony is running (the
+            // Canary being set up stops advertising, so it leaves
+            // nearbyCanaries); the card stays mounted throughout — it renders
+            // nothing when it has no rows, and a conditional mount tore its
+            // setup sheet down 15 s into the ceremony.
+            if store.nearbyCanaries.isEmpty, store.ble.setupClient == nil {
+                ListeningRow(text: "Listening — power \(what) on within a few meters of this phone.",
+                             advice: store.bluetoothAdvice,
+                             since: store.listeningSince)
+            }
             NearbyCanaryCard()
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
@@ -119,7 +126,8 @@ struct CanaryFamilySetupView: View {
         .onAppear(perform: prefill)
         .onChange(of: portal.networks) { _, networks in
             // The Canary's own list arrived: preselect the remembered
-            // network when it can see it, else the strongest it heard.
+            // network when it can see it — and nothing otherwise (the
+            // strongest it heard is as often a neighbor's; the person picks).
             portalChoice = SetupPortal.preselect(networks, remembered: remembered?.ssid) ?? ""
             matchPassword(to: effectiveSSID)
         }
@@ -315,6 +323,14 @@ struct CanaryFamilySetupView: View {
                 }
                 Text("Another name…").tag("")
             }
+            // Unselected unless this phone remembered one on the list: the
+            // list is by signal, and the strongest signal is not a choice.
+            Text(SetupPortal.pickYoursNote)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(SetupPortal.notSeenNote)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if portal.networks.isEmpty || portalChoice.isEmpty {
             TextField("Your Wi-Fi name", text: $homeSSID)
@@ -390,9 +406,15 @@ struct CanaryFamilySetupView: View {
     }
 
     @ViewBuilder private var appearControl: some View {
+        // This row is the mDNS browse's first consumer on a fresh install:
+        // the consent tap started only the Bluetooth scan, so iOS's Local
+        // Network prompt comes here, with its reason on the screen.
         if store.discoveryConsent != true {
-            Button("Enable discovery to watch for it") { store.setDiscoveryConsent(true) }
-                .buttonStyle(.bordered)
+            Button("Enable discovery to watch for it") {
+                store.setDiscoveryConsent(true)
+                store.startLocalNetworkDiscoveryIfConsented()
+            }
+            .buttonStyle(.bordered)
         } else if !seen.isEmpty {
             ForEach(seen) { d in discoveredRow(d, mine: true) }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)
@@ -408,10 +430,13 @@ struct CanaryFamilySetupView: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             ListeningRow(text: "Watching this network for the \(family.deviceType.role.lowercased())…", advice: nil)
+                .onAppear { store.startLocalNetworkDiscoveryIfConsented() }
+            Text("iOS asks for Local Network so this phone can see it on your Wi-Fi.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         if let login = HubSecretStore.brokerLogin(), family == .vision || family == .sense {
             VStack(alignment: .leading, spacing: Theme.xs) {
-                Text("Hub login for the Flasher's MQTT fields: \(login.username)")
+                Text("Its hub login, \(login.username) — the setup card hands it over; the Flasher's MQTT fields take it too.")
                     .font(.caption.weight(.medium))
                 BrokerPasswordCopyButton(password: login.password)
                     .font(.caption)
