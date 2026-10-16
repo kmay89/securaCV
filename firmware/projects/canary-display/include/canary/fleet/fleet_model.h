@@ -793,13 +793,23 @@ class FleetModel {
   // A display peer is a sibling SCREEN, not a life-safety sensor: it seats in
   // the roster (it has its own I2C sensor data and screen state) but its
   // link-loss must never climb the witness-lost alarm ladder — unplugging a
-  // nightstand is ordinary, not an emergency. Matched on the device_type
-  // prefix every display flavor reports — plus the nightlight, which
-  // reports what it is ("canary-nightlight") and is every bit a sibling
-  // screen: unplugging a kid's nightlight must never alarm the household.
+  // nightstand is ordinary, not an emergency. Matched on the CD_DEVICE_TYPE
+  // each display flavor actually publishes (configs/canary-display/*/
+  // config.h): "canary-nightstand" (the 1.47" sticks, the C6, the Touch
+  // 1.69, the AMOLED) and "canary-nightstand7" by prefix, "canary-dash",
+  // "canary-watch", and the nightlight — unplugging a kid's nightlight must
+  // never alarm the household. "canary-display" stays for older images.
+  // This list once named only "canary-display" and the nightlight, which no
+  // nightstand reports, so a household of several nightstands on one broker
+  // climbed the witness-lost ladder every time one was unplugged.
   static bool is_display_peer(const Witness& w) {
-    return strncmp(w.device_type, "canary-display", 14) == 0 ||
-           strncmp(w.device_type, "canary-nightlight", 17) == 0;
+    static const char* const kDisplayTypes[] = {
+        "canary-display", "canary-nightstand", "canary-nightlight",
+        "canary-dash", "canary-watch"};
+    for (const char* t : kDisplayTypes) {
+      if (strncmp(w.device_type, t, strlen(t)) == 0) return true;
+    }
+    return false;
   }
 
   Sev witness_sev(const Witness& w, uint32_t now) const {

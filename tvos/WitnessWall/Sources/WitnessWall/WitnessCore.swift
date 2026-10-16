@@ -198,6 +198,13 @@ extension FleetSnapshot {
     ///    device_id, so a hubless home can hold two "canary_dash_001"s, and
     ///    only their sources tell them apart. Collapsing them would silently
     ///    drop a real Canary from the wall.
+    ///  * A part's FIRST row is its self-report; the rows after it are the
+    ///    peers that source merely hears (a display's /api/fleet answers for
+    ///    every Canary on its broker). A peer row never stands beside a
+    ///    device's own report: it is dropped when any part self-reports that
+    ///    name, and otherwise one peer row per name survives (a live one over
+    ///    a stale one). Without this, N displays on one broker drew up to N²
+    ///    rows — each node once for itself and once per sibling that heard it.
     ///  * A merged fleet has NO name and NO `verified_through`, full stop.
     ///    A name from one part over devices from another is a claim nobody
     ///    made, and a verification stamp from one part would render a calm
@@ -205,10 +212,23 @@ extension FleetSnapshot {
     ///    survive only the single-part pass-through.
     static func merged(_ parts: [FleetSnapshot]) -> FleetSnapshot {
         guard parts.count > 1 else { return parts.first ?? FleetSnapshot(kernel: nil, verifiedThrough: nil, devices: []) }
+        let selfNames = Set(parts.compactMap { $0.devices.first?.name })
         var seen = Set<String>()
         var devices: [Device] = []
+        var peerAt: [String: Int] = [:]   // peer name -> its index in `devices`
         for part in parts {
-            for device in part.devices where seen.insert(device.id).inserted {
+            for (index, device) in part.devices.enumerated() {
+                if index == 0 {
+                    if seen.insert(device.id).inserted { devices.append(device) }
+                    continue
+                }
+                if selfNames.contains(device.name) { continue }
+                if let at = peerAt[device.name] {
+                    if device.online && !devices[at].online { devices[at] = device }
+                    continue
+                }
+                guard seen.insert(device.id).inserted else { continue }
+                peerAt[device.name] = devices.count
                 devices.append(device)
             }
         }

@@ -863,6 +863,13 @@ for (const m of manifests) {
  * not a refactor. */
 const CONFIG_FIGURE_DISPUTED = new Map([
   ['canary-vision/default', ['devices/canary-vision-devkit: device.canary-vision-devkit']],
+  // The C6 1.47" board compiles the S3 stick's nightstand config (same
+  // flavor, a USB-C socket instead of the stick's USB-A plug — two shapes).
+  // Recording it moves nothing: the type it publishes, `canary-nightstand`,
+  // already spans the stick, the Touch 1.69 and the AMOLED, so it resolves
+  // to no figure by the every-board-agrees rule, and the C6 is drawn by its
+  // board id (the `hw` key its pins.h now declares) instead.
+  ['canary-display/nightstand', ['devices/canary-display-nightstand-c6: device.canary-display-nightstand-c6']],
 ]);
 const configsWithType = new Set(deviceTypes.map((c) => `${c.family}/${c.flavor}`));
 const manifestsOfFamily = new Map();

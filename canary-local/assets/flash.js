@@ -2078,22 +2078,30 @@ function renderPicker() {
   if (!matches.length) {
     list.append(el("p", "muted", "No published SecuraCV product targets this chip yet."));
   }
+  // The shortlist is what the evidence could not rule out: one card when it
+  // named the board, one card per board when it couldn't (an ESP32-C6 is a
+  // Sense node or a 1.47" display — the other must not hide behind a click).
+  const shown = new Set(((pick && pick.shortlist) || (focus ? [focus] : []))
+    .map((p) => p.id));
   if (focus && matches.length > 1) {
-    // Hide the others, but keep their rows in the DOM so refreshManifestState
-    // still fills every version; one click reveals the grouped browse.
-    rows.forEach((r) => { if (r.dataset.id !== focus.id) r.style.display = "none"; });
-    headers.forEach((h) => { h.style.display = "none"; });
     const note = el("p", "fineprint flash-focus-note");
     note.append(el("span", null,
       (pick.kind === "picked" ? "" : "🪄 ") + pick.why + " "));
-    const more = el("button", "ghost small",
-      `show all ${matches.length} for this chip (developer)`);
-    more.addEventListener("click", () => {
-      rows.forEach((r) => { r.style.display = ""; });
-      headers.forEach((h) => { h.style.display = ""; });
-      note.remove();
-    });
-    note.append(more);
+    if (matches.length > shown.size) {
+      // Hide the others, but keep their rows in the DOM so
+      // refreshManifestState still fills every version; one click reveals
+      // the grouped browse.
+      rows.forEach((r) => { if (!shown.has(r.dataset.id)) r.style.display = "none"; });
+      headers.forEach((h) => { h.style.display = "none"; });
+      const more = el("button", "ghost small",
+        `show all ${matches.length} for this chip (developer)`);
+      more.addEventListener("click", () => {
+        rows.forEach((r) => { r.style.display = ""; });
+        headers.forEach((h) => { h.style.display = ""; });
+        note.remove();
+      });
+      note.append(more);
+    }
     card.append(note);
   }
   card.append(list);
