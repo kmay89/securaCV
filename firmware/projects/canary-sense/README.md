@@ -248,8 +248,10 @@ day):
   retry of the saved network runs under it) and lowers it again when the
   door shuts without a join.
 - **Never because a saved network is failing.** That raises the SoftAP
-  recovery portal (a door with the key the Flasher printed); the Bluetooth
-  door takes the stored-credentials fact, not the portal's.
+  recovery portal (a door with the key on the Flasher's card after the
+  flash — it reads the `[SETUP]` line from the Canary's first boot; the
+  serial console shows the same line); the Bluetooth door takes the
+  stored-credentials fact, not the portal's.
 - Bounds while open: 3 s between accepted credential writes, 10 attempts
   per open door (then shut until a tap or a power cycle), a 3-minute idle
   disconnect, ~20 s linger after a join. The `WIFI_SETTINGS` result carries

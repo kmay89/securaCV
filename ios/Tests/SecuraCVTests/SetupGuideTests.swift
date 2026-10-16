@@ -83,6 +83,73 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertTrue(SetupGuide.canary(.wap)[1].body.contains("power-cycle"), "a WAP's door re-arms on a power cycle")
         XCTAssertFalse(SetupGuide.canary(.display)[1].body.contains(SetupGuide.doorWindowSentence),
                        "a display has no door to keep open")
+        // A Sense or Vision has both ways back in, and the power cycle is
+        // said first: it is the one that works past the half hour too.
+        for family in [CanaryFamily.sense, .vision] {
+            let line = SetupGuide.doorWindowLine(family)
+            XCTAssertTrue(line.contains("unplug and replug it for another half hour"), family.rawValue)
+            XCTAssertTrue(line.contains(SetupGuide.tapSentence), family.rawValue)
+        }
+    }
+
+    func testNothingYetSaysBothWaysBackIn() {
+        // The footnote every "Listening…" grows after the wait: the two
+        // reasons a door is shut, and both ways to reopen it.
+        let line = SetupGuide.nothingYetLine
+        XCTAssertTrue(line.hasPrefix("Nothing yet?"))
+        XCTAssertTrue(line.contains("more than half an hour"), "the first-boot window")
+        XCTAssertTrue(line.contains("was on a Wi-Fi before"), "a saved network shuts the door for good")
+        XCTAssertTrue(line.contains("unplug it and plug it back in"))
+        XCTAssertTrue(line.contains("BOOT button"), "the Sense's and Vision's shorter way")
+        XCTAssertTrue(line.hasSuffix("."))
+        XCTAssertEqual(SetupGuide.nothingYetAfter, 20, "long enough for a door to be heard")
+    }
+
+    func testTheHeadlessFallbackLeadsWithTheReplugAndNamesTheConsole() {
+        for family in [CanaryFamily.sense, .vision] {
+            let key = SetupGuide.canary(family).first { $0.id == "key" }!
+            XCTAssertEqual(key.title, "If no card appears", family.rawValue)
+            XCTAssertTrue(key.body.hasPrefix("Unplug it and plug it back in"), "\(family.rawValue): the replug comes first")
+            XCTAssertTrue(key.body.contains("BOOT button"), family.rawValue)
+            // The Flasher prints nothing today: the key is on the device's
+            // own serial line.
+            XCTAssertTrue(key.body.contains("Flasher's serial console (the [SETUP] line at boot)"), family.rawValue)
+            XCTAssertTrue(key.short.contains("Unplug and replug"), family.rawValue)
+        }
+        for step in SetupGuide.allSteps {
+            XCTAssertFalse(step.title.contains("Flasher printed"), step.id)
+            XCTAssertFalse(step.body.contains("Flasher printed"), step.id)
+            XCTAssertFalse(step.short.contains("Flasher printed"), step.id)
+        }
+    }
+
+    func testTheHeadlessHubNoteNamesTheSameTapAndTheBootFallback() {
+        for family in [CanaryFamily.sense, .vision] {
+            let note = family.hubNote
+            XCTAssertTrue(note.hasPrefix("The same tap that gives it your Wi-Fi hands it your hub"), family.rawValue)
+            XCTAssertTrue(note.contains("broker address"), family.rawValue)
+            XCTAssertTrue(note.contains("Set the hub up first"), family.rawValue)
+            XCTAssertTrue(note.contains("BOOT button once after the hub exists"), family.rawValue)
+            XCTAssertFalse(note.contains("Flasher"), "\(family.rawValue): no MQTT fields to type")
+        }
+        // Nothing in either walkthrough still sends people to a terminal for
+        // the integration: the kernel add-on's panel installs it with one click.
+        for step in SetupGuide.allSteps {
+            XCTAssertFalse(step.body.contains("terminal"), step.id)
+        }
+        XCTAssertTrue(SetupGuide.hub.first { $0.id == "finish" }!.body.contains("SecuraCV panel in the hub's sidebar"),
+                      "the finish step names the panel that installs the integration")
+    }
+
+    func testEveryFamilyHasOneWordAndTheDoorFamiliesPutItOnTheAir() {
+        XCTAssertEqual(CanaryFamily.sense.word, "Sense")
+        XCTAssertEqual(CanaryFamily.vision.word, "Vision")
+        XCTAssertEqual(CanaryFamily.wap.word, "WAP")
+        XCTAssertEqual(CanaryFamily.display.word, "Display")
+        for family in CanaryFamily.allCases where family.hasBluetoothDoor {
+            XCTAssertEqual(NearbyCanaries.parseName("\(family.word)-AB12")?.family, family,
+                           "\(family.rawValue): the word is the one the advert spells")
+        }
     }
 
     func testNoStepIsAnEmptyPromise() {

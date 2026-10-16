@@ -104,12 +104,31 @@ enum SetupPortal {
     }
 
     /// Which network to preselect: the remembered household Wi-Fi when the
-    /// Canary can see it, else the strongest it heard, else none (the
-    /// person types a name).
+    /// Canary can see it — and nothing otherwise. It used to fall back to
+    /// the strongest network the Canary heard, which in an apartment
+    /// building is as often a neighbor's as yours, and a preselected wrong
+    /// name is one tap from being sent. An unselected picker with
+    /// `pickYoursNote` under it asks the one question only the person can
+    /// answer; Join stays disabled until they do.
     static func preselect(_ networks: [Network], remembered: String?) -> String? {
-        if let remembered, networks.contains(where: { $0.ssid == remembered }) { return remembered }
-        return networks.first?.ssid
+        guard let remembered, networks.contains(where: { $0.ssid == remembered }) else { return nil }
+        return remembered
     }
+
+    /// The picker's header when nothing was remembered (or the remembered
+    /// network is not on the Canary's list): a question, not a label.
+    static let pickHeader = "Pick your home Wi-Fi"
+    /// Under every picker of the Canary's own list — the list is sorted by
+    /// signal, and the strongest signal is not a choice.
+    static let pickYoursNote =
+        "These are the networks the Canary can hear, strongest first — pick yours, not a neighbor's."
+    /// The footer under a list that has not got the person's network on it.
+    static let notSeenNote =
+        "Don't see yours? Canaries join 2.4 GHz Wi-Fi only — most routers have that band or can turn it on — or choose Another name…"
+    /// A WAP is paired over the home LAN right after it joins, so the phone
+    /// and the WAP must end up on the same network.
+    static let wapSameNetworkNote =
+        "Pick the Wi-Fi this phone is on — a guest network keeps them apart; the 2.4 GHz and 5 GHz names of one router are fine."
 
     // MARK: - saying what went wrong, and what to do
 

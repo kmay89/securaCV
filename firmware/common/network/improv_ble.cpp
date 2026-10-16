@@ -5,10 +5,11 @@
 // portal's join path. Every decision that could be wrong lives in the
 // header, where a g++ test can reach it.
 //
-// Threading: NimBLE's callbacks run on its host task. The write callback
-// only copies the packet into a mailbox; everything else — parsing, the
-// session, WiFi calls, notifications — happens in tick() on the loop task,
-// the same task the portal's own join state machine runs on.
+// Threading: NimBLE's callbacks run on its host task. The write callbacks
+// (the RPC command and the companion service's HUB) only copy the packet
+// into a mailbox; everything else — parsing, the session, WiFi calls,
+// notifications, the hub hand-off to the board — happens in tick() on the
+// loop task, the same task the portal's own join state machine runs on.
 
 // The feature flag is the project's: include/canary/config.h carries the
 // FEATURE_IMPROV default (and IMPROV_FIRST_BOOT_WINDOW_MS) on every family
@@ -129,10 +130,25 @@ NimBLECharacteristic* s_command = nullptr;
 NimBLECharacteristic* s_result = nullptr;
 NimBLECharacteristic* s_caps = nullptr;
 
+// The companion service and its one characteristic (hub_handoff.h). Null
+// when the service could not be registered: the door still works, the
+// hand-off is off this boot.
+NimBLEService*        s_hub_service = nullptr;
+NimBLECharacteristic* s_hub = nullptr;
+
 // The mailbox: one command at a time, host task → loop task.
 uint8_t s_rx[improv::MAX_COMMAND_LEN];
 volatile size_t s_rx_len = 0;
 volatile bool s_rx_pending = false;
+
+// The hub hand-off's own mailbox, the same release/acquire discipline: one
+// document at a time, host task → loop task. A length past the buffer marks
+// an oversize write (nothing copied; the loop task answers TooLong).
+uint8_t  s_hub_rx[hub_handoff::MAX_PAYLOAD];
+volatile uint16_t s_hub_rx_len = 0;
+volatile bool s_hub_rx_pending = false;
+volatile bool s_hub_rx_unencrypted = false;
+hub_handoff::Status s_hub_status = hub_handoff::Status::None;
 
 volatile bool s_connected = false;
 volatile bool s_readvertise = false;   // a disconnect handed the radio back
@@ -180,6 +196,20 @@ void publish_error() {
   const uint8_t b = (uint8_t)s_session.error;
   s_error->setValue(&b, 1);
   s_error->notify();
+}
+
+// What a READ of HUB answers: the status byte and nothing else. Set on the
+// loop task; the host task sets it too, right after it takes a write, so
+// the document a phone wrote is never what the next read returns.
+void publish_hub_status() {
+  if (!s_hub) return;
+  const uint8_t b = (uint8_t)s_hub_status;
+  s_hub->setValue(&b, 1);
+}
+
+void set_hub_status(hub_handoff::Status st) {
+  s_hub_status = st;
+  publish_hub_status();
 }
 
 void send_result(Command cmd, const char* const* strings, size_t count) {
@@ -271,7 +301,61 @@ class ServerCb : public NimBLEServerCallbacks {
 #endif
 };
 
+// The HUB write: the same mailbox discipline as the RPC command, a second
+// buffer so a hand-off and a command in the same instant lose neither.
+class HubCb : public NimBLECharacteristicCallbacks {
+  void take(NimBLECharacteristic* c, bool encrypted) {
+    if (__atomic_load_n(&s_hub_rx_pending, __ATOMIC_ACQUIRE)) { scrub(c); return; }   // one at a time
+    if (!encrypted) {
+      // The second check (the first is the characteristic's WRITE_ENC):
+      // nothing from a link that is not encrypted is parsed. The loop task
+      // answers Rejected.
+      s_hub_rx_unencrypted = true;
+      s_hub_rx_len = 0;
+      scrub(c);
+      __atomic_store_n(&s_hub_rx_pending, true, __ATOMIC_RELEASE);
+      return;
+    }
+    const auto v = c->getValue();
+    const size_t n = v.length();
+    if (n == 0 || n > sizeof(s_hub_rx)) {
+      // Nothing copied: the loop task answers TooLong / Malformed from the
+      // length alone.
+      s_hub_rx_len = (uint16_t)(n > 0xFFFFu ? 0xFFFFu : n);
+      scrub(c);
+      __atomic_store_n(&s_hub_rx_pending, true, __ATOMIC_RELEASE);
+      return;
+    }
+    memcpy(s_hub_rx, v.data(), n);
+    s_hub_rx_len = (uint16_t)n;
+    scrub(c);
+    __atomic_store_n(&s_hub_rx_pending, true, __ATOMIC_RELEASE);
+  }
+  // The stack stored the written document as the characteristic's value;
+  // put the status byte back before this callback returns, over a zeroed
+  // buffer, so neither a read nor the attribute's own memory keeps it.
+  static void scrub(NimBLECharacteristic* c) {
+    uint8_t zero[hub_handoff::MAX_PAYLOAD];
+    memset(zero, 0, sizeof(zero));
+    c->setValue(zero, sizeof(zero));
+    const uint8_t b = (uint8_t)s_hub_status;
+    c->setValue(&b, 1);
+  }
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+    take(c, !s_id.require_encryption || info.isEncrypted());
+  }
+#else
+  // 1.4.x calls both onWrite overloads; only the one with the descriptor is
+  // overridden here, so a write is taken once.
+  void onWrite(NimBLECharacteristic* c, ble_gap_conn_desc* desc) override {
+    take(c, !s_id.require_encryption || (desc && desc->sec_state.encrypted));
+  }
+#endif
+};
+
 CommandCb s_command_cb;
+HubCb     s_hub_cb;
 ServerCb  s_server_cb;
 
 // ── Advertising ────────────────────────────────────────────────────────────
@@ -427,6 +511,9 @@ void handle_command(uint32_t now_ms) {
     case Command::WifiSettings: {
       const Error e = improv::session_on_wifi_settings(s_session, now_ms, s_timing);
       if (e == Error::None) {
+        // A new join is a new hand-off slot: the status reads None until the
+        // phone writes the hub for this one.
+        set_hub_status(hub_handoff::Status::None);
         if (!setup_portal_submit_join(cmd.wifi.ssid, cmd.wifi.password, now_ms)) {
           // The portal refused (a wizard join is testing, or it is not up
           // after all): the join never started.
@@ -460,6 +547,60 @@ void handle_command(uint32_t now_ms) {
       publish_error();
       break;
   }
+}
+
+// The hub hand-off, on the loop task: the mailbox's document is parsed
+// (hub_handoff.h) and, when the session has a join to attach it to, handed
+// to the board through Identity::store_hub. Every path ends in the status
+// byte the phone reads; a refusal is one health line, never the bytes.
+void handle_hub(uint32_t now_ms) {
+  using hub_handoff::Status;
+  using hub_handoff::Verdict;
+  improv::session_touch(s_session, now_ms);   // the link did something
+  if (s_hub_rx_unencrypted) {
+    s_hub_rx_unencrypted = false;
+    s_hub_rx_len = 0;
+    __atomic_store_n(&s_hub_rx_pending, false, __ATOMIC_RELEASE);
+    set_hub_status(Status::Rejected);
+    Serial.println("[IMPROV] hub hand-off on an unencrypted link refused");
+    return;
+  }
+  uint8_t doc[hub_handoff::MAX_PAYLOAD];
+  const size_t n = s_hub_rx_len;
+  const bool oversize = n > sizeof(doc);
+  if (!oversize) memcpy(doc, s_hub_rx, n);
+  improv::wipe(s_hub_rx, sizeof(s_hub_rx));
+  s_hub_rx_len = 0;
+  __atomic_store_n(&s_hub_rx_pending, false, __ATOMIC_RELEASE);
+
+  // Only the phone that has a join in this session may hand over a hub:
+  // Provisioned (it gave the device its Wi-Fi), or Provisioning for a phone
+  // that writes a beat before the verdict lands.
+  if (s_session.state != State::Provisioned && s_session.state != State::Provisioning) {
+    improv::wipe(doc, sizeof(doc));
+    set_hub_status(Status::Rejected);
+    Serial.println("[IMPROV] hub hand-off refused: no join this session");
+    return;
+  }
+
+  hub_handoff::HubHandoff hub;
+  const Verdict v = hub_handoff::parse_hub_handoff(oversize ? nullptr : doc, n, hub);
+  improv::wipe(doc, sizeof(doc));
+  if (v != Verdict::Ok) {
+    set_hub_status(Status::Rejected);
+    Serial.printf("[IMPROV] hub hand-off refused: %s\n", hub_handoff::verdict_name(v));
+    return;
+  }
+  const bool stored = s_id.store_hub ? s_id.store_hub(hub) : false;
+  if (stored) {
+    Serial.printf("[IMPROV] hub hand-off stored: %s:%u%s\n", hub.host, (unsigned)hub.port,
+                  hub.has_credentials ? " with a login" : "");
+  } else {
+    Serial.println(s_id.store_hub ? "[IMPROV] hub hand-off not stored (the store refused)"
+                                  : "[IMPROV] hub hand-off refused: this board takes none");
+  }
+  hub_handoff::wipe(hub);
+  set_hub_status(stored ? Status::Stored : Status::Rejected);
 }
 
 void follow_join(uint32_t now_ms) {
@@ -558,11 +699,38 @@ bool begin(const Identity& identity, bool no_credentials, uint32_t now_ms) {
   const uint8_t caps = capabilities();
   s_caps->setValue(&caps, 1);
 
+  // The SecuraCV companion service beside the Improv one — the same UUID
+  // the WAP registers for its claim; here it carries HUB alone. Outside the
+  // Improv service so a standard client never meets it, and not in the
+  // advert (the scan response is full; the phone that needs it is already
+  // connected). Encrypted by property AND by the handler, like the RPC
+  // write. Fail-soft: a board that cannot register it keeps its Wi-Fi door.
+  s_hub_service = s_server->createService(hub_handoff::SERVICE_UUID);
+  if (s_hub_service) {
+    const uint32_t hub_props = NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ
+        | (identity.require_encryption ? (NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::READ_ENC) : 0);
+    s_hub = s_hub_service->createCharacteristic(hub_handoff::HUB_UUID, hub_props);
+    if (s_hub) {
+      s_hub->setCallbacks(&s_hub_cb);
+      publish_hub_status();
+    } else {
+      s_server->removeService(s_hub_service, /*deleteSvc=*/true);
+      s_hub_service = nullptr;
+    }
+  }
+  if (!s_hub) Serial.println("[IMPROV] companion service unavailable — no hub hand-off this boot");
+
 #if ESP_ARDUINO_VERSION_MAJOR < 3
   if (!s_service->start()) {   // 1.4.x starts services one by one; 2.x starts them with the server
     Serial.println("[IMPROV] service registration refused — door stays shut this boot");
     s_readvertise = true;      // the beacon goes back on air regardless
     return false;
+  }
+  if (s_hub_service && !s_hub_service->start()) {
+    Serial.println("[IMPROV] companion service refused — no hub hand-off this boot");
+    s_server->removeService(s_hub_service, /*deleteSvc=*/true);
+    s_hub_service = nullptr;
+    s_hub = nullptr;
   }
   s_server->start();
 #else
@@ -635,6 +803,7 @@ void tick(uint32_t now_ms, bool no_credentials) {
   }
   follow_link(now_ms);
   if (__atomic_load_n(&s_rx_pending, __ATOMIC_ACQUIRE)) handle_command(now_ms);
+  if (__atomic_load_n(&s_hub_rx_pending, __ATOMIC_ACQUIRE)) handle_hub(now_ms);
   follow_join(now_ms);
   follow_scan(now_ms);
   if (improv::session_tick(s_session, now_ms, s_timing)) {
@@ -671,6 +840,8 @@ bool active() { return s_active; }
 improv::State state() { return s_session.state; }
 
 bool setup_open() { return door_open_now(); }
+
+hub_handoff::Status hub_status() { return s_hub_status; }
 
 void advertise(const uint8_t* beacon_mfg, size_t beacon_len) {
   if (beacon_mfg && beacon_len && beacon_len <= sizeof(s_last_beacon)) {
@@ -712,6 +883,7 @@ void tap(uint32_t) {}
 bool active() { return false; }
 improv::State state() { return improv::State::Stopped; }
 bool setup_open() { return false; }
+hub_handoff::Status hub_status() { return hub_handoff::Status::None; }
 void advertise(const uint8_t* beacon_mfg, size_t beacon_len) {
 #if IMPROV_BLE_HAVE_NIMBLE
   // The carrier's own stop -> set -> start, beacon primary, nothing else.

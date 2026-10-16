@@ -7,6 +7,12 @@
 #include "canary/config.h"
 #include "canary/log.h"
 
+// The broker socket's NVS mode key (network/mqtt_transport.h); the header
+// names <WiFiClientSecure.h>, which the LDF only follows from a project
+// source, so it is named here first — the same note as mqtt_mgr.cpp's.
+#include <WiFiClientSecure.h>
+#include "network/mqtt_transport.h"
+
 // Prefer local dev secrets if present; otherwise use the CI stub. Two
 // spellings because the secrets dir may reach the compiler either as an
 // include ROOT (-I<project>/secrets -> "secrets.h") or as a subdir of an
@@ -162,6 +168,46 @@ bool set_wifi_credentials(const char* ssid, const char* pass) {
     log_line("CFG", "WiFi credentials provisioned to NVS.");
   } else {
     log_line("CFG", "NVS would not hold the credentials - this boot only.");
+  }
+  return durable;
+}
+
+bool set_mqtt_credentials(const char* host, uint16_t port,
+                          const char* user, const char* pass, bool tls) {
+  if (host == nullptr || host[0] == '\0' || port == 0) return false;
+  get();  // ensure the cache exists before we patch it
+  copy_str(g_cfg.mqtt_host, sizeof(g_cfg.mqtt_host), host);
+  g_cfg.mqtt_port = port;
+  copy_str(g_cfg.mqtt_user, sizeof(g_cfg.mqtt_user), user ? user : "");
+  copy_str(g_cfg.mqtt_pass, sizeof(g_cfg.mqtt_pass), pass ? pass : "");
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) {
+    // NVS down: this boot dials the patched cache; the next boot is back on
+    // whatever the store held. Honest failure, not a dead end.
+    log_line("CFG", "NVS unavailable - broker held for this boot only.");
+    return false;
+  }
+  prefs.putString("mqtt_host", g_cfg.mqtt_host);
+  prefs.putUShort("mqtt_port", g_cfg.mqtt_port);
+  prefs.putString("mqtt_user", g_cfg.mqtt_user);
+  prefs.putString("mqtt_pass", g_cfg.mqtt_pass);
+  // The socket mode travels with the broker it was provisioned for: a
+  // plaintext hub named now must not meet a TLS mode flashed earlier. A TLS
+  // hub leaves the mode alone — the hand-off carries no certificate, so the
+  // unit keeps the CA or pin it has, or stays plain without one.
+  const uint8_t plain = (uint8_t)canary::net::mqtt_tls::Mode::Plain;
+  if (!tls) prefs.putUChar(canary::net::mqtt_tls::NVS_KEY_MODE, plain);
+  // Trust the readback, not the calls — the same rule as set_wifi_credentials.
+  bool durable = prefs.getString("mqtt_host", "") == g_cfg.mqtt_host &&
+                 prefs.getUShort("mqtt_port", 0) == g_cfg.mqtt_port &&
+                 prefs.getString("mqtt_user", "") == g_cfg.mqtt_user &&
+                 prefs.getString("mqtt_pass", "") == g_cfg.mqtt_pass;
+  if (!tls) durable = durable && prefs.getUChar(canary::net::mqtt_tls::NVS_KEY_MODE, 0xFF) == plain;
+  prefs.end();
+  if (durable) {
+    log_line("CFG", "Broker provisioned to NVS (hub hand-off).");
+  } else {
+    log_line("CFG", "NVS would not hold the broker - this boot only.");
   }
   return durable;
 }

@@ -173,7 +173,7 @@ struct FirstCanaryCard: View {
                     Text(state == .invite ? "Start here" : "Add your first Canary").font(.headline)
                     switch state {
                     case .ask:
-                        Text("Plug it in near this phone. SecuraCV listens for it over Bluetooth and your Wi-Fi — nothing leaves your home. iOS asks for both next.")
+                        Text("Plug it in near this phone. SecuraCV listens for it over Bluetooth — nothing leaves your home. iOS asks for Bluetooth next.")
                             .font(.footnote).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Find my Canary") { store.setDiscoveryConsent(true) }
@@ -184,8 +184,9 @@ struct FirstCanaryCard: View {
                         }
                         .font(.footnote)
                     case .listening:
-                        ListeningRow(text: "Listening — power it on within a few meters of this phone.",
-                                     advice: store.bluetoothAdvice)
+                        ListeningRow(text: FirstRunCard.listeningLine(notificationsAllowed: store.notificationsAllowed),
+                                     advice: store.bluetoothAdvice,
+                                     since: store.listeningSince)
                         HStack(spacing: Theme.m) {
                             Button("Other ways to add one") { open(.canary) }
                             Button("Set up a hub") { open(.hub) }

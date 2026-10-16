@@ -148,6 +148,9 @@ let tlsParked = null;
 // The broker TLS mode, CA and pin are NON-secrets (a public certificate and
 // its hash — docs/flasher_profiles_fleet_book.md), so they live in the same
 // local prefs as the host and never take the OS-secret-store route.
+// True once the person typed a Wi-Fi name in THIS session: a restored or
+// prefilled name is cleared for a door-bearing product, a typed one is kept.
+let wifiTypedThisSession = false;
 const PROV_FIELDS = ["device-id", "wifi-ssid", "mqtt-host", "mqtt-port", "mqtt-user",
   "mqtt-tls", "mqtt-ca", "mqtt-fp"];
 function persistProv() {
@@ -567,9 +570,70 @@ const HELP_DESKTOP_OVERRIDES = {
     what: "Normally every byte on the board is saved into this app's backups folder before anything is written — the console names the file, and it is your undo button.",
   },
   wifi_bake: {
-    what: "Typed here, your network is written into the chip's settings region in the same pass as the firmware — the Canary joins it on first boot. It never leaves this app except over the USB cable.",
+    what: "Typed here, your network is written into the chip's settings region in the same pass as the firmware — the Canary joins it on first boot. It never leaves this app except over the USB cable. A Sense, Vision or WAP can also be left blank: it opens a Bluetooth setup door at first power-on and the SecuraCV iPhone app hands over your Wi-Fi in one tap.",
   },
 };
+// Inlined from canary-local/assets/flash-core.js (SETUP_DOOR_NOTE,
+// WIFI_PASS_REQUIRED, SETUP_NETWORK_LINE_RES, parseSetupNetwork,
+// setupNetworkLine) — this bundle cannot import canary-local, and
+// tests/desktop_parity.test.js fails the build if any of them drift.
+const SETUP_DOOR_NOTE =
+  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+const WIFI_PASS_REQUIRED =
+  "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+const SETUP_NETWORK_LINE_RES = [
+  /\[SETUP\] Setup network up: "([^"\n]+)"\s+password (\S+)/g,
+  /\[WIFI\] AP started: (\S+) \(password: ([^)\n]+)\)/g,
+];
+function parseSetupNetwork(text) {
+  const t = String(text || "");
+  let last = null;
+  for (const re of SETUP_NETWORK_LINE_RES) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t))) last = { ssid: m[1], key: m[2], at: m.index };
+  }
+  return last ? { ssid: last.ssid, key: last.key } : null;
+}
+function setupNetworkLine(net) {
+  return `Its setup network: ${net.ssid} · key ${net.key}`;
+}
+// The setup network's key, off the board's own first-boot line. A Sense or
+// Vision prints it ONCE, when its portal comes up (setup_portal.cpp: `[SETUP]
+// Setup network up: "SecuraCV-XXXX"  password <key>`); a WAP when its AP
+// starts (`[WIFI] AP started: … (password: cv-…)`). Nothing else ever shows
+// that key, so the monitor that is already watching the post-flash boot
+// hands it to the hatch card and the install result the moment it lands.
+// Rolling buffer, latched on first match (the line scrolls away; the key
+// does not change until a reflash resets it below).
+function feedSetupNetwork(chunk) {
+  if (state.setupNet) return;
+  state.setupNetBuf = ((state.setupNetBuf || "") + String(chunk || "")).slice(-8000);
+  const net = parseSetupNetwork(state.setupNetBuf);
+  if (!net) return;
+  state.setupNet = net;
+  renderSetupNetwork();
+  logEvent("ok", `First boot: setup network ${net.ssid} is up — its key is on the hatch card`);
+}
+function resetSetupNetwork() {
+  state.setupNet = null;
+  state.setupNetBuf = "";
+  const line = $("hatch-setup-net");
+  if (line) { line.textContent = ""; line.classList.add("hidden"); }
+}
+function renderSetupNetwork() {
+  const net = state.setupNet;
+  if (!net) return;
+  const text = setupNetworkLine(net) + " — read off its first boot, over the cable.";
+  const line = $("hatch-setup-net");
+  if (line) { line.textContent = "✓ " + text; line.classList.remove("hidden"); }
+  // The install result is the desktop's install log: say it there too, once
+  // a write has actually happened (the pre-flash voice reads the same stream).
+  const res = $("flash-result");
+  if (res && state.vision && state.vision.hostFlash && !res.textContent.includes("Its setup network:")) {
+    res.textContent = (res.textContent ? res.textContent + " " : "") + text;
+  }
+}
 function helpTopic(id) {
   const reg = state.catalog && state.catalog.settings_help;
   const t = reg && typeof reg === "object" ? reg[id] : null;
@@ -832,6 +896,10 @@ async function boot() {
   };
   $("wifi-ssid").addEventListener("input", wifiQrInvalidate);
   $("wifi-pass").addEventListener("input", wifiQrInvalidate);
+  // A name the person typed this session is theirs to keep across product
+  // picks; one restored from the last flash (PROV_FIELDS) is cleared when a
+  // door-bearing product is chosen (onProductChosen) — see wifiTypedThisSession.
+  $("wifi-ssid").addEventListener("input", () => { wifiTypedThisSession = true; });
   // One-click diagnostic report (parity: browser's diagnosticReportButton).
   // Delegated to a named function because the failed-install card offers the
   // same button — the browser puts it right in the error card, where someone
@@ -987,6 +1055,7 @@ async function boot() {
   await listen("serial:log", (ev) => {
     feedSenseTune(ev.payload); // the tuning panel reads [cfg]/[tune] replies
     feedWapField(ev.payload);  // the field bench reads the WAP's [wap] lines
+    feedSetupNetwork(ev.payload); // the first boot's setup network + its key
     appendConsole("serial-console", ev.payload);
     // Does this decode as text at the speed we opened? If not, walk the baud
     // list (parity: the browser monitor's pump(), same words).
@@ -3286,16 +3355,36 @@ function onProductChosen(p, ver) {
     // one on the glass, so leaving these blank stays a legitimate choice.
     if (input) input.required = usbSecrets && ["mqtt-host", "mqtt-port"].includes(input.id);
   });
-  $("wifi-ssid").required = usbSecrets;
-  $("provision-note").textContent = usbSecrets
+  // The Bluetooth setup door (catalog setup_door, derived by gen_flash.py from
+  // what each build compiles: Sense, Vision, WAP). For these the WiFi fields
+  // are optional in a stronger sense — the iPhone app hands them the network
+  // at first power-on — so the note says so, and the SSID is NOT prefilled:
+  // a prefilled name steered every owner away from the door and toward a
+  // password they then had to type. Same note, same words, in the browser
+  // flasher's "WiFi (optional)" heading (flash-core.js SETUP_DOOR_NOTE).
+  const door = p.setup_door === true;
+  $("wifi-ssid").required = usbSecrets && !door;
+  // A door-bearing product must not inherit the LAST flash's network: the
+  // SSID restores from prefs at launch (PROV_FIELDS) and profileAutofill()
+  // would fill its password from the setup profile, baking a network the
+  // person never typed for this board — the Canary then boots with its
+  // door shut and the iPhone can hand it neither Wi-Fi nor hub. A name typed
+  // in this session is the person's own choice and stays.
+  if (door && !wifiTypedThisSession) {
+    $("wifi-ssid").value = "";
+    $("wifi-pass").value = "";
+  }
+  $("provision-note").textContent = (usbSecrets
     ? "The official release image is generic. These values are written directly into this board's settings partition and never logged."
     : broker
     ? "Optional, and worth doing: bake in your network AND your hub's broker, and this board comes up already talking to Home Assistant. Skip either and its on-screen setup still works. Written straight into this board's settings partition, never logged."
-    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.";
+    : "Optional: bake your network in and the Canary joins it on first boot — skip it and the board's own setup path (phone portal or on-screen) still works.")
+    + (door ? " " + SETUP_DOOR_NOTE : "");
   profileNoteRefresh();
   // Offer the network this computer is on — the common case — so joining is
   // one Tab and a password away (which Keychain/password managers can fill).
-  if (!$("wifi-ssid").value) {
+  // Not for a door-bearing product: there, blank is the recommended answer.
+  if (!door && !$("wifi-ssid").value) {
     invoke("current_ssid").then((ssid) => {
       if (ssid && !$("wifi-ssid").value) $("wifi-ssid").value = ssid;
     }).catch(() => {});
@@ -3504,6 +3593,7 @@ async function onFlash() {
     }), con);
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
+    resetSetupNetwork(); // this write's first boot prints the key fresh
     // The flash succeeded — that's the consent moment the "Remember" box
     // announced: save the profile, record the board in the fleet book, and
     // put its API credential in the secret drawer.
@@ -3815,6 +3905,14 @@ function readProvisioning(product) {
     }
   }
   const wifiPass = $("wifi-pass").value;
+  // A network name with no password is a question, not an answer: it used to
+  // seed an OPEN join that failed silently on first boot. Refused unless the
+  // owner ticked the explicit open-network choice (parity: the browser's
+  // renderWifiFields runs core.wifiFieldsVerdict with the same words).
+  if ($("wifi-ssid").value && !wifiPass && !($("wifi-open") && $("wifi-open").checked)) {
+    setStatus("flash-result", WIFI_PASS_REQUIRED, "err");
+    return false;
+  }
   if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
                    new TextEncoder().encode(wifiPass).length > 63)) {
     setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
@@ -4714,6 +4812,7 @@ async function onFlashLocalFile() {
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
+    resetSetupNetwork();
     renderReceipts();
     setStatus(
       "local-result",
@@ -5074,7 +5173,7 @@ const BLE_CHECK_NOTE =
   "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
   "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
   "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
-  "the SecuraCV iPhone app (its App Store release is still pending), or in the " +
+  "the SecuraCV iPhone app (on TestFlight by invite; App Store release pending), or in the " +
   "browser Lab in Chrome or Edge on this computer.";
 function openBleCheck() {
   const url = labUrl("flash.html");
@@ -5359,6 +5458,7 @@ function resetOutcome() {
   // sent the user back to reflash a module that was already done, and the
   // two-board hatch could never fire).
   if (state.vision) { state.vision.hostFlash = null; state.vision.hostBoot = null; }
+  resetSetupNetwork();
   state.selfCheckAsked = false; // the next manifest may be this write's receipt
   try { renderReceipts(); } catch (_) {}
   const con = $("serial-console");
@@ -5768,7 +5868,7 @@ const ATLAS_LINKS = [
   // (non-negotiable #4): a built-and-tested app that isn't in a store yet
   // says so instead of implying a download.
   [ATLAS_FAMILY_GROUP, [
-    ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. Built and tested; App Store availability pending.", REPO + "/tree/main/ios"],
+    ["iPhone & Apple Watch app", "The living-with-it companion: honest alerts, the fleet on your wrist. On TestFlight (ask for an invite); App Store release pending.", REPO + "/tree/main/ios"],
     ["SecuraCV Lab (desktop)", "This app's sibling: the whole Lab as a native app — same benches, offline.", SITE + "/download"],
     ["The Witness Wall (Apple TV)", "Your fleet's record on the TV — try it on the Your Fleet tab today; the native app is built, App Store availability pending.", REPO + "/blob/main/tvos/RUN_ON_APPLE_TV.md"],
   ]],
@@ -5985,6 +6085,7 @@ function showHatchCard(product) {
     li.textContent = step;
     steps.appendChild(li);
   });
+  renderSetupNetwork(); // the key, if the first boot has printed it already
   $("hatch-card").classList.remove("hidden");
   if (wasHidden) {
     // The boot receipt carries the board's REAL identity, and `boot` is
@@ -6210,12 +6311,28 @@ function hatchMoment(product) {
       ]
     };
   }
+  // Fallbacks mirror gen_flash.py's HATCH_MOMENTS "ap-door" (the WAP: the
+  // Bluetooth setup door first) and "ap" (the all-rounder Canary: no door,
+  // so the setup network — WITH its key — is the first step).
+  if (id && id.includes("wap")) {
+    return {
+      kicker: "Canary hatched",
+      title: "Your Canary is on its perch.",
+      body: "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
+      steps: [
+        "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
+        "No card? Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
+        "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
+        "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
+      ]
+    };
+  }
   return {
     kicker: "Canary hatched",
     title: "Your Canary is on its perch.",
-    body: "The magical first proof is local and physical: join its setup network, open the dashboard, then make one harmless signal it can witness.",
+    body: "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
     steps: [
-      "On your phone, join the SecuraCV-XXXX Wi-Fi network it creates — the Canary's setup wizard pops up on its own a moment later. (If it doesn't, open canary.local — or 192.168.4.1 — in your browser.)",
+      "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
       "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
       "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
     ]
@@ -6293,9 +6410,39 @@ const hub = {
   // page still wants a click"), so the self-setup finish line can carry it
   // instead of overwriting it with a clean "all done".
   onboardNote: null,
+  // The Home Assistant username this app created and checked on the hub —
+  // kept (the password is not) so the finish line and the "Open your hub"
+  // button can say whom to sign in as instead of leaving it to be retyped.
+  onboardUser: null,
 };
 
 const HUB_HOST = "homeassistant.local:8123";
+// The hub the first-boot watch should ask: the address typed into the panel's
+// "Know its address?" hint when there is one (an IP from the router, with
+// :8123 added — hubCleanHost strips any port or scheme), else the mDNS name.
+// Read on EVERY tick, so a typed address takes effect on the next probe, not
+// after a failure or the 25-minute escalation. (The Rust mdns-sd browse that
+// would find a hub without .local resolution is a separate change.)
+function hubFbHost() {
+  const el = $("hub-fb-host");
+  const typed = el ? hubCleanHost(el.value) : "";
+  return typed ? typed + ":8123" : HUB_HOST;
+}
+// "Open your hub — sign in as <username>", once the account exists.
+function hubOpenLabel() {
+  return hub.onboardUser ? `Open your hub — sign in as ${hub.onboardUser}` : "Open your hub →";
+}
+// The username to the clipboard on the way to the sign-in page. Guarded: a
+// webview without the clipboard API, or one that refuses, loses nothing.
+function hubCopyUsername() {
+  const u = hub.onboardUser;
+  if (!u) return;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(u).catch(() => {});
+    }
+  } catch (_) { /* no clipboard here — the label still names the user */ }
+}
 const HUB_REMEMBER_KEY = "securacv.hub.remember";
 const HUB_LASTFLASH_KEY = "securacv.hub.lastflash";
 // How long after a flash we'll still offer to resume the first-boot watch on
@@ -6398,14 +6545,17 @@ function hubInit() {
     el.scrollTop = el.scrollHeight;
   });
   // First-boot companion controls.
-  $("hub-fb-open").addEventListener("click", () => openExternal("http://" + HUB_HOST));
+  $("hub-fb-open").addEventListener("click", () => {
+    hubCopyUsername();
+    openExternal("http://" + hubFbHost());
+  });
   $("hub-fb-setup").addEventListener("click", () => {
     $("hub-fb-setup").classList.add("hidden");
     hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"), $("hub-fb-host").value).then(
       (report) => {
-        // A reachability failure is the moment the address field earns its
-        // place: mDNS-blocked networks need the IP from the router.
-        if (!(report && report.ok)) $("hub-fb-host").classList.remove("hidden");
+        // A reachability failure is the moment to unfold the address hint:
+        // mDNS-blocked networks need the IP from the router.
+        if (!(report && report.ok)) $("hub-fb-host-hint").open = true;
       }
     );
   });
@@ -6629,7 +6779,10 @@ async function hubMaybeResume() {
   // Same countdown as the live watch, from the persisted flash time — the
   // relaunched app owes the user the same "when do I start worrying" answer.
   const stopCount = hubCountdownStart($("hub-resume-count"), rec.at);
-  $("hub-resume-open").addEventListener("click", () => openExternal("http://" + (rec.host || HUB_HOST)));
+  $("hub-resume-open").addEventListener("click", () => {
+    hubCopyUsername();
+    openExternal("http://" + (rec.host || HUB_HOST));
+  });
   $("hub-resume-dismiss").addEventListener("click", () => {
     hubClearFlashRecord();
     banner.classList.add("hidden");
@@ -6667,6 +6820,7 @@ async function hubMaybeResume() {
         $("hub-resume-text").textContent =
           "Your hub from earlier is up — creating your Home Assistant account…";
         await hubRunOnboarding($("hub-resume-text"), rec.host);
+        $("hub-resume-open").textContent = hubOpenLabel();
       }
       if (rec.provision) {
         // The relaunched app still owes this hub its self-setup run.
@@ -7004,6 +7158,7 @@ function hubStartFirstBoot() {
     " No monitor or keyboard needed — the hub announces itself on your network by itself." +
     " First boot takes 10–20 minutes while it sets itself up; the blinking light is normal. Leave it powered if you can (a power cut usually just delays it — worst case is re-flashing). You can walk away, we'll ping you.";
   $("hub-fb-open").classList.add("hidden");
+  $("hub-fb-open").textContent = hubOpenLabel();
   hubRenderQr();
   hubStopFirstBoot(true); // clear any prior timer without hiding the panel
   const t0 = Date.now();
@@ -7017,8 +7172,11 @@ function hubStartFirstBoot() {
     // answers). Acting on anything but "ready" is how this watch used to
     // create the account against a landing page and give up.
     let probe = "offline";
+    // The typed address, when there is one, from the first tick (hubFbHost).
+    const host = hubFbHost();
+    const typedHost = host === HUB_HOST ? undefined : host;
     try {
-      probe = await invoke("hub_probe_hub", { host: HUB_HOST });
+      probe = await invoke("hub_probe_hub", { host });
     } catch (_) {}
     const up = probe === "ready";
     if (probe === "preparing" && !saidPreparing) {
@@ -7051,7 +7209,8 @@ function hubStartFirstBoot() {
         $("hub-fb-text").textContent =
           "It's alive! Creating your Home Assistant account on the hub…";
         hubNotify("Your hub is ready", "Finishing your account automatically — no setup wizard for you.");
-        await hubRunOnboarding($("hub-fb-text"));
+        await hubRunOnboarding($("hub-fb-text"), typedHost);
+        openBtn.textContent = hubOpenLabel(); // the login exists — name it
       }
       if (wantSetup) {
         // The hub is up and the card carries the self-setup bundle — this is
@@ -7063,16 +7222,16 @@ function hubStartFirstBoot() {
         if (!wantAccount) {
           hubNotify("Your hub is ready", "Finishing setup automatically — no monitor needed.");
         }
-        const report = await hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"));
+        const report = await hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"), typedHost);
         if (report && report.ok) hubClearFlashRecord();
-        else $("hub-fb-host").classList.remove("hidden");
+        else $("hub-fb-host-hint").open = true;
       } else if (wantAccount) {
         // hubRunOnboarding already wrote the outcome into the status line.
         hubChime();
         hubClearFlashRecord();
       } else {
         $("hub-fb-text").textContent = "It's alive! Your hub is up. 🐤";
-        hubNotify("Your hub is ready", "Open " + HUB_HOST + " to log in.");
+        hubNotify("Your hub is ready", "Open " + host + " to log in.");
         hubChime();
         hubClearFlashRecord(); // it's up — nothing left to resume
       }
@@ -7123,13 +7282,17 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         password: acct.password,
       });
       // Any report is a definitive answer from the hub — the password's job
-      // is done either way, so drop it from memory now.
+      // is done either way, so drop it from memory now. The username stays:
+      // it is what the sign-in page asks for next.
       hub.pendingAccount = null;
       if (report.ok) {
         hub.onboardNote = null;
+        hub.onboardUser = acct.username;
         statusEl.textContent =
           "Your Home Assistant account is ready — the login is checked and works. " +
-          "Open http://" + HUB_HOST + " and sign in any time. 🐤";
+          "Open http://" + (host === HUB_HOST ? HUB_HOST : host + ":8123") +
+          " and sign in as " + acct.username +
+          "; the password is the one you typed in Step 3. 🐤";
       } else {
         hub.onboardNote = report.note ||
           "Home Assistant still has a setup step waiting in the browser.";
@@ -7151,6 +7314,14 @@ async function hubRunOnboarding(statusEl, hostOverride) {
   }
   return null;
 }
+
+// What the self-setup run does NOT do: the bundle's host_provision.sh installs
+// the add-ons, not the SecuraCV *integration* (custom_components/securacv).
+// The kernel add-on's panel carries that as one click; "finished" must say so
+// rather than declare a hub done with its integration uninstalled.
+const HUB_INTEGRATION_CLICK =
+  "One click is still yours: open the SecuraCV panel in the hub's sidebar and press " +
+  "Install the integration and restart Home Assistant.";
 
 // ── self-setup over the hub's service console ───────────────────────────────
 // The card carried the bundle; the hub is answering; now this computer is the
@@ -7210,13 +7381,17 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
         (withDisplay
           ? " The hub-display app is installed too — one step is yours: make the screen its own Home Assistant user (Settings → People → Users, Administrator off — a screen only views dashboards), then open Settings → Apps → HAOS Kiosk Display → Configuration, enter that login, and press Start. The attached screen lights up with your dashboard."
           : "") +
-        " Open your hub and the SecuraCV panel is waiting. 🐤" +
+        " Open your hub" +
+        (hub.onboardUser
+          ? " — sign in as " + hub.onboardUser + "; the password is the one you typed in Step 3 —"
+          : "") +
+        " and the SecuraCV panel is waiting. " + HUB_INTEGRATION_CLICK + " 🐤" +
         // A clean install must not bury an account that still needs a human —
         // carry the onboarding run's note over the finish line.
         (hub.onboardNote ? " One thing about your account: " + hub.onboardNote : "");
       hubNotify(
         "Hub setup finished",
-        "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + "."
+        "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + ". " + HUB_INTEGRATION_CLICK
       );
       hubChime();
       logEvent("ok", "Hub self-setup finished over the service console");

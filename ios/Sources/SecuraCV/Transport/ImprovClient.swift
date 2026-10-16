@@ -11,14 +11,23 @@
 // sheet; CoreBluetooth pairs and retries the write on its own. Nothing is
 // bonded — the next setup pairs afresh, which is the point.
 //
-// A WAP also serves SecuraCV's companion service beside the Improv one
-// (ImprovWire.companionServiceUUID): one CLAIM characteristic, readable
-// once by this link after the join it asked for succeeded. A claim ticket,
-// not the receipt — the bearer token never rides Bluetooth; the sheet
-// spends the claim over the home Wi-Fi (Shared/MagicPairPlan.swift) and
-// the receipt comes back over that. Optional: a Sense or Vision serves no
-// companion service, its absence fails nothing, and readiness never waits
-// for it.
+// A Canary may also serve SecuraCV's companion service beside the Improv
+// one (ImprovWire.companionServiceUUID), two characteristics, each
+// optional — a missing one fails nothing, and readiness never waits for
+// either:
+//   * CLAIM (a WAP): readable once by this link after the join it asked
+//     for succeeded. A claim ticket, not the receipt — the bearer token
+//     never rides Bluetooth; the sheet spends the claim over the home Wi-Fi
+//     (Shared/MagicPairPlan.swift) and the receipt comes back over that.
+//   * HUB (a Sense or Vision): written once after the join, with the hub
+//     this phone knows (ImprovWire.hubHandoff), then read back for the
+//     Canary's one-byte answer (ImprovWire.HubHandoffStatus).
+//
+// Two more things the link does for the person's sake: a join the Canary
+// refused leaves its door open on the same link (recoverAfterFailedJoin —
+// a wrong password costs a retype, not a reconnect), and a quiet link is
+// kept alive with a harmless command (ping) while they find the password,
+// because the firmware drops a silent link after three minutes.
 //
 // Ownership: BLEConsole owns the central and the scan. It hands one
 // CBPeripheral to one ImprovClient at a time (beginSetup) and forwards the
@@ -35,12 +44,16 @@ final class ImprovClient: NSObject, ObservableObject {
     static let commandUUID      = CBUUID(string: ImprovWire.rpcCommandUUID)
     static let resultUUID       = CBUUID(string: ImprovWire.rpcResultUUID)
     static let capabilitiesUUID = CBUUID(string: ImprovWire.capabilitiesUUID)
-    /// SecuraCV's companion service beside the Improv one, on a WAP: the
-    /// claim ticket (ImprovWire's header has the JSON), readable once by
-    /// the link that provisioned, encrypted. Optional — never required
-    /// for the door itself.
+    /// SecuraCV's companion service beside the Improv one (ImprovWire's
+    /// header has both JSON shapes): CLAIM on a WAP, readable once by the
+    /// link that provisioned; HUB on a Sense or Vision, written once with
+    /// the hub this phone knows and read back for the answer. Both
+    /// encrypted, both optional — never required for the door itself.
     static let companionServiceUUID = CBUUID(string: ImprovWire.companionServiceUUID)
     static let claimUUID            = CBUUID(string: ImprovWire.claimUUID)
+    static let hubUUID              = CBUUID(string: ImprovWire.hubUUID)
+
+    typealias HubHandoffStatus = ImprovWire.HubHandoffStatus
 
     enum Phase: Equatable, Sendable {
         case connecting
@@ -70,6 +83,11 @@ final class ImprovClient: NSObject, ObservableObject {
     /// the Canary heard nothing. The sheet says so instead of silently
     /// dropping to a typed name. Cleared by the next write that lands.
     @Published private(set) var pairingDeclined = false
+    /// A write to an encrypted characteristic has landed on this link, so
+    /// iOS's Pair sheet is behind us. Until then, nothing writes on a
+    /// timer: the first encrypted write is what raises that sheet, and it
+    /// is raised only by something the person can see on screen.
+    @Published private(set) var linkEncrypted = false
     /// The URLs the last WIFI_SETTINGS result carried.
     private var lastURLs: [String] = []
 
@@ -81,6 +99,16 @@ final class ImprovClient: NSObject, ObservableObject {
     private var result: CBCharacteristic?
     private var claim: CBCharacteristic?
     private var claimWaiter: CheckedContinuation<Data?, Never>?
+    private var hub: CBCharacteristic?
+    private var hubWaiter: CheckedContinuation<HubHandoffStatus, Never>?
+    /// The hub hand-off's deadline: the firmware's write callback only
+    /// queues the document and leaves the status byte at its PREVIOUS value
+    /// (0, none, on a first hand-off); the loop task parses and stores it a
+    /// beat later. So a status of 0 read right after the write is "not
+    /// processed yet", not the answer — it is read again every 250 ms until
+    /// it is 1, 2 or 3, or the deadline resolves `.unknown`.
+    private var hubDeadline: Date?
+    private static let hubPollEvery: Duration = .milliseconds(250)
 
     /// One request in flight at a time; each resumes exactly once.
     private var readyWaiter: CheckedContinuation<Bool, Never>?
@@ -193,8 +221,73 @@ final class ImprovClient: NSObject, ObservableObject {
         peripheral.writeValue(ImprovWire.identify, for: command, type: .withResponse)
     }
 
+    /// Keep a quiet link alive while the person finds the password: the
+    /// firmware drops a link that has sent nothing for three minutes
+    /// (improv_core.h idle_disconnect_ms) and counts any command as
+    /// activity (session_touch) — GET_DEVICE_INFO is the one with no side
+    /// effect, and the Canary answers it. Only once a write has landed on
+    /// this link: before that the write itself would raise iOS's Pair
+    /// sheet, with nothing on screen to say why.
+    func ping() {
+        guard phase == .ready, linkEncrypted, let command else { return }
+        peripheral.writeValue(ImprovWire.deviceInfo, for: command, type: .withResponse)
+    }
+
+    /// A join the Canary refused — UnableToConnect: a wrong password, or a
+    /// network it cannot see — leaves its door open on the SAME link
+    /// (improv_core.h session_on_join_result: back to Authorized), so the
+    /// next write need not reconnect. True when the link is still up and
+    /// the phase is back at ready for it; false when the link is gone or
+    /// the failure was something else (the sheet reconnects then).
+    @discardableResult
+    func recoverAfterFailedJoin() -> Bool {
+        guard case .failed = phase, lastError == .unableToConnect,
+              peripheral.state == .connected, command != nil else { return false }
+        lastError = .none
+        phase = .ready
+        return true
+    }
+
     /// Whether this Canary offers a claim ticket beside the door (a WAP).
     var offersClaim: Bool { claim != nil }
+
+    /// Whether this Canary takes a hub over the door (a Sense or Vision
+    /// with the HUB characteristic; an older firmware has none).
+    var offersHubHandoff: Bool { hub != nil }
+
+    /// Hand the Canary the hub this phone knows (ImprovWire.hubHandoff
+    /// built `data`): one write with response, then one read for its
+    /// answer. `.unknown` when it offers no HUB, the write was refused by
+    /// the link, or nothing came back in time — never a guess at what the
+    /// Canary did.
+    func handOverHub(_ data: Data, timeout: Duration = .seconds(10)) async -> HubHandoffStatus {
+        guard let hub else { return .unknown }
+        generation += 1
+        let gen = generation
+        let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
+        hubDeadline = Date().addingTimeInterval(seconds)
+        return await withCheckedContinuation { cont in
+            hubWaiter = cont
+            peripheral.writeValue(data, for: hub, type: .withResponse)
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, self.generation == gen, let w = self.hubWaiter else { return }
+                self.hubWaiter = nil
+                self.hubDeadline = nil
+                w.resume(returning: .unknown)
+            }
+        }
+    }
+
+    /// The status byte read 0 before the deadline: the loop task has not
+    /// processed the document yet. Ask again shortly; the waiter stays.
+    private func pollHubStatusAgain() {
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.hubPollEvery)
+            guard let self, self.hubWaiter != nil, let hub = self.hub else { return }
+            self.peripheral.readValue(for: hub)
+        }
+    }
 
     /// Read the claim the join earned — the link that provisioned gets it
     /// once; anyone else, and any later read, gets "{}". Nil when the
@@ -227,6 +320,7 @@ final class ImprovClient: NSObject, ObservableObject {
         if let w = scanWaiter { scanWaiter = nil; w.resume(returning: networks) }
         if let w = joinWaiter { joinWaiter = nil; w.resume(returning: .failed(why)) }
         if let w = claimWaiter { claimWaiter = nil; w.resume(returning: nil) }
+        if let w = hubWaiter { hubWaiter = nil; hubDeadline = nil; w.resume(returning: .unknown) }
     }
 
     private func resolveJoin(_ outcome: Outcome) {
@@ -250,10 +344,12 @@ extension ImprovClient: CBPeripheralDelegate {
         peripheral.discoverCharacteristics(
             [Self.stateUUID, Self.errorUUID, Self.commandUUID, Self.resultUUID, Self.capabilitiesUUID],
             for: service)
-        // The companion service is a WAP's and optional: its absence fails
-        // nothing, and readiness (the state read below) never waits for it.
+        // The companion service is optional: its absence fails nothing, and
+        // readiness (the state read below) never waits for it. Which of its
+        // two characteristics a Canary serves says what it is for — CLAIM
+        // on a WAP, HUB on a Sense or Vision.
         if let companion = services.first(where: { $0.uuid == Self.companionServiceUUID }) {
-            peripheral.discoverCharacteristics([Self.claimUUID], for: companion)
+            peripheral.discoverCharacteristics([Self.claimUUID, Self.hubUUID], for: companion)
         }
     }
 
@@ -261,6 +357,7 @@ extension ImprovClient: CBPeripheralDelegate {
         let chars = service.characteristics ?? []
         if service.uuid == Self.companionServiceUUID {
             self.claim = chars.first { $0.uuid == Self.claimUUID }
+            self.hub = chars.first { $0.uuid == Self.hubUUID }
             return
         }
         guard service.uuid == Self.serviceUUID else { return }
@@ -285,9 +382,23 @@ extension ImprovClient: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if characteristic.uuid == Self.hubUUID {
+            // The hub write: landed → read the Canary's answer; refused by
+            // the link → no answer is the honest one.
+            if error == nil {
+                pairingDeclined = false
+                linkEncrypted = true
+                if let hub { peripheral.readValue(for: hub) }
+            } else if let w = hubWaiter {
+                hubWaiter = nil
+                w.resume(returning: .unknown)
+            }
+            return
+        }
         guard characteristic.uuid == Self.commandUUID else { return }
         guard let error else {
             pairingDeclined = false   // a write landed: the link is encrypted now
+            linkEncrypted = true
             return
         }
         // The pairing sheet was declined, or the Canary refused the write.
@@ -316,6 +427,11 @@ extension ImprovClient: CBPeripheralDelegate {
             w.resume(returning: nil)
             return
         }
+        if characteristic.uuid == Self.hubUUID, error != nil, let w = hubWaiter {
+            hubWaiter = nil
+            w.resume(returning: .unknown)
+            return
+        }
         guard let data = characteristic.value, error == nil else { return }
         switch characteristic.uuid {
         case Self.capabilitiesUUID:
@@ -326,6 +442,21 @@ extension ImprovClient: CBPeripheralDelegate {
                 claimWaiter = nil
                 // "{}" is the door's "not yours" — nil to the caller.
                 w.resume(returning: data.count > 2 ? data : nil)
+            }
+
+        case Self.hubUUID:
+            if let w = hubWaiter {
+                let status = ImprovWire.parseHubStatus(data)
+                // 0 before the deadline is "not processed yet" (the write
+                // callback only queues; the loop task answers a beat later):
+                // keep the link and read again. Anything else is the verdict.
+                if status == .none, let deadline = hubDeadline, Date() < deadline {
+                    pollHubStatusAgain()
+                    return
+                }
+                hubWaiter = nil
+                hubDeadline = nil
+                w.resume(returning: status)
             }
 
         case Self.stateUUID:
