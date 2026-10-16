@@ -4122,6 +4122,12 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
       `${label} smartPick no longer detects the ambiguous case`);
     assert.ok(src.includes("Recommended:"),
       `${label} smartPick no longer names its recommendation`);
+    // One chip, several boards (ESP32-C6: Sense node or 1.47" display): each
+    // board gets a card, never just the authored default.
+    assert.ok(/function boardShortlist/.test(src),
+      `${label} smartPick lost the one-card-per-board shortlist`);
+    assert.ok(src.includes("More than one board ` +\n        `uses that chip"),
+      `${label} smartPick no longer admits a chip that spans boards`);
   }
   // The rest of the chip's products stay reachable — folded, never filtered.
   // A recommendation that HIDES a flashable board is worse than a wall of them.
@@ -4129,7 +4135,7 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
     assert.ok(src.includes("for this chip (developer)"),
       `${label} no longer offers the full list behind the recommendation`);
   }
-  assert.match(appJs, /\[pick\.product, \.\.\.matches\.filter\(/,
+  assert.match(appJs, /\[\.\.\.shortlist, \.\.\.matches\.filter\(/,
     "the desktop must ORDER by the recommendation, never filter to it");
 });
 

@@ -1376,14 +1376,14 @@ export function smartPick(catalog, opts = {}) {
   if (preferredId) {
     const p = byChip.find((x) => x.id === preferredId);
     if (p) {
-      return { product: p, kind: "picked",
+      return { product: p, kind: "picked", shortlist: [p],
         why: `Showing ${p.name} — the firmware you picked.` };
     }
   }
   if (currentProject) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
-      return { product: cur, kind: "current",
+      return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name} — installing keeps it, ` +
              `updated in place.` };
     }
@@ -1416,11 +1416,51 @@ export function smartPick(catalog, opts = {}) {
         `the others if yours is a different board.`
       : `Your board reads as an ${label} with ${mb} MB flash — that ` +
         `looks like a ${p.board_label}. Recommended: ${p.name}.`;
-    return { product: p, kind: "board", why };
+    return { product: p, kind: "board", why,
+      shortlist: families.size > 1 ? boardShortlist(sized) : [p] };
   }
+  // Nothing narrowed the field. That is only a recommendation when every
+  // product for this chip is cut for the same board; when they span
+  // different boards (an ESP32-C6 is a XIAO Sense node OR a Waveshare 1.47"
+  // display — same chip, same 4 MB), leading with the authored default and
+  // folding the rest would put the wrong image in front of half the owners
+  // and hide theirs behind a "developer" button. Say so and show each board.
   const p = recommendedProduct(catalog, chip);
-  return p ? { product: p, kind: "chip",
-    why: `Recommended for your ${label}: ${p.name}.` } : null;
+  if (!p) return null;
+  const shortlist = boardShortlist(sized);
+  if (shortlist.length > 1) {
+    const size = mb ? ` with ${mb} MB flash` : "";
+    return { product: p, kind: "chip", shortlist,
+      why: `Your board reads as an ${label}${size}. More than one board ` +
+        `uses that chip, so this is a starting point, not an ` +
+        `identification — pick yours by name and picture: ` +
+        `${orList(shortlist.map((x) => x.board_label))}.` };
+  }
+  return { product: p, kind: "chip", shortlist: [p],
+    why: `Recommended for your ${label}: ${p.name}.` };
+}
+
+// "A or B", "A, B, or C" — the shortlist sentence reads as English.
+function orList(items) {
+  if (items.length < 3) return items.join(" or ");
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+// One product per distinct physical board, in catalog (authored) order. What
+// the picker shows unfolded when the silicon could not name the board: the
+// products on one board differ in flavor (a family question the browse
+// answers), but products on different boards differ in PINS, and a board the
+// evidence cannot rule out must never sit behind a click.
+export function boardShortlist(products) {
+  const seen = new Set();
+  const out = [];
+  for (const p of products || []) {
+    const key = (p.tier && p.tier.board_id) || p.board_label || p.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 // ── catalog shape guard ─────────────────────────────────────────────────────

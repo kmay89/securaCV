@@ -3082,7 +3082,7 @@ function smartPick(catalog, opts = {}) {
   if (currentProject) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
-      return { product: cur, kind: "current",
+      return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name} — installing keeps it, updated in place.` };
     }
   }
@@ -3107,13 +3107,52 @@ function smartPick(catalog, opts = {}) {
           `the others if yours is a different board.`
         : `Your board reads as an ${label} with ${mb} MB flash — that ` +
           `looks like a ${p.board_label}. Recommended: ${p.name}.`;
-      return { product: p, kind: "board", why };
+      return { product: p, kind: "board", why,
+        shortlist: families.size > 1 ? boardShortlist(sized) : [p] };
     }
   }
   // The catalog is authored flagship-first per chip, so the first product that
-  // fits the detected silicon is the honest "recommended for you".
+  // fits the detected silicon is the honest "recommended for you" — but only
+  // when every product for the chip is cut for the same board. An ESP32-C6 is
+  // a XIAO Sense node OR a Waveshare 1.47" display (same chip, same 4 MB):
+  // leading with the Sense and folding the display behind a "developer"
+  // button put the wrong image in front of every display owner. Same branch,
+  // same words, as flash-core.js.
   const p = byChip[0];
-  return p ? { product: p, kind: "chip", why: `Recommended for your ${label}: ${p.name}.` } : null;
+  if (!p) return null;
+  const shortlist = boardShortlist(byChip);
+  if (shortlist.length > 1) {
+    const size = mb ? ` with ${mb} MB flash` : "";
+    return { product: p, kind: "chip", shortlist,
+      why: `Your board reads as an ${label}${size}. More than one board ` +
+        `uses that chip, so this is a starting point, not an ` +
+        `identification — pick yours by name and picture: ` +
+        `${orList(shortlist.map((x) => x.board_label))}.` };
+  }
+  return { product: p, kind: "chip", shortlist: [p],
+    why: `Recommended for your ${label}: ${p.name}.` };
+}
+
+// "A or B", "A, B, or C" (parity: flash-core.js orList).
+function orList(items) {
+  if (items.length < 3) return items.join(" or ");
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+// One product per distinct physical board, authored order (parity:
+// flash-core.js boardShortlist). Products on one board differ in flavor;
+// products on different boards differ in PINS, so a board the evidence
+// cannot rule out is shown, never folded.
+function boardShortlist(products) {
+  const seen = new Set();
+  const out = [];
+  for (const p of products || []) {
+    const key = (p.tier && p.tier.board_id) || p.board_label || p.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 function renderProducts() {
@@ -3186,7 +3225,9 @@ function renderProducts() {
       : null,
   });
   const rec = $("pick-recommend");
-  const showAll = state.showAllProducts || !pick || matches.length < 2;
+  const shortlist = pick ? (pick.shortlist || [pick.product]) : [];
+  const shortIds = new Set(shortlist.map((p) => p.id));
+  const showAll = state.showAllProducts || !pick || matches.length <= shortIds.size;
   if (rec) {
     rec.innerHTML = "";
     rec.classList.toggle("hidden", !pick || matches.length < 2);
@@ -3212,12 +3253,12 @@ function renderProducts() {
   // the toggle. Filtering would make a board the picker CAN flash unreachable
   // if the recommendation is wrong, which is the failure this must not have.
   const ordered = pick
-    ? [pick.product, ...matches.filter((p) => p.id !== pick.product.id)]
+    ? [...shortlist, ...matches.filter((p) => !shortIds.has(p.id))]
     : matches;
 
   const selectedId = state.product ? state.product.id : null;
 
-  ordered.forEach((p, index) => {
+  ordered.forEach((p) => {
     const ver =
       state.manifest &&
       state.manifest.products &&
@@ -3234,7 +3275,7 @@ function renderProducts() {
       // Folded, not dropped. A row the user already chose stays visible even
       // when it isn't the recommendation, or the picker would appear to
       // forget their pick the moment the passport lands and re-renders.
-      (showAll || index === 0 || isSelected ? "" : " folded");
+      (showAll || shortIds.has(p.id) || isSelected ? "" : " folded");
     row.innerHTML = `
       <input type="radio" name="product" value="${p.id}"${isSelected ? " checked" : ""}${fit.fits ? "" : " disabled"}>
       ${figureSlot(p)}
