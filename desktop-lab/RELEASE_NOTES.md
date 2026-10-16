@@ -16,6 +16,21 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.1 — 2026-10-16
+
+**A 1.47" C6 display is offered as a display, and every Canary on your
+network reaches the Witness Wall.**
+
+- **The Flash page shows the ESP32-C6 display next to the Sense.** The two
+  boards share a chip and a flash size, so the page used to lead with the
+  Sense and hide the Waveshare ESP32-C6-LCD-1.47 under "show all
+  (developer)". It now shows a card for each board it can't rule out, with
+  its picture. The same goes for the ESP32-C3 boards.
+- **The Witness Wall shows every display, not just the first.** Without a
+  hub, the Wall stopped at the first Canary that answered; it now asks each
+  one it finds and shows them all, once each.
+- **Your C6 nightstands get their own picture** on the fleet pages.
+
 ## 0.3.0 — 2026-10-10
 
 **The Lab flashes over USB by itself, and keeps an eye on your fleet from
