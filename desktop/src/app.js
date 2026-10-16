@@ -1218,6 +1218,38 @@ function witnessBases(sightings) {
   return [...new Set(bases)];
 }
 const witnessDiscovery = {
+  // No kernel answered, so the boards ARE the fleet: ask every browsed board
+  // for its /api/fleet and fold the answers into one document. Stopping at the
+  // first board that answered (as the kernel pass does) showed ONE node in a
+  // hubless home of several displays. A board's own self-report is its first
+  // row and outranks what a sibling heard about it; a peer row only fills a
+  // device nobody reported for itself (and a live sighting beats a stale one).
+  async boardFleet(sightings) {
+    const fleetRows = (doc) => (doc && (doc.devices || doc.canaries || (Array.isArray(doc) ? doc : []))) || [];
+    const mergeBoardFleets = (docs) => {
+      const seen = new Map();   // name -> { row, self }
+      for (const doc of docs) {
+        fleetRows(doc).forEach((row, i) => {
+          if (!row || !row.name) return;
+          const self = i === 0;
+          const had = seen.get(row.name);
+          if (!had || (self && !had.self) || (!self && !had.self && row.online && !had.row.online)) {
+            seen.set(row.name, { row, self });
+          }
+        });
+      }
+      if (!seen.size) return null;
+      const head = Array.isArray(docs[0]) ? {} : { ...docs[0] };
+      delete head.canaries;
+      return { ...head, devices: [...seen.values()].map((s) => s.row) };
+    };
+    const kernel = new Set(witnessBases([]));
+    const boards = [...new Set(witnessBoardBases(sightings))].filter((b) => !kernel.has(b));
+    if (!boards.length) return null;
+    const docs = (await Promise.all(boards.map((b) =>
+      invoke("witness_discover", { bases: [b] }).catch(() => null)))).filter(Boolean);
+    return docs.length ? mergeBoardFleets(docs) : null;
+  },
   timer: null,        // next scheduled tick
   scanning: false,    // continuous mode (fleet tab open)
   burstUntil: 0,      // fast-poll deadline after a flash
@@ -1240,8 +1272,10 @@ const witnessDiscovery = {
     try { sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || []; }
     catch (_) { /* no multicast here, or nobody announcing — the poll still runs */ }
     let fleet = null;
-    try { fleet = await invoke("witness_discover", { bases: witnessBases(sightings) }); }
+    // The kernel first, alone: it answers for the whole fleet.
+    try { fleet = await invoke("witness_discover", { bases: witnessBases([]) }); }
     catch (_) { /* nothing answering yet, or an older build without the command */ }
+    if (!fleet) fleet = await this.boardFleet(sightings);
     this.inFlight = false;
     if (fleet) {
       const n = (fleet.devices || fleet.canaries || (Array.isArray(fleet) ? fleet : [])).length;

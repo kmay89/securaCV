@@ -2461,16 +2461,20 @@ const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://ca
 // The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
 // as bases — the test after the run test holds every monorepo wall to them.
 const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
-const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+const wallInvoke = (calls, sightings, caps, answer) => async (cmd, args) => {
   calls.push([cmd, args]);
   if (cmd === "native_capabilities") return caps;
   if (cmd === "fleet_scan") return sightings;
-  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "witness_discover") {
+    const doc = answer && answer(Array.from(args.bases));
+    if (doc) return doc;
+    throw "no kernel answered on the LAN yet";
+  }
   if (cmd === "companion_set_bases") return null;
   throw new Error(`the wall invoked an unexpected command: ${cmd}`);
 };
 const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
-async function runLabWall(typedBase, sightings) {
+async function runLabWall(typedBase, sightings, answer) {
   const calls = [];
   const scan = wallStatusEl();
   const frame = { src: "", contentWindow: { postMessage() {} } };
@@ -2488,15 +2492,17 @@ async function runLabWall(typedBase, sightings) {
     addEventListener() {},
   };
   ctx.window = ctx;
-  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }, answer) } };
+  const posted = [];
+  frame.contentWindow.postMessage = (m) => posted.push(m);
   vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
   for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
     await new Promise((r) => setImmediate(r));
   }
-  await new Promise((r) => setImmediate(r));
-  return { calls, status: scan.textContent };
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent, posted };
 }
-async function runFlasherWall(typedHost, sightings) {
+async function runFlasherWall(typedHost, sightings, answer) {
   const src = read(join(ROOT, "desktop/src/app.js"));
   const grab = (re, what) => {
     const m = re.exec(src);
@@ -2510,16 +2516,48 @@ async function runFlasherWall(typedHost, sightings) {
   ].join("\n");
   const calls = [];
   const scan = wallStatusEl();
+  const posted = [];
   const els = {
     "mqtt-host": { value: typedHost || "" },
     "fleet-scan-status": scan,
-    "witness-frame": { contentWindow: { postMessage() {} } },
+    "witness-frame": { contentWindow: { postMessage: (m) => posted.push(m) } },
   };
   const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
-    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}, answer), () => "New Canary");
   await wall.tick();
-  return { calls, status: scan.textContent };
+  return { calls, status: scan.textContent, posted };
 }
+
+test("witness wall: with no kernel, every answering board reaches the wall, once each", async () => {
+  // Three nightstands, no hub: each answers /api/fleet with itself first and
+  // the siblings it hears after. The wall used to stop at the first answer
+  // and show ONE node. Self-reports win over a sibling's (stale) view.
+  const nodes = [
+    { deviceId: "a", host: "a.local", ip: "192.168.1.61", port: 80 },
+    { deviceId: "b", host: "b.local", ip: "192.168.1.62", port: 80 },
+    { deviceId: "c", host: "c.local", ip: "192.168.1.63", port: 80 },
+  ];
+  const row = (name, online, extra) => ({ name, online, product: "canary-nightstand", ...extra });
+  const docs = {
+    "http://192.168.1.61:80": { kernel: "A", devices: [row("A", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("B", 0)] },
+    "http://192.168.1.62:80": { kernel: "B", devices: [row("B", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("A", 1)] },
+    "http://192.168.1.63:80": { kernel: "C", devices: [row("C", 1)] },
+  };
+  const answer = (bases) => (bases.length === 1 ? docs[bases[0]] : null);
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, nodes, answer)],
+                             ["Flasher app.js", () => runFlasherWall("", nodes, answer)]]) {
+    const { status, posted } = await run();
+    const fleet = posted.filter((m) => m && m.type === "witness:fleet").pop();
+    assert.ok(fleet, `${name} posted no fleet to the wall`);
+    const devs = Array.from(fleet.fleet.devices);
+    assert.deepStrictEqual(devs.map((d) => d.name).sort(), ["A", "B", "C"],
+      `${name}: every board must reach the wall, once each`);
+    const b = devs.find((d) => d.name === "B");
+    assert.strictEqual(b.online, 1, `${name}: B's own self-report must beat A's stale view of it`);
+    assert.strictEqual(b.hardware, "waveshare-esp32c6-lcd147", `${name}: the self row carries the board`);
+    assert.match(status, /3 Canaries on your network/, `${name} must count the merged fleet`);
+  }
+});
 
 test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
   // witness_discover returns the FIRST base whose /api/fleet answers, and a
@@ -2544,8 +2582,14 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
     assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
     assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
     // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
-    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
-      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    // The kernel is asked alone first; only when none answers is every
+    // browsed board asked, each on its own, so all of them reach the wall.
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), kernel,
+      `${name}: the kernel addresses must be asked first, and alone`);
+    const boardPolls = calls.slice(pollAt + 1).filter(([c]) => c === "witness_discover")
+      .map(([, a]) => Array.from(a.bases));
+    assert.deepStrictEqual(boardPolls, WALL_BOARDS.map((b) => [b]),
+      `${name}: every browsed board must be asked on its own, in browse order, after the kernel`);
     assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
       `${name} must say the boards it heard, not "nothing answering yet"`);
     statuses.push(status);
