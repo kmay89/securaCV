@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Several 1.47" C6 nightstands: offered by the flasher, and each on every wall once (Flasher 0.12.1, Lab 0.3.1)
+
+- **The flashers show the ESP32-C6 display card next to the Sense** (and the
+  C3 boards side by side): when the chip and flash size cannot name the
+  board, `smartPick` returns one card per board instead of folding the rest
+  behind "show all (developer)".
+- **The C6 board names itself** (`CANARY_FIGURE_HARDWARE`
+  `waveshare-esp32c6-lcd147`) and its manifest names its figure, so the apps
+  draw it instead of a generic marker.
+- **Sibling displays no longer alarm each other**: `is_display_peer` matches
+  the device types the displays really publish (`canary-nightstand*`,
+  `canary-dash`, `canary-watch`, `canary-nightlight`).
+- **The desktop Witness Wall (Flasher and Lab) shows every board** in a
+  hubless home, and **the Apple TV Wall draws each display once**: a device's
+  own report wins over its siblings' echoes of it.
+- **Flasher 0.12.1** and **Lab 0.3.1** carry the picker and the wall to the
+  installed Mac apps — see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`.
+
 ### Ridiculously easy, audited: six onboarding journeys walked tap by tap on the code, and what stood in the way fixed — a Canary takes its hub from the phone, a paired WAP stays reachable, one prompt per tap, the phone listens in your pocket
 
 An adversarial audit walked every onboarding journey as the code runs it
