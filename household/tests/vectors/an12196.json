@@ -1,0 +1,35 @@
+{
+  "$comment": "NXP AN12196 (NTAG 424 DNA and NTAG 424 DNA TagTamper features and hints), the two AuthenticateEV2First worked examples, as published test data. Both use the factory-default all-zero AES key: it is no secret, and it lives here as data rather than as a key literal in the code. The bytes were taken from the transcription in the ntag424 crate 0.1.1 (MIT OR Apache-2.0, https://codeberg.org/jannschu/ntag424: src/session/tests.rs, src/commands/authenticate/aes.rs, src/crypto/suite.rs), which cites AN12196 for each; the application note itself was not fetched. Replayed by household/src/ntag424.rs tests::an12196_* and simulator_matches_an12196_key0. All values are hex.",
+  "key0": {
+    "$comment": "Key 0x00, Table 14: the full APDU transcript.",
+    "key": "00000000000000000000000000000000",
+    "key_no": "00",
+    "rnd_a": "13C5DB8A5930439FC3DEF9A4C675360F",
+    "select_apdu": "00A4040007D276000085010100",
+    "part1_apdu": "9071000002000000",
+    "card_part1": "A04C124213C186F22399D33AC2A30215",
+    "rnd_b": "B9E2FC789B64BF237CCCAA20EC7E6E48",
+    "part2_apdu": "90AF00002035C3E05A752E0144BAC0DE51C1F22C56B34408A23D8AEA266CAB947EA8E0118D00",
+    "card_part2": "3FA64DB5446D1F34CD6EA311167F5E4985B89690C04A05F17FA7AB2F08120663",
+    "ti": "9D00C4DF",
+    "sv1": "A55A0001008013C56268A548D8FBBF237CCCAA20EC7E6E48C3DEF9A4C675360F",
+    "sv2": "5AA50001008013C56268A548D8FBBF237CCCAA20EC7E6E48C3DEF9A4C675360F",
+    "ses_enc": "1309C877509E5A215007FF0ED19CA564",
+    "ses_mac": "4C6626F5E72EA694202139295C7A7FC7"
+  },
+  "key3": {
+    "$comment": "Key 0x03: part 2 APDU, card response, TI, session vector and session keys.",
+    "key": "00000000000000000000000000000000",
+    "key_no": "03",
+    "rnd_a": "B98F4C50CF1C2E084FD150E33992B048",
+    "part1_apdu": "9071000002030000",
+    "card_part1": "B875CEB0E66A6C5CD00898DC371F92D1",
+    "rnd_b": "91517975190DCEA6104948EFA3085C1B",
+    "part2_apdu": "90AF000020FF0306E47DFBC50087C4D8A78E88E62DE1E8BE457AA477C707E2F0874916A8B100",
+    "card_part2": "0CC9A8094A8EEA683ECAAC5C7BF20584206D0608D477110FC6B3D5D3F65C3A6A",
+    "ti": "7614281A",
+    "sv1": "A55A00010080B98FDD01B6693705CEA6104948EFA3085C1B4FD150E33992B048",
+    "ses_enc": "7A93D6571E4B180FCA6AC90C9A7488D4",
+    "ses_mac": "FC4AF159B62E549B5812394CAB1918CC"
+  }
+}

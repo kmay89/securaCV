@@ -17,11 +17,11 @@ on:
       - 'canary-vision/package.json'
       - 'canary-vision/device-api/package.json'
       - 'canary-vision/package-lock.json'
-      # Shipped desktop Flasher / Lab + the hub-io and flash-engine crates and
-      # the tvOS core — each has its own Cargo.lock (the root Cargo.toml
-      # declares no [workspace], so the root audit never sees them). These are
-      # self-updating apps, so a known advisory in one must gate the same as
-      # the kernel's.
+      # Shipped desktop Flasher / Lab + the hub-io and flash-engine crates, the
+      # tvOS core and the household-key checker — each has its own Cargo.lock
+      # (the root Cargo.toml declares no [workspace], so the root audit never
+      # sees them). These are self-updating apps or hub-side security code, so
+      # a known advisory in one must gate the same as the kernel's.
       # NOTE: hub-core is deliberately NOT listed. It is a zero-dependency,
       # pure-`std` crate and its Cargo.lock is gitignored (desktop/.gitignore),
       # so there is nothing to audit and no committed lockfile to load — adding
@@ -31,6 +31,11 @@ on:
       - 'desktop/hub-io/Cargo.lock'
       - 'desktop/flash-engine/Cargo.lock'
       - 'tvos/witness-core/Cargo.lock'
+      # household/ is also cargo-deny checked (job below), and its manifest's
+      # licenses and sources are what that step judges, so the manifest
+      # triggers this workflow too.
+      - 'household/Cargo.lock'
+      - 'household/Cargo.toml'
       - 'desktop-lab/package.json'
       - 'desktop-lab/package-lock.json'
       - 'desktop/package.json'
@@ -80,18 +85,24 @@ jobs:
       - name: Audit Cargo.lock against the RustSec advisory DB
         run: cargo audit
 
-      # The desktop Flasher/Lab, the hub-io and flash-engine crates, and the
+      # The desktop Flasher/Lab, the hub-io and flash-engine crates and the
       # tvOS core each carry their OWN Cargo.lock outside the root (no
-      # [workspace]), so the root audit above never touches them. They ship in signed, self-updating apps — audit
-      # them against the same advisory DB and fail on any advisory.
+      # [workspace]), so the root audit above never touches them. They ship
+      # in signed, self-updating apps — audit them against the same advisory
+      # DB and fail on any advisory.
       # `-f <lock>` audits that exact lockfile; the shared .cargo/audit.toml
       # ignore list still applies (run from the repo root).
+      # Every lockfile is audited and reported even when an earlier one
+      # fails (the step fails at the end if any did), and the step runs even
+      # when the root audit above failed: one red lockfile must never hide
+      # another's result.
       # hub-core is intentionally excluded: it is a zero-dependency, pure-`std`
       # crate whose Cargo.lock is gitignored, so there is nothing to audit and
       # `cargo audit -f desktop/hub-core/Cargo.lock` would fail to load the file.
       - name: Audit shipped desktop / tvOS lockfiles
+        if: ${{ success() || failure() }}
         run: |
-          set -e
+          rc=0
           for lock in \
             desktop/src-tauri/Cargo.lock \
             desktop-lab/src-tauri/Cargo.lock \
@@ -99,9 +110,18 @@ jobs:
             desktop/flash-engine/Cargo.lock \
             tvos/witness-core/Cargo.lock; do
             echo "::group::cargo audit -f $lock"
-            cargo audit -f "$lock"
+            cargo audit -f "$lock" || rc=1
             echo "::endgroup::"
           done
+          exit $rc
+
+      # The household-key checker (household/) guards the household posture
+      # and has its own Cargo.lock. Its own step, run whatever the steps above
+      # concluded, so its result is always produced and a desktop advisory
+      # never stands in for it (or hides one in it).
+      - name: Audit the household-key checker lockfile
+        if: ${{ success() || failure() }}
+        run: cargo audit -f household/Cargo.lock
 
   cargo-deny:
     name: cargo deny (licenses / bans / sources)
@@ -127,6 +147,13 @@ jobs:
         # cargo-deny owns license policy, duplicate detection, and source
         # provenance per deny.toml (doc-12 A4 / FR-14).
         run: cargo deny check bans licenses sources
+      - name: Check licenses, duplicate versions, and sources (household/)
+        # The household-key checker is a standalone crate (its own
+        # Cargo.lock, empty [workspace]), so the root check above never sees
+        # its graph. Run from the repo root so cargo-deny picks up the same
+        # ./deny.toml policy (its default config path is <cwd>/deny.toml).
+        # The first sub-crate to be deny-checked; the others are audited only.
+        run: cargo deny --manifest-path household/Cargo.toml check bans licenses sources
 
   npm-audit:
     name: npm audit (${{ matrix.dir }})

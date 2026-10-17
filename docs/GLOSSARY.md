@@ -254,6 +254,36 @@ QR. Nothing of it is bench-tested yet.
 → [magic pairing (design)](design/magic_pairing.md),
 [the FAQ](FAQ.md#how-do-i-give-a-new-canary-my-wi-fi-do-i-have-to-type-a-setup-key)
 
+**Household key** — Something a household member carries and presents on
+purpose to change the **household posture**: a phone or watch key behind that
+device's own Face ID or fingerprint, a FIDO2 security key, an NFC card or
+sticker, or a button fob. It proves possession, not identity — a borrowed card
+reads the same — so the system never names anyone, and a key never rewords,
+quiets or delays a witnessed event. The hub-side checker is built and
+host-tested; nothing on a Canary acts on a key yet.
+→ [the research](research/face_id_without_faces.md),
+[`spec/household_keys_v0.md`](../spec/household_keys_v0.md)
+
+**Key satellite** — The door device a household key is presented to: an NFC
+reader (a XIAO ESP32-C3 and an ST25R3916 in the reference design) that relays
+a fresh hub challenge and the credential's answer, and holds no member
+material. Its own device class, never a Canary: no camera, no microphone,
+nothing that witnesses. **Not built**; the spec is its contract.
+→ [`spec/household_keys_v0.md`](../spec/household_keys_v0.md) §6.3
+
+**Household posture** — The household's mode, `away`, `home` or `night`, and
+the only thing a household key may change. `home` lets indoor witnesses sense
+tamper only, may be set only by an *intent* credential (one that needed its
+holder's own user verification), and lapses on its own: at most 24 hours
+after it is issued (12 by default), and a witness counts it for at most
+24 hours 5 minutes of its own clock, whatever the hub's clock said; a
+card or fob may set only `away` or `night`. It travels as a signed 112-byte
+statement, and a witness that cannot verify one against its pinned hub key
+behaves as `away`. Always "household posture," never bare "posture," which
+already means a Vision event's body posture and the Pocket Canary's bird.
+→ [`spec/household_keys_v0.md`](../spec/household_keys_v0.md),
+[the decision record](design/household_presence_and_posture.md)
+
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
 soured it); the only exception is the Unix `flock(2)` syscall. Rule:

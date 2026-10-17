@@ -467,6 +467,16 @@ telemetry), we list both columns honestly.
 | **Witness chain / tamper evidence** | Optional E2E (some). | Always-on, default. | **We are ahead.** |
 | **Telemetry / analytics** | Always-on. | None (Invariant IV). | **We are ahead.** |
 
+> **Correction (2026-10-14), to the Notifications row above and to item 3
+> below.** Web Push always goes through the browser vendor's push service:
+> VAPID identifies the sender to that service, it does not remove it. So Web
+> Push is a remote lane like APNs, not "no third party". Under the
+> notification doctrine
+> ([`apple_watch_and_notifications.md`](../design/apple_watch_and_notifications.md)
+> §1.1 and §2), only Critical takes a remote lane, and then as a content-free
+> poke with no zone name; corroborated presence and every other Important
+> event stay on the LAN. The rest of this audit is left as written.
+
 ### 9.3 The five missing primitives, ranked
 
 Of the gaps above, five are *structural* — they don't fit elsewhere
@@ -501,7 +511,10 @@ build on them. In dependency order:
    deep-link URL into that zone's Today sheet. No pixels. Uses VAPID
    — no third-party push relay. Each Canary can run its own VAPID
    subscription endpoint; the phone subscribes once per Canary via
-   the existing service worker (`companion-sw.js`).
+   the existing service worker (`companion-sw.js`). (Corrected
+   2026-10-14: Web Push does go through the browser vendor's push
+   service, so it carries Critical only and no zone name; see the
+   correction under the table in §9.2.)
 
 4. **Geofencing.** Pure phone-side. `navigator.geolocation` +
    a polygon the user paints once on the `/home` view. When the

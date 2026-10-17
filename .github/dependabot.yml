@@ -130,6 +130,51 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+  # The household-key checker (household/): its own lockfile, read by its PR
+  # CI job (household.yml) and by audit.yml (cargo audit + cargo deny). Its
+  # crypto stack is one RustCrypto trait generation (digest / cipher /
+  # signature / elliptic-curve): a partial bump splits the graph and fails to
+  # compile, the same failure the root group above exists for (#717/#718), so
+  # the whole family moves together with no update-types filter.
+  - package-ecosystem: "cargo"
+    directory: "/household"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      rustcrypto:
+        patterns:
+          - "sha2"
+          - "hmac"
+          - "hkdf"
+          - "digest"
+          - "crypto-common"
+          - "block-buffer"
+          - "cipher"
+          - "inout"
+          - "aes"
+          - "cmac"
+          - "aead"
+          - "chacha20"
+          - "chacha20poly1305"
+          - "poly1305"
+          - "universal-hash"
+          - "signature"
+          - "ecdsa"
+          - "elliptic-curve"
+          - "p256"
+          - "primeorder"
+          - "primefield"
+          - "ed25519-dalek"
+          - "curve25519-dalek"
+      rand:
+        patterns: ["rand", "rand_*", "getrandom"]
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   # Node fleet UI + device-API (npm workspace rooted at canary-vision/).
   - package-ecosystem: "npm"
     directory: "/canary-vision"

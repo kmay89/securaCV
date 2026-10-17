@@ -1,0 +1,3077 @@
+{
+  "_comment": [
+    "Conformance vectors for the hub attention engine (spec/household_keys_v0.md section 7; the `attention` and `household_posture` blocks of spec/witness_dictionary.json).",
+    "HAND-AUTHORED. Every expectation was decided from the dictionary's rules, not computed by an engine; never regenerate this file from code. Change the dictionary first, then this file, then the code.",
+    "vectors: {name, input, expect}. Every input spells all eleven fields; `corroboration` is the list of channel ids that agreed (the reporting channel's own included), and a replay counts the DISTINCT modality classes among them (wifi_rf and ble are one class; unknown counts for nothing). `expect` is the whole decision: tier, phrase, reason, held_for_morning (quiet hours holding a digest) and the episode key {family, zone}.",
+    "words: each device_word (exact, case-sensitive; anything unlisted is `other`) or kernel_event_type (the kernel's PascalCase wire form) and its class.",
+    "episodes: timed sequences for the repeat governor, on monotonic seconds. Each step is {at, tier, episode, expect}; expect is notify {cause}, collapsed {resting_for_secs} or not_surfaced. The numbers are the Apple apps' RepeatGovernor: 120 s doubling to 1800 s, an 1800 s calm gap measured from the latest second any repeat was considered (a stamp earlier than that is recorded as that latest second, so a stray early one can neither fake a calm nor shorten a rest), a higher tier always notifies, critical is never governed; tier none is never considered.",
+    "Replayed by: src/relay/attention.rs (Rust, run by rust.yml's `cargo test --features alert-relay relay::`). Any other surface that decides tiers (the Apple apps, the display, the Home Assistant integration) must replay this file before it ships its own copy of the rules."
+  ],
+  "vectors": [
+    {
+      "name": "tamper_outdoor_is_critical",
+      "input": {
+        "class": "tamper",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "tamper",
+        "corroboration": [
+          "tamper"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "tamper_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "tamper",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "tamper_indoor_while_home_is_still_critical",
+      "input": {
+        "class": "tamper",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "tamper",
+        "corroboration": [
+          "tamper"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "tamper_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "tamper",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "tamper_indoor_home_at_a_witness_that_honors_posture_is_still_critical",
+      "input": {
+        "class": "tamper",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": true,
+        "channel": "tamper",
+        "corroboration": [
+          "tamper"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "tamper_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "tamper",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "tamper_in_quiet_hours_is_not_held",
+      "input": {
+        "class": "tamper",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "tamper",
+        "corroboration": [
+          "tamper"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "tamper_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "tamper",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "tamper_with_a_familiar_radio_hint_is_still_critical",
+      "input": {
+        "class": "tamper",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "tamper_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "tamper",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "integrity_failure_at_hub_level",
+      "input": {
+        "class": "integrity",
+        "zone": 0,
+        "zone_kind": "unknown",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "integrity_failed",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "integrity",
+          "zone": 0
+        }
+      }
+    },
+    {
+      "name": "integrity_failure_while_home_in_quiet_hours",
+      "input": {
+        "class": "integrity",
+        "zone": 0,
+        "zone_kind": "unknown",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "integrity_failed",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "integrity",
+          "zone": 0
+        }
+      }
+    },
+    {
+      "name": "dark_indoor_witness_while_home",
+      "input": {
+        "class": "dark",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "dark_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "dark",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "smoke_heard_by_one_microphone_is_critical",
+      "input": {
+        "class": "smoke_alarm_heard",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "smoke_heard_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "life_safety",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "smoke_heard_indoor_while_home_in_quiet_hours",
+      "input": {
+        "class": "smoke_alarm_heard",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "smoke_heard_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "life_safety",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "co_heard_at_night_in_quiet_hours",
+      "input": {
+        "class": "co_alarm_heard",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "night",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "critical",
+        "phrase": "co_heard_at_zone",
+        "reason": "critical_class",
+        "held_for_morning": false,
+        "episode": {
+          "family": "life_safety",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "camera_person_indoor_while_home_is_none",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "person_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_indoor_home_at_a_witness_that_honors_posture",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": true,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "person_at_zone",
+        "reason": "home_indoor_at_witness",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "corroborated_contact_indoor_while_home_is_none",
+      "input": {
+        "class": "contact",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "contact",
+        "corroboration": [
+          "contact",
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "opening_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "opening",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "corroborated_glass_break_indoor_while_home_is_none",
+      "input": {
+        "class": "glass_break_heard",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone",
+          "contact"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "glass_break_heard_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "breakage",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "none_is_never_held_by_quiet_hours",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "person_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unfamiliar_radio_arrival_indoor_while_home_is_none",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "activity_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_outdoor_while_home_is_unchanged",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_at_a_door_while_home_is_unchanged",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "an_unclassified_zone_while_home_is_never_quieted",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "unknown",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_indoor_while_away",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "away",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_indoor_at_night_is_away_in_v0",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "night",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_indoor_unset_is_todays_behavior",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "animal_on_camera_and_radar_stays_digest",
+      "input": {
+        "class": "animal",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision",
+          "radar"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "animal_at_zone",
+        "reason": "class_ceiling",
+        "held_for_morning": false,
+        "episode": {
+          "family": "animal",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unclassified_event_corroborated_stays_digest",
+      "input": {
+        "class": "other",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision",
+          "radar"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "event_at_zone",
+        "reason": "unclassified",
+        "held_for_morning": false,
+        "episode": {
+          "family": "other",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unclassified_event_in_quiet_hours_is_held",
+      "input": {
+        "class": "other",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "event_at_zone",
+        "reason": "unclassified",
+        "held_for_morning": true,
+        "episode": {
+          "family": "other",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unknown_word_indoor_while_home_is_none",
+      "input": {
+        "class": "other",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "event_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "other",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "animal_indoor_while_home_is_none",
+      "input": {
+        "class": "animal",
+        "zone": 1,
+        "zone_kind": "indoor",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "none",
+        "phrase": "animal_at_zone",
+        "reason": "home_indoor",
+        "held_for_morning": false,
+        "episode": {
+          "family": "animal",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unknown_word_at_a_door_while_home_is_digest",
+      "input": {
+        "class": "other",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "home",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "event_at_zone",
+        "reason": "unclassified",
+        "held_for_morning": false,
+        "episode": {
+          "family": "other",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_alone_is_important",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radar_person_alone_is_important",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "radar",
+        "corroboration": [
+          "radar"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_dwelling_is_important",
+      "input": {
+        "class": "dwelling",
+        "zone": 7,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "stayed_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 7
+        }
+      }
+    },
+    {
+      "name": "person_from_an_unknown_channel_is_digest",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "person_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "person_from_an_unknown_channel_with_two_classes_agreeing",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "unknown",
+        "corroboration": [
+          "radar",
+          "pir"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_presence_alone_is_uncorroborated",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "csi_presence_alone_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_csi",
+        "corroboration": [
+          "wifi_csi"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "pir_motion_alone_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "pir",
+        "corroboration": [
+          "pir"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "pir_and_radar_agreeing_is_important",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "pir",
+        "corroboration": [
+          "pir",
+          "radar"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "activity_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "a_light_sensor_and_a_camera_are_one_class",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "light",
+        "corroboration": [
+          "light",
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "duplicate_channel_ids_count_once",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "pir",
+        "corroboration": [
+          "pir",
+          "pir"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "an_unknown_corroborating_channel_counts_for_nothing",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision",
+          "unknown"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "knock_heard_alone_is_digest",
+      "input": {
+        "class": "knock",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "knock_heard_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "visitor",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "doorbell_heard_alone_is_digest",
+      "input": {
+        "class": "doorbell",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "doorbell_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "visitor",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "doorbell_button_alone_is_uncorroborated",
+      "input": {
+        "class": "doorbell",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "button",
+        "corroboration": [
+          "button"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "doorbell_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "visitor",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "vision_doorbell_button_and_camera_is_important",
+      "input": {
+        "class": "doorbell",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "button",
+        "corroboration": [
+          "button",
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "doorbell_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "visitor",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "glass_break_heard_alone_is_digest",
+      "input": {
+        "class": "glass_break_heard",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "glass_break_heard_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "breakage",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "glass_break_with_a_contact_agreeing_is_important",
+      "input": {
+        "class": "glass_break_heard",
+        "zone": 2,
+        "zone_kind": "indoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone",
+          "contact"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "glass_break_heard_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "breakage",
+          "zone": 2
+        }
+      }
+    },
+    {
+      "name": "contact_alone_is_uncorroborated",
+      "input": {
+        "class": "contact",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "contact",
+        "corroboration": [
+          "contact"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "opening_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "opening",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "contact_with_a_camera_agreeing_is_important",
+      "input": {
+        "class": "contact",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "contact",
+        "corroboration": [
+          "contact",
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "opening_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "opening",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "person_on_a_contact_alone_is_uncorroborated",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "contact",
+        "corroboration": [
+          "contact"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "person_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "vehicle_on_one_camera_is_digest",
+      "input": {
+        "class": "vehicle",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "vehicle_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "vehicle",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "vehicle_on_camera_and_radar_is_important",
+      "input": {
+        "class": "vehicle",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision",
+          "radar"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "vehicle_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "vehicle",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "object_removed_on_one_camera_is_digest",
+      "input": {
+        "class": "object_removed",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "object_removed_at_zone",
+        "reason": "uncorroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "object",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "loud_sound_alone_is_digest",
+      "input": {
+        "class": "sound_heard",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "sound_heard_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "sound",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "loud_sound_with_a_camera_agreeing_is_important",
+      "input": {
+        "class": "sound_heard",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "microphone",
+        "corroboration": [
+          "microphone",
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "sound_heard_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "sound",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_arrival_with_no_hint_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_arrival_familiar_and_sustained_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_arrival_unfamiliar_and_sustained_may_be_important",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_arrival_unfamiliar_but_brief_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "brief",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_arrival_unfamiliar_with_no_dwell_is_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "none",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "two_radios_on_one_phone_are_still_radio_alone",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_rf",
+        "corroboration": [
+          "wifi_rf",
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "two_radios_on_one_phone_familiar_stay_digest",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_rf",
+        "corroboration": [
+          "wifi_rf",
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "familiarity_never_lowers_a_corroborated_arrival",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble",
+          "radar"
+        ],
+        "dwell": "sustained",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "activity_at_zone",
+        "reason": "corroborated",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "radio_dwelling_unfamiliar_and_sustained",
+      "input": {
+        "class": "dwelling",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "stayed_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "csi_presence_ignores_the_hint",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_csi",
+        "corroboration": [
+          "wifi_csi"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_ignores_a_familiar_hint",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "a_knock_on_radio_is_not_an_arrival",
+      "input": {
+        "class": "knock",
+        "zone": 1,
+        "zone_kind": "door",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "knock_heard_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "visitor",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "unfamiliar_radio_arrival_in_quiet_hours_is_delivered",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "unfamiliar",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "familiar_radio_arrival_in_quiet_hours_is_held",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "ble",
+        "corroboration": [
+          "ble"
+        ],
+        "dwell": "sustained",
+        "novelty": "familiar",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "rf_only_arrival",
+        "held_for_morning": true,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "camera_person_in_quiet_hours_is_delivered",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "csi_presence_in_quiet_hours_is_held",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_csi",
+        "corroboration": [
+          "wifi_csi"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 14,
+        "quiet_hours": true
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": true,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "the_hour_changes_nothing_camera_person_at_three",
+      "input": {
+        "class": "person",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "vision",
+        "corroboration": [
+          "vision"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 3,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "important",
+        "phrase": "person_at_zone",
+        "reason": "camera_or_radar_person",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    },
+    {
+      "name": "the_hour_changes_nothing_csi_presence_at_twenty_three",
+      "input": {
+        "class": "presence",
+        "zone": 1,
+        "zone_kind": "outdoor",
+        "posture": "unset",
+        "witness_honors_posture": false,
+        "channel": "wifi_csi",
+        "corroboration": [
+          "wifi_csi"
+        ],
+        "dwell": "none",
+        "novelty": "unknown",
+        "hour_bucket": 23,
+        "quiet_hours": false
+      },
+      "expect": {
+        "tier": "digest",
+        "phrase": "activity_at_zone",
+        "reason": "single_weak_channel",
+        "held_for_morning": false,
+        "episode": {
+          "family": "someone",
+          "zone": 1
+        }
+      }
+    }
+  ],
+  "words": [
+    {
+      "device_word": "person_detected",
+      "class": "person"
+    },
+    {
+      "device_word": "presence_started",
+      "class": "person"
+    },
+    {
+      "device_word": "dwell_started",
+      "class": "dwelling"
+    },
+    {
+      "device_word": "interaction_likely",
+      "class": "dwelling"
+    },
+    {
+      "device_word": "rf_presence_started",
+      "class": "presence"
+    },
+    {
+      "device_word": "rf_dwell_started",
+      "class": "dwelling"
+    },
+    {
+      "device_word": "motion_detected",
+      "class": "presence"
+    },
+    {
+      "device_word": "vehicle_detected",
+      "class": "vehicle"
+    },
+    {
+      "device_word": "animal_detected",
+      "class": "animal"
+    },
+    {
+      "device_word": "doorbell",
+      "class": "doorbell"
+    },
+    {
+      "device_word": "knock",
+      "class": "knock"
+    },
+    {
+      "device_word": "glass_break",
+      "class": "glass_break_heard"
+    },
+    {
+      "device_word": "smoke_alarm_t3",
+      "class": "smoke_alarm_heard"
+    },
+    {
+      "device_word": "co_alarm_t4",
+      "class": "co_alarm_heard"
+    },
+    {
+      "device_word": "tamper",
+      "class": "tamper"
+    },
+    {
+      "device_word": "panic",
+      "class": "tamper"
+    },
+    {
+      "device_word": "witness_lost",
+      "class": "dark"
+    },
+    {
+      "device_word": "chain_break",
+      "class": "integrity"
+    },
+    {
+      "device_word": "verify_failed",
+      "class": "integrity"
+    },
+    {
+      "device_word": "",
+      "class": "other"
+    },
+    {
+      "device_word": "Tamper",
+      "class": "other"
+    },
+    {
+      "device_word": "TAMPER",
+      "class": "other"
+    },
+    {
+      "device_word": " tamper",
+      "class": "other"
+    },
+    {
+      "device_word": "tamper ",
+      "class": "other"
+    },
+    {
+      "device_word": "tamper_detected",
+      "class": "other"
+    },
+    {
+      "device_word": "TamperDetected",
+      "class": "other"
+    },
+    {
+      "device_word": "presence_ended",
+      "class": "other"
+    },
+    {
+      "device_word": "dwell_ended",
+      "class": "other"
+    },
+    {
+      "device_word": "rf_presence_ended",
+      "class": "other"
+    },
+    {
+      "device_word": "enclosure_tamper",
+      "class": "other"
+    },
+    {
+      "device_word": "smoke",
+      "class": "other"
+    },
+    {
+      "device_word": "fire",
+      "class": "other"
+    },
+    {
+      "device_word": "a_word_from_a_future_firmware",
+      "class": "other"
+    },
+    {
+      "device_word": "smoke-alarm",
+      "class": "other"
+    },
+    {
+      "device_word": "tamperDetected",
+      "class": "other"
+    },
+    {
+      "kernel_event_type": "BoundaryCrossingObjectLarge",
+      "class": "presence"
+    },
+    {
+      "kernel_event_type": "BoundaryCrossingObjectSmall",
+      "class": "animal"
+    },
+    {
+      "kernel_event_type": "AcousticImpulseInZone",
+      "class": "sound_heard"
+    },
+    {
+      "kernel_event_type": "PresenceInRestrictedZone",
+      "class": "presence"
+    },
+    {
+      "kernel_event_type": "VehiclePresenceAfterHours",
+      "class": "vehicle"
+    },
+    {
+      "kernel_event_type": "ContactStateChange",
+      "class": "contact"
+    },
+    {
+      "kernel_event_type": "ObjectRemovedFromZone",
+      "class": "object_removed"
+    },
+    {
+      "kernel_event_type": "TamperDetected",
+      "class": "tamper"
+    },
+    {
+      "kernel_event_type": "VehicleArrivalDeparture",
+      "class": "vehicle"
+    }
+  ],
+  "episodes": [
+    {
+      "name": "first_notifies_then_repeats_rest_and_rests_double",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 30,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 90
+          }
+        },
+        {
+          "at": 119,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1
+          }
+        },
+        {
+          "at": 120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 200,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 160
+          }
+        },
+        {
+          "at": 360,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 400,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 440
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_higher_tier_always_gets_through",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 10,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 110
+          }
+        },
+        {
+          "at": 20,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "escalation"
+          }
+        },
+        {
+          "at": 30,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 230
+          }
+        },
+        {
+          "at": 40,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 220
+          }
+        }
+      ]
+    },
+    {
+      "name": "critical_is_never_governed",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "critical",
+          "episode": {
+            "family": "tamper",
+            "zone": 4
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "critical"
+          }
+        },
+        {
+          "at": 1,
+          "tier": "critical",
+          "episode": {
+            "family": "tamper",
+            "zone": 4
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "critical"
+          }
+        },
+        {
+          "at": 2,
+          "tier": "critical",
+          "episode": {
+            "family": "tamper",
+            "zone": 4
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "critical"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_calm_gap_ends_the_episode",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 1800,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 1801,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 119
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_continuous_flap_never_ages_into_calm_and_rests_cap_at_1800",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 600,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 900,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 180
+          }
+        },
+        {
+          "at": 1200,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 1500,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 660
+          }
+        },
+        {
+          "at": 1800,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 360
+          }
+        },
+        {
+          "at": 2100,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 2400,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 2700,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1500
+          }
+        },
+        {
+          "at": 3000,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1200
+          }
+        },
+        {
+          "at": 3300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 900
+          }
+        },
+        {
+          "at": 3600,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 600
+          }
+        },
+        {
+          "at": 3900,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 300
+          }
+        },
+        {
+          "at": 4200,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 4500,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1500
+          }
+        }
+      ]
+    },
+    {
+      "name": "zones_are_separate_episodes",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 10,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 2
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 20,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 100
+          }
+        }
+      ]
+    },
+    {
+      "name": "families_are_separate_episodes",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 5,
+          "tier": "important",
+          "episode": {
+            "family": "visitor",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 6,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 114
+          }
+        }
+      ]
+    },
+    {
+      "name": "none_is_never_considered",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "none",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "not_surfaced"
+          }
+        },
+        {
+          "at": 10,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 20,
+          "tier": "none",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "not_surfaced"
+          }
+        },
+        {
+          "at": 1810,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_clock_step_back_only_rests_longer",
+      "steps": [
+        {
+          "at": 1000,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 900,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 1120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_early_timestamp_never_resets_the_calm_gap",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 360,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 840,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 1800,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 1900,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1700
+          }
+        },
+        {
+          "at": 100,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1800
+          }
+        },
+        {
+          "at": 2100,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1500
+          }
+        },
+        {
+          "at": 2300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1300
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_early_escalation_never_shortens_the_next_rest",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 60,
+          "tier": "digest",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 30,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "escalation"
+          }
+        },
+        {
+          "at": 270,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 30
+          }
+        },
+        {
+          "at": 300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_early_critical_never_shortens_the_next_rest",
+      "steps": [
+        {
+          "at": 1000,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 500,
+          "tier": "critical",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "critical"
+          }
+        },
+        {
+          "at": 1100,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 140
+          }
+        },
+        {
+          "at": 1240,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        }
+      ]
+    }
+  ]
+}
