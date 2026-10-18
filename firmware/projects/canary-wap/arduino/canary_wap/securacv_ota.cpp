@@ -230,12 +230,16 @@ bool securacv_ota_build_manifest_message(const securacv_ota_manifest_t *m,
 {
     // Byte-identical to ota_release.py's manifest_signed_message():
     // "scv-manifest-v1\0" then every field (lowercased sha, decimal size)
-    // followed by a NUL separator. Absent optional fields are empty.
+    // followed by a NUL separator. Absent optional fields are empty. A
+    // manifest_version 2 manifest uses the "scv-manifest-v2" prefix and
+    // appends the board and chip the image was built for, so the hardware
+    // binding is under the release key (docs/OTA.md §3).
     if (m == NULL || out == NULL || out_len == NULL) return false;
+    if (m->manifest_version != 0 && m->manifest_version != 1 && m->manifest_version != 2) return false;
+    const bool v2 = (m->manifest_version == 2);
 
-    static const char prefix[] = "scv-manifest-v1";
     size_t pos = 0;
-    if (!manifest_msg_append(out, cap, &pos, prefix)) return false;
+    if (!manifest_msg_append(out, cap, &pos, v2 ? "scv-manifest-v2" : "scv-manifest-v1")) return false;
     if (!manifest_msg_append(out, cap, &pos, m->product)) return false;
     if (!manifest_msg_append(out, cap, &pos, m->version)) return false;
     if (!manifest_msg_append(out, cap, &pos, m->min_version)) return false;
@@ -256,10 +260,53 @@ bool securacv_ota_build_manifest_message(const securacv_ota_manifest_t *m,
 
     if (!manifest_msg_append(out, cap, &pos, m->release_notes)) return false;
     if (!manifest_msg_append(out, cap, &pos, m->release_url)) return false;
+    if (v2) {
+        if (!manifest_msg_append(out, cap, &pos, m->board)) return false;
+        if (!manifest_msg_append(out, cap, &pos, m->chip)) return false;
+    }
 
     *out_len = pos;
     return true;
 }
+
+// ── Pure rules (host-tested in test_ota_logic.cpp) ───────────────────────
+const char *securacv_ota_state_word(securacv_ota_state_t state)
+{
+    switch (state) {
+        case SECURACV_OTA_IDLE:        return "idle";
+        case SECURACV_OTA_CHECKING:    return "checking";
+        case SECURACV_OTA_DOWNLOADING: return "downloading";
+        case SECURACV_OTA_VERIFYING:   return "verifying";
+        case SECURACV_OTA_FLASHING:    return "flashing";
+        case SECURACV_OTA_REBOOTING:   return "rebooting";
+        case SECURACV_OTA_ERROR:       return "error";
+        default:                       return "unknown";
+    }
+}
+
+bool securacv_ota_min_version_ok(const char *running, const char *min_version)
+{
+    if (min_version == NULL || min_version[0] == '\0') return true;
+    if (running == NULL || running[0] == '\0') return false;
+    return securacv_version_compare(running, min_version) >= 0;
+}
+
+bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
+                           const char *build_board, const char *build_chip)
+{
+    if (m == NULL) return false;
+    if (m->manifest_version != 2) return true;
+    if (m->board[0] != '\0' && build_board != NULL && build_board[0] != '\0' &&
+        strcmp(m->board, build_board) != 0) {
+        return false;
+    }
+    if (m->chip[0] != '\0' && build_chip != NULL && build_chip[0] != '\0' &&
+        strcmp(m->chip, build_chip) != 0) {
+        return false;
+    }
+    return true;
+}
+
 
 bool securacv_ota_hex_to_bytes(const char *hex, uint8_t *bytes, size_t byte_len)
 {
@@ -304,6 +351,8 @@ const char *securacv_ota_error_str(securacv_ota_error_t error)
         case SECURACV_OTA_ERR_PUBKEY_MISSING:    return "Release public key not provisioned";
         case SECURACV_OTA_ERR_DEFERRED:          return "Install deferred by device";
         case SECURACV_OTA_ERR_MANIFEST_SIG:      return "Manifest signature missing or invalid";
+        case SECURACV_OTA_ERR_MIN_VERSION:       return "Running version below the manifest's min_version";
+        case SECURACV_OTA_ERR_BOARD_MISMATCH:    return "Manifest is for another board or chip";
         default:                                 return "Unknown error";
     }
 }
@@ -362,6 +411,10 @@ const char *securacv_ota_friendly_error(securacv_ota_error_t error)
             return "The update was postponed. It will be offered again later.";
         case SECURACV_OTA_ERR_MANIFEST_SIG:
             return "The update info failed its security check, so it was ignored.";
+        case SECURACV_OTA_ERR_MIN_VERSION:
+            return "This update needs an earlier update installed first. Install the previous release, then try again.";
+        case SECURACV_OTA_ERR_BOARD_MISMATCH:
+            return "That update is for a different kind of Canary, so it was not installed.";
         default:
             return "Something went wrong with the update. Your Canary is still on its current software.";
     }
@@ -568,6 +621,11 @@ typedef struct {
 
 static ota_context_t s_ctx = {};
 static bool s_just_updated = false;
+// The confirm dwell (securacv_ota_health_tick): probes passed at boot, the
+// image is still pending, healthy has held since s_healthy_since_ms.
+static bool s_probes_passed = false;
+static bool s_dwell_started = false;
+static uint32_t s_healthy_since_ms = 0;
 
 // ============================================================================
 // NVS PERSISTED SETTINGS
@@ -1093,6 +1151,17 @@ esp_err_t securacv_ota_boot_self_test(void)
             ESP_LOGW(TAG, "Some optional self-tests failed, but continuing");
         }
 
+        if (s_ctx.config.confirm_dwell_ms > 0) {
+            // The probes passed; the dwell decides (securacv_ota_health_tick).
+            // A crash loop or a wedged radio inside it reboots into the
+            // previous image by the bootloader's own pending-verify rule.
+            s_probes_passed = true;
+            s_dwell_started = false;
+            ESP_LOGI(TAG, "Self-tests passed - confirming after %lu ms of health",
+                     (unsigned long)s_ctx.config.confirm_dwell_ms);
+            return ESP_OK;
+        }
+
         ESP_LOGI(TAG, "Self-tests passed - marking firmware as valid");
         err = esp_ota_mark_app_valid_cancel_rollback();
         if (err != ESP_OK) {
@@ -1114,6 +1183,36 @@ esp_err_t securacv_ota_boot_self_test(void)
     }
 
     return ESP_OK;
+}
+
+bool securacv_ota_pending_verify(void)
+{
+    return running_image_pending_verify();
+}
+
+bool securacv_ota_health_tick(uint32_t now_ms, bool healthy)
+{
+    if (!s_probes_passed || s_ctx.config.confirm_dwell_ms == 0) return false;
+    if (!running_image_pending_verify()) { s_probes_passed = false; return false; }
+    if (!healthy) { s_dwell_started = false; return false; }
+    if (!s_dwell_started) {
+        s_dwell_started = true;
+        s_healthy_since_ms = now_ms;
+        return false;
+    }
+    if ((int32_t)(now_ms - s_healthy_since_ms) < (int32_t)s_ctx.config.confirm_dwell_ms) return false;
+
+    ESP_LOGI(TAG, "Healthy for the confirm dwell - marking firmware as valid");
+    const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
+        return false;
+    }
+    s_probes_passed = false;
+    s_just_updated = true;
+    ota_raise_floor_to(s_ctx.config.current_version);
+    ESP_LOGI(TAG, "OTA validation complete - firmware confirmed");
+    return true;
 }
 
 bool securacv_ota_just_updated(void)
@@ -1245,13 +1344,27 @@ static void ota_task(void *arg)
         }
     }
 
-    // min_version is informational for gap-skips: log if we're below it.
-    if (strlen(s_ctx.manifest.min_version) > 0) {
-        if (securacv_version_compare(s_ctx.config.current_version,
-                                     s_ctx.manifest.min_version) < 0) {
-            ESP_LOGW(TAG, "Running version %s is below manifest min_version %s",
-                     s_ctx.config.current_version, s_ctx.manifest.min_version);
-        }
+    // min_version is ENFORCED (it used to be logged): a device below the
+    // floor would install an image whose migration steps assume the
+    // intermediate release ran, so it is told to install that one first.
+    if (!securacv_ota_min_version_ok(s_ctx.config.current_version, s_ctx.manifest.min_version)) {
+        ESP_LOGW(TAG, "Running version %s is below manifest min_version %s - install the intermediate release first",
+                 s_ctx.config.current_version, s_ctx.manifest.min_version);
+        s_ctx.update_available = false;
+        ota_set_error(SECURACV_OTA_ERR_MIN_VERSION);
+        goto task_exit;
+    }
+
+    // The hardware binding (manifest_version 2): a manifest for another
+    // board or chip under the right product id is the anti-brick case the
+    // product check alone cannot catch.
+    if (!securacv_ota_board_ok(&s_ctx.manifest, s_ctx.config.board, s_ctx.config.chip)) {
+        ESP_LOGE(TAG, "Manifest is for board '%s' chip '%s'; this image is board '%s' chip '%s' - refused",
+                 s_ctx.manifest.board, s_ctx.manifest.chip,
+                 s_ctx.config.board ? s_ctx.config.board : "?", s_ctx.config.chip ? s_ctx.config.chip : "?");
+        s_ctx.update_available = false;
+        ota_set_error(SECURACV_OTA_ERR_BOARD_MISMATCH);
+        goto task_exit;
     }
 
     if (!s_ctx.install_mode) {
@@ -1528,6 +1641,28 @@ static esp_err_t ota_parse_manifest(const char *json_data)
     const char *min_version = doc["min_version"];
     if (min_version != NULL) {
         strncpy(s_ctx.manifest.min_version, min_version, sizeof(s_ctx.manifest.min_version) - 1);
+    }
+
+    // manifest_version 2 signs the hardware binding; a v1 manifest carrying
+    // board/chip would be an UNSIGNED binding, which is worse than none, so
+    // it is refused the way the signer refuses to emit one.
+    {
+        const int mver = doc["manifest_version"] | 1;
+        if (mver != 1 && mver != 2) {
+            ESP_LOGE(TAG, "Unknown manifest_version %d", mver);
+            ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
+            return ESP_FAIL;
+        }
+        s_ctx.manifest.manifest_version = (uint8_t)mver;
+        const char *board = doc["board"];
+        const char *chip = doc["chip"];
+        if (mver == 1 && ((board && board[0]) || (chip && chip[0]))) {
+            ESP_LOGE(TAG, "board/chip on a manifest_version 1 manifest are unsigned - refused");
+            ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
+            return ESP_FAIL;
+        }
+        if (board != NULL) strncpy(s_ctx.manifest.board, board, sizeof(s_ctx.manifest.board) - 1);
+        if (chip != NULL) strncpy(s_ctx.manifest.chip, chip, sizeof(s_ctx.manifest.chip) - 1);
     }
 
     s_ctx.manifest.size = doc["size"] | 0U;

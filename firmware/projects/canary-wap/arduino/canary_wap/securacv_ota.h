@@ -135,6 +135,8 @@ typedef enum {
     SECURACV_OTA_ERR_PUBKEY_MISSING,        /**< Release public key not provisioned (all zeros) */
     SECURACV_OTA_ERR_DEFERRED,              /**< Install deferred by the device (busy / low battery) */
     SECURACV_OTA_ERR_MANIFEST_SIG,          /**< Manifest signature missing or invalid (forged metadata) */
+    SECURACV_OTA_ERR_MIN_VERSION,           /**< Running version is below the manifest's min_version: install the intermediate release first */
+    SECURACV_OTA_ERR_BOARD_MISMATCH,        /**< Manifest names another board or chip than this image was built for */
     SECURACV_OTA_ERR__COUNT,                /**< Sentinel — keep LAST. Not an error code; lets
                                                  test_ota_logic.cpp iterate every enumerator so a
                                                  new code cannot ship without a friendly UI string. */
@@ -184,6 +186,9 @@ typedef struct {
     char signing_key_id[33];    /**< Release key identifier (informational) */
     char release_notes[512];    /**< Human-readable changelog text */
     char release_url[128];      /**< URL to full release notes page */
+    uint8_t manifest_version;   /**< 1 (fields above) or 2 (adds the signed board + chip) */
+    char board[48];             /**< v2: the board token the image was built for (CANARY_FIGURE_HARDWARE); "" = any */
+    char chip[16];              /**< v2: the IDF target the image was built for (esp32s3, esp32c6, ...); "" = any */
 } securacv_ota_manifest_t;
 
 // ============================================================================
@@ -276,6 +281,10 @@ typedef struct {
     securacv_ota_can_install_cb_t can_install;  /**< Install-permission hook (can be NULL) */
     securacv_ota_before_reboot_cb_t on_before_reboot;  /**< Pre-reboot flush hook (can be NULL) */
     bool skip_version_check;            /**< Force update even if same version (dev only!) */
+    const char *board;                  /**< This build's board token (CANARY_FIGURE_HARDWARE); NULL = unknown, no binding */
+    const char *chip;                   /**< This build's IDF target (CONFIG_IDF_TARGET); NULL = unknown, no binding */
+    uint32_t confirm_dwell_ms;          /**< Confirm a pending image only after the board has reported healthy this long
+                                             through securacv_ota_health_tick(); 0 = confirm at the boot probe (legacy) */
     bool auto_reboot;                   /**< Automatically reboot after successful install */
     uint32_t http_timeout_ms;           /**< HTTP request timeout in milliseconds (default: 30000) */
     uint32_t download_buffer_size;      /**< Download chunk size in bytes (default: 4096) */
@@ -295,6 +304,9 @@ typedef struct {
     .can_install = NULL, \
     .on_before_reboot = NULL, \
     .skip_version_check = false, \
+    .board = NULL, \
+    .chip = NULL, \
+    .confirm_dwell_ms = 0, \
     .auto_reboot = true, \
     .http_timeout_ms = 30000, \
     .download_buffer_size = 4096, \
@@ -398,6 +410,53 @@ esp_err_t securacv_ota_boot_self_test(void);
  * the integration layer can emit its "update applied" witness event once.
  */
 bool securacv_ota_just_updated(void);
+
+/**
+ * @brief True while THIS boot's image is still unconfirmed (PENDING_VERIFY):
+ * a reboot before confirmation returns to the previous image. What
+ * GET /api/status reports as ota.pending_verify (docs/OTA.md §6).
+ */
+bool securacv_ota_pending_verify(void);
+
+/**
+ * @brief The health-gated half of the A/B confirmation (docs/OTA.md §2).
+ *
+ * Call every loop pass with the board's own notion of healthy (the Wi-Fi
+ * link, no crash loop, the sensor answering). When config.confirm_dwell_ms
+ * is set, securacv_ota_boot_self_test() leaves a probe-passing image
+ * PENDING and this confirms it once `healthy` has held for the dwell; an
+ * unhealthy pass restarts the dwell. A reboot inside the dwell (a crash
+ * loop, a watchdog) therefore rolls back by the bootloader's own rule. No
+ * effect when the dwell is 0 or the image is already confirmed.
+ *
+ * @return true on the pass that confirmed the image.
+ */
+bool securacv_ota_health_tick(uint32_t now_ms, bool healthy);
+
+/**
+ * @brief The engine's state as the one lowercase word every node's
+ * GET /api/status and roll-call row speak: idle / checking / downloading /
+ * verifying / flashing / rebooting / error (securacv_ota_state_str() is the
+ * capitalized UI spelling).
+ */
+const char *securacv_ota_state_word(securacv_ota_state_t state);
+
+/**
+ * @brief The min_version rule, pure: may a device running @p running install
+ * a manifest that says @p min_version? An empty / NULL floor is no floor.
+ * Enforced (not logged) since the parity program — a device below the floor
+ * is told to install the intermediate release first.
+ */
+bool securacv_ota_min_version_ok(const char *running, const char *min_version);
+
+/**
+ * @brief The board / chip rule, pure: a manifest binding (v2) matches when
+ * each field it names equals the build's; an empty manifest field binds
+ * nothing, and a build that does not know its own board / chip (NULL) cannot
+ * be bound and passes. A v1 manifest has no binding.
+ */
+bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
+                           const char *build_board, const char *build_chip);
 
 // ============================================================================
 // PERSISTED SETTINGS (NVS)

@@ -201,6 +201,77 @@ static int test_manifest_message_cross_language_fixture()
     return 0;
 }
 
+static int test_manifest_v2_message_and_rules()
+{
+    // manifest_version 2 appends the board and chip under its own prefix —
+    // byte-identical to ota_release.py's manifest_signed_message(...,
+    // manifest_version=2); the Python test pins the same shape.
+    securacv_ota_manifest_t m;
+    memset(&m, 0, sizeof(m));
+    m.manifest_version = 2;
+    strcpy(m.product, "securacv-canary-sense");
+    strcpy(m.version, "2.5.0");
+    strcpy(m.min_version, "2.4.0");
+    strcpy(m.url, "https://example.com/sense.bin");
+    strcpy(m.sha256, "AABB");
+    for (int i = 4; i < 64; i++) m.sha256[i] = '0';
+    m.sha256[64] = '\0';
+    m.size = 123456;
+    strcpy(m.board, "xiao-esp32c6-mr60");
+    strcpy(m.chip, "esp32c6");
+
+    static const char expected_hex[] = "7363762d6d616e69666573742d76320073656375726163762d63616e6172792d73656e736500322e352e3000322e342e300068747470733a2f2f6578616d706c652e636f6d2f73656e73652e62696e0061616262303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030003132333435360000007869616f2d657370333263362d6d723630006573703332633600";
+    uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+    size_t msg_len = 0;
+    CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    CHECK(msg_len == strlen(expected_hex) / 2);
+    uint8_t expected[sizeof(msg)];
+    CHECK(securacv_ota_hex_to_bytes(expected_hex, expected, msg_len));
+    CHECK(memcmp(msg, expected, msg_len) == 0);
+
+    // A v1 manifest (manifest_version 0 = absent, or 1) keeps the v1 prefix.
+    m.manifest_version = 1;
+    CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    CHECK(memcmp(msg, "scv-manifest-v1", 15) == 0);
+    m.manifest_version = 3;
+    CHECK(!securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    m.manifest_version = 2;
+
+    // The board rule: each named field must equal the build's; an empty
+    // manifest field binds nothing; a build that cannot name its own passes.
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32c6-mr60", "esp32c6"));
+    CHECK(!securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32c6"));
+    CHECK(!securacv_ota_board_ok(&m, "xiao-esp32c6-mr60", "esp32s3"));
+    CHECK(securacv_ota_board_ok(&m, NULL, NULL));
+    CHECK(securacv_ota_board_ok(&m, "", ""));
+    m.board[0] = '\0';
+    CHECK(securacv_ota_board_ok(&m, "anything", "esp32c6"));
+    m.manifest_version = 1;
+    strcpy(m.board, "xiao-esp32c6-mr60");
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32s3"));  // v1: no binding
+    CHECK(!securacv_ota_board_ok(NULL, "x", "y"));
+
+    // The floor rule, enforced: below min_version refuses; no floor is no floor.
+    CHECK(securacv_ota_min_version_ok("2.4.0", "2.4.0"));
+    CHECK(securacv_ota_min_version_ok("2.4.1", "2.4.0"));
+    CHECK(!securacv_ota_min_version_ok("2.3.9", "2.4.0"));
+    CHECK(securacv_ota_min_version_ok("1.0.0", ""));
+    CHECK(securacv_ota_min_version_ok("1.0.0", NULL));
+    CHECK(!securacv_ota_min_version_ok(NULL, "2.4.0"));
+    CHECK(!securacv_ota_min_version_ok("", "2.4.0"));
+
+    // The lowercase state words every node's status body speaks.
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_IDLE), "idle") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_CHECKING), "checking") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_DOWNLOADING), "downloading") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_VERIFYING), "verifying") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_FLASHING), "flashing") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_REBOOTING), "rebooting") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_ERROR), "error") == 0);
+    CHECK(strcmp(securacv_ota_state_word((securacv_ota_state_t)99), "unknown") == 0);
+    return 0;
+}
+
 static int test_friendly_strings()
 {
     // Every error code needs a usable primary-UI sentence; raw enum names
@@ -279,6 +350,7 @@ int main()
     if (test_signed_message_layout()) return 1;
     if (test_hex_to_bytes()) return 1;
     if (test_manifest_message_cross_language_fixture()) return 1;
+    if (test_manifest_v2_message_and_rules()) return 1;
     if (test_friendly_strings()) return 1;
     if (test_channel_manifest_url()) return 1;
 
