@@ -19,8 +19,11 @@
 // recording Arduino_GFX of the panel's native size, with an Arduino clock
 // the splash's own pump drives (delay() advances millis()), a Preferences
 // stand-in whose "met" flag the test clears before each splash, and a fixed
-// pseudonym. It plays the first meeting, the whole story::kHello script, on
-// each canvas, and at every tick where the bubble's text starts over, or the
+// pseudonym of one repeated letter. It plays the first meeting, the whole
+// story::kHello script, on each canvas, under the default Character and
+// under Heirloom, with "2222..." and the wide-lettered "WWWW..." (the one
+// that wraps the bubble tallest, so the dash's bird rises under Heirloom,
+// F159), and at every tick where the bubble's text starts over, or the
 // bubble or the tail moved, it reads the tail OFF THE FRAME: the canvas
 // rendered whole with the tail and without it, read back through the port's
 // turn from the native panel, the pixels that differ being the tail's. It
@@ -88,6 +91,7 @@
 #include "canary/hal/display.h"
 #include "canary/log.h"
 #include "canary/ui/canary_mark.h"
+#include "canary/ui/character.h"
 #include "canary/ui/lvgl_port.h"
 #include "canary/ui/splash.h"
 #include "canary/ui/splash_layout.h"
@@ -395,6 +399,7 @@ struct Watch {
   lv_area_t last_tail{0, 0, -1, -1}, last_bub{0, 0, -1, -1};
 };
 Watch g_w;
+bool g_report = true;  // the options' landing, printed for one play a canvas
 
 bool same_area(const lv_area_t& a, const lv_area_t& b) {
   return a.x1 == b.x1 && a.y1 == b.y1 && a.x2 == b.x2 && a.y2 == b.y2;
@@ -468,7 +473,7 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
     }
   }
   // 5: each of F185's options, on this frame, keeps 3 and 4.
-  const bool report = !W.reported && text[0] != '\0';
+  const bool report = g_report && !W.reported && text[0] != '\0';
   if (report) {
     // The report, once a canvas, on the frame of its first typed line.
     W.reported = true;
@@ -628,6 +633,24 @@ void play(const char* tag) {
              W.center_fails + W.rise_fails);
 }
 
+// Every play of one canvas: both Characters, a plain and a wide-lettered
+// pseudonym; F185's options are reported for the first.
+void play_all(const char* canvas) {
+  static char tag[160];
+  bool first = true;
+  for (canary::ui::Character ch : {canary::ui::Character::QuietGlass, canary::ui::Character::Heirloom}) {
+    for (char letter : {'2', 'W'}) {
+      canary::ui::character_apply(ch);
+      device_pseudonym::fill() = letter;
+      snprintf(tag, sizeof(tag), "%s/%s, pseudonym %c...", canvas,
+               ch == canary::ui::Character::Heirloom ? "heirloom" : "default", letter);
+      g_report = first;
+      first = false;
+      play(tag);
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -640,11 +663,11 @@ int main() {
   // portrait is worn before the splash (the dash only).
 #if GLASS_TURNS
   canary::ui::lvgl_port_set_rotation(canary::glass::ROT_LANDSCAPE);
-  play("dash, landscape");
+  play_all("dash, landscape");
   canary::ui::lvgl_port_set_rotation(canary::glass::ROT_PORTRAIT);
-  play("dash, portrait");
+  play_all("dash, portrait");
 #else
-  play("nightstand-c6");
+  play_all("nightstand-c6");
 #endif
   if (g_fail) {
     printf("%d of %d LVGL 9 splash tail checks FAILED\n", g_fail, g_checks);
