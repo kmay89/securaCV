@@ -125,9 +125,28 @@ final class SetupPortalTests: XCTestCase {
     }
 
     func testAPasswordThatCanNeverWorkIsNamedBeforeSending() {
-        XCTAssertNotNil(SetupPortal.passwordHint("short", networkIsOpen: false))
+        // No minimum: the router sets its own rule (WEP 5/13, WPA3 any length,
+        // WPA2 8..63), and the Canary's live verdict reports a refusal. The
+        // firmware never had a floor; the app must not add one — the twin of
+        // firmware/common/network/wifi_credential_policy.h and its host test.
+        XCTAssertNil(SetupPortal.passwordHint("short", networkIsOpen: false), "a short password is the router's business")
+        XCTAssertNil(SetupPortal.passwordHint("a", networkIsOpen: false))
         XCTAssertNil(SetupPortal.passwordHint("long enough", networkIsOpen: false))
         XCTAssertNil(SetupPortal.passwordHint("", networkIsOpen: false), "nothing typed yet is not an error")
-        XCTAssertNil(SetupPortal.passwordHint("short", networkIsOpen: true), "an open network takes none")
+        XCTAssertNil(SetupPortal.passwordHint(String(repeating: "p", count: 64), networkIsOpen: false), "64 bytes is a hex key")
+        XCTAssertNotNil(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: false), "65 bytes is what the firmware refuses")
+        XCTAssertEqual(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: false),
+                       "A Wi-Fi password is at most 64 characters.")
+        XCTAssertNil(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: true), "an open network takes none")
+        // The words beside the field name whose password it is, and never ask
+        // for a new one.
+        XCTAssertEqual(SetupPortal.passwordFieldLabel, "Wi-Fi network password")
+        XCTAssertTrue(SetupPortal.passwordFieldHint.contains("already use"))
+        XCTAssertTrue(SetupPortal.passwordFieldHint.contains("Nothing to invent"))
+        for words in [SetupPortal.passwordFieldLabel, SetupPortal.passwordFieldHint, SetupPortal.openNetworkNote] {
+            XCTAssertFalse(words.lowercased().contains("create"), words)
+            XCTAssertFalse(words.lowercased().contains("choose"), words)
+            XCTAssertFalse(words.contains("at least"), words)
+        }
     }
 }

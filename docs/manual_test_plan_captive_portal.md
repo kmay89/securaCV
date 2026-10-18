@@ -141,6 +141,69 @@ exercise.
 
 ---
 
+### F) The Wi-Fi password field means the network's password — on every surface
+
+This is the regression case for the parity program's §1 fix: the field used to
+be labeled only "Password" on the shared portal and the display, and three
+clients refused anything shorter than 8 characters on the router's behalf. The
+rule now lives once, in
+`firmware/common/network/wifi_credential_policy.h` (host-tested by
+`firmware/tests_host/test_wifi_credential_policy.cpp`): SSID 1–32 bytes,
+password 0–64 bytes, **no minimum**, open network accepted, and the one label
+every surface shows. Run F1–F4 on each surface that applies: the shared portal
+(Sense / Vision / Sentinel), the display's portal, the canary (PIO) `/setup`
+wizard and dashboard, the WAP companion wizard, the iPhone app's Bluetooth
+card and SoftAP walkthrough, the desktop Flasher and the browser flasher.
+
+#### F1) The field says whose password it is, and the OS invents nothing
+**Action**
+- Pick a secured network from the list; focus the password field on an iPhone
+  and on an Android phone.
+
+**Expected**
+- The field is labeled **"Wi-Fi network password"** (placeholder or label),
+  with a hint that it is the password you already use for this network.
+- Neither OS offers to generate or "create" a strong password. iOS may offer
+  a *saved* password (the field is annotated as an existing credential);
+  Android shows its keyboard and nothing else.
+- Show / hide toggles the masking without changing the field's kind.
+
+#### F2) The router sets the rule, not the Canary
+**Action**
+- Type a 1-character password and tap Join; then the real password.
+
+**Expected**
+- The 1-character password is **sent**, not refused: the device reports
+  **"Wrong password"** (or the router's verdict) live, the sheet shakes, the
+  field clears and keeps focus, and the network list is still there — no
+  re-scan needed. The real password then joins.
+- A 65-character password is refused **before** the join with
+  "A Wi-Fi password is at most 64 characters."; a 64-character hex key is
+  accepted (it is a raw PSK).
+
+#### F3) An open network asks for nothing
+**Action**
+- Pick a network the scan marked open (no lock glyph).
+
+**Expected**
+- The portal hides the password field and shows "Open network — no password
+  needed."; Join proceeds with an empty password. "Join another network…"
+  (a hidden SSID) keeps the field, since the device cannot know.
+- The flashers accept an empty password only with the explicit "open network
+  (no password)" choice ticked — a name with no password is still a question
+  there, because nothing has scanned the air yet.
+
+#### F4) The only password anyone creates is labeled as such
+**Action**
+- Open the hub card in the desktop Flasher and the hub walkthrough in the
+  iPhone app.
+
+**Expected**
+- The Home Assistant owner account fields read **"New hub account password"**
+  / **"Confirm hub account password"**; iOS offers a strong password there and
+  nowhere else. This step is about the hub, not a Canary, and is the one
+  legitimate create-a-password form.
+
 ## Pass/Fail Summary
 Record per platform (✅ / ❌ / N/A):
 

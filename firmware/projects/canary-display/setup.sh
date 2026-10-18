@@ -134,6 +134,7 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    "${FIRMWARE_ROOT}/common/network/wifi_credential_policy.h"
     # The Host-header guard glass_web.cpp gates writes and the CSRF token
     # with (shared with the canary tree's securacv_network; host-tested once
     # in firmware/tests_host).

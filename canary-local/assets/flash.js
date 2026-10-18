@@ -3804,7 +3804,9 @@ function renderWifiFields(box, product) {
   // accepted that suggestion and the join failed. Grab yours from the router
   // sticker / your phone, or let "Remember on this computer" recall it.
   // (Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password".)
-  pass.type = "text"; pass.placeholder = "password";
+  pass.type = "text"; pass.placeholder = core.WIFI_CREDENTIAL.fieldLabel;
+  pass.maxLength = core.WIFI_CREDENTIAL.passwordMaxBytes;
+  pass.setAttribute("aria-label", core.WIFI_CREDENTIAL.fieldLabel);
   pass.classList.add("pw-masked");
   pass.autocomplete = "off";
   pass.setAttribute("autocapitalize", "none");

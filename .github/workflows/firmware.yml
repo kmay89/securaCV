@@ -877,6 +877,8 @@ jobs:
         run: |
           chmod +x firmware/scripts/check_ap_security_sync.sh
           firmware/scripts/check_ap_security_sync.sh
+          chmod +x firmware/scripts/check_wifi_credential_sync.sh
+          firmware/scripts/check_wifi_credential_sync.sh
 
       - name: Verify on-glass text stays inside the display font's glyph range
         # LVGL's built-in Montserrat covers 0x20-0x7F, 0xB0 and U+2022 only, and

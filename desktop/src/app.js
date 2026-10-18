@@ -3988,9 +3988,12 @@ function readProvisioning(product) {
     setStatus("flash-result", WIFI_PASS_REQUIRED, "err");
     return false;
   }
-  if (wifiPass && (new TextEncoder().encode(wifiPass).length < 8 ||
-                   new TextEncoder().encode(wifiPass).length > 63)) {
-    setStatus("flash-result", "Wi-Fi password must be 8–63 UTF-8 bytes (or empty for an open network).", "err");
+  // The firmware's bound and nothing stricter (firmware/common/network/
+  // wifi_credential_policy.h: 0..64 bytes, no minimum). This used to refuse
+  // anything under 8 bytes on the router's behalf, which made real WEP /
+  // WPA3 / short-key networks untypeable and read as "invent one".
+  if (wifiPass && new TextEncoder().encode(wifiPass).length > 64) {
+    setStatus("flash-result", "A Wi-Fi password is at most 64 characters.", "err");
     return false; // same: an answer the user gave, not an answer to drop
   }
   return {

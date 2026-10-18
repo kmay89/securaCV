@@ -2183,8 +2183,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <input type="text" class="form-input" id="wifiSsidInput" placeholder="Or enter SSID manually" style="margin-top:0.5rem;">
             </div>
             <div class="form-group">
-              <label class="form-label">Password</label>
-              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+              <label class="form-label">Wi-Fi network password</label>
+              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="The password you already use for this network" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
             </div>
             <div class="form-group">
               <label class="form-label">Device name <span style="color:var(--muted);font-weight:normal;">(optional — makes it canary-&lt;name&gt;.local)</span></label>

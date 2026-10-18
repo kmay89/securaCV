@@ -74,12 +74,16 @@ struct FleetWiFiSheet: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             HStack {
+                // The new network's EXISTING password (it is the router that
+                // changed, not the Canary): `.password`, never `.newPassword`.
                 if showPassword {
-                    TextField("Password", text: $password)
+                    TextField(SetupPortal.passwordFieldLabel, text: $password)
+                        .textContentType(.password)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } else {
-                    SecureField("Password", text: $password)
+                    SecureField(SetupPortal.passwordFieldLabel, text: $password)
+                        .textContentType(.password)
                 }
                 Button {
                     showPassword.toggle()

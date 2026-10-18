@@ -809,7 +809,14 @@ test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", asy
   // Validation: bad inputs throw before anything is built.
   assert.throws(() => buildNvsWifiImage("", "password123", 0x5000));
   assert.throws(() => buildNvsWifiImage("x".repeat(40), "password123", 0x5000));
-  assert.throws(() => buildNvsWifiImage("net", "short", 0x5000));
+  // No minimum: a 1..7 byte password is the router's business (WEP 5/13,
+  // WPA3 any length) and the Canary's join verdict reports a refusal live.
+  // The flasher used to throw here on the router's behalf; the firmware
+  // never did (firmware/common/network/wifi_credential_policy.h).
+  assert.doesNotThrow(() => buildNvsWifiImage("net", "short", 0x5000));
+  assert.doesNotThrow(() => buildNvsWifiImage("net", "a", 0x5000));
+  assert.doesNotThrow(() => buildNvsWifiImage("net", "f".repeat(64), 0x5000), "64 bytes is a hex key");
+  assert.throws(() => buildNvsWifiImage("net", "p".repeat(65), 0x5000), "65 bytes is what the firmware refuses");
   // Open network (no password) is allowed.
   const open = buildNvsWifiImage("cafe", "", 0x5000);
   assert.ok(parseNvs(open).find((i) => i.key === "wifi_pass"));

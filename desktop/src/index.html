@@ -282,7 +282,7 @@
                      (never type=password) so the OS offers nothing to "generate" —
                      grab it from your router sticker or phone, or just type it.
                      Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password". -->
-                <label>Wi-Fi password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="63" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only to the board.">Use saved</button></span></label>
+                <label>Wi-Fi network password<span class="pw-row"><input id="wifi-pass" class="pw-masked" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"><button type="button" class="btn btn-ghost pw-toggle" data-pw="wifi-pass" aria-label="Show the password">Show</button><button type="button" class="btn btn-ghost pw-fetch" data-pw="wifi-pass" data-ssid="wifi-ssid" title="Fill with this computer's saved password for the Wi-Fi name above — the system asks permission first, and it goes only to the board.">Use saved</button></span></label>
                 <!-- A name with no password is refused by readProvisioning unless
                      this is ticked: a forgotten password used to seed an open join
                      that failed silently on first boot. Same choice, same words, in
@@ -842,8 +842,8 @@
               <div class="form-grid">
                 <label>Your name<input id="hub-acct-name" maxlength="128" autocomplete="off"></label>
                 <label>Username<input id="hub-acct-user" maxlength="64" autocomplete="off"></label>
-                <label>Password<input id="hub-acct-pass" type="password" maxlength="128" autocomplete="new-password"></label>
-                <label>Confirm password<input id="hub-acct-pass2" type="password" maxlength="128" autocomplete="new-password"></label>
+                <label>New hub account password<input id="hub-acct-pass" type="password" maxlength="128" autocomplete="new-password"></label>
+                <label>Confirm hub account password<input id="hub-acct-pass2" type="password" maxlength="128" autocomplete="new-password"></label>
               </div>
               <p id="hub-acct-hint" class="muted"></p>
             </details>

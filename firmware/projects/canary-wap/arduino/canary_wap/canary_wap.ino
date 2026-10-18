@@ -178,6 +178,7 @@
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 #include "captive_probe.h"       // Pure per-platform connectivity-probe response policy
 #include "ap_security_policy.h"  // F16: SoftAP WPA2/WPA3 + PMF request (staged copy of firmware/common/network/, check_ap_security_sync.sh)
+#include "wifi_credential_policy.h"  // the one home-Wi-Fi credential rule + the words beside the field (staged copy of firmware/common/network/, check_wifi_credential_sync.sh)
 #include <esp_wifi.h>             // F16: esp_wifi_get/set_config for the SoftAP security request
 #include <sdkconfig.h>            // F16: CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT (is SoftAP SAE in this core?)
 extern "C" {
@@ -6710,22 +6711,31 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   const char* ssid = body["ssid"] | "";
   const char* password = body["password"] | "";
 
-  if (strlen(ssid) == 0 || strlen(ssid) > 32) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Invalid SSID (1-32 chars required)";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  if (strlen(password) > 64) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Password too long (max 64 chars)";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  // The ONE credential rule (wifi_credential_policy.h, staged from
+  // firmware/common/network): SSID 1..32 bytes, password 0..64 bytes, no
+  // minimum — an open network has none and a secured network's floor is its
+  // router's business. The error strings are kept; `code` is the fleet word.
+  {
+    using canary::net::wifi_credential::Verdict;
+    const Verdict cred = canary::net::wifi_credential::check(ssid, password);
+    if (cred == Verdict::SsidEmpty || cred == Verdict::SsidTooLong) {
+      JsonDocument doc;
+      doc["ok"] = false;
+      doc["error"] = "Invalid SSID (1-32 chars required)";
+      doc["code"] = canary::net::wifi_credential::verdict_code(cred);
+      String response;
+      serializeJson(doc, response);
+      return http_send_json(req, response.c_str());
+    }
+    if (cred == Verdict::PasswordTooLong) {
+      JsonDocument doc;
+      doc["ok"] = false;
+      doc["error"] = "Password too long (max 64 chars)";
+      doc["code"] = canary::net::wifi_credential::verdict_code(cred);
+      String response;
+      serializeJson(doc, response);
+      return http_send_json(req, response.c_str());
+    }
   }
 
   // Optional friendly device name (e.g. "kitchen"). When present it both

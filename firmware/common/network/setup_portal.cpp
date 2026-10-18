@@ -23,6 +23,7 @@
 #include "network/provision_core.h"
 #include "network/setup_portal.h"
 #include "network/setup_portal_logic.h"
+#include "network/wifi_credential_policy.h"
 #include "network/wifi_join_policy.h"
 
 namespace canary {
@@ -114,6 +115,7 @@ font-size:16px;padding:11px 0}
 .pw-masked{-webkit-text-security:disc;text-security:disc}
 .field button{background:none;border:0;color:var(--mut);font-size:13px;padding:10px 12px;cursor:pointer}
 #msg{min-height:20px;font-size:13.5px;color:var(--warn);margin:2px 2px 8px}
+.hint{font-size:13px;color:var(--mut);margin:0 2px 10px;line-height:1.35}
 #join{width:100%;padding:14px;border:0;border-radius:10px;background:var(--txt);
 color:#000;font-size:16px;font-weight:600;cursor:pointer;transition:opacity .18s}
 #join:disabled{opacity:.55}
@@ -146,10 +148,12 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
   <div class="field" id="ssidf" style="display:none">
     <input id="ssid" placeholder="Network name" autocapitalize="none" autocorrect="off">
   </div>
-  <div class="field">
-    <input id="pw" type="text" class="pw-masked" placeholder="Password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+  <div class="field" id="pwf">
+    <input id="pw" type="text" class="pw-masked" placeholder="Wi-Fi network password" aria-label="Wi-Fi network password" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
     <button id="eye" type="button">show</button>
   </div>
+  <div class="hint" id="pwhint">The password you already use for this network, exactly as your router has it. Nothing to invent.</div>
+  <div class="hint" id="opennote" style="display:none">Open network — no password needed.</div>
   <div id="msg"></div>
   <button id="join">Join</button>
 </div>
@@ -175,16 +179,21 @@ d.appendChild(nm);
 if(n.secure){var lk=document.createElement('span');lk.className='lock';
 lk.textContent='🔒';d.appendChild(lk)}
 d.insertAdjacentHTML('beforeend',bars(n.rssi));
-d.onclick=function(){pick(n.ssid,false)};c.appendChild(d)});
+d.onclick=function(){pick(n.ssid,false,n.secure!==false)};c.appendChild(d)});
 var o=document.createElement('div');o.className='row';
 o.innerHTML='<div class="name other">Join another network…</div>';
-o.onclick=function(){pick('',true)};c.appendChild(o)}
-function pick(ssid,manual){if(busy)return;sel=ssid;
+o.onclick=function(){pick('',true,true)};c.appendChild(o)}
+function pick(ssid,manual,secure){if(busy)return;sel=ssid;
 $('ssidf').style.display=manual?'flex':'none';
 $('picked').textContent=manual?'Other network':ssid;
 $('msg').textContent='';$('pw').value='';
+// An open network has no password: hide the field so nobody is asked to
+// invent one; a typed name may be either, so the field stays.
+$('pwf').style.display=secure?'flex':'none';
+$('pwhint').style.display=secure?'block':'none';
+$('opennote').style.display=secure?'none':'block';
 var s=$('sheet');s.classList.remove('err');s.classList.add('open');
-(manual?$('ssid'):$('pw')).focus()}
+(manual?$('ssid'):secure?$('pw'):$('join')).focus()}
 function scan(force){skeleton();
 fetch('/scan'+(force?'?force=1':'')).then(function(r){return r.json()})
 .then(function(j){if(j.scanning){setTimeout(function(){scan(false)},900);return}
@@ -309,9 +318,10 @@ void handle_scan() {
 // land here so the Testing pass, the persist-only-on-success rule, the
 // linger and the teardown are the same bench-proven choreography.
 bool begin_join(const char* ssid, const char* pass, uint32_t now_ms) {
-  const size_t sl = ssid ? strlen(ssid) : 0;
-  const size_t pl = pass ? strlen(pass) : 0;
-  if (sl == 0 || sl > 32 || pl > 64) return false;
+  // The ONE credential rule (common/network/wifi_credential_policy.h): SSID
+  // 1..32 bytes, password 0..64 bytes, no minimum — an open network has none
+  // and a secured network's floor is its router's business.
+  if (wifi_credential::check(ssid, pass) != wifi_credential::Verdict::Ok) return false;
   snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid);
   snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass ? pass : "");
   g->fail_reason[0] = '\0';
@@ -338,9 +348,19 @@ bool begin_join(const char* ssid, const char* pass, uint32_t now_ms) {
 void handle_join() {
   const String ssid = g->server.arg("ssid");
   const String pass = g->server.arg("pass");
+  // Name the refusal: the iPhone's SetupPortalClient and the Lab read
+  // `reason` back, and "bad request" taught nobody anything.
+  const auto verdict = wifi_credential::check(ssid.c_str(), pass.c_str());
+  if (verdict != wifi_credential::Verdict::Ok) {
+    char body[160];
+    snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\",\"reason\":\"%s\"}",
+             wifi_credential::verdict_code(verdict), wifi_credential::verdict_label(verdict));
+    g->server.send(400, "application/json", body);
+    return;
+  }
   if (!begin_join(ssid.c_str(), pass.c_str(), millis())) {
     g->server.send(400, "application/json",
-                   "{\"ok\":false,\"reason\":\"bad request\"}");
+                   "{\"ok\":false,\"error\":\"busy\",\"reason\":\"A join is already in progress.\"}");
     return;
   }
   g->server.send(200, "application/json", "{\"ok\":true}");

@@ -60,7 +60,7 @@ enum SetupPortal {
         let bytes = ssid.utf8.count
         if bytes == 0 { return "Type your Wi-Fi's name." }
         if bytes > 32 { return "A Wi-Fi name can be at most 32 bytes." }
-        if password.utf8.count > 64 { return "A Wi-Fi password can be at most 64 characters." }
+        if password.utf8.count > passwordMaxBytes { return "A Wi-Fi password is at most 64 characters." }
         return nil
     }
 
@@ -161,11 +161,29 @@ enum SetupPortal {
         return "This Canary can't see \(name) — it only joins 2.4 GHz Wi-Fi. Pick one from its list, or move it closer to your router."
     }
 
-    /// Before anything is sent: a WPA password shorter than 8 characters
-    /// can never work, so say so instead of letting the Canary find out.
+    /// The words every setup surface shows beside the field — the twin of
+    /// `firmware/common/network/wifi_credential_policy.h` FIELD_LABEL /
+    /// FIELD_HINT / OPEN_NETWORK_NOTE. It is the password of the network the
+    /// person picked, never one they are asked to invent.
+    static let passwordFieldLabel = "Wi-Fi network password"
+    static let passwordFieldHint =
+        "The password you already use for this network, exactly as your router has it. Nothing to invent."
+    static let openNetworkNote = "Open network — no password needed."
+
+    /// The firmware's bound (`PASSWORD_MAX_BYTES`): a 63-character WPA
+    /// passphrase or a 64-digit hex key. There is deliberately NO minimum —
+    /// an earlier version of this hint refused anything under 8 characters on
+    /// the router's behalf, which turned real WEP / WPA3 / short-key networks
+    /// into "cannot be typed" and read as the field wanting something new.
+    /// The router decides; the Canary's join verdict ("Wrong password")
+    /// reports, live, with a retry.
+    static let passwordMaxBytes = 64
+
+    /// Before anything is sent: the one thing the firmware will refuse
+    /// outright, named before the join rather than as a 400 after it.
     static func passwordHint(_ password: String, networkIsOpen: Bool) -> String? {
-        guard !networkIsOpen, !password.isEmpty, password.count < 8 else { return nil }
-        return "A Wi-Fi password is at least 8 characters."
+        guard !networkIsOpen, password.utf8.count > passwordMaxBytes else { return nil }
+        return "A Wi-Fi password is at most 64 characters."
     }
 
     /// Where the device stands with the join, from `/status`.

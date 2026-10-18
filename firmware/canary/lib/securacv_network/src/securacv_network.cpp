@@ -50,6 +50,7 @@
 // (an IDF 5.x feature; the IDF 4.4 core has no ap.pmf_cfg at all), so the
 // whole AP write compiles out elsewhere and ap_security::decide reports why.
 #include "network/ap_security_policy.h"
+#include "network/wifi_credential_policy.h"  // the one credential rule every portal shares
 #include <esp_wifi.h>
 #if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
     ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
@@ -3772,6 +3773,19 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 
   if (!ssid || strlen(ssid) == 0) {
     return http_send_error(req, 400, "missing_ssid");
+  }
+  // The ONE credential rule (common/network/wifi_credential_policy.h): SSID
+  // 1..32 bytes, password 0..64 bytes, NO minimum (an open network has none;
+  // a secured network's floor is its router's business). This handler used
+  // to strncpy an over-long value into the buffer and silently truncate it,
+  // then join with a password nobody typed.
+  switch (canary::net::wifi_credential::check(ssid, password ? password : "")) {
+    case canary::net::wifi_credential::Verdict::SsidTooLong:
+      return http_send_error(req, 400, "ssid_too_long");
+    case canary::net::wifi_credential::Verdict::PasswordTooLong:
+      return http_send_error(req, 400, "password_too_long");
+    default:
+      break;
   }
 
   // Household time zone seed (repo sweep F28): the setup page sends the

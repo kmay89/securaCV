@@ -336,19 +336,33 @@ struct CanaryFamilySetupView: View {
             TextField("Your Wi-Fi name", text: $homeSSID)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
         }
-        if !chosenIsOpen {
+        if chosenIsOpen {
+            Text(SetupPortal.openNetworkNote)
+                .font(.footnote).foregroundStyle(.secondary)
+        } else {
             HStack {
+                // The password of the network picked above — an EXISTING
+                // credential. `.password` tells iOS so: it offers to fill a
+                // saved one and never to invent a strong new one (the
+                // sign-up reading an unannotated secure field can get;
+                // firmware/LESSONS_LEARNED.md "iOS offers to invent a
+                // password"). Never `.newPassword` here.
                 if showPassword {
-                    TextField("Your Wi-Fi password", text: $homePassword)
+                    TextField(SetupPortal.passwordFieldLabel, text: $homePassword)
+                        .textContentType(.password)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } else {
-                    SecureField("Your Wi-Fi password", text: $homePassword)
+                    SecureField(SetupPortal.passwordFieldLabel, text: $homePassword)
+                        .textContentType(.password)
                 }
                 Button { showPassword.toggle() } label: {
                     Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
+            Text(SetupPortal.passwordFieldHint)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         ForEach(preflightHints, id: \.self) { hint in
             Label(hint, systemImage: "info.circle")

@@ -884,8 +884,12 @@ export function buildNvsSeedImage(opts, partitionSize) {
     passB = enc.encode(String(wifi.pass || ""));
     if (ssidB.length < 1 || ssidB.length > 32)
       throw new Error("WiFi name must be 1-32 bytes");
-    if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
-      throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
+    // The firmware's bound and nothing stricter (firmware/common/network/
+    // wifi_credential_policy.h: 0..64 bytes, no minimum — the router sets its
+    // own floor and the Canary's join verdict reports). An earlier 8..63 here
+    // refused real WEP / WPA3 / short-key networks on the router's behalf.
+    if (passB.length > WIFI_CREDENTIAL.passwordMaxBytes)
+      throw new Error(WIFI_CREDENTIAL.tooLong);
   }
   for (const [k, v] of [...Object.entries(u8s), ...Object.entries(u16s), ...Object.entries(u32s)]) {
     if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
@@ -1726,6 +1730,30 @@ export const SETUP_DOOR_NOTE =
 // owner ticked the explicit open-network choice. Same words in both.
 export const WIFI_PASS_REQUIRED =
   "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+
+// The fleet's ONE credential rule and the words beside the field — the twin
+// of firmware/common/network/wifi_credential_policy.h (host-tested there;
+// tests/flash.test.js pins these values to the header's). SSID 1..32 bytes,
+// password 0..64 bytes, NO minimum: the router decides, and the Canary's live
+// join verdict ("Wrong password") reports a refusal.
+export const WIFI_CREDENTIAL = Object.freeze({
+  ssidMaxBytes: 32,
+  passwordMaxBytes: 64,
+  passwordMinBytes: 0,
+  fieldLabel: "Wi-Fi network password",
+  fieldHint: "The password you already use for this network, exactly as your router has it. Nothing to invent.",
+  openNetworkNote: "Open network — no password needed.",
+  tooLong: "A Wi-Fi password is at most 64 characters.",
+});
+export function wifiCredentialVerdict(ssid, pass) {
+  const enc = new TextEncoder();
+  const sl = enc.encode(String(ssid ?? "")).length;
+  const pl = enc.encode(String(pass ?? "")).length;
+  if (sl === 0) return "ssid_empty";
+  if (sl > WIFI_CREDENTIAL.ssidMaxBytes) return "ssid_too_long";
+  if (pl > WIFI_CREDENTIAL.passwordMaxBytes) return "password_too_long";
+  return "ok";
+}
 export function wifiFieldsVerdict(ssid, pass, openNetwork) {
   if (!ssid) return { ok: true, skipped: true };
   if (!pass && !openNetwork) return { ok: false, error: WIFI_PASS_REQUIRED };
