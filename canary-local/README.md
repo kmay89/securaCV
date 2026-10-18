@@ -1028,6 +1028,16 @@ fails on byte drift.
   each call to the native build, and the page is served as committed. CI
   runs all six both ways. See
   [`tests/native/README.md`](tests/native/README.md).
+- `tests/native_cores.test.js` holds the loader to the dist it stands in
+  for, and under `LAB_CORES=native` drives each native core next to its
+  committed dist, call for call; CI runs it both ways, the second in a step
+  of its own whose red means a stale or divergent dist.
+  `tests/vision_wasm32.test.js` (the Vision box pipeline, freestanding) and
+  `tests/cores_wasm32.test.js` (the whole Vision and WAP audio cores, against
+  a WASI sysroot, under `node:wasi`) build the sources for wasm32 with the
+  host's clang, where `long` is 32 bits as in the dist and on the ESP32, and
+  hold them to a g++ build. They are not emscripten or the dist. See
+  [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless
   Chromium, and asserts the framebuffer flushed, the boot banner sang,
