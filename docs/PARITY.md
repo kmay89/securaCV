@@ -219,53 +219,62 @@ partition table gives each A/B half.
 <!-- BUILD_TABLE:begin -->
 | Product | Env | Result here | Flash used / slot | RAM used / total |
 |---|---|---|---|---|
-| firmware/canary | `dev` | not built here (CI builds it) | — | — |
-| firmware/canary | `release` | ✅ built | 1,623,105 / 1,966,080 (82.6 %) | 100,800 / 327,680 (30.8 %) |
-| firmware/canary | `release_ha` | not built here (CI builds it) | — | — |
-| firmware/canary | `full` | not built here (CI builds it) | — | — |
-| firmware/canary | `esp32cam` | not built here (CI builds it) | — | — |
-| firmware/canary | `esp32-wroom` | not built here (CI builds it) | — | — |
-| firmware/canary | `freenove-s3` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-wap | `canary-wap-default` | ✅ built | 2,348,114 / 3,342,336 (70.3 %) | 123,176 / 327,680 (37.6 %) |
-| firmware/projects/canary-wap | `canary-wap-usbdrive` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-vision | `canary-vision-default` | ✅ built | 1,372,508 / 1,966,080 (69.8 %) | 70,988 / 327,680 (21.7 %) |
-| firmware/projects/canary-vision | `canary-vision-xiao-c3` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-vision | `canary-vision-xiao-s3` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-vision | `canary-vision-c3-super-mini` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-playground` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-b` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-rs485` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-can` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-vault` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-sd` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-rtc` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-espnow` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-ble5` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-modes` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-dash-mic` | not built here (CI builds it) | — | — |
+| firmware/canary | `dev` | ✅ built | 1,821,837 / 1,966,080 (92.7 %) | 101,064 / 327,680 (30.8 %) |
+| firmware/canary | `release` | ✅ built | 1,623,417 / 1,966,080 (82.6 %) | 100,808 / 327,680 (30.8 %) |
+| firmware/canary | `release_ha` | ✅ built | 1,735,101 / 1,966,080 (88.3 %) | 116,076 / 327,680 (35.4 %) |
+| firmware/canary | `full` | ❌ not buildable here — the pioarduino platform wants openocd from GitHub and the proxy refuses its TLS | — | — |
+| firmware/canary | `esp32cam` | ✅ built | 1,648,789 / 1,966,080 (83.9 %) | 100,472 / 327,680 (30.7 %) |
+| firmware/canary | `esp32-wroom` | ✅ built | 1,479,125 / 1,966,080 (75.2 %) | 91,088 / 327,680 (27.8 %) |
+| firmware/canary | `freenove-s3` | ✅ built | 1,534,277 / 1,966,080 (78.0 %) | 96,108 / 327,680 (29.3 %) |
+| firmware/projects/canary-wap | `canary-wap-default` | ✅ built | 2,348,406 / 3,342,336 (70.3 %) | 123,184 / 327,680 (37.6 %) |
+| firmware/projects/canary-wap | `canary-wap-usbdrive` | ✅ built | 2,417,946 / 3,342,336 (72.3 %) | 152,656 / 327,680 (46.6 %) |
+| firmware/projects/canary-vision | `canary-vision-default` | ✅ built | 1,372,714 / 1,966,080 (69.8 %) | 70,988 / 327,680 (21.7 %) |
+| firmware/projects/canary-vision | `canary-vision-xiao-c3` | ✅ built | 1,381,938 / 1,966,080 (70.3 %) | 71,316 / 327,680 (21.8 %) |
+| firmware/projects/canary-vision | `canary-vision-xiao-s3` | ✅ built | 1,331,905 / 3,342,336 (39.8 %) | 77,656 / 327,680 (23.7 %) |
+| firmware/projects/canary-vision | `canary-vision-c3-super-mini` | ✅ built | 1,372,698 / 1,966,080 (69.8 %) | 70,988 / 327,680 (21.7 %) |
+| firmware/projects/canary-display | `canary-display-dash` | ✅ built | 2,319,359 / 6,553,600 (35.4 %) | 155,044 / 327,680 (47.3 %) |
+| firmware/projects/canary-display | `canary-display-playground` | ✅ built | 2,365,871 / 6,553,600 (36.1 %) | 155,692 / 327,680 (47.5 %) |
+| firmware/projects/canary-display | `canary-display-dash-b` | ✅ built | 2,367,107 / 6,553,600 (36.1 %) | 155,692 / 327,680 (47.5 %) |
+| firmware/projects/canary-display | `canary-display-dash-rs485` | ✅ built | 2,321,883 / 6,553,600 (35.4 %) | 155,116 / 327,680 (47.3 %) |
+| firmware/projects/canary-display | `canary-display-dash-can` | ✅ built | 2,321,947 / 6,553,600 (35.4 %) | 155,116 / 327,680 (47.3 %) |
+| firmware/projects/canary-display | `canary-display-dash-vault` | ✅ built | 2,359,751 / 6,553,600 (36.0 %) | 155,268 / 327,680 (47.4 %) |
+| firmware/projects/canary-display | `canary-display-dash-sd` | ✅ built | 2,378,423 / 6,553,600 (36.3 %) | 155,396 / 327,680 (47.4 %) |
+| firmware/projects/canary-display | `canary-display-dash-rtc` | ✅ built | 2,323,679 / 6,553,600 (35.5 %) | 155,124 / 327,680 (47.3 %) |
+| firmware/projects/canary-display | `canary-display-dash-espnow` | ✅ built | 2,324,675 / 6,553,600 (35.5 %) | 155,708 / 327,680 (47.5 %) |
+| firmware/projects/canary-display | `canary-display-dash-ble5` | ✅ built | 2,319,671 / 6,553,600 (35.4 %) | 155,044 / 327,680 (47.3 %) |
+| firmware/projects/canary-display | `canary-display-dash-modes` | ✅ built | 2,380,043 / 6,553,600 (36.3 %) | 156,836 / 327,680 (47.9 %) |
+| firmware/projects/canary-display | `canary-display-dash-mic` | ✅ built | 2,338,939 / 6,553,600 (35.7 %) | 155,868 / 327,680 (47.6 %) |
 | firmware/projects/canary-display | `canary-display-dash7` | ✅ built | 2,345,367 / 6,553,600 (35.8 %) | 156,116 / 327,680 (47.6 %) |
-| firmware/projects/canary-display | `canary-display-nightstand7` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-watch` | ✅ built | 1,850,245 / 3,342,336 (55.4 %) | 214,124 / 327,680 (65.3 %) |
-| firmware/projects/canary-display | `canary-display-watch-modes` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-nightstand-s3` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-touch169` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-amoled241` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-nightstand-c6` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-display | `canary-display-nightlight-c3` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-sense | `canary-sense-default` | ✅ built | 1,802,160 / 1,966,080 (91.7 %) | 74,764 / 327,680 (22.8 %) |
-| firmware/projects/canary-sense | `canary-sense-wellbeing` | not built here (CI builds it) | — | — |
-| firmware/projects/canary-sentinel | `canary-sentinel-door` | ✅ built | 1,401,300 / 1,966,080 (71.3 %) | 63,376 / 327,680 (19.3 %) |
-| firmware/projects/canary-sentinel | `canary-sentinel-lite` | not built here (CI builds it) | — | — |
+| firmware/projects/canary-display | `canary-display-nightstand7` | ✅ built | 2,345,711 / 6,553,600 (35.8 %) | 155,380 / 327,680 (47.4 %) |
+| firmware/projects/canary-display | `canary-display-watch` | ✅ built | 1,850,461 / 3,342,336 (55.4 %) | 214,124 / 327,680 (65.3 %) |
+| firmware/projects/canary-display | `canary-display-watch-modes` | ✅ built | 1,859,809 / 3,342,336 (55.6 %) | 215,108 / 327,680 (65.6 %) |
+| firmware/projects/canary-display | `canary-display-nightstand-s3` | ✅ built | 1,807,141 / 6,553,600 (27.6 %) | 205,024 / 327,680 (62.6 %) |
+| firmware/projects/canary-display | `canary-display-touch169` | ✅ built | 1,848,729 / 6,553,600 (28.2 %) | 213,812 / 327,680 (65.3 %) |
+| firmware/projects/canary-display | `canary-display-amoled241` | ❌ not buildable here — the offline library mirror resolves no FS for SD_MMC (CI builds it) | — | — |
+| firmware/projects/canary-display | `canary-display-nightstand-c6` | ✅ built | 1,915,680 / 2,031,616 (94.3 %) | 128,772 / 327,680 (39.3 %) |
+| firmware/projects/canary-display | `canary-display-nightlight-c3` | ✅ built | 1,537,310 / 2,031,616 (75.7 %) | 194,132 / 327,680 (59.2 %) |
+| firmware/projects/canary-sense | `canary-sense-default` | ✅ built | 1,802,308 / 1,966,080 (91.7 %) | 74,772 / 327,680 (22.8 %) |
+| firmware/projects/canary-sense | `canary-sense-wellbeing` | ✅ built | 1,805,644 / 1,966,080 (91.8 %) | 74,812 / 327,680 (22.8 %) |
+| firmware/projects/canary-sentinel | `canary-sentinel-door` | ✅ built | 1,401,448 / 1,966,080 (71.3 %) | 63,384 / 327,680 (19.3 %) |
+| firmware/projects/canary-sentinel | `canary-sentinel-lite` | ✅ built | 1,111,166 / 1,310,720 (84.8 %) | 58,628 / 327,680 (17.9 %) |
 
-7 of 38 CI environments built in this container; 0 could not be built here (toolchain or library the offline mirror does not carry — the reason is in the row); 31 were not attempted here. `firmware.yml` builds all of them on the pushed branch and applies the slot guards.
+36 of 38 CI environments built in this container; 2 could not be built here (toolchain or library the offline mirror does not carry — the reason is in the row); 0 were not attempted here. `firmware.yml` builds all of them on the pushed branch and applies the slot guards.
 <!-- BUILD_TABLE:end -->
 
-Two sizes to keep an eye on: **canary-sense** sits at 91.7 % of its
+Three sizes to keep an eye on: **canary-sense** sits at 91.7 % of its
 0x1E0000 slot (the C6's 4 MB flash with two app halves) — the shared
 supervisor, the HTTP status server and the peer link fit, but the next
 feature on the Sense pays for itself in flash; **canary (PIO) `release`** is
-at 82.6 %, the reason the peer link is not on the flagship yet (footnote 13).
+at 82.6 %, the reason the peer link is not on the flagship yet (footnote
+13); and the **C6 nightstand** (`canary-display-nightstand-c6`) had 2,624
+bytes of its 0x1F0000 slot left on `main`, so this program's additions put
+its `.bin` 8,912 bytes over and CI's slot guard refused it. The cut its
+env's budget notes had scoped landed: the lean build also drops the LVGL
+widget classes no face creates (`lv_conf.h` under `CD_LEAN_BUILD`),
+measured at −35,920 bytes of `.bin`, which leaves about 27 KB spare. The
+next cut (no C++ unwind tables on the env's own sources, −65 KB) is
+measured and written in the env's notes, not taken. The table's C6 row is
+the lean image after the cut.
 
 ---
 

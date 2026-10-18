@@ -71,7 +71,9 @@
 //     the halo stand where onboard_layout.h's stack seats them
 //     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
 //     exactly), the halo's stroke is inked on the glass where its circle
-//     says and nothing just outside it (haloInked), and the card stands over
+//     says and nothing just outside it, on every side the ring keeps on the
+//     glass (haloInked — the landscape nightlight's ring runs off the
+//     panel's right edge by onboard_layout.h's rule), and the card stands over
 //     the halo's center with its sides inside the stroke (cardInHalo; on the
 //     dash its corners reach past the 800 px glass's ring, F155, and are
 //     printed, not held; on the nightlight they are held inside the stroke,
@@ -846,9 +848,13 @@ async function walkHarness(flavor, turn = null) {
     check(v.state === "fail" && v.reason === PORTAL.join_failures.NotFound, `absent SSID verdict ${JSON.stringify(v)}`);
     await failFixOnGlass("NotFound");
 
-    // A body the firmware refuses outright.
+    // A body the firmware refuses outright — with the shared credential
+    // policy's word for it (wifi_credential_policy.h: every portal answers a
+    // 33-byte network name with "ssid_too_long" and a sentence a person can
+    // read), not the bare "bad request" the display used to answer.
     r = await join("x".repeat(33), "k");
-    check(r.status === 400 && JSON.parse(r.body).reason === "bad request", `33-byte SSID → ${r.status} ${r.body}`);
+    check(r.status === 400 && JSON.parse(r.body).error === "ssid_too_long" && JSON.parse(r.body).reason.length > 0,
+          `33-byte SSID → ${r.status} ${r.body}`);
 
     // The right key, with a zone: success, and only now the credentials.
     r = await join("HomeNet", "correct-horse", "UTC0");

@@ -78,7 +78,7 @@ inline bool hkdf_sha256(const uint8_t* salt, size_t slen, const uint8_t* ikm, si
   uint8_t prk[HASH_BYTES];
   static const uint8_t kZeroSalt[HASH_BYTES] = {0};
   hmac_sha256(slen ? salt : kZeroSalt, slen ? slen : HASH_BYTES, ikm, ilen, prk);
-  uint8_t t[HASH_BYTES];
+  uint8_t t[HASH_BYTES] = {0};  // T(0) is empty: the first round copies tlen == 0 bytes of it
   size_t tlen = 0;
   size_t done = 0;
   uint8_t counter = 1;
