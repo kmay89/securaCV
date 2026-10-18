@@ -120,6 +120,12 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   WPA2-gated, but once on home WiFi the same handler is served on the STA interface — a compromised
   IoT gadget or roommate on the LAN can pair. Deliberate posture, but a passwordless live-camera
   path to every LAN host is a real residual risk for a custody-first device.
+  *(2026-10 note: the posture stands, but what the session buys is narrower. It also used to buy
+  `GET /api/provisioning-receipt` (the bearer token, the SoftAP password, the TLS pin) and
+  `GET /api/pairing-qr` (the token), so any LAN host could read the token with no BOOT tap; since
+  sweep F289 both routes take the `Authorization: Bearer` header alone (`api_auth_bearer_valid`,
+  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. See
+  `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the
