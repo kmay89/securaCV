@@ -58,7 +58,9 @@
  * open it waits for the link (the ceiling it would write could cover the
  * card rows after it). So the offline queue, which drains later without
  * asking the planner, is never given a row older rows wait ahead of. Rows
- * in the hold do not survive a reboot, and a broker change drops them, so on
+ * in the hold do not survive a reboot (a planned one drains them first, for
+ * up to a second: csi_event_egress_flush_for_restart() below, sweep F92),
+ * and a broker change drops them, so on
  * a build with a card slot but no usable card a row from the first 45 s
  * after boot is lost if the canary reboots (or its broker changes) first. A
  * held row the backfill already sent from the card (a failed append that
@@ -74,6 +76,9 @@
 
 #ifndef SECURACV_CSI_EVENT_EGRESS_H
 #define SECURACV_CSI_EVENT_EGRESS_H
+
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,6 +97,23 @@ void csi_event_egress_begin(void);
  * FEATURE_HA_MQTT. */
 void csi_event_egress_pump(void);
 
+/* Loop task, right before a planned restart (sweep F92): main.cpp's
+ * deliberate_restart_now() (POST /api/reboot, deferred to the loop, and the
+ * serial 'x'), ahead of the chain persist and the MQTT disconnect. Commits
+ * every open CSI bundle now (csi_event_flush_bundles(): each takes its event
+ * id and queues here), then runs csi_event_egress_pump() until the egress
+ * queue is empty and the RAM hold has gone (onto the card, or to the MQTT
+ * layer), or budget_ms has passed, whichever is first, with a short delay
+ * between passes. Bounded: a broker that does not answer, a hold waiting
+ * for a card, or a backlog the backfill is still walking costs the budget
+ * and no more (each pass is the loop's own pump, as bounded as on any pass;
+ * the caller resets the watchdog first). What is still in the queue or the
+ * hold then is lost to the restart, as before, and the MQTT layer's offline
+ * queue is RAM too; rows on the card stay owed. Returns true when the queue
+ * and the hold were empty. Without FEATURE_HA_MQTT it only commits the
+ * bundles (nothing leaves the device). */
+bool csi_event_egress_flush_for_restart(uint32_t budget_ms);
+
 #ifdef CSI_TEST_HOST_BUILD
 /* Host tests only (firmware/tests_host/test_canary_event_egress.cpp): forget
  * this "boot"'s RAM state, to model a power cycle. NVS and the card stay. */
@@ -108,6 +130,12 @@ void csi_event_egress_test_reset(void);
 #include <stdio.h>
 
 #include "csi_event_backfill.h"   /* the planner's Stats */
+
+/* csi_event_egress_flush_for_restart()'s budget at every planned restart
+ * (sweep F92): one second, well inside the loop task's 8 s watchdog
+ * (WATCHDOG_TIMEOUT_SEC), so a stalled broker delays a restart by about a
+ * second. The canary-wap's csi_event_egress::kRestartBudgetMs. */
+constexpr uint32_t kCsiEventEgressRestartBudgetMs = 1000;
 
 /* What the egress did this boot (backlog F109), in the canary-wap's
  * csi_event_egress::Stats shape, field for field, so a bench run or a field

@@ -53,6 +53,16 @@
  * row is neither appended to the card nor published, with the link up or
  * through an outage's backfill, and every one is counted; the ring keeps it.
  *
+ * F92: a planned restart (csi_event_egress_flush_for_restart(), which
+ * main.cpp's deliberate_restart_now() calls through its
+ * flush_events_before_restart(), held there by check_event_egress_order.py
+ * rule 10) commits the open bundle and drains it, behind the row queued
+ * before it, to the broker and the card; in an outage it leaves the bundle
+ * on the card for the next boot's backfill; and a row that cannot go costs
+ * it the budget and no more. Each fails with the helper's body a bare
+ * `return true;` (the restart as it was), and with only one of its halves
+ * (the flush, the drain).
+ *
  * F103's review added a line that lands without its newline: its append
  * fails, so the row waits in the hold, and the next append seals the line,
  * which the walk then sends. It reaches HA once, not from the card and again
@@ -312,6 +322,8 @@ static void noop_tick(const csi_features_t*) {}
 static const csi_event_decl_t EVENTS[] = {
   /* stateless: commits at once */
   { "ping", CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
+  /* state-bearing: an open bundle until it closes (sweep F92's restart) */
+  { "state", CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
 };
 static const csi_module_t MODULE = {
   "test.egress", CSI_PRIVACY_P0, EVENTS, sizeof(EVENTS) / sizeof(EVENTS[0]),
@@ -334,6 +346,17 @@ static uint32_t emit_ping() {
   v.present_fields = CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET;
   std::strcpy(v.note, "p");
   return csi_event_emit("test.egress", "ping", &v);
+}
+
+/* A state-bearing emit: it opens a bundle (the return is its handle, not an
+ * event id) and commits nothing until the bundle closes. */
+static uint32_t open_bundle(const char* state = "active") {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  std::strncpy(v.state_name, state, sizeof(v.state_name) - 1);
+  return csi_event_emit("test.egress", "state", &v);
 }
 
 [[maybe_unused]] static uint32_t emit_ambient() {
@@ -1387,6 +1410,78 @@ static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
 
 /* ── main ──────────────────────────────────────────────────────────────── */
 
+/* ── F92: a planned restart flushes open bundles, then drains ─────────── */
+
+/* main.cpp's deliberate_restart_now() (POST /api/reboot, serial 'x'), as far
+ * as the egress sees it: csi_event_egress_flush_for_restart() with the
+ * restart budget, then the reboot. check_event_egress_order.py rule 10 holds
+ * main.cpp to that call, before the chain persist and the MQTT disconnect. */
+static bool planned_restart() {
+  const bool drained = csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs);
+  boot();
+  return drained;
+}
+
+/* Sweep F92: a bundle lives in RAM until it closes, up to ten minutes, and
+ * no planned restart closed one first, so a POST /api/reboot lost every open
+ * row (a presence state, an anomaly's two minutes), and the rows waiting in
+ * the egress's queue and hold with it. Each scenario fails with the restart
+ * as it was (the helper's body a bare `return true;`: nothing flushed,
+ * nothing pumped), and the first two with either half of it alone. */
+static void test_a_planned_restart_delivers_the_open_bundle() {
+  std::printf("-- F92: a planned restart commits the open bundle and drains it to the card and the broker\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  const uint32_t before = emit_ping();   // committed, still in the egress queue
+  const uint32_t handle = open_bundle();
+  CHECK(handle != 0 && handle < csi_event_id_floor::kIdSpaceBase, "a bundle is open (a handle, no event id)");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains: nothing is left in the queue or the hold");
+  CHECK(exactly(W.ha.accepted, {before, next}) && W.ha.refused.empty(),
+        "the queued row, then the bundle, reach HA before the restart, in id order");
+  CHECK(card_lines_for(next) == 1, "and the bundle is on the card");
+  drain(20);
+  CHECK(W.wire.size() == 2, "after the restart nothing is sent twice");
+}
+
+static void test_a_planned_restart_in_an_outage_keeps_the_bundle_owed() {
+  std::printf("-- F92: in an outage the flushed bundle goes onto the card, and after the restart it is replayed\n");
+  fresh_device();
+  drain(4);                              // the card is open; the link is down
+  (void)open_bundle("empty");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains onto the card");
+  CHECK(card_lines_for(next) == 1, "the bundle is on the card");
+  connect();
+  drain(40);
+  CHECK(exactly(W.ha.accepted, {next}) && W.ha.replay.back() == true,
+        "after the restart the backfill sends it, as a replay");
+}
+
+/* The drain is bounded: a row that cannot go (here, one held for a card
+ * that may still mount, the first 45 s after boot) costs the budget, about
+ * a second, and the restart goes on. */
+static void test_a_planned_restart_is_bounded() {
+  std::printf("-- F92: a row that cannot go costs the restart its budget and no more\n");
+  fresh_device();
+  W.mounted = false;                     // a card in, its boot mount still running
+  boot();
+  connect();
+  loop_pass();
+  (void)open_bundle();
+  const uint32_t t0 = stub_millis();
+  const unsigned delays0 = stub_delays();
+  CHECK(!csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs),
+        "the held bundle is still waiting for the card: not drained");
+  const uint32_t took = stub_millis() - t0;
+  CHECK(took >= kCsiEventEgressRestartBudgetMs && took < kCsiEventEgressRestartBudgetMs + 50,
+        "it gave up after the budget");
+  CHECK(stub_delays() - delays0 <= kCsiEventEgressRestartBudgetMs / 10 + 1,
+        "pumping at most once per 10 ms between passes");
+  CHECK(W.ha.accepted.empty(), "and nothing overtook the card it waits for");
+}
+
 int main() {
   Serial.quiet = true;
   csi_event_test_reset();
@@ -1417,6 +1512,9 @@ int main() {
   test_held_rows_cover_no_card_rows_after_them();
   test_ambient_rows_are_not_held();
   test_ambient_rows_stay_off_the_card_and_the_broker();
+  test_a_planned_restart_delivers_the_open_bundle();
+  test_a_planned_restart_in_an_outage_keeps_the_bundle_owed();
+  test_a_planned_restart_is_bounded();
   test_broker_change_before_the_card_opens();
   test_card_closes_long_after_boot();
   test_card_out_for_a_remount();

@@ -93,6 +93,8 @@ struct CommittedEvent {
  * and then dropping (counted) beats blocking the emitter. */
 constexpr UBaseType_t kQueueDepth = 8;
 constexpr int         kPumpBudget = 4;   // rows per loop pass
+/* Between two pumps of csi_event_egress_flush_for_restart() (sweep F92). */
+constexpr uint32_t    kRestartPassMs = 10;
 QueueHandle_t         s_queue = nullptr;
 uint32_t              s_dropped = 0;     // queue full; atomic add
 uint32_t              s_dropped_said = 0;  // what the log last reported
@@ -684,6 +686,31 @@ extern "C" void csi_event_egress_pump(void) {
 #endif
 }
 
+extern "C" bool csi_event_egress_flush_for_restart(uint32_t budget_ms) {
+  /* Every open bundle closes and commits now, on this task: each takes its
+   * event id, and the commit hook above queues it for the pump. */
+  csi_event_flush_bundles();
+#if FEATURE_HA_MQTT
+  if (!s_queue) return true;
+  /* Then the pump, pass after pass, until nothing waits in the queue or the
+   * hold, or the budget is spent: a row the pump drains goes onto the card
+   * (owed across the restart) and out when the link is up; a held row goes
+   * when nothing older waits. The delay lets the network stack move the
+   * bytes and keeps the pass count bounded by the budget. */
+  const uint32_t start = millis();
+  for (;;) {
+    csi_event_egress_pump();
+    const bool drained = uxQueueMessagesWaiting(s_queue) == 0 && s_hold.count == 0;
+    if (drained) return true;
+    if ((uint32_t)(millis() - start) >= budget_ms) return false;
+    delay(kRestartPassMs);
+  }
+#else
+  (void)budget_ms;
+  return true;
+#endif
+}
+
 CsiEventEgressStats csi_event_egress_stats() {
   CsiEventEgressStats s = {};
 #if FEATURE_HA_MQTT
@@ -757,6 +784,7 @@ extern "C" void csi_event_egress_test_reset(void) {
 
 extern "C" void csi_event_egress_begin(void) {}
 extern "C" void csi_event_egress_pump(void) {}
+extern "C" bool csi_event_egress_flush_for_restart(uint32_t) { return true; }
 CsiEventEgressStats csi_event_egress_stats() { return CsiEventEgressStats{}; }
 bool csi_event_egress_read_stats(CsiEventEgressStats*) { return false; }
 extern "C" size_t csi_event_egress_diagnostics_json(char* out, size_t cap) {
