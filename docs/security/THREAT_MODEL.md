@@ -686,14 +686,24 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   CONFIRM), and a CONFIRM counts only from the pairing partner's address,
   and only once the code is shown: the joiner's genuine CONFIRM re-sent
   from another radio no longer completes a pairing, and a wrong hash from
-  another radio no longer cancels one. The address check does not stop a
-  reflection (open): the CONFIRM hash is the same in both directions, so
-  the initiator's own CONFIRM, re-sent to it from the joiner's address,
-  counts as the joiner's, and the initiator then holds a joiner whose owner
-  never confirmed (the joiner drops the COMPLETE; host-probed, the same
-  before F75, and on the PlatformIO tree, which computes the same hash,
-  the same before and after F97). A hash bound to the sender's role would
-  stop it (a wire change). Since F73 a pairing whose partner the device cannot hold (a
+  another radio no longer cancels one. The address check did not stop a
+  reflection: until F94 the CONFIRM hash was the same in both directions,
+  so the initiator's own CONFIRM, re-sent to it from the joiner's address,
+  counted as the joiner's, and the initiator then held a joiner whose owner
+  never confirmed (the joiner dropped the COMPLETE; host-probed, the same
+  before F75, and on the PlatformIO tree, which computed the same hash,
+  the same before and after F97). Since F94, on both trees, each CONFIRM
+  is bound to its sender's role (spec §5.3) and each side checks its
+  partner's, so a reflected CONFIRM is a wrong hash from the partner's
+  address and ends the pairing, with nothing added, sealed or sent. That
+  ending is no new power: any radio could already end a pairing with a
+  wrong hash from the partner's address. It is a wire change that fails
+  closed: a device on firmware before F94 and an updated one each refuse
+  the other's CONFIRM, and an initiator on firmware before F94 still takes
+  its own reflected CONFIRM until it is updated. Host-tested on both trees
+  (the reflection, the role-free CONFIRM, both roles, both orders), not
+  bench-tested; the hash still covers only the ephemeral exchange (F69,
+  F115, below). Since F73 a pairing whose partner the device cannot hold (a
   deny-listed key, a full opera, an address another member holds) fails
   and is logged: the initiator adds the joiner before anything is sent, so
   it no longer seals the `opera_secret` to a partner it then refuses, and a
@@ -875,8 +885,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     CONFIRM, at most three times and only to its partner, once it has read
     the initiator's CONFIRM after its own owner confirmed, and that pair
     completes in both orders (host-probed against the pre-F97 library);
-    the copies carry the hash its first CONFIRM already put on the air. The
-    reflection above stays open.
+    the copies carry the hash its first CONFIRM already put on the air.
+    Since F94 neither pre-F97 mix pairs at all: every pairing with firmware
+    before F94 fails closed at the CONFIRM (above), and the reflection
+    above ends the pairing instead of completing it.
   - *Opera sends to members only.* Until F101 every opera sender (tamper
     alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
     went to every address in the transport table, which, while a pairing
@@ -930,8 +942,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
 - **PlatformIO pairing endings (F133-F135; host-tested only).**
   - *A lost COMPLETE (F134).* Nothing acknowledges a COMPLETE, and until
     F134 the initiator sent it once and reported success, so one lost on
-    the air left it holding a member that never joined, the same harm as
-    the reflection above. Now it sends the frames it already put on the
+    the air left it holding a member that never joined, the same harm the
+    reflection above did until F94. Now it sends the frames it already put on the
     air (its CONFIRM and the sealed COMPLETE, byte for byte; the pairing
     key stays wiped and nothing is sealed again) every 2 s, to the
     partner's address only, for at most the 5-minute pairing timeout, and
@@ -945,10 +957,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     CONFIRM reaching a completed initiator, the joiner's, replayed or
     reflected, is dropped (host-tested, with third-party, replayed and
     reflected pairing frames of every type). A joiner still takes a copy
-    only after its own owner confirmed; so the reflection above now ends in
-    a pairing when the joiner's owner confirms within the window, and still
-    leaves the initiator holding a member that never joined when that owner
-    does not. An initiator on firmware before F134 keeps the old harm. The
+    only after its own owner confirmed; so, until F94, the reflection above
+    ended in a pairing when the joiner's owner confirmed within the window,
+    and left the initiator holding a member that never joined when that
+    owner did not (since F94 it ends the pairing before anything is
+    sealed). An initiator on firmware before F134 keeps the old harm. The
     cost, until F162: this tree's members sent nothing on a timer, so the
     copies usually ran their whole window, at most 149 copies of two
     frames. Since F162 a member sends one signed HEARTBEAT right after it
