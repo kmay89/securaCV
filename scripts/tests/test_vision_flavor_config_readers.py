@@ -6,8 +6,11 @@ include path, but the firmware reads its own constants in
 firmware/projects/canary-vision/include/canary/config.h (the topic patterns
 in include/canary/topics.h), which own the values. The flavor file named
 eighteen CONFIG_* settings nothing read, so editing one changed nothing;
-they are gone. It still owns the FEATURE_* flags and the watchdog timeout.
-What is pinned and why:
+they are gone, and so are the four detection defaults gen_flash.py read
+there before it read the project config.h's own constants (F182's
+follow-up). It still owns the FEATURE_* flags and the watchdog timeout, and
+keeps one copy, the device type the fleet figures read. What is pinned and
+why:
 
   • every CONFIG_* macro left in the flavor file has a reader outside it: a
     tracked file of a kind that can read a macro (C/C++ sources and headers,
@@ -17,12 +20,16 @@ What is pinned and why:
     test;
   • every one of them is a seed: a copy of the same-named
     `static constexpr` in the project config.h (CONFIG_ dropped), and it
-    must hold the same value. Today they are the four gen_flash.py reads
+    must hold the same value. Today there is one, CONFIG_DEVICE_TYPE, which
+    gen_figures.mjs reads to key the flavor's figure. A seed with no
+    same-named constant, or one whose constant is not a plain literal this
+    test can compare, is refused rather than passed;
+  • the four detection defaults the flasher catalog used to read here
     (CONFIG_PERSON_TARGET, CONFIG_SCORE_MIN, CONFIG_LOST_TIMEOUT_MS,
-    CONFIG_DWELL_START_MS) for the flasher catalog's detection defaults, and
-    CONFIG_DEVICE_TYPE, which gen_figures.mjs reads to key the flavor's
-    figure. A seed with no same-named constant, or one whose constant is not
-    a plain literal this test can compare, is refused rather than passed;
+    CONFIG_DWELL_START_MS) have no reader left, so putting one back fails
+    the first check: gen_flash.py reads PERSON_TARGET, SCORE_MIN,
+    LOST_TIMEOUT_MS and DWELL_START_MS from the project config.h, and names
+    nothing under firmware/configs/canary-vision/;
   • a tool that reads a macro by pattern rather than by name (gen_figures.mjs
     matches any `#define ...DEVICE_TYPE`) is a reader only through
     PATTERN_READERS, and only while that file still holds the pattern and
@@ -34,9 +41,6 @@ What is pinned and why:
     run the checkers on synthetic inputs, so they hold the checkers and not
     the tree, and a re-aligned or re-valued project config.h cannot break
     them.
-
-Repointing gen_flash.py at the project config.h, which would let the four
-seeds go too, waits for the package that owns gen_flash.py (w18-labflash).
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -68,6 +72,10 @@ PATTERN_READERS = {
     "CONFIG_DEVICE_TYPE": ("canary-local/tools/figures/gen_figures.mjs",
                            r"#define\s+\w*DEVICE_TYPE\s+"),
 }
+# The detection defaults gen_flash.py read from the flavor file until it read
+# the project config.h's constants instead (F182's follow-up).
+FORMER_FLASHER_SEEDS = ("CONFIG_PERSON_TARGET", "CONFIG_SCORE_MIN",
+                        "CONFIG_LOST_TIMEOUT_MS", "CONFIG_DWELL_START_MS")
 
 DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(CONFIG_[A-Za-z0-9_]+)\b[ \t]*(.*)$", re.M)
 # The defined name of any CONFIG_* #define, which names it without reading it.
@@ -193,15 +201,27 @@ class FlavorConfigReaders(unittest.TestCase):
     def test_every_seed_equals_the_project_constant(self):
         self.assertEqual(seed_problems(self.macros, project_constants(self.project_text)), [])
 
-    def test_the_seeds_are_the_four_gen_flash_reads_and_the_figure_type(self):
-        self.assertEqual(sorted(self.macros), ["CONFIG_DEVICE_TYPE", "CONFIG_DWELL_START_MS",
-                                               "CONFIG_LOST_TIMEOUT_MS", "CONFIG_PERSON_TARGET",
-                                               "CONFIG_SCORE_MIN"])
-        gen_flash = (REPO / "canary-local/tools/gen_flash.py").read_text(encoding="utf-8")
-        for name in sorted(set(self.macros) - {"CONFIG_DEVICE_TYPE"}):
-            self.assertIn(f'read_const(VISION_CFG, "{name}")', gen_flash, name)
+    def test_the_only_seed_is_the_figure_type(self):
+        self.assertEqual(sorted(self.macros), ["CONFIG_DEVICE_TYPE"])
         self.assertTrue(pattern_read("CONFIG_DEVICE_TYPE", self.flavor_text),
                         "gen_figures.mjs no longer reads the flavor's DEVICE_TYPE by its pattern")
+
+    def test_gen_flash_names_nothing_in_the_flavor_directory(self):
+        # A pin on the source; canary-local/tools/tests/test_flash_read_const.py
+        # holds the behavior (which files vision_detect_block reads).
+        gen_flash = (REPO / "canary-local/tools/gen_flash.py").read_text(encoding="utf-8")
+        naming = [n for n, line in enumerate(gen_flash.splitlines(), 1)
+                  if "configs/canary-vision" in line]
+        self.assertEqual(naming, [], "gen_flash.py names the Vision flavor directory again (at "
+                         "these lines); its detection defaults are the project config.h's constants")
+
+    def test_a_former_flasher_seed_put_back_has_no_reader(self):
+        # Against the real tree: each of the four, planted back in the flavor
+        # file, is a CONFIG_* nothing reads, so the first check fails on it.
+        planted = self.flavor_text + "".join(f"#define {n}  1\n" for n in FORMER_FLASHER_SEEDS)
+        macros = flavor_macros(planted)
+        missing = [n for n in unread(macros, self.corpus) if not pattern_read(n, planted)]
+        self.assertEqual(missing, sorted(FORMER_FLASHER_SEEDS))
 
     # ── the checks catch what they exist to catch ─────────────────────────
 

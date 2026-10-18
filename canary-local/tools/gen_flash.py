@@ -1408,23 +1408,26 @@ def product_role(pid: str) -> str:
     return "canary"
 
 
-VISION_CFG = REPO / "firmware/configs/canary-vision/default/config.h"
+# The project config owns the four first-boot seeds detect_config.cpp loads
+# (sweep F182); the flavor config under firmware/configs/ no longer copies them.
+VISION_CONFIG_H = REPO / "firmware/projects/canary-vision/include/canary/config.h"
 VISION_BOUNDS = REPO / "firmware/projects/canary-vision/include/canary/detect_config.h"
 VISION_LAB = CANARY_LOCAL / "devices/vision.json"
 
 
 def vision_detect_block() -> dict:
-    """The Vision's four runtime dials: defaults from the firmware config,
-    bounds from detect_config.h (the clamps the setters enforce), and the
-    room presets from the lab's own drift-gated vision.json — the exact
+    """The Vision's four runtime dials: defaults from the project config.h
+    (the compiled seeds detect_config.cpp falls back to before NVS holds a
+    value), bounds from detect_config.h (the clamps the setters enforce), and
+    the room presets from the lab's own drift-gated vision.json — the exact
     values the Home Assistant numbers write, now bakeable at flash time
     (NVS namespace "securacv": det_target u8, det_score u8, det_lost u32,
     det_dwell u32 — detect_config.cpp)."""
     defaults = {
-        "target": read_const(VISION_CFG, "CONFIG_PERSON_TARGET"),
-        "score": read_const(VISION_CFG, "CONFIG_SCORE_MIN"),
-        "lost_ms": read_const(VISION_CFG, "CONFIG_LOST_TIMEOUT_MS"),
-        "dwell_ms": read_const(VISION_CFG, "CONFIG_DWELL_START_MS"),
+        "target": read_const(VISION_CONFIG_H, "PERSON_TARGET"),
+        "score": read_const(VISION_CONFIG_H, "SCORE_MIN"),
+        "lost_ms": read_const(VISION_CONFIG_H, "LOST_TIMEOUT_MS"),
+        "dwell_ms": read_const(VISION_CONFIG_H, "DWELL_START_MS"),
     }
     bounds = {
         "score": [read_const(VISION_BOUNDS, "DETECT_SCORE_MIN_LO"),
