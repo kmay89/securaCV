@@ -74,7 +74,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | canary-ota (`firmware/projects/canary-ota/`) | ❌ every column — an ESP-IDF teaching harness with the older SHA-256-only engine; no CI job compiles it and it has no onboarding. Left as it was, by design (`firmware/VARIANT_POLICY.md`). |
 | canary-companion, canary-tincan | not applicable — Phase-0 pure cores with no runtime, no network stack and no env; their host tests still pass (`make -C firmware/projects/<p>/tests_host`). |
 | canary-fence-guard | not applicable — a concept whose `main_stub.cpp` refuses to compile. |
-| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` is stale until Actions → "Rebuild emulator dist (pinned emsdk)" runs on this branch (`CLAUDE.md`, "Generated files"). |
+| the emulator (`canary-local/emulator/`) | inherits the display row: it compiles `provision.cpp`, `runtime_config.cpp` and `main.cpp`, which all changed, so the committed `dist/` was rebuilt from this tree by Actions → "Rebuild emulator dist (pinned emsdk)" before the merge (`CLAUDE.md`, "Generated files"); the dist drift check and the page logic tests hold it to the sources. |
 
 ### Footnotes — every ⚠️ and ❌, with its reason
 
@@ -364,8 +364,9 @@ These are the calls.
 
 - G1–G10, D1–D4, O1–O6 above, on one of each board. The SCVP election and the
   60 s OTA dwell are the two behaviors with no software stand-in at all.
-- The emulator dist rebuild (Actions button) — a CI matter, not a bench one,
-  but the Lab's onboarding preview shows the old portal until it runs.
+- The emulator needs none: its dist was rebuilt from this tree by Actions →
+  "Rebuild emulator dist (pinned emsdk)" before the merge, so the Lab's
+  onboarding preview already shows the shared portal.
 - Swift: the iOS `NearbyCanaries.suffix(ofSetupSSID:)` and
   `SetupPortal.isSetupNetwork` changes and the tvOS Wall were checked by
   reading and by their unit tests' expectations; there is no Xcode here, so

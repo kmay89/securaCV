@@ -478,7 +478,9 @@ re-derive them from the matrix:
   heartbeat (footnote 8). **The WAP's BLE door does not reopen on recovery**,
   only its SoftAP does (footnote 4). **The display's portal takes no name**;
   naming stays on the glass and in Home Assistant.
-- **The emulator dist** is stale until the Actions rebuild runs on the branch.
+- **The emulator dist** was rebuilt from this tree (Actions → "Rebuild emulator
+  dist (pinned emsdk)") before the merge; the dist drift check and the page
+  logic tests hold it to the sources.
 - **Hardware**: G1–G10, D1–D4 and O1–O6 in `PARITY.md` §4 have not run on a
   bench yet; the election and the OTA dwell have no software stand-in.
 
