@@ -5,7 +5,7 @@ settles Apple Home open decisions #3 and #4 for the household-key path. No
 firmware changes in this record; the firmware work is listed as follow-up
 (§3.3, §9).
 Intended Status: Informative (architecture decision record)
-Last Updated: 2026-10-14
+Last Updated: 2026-10-18
 
 > One paragraph: the canary-wap **household IRK store is dropped**, because it
 > is a stored identifier that changes what the Canary witnesses and household
@@ -378,9 +378,16 @@ event.
    clock. Plain NTP is unauthenticated, so the hub should take
    its time from an authenticated source (for example chrony with NTS). The
    hub replaces a lapsed `home` with `away` and starts in `away` after every
-   restart. A forgotten tap, or a denial of service against the LAN API
-   (which holds whatever posture is current), leaves an empty house watched
-   less than today only until the lapse, so a short `home_ttl` limits both.
+   restart. It also times each `home` on its monotonic clock from the
+   command, so a wall clock held back (by a spoofed time source, say) cannot
+   keep it past `home_ttl`. A roster change that drops any member, or a
+   roster on disk that does not verify, ends a current `home` too: nothing
+   records who set it, so a revoked member's `home` cannot be told from
+   anyone else's, and ending it is the fail-safe; members still enrolled set
+   it again (after a stale roster, once one verifies: rule 1). A forgotten
+   tap, or a denial of service against the LAN API (which holds whatever
+   posture is current), leaves an empty house watched less than today only
+   until the lapse, so a short `home_ttl` limits both.
 3. **Statements are signed.** Each is a 112-byte record signed with the hub's
    Ed25519 posture key, which witnesses pin. v0 offers it through a file seam
    and `GET /v1/posture`, never as an unsigned broker word. Whoever holds the
@@ -391,11 +398,16 @@ event.
    refuses to load from inside its data directory. That protects a copy of
    the directory, not a disk image or a backup that also holds the KEK;
    keeping the two apart is the operator's job, which v0 cannot enforce
-   (spec §5.4).
+   (spec §5.4). The KEK still needs a backup of its own, somewhere safe:
+   losing it loses the household — a new household, a new posture key with
+   every witness paired again, and every admin and member enrolled again.
 4. **Witnesses fall to `away` on any doubt.** Missing, lapsed, wrong
    household, replayed, a bad signature, issued more than 5 minutes ahead of
    the witness's clock, or no trusted clock all read as `away`, which is full
-   sensing.
+   sensing. A statement refused only for being ahead is otherwise genuine
+   and newer than anything accepted, so the witness still records its `seq`
+   as the last accepted: refusing it only now would postpone a future-dated
+   `home`, not void it.
 5. **No who.** The roster holds random handles and public keys and no field
    that can hold a name. No output says which credential or member acted.
    v0 has no TLS of its own, though: on a LAN bind without a TLS-terminating
@@ -461,10 +473,11 @@ or whether they belong to the household. This is a strengthening change.
    - next to that, decide whether the change time the hub itself reveals is
      acceptable: nothing records which credential was used, but the current
      statement states the minute of the last posture change or `home` renewal
-     (a command, a lapse or a restart), the modification times of the seam and
-     `seq.json` state its second, and any live reader of the seam or
-     `GET /v1/posture` learns each change's time to its own polling
-     precision;
+     (a command, a lapse, a roster change that ended `home` or a restart) or
+     of a republish after a failed write or a hub clock set back, the
+     modification times of the seam and `seq.json` state its second, and any
+     live reader of the seam or `GET /v1/posture` learns each change's time
+     to its own polling precision;
    - map the household posture onto canary-wap's `notify` Context; and
    - carry the key-satellite device-class contract
      ([`spec/household_keys_v0.md`](../../spec/household_keys_v0.md) §6.3) as

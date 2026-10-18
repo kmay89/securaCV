@@ -392,9 +392,10 @@ Modeled on the voice contract in
    blur the latest statement, though: the current statement states the minute
    it was issued (`issued_at`), the statement file's modification time states
    its second, and any live reader of that file or of `GET /v1/posture` learns
-   each new statement — a command (a renewed Home included), a lapse or a
-   restart — to its own polling precision. That too is for the posture RFC,
-   next to Home Assistant's exact-time diary
+   each new statement — a command (a renewed Home included), a lapse, a
+   roster change that ends Home, a restart, or a republish after a failed
+   write or a hub clock set back — to its own polling precision. That too is
+   for the posture RFC, next to Home Assistant's exact-time diary
    ([decision record](../design/household_presence_and_posture.md) §8).
 5. **No who, in any output** — journal, alert ledger, digests, Watch
    snapshots, MQTT, Home Assistant, logs. The roster holds random handles and
@@ -409,8 +410,10 @@ Modeled on the voice contract in
    (12 h by default, at most 24 h after it was issued), the hub restarts in
    Away, and a statement a witness cannot verify reads as Away: a forgotten
    Home is bounded, not removed. A witness refuses a statement issued more
-   than 5 minutes ahead of its own clock, so a Home counts for at most 24 h
-   5 min of each witness's own clock, whatever the hub's clock said; a hub
+   than 5 minutes ahead of its own clock — and still records its sequence
+   number as the last accepted, so it can never count later, once its time
+   arrives — so a Home counts for at most 24 h 5 min of each witness's own
+   clock, whatever the hub's clock said; a hub
    clock more than 5 minutes ahead (give or take the minute floor on
    `issued_at`) is refused (witnesses behave as Away), and one running behind
    lapses Home early. Home silences nothing the relay carries and adds no
@@ -421,7 +424,8 @@ Modeled on the voice contract in
    bring in Apple's associated-domains CDN and a public hostname). Off the home
    network, a key does nothing: on any bind the checker closes, without a
    response, every connection from a peer that is not loopback, private or
-   link-local (the 100.64.0.0/10 range Tailscale and carrier NAT use is
+   link-local (the 100.64.0.0/10 range Tailscale and carrier NAT use, and
+   Tailscale's IPv6 range `fd7a:115c:a1e0::/48`, unique-local in form, are
    refused too). That is a peer-address check — a strong default, not a
    cryptographic guarantee. A proxy, VPN or ingress that re-originates
    traffic from a private or loopback address defeats it, so the hub's LAN
@@ -432,7 +436,7 @@ Modeled on the voice contract in
 | Piece | What it is | Notes |
 |---|---|---|
 | **Key satellite** (not built) | XIAO ESP32-C3 (already in the repo) + ST25R3916 NFC front end; MCU inside the wall, antenna outside | Its own device class, like the voice satellite, secure by default on ESP-IDF (spec §6.3): NVS encryption, Secure Boot v2 RSA-3072, flash encryption in release mode, secure download mode — still open, like any C3, to AR2023-007 given days of access — a tamper switch, and a first-boot identity drawn inside `bootloader_random_enable()`/`disable()` as `firmware/projects/canary-vision/src/witness.cpp` does. No member material. A padded uplink metronome keeps its own traffic from timing taps (Invariant III; the [`src/bridge/homekit.rs`](../../src/bridge/homekit.rs) pacer); indoor witnesses going quiet after a tap is a separate signal the posture RFC must pace. |
-| **Hub checker** (built) | [`household/`](../../household/): its own crate and process, not `witnessd` | Roster in a private data directory; card keys and the hub's own signing keys (the posture key witnesses pin, the roster key that countersigns every accepted roster) sealed under a key-encryption key held outside it. Sealing protects a copy of the directory, not a disk image that also holds that key, and keeping the directory and that key out of backups is the operator's job: v0 does not, and cannot, enforce it. Paired clients reach it over a LAN API with no TLS of its own in v0: without a TLS proxy on the hub, a listener on the LAN sees each client's bearer token and, in a command, the member handle. The crate split stops kernel code calling it; keeping witnessd's Unix user out of its files, and giving it no internet route, are `won't`s the deployment configures, not `can't`s. |
+| **Hub checker** (built) | [`household/`](../../household/): its own crate and process, not `witnessd` | Roster in a private data directory; card keys and the hub's own signing keys (the posture key witnesses pin, the roster key that countersigns every accepted roster) sealed under a key-encryption key held outside it. Sealing protects a copy of the directory, not a disk image or a backup that also holds that key, and keeping that key out of any backup that holds the directory is the operator's job: v0 does not, and cannot, enforce it. That key still needs a backup of its own, somewhere safe: losing it loses the household (a new household, a new posture key with every witness paired again, every admin and member enrolled again). Paired clients reach it over a LAN API with no TLS of its own in v0: without a TLS proxy on the hub, a listener on the LAN sees each client's bearer token and, in a command, the member handle. The crate split stops kernel code calling it; keeping witnessd's Unix user out of its files, and giving it no internet route, are `won't`s the deployment configures, not `can't`s. |
 | **Phone and watch keys** (apps not built) | Android Keystore/StrongBox P-256 behind a Class 3 biometric; iOS Secure Enclave P-256 behind `.userPresence` — never "express" keys | A foreground NFC reader session against the satellite's emulated ISO 7816-4 card — iPhone: Core NFC `NFCISO7816Tag` on a custom AID under `com.apple.developer.nfc.readersession.iso7816.select-identifiers` (the self-service Tag Reading capability, not the NFC & SE Platform entitlement); Android: reader-mode `IsoDep`, no HCE. The challenge lives only in the RF field, so it cannot be stockpiled. |
 | **Cards** | NTAG 424 DNA (AES-128, ~$0.45–1 a sticker, ~$2.50–5 a PVC card) or DESFire EV3 (EAL5+, relay-resistant proximity check) | *Possession, not intent* — a card answers any reader field — so Away or Night only; offer shielding sleeves. Random ID on, so the hub trial-authenticates each enrolled card's own key, bounded by the roster (16 in v0, always 16 attempts); check the failed-authentication counter first. Never diversified from the UID; no class key. |
 | **FIDO2 keys** | Any NFC key speaking FIDO2's CTAP2 (Client to Authenticator Protocol), $15–29 | With no keypad on the satellite, user verification (UV) needs a key with its own fingerprint sensor, registered `credProtect` 3 as *intent*. A plain key is `credProtect` 2, *possession*, and its holder is told a harvested credential ID and relying-party ID let anyone recognize it later with a silent `up=false` probe. No signature counter is stored (clone detection traded for no usage tally). |
@@ -461,9 +465,13 @@ purpose, then signs a new statement.
   then a restore of the whole data directory rolls it back (a v0 limit).
 - **Changes.** Adding a member takes m-of-n admins and, when m is 1, a
   physical confirm on the *inside* (v0: an operator command on the hub host).
-  Revoking is cheap on purpose — any one admin, or the holder. Changing the
-  admin set or threshold takes m-of-n current admins and 24 hours pending, so
-  with a threshold of 2 or more one stolen admin phone cannot take over.
+  Revoking is cheap on purpose — any one admin, or the holder. A roster that
+  drops any member ends a current Home once the hub loads it: nothing records
+  who set Home, so one a revoked member set cannot be told from anyone
+  else's, and ending it is the fail-safe; members still enrolled set it
+  again. Changing the admin set or threshold takes m-of-n current admins and
+  24 hours pending, so with a threshold of 2 or more one stolen admin phone
+  cannot take over.
   Genesis defaults to threshold 1, where one admin key's approval is all any
   change needs (an add also needs that confirm) — removing every other admin
   included, once the 24 hours pass — and nothing announces the pending change
@@ -558,10 +566,11 @@ vendor cloud to breach.
    never have. AES cards are the exception, said out loud: checking one needs
    that card's AES key on the hub, which is clone-capable.
    Card keys live only in the checker's private data, sealed under a key kept
-   outside it (keeping both out of backups is the operator's job), and a hub
-   compromise means re-keying every card. They are not the hub's only secret:
-   its posture signing key, sealed beside them, alone decides whether indoor
-   witnesses sense — whoever holds it can sign Home without any intent
+   outside it (keeping that key out of any backup of the data, yet backed up
+   on its own, is the operator's job: losing it loses the household), and a
+   hub compromise means re-keying every card. They are not the hub's only
+   secret: its posture signing key, sealed beside them, alone decides whether
+   indoor witnesses sense — whoever holds it can sign Home without any intent
    credential — so a hub compromise also means a new posture key and
    re-pairing every witness.
 2. **Any biometric is local user verification on the member's own device**

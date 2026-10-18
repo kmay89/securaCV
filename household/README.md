@@ -65,7 +65,10 @@ key requires user presence. The admin quorum declares the class at enrollment.
 
 **Freshness and replay.** Freshness comes from a 32-byte nonce drawn from the
 OS RNG. A challenge is good for one use, for 10 seconds, on the session that
-asked for it. The hub checks membership against the *current* roster epoch,
+asked for it. The hub holds at most 64 outstanding challenges, 4 per session.
+A session that asks for a fifth loses its oldest instead of being refused, so
+whoever holds a session's token cannot starve that session by holding its
+slots. The hub checks membership against the *current* roster epoch,
 and an epoch change discards every outstanding challenge. No signature
 counter, usage tally or arrival history is kept for any credential. FIDO2
 clone detection is traded away for that.
@@ -74,13 +77,19 @@ clone detection is traded away for that.
 default). A witness checks the lapse against its own clock, and keeps checking
 the statement it holds on that clock (`Statement::is_current`). It refuses a
 statement issued more than 5 minutes ahead of its clock, and refusing means
-behaving as `away`. So a `home` counts on a witness for at most 24 hours and 5
-minutes of the witness's own clock, whatever the hub's clock said. The hub
-replaces a lapsed `home` with `away` on its own clock, and that `home` also
-lapses at once if the hub's clock steps back more than 5 minutes behind its
-`issued_at`. The hub also starts in `away` after every restart. Plain NTP is
-unauthenticated, so the hub should take its time from an authenticated source
-(chrony with NTS, for example).
+behaving as `away`. The witness must still record that statement's `seq` as
+the last one accepted (`posture::verify` returns it with the refusal), so the
+statement can never count later, once its `issued_at` arrives. So a `home`
+counts on a witness for at most 24 hours and 5 minutes of the witness's own
+clock, whatever the hub's clock said. The hub replaces a lapsed `home` with
+`away` on its own clock, and that `home` also lapses at once if the hub's
+clock steps back more than 5 minutes behind its `issued_at`. The hub times
+each `home` on its monotonic clock as well, from the command, so a wall
+clock held back (by a spoofed time source, say) cannot keep it alive past
+the home TTL. A roster change that drops any member, or a roster that goes stale, ends
+a current `home` too (see the limitations). The hub also starts in `away`
+after every restart. Plain NTP is unauthenticated, so the hub should take its
+time from an authenticated source (chrony with NTS, for example).
 
 **The roster has no names.** Members and admins are random 16-byte handles.
 Unknown JSON fields are refused, so no field can hold a name.
@@ -98,11 +107,15 @@ Every change is `epoch + 1` and links to the previous roster's digest. Every
 accepted roster is countersigned by the hub's Ed25519 roster key. The chain is
 re-checked on every load. The checker refuses any roster below the highest
 epoch it has accepted, and any different roster at that epoch. The running
-server reloads the chain when its newest roster file changes (a roster was
-applied). If the changed chain does not load or verify, or the checker
-refuses the roster it yields, the server refuses `home` until a roster
-verifies, and still checks `away` and `night` against the last roster that
-verified: raising sensing is safe whoever asks.
+server reloads the chain when the name of its newest chain file changes (a
+roster was applied; a file in `roster/chain` not named like a chain file, 20
+digits and `.json`, is ignored), and verifies it against the roster public
+key it opened under the KEK at startup, never re-read from the plaintext
+`hub_keys.json`.
+If the changed chain does not load or verify, or the checker refuses the
+roster it yields, the server refuses `home` until a roster verifies, ends a
+current `home`, and still checks `away` and `night` against the last roster
+that verified: raising sensing is safe whoever asks.
 
 **Admins and members never share a credential.** The roster refuses one
 public key, or one FIDO2 credential id, as both an admin and a member. A FIDO2
@@ -128,9 +141,10 @@ holds the KEK, exposes every one of them.
 A leaked card key means re-keying that card. A leaked posture key lets anyone
 sign `home`, skipping "intent lowers, possession only raises", and a forged
 statement with a huge `seq` would lock out every genuine one: recovery is a
-new posture key and re-pairing every witness. Keeping the data directory and
-the KEK out of backups is the operator's job: v0 does not, and cannot, enforce
-it.
+new posture key and re-pairing every witness. Keeping the KEK out of every
+backup that holds the data directory is the operator's job: v0 does not, and
+cannot, enforce it. The KEK still needs a backup of its own, somewhere safe:
+losing it loses the household (see the limitations).
 
 **What the network sees.** Every rejection on the LAN API's three routes is
 the same `401` with the same body, whether the token was missing or wrong, the
@@ -146,7 +160,10 @@ expired, a card, or does not match the binding the request used (an `es256`
 response for a FIDO2 member or the other way round, the wrong `rp_id`, no UP,
 or no UV from an `intent` member). So neither the response nor the time it
 takes says whether a handle exists. A test asserts this by counting the
-checks, not by timing them.
+checks, not by timing them. The dummy key is drawn from the OS RNG each time
+the checker starts, and its private half is dropped at once (a fixed seed
+would have made it public). Its verdict is never read: only a member's own
+public key can authorize, and a member without one never does.
 
 Rejections are counted per door and per lane. The signature lane carries
 `es256` and `fido2-es256` responses: a phone, watch, fob or FIDO2 key, over
@@ -172,9 +189,11 @@ home network, without a response. It answers loopback, private IPv4 (RFC
 1918), IPv4 link-local, IPv6 unique-local (`fc00::/7`) and link-local
 (`fe80::/10`) peers, and the IPv4-mapped forms of those. It refuses
 everything else, including `100.64.0.0/10` (the shared address space
-Tailscale and carrier NAT use) and public IPv6 addresses. So "a key does
-nothing from outside the home network" rests on the peer address: a strong
-default, not a cryptographic guarantee (see the limitations).
+Tailscale and carrier NAT use), Tailscale's IPv6 range `fd7a:115c:a1e0::/48`
+(unique-local in form, but a tailnet reaches it from anywhere) and public
+IPv6 addresses. So "a key does nothing from outside the home network" rests
+on the peer address: a strong default, not a cryptographic guarantee (see the
+limitations).
 
 **Logs.** The server logs startup, shutdown, reload trouble and storage
 failures, and nothing per request. Sentinel tests plant recognizable handles.
@@ -188,10 +207,13 @@ cd household
 cargo build --release
 
 # 1. A household: id, posture key, roster key. The KEK file goes OUTSIDE the
-#    data directory, and neither belongs in a backup: v0 cannot exclude them
-#    for you. Ordinary system backups usually include /etc, so exclude this
-#    file from yours, or keep the KEK somewhere they do not reach. Its
-#    directory must exist; init writes a new KEK there if the file does not.
+#    data directory, and out of every backup that holds the data directory:
+#    v0 cannot exclude it for you. Ordinary system backups usually include
+#    /etc, so exclude this file from yours, or keep the KEK somewhere they do
+#    not reach. Then back the KEK up on its own, somewhere safe: losing it
+#    loses the household (see the limitations). Its directory must exist;
+#    init writes a new KEK there if the file does not, and refuses a data
+#    directory that already holds a household before it writes a KEK.
 install -d -m 0700 /etc/securacv
 household_checker init --data-dir /var/lib/securacv-household --kek /etc/securacv/household.kek
 #    → writes hub_keys.sealed (the two signing keys, sealed under the KEK)
@@ -238,16 +260,31 @@ More subcommands:
   whose handle is neither a card member of the roster it applied nor a card
   member of a proposal still pending, and prints
   `{"epoch", "card_keys_removed"}`. So a key provisioned for a card in a
-  discarded proposal goes with it. After a revoke it reminds you that LAN
-  pairings are separate from the roster (see the limitations).
-- `card provision --handle H [--key-file F]` puts a card key into the sealed
-  store, for a handle that is a card member of the roster or of a pending
-  proposal. It reads the key as hex from a file. `--key-hex` is refused: a key
-  on the command line lands in shell history and in `/proc`. Without
-  `--key-file` it draws a random key and prints it once. It opens the hub
-  keys first, which proves the KEK belongs to this household, so a card is
-  never sealed under a KEK the server cannot open. Software only: writing the
-  key onto a physical card is not part of v0.
+  discarded proposal goes with it. A pending file that does not load cannot
+  apply either, so it keeps no card key: it is skipped with a warning that
+  names the file. If removing the keys fails, the roster is still applied:
+  it prints `{"epoch"}` alone, exits 1 and names `card prune` as the retry.
+  After a revoke it reminds you that LAN pairings are separate from the
+  roster (see the limitations).
+- `card provision --handle H [--key-file F] [--replace]` puts a card key into
+  the sealed store, for a handle that is a card member of the roster or of a
+  pending proposal. It reads the key as hex from a file. `--key-hex` is
+  refused: a key on the command line lands in shell history and in `/proc`.
+  The key file gets the KEK's rule: it may not be inside the data directory,
+  nor (on Unix) carry any permission for group or others. A pipe or FIFO,
+  such as `--key-file /dev/stdin`, is accepted. Delete a key file once the
+  card is provisioned. Without `--key-file` it draws a random key and prints
+  it once. A card that already has a key is re-keyed only with `--replace`.
+  It opens the hub keys first, which proves the KEK belongs to this
+  household, so a card is never sealed under a KEK the server cannot open.
+  Software only: writing the key onto a physical card is not part of v0.
+- `card prune` removes every sealed card key that no card member of the
+  current roster or of a pending proposal names, and prints
+  `{"card_keys_removed"}`: the retry when `roster apply` could not remove
+  them. It skips a pending file that does not load, as `roster apply` does.
+- `pair --reset` rewrites `bearers.json` empty even when that file is
+  damaged, so it also repairs a damaged pairing file (it then reports that
+  the file did not read, instead of how many clients it unpaired).
 - `serve --bind ADDR --allow-lan-plaintext` binds a LAN address. Without that
   flag, any address that is not loopback is refused. On any bind, a peer off
   the home network is closed without a response.
@@ -255,35 +292,53 @@ More subcommands:
   43 200 by default. A short one limits what a denial of service can hold
   (see the limitations).
 - `serve` reloads the roster chain, the sealed card store and the pairings
-  while it runs. Each part reloads on its own. A part that fails keeps the
-  previous state, is retried on every poll, and is logged once; a roster
-  that fails also refuses `home` until one verifies (above).
-- Only `init`, `roster genesis`, `roster apply`, `card provision` and `serve`
-  take `--kek`. Every other command opens no sealed material (some read or
-  write the caller's own key file: an admin key, a client key, a bearer
-  token).
+  while it runs. Each part reloads on its own. Nothing counts as seen at
+  start, so the first poll loads every part, and a change applied while the
+  server was starting is never missed. A part that fails to load keeps the
+  previous state, is retried on every poll until it loads, and is logged
+  once; a roster that fails also refuses `home` until one verifies (above).
+  A roster that loads but that the checker refuses is not retried until the
+  chain changes again: it stays stale for `home`.
+- Only `init`, `roster genesis`, `roster apply`, `card provision`,
+  `card prune` and `serve` take `--kek`. Every other command opens no sealed
+  material (some read or write the caller's own key file: an admin key, a
+  client key, a bearer token).
+- Every command accepts only its own options. An unknown or misspelled one
+  (`--key-fle`, say) is refused with exit status 2, never ignored, and so is
+  an option written as `--name=value`. No error message repeats an option's
+  value or a stray argument: either may be a key typed in the wrong place.
 
 ### The output seam
 
 The checker writes the current statement to
-`<data_dir>/household_posture.bin`, atomically (temp file, then rename) and
-with mode 0600. `GET /v1/posture` returns the same 112 bytes base64-encoded,
-plus the decoded posture. A reader must run every check in `posture::verify`
-and behave as `away` on any failure.
+`<data_dir>/household_posture.bin`, atomically (temp file, then rename, then
+on Unix a sync of the directory) and with mode 0600. `GET /v1/posture`
+returns the same 112 bytes base64-encoded, plus the decoded posture. A reader
+must run every check in `posture::verify` and behave as `away` on any
+failure.
 
 An accepted `away` or `night` that does not change the current posture
 publishes nothing (no new `seq`, no rewrite), so the seam does not reveal a
 tap that changed nothing. `home` is always reissued, because that renews its
 lapse.
 
+A publish that fails reports an error and marks the seam dirty, because the
+seam may no longer match what the checker holds: a failed directory sync, for
+one, comes after the rename, so the new bytes may already be in the seam.
+Until a publish succeeds, no `away` or `night` counts as changing nothing,
+and the server's tick (every second) republishes the current statement,
+never extending a `home`.
+
 Nothing records which credential was used: no counters, no tap log, no
 per-member timestamps, no history. The current statement still states the
-minute it was issued, which is the minute of the last posture change or of
-the last `home` renewal (`issued_at`, `not_after`, and `seq.json`'s
-`last_seq >> 10`), and the modification times of the seam and `seq.json`
-state its second. That was a command, a lapse or a restart. Any live reader
-of the seam or of `GET /v1/posture` learns each change's time to its own
-polling precision. Whether that is acceptable is for the posture RFC
+minute it was issued, which is the minute of the last posture change, of
+the last `home` renewal, or of a republish (`issued_at`, `not_after`, and
+`seq.json`'s `last_seq >> 10`), and the modification times of the seam and
+`seq.json` state its second. That was a command, a lapse, a roster change
+that ended `home`, a republish (after a failed publish, or once a hub clock
+that ran ahead is corrected) or a restart. Any live reader of the seam or of
+`GET /v1/posture` learns each change's time to its own polling precision.
+Whether that is acceptable is for the posture RFC
 ([`household_presence_and_posture.md`](../docs/design/household_presence_and_posture.md)
 §8), next to the question of Home Assistant's exact-time diary.
 
@@ -335,6 +390,12 @@ which cites AN12196 for each. The application note itself was not fetched.
   is restored from a backup, the mark rolls back with it. v0 has no satellite
   to keep the mark elsewhere (`change::check_not_rollback` takes that value
   when one exists).
+- **Losing the KEK loses the household.** The hub's posture and roster keys
+  are sealed under the KEK, and so are the card keys: nothing opens them
+  without it. Losing the KEK file means a new `init` (it refuses a data
+  directory that already holds a household), a new posture key with every
+  witness re-paired, and every admin and member enrolled again. Back the KEK
+  up somewhere safe, apart from the data directory's backups.
 - **The LAN API is plaintext HTTP.** v0 has no TLS. On a LAN bind
   (`--allow-lan-plaintext`), every request crosses the network in cleartext,
   including each client's bearer token (stable per client), the posture and,
@@ -350,22 +411,43 @@ which cites AN12196 for each. The application note itself was not fetched.
   home-network peers only. On an IPv6-only home LAN with public addresses,
   bind an IPv4 LAN address.
 - **A denial of service holds the current posture.** Each connection is
-  served on its own thread: at most 16 at once and 4 from one peer address,
-  each with an absolute 5-second budget. A LAN host with many addresses can
-  still take every slot. Any network denial of service against the LAN API
-  holds the current posture, and if that is `home` it stays until it lapses
-  at the home TTL, so keep `--home-ttl` short. A client without a token cannot
-  start a cooldown, and a cooldown does not block `away` or `night` from a
-  phone, watch, fob or FIDO2 key. A paired client, or anyone holding a token
-  sniffed on a plaintext LAN bind, can still start a cooldown (which refuses
-  `home`) or spend the request cap all paired clients share (which refuses
-  everything until the minute passes).
+  served on its own thread: at most 16 at once and 4 from one peer, where a
+  peer is one IPv4 address or one IPv6 /64 (an IPv4-mapped IPv6 address
+  counts as its IPv4 address). On the default loopback bind, or behind a
+  proxy on the hub, every client is the same peer. When a newcomer finds a
+  cap reached, the server shuts down the oldest connection that has not
+  finished sending its request (in the newcomer's peer group when the
+  per-peer cap is the one reached, otherwise overall) and admits the
+  newcomer. Only when every counted connection is already serving a whole
+  request is the newcomer closed without a response. So idle or trickling
+  sockets never keep out a client that sends its request at once, as a paired
+  client does. Reading a request has an absolute 5-second budget; once the
+  request is routed, its response gets at least 1 second to write, because
+  the request may already have changed the posture. A host that opens connections as fast as the
+  accept loop takes them can still contend with a client for a slot. Any
+  network denial of service against the LAN API holds the current posture,
+  and if that is `home` it stays until it lapses at the home TTL, so keep
+  `--home-ttl` short. A client without a token cannot start a cooldown, and a
+  cooldown does not block `away` or `night` from a phone, watch, fob or FIDO2
+  key. A paired client, or anyone holding a token sniffed on a plaintext LAN
+  bind, can still start a cooldown (which refuses `home`) or spend the
+  request cap all paired clients share (which refuses everything until the
+  minute passes). Whoever holds another client's token cannot starve that
+  client's session of challenges (a session at its cap of 4 loses its
+  oldest), but can still displace one before its owner answers it, at a
+  rate the request cap bounds.
 - **The hub's clock matters.** A hub clock more than 5 minutes ahead of a
   witness's (give or take the minute floor on `issued_at`) makes that witness,
   running `posture::verify`, refuse its statements (it behaves as `away`, the
-  fail-safe). A hub clock behind makes `home` lapse early. Plain NTP is
-  unauthenticated: take the hub's time from an authenticated source, such as
-  chrony with NTS.
+  fail-safe, and must record the refused `seq`, so that statement never
+  counts later). Once the hub's clock is corrected, its tick ends a future-dated
+  `home` and reissues a future-dated `away` or `night` under the corrected
+  clock, so witnesses with correct clocks stop refusing it. A hub clock
+  behind makes `home` lapse early on witnesses. A wall clock held back on the
+  hub (by a spoofed time source, say) cannot keep a `home` alive there past
+  the home TTL: the hub also times each `home` on its monotonic clock, from
+  the command. Plain NTP is unauthenticated: take the hub's time from an
+  authenticated source, such as chrony with NTS.
 - **Threshold 1 means one admin decides.** `roster genesis` defaults to
   threshold 1. With threshold 1, one admin's approval is all any change needs
   (an add also needs the confirm at the hub), including removing every other
@@ -382,10 +464,18 @@ which cites AN12196 for each. The application note itself was not fetched.
   leaves its device paired, and there is no per-token unpair. `pair --reset`
   unpairs every client, and takes effect while the server runs; pair again
   the clients you keep. `roster apply` says so after a revoke.
+- **A revocation ends everyone's `home`.** A roster that drops any member
+  ends a current `home` at the server's next tick, and so does a roster that
+  goes stale; if that `away` fails to publish, every tick tries it again,
+  and the ended `home` is never republished. Nothing records who set
+  `home`, so a revoked member's `home` cannot be told from anyone else's:
+  ending it is the fail-safe, and members still enrolled set it again. A
+  roster that only adds members does not end it.
 - **The time of the last change is readable.** The seam, `seq.json` and
   `GET /v1/posture` state when the posture last changed, or `home` was last
-  renewed, to the minute from the statement and to the second from the
-  files' modification times (see [The output seam](#the-output-seam)).
+  renewed, or the statement was last republished, to the minute from the
+  statement and to the second from the files' modification times (see
+  [The output seam](#the-output-seam)).
 - **Card failure counters.** Trial authentication makes failed
   `AuthenticateEV2First` attempts on a household card: fewer per tap than the
   number of enrolled cards. Check the NTAG 424 DNA failed-authentication
@@ -400,7 +490,8 @@ which cites AN12196 for each. The application note itself was not fetched.
   every enrolled card has a key in the sealed store. A card without a key
   simply never authenticates. It does remove every key that neither the new
   roster nor a proposal still pending names as a card member (it discards the
-  proposals the new epoch made stale first).
+  proposals the new epoch made stale first). If that removal fails, the
+  roster is applied anyway and `card prune` retries it.
 - **The CLI signs only Ed25519 admin approvals.** ES256 enclave and FIDO2
   admin approvals are checked by the library, but they must be made
   elsewhere and imported with `--approval-file`.

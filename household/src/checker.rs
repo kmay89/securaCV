@@ -154,7 +154,9 @@ pub struct Checker {
     /// on time even if the wall clock is held back.
     home_deadline_ms: Option<u64>,
     /// End a current `home` at the next tick: a member was revoked, or the
-    /// roster on disk stopped verifying.
+    /// roster on disk stopped verifying. Cleared only once no `home` is
+    /// current (the `away` that ends it was published, or none was in
+    /// force), or a new `home` is authorized under the roster now held.
     end_home: bool,
 }
 
@@ -345,7 +347,9 @@ impl Checker {
     /// Call periodically (the server does, every second). In order:
     ///
     /// - a `home` that is no longer current, or past its monotonic deadline,
-    ///   or that a revocation or a stale roster ended, becomes `away`.
+    ///   or that a revocation or a stale roster ended, becomes `away` (if
+    ///   that publish fails, the next tick tries the `away` again; the
+    ///   ended `home` is never republished).
     ///   "Current" is [`Statement::is_current`] on the hub's own clock, so a
     ///   `home` also lapses at once if that clock steps back more than
     ///   [`crate::posture::MAX_SKEW_SECS`] behind its `issued_at`; the
@@ -356,16 +360,20 @@ impl Checker {
     ///   its `issued_at` is ahead of the hub's corrected clock (every witness
     ///   with a correct clock refuses it, rule 7).
     pub fn tick(&mut self, now_unix: u64, now_ms: u64) -> Result<()> {
-        let end_home = std::mem::take(&mut self.end_home);
         let cur = self.current;
         if cur.posture == HouseholdPosture::Home
-            && (end_home
+            && (self.end_home
                 || !cur.is_current(now_unix)
                 || self.home_deadline_ms.is_some_and(|d| now_ms >= d))
         {
+            // If this publish fails, `end_home` stays set, so the next tick
+            // tries the `away` again rather than republishing the `home`
+            // from the dirty seam below.
             self.issue(HouseholdPosture::Away, now_unix, None)?;
+            self.end_home = false;
             return Ok(());
         }
+        self.end_home = false;
         let from_future = cur.issued_at > now_unix.saturating_add(crate::posture::MAX_SKEW_SECS);
         if self.seam_dirty || from_future {
             let keep = (cur.posture == HouseholdPosture::Home).then_some(cur.not_after);
@@ -514,6 +522,10 @@ impl Checker {
         if target == HouseholdPosture::Home {
             self.home_deadline_ms =
                 Some(now_ms.saturating_add(self.home_ttl_secs.saturating_mul(1000)));
+            // This `home` was authorized under the roster now held (a stale
+            // roster refuses `home`), so a pending end was for the one it
+            // replaced.
+            self.end_home = false;
         }
         Ok(st)
     }
@@ -1258,6 +1270,56 @@ pub(crate) mod tests {
         c.mark_roster_stale();
         c.tick(T0, 5).unwrap();
         assert_eq!(c.current().posture, HouseholdPosture::Away);
+    }
+
+    #[test]
+    fn an_ended_home_stays_ended_when_the_away_fails_to_publish() {
+        // The verified hole: the end was taken before the away published,
+        // so after a failed publish the dirty-seam republish put the home
+        // back on the seam until it lapsed.
+        let seam = |p: &Probe| {
+            posture::decode_structure(&p.0.lock().unwrap().seam.unwrap())
+                .unwrap()
+                .posture
+        };
+        for revoke in [true, false] {
+            let (mut c, p) = probed();
+            let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+            c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+            if revoke {
+                let mut next = c.roster.successor().unwrap();
+                next.members.retain(|m| m.handle != [POSSESSION; 16]);
+                c.set_roster(next).unwrap();
+            } else {
+                c.mark_roster_stale();
+            }
+            p.0.lock().unwrap().fail_next_publish = true;
+            assert!(c.tick(T0, 2).is_err());
+            assert_eq!(c.current().posture, HouseholdPosture::Home);
+            c.tick(T0, 3).unwrap();
+            assert_eq!(c.current().posture, HouseholdPosture::Away);
+            assert_eq!(seam(&p), HouseholdPosture::Away, "the ended home came back");
+            c.tick(T0, 4).unwrap();
+            assert_eq!(seam(&p), HouseholdPosture::Away);
+        }
+    }
+
+    #[test]
+    fn a_home_set_after_a_revocation_is_not_ended_by_it() {
+        let (mut c, p) = probed();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        let mut next = c.roster.successor().unwrap();
+        next.members.retain(|m| m.handle != [POSSESSION; 16]);
+        c.set_roster(next).unwrap();
+        // The away that ends it fails, so the end is still pending...
+        p.0.lock().unwrap().fail_next_publish = true;
+        assert!(c.tick(T0, 2).is_err());
+        // ...when a member still enrolled sets home under the new roster.
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 3, T0).unwrap();
+        c.tick(T0, 4).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Home);
     }
 
     #[test]

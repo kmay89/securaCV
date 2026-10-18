@@ -25,16 +25,19 @@
 //!   `not_after`, and `seq.json`'s `last_seq` (whose value `>> 10` is that
 //!   minute), state the minute of the last posture change or `home`
 //!   renewal, and both files' modification times state its second. That was
-//!   a command (a renewed `home` included), a lapse or a restart. It is the
-//!   time of the last act, not a history;
+//!   a command (a renewed `home` included), a lapse, a roster change that
+//!   ended `home`, a republish (after a failed publish, or once a hub clock
+//!   that ran ahead is corrected) or a restart. It is the time of the last
+//!   act, not a history;
 //! - a proposal's `proposed_at` (an admin act, needed for the 24-hour rule),
 //!   deleted when the proposal is applied.
 //!
-//! Exclude this directory from backups: v0 does not, and cannot, do it for
-//! you. A restored copy rolls the roster high-water mark back with it; v0 has
-//! no satellite to remember it (see the README's limitations). The KEK lives
-//! outside it, so a copy of the directory alone does not open the sealed
-//! files.
+//! The KEK lives outside this directory, so a copy of the directory alone (a
+//! backup, a tarball) does not open the sealed files. Keeping the KEK out of
+//! every backup that holds the directory is the operator's job: v0 does not,
+//! and cannot, do it for you. A restored copy also rolls the roster
+//! high-water mark back with it; v0 has no satellite to remember it (see the
+//! README's limitations).
 
 use crate::admin::Approval;
 use crate::change::{self, HighWater, SignedRoster};

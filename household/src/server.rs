@@ -27,8 +27,11 @@
 //!
 //! Patterned on the kernel's `src/api/mod.rs`: a request is at most
 //! [`MAX_REQUEST_BYTES`] including a body of at most [`MAX_BODY_BYTES`]; every
-//! connection has an absolute budget of [`CONNECTION_BUDGET`] that each read
-//! and write timeout is cut to; one request per connection; a request-rate
+//! connection has an absolute budget of [`CONNECTION_BUDGET`] to send its
+//! request, each read timeout cut to what is left, and its response is
+//! written by the end of that budget or [`RESPONSE_WINDOW`] after routing,
+//! whichever is later (the request may already have changed the posture);
+//! one request per connection; a request-rate
 //! cap for paired clients; no chunked bodies. Connections are served on
 //! their own threads, at most [`MAX_CONNECTIONS`] at once and
 //! [`MAX_CONNECTIONS_PER_PEER`] from one peer (an IPv4 address or an IPv6
@@ -86,10 +89,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const MAX_REQUEST_BYTES: usize = 8192;
 /// Largest body accepted.
 pub const MAX_BODY_BYTES: usize = 4096;
-/// Longest a single read or write may block (always cut to what is left of
-/// the connection budget).
+/// Longest a single read or write may block (a read is always cut to what is
+/// left of the connection budget; the write, to its own deadline).
 pub const IO_TIMEOUT: Duration = Duration::from_secs(3);
-/// Absolute budget for one connection, reads and write included.
+/// Absolute budget for one connection to send its request. The response's
+/// write gets until this budget ends or [`RESPONSE_WINDOW`] after routing,
+/// whichever is later.
 pub const CONNECTION_BUDGET: Duration = Duration::from_secs(5);
 /// Most requests served per minute (all paired clients together).
 pub const MAX_REQUESTS_PER_MINUTE: usize = 600;
@@ -715,9 +720,10 @@ fn find_head_end(b: &[u8]) -> Option<usize> {
     b.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
-/// What is left of the connection budget for one blocking operation: at
-/// most [`IO_TIMEOUT`], and `None` once the budget is spent, so no read or
-/// write can outlast [`CONNECTION_BUDGET`].
+/// What is left before `deadline` for one blocking operation: at most
+/// [`IO_TIMEOUT`], and `None` once it has passed. Reads take the connection
+/// budget's end, so no read outlasts [`CONNECTION_BUDGET`]; the response's
+/// write takes its own deadline.
 fn time_left(deadline: Instant) -> Option<Duration> {
     let left = deadline.checked_duration_since(Instant::now())?;
     if left.is_zero() {
