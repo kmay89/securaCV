@@ -330,12 +330,12 @@ async function compile(plan) {
   await new Promise((resolve, reject) => {
     execFile(cxx, args, { maxBuffer: 64 << 20 }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(`LAB_CORES=native: ${cxx} could not build ${plan.name} from build.sh's ` +
+        reject(new Error(`native core: ${cxx} could not build ${plan.name} from build.sh's ` +
           `"${plan.flavor}" sources:\n${cxx} ${args.join(" ")}\n${stderr || err.message}`));
       } else resolve();
     });
   });
-  process.stderr.write(`LAB_CORES=native: ${plan.name} built from this tree's ${plan.sources.length} ` +
+  process.stderr.write(`native core: ${plan.name} built from ${plan.sources.length} ` +
     `"${plan.flavor}" sources with ${cxx} in ${((Date.now() - t0) / 1000).toFixed(1)} s\n`);
   return { plan, bin };
 }
@@ -513,8 +513,11 @@ function nativeFactory(name) {
 
 // instance, limits and channel are exported for native_cores.test.js, which
 // drives the pipe with a stand-in core (fake_core.js) instead of a compiled
-// one, and wakes the waiting thread from a second one (channel); build for
-// probe_cores.js, which compiles a core once before its probe's browser
-// starts and hands each page its own instance.
-module.exports = { coreFactory, buildPlan, build, exportsOf, exportTable, mode, CORES, instance, limits,
+// one, and wakes the waiting thread from a second one (channel); build
+// for probe_cores.js, which compiles a core once before its probe's browser
+// starts and hands each page its own instance; build, compile and instance
+// for cores_wasm32.test.js, which holds a wasm32-wasi build to the g++ one
+// whatever LAB_CORES says, and compiles a mutated copy of a core (compile
+// never caches) for its self-check.
+module.exports = { coreFactory, buildPlan, build, compile, exportsOf, exportTable, mode, CORES, instance, limits,
   channel: open };

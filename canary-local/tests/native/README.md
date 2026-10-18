@@ -176,11 +176,75 @@ what the sources compute with a 32-bit `long`; an undefined signed overflow
 can still come out one way from this clang and another from emscripten's,
 and the dist is still what ships.
 
+## Whole cores as wasm32-wasi, from the sources (`cores_wasm32.test.js`)
+
+The freestanding build above covers the box pipeline alone. The rest of the
+Vision core (`detect_config.cpp`, `presence_fsm.cpp`, `voxel_tracker.cpp`,
+the bindings' JSON) and the WAP audio core need a C library (`snprintf`),
+and the Vision shim's in-memory `Preferences` map needs the C++ library.
+So [`wasi.js`](wasi.js) builds each whole core a third way: `build.sh`'s
+sources, flags and include paths for the core (read through `cores.js`'s
+`buildPlan`, not copied), compiled one source at a time by the host's clang
+with `--target=wasm32-wasi` against a WASI sysroot (wasi-libc, libc++ and
+libc++abi, compiler-rt's wasm32 builtins), beside a one-macro
+`<emscripten.h>` and [`wasm32/wasi_support.cpp`](wasm32/wasi_support.cpp).
+`wasm-ld` links it as a WASI reactor that exports each
+`EMSCRIPTEN_KEEPALIVE` function by name (a name it cannot find fails the
+link) and refuses any undefined symbol. `node:wasi` runs it, and the module
+it hands the test has the dist's shape: `cwrap`, and `ccall`,
+`UTF8ToString` and the `HEAP` views where `build.sh` exports them, with
+emscripten's conversions.
+
+```sh
+node --test canary-local/tests/cores_wasm32.test.js
+```
+
+The test checks that each wasm32 core's `long` is 32 bits (read from the
+module) and the g++ build's 64 (read from the compiler), that the module
+imports only WASI calls (libc's stdio) and exports what the plan declares
+and nothing else, and that its runtime methods are the dist's. Then it
+drives each wasm32 core next to the g++ build from `cores.js`, call for
+call, on the scenarios `native_cores.test.js` holds the native build to the
+dist with ([`scenarios.js`](scenarios.js)), and every answer must agree.
+Its last test puts a `long` back in each core, in a scratch copy: A42's
+posture products in the Vision pipeline, and the audio RMS's sum of
+squares, which reaches about 1e10 on a loud frame. It requires the g++
+build of each mutant to answer as the sources do and the wasm32 build to
+answer some call otherwise, so the comparison is shown to see what it is
+there for. On the tree here the audio mutant reads the first loud frame's
+level as 2270 where the sources say 5656, and the Vision one reads a box
+240 pixels wide and two billion tall as `ambiguous` where the sources say
+`upright`. The two builds take about 4 s and
+1 s; the whole file took 35 to 45 s here, on a shared 4-CPU machine.
+
+It needs what `vision_wasm32.test.js` needs (a `clang++` with a wasm32
+target, `wasm-ld`, `$CXX`, found the same way) and a WASI sysroot that clang
+finds for that target. On Ubuntu that is four packages built for clang's own
+version `<n>`: `wasi-libc`, `libc++-<n>-dev-wasm32`,
+`libc++abi-<n>-dev-wasm32` and `libclang-rt-<n>-dev-wasm32`. Elsewhere,
+point `WASI_SYSROOT` at one (a wasi-sdk's `share/wasi-sysroot`). Where a
+part is missing the tests skip and say which, with the package that ships
+it; `CORES_WASM32=require` makes that a failure instead. CI installs the
+four packages for clang 18 and runs the file in its own step with
+`CORES_WASM32=require` and `WASM32_CLANGXX=clang++-18`, whenever the dist
+step ran. Ubuntu's libc++abi for wasm32-wasi is built without exceptions
+yet its `operator new` still names `__cxa_throw`; the cores build with
+`-fno-exceptions`, as `build.sh`'s em++ calls do, so `wasi_support.cpp`
+defines that pair (weakly) to abort, as emscripten does where a throw would
+be. `node:wasi` prints an experimental-feature warning on Node 22.
+
+It is the host's clang and wasi-libc, not emscripten (whose C library is
+its own musl), and it is not the dist. It settles what the sources compute
+in wasm32 with a 32-bit `long`, on the calls those scenarios make; an
+undefined signed overflow, or a libm that rounds otherwise, can still come
+out one way here and another in the dist, and the dist is still what ships.
+
 ## Which tests drive a dist core
 
 Only `vision.test.js`, `eyes.test.js` and `audio.test.js` `require()` a core
 in Node, and all three take it through `cores.js` (`native_cores.test.js`
-holds that); `vision_wasm32.test.js` builds its own and loads no dist.
+holds that); `vision_wasm32.test.js` and `cores_wasm32.test.js` build their
+own and load no dist.
 
 ## The browser probes on the tree's sources
 

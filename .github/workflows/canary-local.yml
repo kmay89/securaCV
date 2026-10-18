@@ -496,7 +496,7 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # six test steps below records the repo paths it reads (node: opens,
+      # seven test steps below records the repo paths it reads (node: opens,
       # stats, listings, existence checks; python3: opens and listings only,
       # CPython audits no stat or exists call; shell tools such as the Witness
       # Wall step's cmp are not recorded), and the step after the last of them
@@ -633,6 +633,45 @@ jobs:
           NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
           PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
         run: node --test canary-local/tests/vision_wasm32.test.js
+      - name: WASI sysroot for the runner's clang 18 (Ubuntu's wasi-libc, libc++, libc++abi, compiler-rt)
+        # Sweep A58. The next step builds whole cores for wasm32-wasi, which
+        # needs what the image's clang has no copy of for that target: a C
+        # library and its headers, libc++ and libc++abi, and compiler-rt's
+        # wasm32 builtins. These are noble's packages, built for clang 18
+        # (the clang the next step pins), about 3 MB from the Ubuntu archive;
+        # no emsdk, nothing fetched from anywhere else. Same `if:` as the
+        # steps above, so the next step can say what is missing if this one
+        # fails.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends wasi-libc libc++-18-dev-wasm32 libc++abi-18-dev-wasm32 libclang-rt-18-dev-wasm32
+      - name: Whole Vision and WAP audio cores as wasm32-wasi, call for call against g++ (the runner's clang 18 + wasi-libc, not emscripten)
+        # Sweep A58. vision_wasm32.test.js, two steps up, builds the Vision
+        # box pipeline alone, freestanding. tests/native/wasi.js builds each
+        # whole core (build.sh's sources, flags and include paths, read by
+        # cores.js) for wasm32-wasi with clang 18 against the sysroot above,
+        # node:wasi runs it, and cores_wasm32.test.js drives it next to the
+        # g++ build on the scenarios native_cores.test.js uses. It then puts
+        # a long back in each core, in a scratch copy (A42's posture products,
+        # the audio RMS's sum of squares), and requires the wasm32 build to
+        # catch what the g++ build misses. Red here on a core change means
+        # the sources compute something else with a 32-bit long (the dist's
+        # and the ESP32's) than with the runner's 64-bit one, or the two
+        # toolchains resolve an input otherwise. It is not emscripten, and not
+        # the dist.
+        # CORES_WASM32=require makes a missing tool or sysroot part a failure
+        # that names it, not a skip; WASM32_CLANGXX pins the clang the
+        # packages above are built for. It reads the sources, not the dist,
+        # so it runs whenever the dist step ran, red or green.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        env:
+          CORES_WASM32: require
+          WASM32_CLANGXX: clang++-18
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: node --test canary-local/tests/cores_wasm32.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -762,7 +801,7 @@ jobs:
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Every file the logic tests read is inside this workflow's path filter
-        # Reads the recordings the six test steps above left (the suites are
+        # Reads the recordings the seven test steps above left (the suites are
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test
