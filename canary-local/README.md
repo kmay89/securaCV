@@ -331,7 +331,11 @@ explained and linked (the firmware document generated from the build
 inputs, committed and schema-validated on every PR; the Rust and Node
 documents produced by `sbom.yml`; see `sbom/README.md`) — all emitted into
 `devices/build.json` by the same generator, drift-gated, so "how to
-build it" can never silently rot.
+build it" can never silently rot. The same file carries each printable
+set's hardware as the case's own `HARDWARE` echo counts it (from
+`docs/hardware/enclosure/hardware.json`, under each device's `hardware`).
+No page draws that list yet; `tests/assembly.test.js` holds the Assemble
+tab's screws to it.
 
 Live parameter re-rendering in the browser (openscad-wasm) is a wave-2
 hook: the lab's data model already carries everything it needs (the full
@@ -429,8 +433,12 @@ built procedurally to the BOM's sizes (`assembly.js`). Only the *choreography* �
 seated transforms, explode/insert vectors, camera, which part appears when — is
 authored, in `devices/assembly.json`. `tests/assembly.test.js` gates the honesty:
 every part resolves to a file that exists, every quoted step maps to a real
-build.json README step, and every claimed quantity matches the BOM (a `×4`
-screws badge can't drift from the BOM's four). The ribbon says so to your face:
+build.json README step, every claimed quantity matches the BOM (a `×4`
+screws badge can't drift from the BOM's four), and every screw the tab drives
+is one the case's own `HARDWARE` echo counts for the build it shows, at the
+echoed size, head, length and count (`build.json` carries each printable
+set's hardware from `docs/hardware/enclosure/hardware.json`; the known gaps
+are listed in the test). The ribbon says so to your face:
 *"every part is the real thing… the choreography is staged."*
 
 | Piece | File |
