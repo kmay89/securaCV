@@ -4715,7 +4715,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"g_nearby_view\.attach\(&g_view_tables->nearby\)",
               "g_nearby_view.attach(&g_view_tables->scratch.nearby)")),
     ("chirp update() re-attaches the recent view",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 g_recent_view.attach(nullptr);")),
     # Rule CV5: every change to the tables is marked for the view.
     ("a chirp frame no longer marks the tables",
@@ -4726,7 +4726,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, r"\bstatic\s+void\s+send_presence\s*\(\s*\)", r"(ChirpHeader\*\s+hdr\s*=)",
               r"g_recent_chirp_count = 0; \1")),
     ("chirp update() handles a presence frame itself",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 handle_presence(nullptr, 0, 0);")),
     # Rule CV6: the routes answer the keys they always did.
     ("the Chirp status route renames recent_chirps",
@@ -4848,7 +4848,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, r"\bconst\s+char\s*\*\s*cannot_send_reason\s*\([^)]*\)",
               r"if\s*\(v\.cooldown_remaining_ms\s*>\s*0\)", "if (v.state == CHIRP_COOLDOWN)")),
     ("update() ends a cooldown state after its drain again",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 if (g_state == CHIRP_COOLDOWN && get_cooldown_remaining_ms() == 0) set_state(CHIRP_ACTIVE);")),
     ("the recent route shows dismissed chirps (h06)",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"\n[ \t]*if\s*\(chirps\[i\]\.dismissed\)\s*continue;",
