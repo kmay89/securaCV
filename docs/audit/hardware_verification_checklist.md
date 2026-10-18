@@ -1986,6 +1986,45 @@ window). Compile is CI's. Owner: U1.
     replayed just after A's 5-minute filter reset came back unsuppressed.
   - Artifact: `docs/audit/repro/F269/suppressed-stops/`.
 
+## canary-wap Chirp: the cooldown tiers reset after 24 quiet hours and outlive a disable (F193) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`expire_stale_tiers()` resets the tiers when `now - last_chirp_ms` passes
+`COOLDOWN_RESET_MS`, 24 h, on every `update()` pass, on or off, and before a
+send; `enable()` keeps them; the count stops at 255) and `mesh_network.h`
+(`CooldownState`). The tiers live in RAM: a reboot clears them. Host-tested
+(`tests_host/test_chirp_commands_wap.cpp`:
+`the_tiers_reset_24_quiet_hours_after_the_last_send`,
+`a_send_that_ends_a_quiet_day_counts_from_tier_1`,
+`a_disable_keeps_the_tiers`, `the_tier_count_stops_at_255`). Compile is
+CI's. Owner: U1.
+
+- [ ] **Turning Chirp off and on keeps the cooldown; a reboot clears it**
+  - Setup: one canary-wap with a GPS fix (the clock set), Chirp on for ten
+    minutes, the web UI open on Community > Chirp.
+  - Repro: send a chirp; send a second when the 5-minute countdown ends;
+    turn Chirp off and on at once; press Send; wait ten minutes and press
+    Send; press Send again when the countdown ends. Then power-cycle the
+    board, turn Chirp on, wait ten minutes and send.
+  - Expected: after the off and on, `GET /api/chirp` reads `"state":"cooldown"`
+    with `"cooldown_tier":2` and a new session emoji; the first press is
+    refused `presence_required`; the press ten minutes on is refused
+    `cooldown` with about 5 minutes left, tier 2 (before F193 it went out,
+    tier 1); the send when the countdown ends goes out at tier 3. After the
+    power cycle `GET /api/chirp` reads `"cooldown_tier":0` and the send goes
+    out at tier 1. The health log's `chirp sent` lines end `tier 1)`,
+    `tier 2)`, `tier 3)`, `tier 1)`.
+  - Artifact: `docs/audit/repro/F193/off-on-keeps-tier/`.
+- [ ] **24 hours with no send reset the tiers, on or off**
+  - Setup: as above.
+  - Repro: send three chirps, each when the last countdown ends (tier 3);
+    turn Chirp off; read `GET /api/chirp` 23 hours later and again 25 hours
+    after the third send; turn Chirp on, wait ten minutes and send.
+  - Expected: at 23 hours `"cooldown_tier":3`; at 25 hours
+    `"cooldown_tier":0` and `"last_chirp_sent_ms":0` with the channel still
+    `disabled`; the send goes out at tier 1, with a 5-minute countdown.
+  - Artifact: `docs/audit/repro/F193/quiet-day-resets/`.
+
 ## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
