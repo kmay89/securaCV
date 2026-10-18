@@ -25,6 +25,7 @@
 #include "network/setup_portal_logic.h"
 #include "network/wifi_credential_policy.h"
 #include "network/wifi_join_policy.h"
+#include "network/onboarding_fsm.h"
 
 namespace canary {
 namespace net {
@@ -60,6 +61,10 @@ struct Ctx {
   bool saw_station = false;   // any phone has EVER associated this session
   bool stuck_hinted = false;
   char product_json[64] = {0};  // pre-escaped product name for /scan
+  bool creds_submitted = false; // a phone handed credentials this session (onboarding_fsm.h "provisioning")
+  char join_name[33] = {0};     // the wizard's optional "name it" field
+  char join_tz[64] = {0};       // the phone's IANA zone (the page's Intl API)
+  char ap_ssid[onboard::SSID_CAP] = {0};
 };
 
 Ctx* g = nullptr;
@@ -154,6 +159,9 @@ footer{margin-top:26px;text-align:center;color:var(--faint);font-size:12px}
   </div>
   <div class="hint" id="pwhint">The password you already use for this network, exactly as your router has it. Nothing to invent.</div>
   <div class="hint" id="opennote" style="display:none">Open network — no password needed.</div>
+  <div class="field" id="nmf">
+    <input id="nm" placeholder="Name it (optional), like Hallway" maxlength="32" autocomplete="off" autocorrect="off">
+  </div>
   <div id="msg"></div>
   <button id="join">Join</button>
 </div>
@@ -208,10 +216,11 @@ var ssid=$('ssidf').style.display!=='none'?$('ssid').value.trim():sel;
 if(!ssid){$('msg').textContent='Enter the network name.';return}
 busy=true;var b=$('join');b.disabled=true;
 b.innerHTML='<span class="spin"></span>Joining…';$('msg').textContent='';
-var body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent($('pw').value);
+var body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent($('pw').value)+'&name='+encodeURIComponent($('nm').value.trim())+'&tz='+encodeURIComponent(tz());
 fetch('/join',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
 .then(function(){poll()})
 .catch(function(){fail('Lost the device — rejoin its setup network and retry.')})};
+function tz(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){return''}}
 function poll(){fetch('/status').then(function(r){return r.json()})
 .then(function(j){if(j.state==='success'){win()}
 else if(j.state==='fail'){fail(j.reason||'Could not connect.')}
@@ -325,6 +334,7 @@ bool begin_join(const char* ssid, const char* pass, uint32_t now_ms) {
   snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid);
   snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass ? pass : "");
   g->fail_reason[0] = '\0';
+  g->creds_submitted = true;
 
   // WAP lessons, in order: clear ANY scan handle — running OR completed-but-
   // unharvested — clear stale STA state, then a non-blocking begin. The AP
@@ -348,6 +358,22 @@ bool begin_join(const char* ssid, const char* pass, uint32_t now_ms) {
 void handle_join() {
   const String ssid = g->server.arg("ssid");
   const String pass = g->server.arg("pass");
+  // The optional fields ride along and are stored only once the join worked
+  // (the same persist-on-success rule as the credentials). The zone is
+  // charset-checked: an IANA name is letters, digits, "_", "/", "+", "-".
+  snprintf(g->join_name, sizeof(g->join_name), "%s", g->server.arg("name").c_str());
+  {
+    const String tz = g->server.arg("tz");
+    size_t o = 0;
+    for (size_t i = 0; i < tz.length() && o + 1 < sizeof(g->join_tz); i++) {
+      const char c = tz[i];
+      const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == '_' || c == '/' || c == '+' || c == '-';
+      if (!ok) { o = 0; break; }
+      g->join_tz[o++] = c;
+    }
+    g->join_tz[o] = '\0';
+  }
   // Name the refusal: the iPhone's SetupPortalClient and the Lab read
   // `reason` back, and "bad request" taught nobody anything.
   const auto verdict = wifi_credential::check(ssid.c_str(), pass.c_str());
@@ -533,15 +559,17 @@ bool setup_portal_begin(const SetupPortalConfig& cfg) {
   // (see the mint note above).
   const char* suffix =
       (cfg.id_suffix && cfg.id_suffix[0]) ? cfg.id_suffix : "CNRY";
-  char ap_ssid[24];
-  if (pass_durable) {
-    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", suffix);
-  } else {
+  char tag[3] = {0};
+  if (!pass_durable) {
     uint8_t tag_rnd[8];
     esp_fill_random(tag_rnd, sizeof(tag_rnd));
-    char tag[3];
     render_password(tag_rnd, sizeof(tag_rnd), tag, sizeof(tag));
-    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s-%s", suffix, tag);
+  }
+  // SecuraCV-<node type>-<4 chars>[-<tag>] — onboarding_fsm.h's one builder.
+  char* ap_ssid = g->ap_ssid;
+  if (onboard::ap_ssid(ap_ssid, sizeof(g->ap_ssid), cfg.node_type, suffix,
+                       pass_durable ? nullptr : tag) == 0) {
+    snprintf(ap_ssid, sizeof(g->ap_ssid), "SecuraCV-%.4s", suffix);
   }
 
   // persistent(false) BEFORE the first radio call: with Arduino persistence
@@ -566,8 +594,14 @@ bool setup_portal_begin(const SetupPortalConfig& cfg) {
     return false;
   }
 
-  Serial.printf("[SETUP] Setup network up: \"%s\"  password %s  (channel %u)\n",
-                ap_ssid, ap_pass, (unsigned)channel);
+  {
+    // The label a flasher reads off the wire, then the same network as a
+    // scannable code — both from onboarding_fsm.h so every board prints the
+    // lines the flashers parse.
+    char line[200];
+    if (onboard::announce_line(line, sizeof(line), ap_ssid, ap_pass, channel) > 0) Serial.println(line);
+    if (onboard::qr_line(line, sizeof(line), ap_ssid, ap_pass) > 0) Serial.println(line);
+  }
   Serial.println("[SETUP] Join it from a phone - the setup page opens by itself"
                  " (or open http://192.168.4.1/).");
 
@@ -644,6 +678,10 @@ void setup_portal_loop(uint32_t now_ms) {
           }
           Serial.printf("[SETUP] Joined \"%s\"  IP=%s\n", g->join_ssid,
                         WiFi.localIP().toString().c_str());
+          if (g->cfg.save_identity != nullptr && (g->join_name[0] || g->join_tz[0]) &&
+              !g->cfg.save_identity(g->join_name, g->join_tz)) {
+            Serial.println("[SETUP] Store refused the name/time zone - kept for this boot.");
+          }
         } else {
           Serial.printf("[SETUP] Saved network is back  IP=%s\n",
                         WiFi.localIP().toString().c_str());
@@ -702,6 +740,8 @@ bool setup_portal_submit_join(const char* ssid, const char* pass, uint32_t now_m
   // would yank it. The caller answers its door with "busy" (Improv: a refused
   // write), and the verdict of the join in flight still arrives.
   if (g->st == St::Testing) return false;
+  g->join_name[0] = '\0';
+  g->join_tz[0] = '\0';
   return begin_join(ssid, pass, now_ms);
 }
 
@@ -736,6 +776,10 @@ void setup_portal_stop() {
   if (g == nullptr) return;
   teardown(/*joined=*/false);
 }
+
+bool setup_portal_credentials_submitted() { return g != nullptr && g->creds_submitted; }
+
+const char* setup_portal_ap_ssid() { return g != nullptr ? g->ap_ssid : ""; }
 
 }  // namespace net
 }  // namespace canary

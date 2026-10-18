@@ -37,7 +37,8 @@ common/
 │   ├── birth_day.h     # when a key was born — written once, never restated (host-tested)
 │   └── key_at_rest.h   # tier / wire label / allow-refuse for the identity key's NVS home (host-tested)
 ├── io/             # Buttons and other inputs the firmware reads
-│   └── short_tap.h    # a debounced short press (≥40 ms, <700 ms) told apart from the long holds other gestures own — the BOOT tap that opens the Bluetooth setup door (host-tested)
+│   ├── short_tap.h    # a debounced short press (≥40 ms, <700 ms) told apart from the long holds other gestures own — the BOOT tap that opens the Bluetooth setup door (host-tested)
+│   └── reset_hold.h   # the long hold: warn at 3 s, factory reset (credentials + settings, identity kept) at 10 s, an opt-in wipe stage; each once per press (host-tested)
 ├── link/           # Canary Link: wire frame, node table, relay, replay window, session (pure, host-tested)
 ├── mqtt/           # mqtt_offline_queue.h — the MQTT offline publish queue (pure logic)
 ├── network/        # Network modules
@@ -46,6 +47,16 @@ common/
 │   ├── tls_policy.h             # the canary's self-signed HTTPS decisions (F15; host-tested)
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h
+│   ├── wifi_credential_policy.h # the home Wi-Fi password rule: SSID 1..32, password 0..64, NO minimum, and the words beside the field (host-tested; JS/Rust/Swift twins)
+│   ├── onboarding_fsm.h         # the fleet's ONE onboarding state machine: the five state words, the 2-minute AP hold after a join, the 10-minute recovery re-raise without a wipe, the 10 s reset hold, the SecuraCV-<type>-<XXXX> name and the serial label lines the flashers parse (host-tested)
+│   ├── wifi_store.h             # saved networks: a four-slot ring, dedupe/evict, the pick rule, a CRC-checked NVS blob (host-tested)
+│   ├── node_status.h            # the GET /api/status body every node serves (pure writer, host-tested)
+│   ├── wifi_supervisor.{h,cpp}  # the headless boards' one Wi-Fi supervisor: boot join, backoff, the portal, recovery, the ring, the clock (sense / vision / sentinel keep a thin wifi_mgr.cpp shim)
+│   ├── node_http.{h,cpp}        # the headless boards' /api/status + /api/fleet server, up while online and the portal is down
+│   ├── mdns_txt.h               # the one _securacv._tcp TXT schema every node advertises (device_id name host fw model dt role hw caps coord broker bport [tls secure_port]) (host-tested)
+│   ├── fleet_key.h              # the household fleet key: HKDF of the Wi-Fi the owner handed the node (an open network refuses), the truncated HMAC tag, hub rotation (host-tested; docs/TRUST_MODEL.md)
+│   ├── peer_protocol.h          # the hub-less mesh: authenticated heartbeat/event frames on the beacon's multicast group, the peer table with its replay window, oldest-uptime-wins coordination that yields to a hub (host-tested)
+│   ├── peer_link.{h,cpp}        # its socket: one lwIP UDP socket on the beacon group, arm with the network on the air (an open network leaves it off), heartbeats, unicast events to the coordinator (sense / vision / sentinel compile it)
 │   ├── mqtt_transport_logic.h   # broker socket decision: plain / TLS-CA / pinned / lab, fail-closed (host-tested)
 │   ├── mqtt_transport.h         # its WiFiClientSecure half for the PubSubClient products (header-only)
 │   ├── setup_portal*.{h,cpp}
@@ -63,6 +74,7 @@ common/
 │   └── nvs_session_depth.h  # NvsManager's per-task session count under its cross-task lock (host-tested)
 ├── story/          # story.h, story_scripts.h — the Canary's performance engine
 ├── time/           # tz_rule.h — the fleet's one IANA → POSIX TZ table and the local minute-of-day
+│                   # clock_sync.h — whom a node asks for the time (pool, nist, the hub third) and when it may believe its clock (host-tested)
 ├── ui/             # console scenes/theme/wake, fleet_view.h, randomart.h (host-testable)
 ├── usb/            # usb_onboard_logic.h — USB onboarding core logic (host-testable)
 └── witness/        # Witness chain management
