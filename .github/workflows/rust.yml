@@ -21,6 +21,9 @@ on:
       # The kernel's fleet_document test pins its /api/fleet bytes to this
       # vector, shared with the Apple TV core (src/api tests).
       - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
+      # The attention engine's conformance vectors, replayed by the
+      # alert-relay lane's src/relay/attention.rs tests.
+      - 'spec/fixtures/attention_v1.json'
       - '.github/workflows/rust.yml'
   pull_request:
     branches: [ "main" ]
@@ -39,6 +42,9 @@ on:
       # The kernel's fleet_document test pins its /api/fleet bytes to this
       # vector, shared with the Apple TV core (src/api tests).
       - 'tvos/witness-core/tests/fixtures/fleet_contract_vectors.json'
+      # The attention engine's conformance vectors, replayed by the
+      # alert-relay lane's src/relay/attention.rs tests.
+      - 'spec/fixtures/attention_v1.json'
       - '.github/workflows/rust.yml'
 
 env:

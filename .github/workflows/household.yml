@@ -1,0 +1,93 @@
+name: Household Keys
+
+# household/ is the hub-side household-key checker (package household-keys):
+# the roster and its change rules, single-use challenges, the es256 /
+# fido2-es256 / NTAG 424 DNA verifiers, the signed household posture
+# statement and the bounded LAN API. It is a standalone crate with its own
+# Cargo.lock and an empty [workspace], deliberately NOT a feature of the
+# root witness-kernel crate (docs/research/face_id_without_faces.md §6.5:
+# a separate crate and process, so kernel code cannot link it). rust.yml's
+# path filter does not cover household/, so this workflow is its only CI.
+#
+# Every test it runs reads only files under household/, so the path list is
+# the crate plus this file (CI.md R5-R7). If a test ever reads a shared
+# fixture outside household/ (spec/fixtures/...), add it to BOTH lists.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'household/**'
+      - '.github/workflows/household.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'household/**'
+      - '.github/workflows/household.yml'
+
+# Read-only token: this workflow only checks out and runs cargo.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# PRs collapse per branch; each main commit gets its own group (CI.md R3).
+concurrency:
+  group: household-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (household-keys)
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: household
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: household -> target
+          key: household
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Docs (warnings are errors)
+        run: cargo doc --locked --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+      # Plain `cargo test` (not --all-targets) so doctests run too. This
+      # includes the AN12196 AuthenticateEV2First vectors, the canonical-JSON
+      # vector pinned from the root crate's rules, the binary end-to-end test
+      # (init → genesis → enroll → serve → client) and the sentinel tests.
+      - name: Test
+        run: cargo test --locked
+
+  # Cargo.toml claims rust-version 1.89 (aes 0.9.3's floor). This leg is
+  # what makes the claim true rather than a comment.
+  msrv:
+    name: msrv 1.89 (household-keys)
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: household
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Rust 1.89
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: household -> target
+          key: household-msrv
+      - name: Check at the declared minimum Rust version
+        run: cargo check --locked --all-targets

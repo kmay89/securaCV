@@ -36,6 +36,7 @@ Canonical specification documents (authoritative sources; do not duplicate witho
 | [`canary_free_signals_v0.md`](canary_free_signals_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — RF presence signals (mesh fallbacks: flag report F-08; CSI itself is documented in `docs/csi_wifi_sensing_research.md`) |
 | [`canary_mesh_network_v0.md`](canary_mesh_network_v0.md) | Draft v0.4 | Normative (intended) | 🟡 Draft — ESP-NOW/BLE mesh (see F-08; **ESP-NOW only, relay not built** — `docs/FLEET_SEMANTICS.md` §6; §4.5 one wire registry for both firmware trees, **awaiting crypto review, not bench-verified**) |
 | [`gossip_replication_v0.md`](gossip_replication_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — mesh gossip replication (see F-08) |
+| [`household_keys_v0.md`](household_keys_v0.md) | Draft v0.1 | Normative (intended) | 🟡 Draft — household keys, the signed household-posture statement and the hub's attention rules; the hub side (checker, LAN API, attention engine, vectors) is host-tested, while the key satellite, the phone and watch clients and every witness-side consumer are **not built**, and nothing has been on a bench or had an external security review |
 | [`beacon_cap_gateway_v0.md`](beacon_cap_gateway_v0.md) | Draft v0.1, **specification only** | Informational | ⚪ Spec-only — explicitly **not implemented** until a future release |
 
 External canonical source (not under `spec/`): [`kernel/architecture.md`](../kernel/architecture.md).

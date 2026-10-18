@@ -340,6 +340,683 @@
       "sentinel"
     ]
   },
+  "household_posture": {
+    "$comment": "The household posture: the one thing a household key may change (docs/research/face_id_without_faces.md \u00a76; spec/household_keys_v0.md \u00a72). A posture change is a deliberate, signed act that applies to every event equally; it never rewords, demotes, quiets, collapses or delays a specific witnessed event. It is called the household posture everywhere and never bare `posture`, which already means BODY posture in Vision event JSON (upright / ambiguous / horizontal). `wire` is the posture byte (offset 5) of the signed 112-byte posture statement (magic SCVP, version 1). `unset` has no wire byte because it is never signed: it is what a consumer uses when no statement is available or none passes verification (missing, lapsed, signature not checked against the pinned hub key, another household's, replayed, issued more than 5 minutes ahead of the witness's clock, or no trusted clock to check it against), and it means exactly today's behavior: full sensing, and an attention engine that decides as if household posture did not exist. That is the fail-toward-today rule (research \u00a76.4 rule 6). `set_by` names the credential classes that may set a value (spec \u00a72 principle 4, intent lowers and possession only raises): home, the only value that lowers sensing, needs an intent credential. scripts/lint_dictionary_sync.py pins id, rust_variant and wire to src/relay/attention.rs `HouseholdPosture`, and the signed values' wire bytes to the household crate's `HouseholdPosture::as_byte` (household/src/posture.rs); set_by and the lapse bound in home's effect are recorded here but not yet gated.",
+    "values": [
+      {
+        "id": "unset",
+        "rust_variant": "Unset",
+        "wire": null,
+        "set_by": [],
+        "effect": "No valid statement is available. Today's behavior: full sensing everywhere, and the attention engine decides exactly as it does for away. Exists only as a consumer's input; never signed."
+      },
+      {
+        "id": "away",
+        "rust_variant": "Away",
+        "wire": 0,
+        "set_by": [
+          "intent",
+          "possession"
+        ],
+        "effect": "Full sensing everywhere. The default and the fail-safe."
+      },
+      {
+        "id": "home",
+        "rust_variant": "Home",
+        "wire": 1,
+        "set_by": [
+          "intent"
+        ],
+        "effect": "Witnesses configured indoor sense tamper only; outdoor, door and unclassified (unknown) witnesses are unchanged, and critical events are critical everywhere. Lapses: not_after is at most 86400 s (HOME_MAX_SECS) after issued_at, default 43200 s."
+      },
+      {
+        "id": "night",
+        "rust_variant": "Night",
+        "wire": 2,
+        "set_by": [
+          "intent",
+          "possession"
+        ],
+        "effect": "Full sensing everywhere. Reserved for a future after-hours rule set; in v0 it behaves exactly as away."
+      }
+    ]
+  },
+  "attention": {
+    "$comment": "The hub attention engine's vocabulary (spec/household_keys_v0.md \u00a77; docs/design/apple_watch_and_notifications.md \u00a71.1): how loudly the hub tells the household about one event, without identity. Mirrored by src/relay/attention.rs (the pure engine, run by rust.yml's `cargo test --features alert-relay relay::`), pinned by scripts/lint_dictionary_sync.py, and replayed from spec/fixtures/attention_v1.json by every surface that decides tiers. The rules, in the order the engine applies them: (1) a class whose floor is critical is critical whatever the posture, zone, channel, corroboration, novelty, dwell, hour, quiet hours or episode; (2) household posture home on an indoor witness gives none for everything else, the same outcome as the witness sensing tamper only, while outdoor, door and unknown zones are never affected by posture; (3) a class whose ceiling is digest stays digest; (4) an arrival seen on carried radio alone may use the device's own novelty hint, and nothing else may: familiar or unknown stays digest, unfamiliar with sustained dwell may be important, and the phrase and reason are the same whichever hint it was; (5) two or more independent modality classes agreeing, or a camera or radar person, may be important; (6) a single weak channel, or a single strong channel with nothing agreeing, is digest. Quiet hours then hold a digest for the morning summary and never hold important or critical (`held_for_morning`). Household posture unset, away and night give the same decision in v0. Three recorded divergences: quiet hours hold digest only here (spec \u00a77.2, 'Quiet hours hold digests'), while ios/Sources/SecuraCV/Alerts/QuietHours.swift holds everything but critical and the doctrine table's \u00a71.2 says digest and important; the Apple apps govern repeats per witness, this engine per (episode family, zone); and ios/Sources/SecuraCV/Alerts/RepeatGovernor.swift records the wall-clock now in every branch and does not move its last buzz back when the clock steps back, so after one late stray stamp it rests a continuous flap until the clock passes the stray by an earned rest, where this engine moves the episode back to the newest stamp (episode_governor) and resumes within one earned rest. All three are for the Apple apps to reconcile when they replay the vectors. Phrases and reason texts are closed: the only blank any of them has is {zone}, the operator's own name for the zone, filled from the operator's zone table and never from a topic or a payload. None of them says a name, known, unknown, stranger, intruder, recognized, verified, familiar, authorized or household, and the linter refuses one that does (spec \u00a77.2, 'No identity, ever'; Free Signals Invariant F and \u00a75).",
+    "version": 1,
+    "tiers": [
+      {
+        "id": "none",
+        "rust_variant": "None",
+        "rank": 0,
+        "meaning": "Not surfaced anywhere. Produced only for a non-critical event from an indoor witness while household posture is home: the hub emulates the witness sensing tamper only."
+      },
+      {
+        "id": "digest",
+        "rust_variant": "Digest",
+        "rank": 1,
+        "meaning": "Pull-only: never pushed, never sounds, visible on the next open and in the morning summary (iOS returns no level at all for it)."
+      },
+      {
+        "id": "important",
+        "rust_variant": "Important",
+        "rank": 2,
+        "meaning": "Time-sensitive, delivered once. On the LAN only: no important event has a cloud poke class."
+      },
+      {
+        "id": "critical",
+        "rust_variant": "Critical",
+        "rank": 3,
+        "meaning": "Delivered through quiet hours, repeats until acknowledged; the only tier with a cloud poke class."
+      }
+    ],
+    "zone_kinds": [
+      {
+        "id": "indoor",
+        "rust_variant": "Indoor",
+        "posture_applies": true,
+        "meaning": "Inside the home. The only kind household posture home acts on."
+      },
+      {
+        "id": "outdoor",
+        "rust_variant": "Outdoor",
+        "posture_applies": false,
+        "meaning": "Outside the home. Never affected by household posture."
+      },
+      {
+        "id": "door",
+        "rust_variant": "Door",
+        "posture_applies": false,
+        "meaning": "At an entry. Never affected by household posture."
+      },
+      {
+        "id": "unknown",
+        "rust_variant": "Unknown",
+        "posture_applies": false,
+        "meaning": "The operator has not classified the zone. Treated as never quieted: a zone nobody said is indoor is not indoor."
+      }
+    ],
+    "modalities": {
+      "$comment": "The physical modality classes corroboration counts, after firmware/common/fusion/sentinel_fusion.h `Modality`: evasion is defeated per class, so channels that die together count once (Wi-Fi and BLE on one phone are one carried-radio class; a light sensor and a camera are one optical class). `sentinel_variant` names the sentinel class each one is; acoustic has none because the sentinel has no microphone. max_classes is the cap on a corroboration count and equals the number of classes.",
+      "max_classes": 7,
+      "items": [
+        {
+          "id": "thermal",
+          "rust_variant": "Thermal",
+          "sentinel_variant": "Thermal"
+        },
+        {
+          "id": "radio_reflection",
+          "rust_variant": "RadioReflection",
+          "sentinel_variant": "RadioReflection"
+        },
+        {
+          "id": "channel_perturb",
+          "rust_variant": "ChannelPerturb",
+          "sentinel_variant": "ChannelPerturb"
+        },
+        {
+          "id": "carried_radio",
+          "rust_variant": "CarriedRadio",
+          "sentinel_variant": "CarriedRadio"
+        },
+        {
+          "id": "optical",
+          "rust_variant": "Optical",
+          "sentinel_variant": "Optical"
+        },
+        {
+          "id": "mechanical",
+          "rust_variant": "Mechanical",
+          "sentinel_variant": "Mechanical"
+        },
+        {
+          "id": "acoustic",
+          "rust_variant": "Acoustic",
+          "sentinel_variant": null
+        }
+      ]
+    },
+    "channels": {
+      "$comment": "The reporting channel of an event and the channels that agreed with it. `modality` is the class it counts as (every sentinel channel's class is pinned to firmware/common/fusion/sentinel_fusion.cpp modality_of by the linter; button and microphone are not sentinel channels). `weak` marks a channel that alone is at most digest (spec \u00a77.2 rule 6: radio, sound, motion heat, a light delta; and unknown, so a guess never earns interruption). `sees_person` marks the channels whose person classification may be important on its own (a camera, a radar). Novelty applies only to the carried_radio channels, and only when nothing else agreed. `unknown` has no modality and is never counted.",
+      "items": [
+        {
+          "id": "pir",
+          "rust_variant": "Pir",
+          "modality": "thermal",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "radar",
+          "rust_variant": "Radar",
+          "modality": "radio_reflection",
+          "weak": false,
+          "sees_person": true
+        },
+        {
+          "id": "wifi_csi",
+          "rust_variant": "WifiCsi",
+          "modality": "channel_perturb",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "wifi_rf",
+          "rust_variant": "WifiRf",
+          "modality": "carried_radio",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "ble",
+          "rust_variant": "Ble",
+          "modality": "carried_radio",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "light",
+          "rust_variant": "Light",
+          "modality": "optical",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "vision",
+          "rust_variant": "Vision",
+          "modality": "optical",
+          "weak": false,
+          "sees_person": true
+        },
+        {
+          "id": "contact",
+          "rust_variant": "Contact",
+          "modality": "mechanical",
+          "weak": false,
+          "sees_person": false
+        },
+        {
+          "id": "tamper",
+          "rust_variant": "Tamper",
+          "modality": "mechanical",
+          "weak": false,
+          "sees_person": false
+        },
+        {
+          "id": "button",
+          "rust_variant": "Button",
+          "modality": "mechanical",
+          "weak": false,
+          "sees_person": false
+        },
+        {
+          "id": "microphone",
+          "rust_variant": "Microphone",
+          "modality": "acoustic",
+          "weak": true,
+          "sees_person": false
+        },
+        {
+          "id": "unknown",
+          "rust_variant": "Unknown",
+          "modality": null,
+          "weak": true,
+          "sees_person": false
+        }
+      ]
+    },
+    "dwell_bands": {
+      "$comment": "How long the reporting witness says the presence has lasted, banded by the caller. Sustained is at least sustained_secs, the same 90 s as canary-wap notify.h MIN_SUSTAINED_MS (the linter pins both). In v0 only an arrival on carried radio alone reads it.",
+      "sustained_secs": 90,
+      "items": [
+        {
+          "id": "none",
+          "rust_variant": "None"
+        },
+        {
+          "id": "brief",
+          "rust_variant": "Brief"
+        },
+        {
+          "id": "sustained",
+          "rust_variant": "Sustained"
+        }
+      ]
+    },
+    "novelty": {
+      "$comment": "A device's own coarse novelty hint for an arrival seen on carried radio alone (canary-wap familiar.h). An internal input only: it defaults to unknown, its producer waits on the ADR the July 2026 audit requires (item E.16), and it never reaches a phrase, a reason, an event, MQTT or Home Assistant. It cannot make anything critical.",
+      "items": [
+        {
+          "id": "unknown",
+          "rust_variant": "Unknown"
+        },
+        {
+          "id": "familiar",
+          "rust_variant": "Familiar"
+        },
+        {
+          "id": "unfamiliar",
+          "rust_variant": "Unfamiliar"
+        }
+      ]
+    },
+    "episode_families": {
+      "$comment": "An episode is keyed by (family, zone slot): no device id, no time, no free text. Inside an episode the first decision notifies; a same-or-lower repeat collapses into it and notifies again only after its earned rest (episode_governor); a higher tier always notifies, and critical is never governed (spec \u00a77.2, 'One episode, one notification'). `cloud_class` is the relay poke class (src/relay/mod.rs `PokeClass` wire word) a critical decision of that family maps to; every other family has none, so household posture and activity never create a remote poke class.",
+      "items": [
+        {
+          "id": "tamper",
+          "rust_variant": "Tamper",
+          "cloud_class": "tamper"
+        },
+        {
+          "id": "integrity",
+          "rust_variant": "Integrity",
+          "cloud_class": "integrity"
+        },
+        {
+          "id": "dark",
+          "rust_variant": "Dark",
+          "cloud_class": "offline"
+        },
+        {
+          "id": "life_safety",
+          "rust_variant": "LifeSafety",
+          "cloud_class": "pattern"
+        },
+        {
+          "id": "someone",
+          "rust_variant": "Someone",
+          "cloud_class": null
+        },
+        {
+          "id": "visitor",
+          "rust_variant": "Visitor",
+          "cloud_class": null
+        },
+        {
+          "id": "breakage",
+          "rust_variant": "Breakage",
+          "cloud_class": null
+        },
+        {
+          "id": "sound",
+          "rust_variant": "Sound",
+          "cloud_class": null
+        },
+        {
+          "id": "opening",
+          "rust_variant": "Opening",
+          "cloud_class": null
+        },
+        {
+          "id": "vehicle",
+          "rust_variant": "Vehicle",
+          "cloud_class": null
+        },
+        {
+          "id": "animal",
+          "rust_variant": "Animal",
+          "cloud_class": null
+        },
+        {
+          "id": "object",
+          "rust_variant": "Object",
+          "cloud_class": null
+        },
+        {
+          "id": "other",
+          "rust_variant": "Other",
+          "cloud_class": null
+        }
+      ]
+    },
+    "episode_governor": {
+      "$comment": "Repeat governance, ported from the Apple apps' RepeatGovernor (ios/Sources/SecuraCV/Alerts/RepeatGovernor.swift; the linter pins its three constants too) so hub and phone rest a burst the same way: the first of an episode notifies; a same-or-lower repeat notifies again only after its earned rest (base_cooldown_secs doubling per notification to cooldown_cap_secs); calm_gap_secs with no repeat even considered ends the episode; a higher tier always notifies; critical is never governed; none is never considered. Seconds should come from the caller's monotonic clock. Out-of-order seconds are taken at face value, because the governor cannot tell which of two disagreeing stamps is the stray: the newest stamp wins. A stamp earlier than the last one its episode saw first moves that memory back to it (last seen becomes the stamp, last notified becomes no later than the stamp; the worst tier notified and the count of notifications stay), and the decision is then exactly the in-order one; every branch records the stamp it decided. So it fails toward noise, never toward silence: an early stray earlier than the last notification shortens the rest in progress (it is measured from the stray instead); and one stray stamp in either direction costs at most one restart of its episode (an early stray can end the episode up to a calm gap early; a late stray a calm gap past the episode notifies as a fresh one, and the next real stamp moves the memory back), which is one extra fresh-episode notification and the rests climbing again from base_cooldown_secs, as after any real calm gap; and it never mutes an episode beyond one earned rest from the next real stamp, however far in the future the stray was. An episode left at a late stray is dropped by the calm sweep (forget_calm) a calm gap after its last stamp once the next stamp has moved it back (or, if none comes, once the clock passes the stray by a calm gap); it holds nothing that mutes. The a_stray_* sequences in spec/fixtures/attention_v1.json pin both directions, at seconds up to 2^53 - 1.",
+      "base_cooldown_secs": 120,
+      "cooldown_cap_secs": 1800,
+      "calm_gap_secs": 1800
+    },
+    "phrase_ids": {
+      "$comment": "Phrases and reason texts are closed: the only blank any of them has is {zone}, the operator's own name for the zone, filled from the operator's zone table and never from a topic or a payload. None of them says a name, known, unknown, stranger, intruder, recognized, verified, familiar, authorized or household, and the linter refuses one that does (spec \u00a77.2, 'No identity, ever'; Free Signals Invariant F and \u00a75).",
+      "items": [
+        {
+          "id": "tamper_at_zone",
+          "rust_variant": "TamperAtZone",
+          "text": "Tamper reported at {zone}"
+        },
+        {
+          "id": "integrity_failed",
+          "rust_variant": "IntegrityFailed",
+          "text": "The witness log failed its integrity check"
+        },
+        {
+          "id": "dark_at_zone",
+          "rust_variant": "DarkAtZone",
+          "text": "A witness at {zone} went dark"
+        },
+        {
+          "id": "smoke_heard_at_zone",
+          "rust_variant": "SmokeHeardAtZone",
+          "text": "Smoke alarm heard at {zone}"
+        },
+        {
+          "id": "co_heard_at_zone",
+          "rust_variant": "CoHeardAtZone",
+          "text": "CO alarm heard at {zone}"
+        },
+        {
+          "id": "glass_break_heard_at_zone",
+          "rust_variant": "GlassBreakHeardAtZone",
+          "text": "Glass break heard at {zone}"
+        },
+        {
+          "id": "person_at_zone",
+          "rust_variant": "PersonAtZone",
+          "text": "Someone at {zone}"
+        },
+        {
+          "id": "activity_at_zone",
+          "rust_variant": "ActivityAtZone",
+          "text": "Activity at {zone}"
+        },
+        {
+          "id": "stayed_at_zone",
+          "rust_variant": "StayedAtZone",
+          "text": "Someone stayed a while at {zone}"
+        },
+        {
+          "id": "vehicle_at_zone",
+          "rust_variant": "VehicleAtZone",
+          "text": "Vehicle at {zone}"
+        },
+        {
+          "id": "animal_at_zone",
+          "rust_variant": "AnimalAtZone",
+          "text": "Animal at {zone}"
+        },
+        {
+          "id": "opening_at_zone",
+          "rust_variant": "OpeningAtZone",
+          "text": "Door or window activity at {zone}"
+        },
+        {
+          "id": "doorbell_at_zone",
+          "rust_variant": "DoorbellAtZone",
+          "text": "Doorbell at {zone}"
+        },
+        {
+          "id": "knock_heard_at_zone",
+          "rust_variant": "KnockHeardAtZone",
+          "text": "Knock heard at {zone}"
+        },
+        {
+          "id": "object_removed_at_zone",
+          "rust_variant": "ObjectRemovedAtZone",
+          "text": "Object removed from {zone}"
+        },
+        {
+          "id": "sound_heard_at_zone",
+          "rust_variant": "SoundHeardAtZone",
+          "text": "Loud sound heard at {zone}"
+        },
+        {
+          "id": "event_at_zone",
+          "rust_variant": "EventAtZone",
+          "text": "Event at {zone}"
+        }
+      ]
+    },
+    "reason_codes": {
+      "$comment": "Why a decision came out as it did: the 'why did or didn't I get this' trace (doctrine \u00a71.2), one closed code per rule. The reason names the rule, never an input the rule must not reveal: an arrival on carried radio alone has the same reason whatever its novelty hint was. Phrases and reason texts are closed: the only blank any of them has is {zone}, the operator's own name for the zone, filled from the operator's zone table and never from a topic or a payload. None of them says a name, known, unknown, stranger, intruder, recognized, verified, familiar, authorized or household, and the linter refuses one that does (spec \u00a77.2, 'No identity, ever'; Free Signals Invariant F and \u00a75).",
+      "items": [
+        {
+          "id": "critical_class",
+          "rust_variant": "CriticalClass",
+          "text": "Tamper, a log failure, a dark witness and a heard smoke or CO alarm are always critical."
+        },
+        {
+          "id": "home_indoor",
+          "rust_variant": "HomeIndoor",
+          "text": "Home posture: indoor witnesses report tamper only."
+        },
+        {
+          "id": "home_indoor_at_witness",
+          "rust_variant": "HomeIndoorAtWitness",
+          "text": "Home posture: this witness was sensing tamper only."
+        },
+        {
+          "id": "class_ceiling",
+          "rust_variant": "ClassCeiling",
+          "text": "This kind of event never interrupts on its own."
+        },
+        {
+          "id": "unclassified",
+          "rust_variant": "Unclassified",
+          "text": "An event this hub has no word for is never more than a digest."
+        },
+        {
+          "id": "rf_only_arrival",
+          "rust_variant": "RfOnlyArrival",
+          "text": "Seen on carried radio alone."
+        },
+        {
+          "id": "corroborated",
+          "rust_variant": "Corroborated",
+          "text": "Two or more independent kinds of sensing agreed."
+        },
+        {
+          "id": "camera_or_radar_person",
+          "rust_variant": "CameraOrRadarPerson",
+          "text": "A camera or a radar saw a person."
+        },
+        {
+          "id": "single_weak_channel",
+          "rust_variant": "SingleWeakChannel",
+          "text": "One weak channel alone (radio, sound, motion heat or light) is never more than a digest."
+        },
+        {
+          "id": "uncorroborated",
+          "rust_variant": "Uncorroborated",
+          "text": "Nothing independent agreed, so it waits in the digest."
+        }
+      ]
+    },
+    "classes": {
+      "$comment": "The coarse event classes. `floor_tier` is the tier a class gets when nothing earns it more; a critical floor is never lowered, and the only thing that takes a non-critical class below digest is household posture home on an indoor witness. `ceiling_tier` is the most a class can earn (corroboration, a camera or radar person, an unfamiliar sustained radio arrival). `person_class` marks the classes a camera or radar person classification may make important on its own. `family` keys the episode; `phrase` is the class's one closed phrase, so neither household posture nor novelty can change the wording.",
+      "items": [
+        {
+          "id": "tamper",
+          "rust_variant": "Tamper",
+          "floor_tier": "critical",
+          "ceiling_tier": "critical",
+          "family": "tamper",
+          "phrase": "tamper_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "integrity",
+          "rust_variant": "Integrity",
+          "floor_tier": "critical",
+          "ceiling_tier": "critical",
+          "family": "integrity",
+          "phrase": "integrity_failed",
+          "person_class": false
+        },
+        {
+          "id": "dark",
+          "rust_variant": "Dark",
+          "floor_tier": "critical",
+          "ceiling_tier": "critical",
+          "family": "dark",
+          "phrase": "dark_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "smoke_alarm_heard",
+          "rust_variant": "SmokeAlarmHeard",
+          "floor_tier": "critical",
+          "ceiling_tier": "critical",
+          "family": "life_safety",
+          "phrase": "smoke_heard_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "co_alarm_heard",
+          "rust_variant": "CoAlarmHeard",
+          "floor_tier": "critical",
+          "ceiling_tier": "critical",
+          "family": "life_safety",
+          "phrase": "co_heard_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "glass_break_heard",
+          "rust_variant": "GlassBreakHeard",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "breakage",
+          "phrase": "glass_break_heard_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "person",
+          "rust_variant": "Person",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "someone",
+          "phrase": "person_at_zone",
+          "person_class": true
+        },
+        {
+          "id": "presence",
+          "rust_variant": "Presence",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "someone",
+          "phrase": "activity_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "dwelling",
+          "rust_variant": "Dwelling",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "someone",
+          "phrase": "stayed_at_zone",
+          "person_class": true
+        },
+        {
+          "id": "vehicle",
+          "rust_variant": "Vehicle",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "vehicle",
+          "phrase": "vehicle_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "animal",
+          "rust_variant": "Animal",
+          "floor_tier": "digest",
+          "ceiling_tier": "digest",
+          "family": "animal",
+          "phrase": "animal_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "contact",
+          "rust_variant": "Contact",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "opening",
+          "phrase": "opening_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "doorbell",
+          "rust_variant": "Doorbell",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "visitor",
+          "phrase": "doorbell_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "knock",
+          "rust_variant": "Knock",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "visitor",
+          "phrase": "knock_heard_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "object_removed",
+          "rust_variant": "ObjectRemoved",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "object",
+          "phrase": "object_removed_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "sound_heard",
+          "rust_variant": "SoundHeard",
+          "floor_tier": "digest",
+          "ceiling_tier": "important",
+          "family": "sound",
+          "phrase": "sound_heard_at_zone",
+          "person_class": false
+        },
+        {
+          "id": "other",
+          "rust_variant": "Other",
+          "floor_tier": "digest",
+          "ceiling_tier": "digest",
+          "family": "other",
+          "phrase": "event_at_zone",
+          "person_class": false
+        }
+      ]
+    },
+    "class_map": {
+      "$comment": "Every event word the hub can see, in both dialects, mapped to one class. `kernel_event_types` is keyed by exactly the event_types ids above (the kernel's sealed vocabulary; src/relay/attention.rs matches the Rust EventType exhaustively, so a new kernel variant does not compile until it is mapped). `device_words` are the Canary wire words (the `event` of securacv/<id>/events, the acoustic chokepoint's type_name, the integrity words) that this dictionary deliberately does not govern as event types (ios/Shared/EventVocabulary.swift `DeviceEvent` says why). Matching is exact and case-sensitive. Any word not listed is `unknown_word_class`, whose ceiling is digest: an unknown word falls back to digest and is never critical; like every non-critical class it is none only under rule 2 (household posture home on an indoor witness, which the engine applies before rule 3). A message on securacv/<id>/tamper is tamper by its topic, whatever its kind or type word (as the relay's evaluate() already treats it), so those words are not listed. THE SEVERITY SETTLEMENT (2026-10-13). Three surfaces mapped events to severity and disagreed: the Apple apps (EventVocabulary.swift defaultSeverity, then AlertCenter.level(for:), where only the tamper rung is critical, only alert is important and everything lower is pull-only), the display (firmware/projects/canary-display/src/fleet/fleet_model.cpp classify_event, substring matches) and the relay (src/relay/mod.rs, four poke classes and no activity at all). This table settles them; a surface that disagrees with it is the bug. (1) chain_break, verify_failed, witness_lost: iOS alert (important); settled critical, beside tamper and the two heard life-safety cadences, as the doctrine table (apple_watch_and_notifications.md \u00a71.1) already says: tamper, chain-integrity failure, a witness declared dark. (2) smoke_alarm_t3, co_alarm_t4: iOS alert (important), display Alert (sounds through quiet hours), relay pattern at ntfy priority 5; settled critical, because a smoke alarm that honors quiet hours is a decoration (QuietHours.swift). Each keeps its own class and phrase: smoke and CO ask for different responses. (3) glass_break: iOS warn (pull-only), display Alert; settled digest alone, important when an independent class agrees, never critical. It is one microphone's cadence classification and a dropped glass makes the same sound (rule: a single weak channel is at most digest), and critical is reserved for what may pierce quiet hours. The display's Alert is the outlier. (4) doorbell, knock and the boundary, restricted-zone, after-hours and removed-object kernel events: iOS notice (pull-only), display Warn; settled digest alone and important when corroborated. A Vision doorbell press is two classes (its button and its camera) and is important; a doorbell heard by a microphone alone is digest. (5) person and presence words: iOS notice (never pushed today); settled by the corroboration rule, so a camera or radar person, or any two independent classes, may be important. That is new behavior on the LAN only: no important event has a cloud poke class, and the relay's vocabulary is unchanged (src/relay/mod.rs: widening it is a privacy decision). (6) panic stays tamper; iOS and the display already agree. (7) An unknown word: iOS and the display both fall to their calm floor; settled other, ceiling digest.",
+      "kernel_event_types": {
+        "boundary_crossing_object_large": "presence",
+        "boundary_crossing_object_small": "animal",
+        "acoustic_impulse_in_zone": "sound_heard",
+        "presence_in_restricted_zone": "presence",
+        "vehicle_presence_after_hours": "vehicle",
+        "contact_state_change": "contact",
+        "object_removed_from_zone": "object_removed",
+        "tamper_detected": "tamper",
+        "vehicle_arrival_departure": "vehicle"
+      },
+      "device_words": {
+        "person_detected": "person",
+        "presence_started": "person",
+        "dwell_started": "dwelling",
+        "interaction_likely": "dwelling",
+        "rf_presence_started": "presence",
+        "rf_dwell_started": "dwelling",
+        "motion_detected": "presence",
+        "vehicle_detected": "vehicle",
+        "animal_detected": "animal",
+        "doorbell": "doorbell",
+        "knock": "knock",
+        "glass_break": "glass_break_heard",
+        "smoke_alarm_t3": "smoke_alarm_heard",
+        "co_alarm_t4": "co_alarm_heard",
+        "tamper": "tamper",
+        "panic": "tamper",
+        "witness_lost": "dark",
+        "chain_break": "integrity",
+        "verify_failed": "integrity"
+      },
+      "unknown_word_class": "other"
+    }
+  },
   "known_divergences": {
     "$comment": "Vocabularies that are NOT unified today and are deliberately NOT gated by the linter yet, because unifying them needs a design decision, not a rename. Recorded here so they are captured, not lost. Each maps to a discrepancy id from the inventory and a follow-up. One exception lives here because it sits beside the divergence it partly closes: tamper_vocabularies.system_integrity_kinds IS unified and IS gated (scripts/lint_dictionary_sync.py).",
     "tamper_vocabularies": {
