@@ -6791,19 +6791,23 @@
      "params": [
       {
        "name": "prong_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "fin thickness (GoPro standard) — the head's three fins are each this thick, on prong_pitch centers"
       },
       {
        "name": "prong_pitch",
-       "default": "6.35"
+       "default": "6.35",
+       "comment": "fin center spacing (GoPro standard) — the outer fins sit this far either side of the center one, and the case's two prongs fit the gaps between"
       },
       {
        "name": "fin_r",
-       "default": "7.5"
+       "default": "7.5",
+       "comment": "fin end radius round the bolt axis — each fin is hulled from a 2 x this wide root on the stalk top up to this radius at the axis, and the detent pockets reach out to this - 0.5"
       },
       {
        "name": "hinge_bolt_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "hinge bolt Ø (M5 at the default); its teardrop bore is cut 0.4 over, through all three fins"
       },
       {
        "name": "hinge_teeth",
@@ -6811,11 +6815,13 @@
       },
       {
        "name": "teeth_n",
-       "default": "24"
+       "default": "24",
+       "comment": "castellation steps round the hinge, a pocket on every other one: the head detents every 720 / teeth_n degrees. Keep it even and equal to the case's teeth_n"
       },
       {
        "name": "teeth_h",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "the case's detent tooth height — the pockets in the outer fins' inner faces are cut this + 0.15 deep and 0.12 oversize"
       }
      ]
     },
@@ -6947,11 +6953,13 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "carrier PCB thickness — brd_t(\"mr60\"); the carrier sits on rails rail_h tall and the clips hook over its back face, rail_h + this behind the plate"
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "not read by the geometry: the carrier is located by its rails and clips, and clip_clear sets that fit"
       }
      ]
     },
@@ -6971,19 +6979,23 @@
       },
       {
        "name": "rad_win_x",
-       "default": "24.0"
+       "default": "24.0",
+       "comment": "radome window width (X) — a blind pocket from the back that leaves radome_t of membrane at the face, its center rad_dx/rad_dy off the board center (= the plate center)"
       },
       {
        "name": "rad_win_y",
-       "default": "24.0"
+       "default": "24.0",
+       "comment": "radome window height (Y) — the same blind pocket, radome_t of membrane left at the face"
       },
       {
        "name": "rad_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "radome window center's X offset from the board center (= the plate center)"
       },
       {
        "name": "rad_dy",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "radome window center's Y offset from the board center (= the plate center)"
       }
      ]
     },
@@ -7184,7 +7196,8 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "sliding fit per side round the adapter body: the collar's lip opening is wart_w + 2 x this by wart_h + 2 x this — core_tol_slide()"
       }
      ]
     },
@@ -8524,11 +8537,13 @@
       },
       {
        "name": "hole_off_y",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "grid corner from board corner, along Y (hole_off_x is X) — the four standoffs and the cover's screw holes and tubes sit on this grid"
       },
       {
        "name": "pcb_t",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "Pi 5 PCB thickness — the tray's walls stop 6 above the board's top face, and the case's height stacks hat_h on it"
       },
       {
        "name": "standoff_h",
@@ -8563,7 +8578,8 @@
       },
       {
        "name": "lid_t",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "cover plate thickness — its pan-head seats leave 1.0 of floor under each head (asserted), and the case's height adds it"
       },
       {
        "name": "corner_r",
@@ -8572,7 +8588,8 @@
       },
       {
        "name": "board_clear",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "clearance round the Pi on every side — the tray's cavity is the board plus 2 x this each way"
       },
       {
        "name": "tol_slide",
@@ -8591,7 +8608,8 @@
       },
       {
        "name": "screw_head_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "M2.5 pan-head Ø — the cover's flat seats are cut this + 0.6 wide and lid_t - 1.0 deep"
       },
       {
        "name": "lid_screw_d",
@@ -8656,7 +8674,8 @@
      "params": [
       {
        "name": "vent_slot_w",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "vent slot width — the floor's slots run inner_w - 16 long, and the cover's chimney slots over the SoC out_w - 24, both on vent_slot_p"
       },
       {
        "name": "vent_slot_p",
@@ -8841,11 +8860,13 @@
       },
       {
        "name": "plate_w",
-       "default": "88.0"
+       "default": "88.0",
+       "comment": "plate outline width (Y), inside the box walls — the boss slots keep a 2 mm web to its edge and the board more than 3 a side (both asserted). MEASURE your box"
       },
       {
        "name": "plate_t",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "plate thickness — the rails, clips and rib bars stand on its top face (the clip beams root there), the slots go through it, and rib_h is held to the rib_lib ceiling for it (asserted)"
       }
      ]
     },
@@ -8931,7 +8952,8 @@
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "clearance per side round the boss screws: the four slots are Ø(boss_screw_d + 2 x this), stretched ±1 along X for the boss grid — core_tol_hole()"
       }
      ]
     },
@@ -9036,7 +9058,8 @@
       },
       {
        "name": "mag_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "magnet thickness — the pockets are cut this deep from the back, and the magnet plate is this + 3.0 thick so a 3.0 floor stays between each pocket and stud"
       },
       {
        "name": "mag_n",
@@ -9051,11 +9074,13 @@
      "params": [
       {
        "name": "strap_w",
-       "default": "9.0"
+       "default": "9.0",
+       "comment": "strap channel width — one channel straight across the pole plate's back, centered between the studs"
       },
       {
        "name": "strap_t",
-       "default": "2.2"
+       "default": "2.2",
+       "comment": "strap channel depth into the pole plate's back — the plate is at least this + 1.2 + the counterbore thick, so the center screw's head bears on plastic (asserted)"
       }
      ]
     },
@@ -9076,15 +9101,18 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "press fit per side on the magnet pockets (Ø mag_d + 2 x this) — catalog default, core_tol_press()"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the wall-screw holes are screw_d as drawn)"
       }
      ]
     },
@@ -9150,11 +9178,13 @@
       },
       {
        "name": "horn_h",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "horn height, throat to mouth — five stacked cones flaring with the square of the height, the glue flange in its last 1.2"
       },
       {
        "name": "horn_wall",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "horn wall thickness round the flare; the glue flange reaches 2 past it (Ø horn_mouth + 2 x this + 4)"
       }
      ]
     },
@@ -9174,7 +9204,8 @@
       },
       {
        "name": "gr_t",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "glare ring thickness — a flat washer gr_od across with a gr_id hole"
       }
      ]
     },
@@ -9199,7 +9230,8 @@
       },
       {
        "name": "cg_flange",
-       "default": "14.0"
+       "default": "14.0",
+       "comment": "gland body's outer flange Ø, 2.0 thick: it bears on the panel, with a Ø1-cord O-ring groove round the hole in its panel face"
       },
       {
        "name": "cg_squeeze",
@@ -9301,7 +9333,8 @@
       },
       {
        "name": "cg_fill",
-       "default": "0.90"
+       "default": "0.90",
+       "comment": "the bush's fill of its cavity once squeezed — the O-ring rule's 90 % ceiling; it sets the bush's free length (cg_bush_l), and an overfill is refused (asserted)"
       },
       {
        "name": "cg_bush_l",
@@ -9310,7 +9343,8 @@
       },
       {
        "name": "cg_cap_floor",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "cap floor thickness — the floor bears on the bush's end, and its hole passes the cable but stops the bush (asserted)"
       },
       {
        "name": "cg_cap_hole",
@@ -9324,7 +9358,8 @@
       },
       {
        "name": "cg_lip_h",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "cap snap lip height — the lip slides on the nose, cams over the barb and parks 0.1 under its shoulder"
       },
       {
        "name": "cg_groove_d",
@@ -9588,19 +9623,23 @@
      "params": [
       {
        "name": "sign_w",
-       "default": "110.0"
+       "default": "110.0",
+       "comment": "plate width (X) — the border groove runs 4 to 5.5 in from each edge, the corner screws sit 7 in, and the text gets this - 13 of room (the default lines are asserted to fit it)"
       },
       {
        "name": "sign_h",
-       "default": "70.0"
+       "default": "70.0",
+       "comment": "plate height (Y) — the border groove runs 4 to 5.5 in from each edge and the corner screws sit 7 in; the three lines stay at +14, 0 and -12 from the center whatever this is"
       },
       {
        "name": "sign_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "plate thickness — the text, the 0.5-deep border groove and the countersinks are cut down from its face, and a countersink deeper than this is refused (asserted)"
       },
       {
        "name": "edge_ch",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "45° chamfer round the face's edge: the face is this smaller on every side than the plate"
       },
       {
        "name": "screw_d",
@@ -9639,15 +9678,18 @@
      "params": [
       {
        "name": "line1",
-       "default": "PRIVACY WITNESS"
+       "default": "PRIVACY WITNESS",
+       "comment": "line 1, in font_b at size1, 14 above the center — the default string's measured width is asserted inside the groove; a custom one is only estimated, with a NOTE"
       },
       {
        "name": "line2",
-       "default": "presence sensing in use"
+       "default": "presence sensing in use",
+       "comment": "line 2, in font_r at size2, on the center line — checked like line 1"
       },
       {
        "name": "line3",
-       "default": "no video is recorded or stored"
+       "default": "no video is recorded or stored",
+       "comment": "line 3, in font_r at size3, 12 below the center — checked like line 1"
       },
       {
        "name": "size1",
@@ -9666,15 +9708,18 @@
       },
       {
        "name": "text_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "deboss depth of all three lines into the face"
       },
       {
        "name": "font_b",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "line 1's font (an OpenSCAD font name) — the width check uses the default line's Liberation Sans measurement whatever font is set"
       },
       {
        "name": "font_r",
-       "default": "Liberation Sans"
+       "default": "Liberation Sans",
+       "comment": "lines 2 and 3's font (an OpenSCAD font name) — the width check uses the default lines' Liberation Sans measurements whatever font is set"
       }
      ]
     },
@@ -15602,7 +15647,8 @@
       },
       {
        "name": "face_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "front face thickness (X) — the T-studs stand on its outer face and both prongs root on its inner face"
       },
       {
        "name": "prong_l",
@@ -15611,7 +15657,8 @@
       },
       {
        "name": "prong_t",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "prong thickness — the two prongs, above and below the louver_gap slot, are each this thick and flex in the print plane (the clip prints on its side)"
       },
       {
        "name": "louver_gap",
@@ -15671,7 +15718,8 @@
      "params": [
       {
        "name": "stud_gap",
-       "default": "36.0"
+       "default": "36.0",
+       "comment": "center-to-center of the two T-studs: set it to your case's keyhole spacing. Each plate must carry stud_gap + stud_head + 4, and the MOLLE slots must clear the heads (asserted)"
       },
       {
        "name": "stud_d",
@@ -15711,15 +15759,18 @@
       },
       {
        "name": "plate_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "clip plate thickness — the T-studs stand on its outer face, and the belt gap and the leaf stack behind its inner face"
       },
       {
        "name": "leaf_l",
-       "default": "48.0"
+       "default": "48.0",
+       "comment": "leaf spring length, from the clip's top to the start of its flared entry — the grip nub sits 2 above that end, and the leaf's strain over this length is asserted under the cycle budget"
       },
       {
        "name": "leaf_t",
-       "default": "2.6"
+       "default": "2.6",
+       "comment": "leaf spring thickness, held to the tip (the flared entry runs parallel) — the strain assert reads it: thinner flexes easier"
       },
       {
        "name": "belt_gap",
@@ -15819,7 +15870,8 @@
       },
       {
        "name": "mag_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "magnet pocket depth into the front face, so the disc glues in flush (asserted shallower than plate_t)"
       }
      ]
     },
@@ -15829,15 +15881,18 @@
      "params": [
       {
        "name": "plate_w",
-       "default": "50.0"
+       "default": "50.0",
+       "comment": "plate width (X) — the keyhole pair, 2 x kh_x + kh_head_d across, must fit inside it (asserted)"
       },
       {
        "name": "plate_h",
-       "default": "64.0"
+       "default": "64.0",
+       "comment": "plate height (Y) — the keyhole row must stay inside its top half (asserted); the tripod hole and the magnet pocket sit 16 below the center"
       },
       {
        "name": "plate_t",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "plate thickness — more than the keyhole pocket depth, and than the tripod counterbore + 1.5 (both asserted); the magnet pocket is cut into its front face"
       },
       {
        "name": "plate_r",
@@ -16445,15 +16500,18 @@
       },
       {
        "name": "label_depth",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "bay number deboss depth into the reclined front face (7 mm numerals at 0.72 of the block's height)"
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the bay numbers' font (an OpenSCAD font name)"
       },
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "sliding fit per side across the board's width: each pocket is board_w + 2 x this wide — core_tol_slide()"
       }
      ]
     },
@@ -16511,11 +16569,13 @@
       },
       {
        "name": "insert_d",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "heat-set insert OD — the guide bore above the post pocket is this + 0.4, so the insert and the iron tip go in square"
       },
       {
        "name": "guide_h",
-       "default": "12.0"
+       "default": "12.0",
+       "comment": "guide height — the post pocket takes its first 6.0, the guide bore runs from 5.9 to the top, and a Ø4 side window 7 up shows the insert seat"
       }
      ]
     },
@@ -16535,7 +16595,8 @@
       },
       {
        "name": "ring_t",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "accent ring thickness — it sits in the bezel seat under the button's flange"
       }
      ]
     },

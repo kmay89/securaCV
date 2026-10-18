@@ -199,9 +199,22 @@ def knobs_without_help(path: Path) -> list[str]:
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
     "canary_c3_lcd147.scad": 12,       # six bool options, tol_* and snap_* (two shared lines)
+    "canary_dock.scad": 0,
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
+    "canary_hammond_chassis.scad": 5,  # clip_w..clip_clear (one shared line)
+    "canary_hub_din.scad": 1,          # din (a bool option)
+    "canary_inserts.scad": 0,
     "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
+    "canary_mount_adapters.scad": 0,
+    "canary_outlet_cradle.scad": 0,
     "canary_relay_solar.scad": 8,      # opt_seal, wall_t..corner_r and gasket_* (two shared lines)
+    "canary_sense_gang.scad": 0,
+    "canary_sense_stand.scad": 1,      # hinge_teeth (a bool option)
+    "canary_shop_tools.scad": 0,
+    "canary_sign.scad": 1,             # screws (a bool option)
+    "canary_vehicle_mount.scad": 7,    # tol_*, dash_l/w/t, tether_w/l (three shared lines)
+    "canary_vision_pro_mount.scad": 0,
+    "canary_wear_clip.scad": 3,        # mp_w/mp_l/mp_t (one shared line)
 }
 
 

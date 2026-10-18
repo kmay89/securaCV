@@ -58,9 +58,9 @@ tether_w = 8.0;  tether_l = 4.0;
 /* [Vent clip] */
 vent_w   = 32.0;     // clip width (extrusion length)
 face_h   = 50.0;     // front face height — a minimum: grown to stud_gap + stud_head + 4 so both heads land on the face
-face_t   = 4.0;
+face_t   = 4.0;      // front face thickness (X) — the T-studs stand on its outer face and both prongs root on its inner face
 prong_l  = 22.0;     // reach onto the louver blade
-prong_t  = 2.4;
+prong_t  = 2.4;      // prong thickness — the two prongs, above and below the louver_gap slot, are each this thick and flex in the print plane (the clip prints on its side)
 louver_gap = 2.2;    // louver BLADE thickness + play — MEASURE your vents (blades run 1.5-2.0; at
                      // 2.8 a thin blade passed with no deflection and the clip hung on its hook alone)
 

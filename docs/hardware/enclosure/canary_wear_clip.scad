@@ -24,7 +24,7 @@ use <canary_snap_lib.scad>   // beam-strain arithmetic for the belt leaf spring
 part = "all";        // ["clip","molle","all"]
 
 /* [Stud/keyhole interface] — T-studs matching the target case's keyholes (36 = field case) */
-stud_gap  = 36.0;
+stud_gap  = 36.0;    // center-to-center of the two T-studs: set it to your case's keyhole spacing. Each plate must carry stud_gap + stud_head + 4, and the MOLLE slots must clear the heads (asserted)
 // ecosystem-standard T-stud (canary_mount_lib): stem 1.4 + cone 1.2 + head
 // 0.8 = 3.4 total — mount_stud_d/head/cap/stem() are the knob defaults
 stud_d    = 4.0;     // stem diameter — mount_stud_d()
@@ -35,9 +35,9 @@ stud_stem_h = 1.4;   // stem height — mount_stud_stem()
 /* [Belt clip] */
 leaf_w    = 45.0;    // belt-clip width (extrusion length) — the plate and the leaf are one profile
 plate_l   = 58.0;    // plate height along the belt direction
-plate_t   = 3.0;
-leaf_l    = 48.0;
-leaf_t    = 2.6;
+plate_t   = 3.0;     // clip plate thickness — the T-studs stand on its outer face, and the belt gap and the leaf stack behind its inner face
+leaf_l    = 48.0;    // leaf spring length, from the clip's top to the start of its flared entry — the grip nub sits 2 above that end, and the leaf's strain over this length is asserted under the cycle budget
+leaf_t    = 2.6;     // leaf spring thickness, held to the tip (the flared entry runs parallel) — the strain assert reads it: thinner flexes easier
 belt_gap  = 4.5;     // leaf-to-plate clearance (belt/waistband thickness)
 nub_h     = 1.2;     // grip nub at the leaf tip
 

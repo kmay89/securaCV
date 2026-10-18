@@ -34,8 +34,8 @@ boss_dx = 147.0;     // boss spacing (X)
 boss_dy = 77.0;      // boss spacing (Y)
 boss_screw_d = 4.2;  // Hammond lid/boss screws are typically M4/#6 into inserts
 plate_l = 158.0;     // plate outline (fits inside the box walls) — MEASURE your box
-plate_w = 88.0;
-plate_t = 2.4;
+plate_w = 88.0;      // plate outline width (Y), inside the box walls — the boss slots keep a 2 mm web to its edge and the board more than 3 a side (both asserted). MEASURE your box
+plate_t = 2.4;       // plate thickness — the rails, clips and rib bars stand on its top face (the clip beams root there), the slots go through it, and rib_h is held to the rib_lib ceiling for it (asserted)
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
 wap_l = 21.0;                                 // XIAO length — the spec, brd_l("xiao")
@@ -72,7 +72,7 @@ rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, be
                      // (canary_rib_lib). 0 = flat. They stand on the board side because the plate prints
                      // that way up — the underside is the bed  // [0:0.5:6]
 tie_slots = true;    // zip-tie slots for cable dressing / battery strap
-tol_hole  = 0.30;
+tol_hole  = 0.30;    // clearance per side round the boss screws: the four slots are Ø(boss_screw_d + 2 x this), stretched ±1 along X for the boss grid — core_tol_hole()
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
