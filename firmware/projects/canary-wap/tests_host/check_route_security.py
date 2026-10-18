@@ -268,6 +268,12 @@ ANSWER_CALLS = frozenset((
     # and the owner's session the receipt mints.
     "send_qr_svg", "http_send_error", "secure_zero", "log_health", "request_reach", "device_id_hex",
     "write", "provisioning_receipt", "provisioning_gate_take", "take", "session_issue",
+    # #1804's, in the receipt after its grants: the transport a spent claim's
+    # receipt spells (tls_after_setup(): the certificate persisted and TLS on,
+    # or due after setup; it decides http or https, not who is answered), and
+    # the spend's stamp the loop task's reboot runway reads (claim_ticket::stamp,
+    # a 0 -> 1 map, written with the __atomic_store_n builtin, no answer).
+    "tls_after_setup", "stamp", "__atomic_store_n",
 ))
 # Handlers whose answers also stand behind grants this check cannot read as
 # a credential gate. The handler still needs its credential gate in an `if`
