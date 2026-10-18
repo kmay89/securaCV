@@ -900,6 +900,30 @@ jobs:
           chmod +x firmware/scripts/check_display_glyphs.py
           python3 firmware/scripts/check_display_glyphs.py
 
+  wap-guard-selftests:
+    name: WAP guard self-tests (${{ matrix.guard }})
+    # The two canary-wap source guards regression_check.sh runs check-only
+    # (check_wap_loop_commands.py, check_wap_json_answers.py) each carry a
+    # mutation self-test: hundreds of in-memory edits to the sketch, every one
+    # of which the guard must refuse. That proof is minutes of CPU per guard
+    # on a runner, which is what put the Regression Guards job past its ten
+    # minutes and the Rust build job (tests/regression_script.rs runs the same
+    # script) past its forty. It runs here, one job per guard, so the proof
+    # stays on every PR without sitting inside those budgets.
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        guard: [check_wap_loop_commands, check_wap_json_answers]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      - name: Run the guard with its mutation self-test
+        run: python3 firmware/scripts/${{ matrix.guard }}.py
+
   regression-check:
     name: Regression Guards
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires

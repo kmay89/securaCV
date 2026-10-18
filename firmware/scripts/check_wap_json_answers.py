@@ -2122,6 +2122,11 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
     ("ble_opera.h", "updateWitnessCharacteristic"): (
         ("hashHex",),
         "a BLE characteristic: hashHex is snprintf(\"%02x\") of the chain head's first 8 bytes"),
+    ("onboarding_fsm.h", "announce_line"): (
+        ('pass ? pass : ""', 'ssid ? ssid : ""'),
+        "not JSON: the serial label both flashers parse (`[SETUP] Setup network up: \"<ssid>\"  "
+        "password <key>  (channel <n>)`, flash-core.js SETUP_NETWORK_LINE_RES); the quotes are the "
+        "label's, not a JSON string's, and a cut line is refused by the length test after it"),
     ("canary_wap.ino", "ble_witness_get_head_json"): (
         ("head_hex", "pub_hex"),
         "a BLE witness value: hex_to_str() of the 32-byte chain head and public key"),
@@ -2602,6 +2607,15 @@ SSID_RAW: dict[tuple[str, str], str] = {
     (INO, "ble_improv_scan_row"):
         "the Improv setup door's scan row: a length-prefixed string the phone's Improv client reads "
         "byte for byte, never JSON; the network's own name is what the phone sends back to join it",
+    (f"{SKETCH}/onboarding_fsm.h", "ap_ssid"):
+        "the setup network's own name (SecuraCV-<type>-XXXX, onboarding_fsm.h), built from the fixed "
+        "prefix, the type word and the pseudonymous suffix into the buffer the radio broadcasts; a "
+        "name, never JSON — the JSON that carries it is written through replaced_text() where it is "
+        "read",
+    (f"{SKETCH}/onboarding_fsm.h", "announce_line"):
+        "the serial label both flashers parse byte for byte (`[SETUP] Setup network up: \"<ssid>\"  "
+        "password <key>  (channel <n>)`, flash-core.js SETUP_NETWORK_LINE_RES): the network's own "
+        "name is what a flasher shows and joins, never JSON",
     (INO, "handle_fleet_qr"):
         "the provisioning QR code's payload (SECURACV:S:<ssid>;P:<pass>;;), drawn as an SVG: the "
         "scanning Canary joins the network by these exact bytes",
@@ -3569,7 +3583,9 @@ def main(argv: list[str]) -> int:
           f"{j7_sites} other JSON texts spelled with printf in {j7_fns} functions, {j7_recorded} of them "
           f"recorded by the values the check cannot read; the device name's setter, loader and routes; "
           f"every SSID a JSON text carries written through replaced_text() ({len(SSID_RAW)} raw uses "
-          f"recorded) ({len(MUTATIONS)} mutations refused).")
+          f"recorded) "
+          + ("(self-test skipped)." if "--no-self-test" in argv
+             else f"({len(MUTATIONS)} mutations refused)."))
     return 0
 
 

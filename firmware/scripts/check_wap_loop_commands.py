@@ -5368,7 +5368,8 @@ def sketch_others() -> dict[str, str]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     srcs = {
         "ino": (REPO / INO).read_text(encoding="utf-8"),
         "mesh_h": (REPO / MESH_H).read_text(encoding="utf-8"),
@@ -5379,7 +5380,9 @@ def main() -> int:
     errors = check(srcs["ino"], srcs["mesh_h"], srcs["mesh_cpp"], srcs["mqtt"], others)
     for err in errors:
         print(f"::error::{err}")
-    problems = self_test(srcs, others)
+    # `--no-self-test`: the check alone (regression_check.sh's path, inside its
+    # ten-minute budget); CI runs the mutation self-test in its own job.
+    problems = [] if "--no-self-test" in argv else self_test(srcs, others)
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
@@ -5392,7 +5395,8 @@ def main() -> int:
           f"the MQTT client is replaced only by loop()'s re-init, which never stops a client "
           f"(the retire_task worker does), and every client's network timeout keeps a "
           f"loop-task publish under the watchdog "
-          f"({len(MUTATIONS)} mutations refused).")
+          + ("(self-test skipped)." if "--no-self-test" in argv
+             else f"({len(MUTATIONS)} mutations refused)."))
     return 0
 
 

@@ -8757,49 +8757,21 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
-// Port 80 → https, at the address the client used. The Location used to
-// name WiFi.softAPIP(): right for a phone on the SoftAP, dead for one on
-// the LAN — where every client is once the AP drops after setup, and where
-// a paired phone that kept an http base_url landed. So the Host the request
-// carried, when it is one (letters, digits, dots, dashes; an IPv6 literal's
-// brackets and colons; a port is dropped — the HTTPS server is on 443);
-// without one (HTTP/1.0), or with anything else, the STA address when the
-// STA holds one, else the .local name (the captive DNS answers it on the
-// AP). A Host header is attacker-chosen text headed into a response header,
-// so anything outside that alphabet is refused, not forwarded.
-static bool redirect_host_ok(const char* host) {
-  if (host[0] == '\0') return false;
-  for (const char* p = host; *p; ++p) {
-    const unsigned char c = (unsigned char)*p;
-    if (!(isalnum(c) || c == '.' || c == '-' || c == ':' || c == '[' || c == ']')) return false;
-  }
-  return true;
-}
-
+// The Location names the WAP the way the receipt's base_url does
+// (receipt_authority.h): a caller on the setup network keeps the SoftAP
+// address, anyone else gets the .local name. It used to be WiFi.softAPIP()
+// for everyone, so http://canary-<suffix>.local/ typed on the home network
+// went to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
+// which the home network cannot reach.
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char host[96] = {0};
-  bool have = httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
-              redirect_host_ok(host);
-  if (have) {
-    // Drop a ":port" — not the colons of a bare IPv6 literal, whose port
-    // follows its closing bracket.
-    char* colon = strrchr(host, ':');
-    if (colon && strchr(colon, ']') == nullptr) *colon = '\0';
-    have = host[0] != '\0';
+  char authority[80];
+  if (receipt_authority::write(authority, sizeof(authority),
+                               request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "No address to redirect to.");
   }
-  if (!have) {
-    if (WiFi.isConnected()) {
-      snprintf(host, sizeof(host), "%s", WiFi.localIP().toString().c_str());
-    } else {
-      snprintf(host, sizeof(host), "%s.local", g_device.mdns_hostname);
-    }
-  }
-  char location[256];
-  const int n = snprintf(location, sizeof(location), "https://%s%s", host, req->uri);
-  if (n < 0 || (size_t)n >= sizeof(location)) {
-    // A cut URI would redirect to the wrong page: the root instead.
-    snprintf(location, sizeof(location), "https://%s/", host);
-  }
+  char location[128];
+  snprintf(location, sizeof(location), "https://%s%s", authority, req->uri);
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
@@ -10268,8 +10240,8 @@ static void wifi_store_rotate_if_due() {
   const int next = canary::net::wifi_store::pick(g_wifi_store, nullptr, nullptr, 0, cur);
   if (next < 0 || next == cur) return;
   wifi_store_adopt(next);
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "Network not found twice - trying the next saved network", g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "Network not found twice - trying the next saved network", g_wifi_creds.ssid);
 }
 
 static bool wifi_load_credentials() {

@@ -857,12 +857,14 @@ echo ""
 # hand-over and the copies (test_mesh_commands_wap, test_chirp_commands_wap,
 # test_bluetooth_commands_wap, test_mqtt_reinit, test_loop_command_ring,
 # test_loop_snapshot, test_loop_event_queue); this holds the sketch's source
-# to them, and mutates it in memory to prove it bites.
+# to them. Its mutation self-test (the proof it bites: about five minutes of
+# CPU on a runner) runs in its own CI job, "WAP guard self-tests" in
+# firmware.yml, not inside this script's ten-minute budget: --no-self-test.
 section "Reliability: canary-wap loop-task ownership"
 
 LOOP_CMD_CHECK="$SCRIPT_DIR/check_wap_loop_commands.py"
 if [ -f "$LOOP_CMD_CHECK" ]; then
-  if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" 2>&1); then
+  if LOOP_CMD_OUT=$(python3 "$LOOP_CMD_CHECK" --no-self-test 2>&1); then
     check_pass "mesh, Chirp and Bluetooth commands and MQTT re-inits run on the loop task; mesh, Chirp and Bluetooth status routes read its copies; NimBLE callbacks post to it; MQTT network waits sit under its watchdog"
   else
     check_fail "a canary-wap HTTP path changes the mesh, Chirp, Bluetooth or the MQTT client off the loop task, reads live what the loop task owns, or an MQTT wait can outlast the watchdog"
@@ -882,13 +884,14 @@ echo ""
 # the full recent list (F196) went out that way. This measures every fixed
 # answer buffer in the canary-wap's *_api.h files and canary_wap.ino against
 # the longest answer it computes from the document's statements, refuses
-# what it cannot bound unless it is serialized to measureJson()'s length,
-# and mutates the sources in memory to prove it bites.
+# what it cannot bound unless it is serialized to measureJson()'s length.
+# Its mutation self-test runs in the "WAP guard self-tests" job (firmware.yml),
+# as the loop-task guard's does: --no-self-test here.
 section "Reliability: canary-wap REST answers fit their buffers"
 
 JSON_ANSWER_CHECK="$SCRIPT_DIR/check_wap_json_answers.py"
 if [ -f "$JSON_ANSWER_CHECK" ]; then
-  if JSON_ANSWER_OUT=$(python3 "$JSON_ANSWER_CHECK" 2>&1); then
+  if JSON_ANSWER_OUT=$(python3 "$JSON_ANSWER_CHECK" --no-self-test 2>&1); then
     check_pass "every canary-wap REST answer fits the buffer it is serialized into, or is sized by measureJson()"
   else
     check_fail "a canary-wap REST answer can outgrow its buffer (sent cut and unterminated) or cannot be measured"
