@@ -52,11 +52,11 @@ README stays the narrative source for those stories.
 | `waveshare-esp32s3-lcd43c` | ESP32-S3 | 33 | 28 (85%) | 0 | 2 | 3 |
 | `waveshare-esp32s3-lcd7` | ESP32-S3 | 33 | 23 (70%) | 0 | 4 | 6 |
 | `waveshare-esp32s3-touch-lcd169` | ESP32-S3 | 33 | 17 (52%) | 0 | 7 | 9 |
-| `xiao-esp32c3` | ESP32-C3 | 15 | 5 (33%) | 2 | 5 | 3 |
+| `xiao-esp32c3` | ESP32-C3 | 15 | 7 (47%) | 2 | 4 | 2 |
 | `xiao-esp32c3-sentinel-lite` | ESP32-C3 | 15 | 2 (13%) | 0 | 7 | 6 |
 | `xiao-esp32c6-mr60` | ESP32-C6 | 24 | 2 (8%) | 2 | 8 | 12 |
 | `xiao-esp32c6-sentinel` | ESP32-C6 | 24 | 2 (8%) | 0 | 9 | 13 |
-| `xiao-esp32s3` | ESP32-S3 | 33 | 7 (21%) | 3 | 6 | 17 |
+| `xiao-esp32s3` | ESP32-S3 | 33 | 8 (24%) | 3 | 6 | 16 |
 | `xiao-esp32s3-round` | ESP32-S3 | 33 | 13 (39%) | 0 | 4 | 16 |
 | `xiao-esp32s3-sense` | ESP32-S3 | 33 | 24 (73%) | 3 | 5 | 1 |
 
@@ -793,16 +793,16 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_RGBLED`, `
 
 ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c3/pins/pins.h)
 
-**5/15 committed** · 2 assigned · 5 conditional · **3 free** (3 ADC-capable)
+**7/15 committed** · 2 assigned · 4 conditional · **2 free** (2 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | **free** | — | ADC, sleep-wake |
 | 1 | **free** | — | ADC, sleep-wake |
-| 2 | conditional | strapping pin — must not be driven at reset; check the boot-mode level before repurposing | ADC, sleep-wake, strap⚠ |
+| 2 | committed | VISION_AI_SYNC_PIN | ADC, sleep-wake, strap⚠ |
 | 3 | committed | DOORBELL_BUTTON_PIN, EXT_LED_PIN_DEFAULT | ADC, sleep-wake |
 | 4 | committed | DOORBELL_GLOW_PIN | ADC, sleep-wake |
-| 5 | **free** | — | ADC, sleep-wake |
+| 5 | committed | VISION_AI_RST_PIN | ADC, sleep-wake |
 | 6 | assigned | I2C_PIN_SDA |  |
 | 7 | assigned | I2C_PIN_SCL |  |
 | 8 | committed | DOORBELL_AUDIO_SPI_CLK_HOLD_PIN, SPI_PIN_SCK | strap⚠ |
@@ -813,7 +813,7 @@ ESP32-C3 · flash 4 MB · PSRAM 0 MB · pin map [`pins/pins.h`](xiao-esp32c3/pin
 | 20 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_RX) |  |
 | 21 | conditional | UART0 console — free only if you give up the serial log; (declared as UART1_PIN_TX) |  |
 
-Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21] — of the free pins, **[5]** reach a header.
+Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21] — of the free pins, **none** reach a header.
 
 Peripheral demand (declared pin map vs MCU): SPI 1/1 · I2C 1/1 · UART 1/2 · RMT TX 0/2 · LEDC 0/6.
 
@@ -937,15 +937,15 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_MICROPHONE`, `HAS_PSRAM`, `H
 
 ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3/pins/pins.h)
 
-**7/33 committed** · 3 assigned · 6 conditional · **17 free** (10 ADC-capable)
+**8/33 committed** · 3 assigned · 6 conditional · **16 free** (9 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
-| 1 | committed | VBAT_PIN | ADC, sleep-wake |
+| 1 | committed | VBAT_PIN, VISION_AI_SYNC_PIN | ADC, sleep-wake |
 | 2 | committed | DOORBELL_BUTTON_PIN | ADC, sleep-wake |
 | 3 | committed | DOORBELL_GLOW_PIN, EXT_LED_PIN_DEFAULT | ADC, sleep-wake, strap⚠ |
-| 4 | **free** | — | ADC, sleep-wake |
+| 4 | committed | VISION_AI_RST_PIN | ADC, sleep-wake |
 | 5 | assigned | I2C_PIN_SDA | ADC, sleep-wake |
 | 6 | assigned | I2C_PIN_SCL | ADC, sleep-wake |
 | 7 | committed | DOORBELL_AUDIO_SPI_CLK_HOLD_PIN, SPI_PIN_SCK | ADC, sleep-wake |
@@ -975,7 +975,7 @@ ESP32-S3 · flash 8 MB · PSRAM 8 MB · pin map [`pins/pins.h`](xiao-esp32s3/pin
 | 47 | **free** | — |  |
 | 48 | **free** | — |  |
 
-Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [1, 2, 3, 4, 5, 6, 7, 8, 9, 43, 44] — of the free pins, **[4]** reach a header.
+Physically broken out (from `PIN_D*/PIN_A*/PIN_GPIO*` aliases): [1, 2, 3, 4, 5, 6, 7, 8, 9, 43, 44] — of the free pins, **none** reach a header.
 
 Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 1/3 · RMT TX 0/4 · LEDC 0/8.
 

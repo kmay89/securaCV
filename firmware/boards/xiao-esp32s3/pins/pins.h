@@ -145,6 +145,12 @@
 // The switch closes D1 to GND (internal pull-up); D2 drives, through 1 k,
 // the base of the ring's low-side transistor (Q1, 2N3904), never the LED.
 // Wiring and parts: docs/hardware/canary_vision_doorbell_wiring.md.
+// The stacked module's own lines, declared so nothing else claims them:
+// its reset (silkscreen RST) and its SPI-mode SYNC output. Inputs on
+// this side only; canary-vision leaves both alone (AI.begin() with no
+// reset pin).
+#define VISION_AI_RST_PIN       4    // D3 — module reset, active LOW: never drive
+#define VISION_AI_SYNC_PIN      1    // D0 — module output: never drive
 #define DOORBELL_BUTTON_PIN     2    // D1 — switch to GND, active LOW
 #define DOORBELL_GLOW_PIN       3    // D2 — transistor base, PWM, active HIGH
 // The speaker: one PWM pin (10-bit at 78 kHz) through an RC filter into a
