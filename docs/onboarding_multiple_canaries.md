@@ -28,7 +28,7 @@ what changes once a second device joins the network.
 
 Each board has a globally-unique hardware identity. The firmware derives a
 stable per-device handle from it (`device_id` = `canary-s3-4dC2`, AP SSID
-`SecuraCV-4dC2`), so you never have to configure anything to make two devices
+`SecuraCV-wap-4dC2`), so you never have to configure anything to make two devices
 distinct at the hardware level. The four-character suffix is encoded in an
 unambiguous alphabet (no `0/O/o` or `1/I/i/l/L`), so it never contains glyphs
 you might misread. Because the handle is derived from immutable hardware, it is
@@ -57,7 +57,7 @@ On first boot the device starts a WiFi Access Point and a captive portal.
 
 ## Step 2 — Add Canary #1 to your home network
 
-1. On your phone/laptop, join the WiFi network **`SecuraCV-4dC2`** (the last 4
+1. On your phone/laptop, join the WiFi network **`SecuraCV-wap-4dC2`** (the last 4
    characters are unique to this board). The AP password is device-unique and
    printed on the provisioning receipt / serial log.
 2. A "sign in to network" page appears. Open **`http://canary.local`** in a real

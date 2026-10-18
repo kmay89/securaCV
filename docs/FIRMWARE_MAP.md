@@ -1,7 +1,11 @@
 # Firmware map — every target, every shared layer, the hub and the Witness Wall
 
 **Snapshot:** `main` at `2e715eb` (2026-10-15), read on 2026-10-18 before any
-code in the parity program changed. Every claim below names the file (and
+code in the parity program changed. **The program has since run**: the
+per-target state *after* it is [`PARITY.md`](PARITY.md), and §10 below ends
+with what each row became. The sections between are kept as they were read —
+they are the evidence the matrix was built against, and the file:line
+references still point at the files that were changed. Every claim below names the file (and
 usually the line) it was read from; where a reader did not open a file the
 row says so. This is the §0 "discover before you assume" deliverable of the
 firmware parity, onboarding, discovery and safe-OTA program; the matrix it
@@ -119,6 +123,13 @@ captive portal, the AP-password mint, the `wl_status_t → JoinFailure` switch
 
 ## 3. Onboarding today, per target
 
+> **After the program:** one rule set, `common/network/onboarding_fsm.h`
+> (+ `wifi_store.h`, `io/reset_hold.h`, `node_status.h`), on all six
+> products; the headless trio's `wifi_mgr.cpp` files are shims over
+> `common/network/wifi_supervisor.cpp`; the SSID is `SecuraCV-<type>-XXXX`
+> everywhere; the AP hold is 120 s / 1.6 s; the saved-network ring holds four;
+> a 10 s hold resets credentials and keeps identity. Cells: `PARITY.md` C1–C12.
+
 Four portal implementations exist. All four raise a device-unique
 `SecuraCV-XXXX` WPA2 network, hijack DNS for A queries only, answer the
 Apple/Android/Windows connectivity probes, list nearby networks strongest
@@ -180,6 +191,14 @@ rest) is derived by `gen_flash.py` from the firmware source.
 ---
 
 ## 4. Discovery and peers today
+
+> **After the program:** the trio and the PIO canary advertise
+> `common/network/mdns_txt.h`'s TXT on port 80 and the trio serve
+> `/api/status` + `/api/fleet` (`node_http.cpp`); the trio run the SCVP peer
+> protocol (`peer_protocol.h`, `peer_link.cpp`) with the household fleet key
+> (`fleet_key.h`) and elect a coordinator that yields to a hub; the PIO canary
+> serves `/api/fleet`. The WAP and the display keep their own TXT and the
+> flagship and the WAP are not on SCVP yet. Cells: `PARITY.md` C13–C18.
 
 | | canary (PIO) | canary-wap | vision / sense / sentinel | canary-display |
 |---|---|---|---|---|
@@ -250,6 +269,13 @@ contract both halves must keep.
 
 ## 6. OTA today
 
+> **After the program:** manifest v2 binds `board`/`chip` in the signed
+> message, `min_version` is enforced, every target confirms the new slot only
+> after a 60 s healthy dwell (`securacv_ota_health_tick`), `ota{state,target,
+> pending_verify}` rides `/api/status`, the hub runs `securacv.staged_update`
+> one node at a time, and `tools/sign-firmware` wraps the signer. Design and
+> rules: [`OTA.md`](OTA.md); cells: `PARITY.md` C19–C20.
+
 One engine, `firmware/common/ota/src/securacv_ota.{h,cpp}` (1,888 lines),
 linked by canary (PIO), canary-wap, canary-display (byte-synced copies),
 canary-vision, canary-sense and canary-sentinel. Facts:
@@ -293,6 +319,11 @@ canary-vision, canary-sense and canary-sentinel. Facts:
 ---
 
 ## 7. Trust today
+
+> **After the program:** [`TRUST_MODEL.md`](TRUST_MODEL.md) — the household
+> fleet key (HKDF of the Wi-Fi credentials) tags every SCVP frame, an open
+> network honestly has no mesh, coordination is explicitly not trust, and the
+> rotation of the key is hub-side and not a Home Assistant service.
 
 - **Identity**: one Ed25519 keypair per witnessing Canary, generated on first
   boot from the hardware RNG, kept in plaintext NVS (`key_at_rest.h` Tier 0).
@@ -427,6 +458,29 @@ in this program (the matrix with per-target cells is [`PARITY.md`](PARITY.md)).
 | Staged rollout | none | hub-side one-at-a-time rollout service in the HA integration, abort on failure |
 | OTA visibility on node / hub / Wall | `/api/ota/status`, HA entity | `ota` in the shared status body and the roll-call |
 | `docs/OTA.md`, `tools/sign-firmware`, `docs/TRUST_MODEL.md`, `docs/PARITY.md` | `docs/firmware_ota.md`, `ota_release.py` | written; `tools/sign-firmware` wraps `ota_release.py` |
+
+### After the program
+
+Every "Closure" above landed on the branch except where [`PARITY.md`](PARITY.md)
+marks a cell ⚠️ or ❌ with a footnote. The open items, so nobody has to
+re-derive them from the matrix:
+
+- **Credentials at rest** stay plaintext NVS on every shipped build; the
+  posture is reported as `creds_at_rest` on every node and the secure kit is
+  the documented path (PARITY footnote 1).
+- **The WAP and the display keep their own mDNS TXT** (`host`, `role`, `fw`
+  are the shared keys; `caps` and `coord` are not emitted yet) and **are not
+  on the SCVP peer protocol** — neither is the flagship, whose `release` slot
+  is at 82.6 % (footnotes 11, 13).
+- **Manual signed upload** exists only on the WAP (BLE OTA, USB drop-file);
+  the other products take the hub's install or the manifest pull (footnote 9).
+- **The headless trio do not mDNS-browse**; their roster is the SCVP
+  heartbeat (footnote 8). **The WAP's BLE door does not reopen on recovery**,
+  only its SoftAP does (footnote 4). **The display's portal takes no name**;
+  naming stays on the glass and in Home Assistant.
+- **The emulator dist** is stale until the Actions rebuild runs on the branch.
+- **Hardware**: G1–G10, D1–D4 and O1–O6 in `PARITY.md` §4 have not run on a
+  bench yet; the election and the OTA dwell have no software stand-in.
 
 The readers' full evidence (12 JSON maps, ~600 KB, every row with file:line)
 was produced in this session's scratch space and distilled here; the rows
