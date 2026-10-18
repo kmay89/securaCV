@@ -81,6 +81,15 @@
 // bring-up until it is over (the join window, safe mode, the worker and
 // the finalize stage's own NimBLE inits), answering 503 meanwhile.
 //
+// And sweep F191 and F209: a Just Works pairing (no owner, no MITM) kept
+// its bond in NimBLE's store, unlisted, and three of them refused the
+// owner's next pairing; a Passkey Entry's six digits showed in the PIN box
+// and went to the health log in or out of pairing mode. Now an
+// unauthenticated bond is deleted with the radio quiet and its link dropped,
+// a passkey is shown only inside the owner's pairing mode (outside it NimBLE
+// is handed one above 999999), no pairing digits reach the log, and GET
+// /api/bluetooth counts the bond store beside the list.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -414,6 +423,13 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_store_overflow_count = 0;
   bc::g_store_full_log = {0, 0};
   bc::g_store_overflow_log = {0, 0};
+  bc::g_passkey_refused_count = 0;         // F191: no passkey refused, the gate shut, as at power-up
+  bc::g_passkey_refused_log = {0, 0};
+  bc::g_owner_pairing_open = false;
+  bc::g_bonds_held = 0;                    // F209: the store not read yet
+  bc::g_bonds_unlisted = 0;
+  bc::g_bond_store_dirty = true;
+  bc::g_bond_lockout_logged = false;
   bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
   bc::g_scan_view = decltype(bc::g_scan_view)();
   bc::g_paired_view = decltype(bc::g_paired_view)();
@@ -1558,29 +1574,6 @@ void test_gatt_activity_counts_and_keeps_a_link() {
   loop_pass();
   CHECK(host_sim::count("disconnect", "loop") == 1);
   std::printf("PASS gatt_activity_counts_and_keeps_a_link\n");
-}
-
-// A passkey the stack asks this device to show (onPassKeyDisplay, the
-// passkey-entry flow) reaches the owner on the loop task's next pass: the
-// pairing reads pin_displayed with the digits the callback returned.
-void test_a_passkey_to_show_reaches_the_owner() {
-  boot();
-  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
-  uint32_t shown = 0;
-  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
-  CHECK(shown < 1000000);
-  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);         // nothing yet
-  loop_pass();
-  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
-  CHECK(bc::g_pairing.pin_displayed);
-  bc::BluetoothStatus st;
-  bc::read_status(&st);
-  CHECK(st.pairing.state == bc::PAIR_PIN_DISPLAYED && st.pairing.pin_code == shown);
-  char six[16];
-  snprintf(six, sizeof six, "%06lu", (unsigned long)shown);
-  CHECK(health_detail("Pairing PIN displayed") == six);
-  CHECK(health_on("nimble") == 0);
-  std::printf("PASS a_passkey_to_show_reaches_the_owner\n");
 }
 
 // A scan result keeps what its advertisement said: connectable or not,
@@ -4766,6 +4759,391 @@ void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
   std::printf("PASS a_saved_name_holding_a_control_byte_is_not_loaded\n");
 }
 
+// ── A passkey shown only in pairing mode (sweep F191) ───────────────────
+
+// Whether any health-log line carries `digits` (a pairing's six digits) in
+// its message or its detail.
+bool health_carries(const std::string& digits) {
+  for (const HealthLine& l : g_health_lines) {
+    if (l.message.find(digits) != std::string::npos || l.detail.find(digits) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+std::string six_digits(uint32_t pin) {
+  char six[16];
+  snprintf(six, sizeof six, "%06lu", (unsigned long)pin);
+  return six;
+}
+
+// A passkey the stack asks this device to show (onPassKeyDisplay, the
+// passkey-entry flow) inside the owner's pairing mode reaches the owner on
+// the loop task's next pass: the pairing reads pin_displayed with the digits
+// the callback returned, and the dashboard's PIN box shows them. The health
+// log says a PIN was shown but not which (sweep F191: the line carried the
+// six digits, and the log is durable, the SD card's /HEALTH and the BLE log
+// export, so whoever read it could complete the pairing); nor does the
+// Numeric Comparison's line.
+void test_a_passkey_to_show_reaches_the_owner() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(shown < 1000000);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED);         // nothing yet
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
+  CHECK(bc::g_pairing.pin_displayed);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.pairing.state == bc::PAIR_PIN_DISPLAYED && st.pairing.pin_code == shown);
+  const Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(answer.body.find("\"pin\":" + std::to_string(shown)) != std::string::npos);
+  CHECK(health_says("Pairing PIN displayed") == 1 && health_detail("Pairing PIN displayed").empty());
+  CHECK(!health_carries(six_digits(shown)));
+  // A second passkey of the same pairing mode (the phone tried again) is
+  // shown too.
+  uint32_t again = 0;
+  on_nimble([&] { again = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(again < 1000000 && bc::g_pairing.pin_code == again && bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED);
+  CHECK(!health_carries(six_digits(again)));
+  CHECK(health_on("nimble") == 0);
+
+  // The Numeric Comparison's line keeps its digits out too.
+  boot();
+  pairing_awaiting_confirm(482913, link(7, 0xA1));
+  CHECK(health_says("BLE pairing PIN — awaiting user confirmation") == 1);
+  CHECK(health_detail("BLE pairing PIN — awaiting user confirmation").empty());
+  CHECK(!health_carries("482913"));
+  std::printf("PASS a_passkey_to_show_reaches_the_owner\n");
+}
+
+// A passkey the stack asks this device to show outside the owner's pairing
+// mode (sweep F191). A keyboard-only phone pairs by Passkey Entry (NimBLE
+// 2.3.8's tables for this side's DISPLAY_YESNO): it types the six digits
+// this device shows. Before F191 they reached the dashboard's PIN box and
+// the health log in or out of pairing mode, whatever allow_pairing said,
+// and the pairing then completed authenticated and listed for whoever read
+// either. Now, outside pairing mode (none started, allow_pairing turned off
+// meanwhile, a Numeric Comparison pending, pairing mode ended), nothing is
+// shown: the NimBLE host task hands NimBLE a passkey above 999999, which
+// ble_sm_inject_io() refuses (NimBLE-Arduino 2.3.8 and 2.5.0), so no key is
+// set and the pairing fails at its timeout; the pairing's state is left
+// alone; and the health log says a passkey was not shown, at most once a
+// minute, never the digits. A passkey the host task let through, from a
+// pairing mode that ended before the loop task applied it, is not shown
+// either. The stand-in does not run NimBLE's security manager: that NimBLE
+// refuses the passkey and times the pairing out is read from its source,
+// and bench-tested nowhere yet (U1).
+void test_a_passkey_outside_pairing_mode_is_shown_nowhere() {
+  const char* const kRefused = "BLE pairing passkey not shown: no pairing mode (Pair in the web UI first)";
+  // No pairing mode.
+  boot();
+  NimBLEConnInfo phone = link(81, 0xE1);
+  host_sim::server->peers = {81};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  uint32_t given = 0;
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(given >= bc::PASSKEY_REFUSED && given < 2 * bc::PASSKEY_REFUSED);   // no passkey NimBLE takes
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && !bc::g_pairing.pin_displayed && bc::g_pairing.pin_code == 0);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.pairing.state == bc::PAIR_NONE && !st.pairing.pin_displayed);
+  Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(answer.body.find("\"pairing\"") == std::string::npos && answer.body.find("\"pin\"") == std::string::npos);
+  CHECK(health_says("Pairing PIN displayed") == 0 && health_says(kRefused) == 1);
+  CHECK(health_detail(kRefused) == "1 since boot" && health_level(kRefused) == SCV_LOG_WARNING);
+  CHECK(!health_carries(six_digits(given % bc::PASSKEY_REFUSED)));
+  // Again within the minute: counted, logged once; after it, logged again.
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED && health_says(kRefused) == 1 && bc::g_passkey_refused_count == 2);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(health_says(kRefused) == 2 && health_detail(kRefused) == "2 since boot");
+  CHECK(host_sim::passkey_answers.empty() && host_sim::server->disconnected.empty());
+
+  // Pairing mode started, then new pairings turned off.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  CHECK(bc::g_owner_pairing_open);
+  bc::Command off = cmd_of(bc::BT_CMD_SETTINGS);
+  off.settings.allow_pairing = false;
+  off.set_mask = bc::BT_SET_ALLOW_PAIRING;
+  CHECK(rest(off).r.ok && bc::g_pairing.state == bc::PAIR_INITIATED && !bc::g_owner_pairing_open);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED && bc::g_pairing.state == bc::PAIR_INITIATED && !bc::g_pairing.pin_displayed);
+  CHECK(health_says(kRefused) == 1);
+
+  // A Numeric Comparison awaiting the owner: another link's passkey is not shown over it.
+  boot();
+  pairing_awaiting_confirm(111222, link(9, 0xB2));
+  CHECK(!bc::g_owner_pairing_open);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED);
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 111222);
+  CHECK(health_says(kRefused) == 1);
+
+  // Pairing mode canceled: shut again.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_CANCEL)).r.ok && !bc::g_owner_pairing_open);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED && bc::g_pairing.state == bc::PAIR_NONE);
+
+  // The host task read the gate open, and the pairing mode ended before the
+  // loop task applied the passkey (as a timeout's cancel would have): the
+  // loop task asks again and shows nothing.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(given < bc::PASSKEY_REFUSED);
+  bc::g_pairing.state = bc::PAIR_NONE;                         // the loop task's, before its next pass
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && !bc::g_pairing.pin_displayed && bc::g_pairing.pin_code == 0);
+  CHECK(!health_carries(six_digits(given)) && health_says(kRefused) == 1);
+  // And a passkey refused on the host task finds a pairing mode the loop
+  // task started meanwhile: still not shown (NimBLE has no key to match it).
+  boot();
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  CHECK(given >= bc::PASSKEY_REFUSED);
+  bc::g_pairing.state = bc::PAIR_INITIATED;
+  bc::g_pairing.started_ms = host_sim::now_ms;                 // no timeout due this pass
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && !bc::g_pairing.pin_displayed);
+  std::printf("PASS a_passkey_outside_pairing_mode_is_shown_nowhere\n");
+}
+
+// ── Bonds no owner asked for (sweep F191, F209) ─────────────────────────
+
+const char* const kUnauthDeleted =
+    "BLE pairing refused: an unauthenticated bond was deleted and its link dropped";
+const char* const kUnauthKept =
+    "BLE pairing refused: an unauthenticated bond was kept by the stack (Clear all deletes it); its link dropped";
+const char* const kLockout =
+    "BLE bond store full with bonds the paired list does not show: new pairings are refused until Clear all";
+
+// A phone pairs by Just Works through the stack on its own link (a
+// DisplayOnly or NoInputNoOutput initiator, or a legacy DisplayYesNo one,
+// against this side's DISPLAY_YESNO): the pairing starts (the store's check
+// at its Pairing Request), NimBLE stores the bond (with the phone's IRK when
+// it uses private addresses) and reports the link encrypted and bonded but
+// not authenticated. False when the store refused the pairing at its start.
+bool just_works_through_stack(NimBLEConnInfo& phone, bool irk) {
+  host_sim::server->peers = {phone.getConnHandle()};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  int rc = 0;
+  on_nimble([&] { rc = host_sim::pairing_starts(phone.getConnHandle()); });
+  if (rc != 0) {
+    loop_pass();
+    return false;
+  }
+  on_nimble([&] { (void)host_sim::persist_bond(phone.getIdAddress(), irk); });
+  phone.encrypted = phone.bonded = true;
+  phone.authenticated = false;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  return true;
+}
+
+// Sweep F191: a Just Works bond (no owner asked, no MITM protection) stayed
+// in NimBLE's store unlisted, and its link stayed up. Now the loop task
+// deletes it as it is reported, with the radio quiet as Remove does (here
+// the phone hands over its IRK and the presence scan runs: a bare
+// deleteBond() is refused BLE_HS_EBUSY), and drops its link by its handle;
+// nothing is listed or saved, the owner's pairing reads failed, and the
+// health log says so without the phone's address. A link encrypted by Just
+// Works with no bond (the setup door's profile keeps none) keeps its link
+// and logs the failed pairing as before; an authenticated bond is listed as
+// before. And when the stack keeps the bond after all (another task
+// restarted the advertiser in the window), the link is dropped all the same
+// and the health log names Clear all.
+void test_an_unauthenticated_bond_is_deleted_and_its_link_dropped() {
+  boot();
+  CHECK(host_sim::presence_disc);                              // the radio is busy
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);              // even inside the owner's pairing mode
+  NimBLEConnInfo phone = rpa_phone(91, 0x91);                  // its bond carries an IRK
+  const NimBLEAddress identity = phone.getIdAddress();
+  CHECK(just_works_through_stack(phone, /*irk=*/true));
+  CHECK(!NimBLEDevice::isBonded(identity) && host_sim::bonds.empty());
+  CHECK(host_sim::bonds_deleted.size() == 1 && host_sim::bonds_deleted[0] == identity);
+  CHECK(host_sim::bonds_busy.empty());                          // deleted with the radio quiet
+  CHECK(host_sim::count("bond_delete", "loop") == 1 && host_sim::count("bond_delete", "nimble") == 0);
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 91) == 1);
+  CHECK(host_sim::server->ended_by_unpair.size() == 1 && host_sim::server->ended_by_unpair[0] == 91);
+  CHECK(bc::g_paired_count == 0 && host_sim::main_nvs.count("bt_paired") == 0);
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(health_says(kUnauthDeleted) == 1 && health_level(kUnauthDeleted) == SCV_LOG_WARNING);
+  CHECK(health_says("New device paired") == 0 && health_says("Pairing failed") == 0);
+  CHECK(!health_names(identity.toString()) && !health_names(phone.getAddress().toString()));
+  CHECK(host_sim::presence_disc && presence_on("loop", "resume") >= 1);   // the radio given back
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bond_store_known && st.bonds_held == 0 && st.bonds_unlisted == 0);
+  // The link's end arrives as usual, and advertising comes back.
+  link_ends(phone);
+  CHECK(!bc::g_connection.connected && host_sim::advertising.isAdvertising());
+
+  // A public-address phone (no IRK) the same way, with no pairing mode.
+  boot();
+  NimBLEConnInfo plain = public_phone(92, 0x92);
+  CHECK(just_works_through_stack(plain, /*irk=*/false));
+  CHECK(host_sim::bonds.empty() && bc::g_paired_count == 0 && health_says(kUnauthDeleted) == 1);
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 92) == 1);
+
+  // Encrypted by Just Works, no bond (the setup door's profile): no bond to
+  // delete and the link stays, as before F191.
+  boot();
+  NimBLEConnInfo door = public_phone(93, 0x93);
+  host_sim::server->peers = {93};
+  host_sim::server->link_up(door);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), door); });
+  loop_pass();
+  door.encrypted = true;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(door); });
+  loop_pass();
+  CHECK(host_sim::server->disconnected.empty() && host_sim::bonds_deleted.empty());
+  CHECK(bc::g_connection.connected && health_says("Pairing failed") == 1 && health_says(kUnauthDeleted) == 0);
+
+  // The owner's phone, authenticated and bonded: listed, its bond kept.
+  boot();
+  NimBLEConnInfo owner = public_phone(94, 0x94);
+  CHECK(pair_through_stack(owner, /*irk=*/false));
+  CHECK(bc::g_paired_count == 1 && NimBLEDevice::isBonded(owner.getIdAddress()));
+  CHECK(host_sim::bonds_deleted.empty() && host_sim::server->disconnected.empty());
+  CHECK(health_says(kUnauthDeleted) == 0);
+  // It comes back later: its link encrypts with the stored key,
+  // authenticated as it was made. Kept.
+  link_ends(owner);
+  NimBLEConnInfo back = public_phone(95, 0x94);
+  host_sim::server->peers = {95};
+  host_sim::server->link_up(back);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), back); });
+  back.encrypted = back.authenticated = back.bonded = true;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(back); });
+  loop_pass();
+  CHECK(NimBLEDevice::isBonded(owner.getIdAddress()) && bc::g_paired_count == 1);
+  CHECK(bc::g_paired_devices[0].connection_count == 2 && host_sim::server->disconnected.empty());
+
+  // The stack keeps the bond: an advertiser another task started again in
+  // the delete's window (Opera's onConnect, a chirp) makes ble_gap_unpair()
+  // answer busy. The link is dropped all the same; the bond reads unlisted.
+  boot();
+  NimBLEConnInfo kept = rpa_phone(96, 0x96);
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  CHECK(just_works_through_stack(kept, /*irk=*/true));
+  host_sim::before_unpair = nullptr;
+  CHECK(NimBLEDevice::isBonded(kept.getIdAddress()) && host_sim::bonds_busy.size() == 1);
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 96) == 1);
+  CHECK(health_says(kUnauthKept) == 1 && health_says(kUnauthDeleted) == 0 && bc::g_paired_count == 0);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 1 && st.bonds_unlisted == 1);
+  std::printf("PASS an_unauthenticated_bond_is_deleted_and_its_link_dropped\n");
+}
+
+// Sweep F209: since F189 a full store refuses a new pairing, and before F191
+// three Just Works phones' bonds filled it, unlisted, so the owner's next
+// pairing was refused (the health log said the store was full; the list
+// showed nothing) until Clear all. Now none of those bonds survives, so the
+// owner pairs, and the store holds the owner's bond alone.
+void test_unlisted_bonds_no_longer_lock_the_owner_out() {
+  boot();
+  for (uint8_t k = 0; k < 3; ++k) {
+    NimBLEConnInfo stranger = public_phone((uint16_t)(101 + k), (uint8_t)(0xA0 + k));
+    CHECK(just_works_through_stack(stranger, /*irk=*/false));
+    link_ends(stranger);
+  }
+  CHECK(host_sim::bonds.empty() && bc::g_paired_count == 0 && health_says(kUnauthDeleted) == 3);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo owner = public_phone(105, 0xA5);
+  CHECK(pair_through_stack(owner, /*irk=*/false));             // not refused at its start
+  CHECK(host_sim::full_events == 0 && host_sim::bonds.size() == 1 && bc::g_paired_count == 1);
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE);
+  CHECK(health_says("BLE pairing refused: the bond store is full") == 0 && health_says(kLockout) == 0);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 1 && st.bonds_unlisted == 0 && st.bond_capacity == 3);
+  std::printf("PASS unlisted_bonds_no_longer_lock_the_owner_out\n");
+}
+
+// Sweep F209: bonds an older firmware's Just Works pairings left in the
+// store, none of them listed, are not deleted on their own (a list save that
+// failed would make the owner's own bond read unlisted), but GET
+// /api/bluetooth counts them beside the list, "bond_store": {"held",
+// "capacity", "unlisted"}, once the stack is up (before it, no count: the
+// store is not reachable), and when they fill the store the health log
+// names the lockout once and Clear all; Clear all deletes them, and the
+// count follows. A store the list matches counts none unlisted.
+void test_the_bond_store_shows_beside_the_list() {
+  boot(/*bring_up=*/false);
+  for (uint8_t k = 0; k < 3; ++k) {
+    const uint8_t addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, (uint8_t)(0xB0 + k)};
+    host_sim::store_bond(NimBLEAddress(addr, 0), /*irk=*/false);   // the older firmware's
+  }
+  FakeMainNvs nvs;                                              // its list, saved since F172, empty
+  nvs.putBool("bt_paired_id", true);
+  loop_pass();
+  Tap before = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(before.body.find("\"bond_store\"") == std::string::npos);   // the store not reachable yet
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bond_store_known && st.bonds_held == 3 && st.bond_capacity == 3 && st.bonds_unlisted == 3);
+  const Tap full = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(full.body.find("\"bond_store\":{\"held\":3,\"capacity\":3,\"unlisted\":3}") != std::string::npos);
+  json_strict::Value parsed;
+  CHECK(json_strict::parse(full.body, &parsed));
+  CHECK(health_says(kLockout) == 1 && health_detail(kLockout) == "3 of 3 bonds unlisted");
+  CHECK(health_level(kLockout) == SCV_LOG_WARNING);
+  CHECK(host_sim::bonds_deleted.empty() && host_sim::bonds.size() == 3);   // nothing deleted on its own
+  for (int k = 0; k < 3; ++k) loop_pass();
+  CHECK(health_says(kLockout) == 1);                            // once, not every pass
+  // A new phone is refused at its start (F189), and the count says why.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo owner = public_phone(111, 0xC1);
+  CHECK(!pair_through_stack(owner, /*irk=*/false));
+  link_ends(owner);
+  // Clear all deletes them, and the count follows.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIRED_CLEAR)).r.ok);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 0 && st.bonds_unlisted == 0);
+  const Tap cleared = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(cleared.body.find("\"bond_store\":{\"held\":0,\"capacity\":3,\"unlisted\":0}") != std::string::npos);
+  // The owner pairs: held and listed, none unlisted.
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo owner_again = public_phone(112, 0xC1);
+  CHECK(pair_through_stack(owner_again, /*irk=*/false));
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 1 && st.bonds_unlisted == 0 && bc::g_paired_count == 1);
+  // An older bond and two listed ones fill the store: the lockout is named
+  // again (one bond is beyond Remove's reach).
+  link_ends(owner_again);
+  NimBLEConnInfo second = public_phone(113, 0xC2);
+  CHECK(pair_through_stack(second, /*irk=*/false));
+  link_ends(second);
+  const uint8_t old_addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, 0xBF};
+  host_sim::store_bond(NimBLEAddress(old_addr, 0), /*irk=*/false);
+  bc::g_bond_store_dirty = true;                                // as a pairing's report would mark it
+  loop_pass();
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1 && health_says(kLockout) == 2);
+  CHECK(health_detail(kLockout) == "1 of 3 bonds unlisted");
+  std::printf("PASS the_bond_store_shows_beside_the_list\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -4859,6 +5237,11 @@ const Test kTests[] = {
     {"a_name_holding_a_control_byte_is_refused", test_a_name_holding_a_control_byte_is_refused},
     {"a_saved_name_holding_a_control_byte_is_not_loaded",
      test_a_saved_name_holding_a_control_byte_is_not_loaded},
+    {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},
+    {"an_unauthenticated_bond_is_deleted_and_its_link_dropped",
+     test_an_unauthenticated_bond_is_deleted_and_its_link_dropped},
+    {"unlisted_bonds_no_longer_lock_the_owner_out", test_unlisted_bonds_no_longer_lock_the_owner_out},
+    {"the_bond_store_shows_beside_the_list", test_the_bond_store_shows_beside_the_list},
 };
 
 }  // namespace bt_commands

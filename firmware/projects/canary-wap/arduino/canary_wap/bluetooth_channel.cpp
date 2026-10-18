@@ -323,6 +323,7 @@ static bool reject_pairing();
 static bool disconnect();
 static bool remove_paired_device(const uint8_t* address, Refusal* refusal);
 static bool clear_all_paired_devices(Refusal* refusal);
+static bool forget_bond(const NimBLEAddress& identity);
 static bool set_device_trusted(const uint8_t* address, bool trusted);
 static bool set_device_blocked(const uint8_t* address, bool blocked);
 static bool set_settings(const BluetoothSettings& settings);
@@ -445,6 +446,63 @@ static uint32_t g_store_full_count = 0;
 static uint32_t g_store_overflow_count = 0;
 static DropLog g_store_full_log = {0, 0};
 static DropLog g_store_overflow_log = {0, 0};
+// The loop task's (sweep F191): passkeys this device was asked to show
+// outside the owner's pairing mode, shown nowhere, since boot, with their
+// log (at most once a minute, as the store's refusals are: a stranger's
+// repeated attempts).
+static uint32_t g_passkey_refused_count = 0;
+static DropLog g_passkey_refused_log = {0, 0};
+
+// Whether a passkey this device shows may be shown (sweep F191): the
+// owner's pairing mode in flight (Pair in the web UI, PAIR_INITIATED, or a
+// passkey of that pairing mode already shown, PAIR_PIN_DISPLAYED) with
+// Bluetooth on and new pairings allowed. A Passkey Entry is what NimBLE
+// 2.3.8's tables give a keyboard-only phone: the phone types the six digits
+// this side shows. Before F191 the digits reached the dashboard's PIN box
+// and the health log whenever a phone asked, in or out of pairing mode and
+// whatever allow_pairing said, so whoever read either could complete an
+// authenticated bond that the channel then listed. The loop task decides
+// (it holds the state); publish_views() hands the answer to the NimBLE host
+// task (g_owner_pairing_open, release), whose onPassKeyDisplay() reads it
+// (acquire) and, when it says no, gives NimBLE a passkey it cannot use
+// (PASSKEY_REFUSED). A Numeric Comparison asks the owner either way (its
+// confirm in the web UI, require_pin).
+static bool g_owner_pairing_open = false;
+static bool owner_pairing_open() {
+  return g_settings.enabled && g_settings.allow_pairing &&
+         (g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED);
+}
+// Added to a refused passkey (sweep F191): no passkey a phone can type is
+// that large. NimBLE-Arduino 2.3.8 and 2.5.0's ble_sm_inject_io() refuse a
+// passkey above 999999 (BLE_HS_EINVAL, ble_sm.c), so no key is set, the
+// pairing waits for one (BLE_SM_PROC_F_ADVANCE_ON_IO) and its 30 s timeout
+// fails it; a stack that took the value anyway would hold a key no six
+// digits spell. The six random digits under it are never shown either.
+static const uint32_t PASSKEY_REFUSED = 1000000;
+
+// NimBLE's bond store as the owner's list sees it (sweep F209): the bonds it
+// holds, of how many it keeps, and how many of them the paired list does
+// not hold. Before F191 a Just Works phone's bond stayed in the store
+// unlisted, where Remove (it takes a listed address) cannot reach it, and
+// three such bonds refused the owner's next pairing (F189 refuses a new
+// pairing on a full store) with nothing on the dashboard to say why. F191
+// deletes such a bond as it is made; one an older firmware already stored
+// is not deleted on its own (a list save that failed would make an owner's
+// own bond read unlisted), but GET /api/bluetooth counts it beside the list
+// (bond_store) and the health log names the lockout (refresh_bond_store()),
+// and Clear all (DELETE /api/bluetooth/paired/all) deletes every bond the
+// stack keeps, listed or not. The loop task's: re-read from the store when
+// something changed it (g_bond_store_dirty: the hand-over, a bond made or
+// deleted, Remove, Clear all), as the status is published.
+#ifdef CONFIG_BT_NIMBLE_MAX_BONDS
+static const uint8_t BOND_STORE_CAPACITY = CONFIG_BT_NIMBLE_MAX_BONDS;   // nimconfig.h's; no WAP build sets it
+#else
+static const uint8_t BOND_STORE_CAPACITY = 3;   // nimconfig.h's default
+#endif
+static uint8_t g_bonds_held = 0;
+static uint8_t g_bonds_unlisted = 0;
+static bool g_bond_store_dirty = true;
+static bool g_bond_lockout_logged = false;
 // The loop task's: the count of a link's dropped events reconcile_link()
 // last answered (sweep F169).
 static uint32_t g_link_drops_reconciled = 0;
@@ -499,6 +557,12 @@ class ServerCallbacks : public NimBLEServerCallbacks {
       passkey = esp_random();
     } while (passkey >= (UINT32_MAX - (UINT32_MAX % 1000000)));
     passkey %= 1000000;
+    // Outside the owner's pairing mode (sweep F191): a passkey NimBLE cannot
+    // use, so the pairing cannot complete, and the loop task shows nothing
+    // (apply_passkey_display()).
+    if (!__atomic_load_n(&g_owner_pairing_open, __ATOMIC_ACQUIRE)) {
+      passkey += PASSKEY_REFUSED;
+    }
     Event e = make_event(BT_EV_PASSKEY_DISPLAY);
     e.u.passkey.pin = passkey;
     // Dropped (no room): the owner never sees the digits and the pairing
@@ -810,6 +874,9 @@ static void apply_disconnect(const Event& e) {
 
 static void apply_auth_complete(const Event& e) {
   const LinkEvent& link = e.u.link;
+  // NimBLE stores a bond before it reports the link's authentication: the
+  // store is read again for the status (sweep F209).
+  g_bond_store_dirty = true;
   // The connection card and the pairing's state are the recorded link's
   // (the F171 review): on FULL a second link can be up beside it (Opera
   // advertises through a link), and its encryption must not mark the
@@ -875,6 +942,40 @@ static void apply_auth_complete(const Event& e) {
         g_pair_callback(&g_pairing);
       }
     }
+  } else if (link.bonded) {
+    // A bond no owner asked for (sweep F191). NimBLE 2.3.8's pairing tables
+    // (ble_sm_sc_resp_ioa, ble_sm_lgcy_resp_ioa, for this side's
+    // DISPLAY_YESNO) pair a DisplayOnly or NoInputNoOutput phone, and on
+    // legacy pairing a DisplayYesNo one, by Just Works: no owner, no MITM
+    // protection, and NimBLE stores the bond. The list never held it and its
+    // key opens none of the authenticated characteristics, but it held one
+    // of the store's CONFIG_BT_NIMBLE_MAX_BONDS slots, and three such bonds
+    // refused the owner's next pairing until Clear all (F209). Every
+    // pairing this channel offers that keeps a bond is authenticated (the
+    // owner's Numeric Comparison; a Passkey Entry inside pairing mode), and
+    // the setup door's Just Works keeps none (set_setup_door(): bonding
+    // off), so an unauthenticated bond is deleted here, with the radio
+    // quiet as Remove does (forget_bond(): NimBLE refuses to forget a bond
+    // carrying the phone's IRK while it advertises or scans), and its link
+    // dropped (ble_gap_unpair() ends it too; the disconnect asks for the
+    // link by its own handle). A bond that reports authenticated stays
+    // whatever the list says: authentication is never revoked from a link
+    // (ble_sm_update_sec_state()), so an owner's bond is never taken here.
+    // No address in the line (the F172 review).
+    const bool forgotten = forget_bond(NimBLEAddress(link.id_address));
+    if (g_server) {
+      g_server->disconnect(link.handle);
+    }
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               forgotten ? "BLE pairing refused: an unauthenticated bond was deleted and its link dropped"
+                         : "BLE pairing refused: an unauthenticated bond was kept by the stack (Clear all deletes it); its link dropped",
+               nullptr);
+    if (recorded) {
+      g_pairing.state = PAIR_FAILED;
+      if (g_pair_callback) {
+        g_pair_callback(&g_pairing);
+      }
+    }
   } else {
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
     if (recorded) {
@@ -886,14 +987,25 @@ static void apply_auth_complete(const Event& e) {
   }
 }
 
+// A passkey this device shows, for the phone to type (Passkey Entry: a
+// keyboard-only initiator). Shown only inside the owner's pairing mode
+// (sweep F191, owner_pairing_open()), where the dashboard's PIN box shows
+// it: outside it, or when the NimBLE host task already gave NimBLE a passkey
+// it cannot use (onPassKeyDisplay(), PASSKEY_REFUSED), the pairing's state
+// is left alone and the refusal counted for the health log (update(), at
+// most once a minute). The six digits never reach the health log either:
+// the log is durable (the SD card's /HEALTH, the BLE log export), and a
+// reader of it could complete the pairing.
 static void apply_passkey_display(const Event& e) {
+  if (e.u.passkey.pin >= PASSKEY_REFUSED || !owner_pairing_open()) {
+    g_passkey_refused_count++;
+    return;
+  }
   g_pairing.pin_code = e.u.passkey.pin;
   g_pairing.state = PAIR_PIN_DISPLAYED;
   g_pairing.pin_displayed = true;
 
-  char pin_str[16];
-  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
-  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
+  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);
@@ -922,10 +1034,10 @@ static void apply_confirm_passkey(const Event& e) {
   g_pairing.pin_displayed = true;
   g_pairing.user_confirmed = false;
 
-  char pin_str[16];
-  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
+  // No digits in the line (sweep F191): the web UI shows them beside the
+  // confirm; the health log is durable and keeps no pairing digits.
   log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
-             "BLE pairing PIN — awaiting user confirmation", pin_str);
+             "BLE pairing PIN — awaiting user confirmation", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);
@@ -1187,6 +1299,7 @@ static void save_paired_devices() {
   // Every list saved from here on holds identity addresses (apply_auth_complete).
   nvs->putBool(NVS_KEY_BT_PAIRED_ID, true);
   g_paired_by_identity = true;
+  g_bond_store_dirty = true;   // F209: which bonds the list holds may have changed
 
 }
 
@@ -1774,6 +1887,7 @@ static void adopt_init_result() {
   // (once; it needs the stack up). Then the list follows the store (F189).
   migrate_paired_devices();
   drop_entries_without_bond();
+  g_bond_store_dirty = true;   // F209: the store is reachable from here on
 
   // init() already put the dispatcher on the server (attach()); this only
   // names the channel its pairing owner, an atomic store the NimBLE host
@@ -2320,6 +2434,7 @@ static bool forget_bond(const NimBLEAddress& identity) {
   const QuietRadio q = quiet_radio();
   const bool deleted = NimBLEDevice::deleteBond(identity);
   restore_radio(q);
+  g_bond_store_dirty = true;   // F209
   return deleted || !NimBLEDevice::isBonded(identity);
 }
 
@@ -2375,6 +2490,7 @@ static bool clear_all_paired_devices(Refusal* refusal) {
     NimBLEDevice::deleteBond(NimBLEDevice::getBondedAddress(i));
   }
   restore_radio(q);
+  g_bond_store_dirty = true;   // F209
 
   // The entries of bonds the stack kept stay listed; the rest go.
   size_t kept = 0;
@@ -2510,6 +2626,43 @@ static loop_snapshot::Value<PairedView, loop_command_ring::PortMuxLock> g_paired
 // fixed: no own-address type is set). The loop task's.
 static char g_local_address[18] = "";
 
+// The bond store's count beside the list (sweep F209), re-read when it may
+// have changed (g_bond_store_dirty), on the loop task with the stack up.
+// When the store is full and some of its bonds are ones the list does not
+// hold, the owner's next pairing is refused (F189) and Remove cannot reach
+// them: the health log says so once, each time the store comes to that, and
+// names Clear all, which deletes every bond the stack keeps.
+static void refresh_bond_store() {
+  if (!g_bond_store_dirty) return;
+  g_bond_store_dirty = false;
+  const int held = NimBLEDevice::getNumBonds();
+  unsigned unlisted = 0;
+  for (int b = 0; b < held; b++) {
+    const NimBLEAddress identity = NimBLEDevice::getBondedAddress(b);
+    const ble_addr_t* id = identity.getBase();
+    bool listed = false;
+    for (size_t i = 0; i < g_paired_count; i++) {
+      if (memcmp(g_paired_devices[i].address, id->val, BLE_ADDRESS_LENGTH) == 0) {
+        listed = true;
+        break;
+      }
+    }
+    if (!listed) unlisted++;
+  }
+  g_bonds_held = held > 0 ? (uint8_t)held : 0;
+  g_bonds_unlisted = (uint8_t)unlisted;
+  const bool locked = g_bonds_held >= BOND_STORE_CAPACITY && g_bonds_unlisted > 0;
+  if (locked && !g_bond_lockout_logged) {
+    char detail[40];
+    snprintf(detail, sizeof(detail), "%u of %u bonds unlisted", (unsigned)g_bonds_unlisted,
+             (unsigned)g_bonds_held);
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE bond store full with bonds the paired list does not show: new pairings are refused until Clear all",
+               detail);
+  }
+  g_bond_lockout_logged = locked;
+}
+
 // Each built zeroed (padding included) so a pass that changed nothing
 // compares equal and takes no lock.
 static void publish_status_view() {
@@ -2535,6 +2688,12 @@ static void publish_status_view() {
       g_local_address[17] = '\0';
     }
     memcpy(status.local_address, g_local_address, sizeof(status.local_address));
+    // The bond store beside the list (sweep F209): reachable once the stack is up.
+    refresh_bond_store();
+    status.bond_store_known = true;
+    status.bonds_held = g_bonds_held;
+    status.bond_capacity = BOND_STORE_CAPACITY;
+    status.bonds_unlisted = g_bonds_unlisted;
   }
 
   status.tx_power = g_settings.tx_power;
@@ -2577,10 +2736,14 @@ static void publish_paired_view() {
 }
 
 // The loop task: update()'s passes and each owner command (run_command()).
+// With the views, whether a passkey may be shown, for the NimBLE host task's
+// onPassKeyDisplay() (sweep F191): a pairing mode started or ended by a
+// command reaches it before the command's handler answers.
 static void publish_views() {
   publish_status_view();
   publish_scan_view();
   publish_paired_view();
+  __atomic_store_n(&g_owner_pairing_open, owner_pairing_open(), __ATOMIC_RELEASE);
 }
 
 void read_status(BluetoothStatus* out) {
@@ -2836,6 +2999,9 @@ void update() {
             "BLE pairing refused: the bond store is full", now);
   log_drops(g_store_overflow_count, g_store_overflow_log, SCV_LOG_WARNING,
             "BLE bond store full: a record was not kept", now);
+  // Passkeys shown nowhere (sweep F191), at most once a minute.
+  log_drops(g_passkey_refused_count, g_passkey_refused_log, SCV_LOG_WARNING,
+            "BLE pairing passkey not shown: no pairing mode (Pair in the web UI first)", now);
 
   if (!g_initialized || !g_settings.enabled) {
     publish_views();   // F138: a disabled channel's pass, as the routes show it

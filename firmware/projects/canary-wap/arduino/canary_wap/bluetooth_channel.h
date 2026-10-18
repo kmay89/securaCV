@@ -193,6 +193,16 @@ struct BluetoothStatus {
   ConnectionInfo connection;
   PairingSession pairing;
 
+  // NimBLE's bond store beside the paired list (sweep F209), once the stack
+  // is up (bond_store_known): the bonds it holds, of bond_capacity
+  // (CONFIG_BT_NIMBLE_MAX_BONDS), and how many of them the list does not
+  // hold (a Just Works bond an older firmware kept: Remove cannot reach it,
+  // Clear all deletes it). A full store refuses a new pairing (F189).
+  bool bond_store_known;
+  uint8_t bonds_held;
+  uint8_t bond_capacity;
+  uint8_t bonds_unlisted;
+
   // Statistics
   uint32_t total_connections;
   uint32_t total_bytes_sent;

@@ -383,8 +383,8 @@ M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
     same.
 
 Bluetooth settings, events, views and bring-up (F144, F143, F138, F171,
-F167, F189, F196, F210): rules of their own, in their own block below
-(`check_bluetooth_views`, `BV_MUTATIONS`).
+F167, F189, F196, F210, F191, F209): rules of their own, in their own block
+below (`check_bluetooth_views`, `BV_MUTATIONS`).
 
 BV1. A settings POST that turns Bluetooth on does it the way
      POST /api/bluetooth/enable does (F144). `handle_bluetooth_settings_set`
@@ -405,8 +405,9 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      `onPassKeyDisplay`, `onConfirmPassKey`, `onWrite`, `onRead`,
      `onResult`, `onScanEnd`) and the helpers they build their events with
      (`make_event`, `link_event`, `post_event`) name none of `BT_LIVE_STATE`
-     and no other file global but the queue (`post_event`'s `g_events`) and
-     the data hook (`onWrite`'s `g_data_callback`), name nothing qualified
+     and no other file global but the queue (`post_event`'s `g_events`),
+     the data hook (`onWrite`'s `g_data_callback`) and, since F191,
+     `onPassKeyDisplay`'s passkey gate (`g_owner_pairing_open`, BV9), name nothing qualified
      `bluetooth_channel::`, call no `log_health(` and no `ble_*::` module,
      and call no function of the file but those helpers and
      `detect_device_type` (which reads only the advertisement). `onWrite`,
@@ -672,6 +673,44 @@ BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
      under TSAN, are `test_bluetooth_commands_wap.cpp`'s
      (`the_handlers_read_enabled_from_the_view`,
      `threads_bring_up_loop_and_reads`).
+
+BV9. No pairing completes, and no bond stays, without the owner (F191,
+     F209). A keyboard-only phone pairs by Passkey Entry (it types the six
+     digits this device shows), and the digits reached the dashboard's PIN
+     box and the health log in or out of pairing mode; a DisplayOnly or
+     NoInputNoOutput phone pairs by Just Works, and NimBLE kept its
+     unauthenticated bond, unlisted, in the 3-bond store, where three of them
+     refused the owner. In `bluetooth_channel.cpp`: `PASSKEY_REFUSED` is
+     defined once, at least 1000000 (past what NimBLE's
+     `ble_sm_inject_io()` takes); `onPassKeyDisplay()` adds it to its six
+     random digits, before it posts them, exactly when `if
+     (!__atomic_load_n(&g_owner_pairing_open, __ATOMIC_ACQUIRE))`, and
+     returns that passkey; `owner_pairing_open()` is exactly `return
+     g_settings.enabled && g_settings.allow_pairing && (g_pairing.state ==
+     PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED);`,
+     `publish_views()` stores it into the gate once (release), and nothing
+     else names the gate; `apply_passkey_display()` starts `if
+     (e.u.passkey.pin >= PASSKEY_REFUSED || !owner_pairing_open()) {
+     g_passkey_refused_count++; return; }`; no `log_health(` of the file
+     names a pairing's digits (`pin`, `pin_*`, `*_pin`, `passkey*`,
+     `numcmp`: the log is durable). `apply_auth_complete()` answers a bond
+     that is not authenticated in one `} else if (link.bonded) {` branch,
+     after the authenticated block, with `forget_bond(NimBLEAddress(
+     link.id_address))` (the radio quiet, as Remove) and
+     `g_server->disconnect(link.handle);`, calls no bare `deleteBond(` or
+     `ble_gap_unpair*(`, and forgets nothing in the authenticated block. The
+     bond store's count beside the list (F209): `refresh_bond_store()` is
+     called only by `publish_status_view()`, once, and the counts
+     (`g_bonds_held`, `g_bonds_unlisted`) are named only by those two. That
+     a refused passkey is shown nowhere and an unauthenticated bond goes,
+     over a stand-in that models the bond store and the busy guard, is
+     `test_bluetooth_commands_wap.cpp`'s
+     (`a_passkey_outside_pairing_mode_is_shown_nowhere`,
+     `an_unauthenticated_bond_is_deleted_and_its_link_dropped`,
+     `unlisted_bonds_no_longer_lock_the_owner_out`,
+     `the_bond_store_shows_beside_the_list`); that NimBLE refuses the
+     out-of-range passkey and times the pairing out is read from its source
+     (2.3.8 and 2.5.0), not run.
 
 ## It proves it bites
 
@@ -2618,7 +2657,9 @@ CALL_RE = r"(?<![\w:.>])([A-Za-z_]\w*)\s*\("
 # (post_event's) and the data hook (onWrite's, which runs on the NimBLE host
 # task with the written bytes). Any other g_ name is the loop task's or the
 # bring-up's (g_init_fail_reason, g_local_address, the views, ...).
-BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite",)}
+BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite",),
+                       # F191: the passkey gate the loop task publishes (BV9)
+                       "g_owner_pairing_open": ("onPassKeyDisplay",)}
 # What a callback hands the loop task, by kind: GATT activity and scan
 # results are posted under EVENT_LOSSY_LIMIT (a burst of them never takes
 # the room a link's events are kept), a link's own at the full limit.
@@ -2738,12 +2779,13 @@ BT_VIEW_CALLS = (
 SIG_BT_RUN_COMMAND = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
 BT_READERS = ("read_status", "read_settings", "read_scan", "read_paired", "read_enabled")
 # The JSON each GET route sends: `<object>.<key>` for every literal key it
-# sets (doc is the top level; conn, pair, stats and dev are its objects).
+# sets (doc is the top level; conn, pair, stats, store and dev are its objects).
 BT_GET_KEYS = {
     "handle_bluetooth_status": {
         "doc": ("state", "enabled", "advertising", "init_fail_reason", "scanning", "connected",
                 "device_name", "local_address", "tx_power", "mtu", "battery_pct", "paired_count",
-                "scanned_count", "connection", "pairing", "stats"),
+                "scanned_count", "bond_store", "connection", "pairing", "stats"),
+        "store": ("held", "capacity", "unlisted"),   # F209: NimBLE's bond store beside the list
         "conn": ("address", "name", "rssi", "distance_m", "distance_label", "security",
                  "connected_sec", "bytes_sent", "bytes_received"),
         "pair": ("state", "pin", "peer_address", "peer_name"),
@@ -3822,12 +3864,132 @@ def check_bluetooth_enabled_read(files: dict[str, str], errors: list[str]) -> No
                           "bluetooth_channel::read_enabled(), the published settings (F210)")
 
 
+# BV9 (F191, F209): no pairing completes, and no bond stays, without the owner.
+SIG_BT_PASSKEY_DISPLAY = r"\buint32_t\s+onPassKeyDisplay\s*\(\s*\)\s*override"
+SIG_BT_APPLY_PASSKEY = r"\bstatic\s+void\s+apply_passkey_display\s*\([^)]*\)"
+SIG_BT_OWNER_PAIRING_OPEN = r"\bstatic\s+bool\s+owner_pairing_open\s*\(\s*\)"
+SIG_BT_PUBLISH_VIEWS = r"\bstatic\s+void\s+publish_views\s*\(\s*\)"
+BT_PASSKEY_GATE = "if(!__atomic_load_n(&g_owner_pairing_open,__ATOMIC_ACQUIRE)){passkey+=PASSKEY_REFUSED;}"
+BT_PASSKEY_POST = "Evente=make_event(BT_EV_PASSKEY_DISPLAY);"
+BT_OWNER_PAIRING_OPEN_BODY = ("returng_settings.enabled&&g_settings.allow_pairing&&"
+                              "(g_pairing.state==PAIR_INITIATED||g_pairing.state==PAIR_PIN_DISPLAYED);")
+BT_OWNER_PAIRING_PUBLISH = "__atomic_store_n(&g_owner_pairing_open,owner_pairing_open(),__ATOMIC_RELEASE);"
+BT_APPLY_PASSKEY_GATE = "if(e.u.passkey.pin>=PASSKEY_REFUSED||!owner_pairing_open()){g_passkey_refused_count++;return;}"
+# Who names the passkey gate's flag: its writer (publish_views(), the loop
+# task) and its reader (onPassKeyDisplay(), the NimBLE host task).
+BT_OWNER_PAIRING_NAMERS = ("publish_views", "onPassKeyDisplay")
+# A pairing's digits, as an identifier names them (blanked code: the
+# literals are gone, so a message saying "PIN" is not one).
+BT_DIGITS_NAME = r"\b(?:pin|pin_\w+|\w+_pin|passkey\w*|\w+_passkey|numcmp)\b"
+BT_UNAUTH_BRANCH = "}elseif(link.bonded){"
+BT_UNAUTH_FORGET = "forget_bond(NimBLEAddress(link.id_address))"
+BT_UNAUTH_DROP = "g_server->disconnect(link.handle);"
+SIG_BT_REFRESH_BONDS = r"\bstatic\s+void\s+refresh_bond_store\s*\(\s*\)"
+SIG_BT_PUBLISH_STATUS = r"\bstatic\s+void\s+publish_status_view\s*\(\s*\)"
+# The bond store's counts (F209): written by the one function that reads the
+# store, read by the status view's builder.
+BT_BOND_COUNTS = ("g_bonds_held", "g_bonds_unlisted")
+
+
+def check_bluetooth_owner_pairing(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV9 (F191, F209): a passkey is shown only inside the owner's
+    pairing mode, and NimBLE is handed one it cannot use outside it; no
+    pairing digits reach the health log; a bond that is not authenticated is
+    deleted with the radio quiet and its link dropped; the bond store's count
+    beside the list is the loop task's, read by the status view."""
+    code = blank_comments_and_strings(files[BT_CPP])
+    spans = named_bodies(code)
+    m = re.search(r"\bstatic\s+const\s+uint32_t\s+PASSKEY_REFUSED\s*=\s*(\d+)\s*;", code)
+    if m is None or int(m.group(1)) < 1000000 or len(re.findall(r"\bPASSKEY_REFUSED\s*=", code)) != 1:
+        errors.append(f"{BT_CPP}: PASSKEY_REFUSED must be defined once, `static const uint32_t PASSKEY_REFUSED "
+                      "= <at least 1000000>;` — added to a refused passkey, it puts it past what "
+                      "ble_sm_inject_io() takes (999999), so NimBLE sets no key (F191)")
+    shown = body_of(code, SIG_BT_PASSKEY_DISPLAY, f"{BT_CPP}: ServerCallbacks::onPassKeyDisplay()", errors)
+    if shown is not None:
+        sq = squash(shown)
+        gate, post = sq.find(BT_PASSKEY_GATE), sq.find(BT_PASSKEY_POST)
+        mod = sq.find("passkey%=1000000;")
+        if sq.count(BT_PASSKEY_GATE) != 1 or not (0 <= mod < gate < post) or \
+                not sq.endswith("returnpasskey;") or sq.count("return") != 1:
+            errors.append(f"{BT_CPP}: onPassKeyDisplay() must refuse, after its six random digits and "
+                          f"before it posts them, with `{BT_PASSKEY_GATE}`, and return that passkey — "
+                          "outside the owner's pairing mode NimBLE must get a passkey it cannot use, so "
+                          "the pairing cannot complete for whoever reads the digits (F191)")
+    body = body_of(code, SIG_BT_OWNER_PAIRING_OPEN, f"{BT_CPP}: owner_pairing_open()", errors)
+    if body is not None and squash(body) != BT_OWNER_PAIRING_OPEN_BODY:
+        errors.append(f"{BT_CPP}: owner_pairing_open() must be exactly `return g_settings.enabled && "
+                      "g_settings.allow_pairing && (g_pairing.state == PAIR_INITIATED || g_pairing.state == "
+                      "PAIR_PIN_DISPLAYED);` — the owner's pairing mode, Bluetooth on, new pairings "
+                      "allowed, no Numeric Comparison pending (F191)")
+    body = body_of(code, SIG_BT_PUBLISH_VIEWS, f"{BT_CPP}: publish_views()", errors)
+    if body is not None and squash(body).count(BT_OWNER_PAIRING_PUBLISH) != 1:
+        errors.append(f"{BT_CPP}: publish_views() must hand the passkey gate to the NimBLE host task, "
+                      f"`{BT_OWNER_PAIRING_PUBLISH}`, once — a pairing mode a command starts or ends "
+                      "reaches onPassKeyDisplay() before the command's handler answers (F191)")
+    for hit in re.finditer(r"\bg_owner_pairing_open\b", code):
+        where = enclosing_function(spans, hit.start())
+        if where is not None and where not in BT_OWNER_PAIRING_NAMERS:
+            errors.append(f"{BT_CPP}: {where}() names g_owner_pairing_open — publish_views() stores it "
+                          "(release) and onPassKeyDisplay() reads it (acquire), nothing else (F191)")
+            break
+    body = body_of(code, SIG_BT_APPLY_PASSKEY, f"{BT_CPP}: apply_passkey_display()", errors)
+    if body is not None and not squash(body).startswith(BT_APPLY_PASSKEY_GATE):
+        errors.append(f"{BT_CPP}: apply_passkey_display() must start `{BT_APPLY_PASSKEY_GATE}` — a passkey "
+                      "the host task refused, or one whose pairing mode ended before this pass, is shown "
+                      "nowhere: not in the dashboard's PIN box, not in the status (F191)")
+    for call in re.finditer(r"(?<![\w:.>])log_health\s*\(", code):
+        close = matching_paren(code, call.end() - 1)
+        args = code[call.end():close] if close > 0 else ""
+        named = re.search(BT_DIGITS_NAME, args)
+        if named:
+            where = enclosing_function(spans, call.start())
+            errors.append(f"{BT_CPP}: {where or 'file scope'}() logs `{named.group(0)}` — no pairing digits "
+                          "reach the health log: it is durable (the SD card's /HEALTH, the BLE log "
+                          "export), and its reader could complete a Passkey Entry (F191)")
+            break
+    auth = body_of(code, SIG_BT_AUTH_COMPLETE, f"{BT_CPP}: apply_auth_complete()", errors)
+    if auth is not None:
+        sq = squash(auth)
+        at = sq.find(BT_UNAUTH_BRANCH)
+        branch = sq[at:] if at >= 0 else ""
+        branch = branch[:branch.find("}else{")] if "}else{" in branch else branch
+        authed = sq[:at] if at >= 0 else sq
+        if sq.count(BT_UNAUTH_BRANCH) != 1 or not sq.startswith("constLinkEvent&link=e.u.link;") or \
+                BT_UNAUTH_FORGET not in branch or BT_UNAUTH_DROP not in branch or \
+                re.search(r"\bdeleteBond\s*\(|\bble_gap_unpair\w*\s*\(", auth) or "forget_bond(" in authed:
+            errors.append(f"{BT_CPP}: apply_auth_complete() must answer a bond that is not authenticated "
+                          f"(`{BT_UNAUTH_BRANCH}` after the authenticated block) with "
+                          f"`{BT_UNAUTH_FORGET}` (the radio quiet, as Remove does: a bare deleteBond() is "
+                          f"refused busy for a bond with the phone's IRK) and `{BT_UNAUTH_DROP}`, and take no "
+                          "authenticated bond: a Just Works bond no owner asked for held a slot of the "
+                          "3-bond store, and three of them refused the owner (F191, F209)")
+    for hit in re.finditer(r"(?<![\w:.>])refresh_bond_store\s*\(", code):
+        where = enclosing_function(spans, hit.start())
+        if where is not None and where != "publish_status_view":
+            errors.append(f"{BT_CPP}: {where}() calls refresh_bond_store() — the status view's builder "
+                          "reads the store, on the loop task, as it publishes (F209)")
+            break
+    for name in BT_BOND_COUNTS:
+        for hit in re.finditer(r"\b" + name + r"\b", code):
+            where = enclosing_function(spans, hit.start())
+            if where not in (None, "refresh_bond_store", "publish_status_view"):
+                errors.append(f"{BT_CPP}: {where}() names {name} — refresh_bond_store() counts the store "
+                              "and publish_status_view() shows the count; a reader on another task reads "
+                              "the published status (F209)")
+                break
+    builder = body_of(code, SIG_BT_PUBLISH_STATUS, f"{BT_CPP}: publish_status_view()", errors)
+    if builder is not None and squash(builder).count("refresh_bond_store();") != 1:
+        errors.append(f"{BT_CPP}: publish_status_view() must call refresh_bond_store() once, with the stack "
+                      "up — the count GET /api/bluetooth shows beside the list (F209)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..BV8 and BD1: the Bluetooth channel's settings enable (F144),
+    """Rules BV1..BV9 and BD1: the Bluetooth channel's settings enable (F144),
     the NimBLE host task's events (F143), the status routes' reads (F138),
     the server callbacks' one dispatcher (F171), the bring-up's hand-over
-    and its worker (F167), the bond store (F189), the answers' lengths (F196)
-    and whether Bluetooth is on as another task reads it (F210)."""
+    and its worker (F167), the bond store (F189), the answers' lengths (F196),
+    whether Bluetooth is on as another task reads it (F210), and no pairing
+    or bond without the owner (F191, F209)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
@@ -3840,6 +4002,7 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_answer_lengths(files[BT_API], errors)
     check_bluetooth_bringup_worker(files, errors)
     check_bluetooth_enabled_read(files, errors)
+    check_bluetooth_owner_pairing(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -5301,6 +5464,64 @@ BV_MUTATIONS += [
      raw_other(f"{SKETCH}/selftest_api.h", "any_active = any_active || bluetooth_channel::is_advertising();",
                "any_active = any_active || bluetooth_channel::is_advertising() || "
                "bluetooth_channel::is_enabled();")),
+]
+# Rule BV9 (F191, F209): no pairing completes, and no bond stays, without the owner.
+SIG_BT_START_PAIRING = r"\bstatic\s+bool\s+start_pairing\s*\(\s*\)"
+SIG_BT_CONFIRM_PASSKEY = r"\bstatic\s+void\s+apply_confirm_passkey\s*\([^)]*\)"
+SIG_BT_READ_STATUS = r"\bvoid\s+read_status\s*\(\s*BluetoothStatus\s*\*\s*out\s*\)"
+BV_MUTATIONS += [
+    ("onPassKeyDisplay() hands NimBLE a usable passkey outside pairing mode",
+     on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"passkey \+= PASSKEY_REFUSED;", "")),
+    ("onPassKeyDisplay() reads the gate relaxed",
+     on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"&g_owner_pairing_open, __ATOMIC_ACQUIRE",
+              "&g_owner_pairing_open, __ATOMIC_RELAXED")),
+    ("onPassKeyDisplay() refuses after it posted the digits",
+     lambda s: on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"(\(void\)post_event\(e\);)",
+                        r"\1 if (!__atomic_load_n(&g_owner_pairing_open, __ATOMIC_ACQUIRE)) "
+                        r"{ passkey += PASSKEY_REFUSED; }")(
+         on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY,
+                  r"if \(!__atomic_load_n\(&g_owner_pairing_open, __ATOMIC_ACQUIRE\)\) \{\s*"
+                  r"passkey \+= PASSKEY_REFUSED;\s*\}", "")(s))),
+    ("a refused passkey stays in NimBLE's range",
+     raw_other(BT_CPP, "static const uint32_t PASSKEY_REFUSED = 1000000;",
+               "static const uint32_t PASSKEY_REFUSED = 0;")),
+    ("the passkey gate is open while a Numeric Comparison waits",
+     on_other(BT_CPP, SIG_BT_OWNER_PAIRING_OPEN, r"g_pairing\.state == PAIR_PIN_DISPLAYED\)",
+              "g_pairing.state == PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING)")),
+    ("the passkey gate ignores allow_pairing",
+     on_other(BT_CPP, SIG_BT_OWNER_PAIRING_OPEN, r"g_settings\.allow_pairing &&\s*", "")),
+    ("publish_views() never hands the gate over",
+     on_other(BT_CPP, SIG_BT_PUBLISH_VIEWS,
+              r"__atomic_store_n\(&g_owner_pairing_open, owner_pairing_open\(\), __ATOMIC_RELEASE\);", "")),
+    ("pairing mode opens the gate itself",
+     on_other(BT_CPP, SIG_BT_START_PAIRING, r"(g_pairing\.state = PAIR_INITIATED;)",
+              r"\1 __atomic_store_n(&g_owner_pairing_open, true, __ATOMIC_RELEASE);")),
+    ("the loop task shows a passkey the host task refused",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r"e\.u\.passkey\.pin >= PASSKEY_REFUSED \|\| ", "")),
+    ("the loop task shows a passkey outside pairing mode",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r" \|\| !owner_pairing_open\(\)", "")),
+    ("the passkey's digits go to the health log again",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r"\"Pairing PIN displayed\", nullptr\)",
+              '"Pairing PIN displayed", String(e.u.passkey.pin).c_str())')),
+    ("the Numeric Comparison's digits go to the health log again",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY, r"(\"BLE pairing PIN — awaiting user confirmation\"), nullptr\)",
+              r'\1, pin_str)')),
+    ("an unauthenticated bond is kept, its link up",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"\} else if \(link\.bonded\) \{", "} else if (false) {")),
+    ("an unauthenticated bond is deleted with the radio busy",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"forget_bond\(NimBLEAddress\(link\.id_address\)\)",
+              "NimBLEDevice::deleteBond(NimBLEAddress(link.id_address))")),
+    ("an unauthenticated bond's link stays up",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"g_server->disconnect\(link\.handle\);", "(void)link.handle;")),
+    ("an authenticated bond is forgotten too",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"(if \(link\.authenticated\) \{)",
+              r"\1 (void)forget_bond(NimBLEAddress(link.id_address));")),
+    ("the bond store is counted off the status view",
+     on_other(BT_CPP, SIG_UPDATE, r"(g_events\.consume\(apply_event\);)", r"\1 refresh_bond_store();")),
+    ("the status view never counts the bond store",
+     on_other(BT_CPP, SIG_BT_PUBLISH_STATUS, r"refresh_bond_store\(\);", "")),
+    ("a reader on the httpd task reads the bond count in place",
+     on_other(BT_CPP, SIG_BT_READ_STATUS, r"(\*out = v\.status;)", r"\1 out->bonds_held = g_bonds_held;")),
 ]
 MUTATIONS += BV_MUTATIONS
 

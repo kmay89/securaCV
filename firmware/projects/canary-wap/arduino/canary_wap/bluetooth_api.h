@@ -152,6 +152,16 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   doc["battery_pct"] = status.battery_pct;
   doc["paired_count"] = status.paired_count;
   doc["scanned_count"] = status.scanned_count;
+  // NimBLE's bond store beside the list (sweep F209), once the stack is up:
+  // a full store refuses a new pairing (F189), and a bond the list does not
+  // hold (an older firmware's Just Works bond) is one only Clear all
+  // (DELETE /api/bluetooth/paired/all) deletes.
+  if (status.bond_store_known) {
+    JsonObject store = doc["bond_store"].to<JsonObject>();
+    store["held"] = status.bonds_held;
+    store["capacity"] = status.bond_capacity;
+    store["unlisted"] = status.bonds_unlisted;
+  }
 
   // Connection info
   if (status.connected) {
