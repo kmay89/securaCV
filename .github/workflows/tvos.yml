@@ -82,7 +82,7 @@ jobs:
   # The vectors test here is the load-bearing one.
   core:
     name: Witness core (chain math + anti-drift vectors)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

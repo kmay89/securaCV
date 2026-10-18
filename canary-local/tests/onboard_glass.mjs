@@ -133,6 +133,57 @@ export function framesOnGlass(shapes, frames, glass = null) {
 }
 
 /**
+ * A glass turned while it runs (sweep F243): the shapes the firmware
+ * announced after the turn was asked, and the frames since. shapes: the
+ * harness's __state.shapes ({w, h, frames, turn}); asked: how many shapes it
+ * held when the probe asked; frames: __state.flushes now; to: {rotation,
+ * glass: {w, h}} the turn asked for. The glass must have announced the asked
+ * shape and no other since the ask, drawn on it since, and — once the dist
+ * announces turns (A56; null from one built before) — named the asked
+ * rotation as its turn. Returns a failure message, or null.
+ */
+export function turnedAtRuntime(shapes, asked, frames, to) {
+  const after = (shapes || []).slice(asked);
+  if (!after.length) {
+    return `asked to turn to rotation ${to.rotation}, the glass announced no new shape (F243)`;
+  }
+  const other = after.find((s) => s.w !== to.glass.w || s.h !== to.glass.h);
+  if (other) {
+    return `asked to turn to rotation ${to.rotation} (${to.glass.w}x${to.glass.h}), the glass announced ` +
+      `${other.w}x${other.h} (F243)`;
+  }
+  const last = after[after.length - 1];
+  if (last.turn !== null && last.turn !== undefined && last.turn !== to.rotation) {
+    return `asked to turn to rotation ${to.rotation}, the glass announced turn ${last.turn} (F243, A56)`;
+  }
+  if (!(frames > last.frames)) {
+    return `the glass turned to ${last.w}x${last.h} and drew no frame on it after (${frames} frame(s) in all) (F243)`;
+  }
+  return null;
+}
+
+/**
+ * The companion after a runtime turn sits where a boot at that rotation
+ * seats it (sweep F243, as runtime_turn.sh holds natively): bird and ref,
+ * markBox() reads ({x, y, w, h, shown}) of the turned glass and of a boot
+ * that wore the rotation from power-on, each read once. The mark breathes
+ * its bird `span` px up and down about its perch (2 px each way: x 42,
+ * y 200..204 on the 180x320 nightlight in runtime_turn.sh's reads), so the
+ * same x and size, and tops within the breath's span of each other. Returns
+ * a failure message, or null; null too when there is no reference on stage
+ * to hold it to (the caller says so).
+ */
+export function perchAfterTurn(bird, ref, span = 4) {
+  if (!ref || !ref.shown) return null;
+  if (!bird || !bird.shown) return "no bird on stage after the turn to hold to its perch (F243)";
+  if (bird.w !== ref.w || bird.h !== ref.h || bird.x !== ref.x || Math.abs(bird.y - ref.y) > span) {
+    return `after the turn the companion is drawn at ${bird.x},${bird.y} (${bird.w}x${bird.h}); a boot at ` +
+      `that rotation seats it at ${ref.x},${ref.y} (${ref.w}x${ref.h}), breathing ${span / 2} px each way (F243)`;
+  }
+  return null;
+}
+
+/**
  * The QR card where the layout seats it (F184): card, the probe's joinCard()
  * answer (its box [x0, y0, x1, y1] the card's white pixels, inclusive);
  * layout, __emu.onboardJoin() (onboard_layout.h's stack, evaluated by the

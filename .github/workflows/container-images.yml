@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -69,12 +69,16 @@ jobs:
       # shared libraries (catches runtime-stage packaging gaps), curl —
       # which the HEALTHCHECK depends on — must be present, and so must the
       # openssl CLI, which docs/timestamping.md promises for
-      # `log_anchor verify --ca`/`--policy` inside this image.
+      # `log_anchor verify --ca`/`--policy` inside this image. witness_api
+      # is here for its operator subcommands (docs/container.md mints the
+      # Witness Wall's viewer token with it); `help` must exit 0 and name
+      # mint-viewer-token. It prints its usage on stderr, and the shell is
+      # dash (no pipefail), so the usage is captured whole rather than piped.
       - name: Smoke-test witnessd image
         run: |
           docker run --rm --entrypoint /bin/sh witnessd:ci -c '
             set -e
-            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass log_anchor court_export; do
+            for bin in witnessd log_verify export_events export_verify envelope_verify break_glass log_anchor court_export witness_api; do
               command -v "$bin" >/dev/null
               if ldd "/usr/local/bin/$bin" | grep -q "not found"; then
                 echo "missing shared libraries for $bin" >&2
@@ -86,6 +90,11 @@ jobs:
             export_verify --help >/dev/null
             log_anchor --help >/dev/null
             court_export --help >/dev/null
+            usage=$(witness_api help 2>&1)
+            case "$usage" in
+              *mint-viewer-token*) ;;
+              *) echo "witness_api help does not name mint-viewer-token: $usage" >&2; exit 1 ;;
+            esac
             curl --version >/dev/null
             openssl version >/dev/null
           '
@@ -94,7 +103,7 @@ jobs:
     name: Publish to GHCR
     needs: build
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     permissions:
       contents: read

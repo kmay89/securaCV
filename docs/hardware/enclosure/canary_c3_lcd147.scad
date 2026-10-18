@@ -139,7 +139,7 @@
 //  for: wide base DOWN (the entry, at the USB end), crown UP.
 //
 //  THE BIRD IS NOT ON THIS PART, and that is not an omission. The house
-//  mark (canary_mark_lib.scad) has interior detail — a C spiralled into the
+//  mark (canary_mark_lib.scad) has interior detail — a C spiraled into the
 //  wing, a V in the tail — with a stated MINIMUM SIZE of roughly 30 mm.
 //  This lid is 25.12 mm across. The bird would be wider than the part
 //  before it was legible on it, so this face carries the WORDMARK ALONE,

@@ -15,10 +15,11 @@
  *      the label travels in the note field (sanitized ASCII at the
  *      chokepoint) and consumers correlate via label only.
  *   3. Pairing (repo sweep F27) happens only through the proximity window:
- *      ble_scout_on_advert() hands the MAC of the first strong unpaired
- *      advert to ble_scout_pair() and nothing else. The HTTP surface arms
- *      the window and reads back hashed_id + label copies; no API, log or
- *      persisted byte carries a MAC. (This sketch has no pairing route yet:
+ *      ble_scout_on_advert() hands the MAC of the first strong, offerable
+ *      unpaired advert to ble_scout_pair() and nothing else (an advert in
+ *      the fleet's own formats is not offerable, repo sweep F36). The HTTP
+ *      surface arms the window and reads back hashed_id + label copies; no
+ *      API, log or persisted byte carries a MAC. (This sketch has no pairing route yet:
  *      the canary PIO tree's /api/scout is the only surface today.)
  *
  * VENDORED COPY — intentional divergence from the canonical library
@@ -459,7 +460,8 @@ void ble_scout_tick(uint32_t now_ms) {
 
 void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
                          int8_t        rssi_dbm,
-                         uint32_t      now_ms) {
+                         uint32_t      now_ms,
+                         bool          offerable) {
   if (!s_inited || mac == nullptr) return;
 
   uint8_t hashed[ble_scan::HASHED_ID_LEN];
@@ -467,11 +469,14 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
 
   /* Drop adverts from non-paired beacons in O(N) registry lookup.
    * MAX_PAIRED_BEACONS=16 so this is ≤16 16-byte memcmps per advert —
-   * sub-microsecond on ESP32-S3. An unpaired advert is first offered to
-   * the proximity pairing window (F27): the first one at/above the
-   * window's threshold claims it, and its MAC goes to ble_scout_pair()
+   * sub-microsecond on ESP32-S3. An unpaired, offerable advert is first
+   * offered to the proximity pairing window (F27): the first one at/above
+   * the window's threshold claims it, and its MAC goes to ble_scout_pair()
    * right here — the only place the raw bytes exist. Already-paired
-   * beacons never consume the window. */
+   * beacons never consume the window, and neither does an advert the scan
+   * callback found in the fleet's own formats (offerable == false: another
+   * Canary's presence beacon or Chirp, repo sweep F36). Tracking a paired
+   * device does not read the flag. */
   char label[ble_scan::MAX_LABEL_LEN + 1] = {0};
   PresenceEvent e = PresenceEvent::NONE;
   bool pair_now = false;
@@ -481,7 +486,7 @@ void ble_scout_on_advert(const uint8_t mac[ble_scan::MAC_LEN],
   if (paired != nullptr) {
     copy_label(label, paired);
     e = presence_on_advert(&s_tracker, hashed, rssi_dbm, now_ms);
-  } else {
+  } else if (offerable) {
     pair_now = pairing::offer(&s_window, rssi_dbm, now_ms);
     if (pair_now) memcpy(label, s_window.label, sizeof(label));
   }

@@ -92,7 +92,7 @@ static inline esp_err_t send_error(httpd_req_t* req, const char* err) {
 
 static inline void fp_to_hex(const uint8_t* fp, char* out) {
   for (size_t i = 0; i < beacon_channel::DEVICE_FP_SIZE; i++) {
-    sprintf(out + i * 2, "%02x", fp[i]);
+    snprintf(out + i * 2, 3, "%02x", fp[i]);   // two digits and the NUL the next pair overwrites
   }
   out[beacon_channel::DEVICE_FP_SIZE * 2] = '\0';
 }

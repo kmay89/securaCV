@@ -508,7 +508,7 @@ since dispatch there already keyed on the signed type.
 | 11 | `PAIR_CONFIRM` | same |
 | 12 | `PAIR_COMPLETE` | same; canary-wap also HKDFs the pairing key (§5.3) |
 | 13–15 | reserved — never assign | |
-| 16 | `HEARTBEAT` | PIO does not send; WAP struct |
+| 16 | `HEARTBEAT` | PIO empty, sent once after a pairing and after a boot (F162, §7.1); WAP struct |
 | 17 | `CSI_FEATURES` | PIO only |
 | 18 | `TAMPER_ALERT` | **differs**: PIO 6-byte template-only (§4.3), WAP 56-byte struct with free text (`TamperAlertPayload`: 1 + 1 + 2 pad + 4 + 48, sent as `sizeof`) — and since the v0.4 follow-up the WAP refuses any other length, so the PIO 6 bytes are dropped rather than read as the struct |
 | 19 | `POWER_ALERT` | WAP only |
@@ -738,10 +738,12 @@ this device no longer holds the opera the COMPLETE carried (left, rotated);
 a new pairing ends them too. A joiner still waiting takes the next copy:
 an updated one in either of its waiting states, and one on firmware before
 F97 too, since every copy carries the CONFIRM in front. Two differences
-from canary-wap: this tree's members send nothing on a timer, so a joiner
-that took the COMPLETE is usually not heard and the copies run their whole
-window, dropped by that joiner; and the end of the window is not logged,
-because that is the routine case here. A joiner's CONFIRM reaching an
+from canary-wap: this tree's members send nothing on a timer, so the copies
+stop on the one heartbeat a joiner sends as it completes (F162, §7.1) and
+run their whole window, dropped by that joiner, when that frame is lost or
+the joiner's firmware predates it (until F162 a joiner that took the
+COMPLETE was usually not heard at all); and the end of the window is not
+logged. A joiner's CONFIRM reaching an
 initiator already done is still dropped and brings no copy: the next timed
 copy is at most 2 s away, and the CONFIRM authenticates nothing a radio in
 range could not replay or reflect (the reflection above). No frame moves the
@@ -822,7 +824,9 @@ secret is drawn on the main loop and persisted before anything uses it, and
 if it cannot be persisted no opera is created (`opera_not_persisted`) — a
 secret the founding device forgot at its next reboot would strand every
 device that joined it. It never replaces an opera the device already holds
-(`opera_exists`). §8.3 has the route.
+(`opera_exists`), and since F136 neither does a join: `pair/join` on a device
+that holds an opera answers `opera_exists` too, and the owner leaves first.
+§8.3 has both routes.
 
 canary-wap stores an opera only while it has one (F113, host-tested): a
 leave, and a turn on or rename after it, removes the `opera_id` and
@@ -1101,7 +1105,30 @@ member heard, and only to members at `PEER_CONNECTED` or later, so an opera
 whose members had all rebooted, or a fresh pairing (each side holds the other
 at `PEER_UNKNOWN`), sent nothing at all. Its alerts and its Beacon,
 channel-lock and hub-election sends still go to members at `PEER_CONNECTED`
-or later only. (The PlatformIO tree sends no heartbeat.)
+or later only.
+
+The PlatformIO tree sends no heartbeat on a timer. Since F162 (host-tested,
+not bench-tested) a member sends one signed `HEARTBEAT`, with an empty
+payload, to its bound members (§8.3; never to a pairing partner that is not
+one, F101) at two moments: as a pairing completes and binds its partner, on
+each side, so the joiner's ends the initiator's `PAIR_COMPLETE` copies
+(§5.2) and each side reads the other `PEER_CONNECTED` once it arrives; and
+on the first loop pass that runs after a boot whose restore bound at least
+one member. A mesh turned off at boot sends that one at the first pass after
+it is turned on. That pass comes right after `setup()`, and `WiFi.begin()`
+does not wait for the station to join its router: until it does, the radio
+is on the softAP's channel (`AP_CHANNEL`, 1), and the ESP-NOW peers follow
+the current channel. So on a board whose router is on another channel the
+boot heartbeat can go out where no member listens, and nothing sends it
+again; the members then read this one `PEER_OFFLINE` until its next frame
+(from code; arming it once the station is associated needs a `main.cpp`
+hook, open). It goes through the
+transport's storm limit like every opera send; this tree has no airtime
+governor. A receiver handles it as any verified opera frame (counter,
+liveness) and nothing more. Not changed: an initiator whose first COMPLETE
+was lost sends its heartbeat to a joiner that is not a member yet, which
+drops it, so that joiner reads the initiator `PEER_OFFLINE` until the
+initiator's next frame.
 
 ### 7.2 Peer States
 
@@ -1204,10 +1231,14 @@ state before `init()`. The view holds the pairing code only while
 `GET /api/mesh` shows it, and each member by fingerprint with its alerts
 and, once heard from its binding, its transport entry's state, RSSI and
 last-seen time; no key. The two routes read a whole copy and nothing else
-of the session's, so they never wait for the main loop. The peer list's
-members still come from the persisted pubkeys (NVS), joined by fingerprint
-against the view, and `last_seen_sec` is counted at the read; every field
-of both bodies is unchanged. Host-tested (`test_mesh_session.cpp`, a
+of the session's, so they never wait for the main loop. Since F199 the
+peer list's rows are the view's members, in the view's order, and
+`last_seen_sec` is counted at the read; the route reads nothing from NVS.
+Until F199 the members came from the persisted pubkeys, joined by
+fingerprint against the view: on a device without flash encryption that
+read is refused, so the route answered 500 `load_failed` there, and a key
+stored but not held by the session was listed as a member never heard.
+Every field of both bodies is unchanged. Host-tested (`test_mesh_session.cpp`, a
 two-thread test included; `test_loop_snapshot.cpp` covers the shared
 header); the `[env:full]` compile is CI's; not bench-tested.
 
@@ -1309,6 +1340,27 @@ meanwhile; it is never replaced, and a retry adds to it), and
 created; or, rarely, the pairing's key generation failed after the opera
 was created and persisted — `GET /api/mesh` then shows it). No new route: the web UI's "Create Opera" button and the Home
 Assistant wizard's "Add another Canary" already call it.
+
+**`pair/join` on a device in an opera (F136, PlatformIO; host-tested, not
+bench-tested):** answers `opera_exists` (409) and starts nothing: no pairing
+number is taken, nothing is sent, and the opera, its name and its members
+stay as they were. The owner leaves first (`POST /api/mesh/leave`), then
+joins; the add-on wizard says so when a join is refused this way. Before
+F136 the join ran beside the opera the device held (from code): the joiner's
+paired callback installed the new opera's secret over the old one and kept every
+old member registered, bound and stored, so they sat in the new opera's
+eight slots as members whose frames fail the `opera_id` check and are never
+heard. The other answer, rejected: a join that replaces the held opera,
+dropping the old members and their addresses at the COMPLETE. That drops
+members and their stored keys at a step the owner took to add a device, and
+the dropped members still count this device as theirs. The refusal has a
+cost, from code: a device can no longer pair with a second member of the
+opera it holds, which the old join did as a side effect (the same secret
+installed over itself, the members kept), so on this tree a device holds
+the member it joined through and every device that joined through it, and
+a changed radio address is re-bound at one member (the F49 part 3 note
+below). canary-wap does not refuse yet: its `pair/join` on a
+device that holds an opera still runs (open).
 
 **`remove` (F10-rekey — crypto review and bench pending):** body
 `{"fingerprint": "<16 hex>"}`, the string `GET /api/mesh/peers` emits. It
@@ -1412,8 +1464,9 @@ always one pass's. `pair/cancel` answers `{ok: true}` whether or not a
 pairing was running; one that has already ended is left as it ended (F135,
 §5.2).
 
-**Peer fields:** `fingerprint` is derived from the persisted trusted-peer
-public keys (`mesh_crypto::fingerprint`). `name` is best-effort and may be
+**Peer fields:** `fingerprint` is derived from the public key of each
+trusted peer the session holds (`mesh_crypto::fingerprint`; until F199, from
+the copies persisted in NVS). `name` is best-effort and may be
 empty (the UI falls back to "Unknown Device") — a placeholder pending a
 peer-metadata store. `alerts_received` is the §8.2 per-peer count of
 verified `TAMPER_ALERT` frames this boot. `state`/`last_seen_sec`/`rssi`
@@ -1566,7 +1619,7 @@ alone and, the member sending nothing in that window, the 60 s commit
 dropped it; a replayed `REKEY_OFFER` sent the receiver's `REKEY_ACCEPT` to
 the outsider. The member's next
 genuine frame would have moved the binding back, but on a quiet opera
-(there is no heartbeat on this tree) that can be a long wait.
+(this tree sends no heartbeat on a timer) that can be a long wait.
 
 So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
@@ -1577,6 +1630,11 @@ from any address but the member's own binding (the peer-fields note above),
 so a frame cannot move a binding and spends no counter; a peer's address is bound only when a pairing
 completes (the address the partner paired from — re-pairing a device that
 is already trusted re-binds it) and restored from NVS `peer_macs` at boot.
+Since F136 the device whose address changed leaves its opera before it
+joins again (`pair/join` above): its LEAVE reaches no member, since it comes
+from an address none of their transport tables holds, so the member it then
+joins through still holds it and re-binds it, while every other member
+keeps it at the old address and the device holds none of them (from code).
 A changed radio MAC means a re-pair, with two limits. The pairing does not
 authenticate the long-term key it binds (§11.1): the 6-digit code and the
 CONFIRM hash cover only the ephemeral X25519 exchange, and the key is

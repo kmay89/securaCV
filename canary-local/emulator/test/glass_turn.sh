@@ -3,7 +3,10 @@
 # (F184, F204): builds glass_turn_test.cpp with g++ against the REAL
 # ui/lvgl_port.cpp, the emulator's REAL display HAL and LVGL 8.4, and runs
 # it twice: in the dash config (LVGL's software rotation) and in the
-# nightlight config (the panel's hardware turn). No emsdk: this proves the sources the dist is built from,
+# nightlight config (the panel's hardware turn). Beside each run,
+# backlight_cap_test.cpp holds the same HAL object's backlight to the board's
+# ceiling (sweep A61: clipped as the C3-LCD-1.47 clips it in the nightlight
+# config, passed through as asked in the dash's). No emsdk: this proves the sources the dist is built from,
 # not the dist's bytes (the browser probe, onboard_probe.mjs, reads those).
 #
 #   bash canary-local/emulator/test/glass_turn.sh [LVGL_DIR]
@@ -16,8 +19,10 @@
 # any step that reads the committed dist: a stale dist goes red in the
 # browser probes, and a step after them would be skipped, hiding the one
 # proof of these sources that does not need the dist. An explicit LVGL_DIR
-# is never fetched into. GLASS_TURN_OUT keeps the objects between runs
-# (default: a fresh temporary directory).
+# is never fetched into. GLASS_TURN_OUT keeps the objects between runs and
+# is left as it is; without it the objects go to a fresh temporary directory
+# that is removed on exit, pass or fail (sweep A82, as glass_turn_lvgl9.sh
+# does).
 set -euo pipefail
 export LC_ALL=C
 
@@ -45,13 +50,18 @@ if [[ "$ver" != "8.4." ]]; then
   exit 2
 fi
 
-OUT="${GLASS_TURN_OUT:-$(mktemp -d)}"
+if [[ -n "${GLASS_TURN_OUT:-}" ]]; then
+  OUT="$GLASS_TURN_OUT"
+else
+  OUT="$(mktemp -d)"
+  trap '[[ -n "$OUT" && -d "$OUT" ]] && rm -rf -- "$OUT"' EXIT
+fi
 mkdir -p "$OUT/lvgl"
 
 # The dash flavor's wiring, as build.sh hands it to em++.
 CFG="$FW/configs/canary-display/dash"
 PINS="$FW/boards/waveshare-esp32s3-lcd43/pins"
-DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY)
+DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE)
 LVGL_INC=(-I "$PROJ/include" -I "$EMU/shim" -I "$LVGL")
 INC=(-I "$HERE/native" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
      -I "$CFG" -I "$PINS" -I "$FW/common" -I "$LVGL")
@@ -74,6 +84,13 @@ CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
 g++ -o "$OUT/glass_turn_test" "$OUT/glass_turn_test.o" "$OUT/lvgl_port.o" \
   "$OUT/emu_hal_display.o" "$OUT"/lvgl/*.o -lm
 "$OUT/glass_turn_test"
+# The board's backlight ceiling (sweep A61), against the same HAL object: the
+# dash has no expander and no ceiling, so every level passes through as asked
+# (backlight_cap_test.cpp; its nightlight run is below).
+"${CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/backlight_cap_test.o"
+g++ -o "$OUT/backlight_cap_test" "$OUT/backlight_cap_test.o" "$OUT/emu_hal_display.o" \
+  "$OUT"/lvgl/*.o -lm
+"$OUT/backlight_cap_test"
 
 # The nightlight's wiring (F204), as build.sh hands it to em++: the same
 # test, now holding the hardware turn (display_set_rotation and
@@ -90,4 +107,11 @@ NL_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-paramet
 "${NL_CXX[@]}" -c "$HERE/glass_turn_test.cpp" -o "$OUT/nl_glass_turn_test.o"
 g++ -o "$OUT/nl_glass_turn_test" "$OUT/nl_glass_turn_test.o" "$OUT/nl_lvgl_port.o" \
   "$OUT/nl_emu_hal_display.o" "$OUT"/lvgl/*.o -lm
+# ...and the nightlight's backlight ceiling (sweep A61): the C3-LCD-1.47's HAL
+# clips its expander's PWM byte at CD_BL_MAX_PCT (50%), and the twin's HAL
+# must clip every day level and night duty where the board's does.
+"${NL_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/nl_backlight_cap_test.o"
+g++ -o "$OUT/nl_backlight_cap_test" "$OUT/nl_backlight_cap_test.o" "$OUT/nl_emu_hal_display.o" \
+  "$OUT"/lvgl/*.o -lm
+"$OUT/nl_backlight_cap_test"
 "$OUT/nl_glass_turn_test"

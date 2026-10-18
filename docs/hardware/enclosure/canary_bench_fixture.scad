@@ -47,23 +47,23 @@ standoff_h = 6.0;    // clip-beam root height: 6.0 puts the beam at 7.2 mm and t
 
 /* [Stations] — MEASURE your parts */
 bz_d   = 12.5;       // buzzer body diameter (CPT-9019 ~ 9 x 9; ring fits to 12.5)
-bz_dep = 2.0;
+bz_dep = 2.0;        // buzzer pocket depth into the plate face
 led_w  = 10.5;       // WS2812 breakout square
-led_dep = 1.6;
+led_dep = 1.6;       // WS2812 breakout pocket depth into the plate face
 btn_w  = 6.4;        // 6 mm tact switch body
-btn_dep = 2.0;
+btn_dep = 2.0;       // tact switch pocket depth into the plate face
 reed_l = 15.0;       // reed switch glass length
-reed_d = 2.8;
+reed_d = 2.8;        // reed glass diameter — the channel bores it + 2 x tol_press and its crown stands 0.3 + tol_press above the face, so the top is open; the slider's relief channel is this + 1.0 wide
 mag_d  = 6.0;        // tamper magnet (rides the slider)
-mag_h  = 3.0;
+mag_h  = 3.0;        // tamper magnet height — not read by the geometry: the slider's pocket is open at the knob top, its floor 1.3 above the foot's underside and 6.4 below the knob top
 
 /* [Plate] */
-fx_w = 120.0;
-fx_h = 80.0;
-fx_t = 4.0;
+fx_w = 120.0;        // plate width (X); the corner holes sit 6 in from each edge
+fx_h = 80.0;         // plate depth (Y); the corner holes sit 6 in from each edge
+fx_t = 4.0;          // plate thickness — the pockets, channels and labels are cut down from its top face, and the XIAO rails and clips stand on it
 chan_w = 3.0;        // wire channel width
-label_depth = 0.5;
-label_font = "Liberation Sans:style=Bold";
+label_depth = 0.5;   // station label deboss depth into the plate face
+label_font = "Liberation Sans:style=Bold";   // the station labels' font (an OpenSCAD font name)
 
 /* [Clips / tolerances] */
 clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
@@ -108,8 +108,9 @@ module plate() {
                 rrect2d(led_w + 2*tol_slide, led_w + 2*tol_slide, 1);
             translate([x_btn, y_btn, fx_t - btn_dep]) linear_extrude(btn_dep + 0.1)
                 rrect2d(btn_w + 2*tol_slide, btn_w + 2*tol_slide, 0.5);
-            // reed channel — an OPEN slot (its axis 0.3 below the face, so the top is
-            // open and the glass reed presses in; buried 0.7 deep it was a tunnel)
+            // reed channel — an OPEN slot (its axis reed_d/2 - 0.3 below the face, so the
+            // bore's crown stands 0.3 + tol_press above it, the top is open and the glass
+            // reed presses in; buried 0.7 deep it was a tunnel)
             translate([x_reed, y_reed, fx_t - reed_d/2 + 0.3]) rotate([0, 90, 0])
                 translate([0, 0, -reed_l/2 - 4]) cylinder(d = reed_d + 2*tol_press, h = reed_l + 8);
             // magnet slider rail: dovetail-ish groove running toward the reed

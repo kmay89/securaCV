@@ -36,7 +36,7 @@ try {
   const pass = new URLSearchParams();
   for (const k of ["profile", "skin", "kernel"]) { const v = q.get(k); if (v) pass.set(k, v); }
   if (frame && pass.toString()) frame.src = "witness/witness.html?" + pass.toString();
-} catch (_) { /* the plain wall still boots */ }
+} catch { /* the plain wall still boots */ }
 
 // Native discovery — desktop Lab only (withGlobalTauri exposes __TAURI__).
 const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
@@ -44,7 +44,7 @@ if (invoke && frame) {
   const status = (msg, live) => { if (scanEl) { scanEl.textContent = msg; scanEl.classList.toggle("live", !!live); } };
   // "/" = our own origin: the wall is our iframe, and a LAN fleet (device
   // names, who is home) goes nowhere else even if something else were framed.
-  const post = (m) => { try { if (frame.contentWindow) frame.contentWindow.postMessage(m, "/"); } catch (_) {} };
+  const post = (m) => { try { if (frame.contentWindow) frame.contentWindow.postMessage(m, "/"); } catch {} };
   // Asked once: only a build that registers fleet_scan says `mdns`, and only
   // one that runs the menu bar companion says `notifications` (desktop; a
   // mobile shell neither registers nor advertises them), so a missing
@@ -53,7 +53,7 @@ if (invoke && frame) {
   const probeCaps = async () => {
     if (caps === null) {
       try { caps = (await invoke("native_capabilities")) || {}; }
-      catch (_) { caps = {}; }
+      catch { caps = {}; }
     }
     return caps;
   };
@@ -74,7 +74,7 @@ if (invoke && frame) {
   };
   const bases = (sightings) => {
     const b = [];
-    try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch (_) {}
+    try { const k = localStorage.getItem("scv-kernel"); if (k && /^http:\/\//i.test(k)) b.push(k); } catch {}
     b.push("http://canary.local:8099", "http://canary.local:8799", "http://canary.local");
     // Boards last: witness_discover returns the FIRST /api/fleet that
     // answers, and a board's answer is its own one-row self-report.
@@ -90,7 +90,7 @@ if (invoke && frame) {
     const key = JSON.stringify(kernelBases);
     if (key === companionSent) return;
     try { await invoke("companion_set_bases", { bases: kernelBases }); companionSent = key; }
-    catch (_) { /* the companion keeps the addresses it had */ }
+    catch { /* the companion keeps the addresses it had */ }
   };
   // No kernel answered, so the boards ARE the fleet: ask every browsed board
   // for its /api/fleet and fold the answers into one document. Stopping at the
@@ -133,12 +133,12 @@ if (invoke && frame) {
     let sightings = [];
     if (mdns) {
       try { sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || []; }
-      catch (_) { /* no multicast here, or nobody announcing — the poll still runs */ }
+      catch { /* no multicast here, or nobody announcing — the poll still runs */ }
     }
     let fleet = null;
     // The kernel first, alone: it answers for the whole fleet.
     try { fleet = await invoke("witness_discover", { bases: bases([]) }); }
-    catch (_) { /* nothing answering yet */ }
+    catch { /* nothing answering yet */ }
     if (!fleet) fleet = await boardFleet(sightings);
     inFlight = false;
     if (fleet) {

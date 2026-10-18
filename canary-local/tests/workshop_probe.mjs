@@ -101,9 +101,12 @@ if (!/print-validated/.test(await ribbon.textContent())) {
 step("ribbon flips");
 // ── checklist speaks the real BOM + firmware language ──
 const checkText = await page.locator(".ws-check").textContent();
-for (const needle of ["M1", "FEATURE_GNSS", "BT1"]) {
+// (the WAP's flags are its sketch's build_config.h: the buzzer implies
+// FEATURE_AUDIBLE_CHIRP; GPS implies none, since GNSS is unconditional there)
+for (const needle of ["M1", "FEATURE_AUDIBLE_CHIRP", "BT1"]) {
   if (!checkText.includes(needle)) fail(`checklist missing "${needle}"`);
 }
+if (checkText.includes("FEATURE_GNSS")) fail("checklist names a GNSS flag the WAP sketch does not have");
 // …and sells honestly: GPS card wears its real price delta, the ticker runs
 const gpsCard = await page.locator(".ws-opt", { hasText: "GPS" }).textContent();
 if (!/\+ \$15\.90/.test(gpsCard)) fail("GPS option missing its + $15.90 delta");
@@ -193,7 +196,25 @@ const tplImgs = await page.locator(".ws-template img").count();
 if (tplImgs < 1) fail("assemble missing drill template previews");
 
 const flashT = await stage("Flash & setup");
-if (!/FEATURE_GNSS/.test(flashT)) fail("flash stage missing the implied GNSS flag");
+if (!/FEATURE_AUDIBLE_CHIRP/.test(flashT)) fail("flash stage missing the buzzer's implied flag");
+if (/FEATURE_GNSS/.test(flashT)) fail("flash stage names a GNSS flag the WAP sketch does not have");
+if (!/build_config\.h/.test(flashT)) fail("flash stage should name build_config.h as where the WAP's flags live");
+// …and the copy around it is the header's, not a configs/ folder's (review of
+// F258: these held flagsHome()'s return, not what the stage renders). The
+// weather package ticks tamper and camera, so both kinds of line show.
+if (/one folder per flavor/.test(flashT)) fail("flash stage calls the WAP's one header a folder of flavors");
+if (/build_config\.h\//.test(flashT)) fail("flash stage links build_config.h as a folder");
+if (!/Flags live in firmware\/projects\/canary-wap\/arduino\/canary_wap\/build_config\.h: one header/.test(flashT)) {
+  fail("flash stage missing 'Flags live in …/build_config.h: one header'");
+}
+if (/in config\.h/.test(flashT)) fail("flash stage tells a WAP builder to edit config.h, which the WAP has none of");
+if (!/FEATURE_TAMPER_GPIO — OFF in full \(Enclosure tamper contact .*?bench-validated\): set it to 1 in build_config\.h when you build/.test(flashT)) {
+  fail("flash stage's tamper line must keep the bench-validated caveat and name build_config.h");
+}
+if (!/FEATURE_CAMERA_PEEK — ON in the full flavor/.test(flashT) || /C3/.test(flashT)) {
+  fail("flash stage's camera line must be ON in full, with no other target's note");
+}
+if (!/FEATURE_CAMERA_PEEK 1 \(HW_HAS_CAMERA\)/.test(flashT)) fail("flash stage's flag list missing the derived value 'FEATURE_CAMERA_PEEK 1 (HW_HAS_CAMERA)'");
 
 const cardT = await stage("Your build");
 if (!/your spec/i.test(cardT)) fail("build card missing");

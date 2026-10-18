@@ -336,11 +336,13 @@ def test_mesh_handler_survives_non_objects_and_odd_values() -> None:
 
 
 def test_chirp_handler_survives_non_objects() -> None:
+    from .test_chirp_active import WAP_CHIRP_ACTIVE  # here: that module imports this one
+
     inst = _entity(bs_platform.SecuraCVCanaryChirpActiveSensor)
     for payload in NON_OBJECT_JSON + JUNK + [OVERSIZE]:
         inst._handle_message(_msg(payload))
     assert inst.writes == []
-    inst._handle_message(_msg('{"enabled": true, "ready": true}'))
+    inst._handle_message(_msg(WAP_CHIRP_ACTIVE))
     assert inst._attr_is_on is True
 
 

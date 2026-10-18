@@ -45,7 +45,7 @@ concurrency:
 jobs:
   unresolved-threads:
     name: All review comments addressed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - name: Report unresolved review threads (advisory)

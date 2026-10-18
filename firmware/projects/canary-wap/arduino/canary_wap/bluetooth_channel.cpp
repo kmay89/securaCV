@@ -225,6 +225,19 @@ static bool g_saved_loaded = false;
 // finishes.
 static bool g_bringup_worker_running = false;
 static bool g_advertise_after_bringup = false;
+// Any task's (sweep F235's review): the sketch's boot bring-up is over, its
+// finalize stage's NimBLE users among it. Set once, by
+// boot_bring_up_finished() on the loop task (release); boot_bring_up_tried()
+// reads it (acquire). Never cleared: the sketch runs its bring-up once per
+// boot.
+static bool g_boot_bring_up_tried = false;
+// Any task's (wave 16's verify): the sketch has started that bring-up, its
+// gate open and its worker created or being created. Set once, by
+// bringup_worker_started() on the loop task (release);
+// boot_bring_up_started() reads it (acquire). Never cleared. Between it and
+// g_boot_bring_up_tried a Start Advertising or Pair tap is told Bluetooth is
+// still starting, whatever the worker's init() answered.
+static bool g_boot_bring_up_started = false;
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -277,7 +290,7 @@ static BluetoothState rest_state();
 static bool init_running();
 static void load_saved();
 static void adopt_init_result();
-static void load_settings(BluetoothSettings* out);
+static bool load_settings(BluetoothSettings* out);
 static void save_settings();
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
 static void save_paired_devices();
@@ -1099,9 +1112,16 @@ static void set_state(BluetoothState new_state) {
 // (its callers start it from kDefaultSettings): load_saved()'s, on the loop
 // task, and init()'s, on its own, into its hand-over (the settings it gives
 // the stack, sweep F167). It names none of the channel's state.
-static void load_settings(BluetoothSettings* out) {
+//
+// A saved name that name_storable() refuses (one saved before sweep F261
+// holding a control byte) is not loaded: `out` keeps its default name, so
+// neither answer nor the advert carries the byte, and true is returned so
+// load_saved() can say so in the health log. The NVS row keeps the old bytes
+// until the next save writes the name the device holds (this opens the
+// namespace read-only).
+static bool load_settings(BluetoothSettings* out) {
   NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return;
+  if (!nvs.isOpen()) return false;
 
   // Defaults (used when the device has never saved BT settings) come from
   // bt_defaults.h so the first-boot state matches the struct initializer.
@@ -1113,12 +1133,19 @@ static void load_settings(BluetoothSettings* out) {
   out->inactivity_timeout_ms = nvs->getULong(NVS_KEY_BT_TIMEOUT, INACTIVITY_TIMEOUT_MS);
   out->long_range_mode = nvs->getBool(NVS_KEY_BT_LONG_RANGE, bt_defaults::LONG_RANGE);
 
+  bool name_refused = false;
   size_t name_len = nvs->getBytesLength(NVS_KEY_BT_NAME);
   if (name_len > 0 && name_len <= MAX_DEVICE_NAME_LEN) {
-    nvs->getBytes(NVS_KEY_BT_NAME, out->device_name, name_len);
-    out->device_name[name_len] = '\0';
+    char saved[MAX_DEVICE_NAME_LEN + 1];
+    nvs->getBytes(NVS_KEY_BT_NAME, saved, name_len);
+    saved[name_len] = '\0';
+    if (name_storable(saved)) {
+      memcpy(out->device_name, saved, strlen(saved) + 1);
+    } else {
+      name_refused = true;
+    }
   }
-
+  return name_refused;
 }
 
 static void save_settings() {
@@ -1370,11 +1397,16 @@ bool init() {
 
   // Concurrency latch: init() can now be entered from the boot bring-up
   // worker task AND the HTTP task (a user tapping Enable/Advertise/Pair
-  // during the bring-up window has the handler bring the stack up, F111).
-  // NimBLE init is not reentrant, so exactly one caller may run the body;
-  // the loser backs off with false and the handler answers with the init
-  // error, while GET /api/bluetooth reads "initializing" (the loop task's
-  // view, from init_running()). Cleared on every exit path (RAII).
+  // during the bring-up window has the handler bring the stack up, F111;
+  // since F235 whenever the stack is down, Start Advertising and Pair on a
+  // device saved on only once the sketch's boot bring-up is over, F235's
+  // review). NimBLE init is not reentrant, so exactly one caller may run
+  // the body; the loser backs off with false and the handler answers that
+  // Bluetooth is still starting (bring_up_starting()), while GET
+  // /api/bluetooth reads "initializing" (the loop task's view, from
+  // init_running()). Cleared on every exit path (RAII), after the last write
+  // of the body, g_stack_up's publish among them: bring_up_starting() rests
+  // on that order (check_wap_loop_commands.py BV4 holds it).
   bool expected = false;
   if (!__atomic_compare_exchange_n(&g_init_in_progress, &expected, true,
                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
@@ -1399,7 +1431,7 @@ bool init() {
   Bringup& b = g_bringup;
   memset(&b, 0, sizeof(b));
   b.applied = kDefaultSettings;
-  load_settings(&b.applied);
+  (void)load_settings(&b.applied);   // a refused saved name: load_saved() logs it (F261)
 
   // Initialize NimBLE. This is the single NimBLEDevice::init() owner for the
   // firmware: it runs before ble_manager::init() in setup() and owns the GAP
@@ -1684,7 +1716,12 @@ static void load_saved() {
   if (g_saved_loaded) return;
   g_saved_loaded = true;
   BluetoothSettings saved = kDefaultSettings;
-  load_settings(&saved);
+  if (load_settings(&saved)) {
+    // As the paired list's repairs are logged (sweep F261).
+    log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
+               "Saved Bluetooth name held a control byte: the default name is used",
+               saved.device_name);
+  }
   g_settings = saved;
   load_paired_devices(g_paired_devices, &g_paired_count, &g_paired_by_identity);
 }
@@ -1762,6 +1799,7 @@ static void adopt_init_result() {
 // the loop task (the F167 review): see g_bringup_worker_running.
 void bringup_worker_started() {
   g_bringup_worker_running = true;
+  __atomic_store_n(&g_boot_bring_up_started, true, __ATOMIC_RELEASE);   // see g_boot_bring_up_started
 }
 
 void bringup_worker_finished() {
@@ -1770,6 +1808,22 @@ void bringup_worker_finished() {
     g_advertise_after_bringup = false;
     start_advertising();
   }
+}
+
+// The loop task, as the sketch's finalize stage ends (sweep F235's review):
+// see g_boot_bring_up_tried.
+void boot_bring_up_finished() {
+  __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);
+}
+
+// Any task (sweep F235's review): see g_boot_bring_up_tried.
+bool boot_bring_up_tried() {
+  return __atomic_load_n(&g_boot_bring_up_tried, __ATOMIC_ACQUIRE);
+}
+
+// Any task (wave 16's verify): see g_boot_bring_up_started.
+bool boot_bring_up_started() {
+  return __atomic_load_n(&g_boot_bring_up_started, __ATOMIC_ACQUIRE);
 }
 
 [[maybe_unused]] static void deinit() {
@@ -1818,6 +1872,16 @@ const char* init_fail_reason() {
 // bring-up only.
 void hold_scanners_on_init(bool held) {
   __atomic_store_n(&g_meta_hold_scanners, held, __ATOMIC_RELEASE);
+}
+
+// Any task, after a tap's bring_up() answered false (sweep F235): another
+// task's bring-up, not a refusal. The latch first: init() publishes
+// g_stack_up before its latch clears (release), so a latch read clear
+// (acquire) sees the stack up when that bring-up brought it up; read the
+// other way round, a bring-up that came up between the two reads would
+// answer its predecessor's refusal.
+bool bring_up_starting() {
+  return init_running() || is_initialized();
 }
 
 void set_device_metadata(const char* fw_revision, const char* serial) {
@@ -2390,9 +2454,9 @@ static bool set_settings(const BluetoothSettings& settings) {
 }
 
 static bool set_device_name(const char* name) {
-  if (!name || strlen(name) == 0 || strlen(name) > MAX_DEVICE_NAME_LEN) {
-    return false;
-  }
+  // 1 to MAX_DEVICE_NAME_LEN bytes, none a control byte (sweep F261: the
+  // length alone let 0x01 into both Bluetooth answers and the advert).
+  if (!name_storable(name)) return false;
 
   strncpy(g_settings.device_name, name, MAX_DEVICE_NAME_LEN);
   g_settings.device_name[MAX_DEVICE_NAME_LEN] = '\0';
@@ -2676,6 +2740,12 @@ static Result run_command(const Command& cmd) {
       if (cmd.set_mask & BT_SET_DEVICE_NAME) {
         memcpy(s.device_name, in.device_name, sizeof(s.device_name));
         s.device_name[MAX_DEVICE_NAME_LEN] = '\0';
+        // The rule set_device_name() applies (sweep F261), refused whole:
+        // none of the POST's fields is applied, as a refused enable.
+        if (!name_storable(s.device_name)) {
+          r.refusal = BT_REFUSED_BAD_NAME;
+          break;
+        }
       }
       if (cmd.set_mask & BT_SET_TX_POWER) s.tx_power = in.tx_power;
       if (cmd.set_mask & BT_SET_INACTIVITY) s.inactivity_timeout_ms = in.inactivity_timeout_ms;
@@ -2696,6 +2766,7 @@ static Result run_command(const Command& cmd) {
       memcpy(name, cmd.name, sizeof(name));
       name[sizeof(name) - 1] = '\0';
       r.ok = set_device_name(name);
+      if (!r.ok) r.refusal = BT_REFUSED_BAD_NAME;   // its only refusal (F261)
       break;
     }
     case BT_CMD_POWER:

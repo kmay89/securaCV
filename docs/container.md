@@ -56,12 +56,15 @@ Optional:
   log.
 - `WITNESS_API_ADDR`: Event API bind address (default in container: `0.0.0.0:8799`)
 - `WITNESS_API_TOKEN_PATH`: file path for the Event API capability token
+  (e.g. `/data/api_token`; the viewer-token and pairing files default
+  beside it)
 - `WITNESS_API_VIEWER_TOKEN_PATH`: the viewer-token file — long-lived
   bearer tokens good for `GET /api/sealed-log` only, for a Witness Wall
   (default: `viewer_tokens.json` beside `WITNESS_API_TOKEN_PATH`; no token
-  path, no viewer tokens). Minted with `witness_api mint-viewer-token`,
-  which this image does not ship yet — see
-  [the API reference](homeassistant_setup.md#viewer-tokens-witness-wall)
+  path, no viewer tokens). Minted inside the running container with
+  `docker exec <container> witness_api mint-viewer-token --label <s>` — see
+  [Mint a Witness Wall viewer token](#mint-a-witness-wall-viewer-token)
+  below and [the API reference](homeassistant_setup.md#viewer-tokens-witness-wall)
 - `BREAK_GLASS_SEAL_TOKEN`: path to a break-glass seal token JSON (enables vault sealing)
 
 ### Health
@@ -116,7 +119,83 @@ docker exec <container> sh -c \
   'DEVICE_KEY_SEED=$(cat /data/witness.ed25519.seed) break_glass policy show --db /data/witness.db'
 ```
 
-Run `docker exec <container> <tool> --help` for the full flags of each tool.
+Run `docker exec <container> <tool> --help` for the full flags of each tool
+(`witness_api help` for `witness_api`, below).
+
+### Mint a Witness Wall viewer token
+
+The Witness Wall walks the sealed log with a **viewer token**, a bearer the
+kernel honors on `GET /api/sealed-log` and nowhere else. The image ships
+`witness_api` for its operator subcommands; `witnessd` stays the
+entrypoint and still does all the serving. Always name a subcommand: run
+bare, `witness_api` is the Event API daemon and tries to serve beside
+`witnessd`. An image pulled before `witness_api` joined it answers
+`docker exec … witness_api` with "executable file not found": pull
+`:latest` again and re-create the container first.
+
+1. Start the container with a token path, so `witnessd` knows where the
+   viewer-token file lives — add
+   `-e WITNESS_API_TOKEN_PATH=/data/api_token` to the `docker run` above
+   (or name the file itself with `WITNESS_API_VIEWER_TOKEN_PATH`).
+2. Once `witnessd` has started at least once (it creates the device seed
+   whose key the receipt carries), mint one token per screen:
+
+   ```bash
+   docker exec <container> witness_api mint-viewer-token \
+       --label "living room tv" --base-url http://<docker-host-ip>:8799
+   ```
+
+   It prints one JSON line, the pairing receipt, and that line is the
+   token's only copy: the kernel keeps its sha256 in
+   `/data/viewer_tokens.json` (`0600`). Paste the line into the Wall's
+   Settings → Verification ([`tvos/README.md`](../tvos/README.md)). Leave
+   out `--base-url` and the Wall uses the address you type into it, with
+   the port.
+
+`docker exec` runs in the container's environment (every `WITNESS_API_*`
+variable and `DEVICE_KEY_SEED`, if you set one), in its working directory
+`/data`, and as the container's user (UID 1001 unless `docker run --user`
+named another), the same user `witnessd` writes `/data` as. So
+`witness_api` opens the same database, finds the seed `witnessd` persisted
+beside it with no `DEVICE_KEY_SEED=$(cat …)` prefix, and writes the
+viewer-token file `witnessd` reads. Three things break that:
+
+- `docker exec -u root` writes a root-owned `0600` file the kernel cannot
+  read. `witnessd` then refuses every viewer token, and every later mint or
+  revoke as the container's user fails to open the file. Minting again does
+  not repair it; give the file back with
+  `docker exec -u root <container> chown 1001:1001 /data/viewer_tokens.json`
+  (your `--user` IDs if you set them).
+- `docker exec -e` pointing a `WITNESS_API_*` path somewhere else mints
+  into a file `witnessd` never opens, because it reads only the path it
+  started with.
+- A container started with `WITNESS_CONFIG` naming a file written for
+  `witnessd` (one with an `[rtsp]` block, say). `docker exec` passes that
+  variable on, and `witness_api` reads the same file, knows only its
+  `db_path`, `ruleset_id`, `api`, `zones` and `retention` keys, and refuses
+  any other, so every subcommand fails at load. This mint path needs the
+  environment-only setup this page gives, or a config file holding only
+  those keys.
+
+**No restart.** `witnessd` re-reads the viewer-token file on every request,
+so a new token works on the first request that carries it. The exception is a container
+started with neither variable: it has no viewer-token file at all,
+`witness_api` refuses to mint ("no viewer token file is configured"), and
+the fix is to re-create the container with step 1.
+
+**Revoke** with the `token_id` from the receipt (or from the file); the next
+request carrying the token is refused:
+
+```bash
+docker exec <container> witness_api revoke-viewer-token <token_id>
+```
+
+The default image terminates no TLS (see `WITNESS_API_ALLOW_INSECURE` in
+the Dockerfile), so the token crosses the LAN in plaintext; whoever captures
+it can read the sealed-log tail, and nothing else. With the token path set,
+`witnessd` also redeems Home Assistant pairing codes, and the same binary
+issues them: `docker exec <container> witness_api issue-pairing-code` (see
+[Pairing](homeassistant_setup.md#pairing-the-docker-sidecar-and-home-assistant)).
 
 ### Notes
 

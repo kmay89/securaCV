@@ -1855,9 +1855,18 @@ static void register_route(httpd_handle_t server, const httpd_uri_t* uri) {
 }
 
 // The six OS connectivity probes (tls_policy::is_connectivity_probe names the
-// same list). Registered with a trailing '*' because probe URLs sometimes
-// carry a cache-busting query and the wildcard matcher compares the FULL uri;
-// handle_captive_probe re-checks the exact path component itself. File scope
+// same list). esp_http_server hands the uri_match_fn only the request's path
+// (httpd_uri() passes the length of http_parser's UF_PATH field), so an exact
+// template already matches a probe that carries a cache-busting query
+// ("/gen_204?cachebust=1"). The trailing '*' adds nothing for that case: what
+// it does is also take any path that starts with a probe's, such as
+// "/gen_204x" or "/ncsi.txt/", which handle_captive_probe tells apart by the
+// exact path component (probe_path_is; req->uri keeps the query, so its
+// strcmp would not do). Such a near miss gets that handler's Apple branch
+// (while setup runs or the home link is down, the wizard, or on the port-80
+// server beside HTTPS the https:// hint; else the Success page) rather than
+// the catch-all or, on the port-80 server, the https:// redirect. firmware/tests_host/test_dashboard_route_match.test.js holds both
+// claims against a verbatim copy of IDF's matcher (sweep F239). File scope
 // because both the main route table and the FEATURE_HTTPS port-80 server
 // register them.
 static const char* kProbePaths[] = {
@@ -5745,24 +5754,22 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  // Trusted peers are the durable membership set (pubkeys, NVS); liveness
-  // comes from the view the main loop published (F161): each member's row
-  // there carries its alerts and, once heard from its binding, the
-  // transport table's state, RSSI and last-seen time as that pass saw them
-  // (see section header + spec §8). The join and the uptime (last_seen_sec
-  // is counted here, at the read) are mesh_api::peer_views_from_status.
-  uint8_t pubkeys[mesh_state::MAX_TRUSTED_PEERS * mesh_crypto::PUBKEY_LEN];
-  size_t  count = 0;
-  if (!mesh_state::load_trusted_peers(pubkeys, sizeof(pubkeys), &count)) {
-    return http_send_error(req, 500, "load_failed");
-  }
-  if (count > mesh_state::MAX_TRUSTED_PEERS) count = mesh_state::MAX_TRUSTED_PEERS;
-
+  // The rows are the members the session holds, from the view the main
+  // loop published (F161): what the device enforces, so they equal GET
+  // /api/mesh's peers_total, and no NVS is read here (F199: the persisted
+  // pubkeys needed flash encryption, so a dev board answered 500
+  // load_failed, and an NVS write that failed left the two disagreeing
+  // until a reboot). Each member's row carries its alerts and, once heard
+  // from its binding, the transport table's state, RSSI and last-seen time
+  // as that pass saw them (see section header + spec §8). The rows and the
+  // uptime (last_seen_sec is counted here, at the read) are
+  // mesh_api::peer_views_from_status.
   mesh_session::StatusView view;
   mesh_session::read_status(&view);
 
   mesh_api::PeerView views[mesh_state::MAX_TRUSTED_PEERS];
-  mesh_api::peer_views_from_status(view, pubkeys, count, (uint32_t)millis(), views);
+  const size_t count =
+      mesh_api::peer_views_from_status(view, (uint32_t)millis(), views, mesh_state::MAX_TRUSTED_PEERS);
 
   // Sized for 8 worst-case rows (host-test pinned, mesh_api.h). 1024 held
   // the pre-F11 row; the alerts_received field needs the headroom.
@@ -5865,6 +5872,12 @@ static esp_err_t handle_mesh_pair_join(httpd_req_t* req) {
   mesh_session::RequestResult res;
   esp_err_t rc = ESP_OK;
   if (!mesh_call(req, r, &res, &rc)) return rc;
+  if (res.status == mesh_session::RequestStatus::OPERA_EXISTS) {
+    // F136: this Canary holds an opera. It leaves it first (POST
+    // /api/mesh/leave); a join never runs beside the old opera's members.
+    // The create path's answer, for the same reason.
+    return http_send_error(req, 409, "opera_exists");
+  }
   if (mesh_pair_refused(req, res.status, "pair_join_failed", &rc)) return rc;
 
   JsonDocument doc;

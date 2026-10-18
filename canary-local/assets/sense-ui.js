@@ -168,11 +168,13 @@ export function makePresenceFSM(cfg) {
       // A stall drops the count and band with the link and ends the tick
       // there, as mr60_presence.cpp's does (the lab used to keep the count,
       // so a stalled state row would have said someone was still counted).
+      // The stall is a state change, so it carries the dropped count and
+      // reports no separate count move (F131).
       if (now - lastFrame >= cfg.stall_ms) {
         rawTarget = false;
         if (state !== "unknown") {
           state = "unknown"; count = "0"; range = "unknown";
-          return { state, count, range, stateChanged: true, countChanged: count !== beforeCount, stalled: true };
+          return { state, count, range, stateChanged: true, countChanged: false, stalled: true };
         }
       }
       if (frame) {
@@ -181,21 +183,30 @@ export function makePresenceFSM(cfg) {
           if (!rawTarget) { rawTarget = true; targetSince = now; }
           if (state !== "present" && now - targetSince >= cfg.debounce_ms) state = "present";
           if (state === "unknown" && now - targetSince < cfg.debounce_ms) { /* stay until debounced */ }
-          count = countBucketOf(frame.count);
           range = rangeBandOf(frame.distanceCm, cfg);
         } else {
           if (rawTarget) { rawTarget = false; targetGone = now; }
           if (state === "present") {
-            if (now - targetGone >= cfg.clear_ms) { state = "clear"; count = "0"; range = "unknown"; }
+            if (now - targetGone >= cfg.clear_ms) state = "clear";
           } else {
-            state = "clear"; count = "0"; range = "unknown";
+            state = "clear";
           }
+          range = "unknown";
         }
+        // The count follows the debounced state, not each frame, as
+        // mr60_presence.cpp's does (F131): "0" unless present; while present
+        // a frame that names a count updates it and one that names none
+        // keeps it, so a dropout publishes nothing and the clear carries the
+        // zero. The band follows each frame.
+        if (state !== "present") count = "0";
+        else if (frame.hasTarget && frame.count > 0) count = countBucketOf(frame.count);
       }
+      const stateChanged = state !== before;
       return {
         state, count, range,
-        stateChanged: state !== before,
-        countChanged: count !== beforeCount,
+        stateChanged,
+        // a state change carries its count: one record per transition
+        countChanged: !stateChanged && count !== beforeCount,
         stalled: state === "unknown" && before !== "unknown",
       };
     },
@@ -301,7 +312,7 @@ export function buildDevice(data, bus) {
 }
 
 // ── provisioning: Track A (USB seeds NVS) + Track B (stock ESPHome) ───────
-export function buildProvision(data, bus) {
+export function buildProvision(data) {
   const p = data.provisioning;
   const wrap = el("div", "sense-prov");
 
@@ -520,7 +531,7 @@ export function buildRadarLab(data, bus) {
     return { hasTarget: true, count: targets.length, distanceCm: Math.min(...targets) * 100 };
   }
 
-  let lastState = "unknown", lastCount = "0", lastPub = "—";
+  let lastState = "unknown", lastPub = "—";
   function publish(event, extra) {
     lastPub = event;
     bus.emit("labevent", { event, ...extra });
@@ -550,9 +561,11 @@ export function buildRadarLab(data, bus) {
       else if (s === "clear" && lastState === "present") publish("presence_cleared", { presence: "clear", occupants: "0", range: "unknown" });
       lastState = s;
     }
-    if (ev.countChanged && fsm.state === "present" && fsm.count !== lastCount) {
+    // drive_fsms' gate: a count move while present (the FSM reports none on
+    // a transition tick, so a visit that returns to an earlier visit's
+    // bucket is published as the firmware signs it)
+    if (ev.countChanged && fsm.state === "present") {
       publish("occupancy_changed", { presence: "present", occupants: fsm.count, range: fsm.range });
-      lastCount = fsm.count;
     }
     if (vev.changed) {
       bus.emit("serial", { text: `[vitals] breathing ${vfsm.lock === "locked" ? "locked" : "lost"}`, kind: "ok" });

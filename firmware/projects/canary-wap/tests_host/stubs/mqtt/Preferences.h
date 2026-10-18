@@ -68,17 +68,43 @@ class Preferences {
   uint8_t getUChar(const char* key, uint8_t def = 0) { return get(key, def); }
   uint16_t getUShort(const char* key, uint16_t def = 0) { return get(key, def); }
   uint32_t getULong(const char* key, uint32_t def = 0) { return get(key, def); }
+  /* As arduino-esp32 3.3.8's Preferences::getString(key, value, maxLen)
+   * answers (libraries/Preferences/src/Preferences.cpp:476-496, sweep F241):
+   *
+   *   esp_err_t err = nvs_get_str(_handle, key, NULL, &len);
+   *   if (err) {
+   *     log_e("nvs_get_str len fail: %s %s", key, nvs_error(err));
+   *     return 0;
+   *   }
+   *   if (len > maxLen) {
+   *     log_e("not enough space in value: %lu < %lu", ...);
+   *     return 0;
+   *   }
+   *   err = nvs_get_str(_handle, key, value, &len);
+   *   ...
+   *   return len;
+   *
+   * nvs_get_str's length counts the terminating NUL, so a value of maxLen
+   * characters or more is refused whole: nothing is written to `value` and
+   * 0 comes back. A missing key is the same 0 with `value` untouched. Each
+   * refusal counts one error log, as each is a log_e (printed only by a
+   * build whose Core Debug Level keeps errors). The stub used to cut the
+   * value to maxLen - 1 instead, so no host test could see the refusal. */
   size_t getString(const char* key, char* out, size_t cap) {
-    if (cap == 0) return 0;
+    if (!key || !out || cap == 0) return 0;
     auto it = stub_nvs().find(k(key));
     if (it == stub_nvs().end()) {
-      out[0] = '\0';
+      ++stub_nvs_error_logs();          /* log_e("nvs_get_str len fail: NOT_FOUND") */
       return 0;
     }
-    const size_t n = it->second.size() < cap - 1 ? it->second.size() : cap - 1;
-    if (n) memcpy(out, it->second.data(), n);
-    out[n] = '\0';
-    return n;
+    const size_t len = it->second.size() + 1;
+    if (len > cap) {
+      ++stub_nvs_error_logs();          /* log_e("not enough space in value") */
+      return 0;
+    }
+    if (len > 1) memcpy(out, it->second.data(), len - 1);
+    out[len - 1] = '\0';
+    return len;
   }
 
  private:

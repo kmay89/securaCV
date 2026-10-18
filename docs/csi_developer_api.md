@@ -203,17 +203,28 @@ trees close bundles the same way, once per main loop (`csi_bundler_tick`);
 until sweep F81 the canary base closed every bundle after each CSI window,
 so each of its observations was a row of its own, committed within a
 second. A module's hourly ceiling counts rows: a bundle that opens spends
-one slot, an observation merged into its open bundle spends none, and a
-bundle that reopens after its ten minutes or its quiet gap spends one like
-any other opening (sweep F80). The ceiling's hour is its six 10-minute
-buckets, not a sliding 60 minutes, so one sliding hour can hold up to twice
-the ceiling's rows (sweep F132). A state held for an hour therefore spends
-six slots on its own rows, which is all of `core.presence`'s six an hour:
-until one ages out, the next transition is refused, and so is every further
-observation of the held state (measured on the host: after an hour or more
-in one state the transition waits up to about ten minutes, 7 to 602 s
-depending on when a slot ages out, and the held state's rows carry one
-observation each).
+one slot, an observation merged into its open bundle spends none and is
+never refused, even at a full ceiling, and a bundle that reopens after its
+ten minutes or its quiet gap spends one like any other opening (sweeps F80,
+F90). The ceiling's hour is its six 10-minute buckets, not a sliding 60
+minutes, so one sliding hour can hold up to twice the ceiling's rows; that
+is the decision (sweep F132). A state held past its window reopens every
+ten minutes, six times an hour, which is all of `core.presence`'s six, so
+the ceiling keeps its last slot for a change of state: with a ceiling of
+two or more, an opening at the last slot is admitted only when its (type,
+state) differs from the module's most recent opening (sweep F90). A state
+held on its own therefore opens at most five of its own bundles in the
+counter's hour, goes once an hour with no open row until a slot ages out
+(up to about a bucket plus one refresh interval: 597 to 604 s measured on
+the host), and the transition out of it is admitted at once (host-tested
+on the library and on the canary's bridge, holds of one to three hours at
+several clock phases). The rule reaches every module whose ceiling is two
+or more, alarm rows included: a `system.integrity` tamper (12 an hour) or
+an `anomaly.baseline` kind (10) repeated in one state, each sealed at once,
+gets the ceiling less one an hour, the last slot kept for a different kind. Before F90 the ceiling was checked before the bundler: after
+an hour or more in one state the transition waited up to about ten
+minutes, 7 to 602 s depending on when a slot aged out, and every refresh of
+the held state's open bundle was refused too.
 
 Both trees also keep an SD event log, `/EVENTS/today.ndjson`, one committed
 row per line in one shared format
@@ -244,8 +255,16 @@ those bodies `"replay":true`. On the canary base
   refuses the device from then on. Both devices' MQTT health carries
   `event_id_space_low` (sweep F82), true once the allocator's next id
   reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
-  most a device can commit) and after a wrap. It only warns: what recovers
-  the device is still a decision. Home Assistant shows it as the device's
+  most a device can commit) and after a wrap. It only warns, and nothing on
+  the device resets the id space (sweep F82's decision): recovery is an
+  owner action. On a canary, a factory reset clears its `securacv` NVS
+  namespace, the floor (`csi.evid`) and the delivery ceiling (`csi.evsent`)
+  with it; a canary-wap has no reset path, so its owner flashes it with the
+  flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
+  with the rest of NVS, and does not restore the flasher's pre-erase backup
+  afterwards (it would bring the counter back). Either way the owner then
+  re-pins the device in Home Assistant, whose mark is above the restarted
+  ids. Home Assistant shows the flag as the device's
   Event ID Space Low diagnostic binary sensor (HA24). At boot the id floor is held at or above the delivery ceiling (NVS
   `csi.evsent`), unless that ceiling is past 0xF0000000 (an older firmware
   wrote one for a forged card line): the floor and the backfill both treat
@@ -445,7 +464,7 @@ the Lab from the dashboard (long-press on the version chip, or
 | --- | --- |
 | `GET /tune` | the Tuning Lab UI |
 | `GET /api/tune/coefficients` | every registered tuning knob, current values |
-| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot |
+| `POST /api/tune/coefficients` | update one or more knobs; persists to NVS; applies at once and from every boot. A `null` value removes the knob's stored row instead (the Lab's reset, sweep F127) |
 | `GET /api/tune/preset` | export every knob's current value as one flat, unsigned JSON object (a download named `tuning-preset.json`) |
 | `POST /api/tune/preset` | import such an object: the same handler as `POST /api/tune/coefficients`, which checks no signature |
 
@@ -474,13 +493,25 @@ baseline `core.presence` runs, the calibration status's `current` below.
 Before F166's review it reported their declared balanced 35 / 75 / 30
 whatever the preset, so a bundle exported and loaded back stored those as
 rows, which moved the thresholds. Their declared `default` is still the
-balanced 35 / 75 / 30, and that is what the reset buttons store. A bundle import is the same handler,
-so it stores every coefficient in the bundle, the three presence
-thresholds included. So do the Lab's per-row **reset** and **Reset all**,
-which POST each coefficient's default as a stored value. A stored
+balanced 35 / 75 / 30. A bundle import is the same handler, so it stores
+every coefficient in the bundle as a row, the three presence thresholds
+included, and so does the calibration's apply (those three). A stored
 `core.presence.motion_threshold`, `active_threshold` or
 `breathing_threshold` wins over the dashboard's preset and sensitivity
-(they set only the default of those reads), at boot as after a change.
+(they set only the default of those reads), at boot as after a change. The
+Lab's per-row **reset** and **Reset all** POST each knob as `null`, which
+removes its stored row (sweep F127): the device then runs what it runs with
+no row, its declared default, and for the three thresholds the saved preset
+and sensitivity's baseline, at once and from every boot. Before F127 the
+reset stored the declared default as a row, so a preset or slider change
+made after it applied nowhere. Reset all removes every knob's row, the
+dashboard's own preset and sensitivity among them (the Lab lists them), so
+it returns the device to balanced at sensitivity 50, and Quiet Hours go
+back to off (23:00 to 07:00, disabled), as before. Either reset first drops
+a slider or toggle save still waiting to be sent, then reloads the rows
+from the device. A value `tune_post()` cannot read (not a number,
+`true` / `false`, or `null`) is ignored, as before; JSON whitespace,
+newlines included, may sit on either side of the colon.
 
 ---
 
@@ -581,9 +612,11 @@ Lab's coefficients behave the same way, its Quiet Hours knobs included
 (sweep F128; see the Tuning Lab section above). The
 preset and sensitivity set only the default of `core.presence`'s three
 thresholds: once a threshold is stored directly (the calibration's apply
-stores all three; so do the Tuning Lab's reset buttons and a bundle
-import), the stored threshold wins, at boot as at once, while
-`GET /api/settings` keeps reporting the saved preset.
+stores all three, and a Tuning Lab bundle import or slider stores its own),
+the stored threshold wins, at boot as at once, while
+`GET /api/settings` keeps reporting the saved preset. The Tuning Lab's
+reset removes a threshold's row, and the preset and sensitivity apply to it
+again (sweep F127).
 The wire keys are deliberately short (the dashboard's controls surface,
 not the full module-tunable surface):
 
@@ -734,7 +767,10 @@ instead. At the first emit AFTER the window closes (or when the user
 disables Quiet Hours mid-window), the chokepoint synthesizes one
 `held_summary` row through the registered `meta.quiet_hours` module.
 The summary's `note` is `"quiet_hours"` and `bundled` reflects
-the number of suppressed events. **Anomaly events (`CSI_CATEGORY_ANOMALY`)
+the number of suppressed events. The hold comes after the module's hourly
+ceiling, so an emit the ceiling refuses is not counted, while a refresh of
+an open bundle needs no slot and is counted at a full ceiling too (sweep
+F90; before it, a full ceiling refused those refreshes first). **Anomaly events (`CSI_CATEGORY_ANOMALY`)
 always pass through** — the night-time category is precisely when
 unusual activity matters most.
 
@@ -743,8 +779,9 @@ csi_settings_nvs.cpp::apply_quiet_hours_from_nvs()`, which
 `csi_integration.cpp`'s `register_v1_modules()` calls at boot, the
 `/api/settings` POST handler calls on a Quiet Hours change, and the Tuning
 Lab's POST (`csi_tune_lab.cpp`'s `tune_post()`, also the bundle import)
-calls when it stores a `core.quiet_hours.*` knob (sweep F128). A device
-that never stored the range runs it off, 23:00 to 07:00
+calls when it stores a `core.quiet_hours.*` knob (sweep F128), or removes
+one for the Lab's reset (sweep F127). A device that never stored the range,
+or whose rows the Lab's reset removed, runs it off, 23:00 to 07:00
 (`kQuietHoursDefault*` in `csi_settings_nvs.h`, sweep F123). The
 `/api/settings` POST stores the range through
 `store_quiet_hours_from_settings()` beside it, by the same key map, so

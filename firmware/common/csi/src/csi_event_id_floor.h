@@ -66,7 +66,7 @@
  * and each later boot first reissues 0xFFFFFFFF (floor_for saturates).
  * From then on Home Assistant refuses the device's events. Both trees' MQTT
  * health says `event_id_space_low` from kHoldLimit on (space_low() below,
- * backlog F82); what recovers the device is still a decision. A boot loop
+ * backlog F82); the recovery is an owner action, set out there. A boot loop
  * costs what it cost before
  * F46: one floor write per boot that allocates (one write, not more, even
  * when boot_floor() holds the floor above the delivery ceiling: the boot's
@@ -145,8 +145,16 @@ inline bool ceiling_ignored(uint32_t persisted_floor, uint32_t delivered_ceiling
 // wrap, and each later boot first reissues 0xFFFFFFFF (floor_for saturates),
 // at or past kHoldLimit again. Home Assistant refuses a wrapped device's
 // events, so both trees' MQTT health publishes this as `event_id_space_low`.
-// It only warns: the recovery (a re-pin in HA, then a reset of the floor
-// and of the delivery ceiling csi.evsent) is still a decision.
+// It only warns. Nothing on the device resets the id space, and no route
+// does (backlog F82's decision): the recovery is an owner action that
+// clears the floor and the delivery ceiling together, then a re-pin. On a
+// canary, a factory reset (BOOT held, main.cpp's factory_reset()) clears its
+// NVS namespace, the floor `csi.evid` and the ceiling `csi.evsent` with it.
+// A canary-wap has no reset path, so its owner flashes it with the
+// flasher's full erase, which clears all of NVS, the floor `ev.next` and
+// `csi.evsent` included. Either way the allocator starts again at kIdSpaceBase,
+// below the mark Home Assistant holds, so the owner then re-pins the device
+// in Home Assistant, which resets that mark.
 inline bool space_low(uint32_t next_id) {
   return next_id >= kHoldLimit || next_id < kIdSpaceBase;
 }

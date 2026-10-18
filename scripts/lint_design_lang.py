@@ -42,9 +42,11 @@ display cases, `vm_*` a Grove Vision module in four files and a radar carrier
 in two, `skirt_t` a rain skirt in four and a snap finger in one, `clip_w` a
 6 mm board-clip tab in twelve and a 45 mm belt clip in one (audit 2026-09,
 C2). The minority meanings were renamed (usb_shell_*, usb_slot_*, radar_*,
-finger_t, leaf_w), and KNOB_MEANINGS holds every one of those names to its
-meaning through its help: a listed knob whose help does not say its meaning
-word — or says the other meaning's — fails, naming the name to use instead.
+finger_t, leaf_w; and C10 gave the J-box's pigtail pass-through, which no
+plug or boot ever crosses, pigtail_*), and KNOB_MEANINGS holds every one of
+those names to its meaning through its help: a listed knob whose help does
+not say its meaning word — or says the other meaning's — fails, naming the
+name to use instead.
 A listed knob with no help passes: there is no meaning on it to transfer yet
 (writing that help is the parametric-UX backlog's next wave).
 
@@ -212,14 +214,22 @@ HELP_LINE_DEBT: set[tuple[str, str]] = set()
 KNOB_MEANINGS = {
     "usb_w":         ("the wall opening a USB cable's plug and boot pass through",
                       r"\bboots?\b", None,
-                      "usb_shell_w for a connector-shell size, usb_slot_w for a side slot"),
+                      "usb_shell_w for a connector-shell size, usb_slot_w for a side slot, "
+                      "pigtail_w for a pigtail cable's pass-through"),
     "usb_h":         ("the wall opening a USB cable's plug and boot pass through",
                       r"\bboots?\b", None,
-                      "usb_shell_h for a connector-shell size, usb_slot_h for a side slot"),
+                      "usb_shell_h for a connector-shell size, usb_slot_h for a side slot, "
+                      "pigtail_h for a pigtail cable's pass-through"),
     "usb_shell_w":   ("the USB connector shell, or an opening sized to it", r"\bshell", None, None),
     "usb_shell_h":   ("the USB connector shell, or an opening sized to it", r"\bshell", None, None),
     "usb_slot_w":    ("a side slot a USB plug enters through", r"\bslot", None, None),
     "usb_slot_h":    ("a side slot a USB plug enters through", r"\bslot", None, None),
+    # the J-box's (C10): the connector sits recessed, so only a pre-made pigtail
+    # cable leaves through the wall — a plug and its boot never cross it
+    "pigtail_w":     ("the slot a pigtail cable passes through, no plug or boot",
+                      r"\bpigtail", r"\bboots?\b", "usb_w for an opening a plug and boot pass"),
+    "pigtail_h":     ("the slot a pigtail cable passes through, no plug or boot",
+                      r"\bpigtail", r"\bboots?\b", "usb_h for an opening a plug and boot pass"),
     "vm_l":          ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",
                       r"radar|mr60|carrier", "radar_l for the MR60 radar carrier"),
     "vm_w":          ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",

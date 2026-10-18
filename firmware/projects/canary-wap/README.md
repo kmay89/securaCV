@@ -223,7 +223,13 @@ within **180 s**, from the SecuraCV companion service
 as `{"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host","expires_in_s"}`.
 The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<hex>`
 — and gets the same receipt the BOOT-tap route serves, `base_url` at the
-`.local` name. The route decides bearer → claim → BOOT tap — the four-grant
+`.local` name. (Every grant names the `.local` name once the WAP is on the
+home Wi-Fi and the request did not arrive over its setup network, and so
+does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
+dashboard at `https://canary-<suffix>.local/settings` then saves that
+receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
+pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
+**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
@@ -304,7 +310,7 @@ make help               # Show all targets
 | `/api/logs` | GET | Log export |
 | `/api/witness` | GET | The newest witness record (sequence, time bucket, type, chain hash); the signed page is `/api/v1/witness` |
 | `/api/v1/witness?last=N` | GET | Newest N signed witness records with their chain-hash pre-image — the shared page contract the phone verifies (`spec/witness_api_v1.md`) |
-| `/api/export` | POST | Writes an export bundle header (device id, firmware, chain position, public key) to the SD card and returns its download URL |
+| `/api/export` | POST | Answers the export bundle header (device id, firmware, chain position, record count, public key) inline, which the dashboard's Export saves as a JSON file; with a card in, also writes it to `/EXPORT/bundle_<ms>.json` and names that copy in `card_path` |
 | `/api/peek/start` | POST | Start camera stream |
 | `/api/peek/stop` | POST | Stop camera stream |
 | `/api/audio/status` | GET | Mic state, mute info, detection counters |
@@ -386,8 +392,11 @@ This project follows the SecuraCV firmware architecture:
 
 - **Board definitions**: `../../boards/xiao-esp32s3-sense/`
 - **Configuration**: `arduino/canary_wap/build_config.h` (hardware target +
-  build profile). `../../configs/canary-wap/` is compiled by no build; only
-  the Lab's tooling reads it.
+  build profile), where the WAP's profile flags live; a few module flags
+  default in their own headers (`FEATURE_BEACON_CHANNEL` in
+  `beacon_channel.h`, the BLE sub-modes in `ble_config.h`). There is no
+  `configs/canary-wap/`; the Lab's Workshop and fleet figures read this
+  header and `canary_wap.ino` directly.
 - **Common modules**: `../../common/`
 - **Build environments**: `../../envs/platformio/`
 

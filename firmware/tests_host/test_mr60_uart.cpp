@@ -514,7 +514,432 @@ void test_presence_fsm_stall_recovery_never_reports_clear_with_a_target() {
     std::printf("PASS test_presence_fsm_stall_recovery_never_reports_clear_with_a_target\n");
 }
 
+// --------------------------------------------------------------------------
+// The count follows the debounced state (sweep F131).
+//
+// `Witness` drives PresenceFSM the way canary-sense main.cpp's drive_fsms
+// does, as far as what it records and when it dirties the state row:
+// presence_detected on a tick that turns Present, presence_cleared on one
+// that turns Clear (Unknown signs nothing), occupancy_changed on a count
+// change while Present, and a state row on any state or count change. Each
+// carries the FSM's state and count after the tick (record_event_now and
+// publish_state_now both refresh the snapshot first). The heartbeat
+// republishes the row on any tick, so a tick that leaves a count beside a
+// state other than Present is a row the device could publish: `contradicted`
+// counts them.
+// --------------------------------------------------------------------------
+
+struct Record {
+    const char* event;     // "state" for a state row
+    Presence    presence;
+    CountBucket occupants;
+};
+
+bool rec_eq(const Record& r, const char* event, Presence p, CountBucket c) {
+    return std::strcmp(r.event, event) == 0 && r.presence == p && r.occupants == c;
+}
+
+struct Witness {
+    PresenceFSM&        fsm;
+    std::vector<Record> records;
+    std::vector<Record> rows;
+    int                 contradicted = 0;
+
+    PresenceEvent drive(const Frame& f, uint32_t t) {
+        const PresenceEvent ev = fsm.tick(f, t);
+        if (ev.state_changed) {
+            if (ev.state == Presence::Present) {
+                records.push_back({"presence_detected", fsm.state(), fsm.count()});
+            } else if (ev.state == Presence::Clear) {
+                records.push_back({"presence_cleared", fsm.state(), fsm.count()});
+            }
+        }
+        if (ev.count_changed && fsm.state() == Presence::Present) {
+            records.push_back({"occupancy_changed", fsm.state(), fsm.count()});
+        }
+        if (ev.state_changed || ev.count_changed) {
+            rows.push_back({"state", fsm.state(), fsm.count()});
+        }
+        if (fsm.state() != Presence::Present && fsm.count() != CountBucket::Zero) {
+            ++contradicted;
+        }
+        return ev;
+    }
+};
+
+// Walk a room from boot to Present with one occupant the way the decoder
+// reports it: the presence flag first (the aggregate's count still 0), then
+// the radar's count frame, then presence held past the debounce. Returns the
+// time of the tick that turned Present.
+uint32_t enter_with_one(Witness& w, FrameParser& p, uint32_t t) {
+    w.fsm.reset(t);
+    (void)w.drive(decode_one(p, frame_people(true)), t);
+    (void)w.drive(decode_one(p, frame_count(1)), t + 100);
+    const PresenceEvent e = w.drive(decode_one(p, frame_people(true)), t + 300);
+    assert(e.state_changed && w.fsm.state() == Presence::Present);
+    assert(w.fsm.count() == CountBucket::One);
+    return t + 300;
+}
+
+// The room empties: Present (and its count) holds through the clear timeout,
+// and the tick that turns Clear carries the zero. The device signs
+// presence_cleared, and no occupancy_changed to "0" while still Present (the
+// old count followed each frame and signed one 1.5 s before the clear).
+void test_emptying_room_signs_presence_cleared_only() {
+    PresenceConfig cfg;  // defaults: 300 debounce, 1500 clear, 5000 stall
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    uint32_t t = enter_with_one(w, p, 1000);
+    assert(w.records.size() == 1);
+    assert(rec_eq(w.records[0], "presence_detected", Presence::Present, CountBucket::One));
+
+    // Everyone leaves. Every no-target frame inside the clear timeout keeps
+    // the state Present and the count One.
+    t += 100;
+    const uint32_t gone = t;
+    for (; t < gone + cfg.clear_timeout_ms; t += 100) {
+        const PresenceEvent e = w.drive(decode_one(p, frame_people(false)), t);
+        assert(!e.state_changed && !e.count_changed);
+        assert(fsm.state() == Presence::Present && fsm.count() == CountBucket::One);
+    }
+    // The tick that turns Clear drops the count in the same tick.
+    const PresenceEvent e = w.drive(decode_one(p, frame_people(false)), t);
+    assert(e.state_changed && e.state == Presence::Clear);
+    assert(e.count == CountBucket::Zero && !e.count_changed);
+    assert(fsm.count() == CountBucket::Zero);
+
+    assert(w.records.size() == 2);
+    assert(rec_eq(w.records[1], "presence_cleared", Presence::Clear, CountBucket::Zero));
+    assert(w.rows.size() == 2);   // the Present row and the Clear row, nothing between
+    assert(rec_eq(w.rows[0], "state", Presence::Present, CountBucket::One));
+    assert(rec_eq(w.rows[1], "state", Presence::Clear, CountBucket::Zero));
+    assert(w.contradicted == 0);
+    std::printf("PASS test_emptying_room_signs_presence_cleared_only\n");
+}
+
+// A target that drops out for one frame signs nothing and moves no row. On
+// the real wire the return is two frames: the presence flag first, with the
+// aggregate's count still 0 (the no-target frame zeroed it), then the
+// radar's count frame. A target frame that names no count keeps the bucket
+// like a no-target frame does, so the 0 in between is not signed either.
+void test_one_frame_dropout_signs_nothing() {
+    PresenceConfig cfg;
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    uint32_t t = enter_with_one(w, p, 1000);
+    const size_t records = w.records.size(), rows = w.rows.size();
+
+    t += 100;
+    PresenceEvent e = w.drive(decode_one(p, frame_people(false)), t);   // the dropout
+    assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    t += 100;
+    const Frame back = decode_one(p, frame_people(true));
+    assert(back.has_target && back.target_count == 0);                 // what the decoder emits
+    e = w.drive(back, t);
+    assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    e = w.drive(decode_one(p, frame_count(1)), t);
+    assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+
+    assert(w.records.size() == records && w.rows.size() == rows);
+
+    // A real change while Present is still signed, once, with its bucket.
+    t += 100;
+    e = w.drive(decode_one(p, frame_count(2)), t);
+    assert(e.count_changed && !e.state_changed && fsm.count() == CountBucket::TwoPlus);
+    assert(w.records.size() == records + 1);
+    assert(rec_eq(w.records.back(), "occupancy_changed", Presence::Present, CountBucket::TwoPlus));
+    assert(w.contradicted == 0);
+    std::printf("PASS test_one_frame_dropout_signs_nothing\n");
+}
+
+// The bucket moves only on a frame whose presence flag names a target. The
+// decoder can emit a count beside a cleared flag: a TARGET_COUNT frame that
+// lands after PEOPLE_EXIST(0) and before the next PEOPLE_EXIST(1) carries
+// the radar's count with has_target still false. While Present that frame
+// is a no-target frame like any other: it keeps the last bucket and signs
+// nothing, and if no target returns the clear carries the zero, so the room
+// is never signed as holding 2+ by a frame in which the radar says nobody
+// is there.
+void test_a_count_beside_a_cleared_flag_moves_nothing() {
+    PresenceConfig cfg;
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    uint32_t t = enter_with_one(w, p, 1000);
+    const size_t records = w.records.size(), rows = w.rows.size();
+
+    t += 100;
+    PresenceEvent e = w.drive(decode_one(p, frame_people(false)), t);
+    assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    const uint32_t gone = t;
+    t += 50;
+    const Frame stray = decode_one(p, frame_count(2));
+    assert(!stray.has_target && stray.target_count == 2);   // what the decoder emits
+    e = w.drive(stray, t);
+    assert(!e.state_changed && !e.count_changed);
+    assert(fsm.state() == Presence::Present && fsm.count() == CountBucket::One);
+    assert(w.records.size() == records && w.rows.size() == rows);
+
+    // No target returns: the clear timeout runs from the PEOPLE_EXIST(0)
+    // frame, and the tick that turns Clear carries the zero.
+    for (t = gone + 100; t < gone + cfg.clear_timeout_ms; t += 100) {
+        e = w.drive(decode_one(p, frame_people(false)), t);
+        assert(!e.state_changed && !e.count_changed && fsm.count() == CountBucket::One);
+    }
+    e = w.drive(decode_one(p, frame_people(false)), t);
+    assert(e.state_changed && e.state == Presence::Clear && e.count == CountBucket::Zero);
+    assert(w.records.size() == records + 1);
+    assert(rec_eq(w.records.back(), "presence_cleared", Presence::Clear, CountBucket::Zero));
+    for (const Record& r : w.records) assert(std::strcmp(r.event, "occupancy_changed") != 0);
+    assert(w.contradicted == 0);
+    std::printf("PASS test_a_count_beside_a_cleared_flag_moves_nothing\n");
+}
+
+// While Clear (or Unknown) the count reads Zero, through the whole Present
+// debounce: no state row counts an occupant beside presence "clear" (the old
+// count followed the first target frame and dirtied a Clear row counting
+// one). The tick that earns Present carries the bucket it was entered with
+// and signs presence_detected alone, not an occupancy_changed beside it.
+void test_no_occupant_counted_while_clear_during_debounce() {
+    PresenceConfig cfg;
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    uint32_t t = 1000;
+    fsm.reset(t);
+    (void)w.drive(decode_one(p, frame_people(false)), t);   // Unknown -> Clear
+    assert(fsm.state() == Presence::Clear);
+    assert(w.rows.size() == 1 && rec_eq(w.rows[0], "state", Presence::Clear, CountBucket::Zero));
+
+    // A debounce that is never earned: a target for 200 ms, then gone.
+    t += 1000;
+    for (uint32_t s = t; t < s + 200; t += 50) {
+        if (t == s) (void)w.drive(decode_one(p, frame_people(true)), t);
+        else        (void)w.drive(decode_one(p, frame_count(1)), t);
+        assert(fsm.state() == Presence::Clear && fsm.count() == CountBucket::Zero);
+    }
+    (void)w.drive(decode_one(p, frame_people(false)), t);
+    assert(w.rows.size() == 1 && w.records.size() == 1);   // only the boot Clear
+
+    // Two people walk in: the count stays Zero until Present is earned, and
+    // Present carries 2+.
+    t += 1000;
+    const uint32_t in = t;
+    (void)w.drive(decode_one(p, frame_people(true)), t);
+    (void)w.drive(decode_one(p, frame_count(2)), t + 50);
+    for (t = in + 100; t < in + cfg.present_debounce_ms; t += 100) {
+        (void)w.drive(decode_one(p, frame_people(true)), t);
+        assert(fsm.state() == Presence::Clear && fsm.count() == CountBucket::Zero);
+    }
+    assert(w.rows.size() == 1);   // nothing dirtied the row during the debounce
+    const PresenceEvent e = w.drive(decode_one(p, frame_people(true)), in + cfg.present_debounce_ms);
+    assert(e.state_changed && e.state == Presence::Present);
+    assert(e.count == CountBucket::TwoPlus && !e.count_changed);
+
+    assert(w.records.size() == 2);
+    assert(rec_eq(w.records[1], "presence_detected", Presence::Present, CountBucket::TwoPlus));
+    assert(w.rows.size() == 2 && rec_eq(w.rows[1], "state", Presence::Present, CountBucket::TwoPlus));
+    assert(w.contradicted == 0);
+    std::printf("PASS test_no_occupant_counted_while_clear_during_debounce\n");
+}
+
+// A stall drops the count in the same tick as the state, and the stall is a
+// state change: it carries Zero and reports no separate count move, so it
+// signs nothing (Unknown is radar-link health). A count held through a
+// dropout rides until the stall, not to "0" ahead of it.
+void test_stall_drops_the_count() {
+    PresenceConfig cfg;
+    PresenceFSM fsm(cfg);
+    FrameParser p;
+    Witness w{fsm, {}, {}, 0};
+
+    // Straight from Present with 2+.
+    uint32_t t = enter_with_one(w, p, 1000);
+    (void)w.drive(decode_one(p, frame_count(2)), t + 50);
+    assert(fsm.count() == CountBucket::TwoPlus);
+    t += 50 + cfg.stall_timeout_ms;
+    PresenceEvent e = w.drive(Frame(), t);
+    assert(e.stalled && e.state_changed && fsm.state() == Presence::Unknown);
+    assert(e.count == CountBucket::Zero && fsm.count() == CountBucket::Zero);
+    assert(!e.count_changed);
+
+    // From a dropout: the target leaves and the radar goes silent before the
+    // clear timeout. The count holds One until the stall's tick.
+    const size_t before = w.records.size();
+    t = enter_with_one(w, p, t + 100);
+    const size_t entered = w.records.size();
+    assert(entered == before + 1);
+    t += 100;
+    (void)w.drive(decode_one(p, frame_people(false)), t);
+    const uint32_t last = t;
+    for (t = last + 500; t < last + cfg.stall_timeout_ms; t += 500) {
+        (void)w.drive(Frame(), t);   // loop()'s empty-frame ticks
+        assert(fsm.state() == Presence::Present && fsm.count() == CountBucket::One);
+    }
+    e = w.drive(Frame(), last + cfg.stall_timeout_ms);
+    assert(e.stalled && fsm.state() == Presence::Unknown && fsm.count() == CountBucket::Zero);
+    assert(!e.count_changed);
+    assert(w.records.size() == entered);   // no occupancy_changed, no presence_cleared
+    assert(w.contradicted == 0);
+    std::printf("PASS test_stall_drops_the_count\n");
+}
+
 #ifdef CANARY_SENSE_VITALS
+// The vitals gate (canary-sense main.cpp): `single_target = (pev.count ==
+// CountBucket::One)`, so VitalsFSM now sees the debounced count. Decided and
+// pinned here (F131): a held One on a no-target frame inside the clear
+// timeout is still single_target, so a held lock keeps reporting its last
+// BPMs on that tick, and the presence tick itself no longer restarts an
+// acquiring run; the tick that turns Clear zeroes the count and suppresses
+// the BPMs at once. During the Present debounce the count is Zero, so vitals
+// cannot start acquiring before Present is earned. A one-frame dropout still
+// restarts an acquiring run on the real wire, by another road: the decoder
+// zeroes both rates with the no-target frame, so the first vitals frame after
+// it is implausible (test_vitals_dropout_still_restarts_an_acquiring_run).
+void test_vitals_gate_sees_the_debounced_count() {
+    PresenceConfig pcfg;   // 300 debounce, 1500 clear
+    VitalsConfig vcfg;     // 4000 confirm, 6000 lost
+    PresenceFSM presence(pcfg);
+    VitalsFSM vitals(vcfg);
+    FrameParser p;
+
+    struct Tick { PresenceEvent pev; VitalsEvent vev; };
+    auto drive = [&](const Frame& f, uint32_t t) {
+        Tick k;
+        k.pev = presence.tick(f, t);
+        const bool single_target = (k.pev.count == CountBucket::One);   // main.cpp's gate
+        k.vev = vitals.tick(f, single_target, t);
+        return k;
+    };
+
+    uint32_t t = 1000;
+    presence.reset(t);
+    vitals.reset(t);
+    (void)drive(decode_one(p, frame_people(true)), t);
+    (void)drive(decode_one(p, frame_count(1)), t + 50);
+    // A plausible vitals pair during the debounce: single_target is false
+    // (the count is Zero until Present), so no acquiring run starts on it.
+    (void)drive(decode_one(p, frame_breath(16.0f)), t + 100);
+    Tick k = drive(decode_one(p, frame_heart(70.0f)), t + 100);
+    assert(presence.state() != Presence::Present && k.pev.count == CountBucket::Zero);
+    assert(!k.vev.bpm_valid);
+    k = drive(decode_one(p, frame_people(true)), t + pcfg.present_debounce_ms);
+    assert(presence.state() == Presence::Present && k.pev.count == CountBucket::One);
+
+    // Vitals once a second, presence frames between: the run starts at the
+    // first vitals pair seen while Present, so the lock lands lock_confirm_ms
+    // after it, not after the debounce-window pair.
+    const uint32_t present_at = t + pcfg.present_debounce_ms;
+    const uint32_t first = present_at + 1000;
+    for (t = first; t < first + vcfg.lock_confirm_ms; t += 1000) {
+        (void)drive(decode_one(p, frame_breath(16.0f)), t);
+        k = drive(decode_one(p, frame_heart(70.0f)), t);
+        assert(vitals.lock() != VitalsLock::Locked);
+        (void)drive(decode_one(p, frame_people(true)), t + 500);
+    }
+    (void)drive(decode_one(p, frame_breath(16.0f)), t);
+    k = drive(decode_one(p, frame_heart(70.0f)), t);
+    assert(vitals.lock() == VitalsLock::Locked && k.vev.bpm_valid);
+    assert(k.vev.breath_bpm == 16 && k.vev.heart_bpm == 70);
+
+    // The room empties. On every no-target tick inside the clear timeout the
+    // presence FSM still says one occupant, so the lock keeps reporting its
+    // last BPMs (the old gate, fed by each frame, suppressed them on the
+    // first no-target frame).
+    t += 100;
+    const uint32_t gone = t;
+    for (; t < gone + pcfg.clear_timeout_ms; t += 100) {
+        k = drive(decode_one(p, frame_people(false)), t);
+        assert(presence.state() == Presence::Present && k.pev.count == CountBucket::One);
+        assert(k.vev.bpm_valid && k.vev.breath_bpm == 16 && k.vev.heart_bpm == 70);
+    }
+    // The Clear tick zeroes the count: the BPMs go in the same tick, while
+    // the lock itself rides out lost_ms as before.
+    k = drive(decode_one(p, frame_people(false)), t);
+    assert(k.pev.state_changed && presence.state() == Presence::Clear);
+    assert(k.pev.count == CountBucket::Zero);
+    assert(!k.vev.bpm_valid && k.vev.breath_bpm == 0 && k.vev.heart_bpm == 0);
+    assert(vitals.lock() == VitalsLock::Locked);
+    std::printf("PASS test_vitals_gate_sees_the_debounced_count\n");
+}
+
+// Pinned, not changed, by F131: a one-frame dropout during an acquiring run
+// still restarts the run on the real wire. The held One keeps the presence
+// tick from restarting it (single_target stays true on the no-target frame),
+// but the decoder zeroes both rates with PEOPLE_EXIST(0), so the first vitals
+// frame after the return carries one rate at 0, VitalsFSM finds it
+// implausible and the run starts again at the next plausible pair. The lock
+// lands lock_confirm_ms after that pair, not after the first one.
+void test_vitals_dropout_still_restarts_an_acquiring_run() {
+    PresenceConfig pcfg;   // 300 debounce, 1500 clear
+    VitalsConfig vcfg;     // 4000 confirm, 6000 lost
+    PresenceFSM presence(pcfg);
+    VitalsFSM vitals(vcfg);
+    FrameParser p;
+
+    struct Tick { PresenceEvent pev; VitalsEvent vev; };
+    auto drive = [&](const Frame& f, uint32_t t) {
+        Tick k;
+        k.pev = presence.tick(f, t);
+        const bool single_target = (k.pev.count == CountBucket::One);   // main.cpp's gate
+        k.vev = vitals.tick(f, single_target, t);
+        return k;
+    };
+    auto pair = [&](uint32_t t) {
+        (void)drive(decode_one(p, frame_breath(16.0f)), t);
+        return drive(decode_one(p, frame_heart(70.0f)), t);
+    };
+
+    uint32_t t = 1000;
+    presence.reset(t);
+    vitals.reset(t);
+    (void)drive(decode_one(p, frame_people(true)), t);
+    (void)drive(decode_one(p, frame_count(1)), t + 50);
+    (void)drive(decode_one(p, frame_people(true)), t + pcfg.present_debounce_ms);
+    assert(presence.state() == Presence::Present && presence.count() == CountBucket::One);
+
+    // The run starts at the first pair seen while Present.
+    const uint32_t start = t + pcfg.present_debounce_ms + 100;
+    (void)pair(start);
+    (void)pair(start + 1000);
+    assert(vitals.lock() != VitalsLock::Locked);
+
+    // One frame of no target: the presence FSM holds One, so the presence
+    // tick leaves the run alone.
+    Tick k = drive(decode_one(p, frame_people(false)), start + 1500);
+    assert(presence.state() == Presence::Present && k.pev.count == CountBucket::One);
+    (void)drive(decode_one(p, frame_people(true)), start + 1600);
+    (void)drive(decode_one(p, frame_count(1)), start + 1600);
+
+    // The vitals resume: the breath frame's aggregate still carries the heart
+    // rate the dropout zeroed, so it is implausible and the run restarts.
+    const uint32_t resume = start + 1750;
+    const Frame half = decode_one(p, frame_breath(16.0f));
+    assert(half.kind == FrameKind::Vitals && half.breath_rate == 16 && half.heart_rate == 0);
+    k = drive(half, resume);
+    assert(k.pev.count == CountBucket::One && !k.vev.bpm_valid);
+    k = drive(decode_one(p, frame_heart(70.0f)), resume);   // the restarted run's first pair
+    assert(vitals.lock() != VitalsLock::Locked);
+
+    // Past where the unbroken run would have locked (start + lock_confirm_ms):
+    // still acquiring. lock_confirm_ms after the resume: locked.
+    for (t = resume + 1000; t < resume + vcfg.lock_confirm_ms; t += 1000) {
+        k = pair(t);
+        assert(vitals.lock() != VitalsLock::Locked && !k.vev.bpm_valid);
+    }
+    assert(t - 1000 >= start + vcfg.lock_confirm_ms);
+    k = pair(t);
+    assert(vitals.lock() == VitalsLock::Locked && k.vev.bpm_valid);
+    assert(k.vev.breath_bpm == 16 && k.vev.heart_bpm == 70);
+    std::printf("PASS test_vitals_dropout_still_restarts_an_acquiring_run\n");
+}
+
 void test_vitals_fsm_integration() {
     VitalsConfig cfg;  // 4000 confirm, 6000 lost, breath 6..30, heart 40..130
     VitalsFSM fsm(cfg);
@@ -647,7 +1072,14 @@ int main() {
     test_truncated_valid_distance_emits_nothing();
     test_presence_fsm_integration();
     test_presence_fsm_stall_recovery_never_reports_clear_with_a_target();
+    test_emptying_room_signs_presence_cleared_only();
+    test_one_frame_dropout_signs_nothing();
+    test_a_count_beside_a_cleared_flag_moves_nothing();
+    test_no_occupant_counted_while_clear_during_debounce();
+    test_stall_drops_the_count();
 #ifdef CANARY_SENSE_VITALS
+    test_vitals_gate_sees_the_debounced_count();
+    test_vitals_dropout_still_restarts_an_acquiring_run();
     test_vitals_fsm_integration();
     test_vitals_lock_survives_interleaved_presence();
     test_vitals_ambiguity_resets_acquiring_run();

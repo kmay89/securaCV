@@ -72,7 +72,7 @@ public struct FleetFigure: Sendable {
   /// none — draw the generic marker then, never a guessed product. The input
   /// is canonicalized the same way the firmware's mDNS advert canonicalizes
   /// its own DEVICE_TYPE (lowercase; underscores and spaces to hyphens), so
-  /// "canary_wap" from a config and "canary-wap" from the wire both resolve.
+  /// "canary_x" from a source and "canary-x" from the wire both resolve.
   public static func forDeviceType(_ deviceType: String) -> FleetFigure? {
     guard let id = deviceTypeToFigure[canonicalDeviceType(deviceType)] else { return nil }
     return all[id]
@@ -1923,7 +1923,6 @@ public struct FleetFigure: Sendable {
     "canary-sense": "device.canary-sense",
     "canary-vision": "device.canary-vision",
     "canary-wap": "device.canary-wap",
-    "canary-wap-mobile": "device.canary-wap",
     "canary-watch": "device.canary-display-watch",
   ]
 

@@ -179,7 +179,11 @@ csi_privacy_class_t csi_event_get_privacy_ceiling(void);
 /**
  * Per-module per-hour ceiling override. The default ceiling is taken from
  * the module's manifest entry (`default_ceiling_per_hour`); pass override=0
- * to revert to manifest default.
+ * to revert to manifest default. "Per hour" means the counter's six
+ * 10-minute buckets, the decision for backlog F132: any six consecutive
+ * buckets hold at most the ceiling's new rows, but a sliding 60 minutes
+ * can hold up to twice it, and a bundled row commits when its bundle
+ * closes, after the bucket that counted it.
  */
 void csi_event_set_module_ceiling(const char* module_id, uint8_t override_per_hour);
 

@@ -15,9 +15,14 @@
 //     real board — they are wired to the rail / charge chip. The bench
 //     lets you try to prove otherwise and fail.
 //   - The mask-ROM boot banner ("waiting for download") is staged by the
-//     bench (the ROM is the one program we can't compile to wasm); its
-//     text is verbatim what an ESP32-S3 prints. Everything after the
-//     banner is the real firmware talking.
+//     bench (the ROM is the one program we can't compile to wasm). It is
+//     the board's own chip's, named by its bench block (`rom.chip`), each
+//     line quoted from an Espressif source cited below, except the
+//     ESP32-S3's two download-mode lines, kept from before A59 and not
+//     re-sourced (its voice lists them `unsourced`); where no source quotes
+//     a banner, the bench prints none and says so. Everything after the
+//     banner is the real firmware talking. The bench's honesty ribbon says
+//     exactly that, per board (benchRibbon()).
 //
 // DOM-free on purpose: tested under Node (repo convention — CI runs the
 // exact shipped source). Hardware facts (which LEDs, what the switch
@@ -30,21 +35,161 @@
 export const CHARGE_PCT_PER_SEC = 0.8;
 export const DRAIN_PCT_PER_SEC = 0.15;
 
-// The ESP32-S3 mask ROM's own voice, verbatim. `boot:` is the strapping
-// sample: GPIO0 high → SPI_FAST_FLASH_BOOT (run the app), GPIO0 held low
-// through reset → DOWNLOAD (sit waiting for a flasher, forever).
-const ROM_HEAD = "ESP-ROM:esp32s3-20210327\nBuild:Mar 27 2021\n";
-export function romBanner(kind) {
-  switch (kind) {
-    case "poweron":
-    case "reset":
-      return ROM_HEAD + "rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)\n";
-    case "swreset": // ESP.restart() — the firmware asked for this one
-      return ROM_HEAD + "rst:0x3 (RTC_SW_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)\n";
-    case "download":
-      return ROM_HEAD + "rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))\nwaiting for download\n";
+// ── The mask ROM's own voice, per chip (sweep A59) ──────────────────────
+// A board's bench block names its chip (`rom.chip`) and the strapping pin
+// its BOOT button pulls low (`rom.boot_strap`); the banner is looked up here
+// by that chip, never assumed. Every line below is quoted, byte for byte,
+// from the Espressif source cited beside it (fetched for A59 from
+// github.com/espressif/esp-idf at tag v5.4), except the kinds a voice lists
+// in `unsourced`: the ESP32-S3's two download-mode lines, kept from before
+// A59 and not re-sourced. `boot:` is the chip's strap
+// sample as the quoted board's pins read it: the BOOT strap high runs the
+// app (SPI_FAST_FLASH_BOOT); held low through reset, the ROM sits waiting
+// for a flasher. The RESET button is a chip power-on reset (the enable
+// pin), so it prints the power-on banner, as the bench always has.
+// A kind whose banner no source quotes is null: romBanner() then prints a
+// one-line note saying so, never another chip's banner in its place.
+export const ROM_VOICES = {
+  esp32s3: {
+    name: "ESP32-S3",
+    // https://github.com/espressif/esp-idf/blob/v5.4/docs/en/security/esp32s3_log.inc
+    // (the flash-encryption guide's ESP32-S3 boot logs). Lines 6-8, its
+    // first boot:
+    //   ESP-ROM:esp32s3-20210327 / Build:Mar 27 2021 /
+    //   rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
+    // Lines 70-72, its restart ("already_en_enc"): the same two lines, then
+    //   rst:0x3 (RTC_SW_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+    head: "ESP-ROM:esp32s3-20210327\nBuild:Mar 27 2021\n",
+    poweron: "rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)\n",
+    swreset: "rst:0x3 (RTC_SW_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)\n",
+    // Not in that source: this is the bench's download line as it stood
+    // before A59, kept; the esp-idf v5.4 docs and examples quote no ESP32-S3
+    // download-mode banner to check it against. Listed in `unsourced`, so the
+    // ribbon says so on every S3 card.
+    download: "rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))\nwaiting for download\n",
+    unsourced: ["download"],
+  },
+  esp32c3: {
+    name: "ESP32-C3",
+    // https://github.com/espressif/esp-idf/blob/v5.4/examples/security/security_features_app/README.md
+    // (an example whose only supported target is the ESP32-C3), lines
+    // 328-330, under "Example Output" / "ROM bootloader verifying software
+    // bootloader":
+    //   ESP-ROM:esp32c3-api1-20210207 / Build:Feb  7 2021 /
+    //   rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
+    // (two spaces before the 7, as the source has it).
+    head: "ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021\n",
+    poweron: "rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)\n",
+    // No esp-idf v5.4 doc or example quotes a production ESP32-C3's
+    // software-reset or download-mode banner (docs/en/security/
+    // esp32c3_log.inc shows a pre-release chip's log: no ESP-ROM line and a
+    // different strap sample), so the bench prints neither and says why.
+    swreset: null,
+    download: null,
+    unsourced: [],
+  },
+};
+
+const KINDS = new Set(["poweron", "reset", "swreset", "download"]);
+
+/**
+ * The ROM banner a reset of `kind` prints on the board whose bench block's
+ * `rom` is given ({ chip, boot_strap }). A chip with no voice above prints
+ * a note instead of a banner; with no `rom` at all, nothing.
+ * @param kind "poweron" | "reset" | "swreset" (the firmware's ESP.restart()) | "download"
+ */
+export function romBanner(kind, rom) {
+  if (!KINDS.has(kind) || !rom || !rom.chip) return "";
+  const voice = ROM_VOICES[rom.chip];
+  const strap = rom.boot_strap ? `BOOT (${rom.boot_strap})` : "BOOT";
+  if (!voice) {
+    return `(no mask-ROM banner on file for ${rom.chip}: the bench prints none rather than another chip's)\n`;
   }
-  return "";
+  const line = kind === "reset" ? voice.poweron : voice[kind];
+  if (line) return voice.head + line;
+  if (kind === "download") {
+    return `(${voice.name} ROM: ${strap} was low at reset, so it waits for a flasher. Its download-mode ` +
+      "banner is not reproduced: no Espressif source the Lab quotes prints it)\n";
+  }
+  return `(${voice.name} ROM: its banner for this reset is not reproduced: the only ${voice.name} ` +
+    "banner the Lab quotes from Espressif is the power-on one)\n";
+}
+
+// ── The honesty ribbon (sweep A59 review) ───────────────────────────────
+// The bench's ribbon says what is staged and what is real, per board: the
+// chip whose ROM it stages (its bench block's `rom`), which of that chip's
+// banners are quoted from Espressif, which are the bench's own, and which it
+// prints a note for instead; then which of its lights are hardwired (a
+// `rail` or `charger` driver: no firmware can drive them). It used to be one
+// sentence for every card ("verbatim ESP32-S3", "PWR/CHG/DONE"), which the
+// Nightlight's ESP32-C3 card, with no lights at all, contradicted.
+const RIBBON_KINDS = [["poweron", "power-on"], ["swreset", "restart"], ["download", "download-mode"]];
+const sayList = (words, joint) =>
+  words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} ${joint} ${words[words.length - 1]}`;
+const LED_WIRES = { rail: "the power rail", charger: "the charge chip" };
+/**
+ * The bench's honesty ribbon for one board, from its bench block alone.
+ * @param profile the registry entry's `bench` block (rom, leds)
+ */
+export function benchRibbon(profile) {
+  const rom = profile?.rom;
+  const voice = rom && rom.chip ? ROM_VOICES[rom.chip] : null;
+  let first;
+  if (!rom || !rom.chip) {
+    first = "Honesty: this bench names no chip, so it stages no mask-ROM banner; everything on its serial is the real firmware.";
+  } else if (!voice) {
+    first = `Honesty: the Lab quotes no mask-ROM banner for this board's ${rom.chip}, so the bench prints a note where the ROM would speak; everything after it is the real firmware.`;
+  } else {
+    const unsourced = voice.unsourced || [];
+    const quoted = RIBBON_KINDS.filter(([k]) => voice[k] && !unsourced.includes(k)).map(([, w]) => w);
+    const own = RIBBON_KINDS.filter(([k]) => voice[k] && unsourced.includes(k)).map(([, w]) => w);
+    const none = RIBBON_KINDS.filter(([k]) => !voice[k]).map(([, w]) => w);
+    const parts = [];
+    if (quoted.length)
+      parts.push(`its ${sayList(quoted, "and")} ${quoted.length > 1 ? "banners are" : "banner is"} quoted from Espressif's esp-idf (cited in bench.js)`);
+    if (own.length)
+      parts.push(`its ${sayList(own, "and")} lines are the bench's own, not checked against an Espressif source`);
+    if (none.length)
+      parts.push(`no Espressif source the Lab quotes prints its ${sayList(none, "or")} banner, so there the bench prints a note instead`);
+    first = `Honesty: the mask-ROM banner is staged by the bench for this board's ${voice.name}: ${parts.join("; ")}. Everything after the banner is the real firmware.`;
+  }
+  const wired = (profile?.leds || []).filter((l) => LED_WIRES[l.driver]);
+  if (!wired.length) return first;
+  const labels = sayList(wired.map((l) => l.label), "and");
+  const wires = sayList([...new Set(wired.map((l) => LED_WIRES[l.driver]))], "and");
+  const many = wired.length > 1;
+  return `${first} The ${labels} ${many ? "lights are" : "light is"} hardwired to ${wires} — ` +
+    `no firmware here or on your desk can turn ${many ? "them" : "it"} off.`;
+}
+
+// ── BOOT held while the app runs (sweep A83) ────────────────────────────
+// The strap is sampled at reset on every board; whether the running firmware
+// also reads the pin is the board's own story, and its bench block's BOOT
+// button says it (`read_while_running`, held to the button's note and to the
+// firmware's pin map by bench.test.js): main.cpp's BOOT grammar (a press
+// wakes the glass, a hold acknowledges) runs wherever the board's pins.h
+// names a BOOT_BUTTON_PIN. The bench's BOOT chip holds the strap only: it is
+// not wired to the twin's button input (emu_button), so on a board that reads
+// the pin the bench says so rather than implying the firmware saw a press. A
+// bench block that does not say gets neither story.
+/**
+ * The bench's line for BOOT held while the app runs, from the board's bench
+ * block (its `rom.boot_strap` and its BOOT button's `read_while_running`).
+ * @param profile the registry entry's `bench` block
+ */
+export function bootHeldLine(profile) {
+  const boot = (profile?.buttons || []).find((b) => b.id === "boot");
+  const strap = profile?.rom?.boot_strap;
+  const name = strap ? `BOOT (${strap})` : "BOOT";
+  if (boot?.read_while_running === false) {
+    return `${name} held — a strapping pin, sampled only at reset. Running firmware ignores it.`;
+  }
+  if (boot?.read_while_running === true) {
+    return `${name} held — a strapping pin, sampled at reset. This board's firmware also reads it while running, ` +
+      "but the bench holds it as the strap only: it is not wired to the twin's button, so the firmware sees no press.";
+  }
+  return `${name} held — a strapping pin, sampled at reset. This board's bench block does not say whether its ` +
+    "running firmware reads it.";
 }
 
 // ── The power plane ─────────────────────────────────────────────────────
@@ -136,11 +281,7 @@ export class BenchPower {
   setBootHeld(held) {
     if (this.bootHeld === !!held) return;
     this.bootHeld = !!held;
-    if (this.bootHeld && this.mode === "run") {
-      this._log(
-        "BOOT held — a strapping pin, sampled only at reset. Running firmware ignores it."
-      );
-    }
+    if (this.bootHeld && this.mode === "run") this._log(bootHeldLine(this.profile));
   }
 
   pressReset() {
@@ -151,7 +292,8 @@ export class BenchPower {
     const kind = this.bootHeld ? "download" : "reset";
     this.mode = this.bootHeld ? "download" : "run";
     if (kind === "download") {
-      this._log("RESET with BOOT low — the ROM boots to download mode instead of the app.");
+      const strap = this.profile.rom?.boot_strap;
+      this._log(`RESET with BOOT${strap ? ` (${strap})` : ""} low — the ROM boots to download mode instead of the app.`);
     } else {
       this._log("RESET — RAM clears; NVS flash keeps everything it learned.");
     }

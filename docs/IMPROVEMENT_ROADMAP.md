@@ -53,6 +53,10 @@ survived only if a majority could not. The counts:
 | Landed in wave 13 (PR #1762) | a fifth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 12 filed; it closes none of the rows here and changes no sentence of §2. On canary-wap's default FULL profile a phone's Numeric Comparison now waits for the owner's confirm in the web UI (a security fix: one server-callback dispatcher replaces the library's yes), Remove forgets the phone's bond by its identity address with the radio quiet, a link while Bluetooth is off is refused, a dropped link event heals and the state names what runs (F171, F172, F173, F169, F170); Chirp's send cooldown is a timer a mute cannot end, and a refused send or confirm says why (F174, F178); the PIO mesh status routes read a view the main loop publishes, the kernel wizard reads each Canary's pairing outcome, and the PIO dashboard hides a Chirp tab nothing serves (F161, F163, F176); the canary's diagnostics carry its egress counters, a mesh-less canary-wap boot logs no NVS error, and its calibration status and Tuning Lab report the thresholds it runs (F179, F180, F164, F166); the Vision keeps one dwell per stay and discovery fits every legal device id (F186, F181); the Lab's Vision, eyes and audio browser probes run on the tree's sources and wait with a predicate the CSP cannot refuse (A41, A44); and the emulator boots a turned dash, which the onboarding probe walks (F184 in part). The Vision core and the five display flavors move the emulator dist, which CI's pinned emsdk rebuilds in the PR after the ledger lands. It files F187-F206 and A45-A47. Host-tested; the ESP32 compiles are CI's and nothing ran on a bench. See §3, "Landed in wave 13" |
 | Landed in wave 14 (PR #1762) | a sixth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 10, 12 and 13 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's Bluetooth bring-up hands its result to the loop task and keeps the owner's commands, pairing mode reads pairing, and the paired list fits NimBLE's 3-bond store, a full store refusing a new phone instead of evicting one (F190, F167, F189); Chirp refuses a mute or unmute on a channel that is off and its beacon says listening through a cooldown, and every canary-wap `serializeJson()` REST answer fits its buffer, held by a new measuring check (the sketch's `snprintf` answers are F212) (F192, F194, F196); the PIO alert list reads a log the main loop changes under its lock, the PIO dashboard calls only routes that exist, and the kernel wizard cancels a pairing it leaves behind (F197, F198, F200); `meta.daily_summary` emits one row per local date, and a canary-wap first boot opens `securacv` quietly (F121, F201); a Vision dwell gone at once reports `dwell_then_left`, its box math is 64-bit on every build, and the discovery fit test formats the table-driven announcements (F202, A42, F203); the Lab's probe waits state their timeout third and fourteen probes serve the tree from an index on loopback (A45, A46); the emulator builds the nightlight and the turned splash is read in a browser, and the Lab's 3D dash turns its case with the glass (F204, F206, A47); and on LVGL 9.5 the dash glass turns what it draws and touch follows it (F205). The Vision core and a new nightlight bundle move the emulator dist, which CI's pinned emsdk rebuilt in the PR after the ledger landed; the rebuilt dist passes the probes with the nightlight walked landscape, and with the nightlight manifest's emulator claim that closes F204 and the rest of F184; CI ran those probes green on the commit that landed the claim (`41d53091`). It files F207-F225, A48-A56, HA28 and C16. Host-tested; the ESP32 compiles are CI's, no CI job ran the real LVGL 9.5 renderer then (F225, wired in wave 15), and nothing ran on a bench. See §3, "Landed in wave 14" |
 | Landed in wave 15 (PR #1762) | a seventh wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items wave 14 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's fleet scan keeps the shortest adverts that fit, each whole, and its device-info and provisioning receipt escape a typed name and are sized to their own length, with three new rules in `check_wap_json_answers.py` (F211, F212); its Bluetooth handlers read the on-switch the loop task published, a nearby Chirp device's emoji is derived from its session id, and a first boot opens `chirp` quietly (F210, F213, F220); the per-entry log Acknowledge matches a route on both trees, held by a verbatim copy of ESP-IDF's matcher, the PlatformIO Bluetooth settings load ignores an error body, and the kernel wizard's Back waits for Start Pairing (F214, F216, F217); both publishers ask Home Assistant for the documented entity ids and the kernel wizard's dashboard names the same zone ids, read from Home Assistant's source and not yet seen in a running one, so HA16 stays open, and the iOS timeline's comments say what sets the WAP's bucket clock (HA16 in part, A48); a runtime turn keeps the nightlight's companion on its perch, held by a native boot in CI, and the dash face follows the turn the port wore (F222, F223); CI is wired to render the dash glass through the real LVGL 9.5 at every quarter turn, partial updates included, a step CI first ran green on 5755ce2b (F225); a Vision box with a non-positive side reads no proximity, and a freestanding wasm32 build of the pipeline is held to the g++ build from the sources (F221, A49); and the Lab's boot and onboard probes bind loopback, every probe server answers a malformed escape, the Nightlight's card boots its own twin on a bench with no battery path, and the 3D dash turns by the turn the HAL reports (A51, A52, A54, A56). The display flavors (all six) and the Vision core move the emulator dist, which CI's pinned emsdk rebuilds in the PR after the ledger lands; until then `vision.test.js` gives 33 of 35 on the committed dist and 35 of 35 with `LAB_CORES=native`, and the dist drift check is red (CI rebuilt it in 1824bf39, and the page logic tests passed on 5755ce2b). It files F226-F250, A57-A64, HA29, HA30 and C17; a follow-up closes A63 and CI5, two CI races. Host-tested; the ESP32 compiles are CI's; no carried Home Assistant file changes; nothing ran on a bench. See §3, "Landed in wave 15" |
+| Landed in wave 16 (PR #1802) | an eighth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 14 and 15 filed, built on #1762's head and ported onto main after the 2026-10 cleanup; it closes none of the rows here and changes no sentence of §2. canary-wap refuses a control byte in a device name, its JSON writer copies no more than it measured, and `check_wap_json_answers.py` holds or records every JSON text the sketch spells with printf, which found GET /api/mqtt/config writing a typed host and user unescaped (F226, F227, F230); an MQTT setting of its full length reads back as saved, a longer one or a CA past 3071 bytes is refused, and every host suite compiles after Arduino.h's names (F241, F229); Chirp suppresses by more than half of the nearby rows at every table size, within two minutes, and its spec says what the device sends and stores (F231, F233, F236); Start Advertising and Pair bring a refused Bluetooth stack up once the boot bring-up is over, and the check holds where the sketch marks it (F235, F287, F288); the route-match test reads every page both trees serve and each route's `#if`, the probe-route comment and FEATURES.md's REST table say what is served, and on F237 and HA30, which main had closed, `wap_server.h`'s route list is held both ways and the Home Assistant guide is held to the sources (F238-F240); a hop owns the canary mark's y, the nightlight's tumble wears its Startle, and the orientation comments say one turn, the IMU signs and MADCTL bytes left for the bench (F244, F242, F250 in part); the LVGL 9.5 harness renders nightstand-c6 and the real splash tail, and the native glass test reads the HAL's turn (F246, F248, A64; a note on F249); and the Lab turns a running nightlight glass, clips its twin's backlight and fits the Touch 1.69's glass (F243, A61, A55). The six display flavors move the emulator dist, which CI's pinned emsdk rebuilt on the branch (5abf3e34); it was not run here. It files F259-F288, A79-A82, HA33, C18 and D13, and closes two of them, F287 and F288, the F235 verification's findings. Host-tested; the ESP32 compiles are CI's; no carried Home Assistant file changes; nothing ran on a bench. See §3, "Landed in wave 16" |
+| Landed in wave 17 (PR #1802, website securacv_website#227, mirror securacv-homeassistant#28) | a ninth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items the 2026-10 cleanup and wave 16 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's provisioning receipt and port 80's redirect name it by its `.local` name over the home network, and its dashboard saves the recovery kit after a BOOT-tap sign-in or from Settings (F255, F257); the Lab reads the WAP's flags from its sketch's `build_config.h`, the fleet figures find a WAP by the type it puts on the wire (`canary-wap`, not its `DEVICE_TYPE` constant `canary`, so step 3 of F258 was premised wrong), `firmware/configs/canary-wap/` is deleted, and the emulator stops passing a flag nothing reads (F258, A76); the display's RS-485 and CAN drivers serve the dev playground in their two compile envs, which now carry dev mode (F253); the Lab app's post-flash monitor takes commands and each Lab bench prints its own chip's ROM banner (A67, A59); CI compiles Hub Core for Windows, lints the Lab's scripts for unused bindings and runs the camera wizard's jq cases on jq 1.6 (A68, CI12, HA32); and the spelling lint carries the website's word families (CI9). In their own PRs, both merged on 2026-10-13, the website lifts dark ink on night panels and fixes four leftovers (W22, W23) and the HACS mirror checks its store page's links into this repo (HA31); W31's playground carry lands here and its website half in the website PR (securacv_website#227). F258's figure table moves the canary-display-dash bundle, which CI's pinned emsdk rebuilds on the branch; it was not run here. It files F289-F294, A83-A89, C19, HA34, HA35, W32-W34 and CI13-CI16, among them F289 (a home-network path to the WAP's bearer token without a tap, read from code). Host-tested; the ESP32 compiles are CI's; one carried Home Assistant file changes; nothing ran on a bench. See §3, "Landed in wave 17" |
+| Landed in wave 18 (PR #1802, website securacv_website#228, mirror securacv-homeassistant#29) | a tenth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 16 and 17 filed; it closes none of the rows here and changes no sentence of §2. canary-wap keeps a control byte out of its JSON answers through the Bluetooth name and every SSID, joins a network listed with one by its own bytes, and states its name rules in its refusals (F261-F263, F265); both trees' card parser refuses an edited line, POST /api/mqtt/config reads its body whole, and an unconfigured bridge logs no NVS errors (F264, F266, F267); Chirp takes a suppressed chirp out of its table at once, holds a nonce 331 to 662 s, its security suites run the real `chirp_channel.cpp`, and the common C-ABI header carries the v0.2 values (F269-F272); both dashboards show only what the build serves and Export saves what it exported (F273-F276, F278); the canary mark's ration starts at power-on and the nightlight face keeps time by elapsed ms, with an `[orient]` line for every turn (F279-F281, F284, F285); Home Assistant's Chirp Active reads the state word the WAP sends and the app skips a go2rtc stream with an empty name (HA33, HA34); the iPhone moves a renamed WAP's recovery kit onto the address it answers at and reads the Keychain once per screen (A88, A75); each serial monitor offers its own firmware's commands (A85, A86); the Nightlight's bench turns its running glass and each bench tells its board's BOOT story (A79-A83); and Hub Core's Windows job runs clippy and the tests, the figures give the WAP's board its type, a lint finds unused Lab selectors, and every PR runs the HACS store page's link check (A87, A89, CI15, CI16, D13, C19, HA35). In its own PR the website's night theme passes a rendered contrast check (W32-W34 and CI13's website half), and the mirror's lint names its one spelling list (CI13's mirror half); both merged on 2026-10-14. mark3 moves the emulator bundles of all six display flavors and A79 the nightlight's; CI's pinned emsdk rebuilds them on the branch after the push, and the rebuilt dist was not run here. It files F295-F311, A90-A101, HA36-HA39, W35-W39, C20 and D14. Host-tested; the ESP32 compiles, the Swift build and cargo are CI's; four carried Home Assistant files change; nothing ran on a bench. See §3, "Landed in wave 18" |
+| Landed in wave 19 (PR #1802, website securacv_website#228, mirror securacv-homeassistant#29) | an eleventh wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking older open items, from the first sweep's F20, F21, F34 and F36 to wave 17's F290 and F291; it closes none of the rows here, answers row 35's residual (the WAP release rows' core), adds a sentence to row 1 (the root image mints viewer tokens), and changes one clause of §2's Wi-Fi sensing row (F90 and F132 decided). Every job in the three repos that floated on `ubuntu-latest` runs on `ubuntu-24.04` ahead of that label's move to 26.04 on 2026-10-19, with rule R11 holding the monorepo to it, the WAP's release rows build on the sketch's esp32 core 3.3.8 and the LVGL 9 rows on exactly 9.5.0, and a static gate holds the kernel's detector backends behind default-off features (CI11, F247; F21 and F34 in part); the hourly ceiling never refuses a refresh and keeps its last slot for a change of state, and the Tuning Lab's reset removes the row (F90, F132, F82, F122, F127); a PlatformIO Canary in an opera refuses a join, sends one heartbeat after it pairs and after a boot, lists its members from the published view, and the wizard's timeouts say what they found (F136's PlatformIO half, F162, F199, F215); another Canary's beacon or Chirp cannot win the Scout's pairing window (F36 and F20 in part); the 4.3B fieldbus station reads a Modbus exception at once and recovers a bus-off controller, and the wide Join card's reach is held (F291, F290, F155); the Sense's count follows its debounced presence and the Vision's flavor file keeps only what something reads (F131, F182); a Canary's Last event names its summaries and the MQTT test plan says its ids need Home Assistant 2025.10 (HA28, HA29); the root image mints Witness Wall viewer tokens and the release docs say the kernel has never been released (A18 in part, CI10); and the Lab groups enclosure knobs as the builder does (C10, wave 3). The planner found W8, W9 and C1 already done. Nothing in it moves the emulator dist. It files F312-F324, A102-A110, HA40-HA43, C21-C24 and CI17-CI19. Host-tested; the ESP32 compiles, cargo and the image build are CI's; two more carried Home Assistant files change; nothing ran on a bench. See §3, "Landed in wave 19" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -67,7 +71,7 @@ One line per area, so the open list in §3 reads against a known baseline.
 
 | Area | What landed | Where |
 |---|---|---|
-| **Wi-Fi sensing** | IDF-portable CSI config (legacy and HE structs), L-LTF data-tone selection replacing the first-52-pairs copy, a router-echo traffic source, breathing band on the corrected tone index, bundle refreshes no longer spend the commit ceiling inside a bundle's 10-minute window, on both trees (since sweep F81 the canary ticks the bundler like the canary-wap, so its state-bearing rows land when their bundle closes, two to ten minutes after the state began; a bundle reopened after its quiet gap or its window spends a slot like any opening, F80; a state held for an hour fills core.presence's 6/hour ceiling, F90, the ceiling's hour is six 10-minute buckets, so one sliding hour can hold twice it, F132, and anomaly rows wait in their bundle, F91, all open decisions), one event-id space: every row takes its id at commit (sweep F46; closed bundles do not reach the event ring, F77), every registered module's `init()` runs once at boot with its saved settings, on both trees (sweep F93), window phase lock resynchronizes, honest probe airtime comment | `firmware/common/csi/`, [`csi_wifi_sensing_research.md`](csi_wifi_sensing_research.md) |
+| **Wi-Fi sensing** | IDF-portable CSI config (legacy and HE structs), L-LTF data-tone selection replacing the first-52-pairs copy, a router-echo traffic source, breathing band on the corrected tone index, bundle refreshes no longer spend the commit ceiling inside a bundle's 10-minute window, on both trees (since sweep F81 the canary ticks the bundler like the canary-wap, so its state-bearing rows land when their bundle closes, two to ten minutes after the state began; a bundle reopened after its quiet gap or its window spends a slot like any opening, F80; a refresh that merges into an open bundle is never refused, and a state held for hours opens at most five of core.presence's 6/hour slots, the last kept for a change of state, F90, and the ceiling's hour is six 10-minute buckets, so one sliding hour can hold twice it, F132, both decided in wave 19 for the maintainer to confirm; anomaly rows wait in their bundle, F91, an open decision), one event-id space: every row takes its id at commit (sweep F46; closed bundles do not reach the event ring, F77), every registered module's `init()` runs once at boot with its saved settings, on both trees (sweep F93), window phase lock resynchronizes, honest probe airtime comment | `firmware/common/csi/`, [`csi_wifi_sensing_research.md`](csi_wifi_sensing_research.md) |
 | **Kernel** | Time-bucket coarsening is widen-only; accept loops classify errors instead of exiting; sandbox reaps its child and denies `statx`; the MQTT bridge stops republishing the current bucket | `src/lib.rs`, `src/api`, `src/break_glass`, `src/module_runtime/sandbox.rs`, `src/bin/event_mqtt_bridge.rs` |
 | **CI / release** | Freshness workflows fall back to an issue; kernel releases re-mark latest; desktop publishes refuse to run without the updater key; BOM regeneration gated; secret scan covers the file types this project actually has; version-sync, plist, icon, mesh-sync and CSI host-test gates; Dependabot sees the composite actions and pip | `.github/` |
 | **Apple** | ATS local networking; privacy manifest for four targets; octet-parsing private-host check with tests; Wall defaults a missing `online` to false and stops saying "verified" without a pinned key; build stamps read the one firmware define | `ios/`, `tvos/` |
@@ -1331,6 +1335,356 @@ before it. The Docker sidecar e2e lost a logged line to `grep -q` under
 `pipefail` (CI5). Run in local Chromium and against a stub `docker`; not
 bench-tested.
 
+### Landed in wave 16
+
+A sixteenth pass on 2026-10-13 (monorepo PR #1802) worked the 2026-09-20
+sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking items waves 14 and 15 filed. It closes none of the rows above and changes no
+sentence of §2. Each package was built in its own worktree on #1762's head,
+reviewed adversarially and fixed; #1762 merged meanwhile, so the packages were
+ported onto main after the 2026-10 cleanup (#1785), which had closed F237,
+HA30, F249 and A62 its own way, and a port review checked the result. Eight
+packages:
+
+- **canary-wap device name, JSON writer, answer check (sweep F226, F227,
+  F230).** `device_name_rule.h` refuses a byte below 0x20 at the name's one
+  setter and both routes, and scrubs a stored one in RAM; `wap_json_writer.h`
+  copies at most what it measured and its room test no longer wraps; J5-J8
+  hold the texts the check missed (on the integrated tree 81 JSON texts in 59
+  functions, 39 recorded; 88 mutations), and the record found GET
+  /api/mqtt/config's host and user unescaped, now spelled with the writer.
+  Host-tested (`test_device_name.cpp`, 1812 checks;
+  `test_wap_json_writer.cpp`, 115, under AddressSanitizer); the compiles are
+  CI's; not bench-tested. Files F261-F265 and, merged with F237's, F277.
+- **canary-wap MQTT settings at their limit, Arduino.h's names first (sweep
+  F241, F229).** `config_load()` reads each setting with its whole buffer, the
+  POST refuses a longer value or a CA past 3071 bytes, the pages carry
+  maxlengths and the stand-in refuses as the core does; every suite compiles
+  after `arduino_globals.h`, held by `check_arduino_globals.py` (191
+  translation units in 90 compiles on the integrated tree). Host-tested (the
+  MQTT re-init suite, 543 checks in 30 tests); the Arduino compile is CI's;
+  not bench-tested. Files F266-F268.
+- **Chirp suppression and the spec (sweep F231, F233, F236).** More than half
+  of the nearby rows, at least three, within two minutes, logged once, with a
+  voter set sized to a full table; the spec gives the five-emoji display, the
+  25-byte session hash, the NVS keys and the measured memory budget.
+  Host-tested (`test_chirp_suppress_wap.cpp`, 2746 checks;
+  `test_chirp_commands_wap.cpp`, 3168; `test_chirp_spec_tables.py`, 8); the
+  compiles are CI's; not bench-tested. Files F269-F272 and HA33.
+- **A tap's Bluetooth bring-up (sweep F235; F287 and F288).** Start
+  Advertising and Pair take Enable's guard and, on a device saved on, leave a
+  down stack to the boot bring-up until it is over (503: "it starts once Wi-Fi
+  setup is done or within five minutes" before the gate opens, "still
+  starting" from then on, even after a refused first init); a tap after the
+  boot worker has brought the stack up succeeds, and its advertising starts at
+  finalize. C3, BV4 and BV7 hold the guard, the wait and its two answers,
+  every reference to `bring_up` and any other name for its namespace,
+  `init()`'s latch and its re-check, and where the sketch starts and ends its
+  boot bring-up and its worker hands over (436 mutations, 52 of them from the
+  F235 verification's two rounds); U1's F235 row names each boot window by its
+  serial line. Host-tested (`test_bluetooth_commands_wap.cpp`, 77 tests, 1708
+  checks, TSAN clean); the compiles are CI's; not bench-tested. Files F259 and
+  F260.
+- **Route lists and route docs (sweep F238-F240; notes on F237 and HA30).**
+  The route-match test reads every page both trees serve and each route's
+  `#if`, with 18 gated groups named and five gaps filed; `wap_server.h`'s list
+  is held both ways by a reader that fails closed; `kProbePaths`' comment and
+  FEATURES.md's REST table say what is served; a test holds main's Home
+  Assistant guide to the bridge, the kernel and the app. Host-tested (node, 26
+  cases; Python, 9); docs and comments only in the firmware. Files F273-F278
+  and D13.
+- **The canary mark's hop, the nightlight's tumble, the orientation comments
+  (sweep F244, F242, F250 in part).** One animation writes the bird's y; the
+  tumble's Startle is paid with the first mood; `io/orientation.h` names each
+  turn the classifier's way, and the IMU signs and the MADCTL bytes wait for
+  the bench (F282). Held by two fake-LVGL host suites and `runtime_turn.sh`
+  (124 checks at the package head). The emulator dist moves for all six
+  display flavors. Not bench-tested. Files F279-F285.
+- **The LVGL 9.5 harness, the native glass test's turn (sweep F246, F248, A64;
+  a note on F249).** `glass_turn_lvgl9.sh` renders nightstand-c6's lean config
+  and the real `splash.cpp`'s first meeting, tail and every line, and holds
+  each of F185's options to the same checks without choosing;
+  `glass_turn_test.cpp` reads the turn the HAL announces; the Vision bindings
+  suite rebuilds after the two headers main's list missed. Natively on a
+  64-bit host (25,635 and 12,874 splash checks, rerun on the integrated tree
+  by the port review); the dist does not move. Files F286, A81 and A82.
+- **The Lab turns a running glass, the Nightlight twin's backlight, the Touch
+  1.69's glass (sweep F243, A61, A55).** `emu_request_rotation()` and a
+  boot-probe step that turns `nightlight@landscape`; the HAL clips the
+  backlight where the board does, with `emu_backlight_cap_pct()` for the bench
+  row; the scene fits a canvas only where it and its plane are the other way
+  round. Host-tested with g++ and in local Chromium with stand-in bundles; the
+  HAL and binding move the dist for all six display flavors. Not bench-tested.
+  Files A79, A80 and C18.
+
+The port kept main's fixes where they overlapped and added its own:
+nightstand-c6's LVGL 9.5 check reads the env without the `CONFIG_NIGHTSTAND`
+marker main removed (23074493), the route-list reader fails closed (a9d4709b),
+the HA30 test holds the `/digest` route and field (0be532f8), FEATURES.md's
+history reads newest first (6f8df9a5), and the pending Bluetooth answer names
+the five-minute hold (d9e4977b). CI's wasm job then found A61's backlight test
+no longer linked beside A64's stand-in; 0e2272d7 fixes it. The integrator's
+local CI mirror had passed 87 of 87 gates on d9e4977b without catching it. The
+emulator dist moves for all six display flavors; CI's pinned emsdk rebuilt it
+on the branch (5abf3e34), and the rebuilt dist was not run here. On a dist
+without the two bindings, the boot probe skips the runtime turn by name, the
+bench probe keeps the old backlight row, and the dist drift check fails; CI on
+d9e4977b stopped at "Turned glass" before it reached any of them. On 0e2272d7,
+with the rebuilt dist, every check passed, the wasm job and the page logic
+tests among them. No carried Home Assistant file changes, so the HACS mirror
+needs no carry; nothing ran on a bench or in a running Home Assistant.
+
+### Landed in wave 17
+
+A seventeenth pass on 2026-10-13 (monorepo PR #1802, with the website PR
+securacv_website#227 and the mirror PR securacv-homeassistant#28) worked the
+2026-09-20 sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking items the 2026-10 cleanup and wave 16 filed. It closes none of the rows
+above and changes no sentence of §2. Each package was built in its own
+worktree on wave 16's head, reviewed adversarially and fixed, then
+cherry-picked onto #1802's branch. Eight packages:
+
+- **canary-wap's receipt address and recovery kit (sweep F255, F257).**
+  `receipt_authority.h` chooses the address for the receipt's `base_url` and
+  port 80's redirect from the request socket's own address, so a caller on
+  the home network gets the `.local` name, and an address that reads 0 is
+  never named. The dashboard offers the kit after a BOOT-tap sign-in and
+  saves it from Settings, Device, Recovery kit. Host-tested
+  (`test_receipt_authority.cpp`, 263 checks; `recovery_kit.test.js`, 28
+  tests); the compiles are CI's; not run on a device. Files F289 and A88.
+- **The WAP's flags from its sketch; the emulator's dead flag (sweep F258,
+  A76).** `_wap_profile.py` resolves the FULL profile as the preprocessor
+  would; `wire_types.mjs` reads the type the WAP publishes, `canary-wap`,
+  not its `DEVICE_TYPE` constant `canary`; `firmware/configs/canary-wap/` is
+  gone. The emulator stops passing `-DCONFIG_CANARY_DISPLAY`, with every
+  preprocessed unit byte-identical. Host-tested; the figure table moves the
+  canary-display-dash bundle. Files F294, A89 and C19.
+- **The display's RS-485 and CAN drivers get their caller (sweep F253).** The
+  playground's stations call them in `canary-display-dash-rs485` and
+  `-dash-can`, which now set `FEATURE_DEVMODE` so the playground compiles
+  there; a host suite holds the wire to one trace three ways, and a repo test
+  holds the envs to their caller. Host-tested; the ESP32 compiles are CI's;
+  not bench-tested. Files F290-F293.
+- **The Lab app's monitor row and each bench's own ROM (sweep A67, A59).**
+  The receipt card carries the Flasher's command chips and box; each bench
+  prints its chip's banner from a cited esp-idf source or a note where none
+  is quoted. Host-tested and run in local Chromium; the Rust is compiled by
+  CI; not bench-tested. Files A83-A86.
+- **CI gates (sweep A68, CI12, HA32).** A `windows-latest` cargo check for
+  Hub Core, a Lab assets ESLint workflow with one rule that no comment can
+  turn off, and the camera wizard's jq cases on the pinned jq 1.6. All three
+  passed in CI on #1802's 340d0253; the Windows job compiles only, and the jq
+  cases have not run inside the app image. Files A87, HA34 and CI16.
+- **The spelling lint's word families (sweep CI9).** Ported from the website
+  and pinned to its commit; 29 lines in 28 files fixed, four of them
+  enclosure comments with unchanged geometry (98 previews rendered and
+  shared, no STL committed). Files CI13-CI15.
+- **The website (sweep W22, W23, W31).** In the website PR
+  (securacv_website#227): night ink on six
+  pages and a guard for the class, and four cleanup leftovers. W31's
+  playground carry lands here in `scripts/carry_to_site.py`; its website half
+  is in that PR, which merged on 2026-10-13, so W31 is done.
+  Files W32-W34.
+- **The HACS mirror (sweep HA31).** In the mirror PR
+  (securacv-homeassistant#28): the store page's links into this repo are
+  checked weekly against `main`. The PR's own run on GitHub Actions passed
+  the link step and its tests; it merged on 2026-10-13. Files HA35.
+
+F258's figure table moves the canary-display-dash emulator bundle; CI's
+pinned emsdk rebuilds it on the branch after this push, and the rebuilt dist
+was not run here. Until then the dist drift check fails on that bundle and
+skips the wasm job's later steps; the page logic tests pass on the committed
+dist (1004 pass, 4 native-only skips). One carried Home Assistant file
+changes (CI9's one-word fix to the evidence viewer), so the HACS mirror needs
+a carry after #1802 merges. Nothing ran on a bench or in a running Home
+Assistant.
+
+### Landed in wave 18
+
+An eighteenth pass on 2026-10-14 (monorepo PR #1802, with the website PR
+securacv_website#228 and the mirror PR securacv-homeassistant#29, both merged
+on 2026-10-14) worked the 2026-09-20 sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking items waves 16 and 17 filed. It closes none of the rows above and
+changes no sentence of §2. Each package was built in its own worktree on wave
+17's code (340d0253), reviewed adversarially and fixed, then cherry-picked
+onto #1802's branch. Eleven packages:
+
+- **canary-wap control bytes in JSON (sweep F261, F262, F263, F265).** The
+  Bluetooth name takes the device name's rule; every SSID reaches JSON through
+  `wap_json::replaced_text()` and a posted one is read back with
+  `wap_json::shows_as()`, so a network listed with U+FFFD is joined by its own
+  bytes from every list; `check_wap_json_answers.py`'s J9 holds the SSIDs, and
+  J5 and J8 refuse the shapes F227's review found (136 self-test mutations).
+  Host-tested on the real channel, API and provisioning sources;
+  compile-tested by CI; not bench-tested. Files F302-F304.
+- **canary-wap card lines and broker config (sweep F264, F266, F267).**
+  `csi_event_log_line::parse()` refuses a string field with a backslash or a
+  byte outside printable ASCII, and both tail scans still read the line's id
+  (`record_id()`); POST `/api/mqtt/config` reads its whole body with
+  `http_body::read_all()`; `config_load()` reads behind `isKey()`. Host-tested
+  in both `tests_host` suites; not bench-tested. Files F300 and F301.
+- **canary-wap Chirp (sweep F269-F272).** A suppressing vote takes the row out
+  of the recent table; the nonce filter's two halves turn at their 331 s
+  slot's start, so a nonce is held 331 to 662 s; the security and invariant
+  suites compile the real `chirp_channel.cpp`; the common C-ABI header carries
+  the v0.2 values and the reachability waivers are gone. Host-tested on real
+  signed frames; not bench-tested. Files F305-F311.
+- **Dashboards (sweep F273-F276, F278).** The Opera, Chirp, hub and camera
+  controls show only when their status route answers; canary-wap's Export
+  answers the bundle inline; the route-match test holds an Export answer's URL
+  to the route table. Host-tested in node and g++; not run on a device. Files
+  F296 and F297.
+- **The canary mark and the nightlight face (sweep F279-F281, F284, F285).**
+  The ration starts at power-on, a hop lands in its mood's breath, the face
+  times by elapsed ms, a fall lands on the visit lift, and every turn writes
+  an `[orient]` line. Held by fake-LVGL host suites and `runtime_turn.sh` on
+  LVGL 8.4; the emulator dist moves for all six display flavors. Not
+  bench-tested. Files F298 and F299.
+- **The Nightlight's bench and each bench's BOOT story (sweep A79-A83).** The
+  Try it bench turns the running glass through `requestRotation()`; the twin's
+  HAL steps the night floor as the expander byte the board writes; each bench
+  block says whether the running firmware reads BOOT, and the troubleshooter
+  quotes a ROM line only where the bench quotes it. Host-tested natively and
+  in headless Chromium on the committed dist; the nightlight bundle moves. Not
+  bench-tested. Files A98-A101 and D14.
+- **Serial monitors (sweep A85, A86).** One generated `monitor` record per
+  flash.json product, held to the firmware's handler and help menu, feeds the
+  browser flasher, the Flasher and the Lab's receipt card, which now unlistens
+  the previous card's listeners. Host-tested; not tried on a board or in the
+  apps. Files A93-A97.
+- **Home Assistant (sweep HA33, HA34; CI13's mirror half).** Chirp Active
+  reads the `state` word the canary-wap sends; the wizard's reference and
+  `discover_cameras.sh` skip a stream whose name slugs to nothing; in the
+  mirror PR (securacv-homeassistant#29) `lint_readme.py` names the monorepo's
+  spelling list. Host-tested on the stub lane and under jq 1.6 and 1.7; not
+  run in a Home Assistant or in the app image. Files F295, A90, HA38 and HA39.
+- **iOS (sweep A88, A75).** `ProvisioningReceipt.rebased(onto:discoveredAs:)`
+  moves a kit of the row's device onto the host it answers at; the setup
+  screens read the Keychain on appear, held by `lint_ios_keychain_reads.py`;
+  the nearby card stands down under the "+" sheet. The glue is held as source
+  by a host test; the Swift compile and XCTests are CI's; not on a phone.
+  Files A91 and A92.
+- **Hygiene (sweep A87, A89, CI15, CI16, D13, C19, HA35).** Hub Core's Windows
+  job runs clippy and `cargo test` on an LF checkout; the figures give the
+  WAP's board the canary-wap type; the spelling lint reads .txt;
+  `lint_css_selectors.mjs` fails an unused Lab selector; FEATURES.md's Last
+  updated line reads newest first; the WAP BOM drops a flag the sketch lacks;
+  `lint.yml` runs the HACS store page's link checker on every PR, failing
+  closed. Host-tested; the Windows run is CI's. Files C20, HA36 and HA37.
+- **The website (sweep W32-W34, CI13's website half).** In the website PR
+  (securacv_website#228): an `--on-brand` token for white ink on fills the
+  night theme lifts, night glass on three translucent panels, and a Chromium
+  night contrast pass over every root page that proves itself on a fixture
+  first (448 failing readings on the branch base, none after). Host-tested in
+  node and local Chromium; not checked on a phone. Files W35-W39.
+
+Integration found two things the packages could not see alone. mark3 (F285)
+and labemu (A80) each passed alone and failed together: A80's source pin
+matched the bare already-worn return that F285 gave an `[orient]` line, and
+82f557c9 moves the pin to the new shape (`onboard.test.js` passes, 42 tests).
+Both packages also add checks to `runtime_turn.sh`: on the integrated tree it
+prints 156 checks, 0 failed (124 before, A81's 16 and F285's 16). labflash's
+`gen_flash.py` bound a lambda to a name, which ruff refuses (E731); 4ea3f4e2
+makes it a nested def with no behavior change. mark3 moves the emulator
+bundles of all six display flavors (watch, nightstand, nightlight, touch169,
+amoled241, dash) and A79 the nightlight's; CI's pinned emsdk rebuilds them on
+the branch after this push, and the rebuilt dist was not run here. Four
+carried Home Assistant files change (HA33's sensor, its new test and two tests
+it updates), so the HACS mirror needs a carry after #1802 merges. Nothing ran
+on a bench or in a running Home Assistant.
+
+### Landed in wave 19
+
+A nineteenth pass on 2026-10-14 (monorepo PR #1802, with the website PR
+securacv_website#228 and the mirror PR securacv-homeassistant#29, both merged
+on 2026-10-14) worked the 2026-09-20 sweep's backlog
+([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)) again,
+taking older open items the planner chose, among them the pins that had to
+land before `ubuntu-latest` moves to Ubuntu 26.04 on 2026-10-19. It closes
+none of the rows above; it answers row 35's residual (the WAP release rows pin
+the sketch's 3.3.8), adds a sentence to row 1 (the root image mints viewer
+tokens), and changes one clause of §2's Wi-Fi sensing row (F90 and F132
+decided). Each package was built in its own worktree on #1802's add8140c,
+reviewed adversarially and fixed, then cherry-picked onto #1802's branch after
+wave 18. Nine packages:
+
+- **CI pins and gates (sweep CI11, F247; F21 and F34 in part).** Every
+  monorepo job that floated on `ubuntu-latest` names `ubuntu-24.04` with a
+  reason comment, and `ci_policy_check.py`'s R11 refuses the floating label,
+  in any letter case, outside a job's steps; the integrator's 278145bc pinned
+  the last five workflows and emptied R11's allowlist, so it holds all 51. The
+  website and the mirror pinned theirs in their own PRs, so CI11 is done in
+  all three repos. The WAP's release rows pin the sketch's esp32 core 3.3.8
+  and the PR row floats on purpose; the LVGL 9 rows ask for exactly 9.5.0;
+  `docs/security/backend_audit.md` and `test_backend_feature_gates.py` hold
+  the kernel's detector backends behind default-off features. Host-tested;
+  runner, core and LVGL resolution are CI's. Files CI17-CI19 and A102.
+- **The hourly ceiling and the Tuning Lab's reset (sweep F90, F132, F82, F122,
+  F127).** A refresh that merges into an open bundle is never refused; with a
+  ceiling of two or more the last slot goes only to an opening of another
+  (type, state); the six-bucket hour is recorded as a decision; the owner's
+  recovery from an exhausted id space and `wifi.channel_activity`'s
+  compile-time knobs are written down; the Lab's reset removes the stored row.
+  Host-tested on the library, the canary's bridge and the WAP's Tuning Lab
+  unit; not bench-tested. Files F314 and F315.
+- **PlatformIO Opera membership (sweep F136's PlatformIO half, F162, F199,
+  F215).** A Canary in an opera answers `pair/join` with 409 `opera_exists`; a
+  member sends one signed heartbeat after a bound pairing and after a boot
+  that restored a member; `GET /api/mesh/peers` reads the published view, not
+  flash; the wizard's timeouts take a fresh read. Host-tested (a two-process
+  pairing included); the `[env:full]` compile is CI's; not run on radios.
+  canary-wap's half is F318. Files F318-F324.
+- **The Scout's pairing filter (sweep F36's payload half; F20, gap #10).**
+  `ble_scout_advert_kind.h`, byte-identical in both trees, keeps another
+  Canary's presence beacon and Chirp out of the pairing window;
+  `CONSOLIDATION.md` gap #10 reads ⚠️ and names what the flagship's safe mode
+  still lacks. Host-tested; the compiles are CI's; no bench pass. Files F316.
+- **The 4.3B fieldbus station and the wide Join card (sweep F291, F290,
+  F155).** The RS-485 probe reads a Modbus exception as soon as its five bytes
+  are in; the CAN station recovers a bus-off controller from its 100 ms drain;
+  `test_onboard_layout` holds the Join card's corner reach as a ceiling, by
+  decision. Host-tested against stand-in drivers in three builds; the ESP32
+  compiles are CI's; not bench-tested. Files F317, A109 and A110.
+- **Sense and Vision truth (sweep F131, F182).** The Sense's occupant count
+  follows its debounced presence, in the firmware and both Lab ports; the
+  Vision's flavor `config.h` keeps its `FEATURE_*` flags, the watchdog and
+  five seeds. The package removed eighteen settings, but `gen_figures.mjs`
+  reads `CONFIG_DEVICE_TYPE` by pattern and the Vision boards dropped out of
+  `figures.json`; f5d0afac puts it back and the reader test now counts pattern
+  readers. Host-tested; the ESP32 compiles are CI's; not bench-tested. Files
+  F312, F313, A106 and A107.
+- **A Canary's Last event (sweep HA28, HA29).** The daily and held summaries
+  read as their type; every other stateless row, the activity ribbon's among
+  them, still reads `unknown` (HA40). HA29's premise was stale: the PWK
+  add-on's floor was already 2026.5.0, so only the MQTT test plan changed.
+  Host-tested on the stubbed harness; not seen in a running Home Assistant.
+  Files HA40-HA43 and A108.
+- **Kernel operations (sweep A18's root-image half, CI10).** The root
+  `witnessd` image ships `witness_api`, smoke-tested in
+  `container-images.yml`, and `docs/container.md` gives the mint path; the
+  release docs say the kernel has never been released and is cut only by a
+  `v*` tag. The image build is CI's; the mint flow is read from code, not run.
+  Files A103-A105.
+- **Enclosure knobs (sweep C10, wave 3: C10a, C10b, C10c-1).** The Lab's
+  parser imports the builder's group-header rule; the J-box's pass-through is
+  `pigtail_w`/`pigtail_h`; 27 lone knobs in three dev cases gain help. The CSG
+  of all 12 touched part options is byte-identical under OpenSCAD 2021.01, and
+  only `enclosures.json` regenerates; the knobs that share a line wait on a
+  decision that moves `catalog.json` (C21). Host-tested; nothing printed.
+  Files C21-C24.
+
+The planner's notes, each checked against the tree: W8, W9 and C1 were already
+done and are ticked with that evidence; W11 stays open, since Canary Reviewer
+runs 38454406746 (monorepo) and 38449430527 (website) both skipped the
+reviewer with the secret still unset; F38 now says F59 (#1749) carried
+`chain_state.h`. Nothing in wave 19 moves the emulator dist. Two more carried
+Home Assistant files change (HA28's `sensor.py` and its new test), so the
+mirror's carry after #1802 merges takes six files. Nothing ran on a bench or
+in a running Home Assistant.
+
 
 ### The documentation wave
 
@@ -1399,7 +1753,7 @@ the ledger stays complete:
 
 | # | Item | Why it matters | Fix | Effort |
 |---|---|---|---|---|
-| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` (a second key is a sticky conflict) within 180 s; wellbeing words ride only on such a row while fresh; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Wave 6: `run.sh` and the sidecar's `entrypoint.sh` name the file in every kernel config block and on the bridge's argv (the sidecar needed no new volume — its daemons already share `/data`, and it ships no witnessd); a render-and-parse test gates both heredocs against the kernel's `deny_unknown_fields`. Wave 7 (PR #1704): the sidecar's bind is decided (option (3), maintainer to confirm) — `SECURACV_API_BIND` in its entrypoint takes `loopback` (the default) or `all`, which binds `0.0.0.0:8799` and sets `WITNESS_API_ALLOW_INSECURE` together; the image still `EXPOSE`s nothing and both quickstarts carry the opt-in as comments (e2e-tested in `docker-sidecar.yml`, CI-only) — and the Wall can read the sealed log with a route-scoped viewer token (row 20). Still the owner's: the 8799 host port (which opens the tokenless roll-call to the LAN) and `http://<host>:8799` typed into the Wall once, since the add-on advertises no `_securacv._tcp`; and the add-on honors `/config/viewer_tokens.json` but has no control that mints a viewer token, so on an add-on install the Wall gets the roll-call, not a walk. Wave 8 (website PR #199, PR #1720): the website's Wall and its emulator read a silent `online` as offline, and the Wall replays `fleet_contract_vectors.json`. PR #1720 re-vendors the emulator into both apps, and the Lab's tests replay the same vectors through both copies (sweep A24). | M |
+| 1 | **(landed)** **The Wall cannot reach any sealed-log source.** The kernel serves `/api/sealed-log` but not `/api/fleet`, which is the only discovery contract the tvOS Wall implements. | The "lights up with no app change" promise in `tvos/discovery/DISCOVERY.md` is false against the only kernel that exists. | Landed in two steps. The kernel serves `GET /api/fleet` in the firmware's self-report shape with the anti-drift vector (follow-up wave). Wave 3: it also lists the Canaries its MQTT bridge has heard — `src/fleet_peers.rs`, fed by `event_mqtt_bridge --fleet-peers-path` / `WITNESS_FLEET_PEERS_PATH` and read by the API through `api.fleet_peers_path` (schema `securacv/fleet_peers/v1`, one file both processes point at). A peer is `online` only when a live (not broker-retained) chain publish verifies against the key pinned for it on first `health` (a second key is a sticky conflict) within 180 s; wellbeing words ride only on such a row while fresh; the two-row document is a shared vector in `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, and its bytes are produced from typed rows so they do not move with `serde_json`'s feature set. Wave 6: `run.sh` and the sidecar's `entrypoint.sh` name the file in every kernel config block and on the bridge's argv (the sidecar needed no new volume — its daemons already share `/data`, and it ships no witnessd); a render-and-parse test gates both heredocs against the kernel's `deny_unknown_fields`. Wave 7 (PR #1704): the sidecar's bind is decided (option (3), maintainer to confirm) — `SECURACV_API_BIND` in its entrypoint takes `loopback` (the default) or `all`, which binds `0.0.0.0:8799` and sets `WITNESS_API_ALLOW_INSECURE` together; the image still `EXPOSE`s nothing and both quickstarts carry the opt-in as comments (e2e-tested in `docker-sidecar.yml`, CI-only) — and the Wall can read the sealed log with a route-scoped viewer token (row 20). Still the owner's: the 8799 host port (which opens the tokenless roll-call to the LAN) and `http://<host>:8799` typed into the Wall once, since the add-on advertises no `_securacv._tcp`; and the add-on honors `/config/viewer_tokens.json` but has no control that mints a viewer token, so on an add-on install the Wall gets the roll-call, not a walk. The root `witnessd` image ships `witness_api` since #1802 (sweep A18, root-image half), so a root-image install mints a viewer token with `docker exec <container> witness_api mint-viewer-token --label <s>` (`docs/container.md`). Wave 8 (website PR #199, PR #1720): the website's Wall and its emulator read a silent `online` as offline, and the Wall replays `fleet_contract_vectors.json`. PR #1720 re-vendors the emulator into both apps, and the Lab's tests replay the same vectors through both copies (sweep A24). | M |
 | 2 | **(landed)** **CSI mixes every transmitter into one window.** Neighbor-AP beacons, peer Canaries' ESP-NOW probes and router echoes all land in the same 64-frame window; per-subcarrier variance across alternating links reads as motion. | The presence detector's false-positive floor is set by the neighborhood's Wi-Fi, not by the room. | Landed, host-tested (2026-09-08). `csi_hal.cpp`'s callback compares each frame's transmitter address, in place, against the BSSID of the AP the station is associated with — read back from `esp_wifi_sta_get_ap_info()` on the main loop (polled, and refreshed at once from the STA got-IP handler), held in one static that is never exported or logged and is wiped on `deinit()` — and, on the WAP, against `csi_probe::has_peer()`; everything else is counted under `frames_dropped_foreign` (appended to `csi_stats_t`; on `/api/status` beside the other drop counters with `filter_foreign` / `filter_armed`; on the canary webui's driver-health tile) and never buffered. `filter_foreign` is a persisted `/api/settings` key, default on. Until the STA associates there is nothing to compare against and every frame passes, so AP-only installs sense as before. The staged sketch copy is byte-identical; the canary tree's `securacv_csi.cpp` carries the BSSID half (no probe layer there). **What did not land:** peers are accepted only through the WAP's probe table, which nothing fills yet (the probe is broadcast-only), so a Canary-only install with no association still hears every transmitter; and nothing here is bench-verified — §5 step 3 has to show `frames_dropped_foreign` climbing while the presence floor drops. Host test: `csi_hal_transmitter_filter_test.cpp` compiles the shipped HAL against `host_stubs/`, feeds two transmitters, and scans the ring, the stats and the emitted feature vector for either address (two planted leaks fail it). | S |
 | 3 | **(landed)** **Breathing envelope is raw magnitude the driver's AGC removes.** The host test passes because synthetic frames have no automatic scaling. | `quiet` presence and `unusual_breathing` will not fire on a real device. | Landed: the envelope is now each subcarrier band's share of the per-frame-normalized row (four rotation bands, the Goertzel bank run per band, each bin keeping its strongest band), which per-packet gain cannot move; the host tests drive a 0.25 Hz breath through a simulated per-packet AGC into bin 3 and read zero in every bin through 80 s of ±30 % gain flicker. Host-tested on synthetic frames only — the bench pass (§5 step 3) is still what turns this into a claim about a room. | S |
 | 4 | **(landed)** **Breathing Goertzel assumes exactly one window per second.** Window cadence is loop-driven and gaps are skipped, so the 6+3i BPM map drifts with loop latency. | Reported breaths-per-minute is a function of CPU load. | Landed: every window close carries its timestamp and the envelope is resampled onto a fixed 1 Hz grid (a close inside the previous slot is averaged into it, a gap is bridged with held copies), and `csi_stats_t` reports `windows_held`, `windows_merged` and `window_period_ms` (appended, both status endpoints surface them). Host tests: 700 ms and 1300 ms cadences both keep 12 BPM in bin 2 with the counters reporting the real pace; a 3 s stall holds two copies. The three copies (common, the sketch mirror, the embedded extractor) moved together. | S |
@@ -1448,7 +1802,7 @@ the ledger stays complete:
 | # | Item | Fix | Effort |
 |---|---|---|---|
 | 34 | **(landed)** **canary-display builds 21 PlatformIO envs serially** in one 45–50 minute job; comments say 18. | Landed. `flavors.json` carries an explicit `shards` partition for canary-display (dash 6, dash-features 6, seven-inch 2, core2-panels 6, c6 1 — one `PLATFORMIO_CORE_DIR` class each); `flavor_envs.py --build-matrix` derives `firmware.yml`'s matrix with per-leg size guards, and its validation refuses a partition that drops an env or mixes core dirs. Five products build as nine legs; the display's check is now five checks named `PlatformIO Build (canary-display/<shard>)` — re-select required status checks on `main` if the old name is pinned. Timeout 90 → 60 min, unmeasured; tighten after a week of timings. | M |
-| 35 | **(landed)** **Firmware SBOM is hand-written** and no longer matches the build files it cites. | Landed. `scripts/gen_firmware_sbom.py` derives CycloneDX 1.5 from `flavors.json`, every build env's resolved PlatformIO config, `platforms.ini`, the first-party library manifests and the workflows' Arduino core pins; committed at `sbom/sbom-firmware.cdx.json`, byte-gated in `lint.yml`, and the resolver is cross-checked against `pio project config` in `sbom.yml`. Still declared by hand, in one place: `PLATFORM_FACTS` (core/IDF per platform literal — a pin bump without it fails generation). Wave 6: `--validate` gates lint.yml and sbom.yml; the sketch.yaml pins are asserted against the workflows (rules in `sbom/README.md`). Residual: the WAP rows' "latest" vs the sketch's 3.3.8 is a maintainer's release call (`firmware/PLATFORMS.md`). | M |
+| 35 | **(landed)** **Firmware SBOM is hand-written** and no longer matches the build files it cites. | Landed. `scripts/gen_firmware_sbom.py` derives CycloneDX 1.5 from `flavors.json`, every build env's resolved PlatformIO config, `platforms.ini`, the first-party library manifests and the workflows' Arduino core pins; committed at `sbom/sbom-firmware.cdx.json`, byte-gated in `lint.yml`, and the resolver is cross-checked against `pio project config` in `sbom.yml`. Still declared by hand, in one place: `PLATFORM_FACTS` (core/IDF per platform literal — a pin bump without it fails generation). Wave 6: `--validate` gates lint.yml and sbom.yml; the sketch.yaml pins are asserted against the workflows (rules in `sbom/README.md`). The WAP rows' residual is answered (#1802, sweep F21): the release rows pin the sketch's 3.3.8 and the PR row floats on "latest" by design (`firmware/PLATFORMS.md`); `test_gen_firmware_sbom.py` holds the split. | M |
 | 36 | **(landed)** **ruff covers only `custom_components`**; the 100+ tooling scripts are unlinted (106 findings at first run). | Add `canary-local/tools` and `scripts` to the ruff step; fix in one sweep. | S |
 | 37 | **(landed)** **Tooling Python is unpinned**; half the workflows run whatever `ubuntu-latest` ships while `pyproject` targets 3.11. | Landed: `pyproject.toml` carries `requires-python = ">=3.11"` as the one floor, every Python-running job sets up Python from it, and rule R9 in `CI.md` is machine-enforced by `ci_policy_check.py` (unit-tested). The resolver picks the newest interpreter that satisfies the floor; the floor is the one knob if that ever bites. Wave 8 (PR #1722): since #1635, `requires-python` has a ceiling (`>=3.11,<3.13`), so `python-version-file` jobs get 3.12. The three jobs that stay on 3.11 now say why: `python.yml` holds the Home Assistant integration's suite to the floor, `pwk-wizard-tests.yml` matches the add-on image's Alpine 3.18 python3, and `vision-model-release.yml` pins for the signing path's Vela compiler. The other three read `pyproject.toml`, and `ci_policy_check.py` refuses an unexplained pin. Wave 8 (PR #1725): the tests_host suites have one list, their Makefiles, and `scripts/tests/test_host_test_lists.py` fails a suite off its Makefile, an inline tests_host compile in a workflow, or a Makefile no pull-request workflow runs (sweep CI3); and `canary-local.yml`'s logic tests fail a PR whose node or python3 tests read a file outside the path filter (`scripts/check_path_filter_reads.py`, sweep CI2; a shell tool's read, git and a python3 existence check are not seen, and the drift-step generators are not recorded yet, sweep CI4). Host-tested; PR #1725's CI is their first run on GitHub. | S |
 | 38 | **(landed)** **Toolchain setup is hand-rolled** (PlatformIO ×15, emsdk ×2, libseccomp ×9, issue-dedup ×3) despite CI.md's composite-action rule. | Landed. Four composite actions under `.github/actions/` — `setup-platformio`, `setup-emsdk`, `setup-libseccomp`, `issue-dedup` — replace the inline copies (the real counts were 4, 2, 9 and 5); `CI.md` R10 is machine-checked by `ci_policy_check.py` (an inline PlatformIO or emsdk install fails), and R9 resolves local composite actions that carry `setup-python`. Left by design: the four `apt-get` lines that install libseccomp with other packages, and bom-pricing's per-item exception loop. Follow-up: move `setup-platformio`'s interpreter to `pyproject.toml` once a build has run on it. | M |

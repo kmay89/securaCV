@@ -21,7 +21,8 @@
  *
  * `first` / `last` are device-monotonic milliseconds of the boot that wrote
  * the line. Strings are chokepoint-sanitized ASCII (state names, confidence
- * words, module/type ids), so no JSON escaping is needed. Only fields the
+ * words, module/type ids), so no JSON escaping is needed, and parse() holds a
+ * line read back to that (below). Only fields the
  * chokepoint already cleared for export land here; raw feature vectors
  * never do.
  *
@@ -34,6 +35,25 @@
  * It also refuses a line whose `id`, `first` or `last` is not a decimal in
  * 0..4294967295 (a sign, an overflow): those three are read as uint32 by
  * json_u32(), never through `long` (backlog F46, below).
+ *
+ * And a line whose string field (cat, priv, module, type, state, conf, dom)
+ * holds a byte no writer of this format puts in a name (sweep F264): a
+ * backslash, or a byte outside printable ASCII (0x20..0x7E), a control byte
+ * among them. Every string this format holds is one of marshal()'s words, a
+ * module's or type's literal id, or a value that came through the
+ * chokepoint, whose sanitize_string_field() turns each byte outside
+ * printable ASCII into '?' (no module's label holds a backslash), so such a
+ * line was edited on the card or written by something else. Read back, it
+ * used to keep the byte, and
+ * the two writers that spell a parsed record with %s, marshal() (a
+ * dismissal rewrites a restored row) and csi_event_wire::build_event_body()
+ * (the backfill's MQTT body), wrote a line and a body that are not JSON; the
+ * ring rows a load restores reach the REST answers the same way. Refused,
+ * the line is a line the readers already pass over: the backfill skips it
+ * and counts it (Stats::skipped), never sends or credits it and walks on to
+ * the rows behind it; the load counts it refused. The tail scans read only
+ * its id (record_id(), below), so an edited line at the end of the log
+ * still marks where the card's records end, and the walk reaches it.
  */
 
 #ifndef SECURACV_CSI_EVENT_LOG_LINE_H
@@ -152,19 +172,36 @@ inline U32 json_u32(const char* line, const char* key, uint32_t* out) {
   return U32::kOk;
 }
 
-/* Pull one string field by name into `out` ("" on a miss). */
-inline void json_str(const char* line, const char* key, char* out, size_t cap) {
-  if (!out || cap == 0) return;
+/* A byte a string field may hold: printable ASCII, less the backslash. The
+ * chokepoint writes no other (sanitize_string_field() turns everything
+ * outside 0x20..0x7E into '?'; no module's label holds a backslash), and the
+ * writers spell what parse() reads with %s, unescaped (sweep F264). */
+inline bool name_byte(unsigned char c) {
+  return c >= 0x20 && c <= 0x7E && c != '\\';
+}
+
+/* Pull one string field by name into `out` ("" on a miss, which is no
+ * refusal). False, with `out` "", when the field holds a byte name_byte()
+ * refuses anywhere up to its closing quote, past `cap` too: the byte would
+ * reach a line or a body written from the record as it is. */
+inline bool json_str(const char* line, const char* key, char* out, size_t cap) {
+  if (!out || cap == 0) return false;
   out[0] = '\0';
   char needle[32];
   const int kn = snprintf(needle, sizeof(needle), "\"%s\":\"", key);
-  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return;
+  if (kn <= 0 || (size_t)kn >= sizeof(needle)) return true;
   const char* k = strstr(line, needle);
-  if (!k) return;
-  const char* p = k + kn;
+  if (!k) return true;
   size_t i = 0;
-  while (*p && *p != '"' && i < cap - 1) out[i++] = *p++;
+  for (const char* p = k + kn; *p && *p != '"'; ++p) {
+    if (!name_byte((unsigned char)*p)) {
+      out[0] = '\0';
+      return false;
+    }
+    if (i < cap - 1) out[i++] = *p;
+  }
   out[i] = '\0';
+  return true;
 }
 
 /* Exactly one record: starts `{"id":`, ends `}`, no second `{`. */
@@ -175,40 +212,63 @@ inline bool well_formed(const char* line) {
   return strchr(line + 1, '{') == nullptr;
 }
 
+/* The id of a line that is one record by everything parse() holds a line
+ * to before its string fields: one well-formed record, whose id is a
+ * uint32 above 0 and whose `first` / `last`, when there, are uint32s. 0
+ * when it is not.
+ *
+ * The tail scans read this, not parse() (the review of sweep F264): they
+ * need only where the card's records end, and a line parse() refuses for a
+ * byte in a name is still the card's newest record. Through parse(), a run
+ * of edited lines at the end of the log that filled a tail read left the
+ * scan no id, and the planner took the card as caught up, so the unsent
+ * rows before them were never walked. Taking the edited line's id, the
+ * planner's card_open() bounds it as it bounds any card id (an id this
+ * device never handed out is clamped below the trust bound), and the
+ * backfill walk reaches the line, refuses it through parse() and skips
+ * and counts it. */
+inline uint32_t record_id(const char* line) {
+  if (!line || !well_formed(line)) return 0;
+  uint32_t id = 0;
+  if (json_u32(line, "id", &id) != U32::kOk || id == 0) return 0;
+  uint32_t ms = 0;
+  if (json_u32(line, "first", &ms) == U32::kBad ||
+      json_u32(line, "last",  &ms) == U32::kBad) return 0;
+  return id;
+}
+
 /* Parse one line (without its '\n') into `out`. False for a line that is
  * not one well-formed record, whose id is 0 (no such event) or not a
- * uint32, or whose `first` / `last` is there but not a uint32 (a missing
- * one reads 0, as before). */
+ * uint32, whose `first` / `last` is there but not a uint32 (a missing
+ * one reads 0, as before), all of which record_id() refuses, or whose
+ * string field holds a byte json_str() refuses (sweep F264). */
 inline bool parse(const char* line, csi_event_record_t* out) {
   if (!line || !out) return false;
   memset(out, 0, sizeof(*out));
-  if (!well_formed(line)) return false;
-  uint32_t id = 0;
-  if (json_u32(line, "id", &id) != U32::kOk || id == 0) {
-    memset(out, 0, sizeof(*out));
-    return false;
-  }
+  const uint32_t id = record_id(line);
+  if (id == 0) return false;
   out->event_id = id;
-  if (json_u32(line, "first", &out->first_seen_ms) == U32::kBad ||
-      json_u32(line, "last",  &out->last_seen_ms)  == U32::kBad) {
-    memset(out, 0, sizeof(*out));
-    return false;
-  }
+  /* record_id() held both to a uint32 or missing (left 0). */
+  (void)json_u32(line, "first", &out->first_seen_ms);
+  (void)json_u32(line, "last",  &out->last_seen_ms);
   out->bundled_count = (uint16_t)json_int(line, "bundled",  1);
   char cat[12]  = {};
   char priv[4]  = {};
-  json_str(line, "cat",  cat,  sizeof(cat));
-  json_str(line, "priv", priv, sizeof(priv));
+  if (!json_str(line, "cat",    cat,  sizeof(cat)) ||
+      !json_str(line, "priv",   priv, sizeof(priv)) ||
+      !json_str(line, "module", out->module_id, sizeof(out->module_id)) ||
+      !json_str(line, "type",   out->type_name, sizeof(out->type_name)) ||
+      !json_str(line, "state",  out->values.state_name, sizeof(out->values.state_name)) ||
+      !json_str(line, "conf",   out->values.confidence, sizeof(out->values.confidence)) ||
+      !json_str(line, "dom",    out->values.dominant_signal, sizeof(out->values.dominant_signal))) {
+    memset(out, 0, sizeof(*out));
+    return false;
+  }
   out->category = (strcmp(cat, "ambient") == 0) ? CSI_CATEGORY_AMBIENT
                 : (strcmp(cat, "anomaly") == 0) ? CSI_CATEGORY_ANOMALY
                                                 : CSI_CATEGORY_EVENT;
   out->privacy = (strcmp(priv, "p2") == 0) ? CSI_PRIVACY_P2
                : (strcmp(priv, "p1") == 0) ? CSI_PRIVACY_P1 : CSI_PRIVACY_P0;
-  json_str(line, "module", out->module_id, sizeof(out->module_id));
-  json_str(line, "type",   out->type_name, sizeof(out->type_name));
-  json_str(line, "state",  out->values.state_name, sizeof(out->values.state_name));
-  json_str(line, "conf",   out->values.confidence, sizeof(out->values.confidence));
-  json_str(line, "dom",    out->values.dominant_signal, sizeof(out->values.dominant_signal));
   out->values.motion_score        = (uint8_t)json_int(line, "motion",    0);
   out->values.breathing_score     = (uint8_t)json_int(line, "breathing", 0);
   out->values.breathing_rate_bpm  = (uint8_t)json_int(line, "bpm",       0);

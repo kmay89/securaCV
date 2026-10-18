@@ -28,8 +28,9 @@
 //     an entity a Home Assistant already registered keeps its registry
 //     entry.
 //  3. The worst case for the buffers: the longest device id the bridge holds
-//     (32 characters), the longest topic prefix config_load() hands back (31)
-//     and the longest firmware version (23); every body is under
+//     (32 characters), the longest topic prefix config_load() hands back (32,
+//     MAX_PREFIX_LEN, since sweep F241) and the longest firmware version
+//     (23); every body is under
 //     csi_mqtt.cpp's 768 bytes (pinned against the source).
 //  4. The slug: letters lowercased, every other run of characters one '_',
 //     none at either end, which is what Home Assistant's slugify makes of an
@@ -193,7 +194,7 @@ void check(bool cond, const std::string& what) {
 // builders are pinned below so this cannot drift from the source.
 constexpr size_t kBodyBytes = 768;
 
-constexpr size_t kLongestPrefix = csi_mqtt::MAX_PREFIX_LEN - 1;
+constexpr size_t kLongestPrefix = csi_mqtt::MAX_PREFIX_LEN;
 
 // The discovery set of the build the host compiles (build_config.h's
 // defaults: FULL on the XIAO ESP32-S3, so FEATURE_ACOUSTIC_EVENTS and
@@ -542,9 +543,10 @@ void boot() {
   c.enabled = true;
   c.discovery = true;
   std::snprintf(c.host, sizeof c.host, "%s", "10.0.0.9");
-  // The longest prefix config_load() hands back: MAX_PREFIX_LEN - 1, since
-  // it reads with Preferences::getString(key, buf, MAX_PREFIX_LEN), whose
-  // length counts the NUL.
+  // The longest prefix config_load() hands back: MAX_PREFIX_LEN, the whole
+  // member, which it reads with the member's size since sweep F241 (it read
+  // with MAX_PREFIX_LEN, and Preferences::getString's length counts the NUL,
+  // so a prefix of MAX_PREFIX_LEN came back as the default).
   std::string prefix(kLongestPrefix, 'p');
   std::snprintf(c.prefix, sizeof c.prefix, "%s", prefix.c_str());
   check(csi_mqtt::config_save(c), "the settings are stored");

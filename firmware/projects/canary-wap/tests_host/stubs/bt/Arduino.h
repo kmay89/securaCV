@@ -85,6 +85,12 @@ class String {
     memcpy(buf, s_.data(), n);
     buf[n] = '\0';
   }
+  // What bluetooth_api.h's send_doc() asks of it (sweep F235): room for
+  // the measured answer, which a host allocation always finds.
+  bool reserve(unsigned int n) {
+    s_.reserve(n);
+    return true;
+  }
   int indexOf(const char* needle) const {
     const size_t at = s_.find(needle);
     return at == std::string::npos ? -1 : (int)at;

@@ -22,7 +22,7 @@ concurrency:
 jobs:
   ruff:
     name: ruff (repo Python)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +47,7 @@ jobs:
 
   scripts:
     name: scripts/lint_*.sh
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -285,6 +285,17 @@ jobs:
         # that touches UserDefaults must ship a PrivacyInfo.xcprivacy or the
         # upload is rejected by email after CI is green.
         run: python3 scripts/lint_apple_plists.py
+      - name: No Keychain read on an iPhone view's render path
+        # A SwiftUI view's @State initial values run on every init and its
+        # body on every change the fleet publishes — during a scan, once per
+        # Bluetooth sighting — and a Keychain read is a synchronous trip to
+        # securityd on the main thread. The 2026-10 review moved one such
+        # read out of a @State initializer and left four behind: the same
+        # read in SetupView's initializer and the hub login in three bodies
+        # (sweep A75). The readers are derived from the sources; the tests in
+        # scripts/tests/test_lint_ios_keychain_reads.py pin the verdicts
+        # they list (a source heuristic: its blind spots are in the script).
+        run: python3 scripts/lint_ios_keychain_reads.py
       - name: App icon catalogs are complete (stdlib PNG header check)
         # Runs on the macOS job too, but that one is gated behind
         # ENABLE_IOS_BUILD; this is the every-PR Linux copy.
@@ -406,3 +417,54 @@ jobs:
         # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
         # before any `docker compose` command, or it fails as written.
         run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh
+
+  hacs-store-page-links:
+    # The HACS store page is the mirror's README.md
+    # (kmay89/securacv-homeassistant), and it links here by absolute URL:
+    # into docs/ (most of them to a heading), to scripts/install.sh, which
+    # the page pipes to bash, and to homeassistant-mirror.yml. The mirror's
+    # own link check reads this repository's main once a week, so a PR here
+    # that renames a linked heading or moves a linked file merged green and
+    # broke the store page first (sweep HA35). This runs the mirror's own
+    # checker (lint_readme.py --source, one slugger for both repositories)
+    # against this PR's checkout, so the PR that breaks a link fails.
+    #
+    # Here rather than a filtered workflow: a link may point anywhere in the
+    # tree, and lint.yml is the unfiltered home for a check whose input is
+    # files anywhere in it (CI.md, "What a path filter must cover"). The cost
+    # is a four-file fetch and one Python run.
+    #
+    # Renaming or moving something the store page links, on purpose: keep
+    # the old name alive in the same PR (an `<a id="old-slug"></a>` on the
+    # line above the renamed heading, which the checker accepts as GitHub
+    # does, or the old file left in place), so this job passes against the
+    # mirror's main as it stands. After it merges, move the link in a mirror
+    # PR (its link step checks this repository's main, which has both
+    # names), then drop the alias once the mirror's main links the new one.
+    # Monorepo first, mirror second: the order the mirror's own link step
+    # asks for. Without the alias no order stays green: whichever PR merges
+    # first, the live store page is broken and this job fails on every
+    # other PR and main push until the second one merges.
+    name: HACS store page links land in this tree
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The job runs a script fetched from the mirror's main; leave no
+          # token in .git/config for it to find.
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      - name: The store page's links into this repository land
+        # Fetches README.md, AGENTS.md, CLAUDE.md and
+        # .github/scripts/lint_readme.py from the mirror's main over
+        # raw.githubusercontent.com (public, no credentials, three tries),
+        # then runs the checker with -I against this checkout. Fails
+        # closed: exit 0 counts only with the checker's own "links into
+        # kmay89/securaCV OK — <n> resolve" line; a file that cannot be
+        # fetched or is empty, or a checker that exits 0 without that line
+        # (one older than securacv-homeassistant#28, a truncated
+        # download), is exit 2.
+        run: python3 scripts/check_hacs_store_links.py

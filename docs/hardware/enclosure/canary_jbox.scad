@@ -24,7 +24,7 @@
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
-use <canary_port_lib.scad>   // connector standards — the USB slot centers on the shell axis
+use <canary_port_lib.scad>   // connector standards — the pigtail slot centers on the USB-C shell axis
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
 use <canary_mark_lib.scad>   // the house wordmark (opt_mark)
 use <canary_rib_lib.scad>    // corner_gusset — the constant-width post web
@@ -45,9 +45,9 @@ board_l = 21.0;      // board length — the 21 spec, brd_l("xiao"), canary_boar
 board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); a real board mics 17.8
                      // (brd_xiao_w_measured()) and the clips' clip_clear absorbs the
                      // difference, so the spec default stands
-board_h = 1.2;
-board_clear = 0.6;
-stack_h = 8.0;
+board_h = 1.2;       // PCB thickness — the 1.2 spec, brd_t("xiao"); the cavity, the clip hooks and the pigtail slot all stack on it
+board_clear = 0.6;   // clearance each side of the board — the cavity is the board plus 2 x this plus 2 x inner_pad
+stack_h = 8.0;       // height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep
 standoff_h = 3.5;    // 3.5: the clip beam (standoff + PCB) keeps the measured
                      // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
@@ -66,16 +66,16 @@ lid_key    = true; // poka-yoke: a rib on the +Y cavity wall and a slot in the l
 boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true 1/2" boss needs a taller shell)
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.2;
-post_d = 5.0;
-usb_w = 10.5;
-usb_h = 6.5;
+post_d = 5.0;        // corner post diameter — four lid-screw posts standing 0.2 into both walls, each piloted screw_d from 2 mm above the floor
+pigtail_w = 10.5;    // pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it
+pigtail_h = 6.5;     // pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)
 
 /* [Camera knockout] */
-cam_ap_d   = 9.0;
+cam_ap_d   = 9.0;    // camera aperture diameter through the lid at cam_dx/cam_dy (opt_camera)
 cam_dx     = 0.0;    // aperture offset from the board center — MEASURE: the XIAO
 cam_dy     = 0.0;    // Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center
 ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
-ko_depth   = 0.8;
+ko_depth   = 0.8;    // depth of the mock knockout's groove in the lid's outer face (the groove is 0.8 wide, just outside ko_ring_d)
 
 /* [Print tolerances] */
 tol_slide = 0.20;  tol_hole = 0.30;
@@ -122,8 +122,8 @@ assert(abs((screw_d + 2*tol_hole) + 2*screw_head_h - (screw_head_d + 2*tol_hole)
        "screw_head_h: the 90° seat does not open to the flat head's diameter");
 assert(lid_t - screw_head_h >= 1.0, "the lid seat leaves under 1.0 mm under the head");
 usb_zc = floor_t + standoff_h + board_h + port_usbc_shell_h()/2;
-// the drain: -X wall at the floor, beside the USB slot
-weep_y = usb_w/2 + weep_d()/2 + 1.5;
+// the drain: -X wall at the floor, beside the pigtail slot
+weep_y = pigtail_w/2 + weep_d()/2 + 1.5;
 assert(!opt_weep || weep_y + weep_d()/2 + 0.5 <= inner_w/2 - pd, "the weep runs into a corner post");
 // Cantilever snap clip on a board long edge — the compact-WAP idiom, so the
 // drawing now comes from canary_snap_lib like the WAP's own: the insertion-
@@ -161,7 +161,7 @@ module body() {
             }
             translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
                 cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1, floor_cove);
-            // USB pass-through slot, low on the -X short wall: route a pigtail
+            // the pigtail pass-through slot, low on the -X short wall: route a pigtail
             // through it (a plug cannot reach the recessed connector) and dress
             // the cable as conduit. Sheltered mounting only - the slot is open.
             // centered on the connector AXIS (shell/2 above the PCB), not PCB-top + h/2:
@@ -169,7 +169,7 @@ module body() {
             // 45°-chamfered top corners keep the upright wall's bridge to the
             // print-validated span (canary_port_lib; the slot bridged 10.5 flat)
             translate([-out_l/2, 0, usb_zc]) rotate([90, 0, 90])
-                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(usb_w, usb_h);
+                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(pigtail_w, pigtail_h);
             // drain at the low point: the -X wall's floor corner, angled down
             // and out (canary_core_lib weep_cut)
             if (opt_weep)
@@ -232,7 +232,7 @@ module lid() {
             lip_ring(inner_l - 2*tol_slide, inner_w - 2*tol_slide, 0.5, lip_h, lip_t);   // lead-in on the tip (canary_core_lib)
             for (p = post_xy()) translate([p[0], p[1], -lip_h - 0.1]) cylinder(d = pd + 1.2, h = lip_h + 0.2);
             if (lid_key) lid_key_slot(0, inner_w/2, 270, lip_h, lip_t);
-            translate([-inner_l/2, 0, -lip_h/2]) cube([lip_t*4, usb_w + 4, lip_h + 0.2], center = true);
+            translate([-inner_l/2, 0, -lip_h/2]) cube([lip_t*4, pigtail_w + 4, lip_h + 0.2], center = true);
         }
     }
 }

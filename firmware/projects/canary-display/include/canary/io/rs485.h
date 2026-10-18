@@ -7,15 +7,14 @@
 //
 // Gated by FEATURE_RS485 (default 0). It shares GPIO43/44 with the CH343
 // USB-UART console, so a build that enables it must keep logging on the native
-// USB CDC. Compiled only in the canary-display-dash-rs485 env; the default and
-// emulator builds see an empty translation unit, so the wasm stays byte-for-byte
-// identical. Bench-pending: TX/RX orientation and bus timing are VERIFY-tagged
-// in pins.h until validated on hardware.
-//
-// NO CALLER YET (audit, 2026-10-09): the dash-rs485 env compiles this driver,
-// but nothing calls rs485_begin(), rs485_read_holding() or rs485_loop(). The
-// playground (src/playground/playground.cpp) brings up its own thin transport
-// on the same bus. Wiring one transport through here is planned work.
+// USB CDC. Compiled only in the canary-display-dash-rs485 env; the default
+// builds see an empty translation unit and the emulator does not compile it.
+// Its caller is the playground's RS485 station (src/playground/playground.cpp,
+// action_rs485_probe), which that env compiles through FEATURE_DEVMODE: under
+// FEATURE_RS485 the station reads through here, and no other code touches
+// Serial1. Host-tested against a stand-in Serial1 by
+// tests_host/test_fieldbus_glue.cpp. Bench-pending: TX/RX orientation and bus
+// timing are VERIFY-tagged in pins.h until validated on hardware.
 
 #pragma once
 
@@ -46,14 +45,13 @@ bool rs485_ready();
 // into `regs` (capacity `cap`), waiting up to `timeout_ms` for the reply.
 // Returns the register count on success, or a negative modbus::Status /
 // RS485_ERR_* on failure. Non-blocking beyond the bounded wait; never allocates.
+// The wait ends when the reply is in: the normal reply's whole length, or the
+// five bytes of an exception reply from `slave` to this read, CRC good
+// (modbus::exception_complete). An exception returns modbus::ERR_EXCEPTION at
+// once and, when `exception_code` is given, its code there (0 otherwise).
 int rs485_read_holding(uint8_t slave, uint16_t start, uint16_t count,
-                       uint16_t* regs, size_t cap, uint32_t timeout_ms);
-
-// Optional bench heartbeat: periodically polls a probe register and logs the
-// result. Provided for a future setup()/loop() wiring once the bus is
-// bench-validated (kept out of the shipping loop for now). No-op until
-// rs485_begin() runs. `now` is millis(); safe to call every loop.
-void rs485_loop(uint32_t now);
+                       uint16_t* regs, size_t cap, uint32_t timeout_ms,
+                       uint8_t* exception_code = nullptr);
 
 }  // namespace io
 }  // namespace canary

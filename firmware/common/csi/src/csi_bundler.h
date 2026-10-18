@@ -21,8 +21,12 @@
  *                         handle. Decided under the slot lock AFTER admit's
  *                         own expiry, so a key whose bundle just closed for
  *                         its quiet gap or window opens anew (BUFFERED), and
- *                         the chokepoint refunds an hourly-ceiling slot only
- *                         for a true merge (backlog F80).
+ *                         a merge never spends an hourly-ceiling slot
+ *                         (backlog F80). The chokepoint asks
+ *                         csi_bundler_peek() first, on the cleaned values,
+ *                         so the ceiling never refuses an emit that would
+ *                         merge, and merges it through csi_bundler_refresh()
+ *                         (backlog F90).
  *
  *   CSI_BUNDLER_COMMIT   — the emit cannot be keyed (ambient, or no state
  *                         name): the chokepoint commits it directly.
@@ -137,13 +141,49 @@ size_t csi_bundler_open_count(void);
 /**
  * True if an open bundle exists for this (module, type, state) key right now.
  * A diagnostic only: it does NOT predict the next admit, which first expires
- * overdue bundles and may then open a new one. The chokepoint decides its
- * ceiling refund from admit's outcome (CSI_BUNDLER_MERGED), never from this
- * (backlog F80).
+ * overdue bundles and may then open a new one. The chokepoint asks
+ * csi_bundler_peek(), which applies that expiry, never this (backlog F80).
  */
 bool csi_bundler_has_open(const char* module_id,
                           const char* type_name,
                           const char* state_name);
+
+/**
+ * What csi_bundler_admit() would answer for this emit right now, without
+ * doing it: the would-merge peek (backlog F90). Side-effect free: it closes
+ * nothing, merges nothing and opens nothing. It applies admit's own rules,
+ * in admit's order:
+ *   DROPPED  — bad input (a null module, type or values);
+ *   COMMIT   — the emit cannot be keyed (ambient, or no state name);
+ *   MERGED   — its key's bundle is open and still inside its window and its
+ *              quiet gap, so admit would merge it (a bundle whose gap or
+ *              window has elapsed is not mergeable: admit closes it first);
+ *   BUFFERED — otherwise: admit would open a bundle, a new row.
+ * Pass the values admit will see (the chokepoint peeks after its sanitize
+ * and allow-list, which can strip the state name). The answer can go stale
+ * the moment the slot lock drops (the clock moves on; another task's admit
+ * can close or evict the bundle), so a caller that acts on MERGED merges
+ * through csi_bundler_refresh(), which merges or does nothing.
+ */
+csi_bundler_outcome_t csi_bundler_peek(const char*               module_id,
+                                       const char*               type_name,
+                                       const csi_event_values_t* values);
+
+/**
+ * Merge this emit into its key's open bundle as csi_bundler_admit() would,
+ * and only that: it never opens a bundle (backlog F90). Expires overdue
+ * bundles first, as admit and csi_bundler_tick() do (their commits run on
+ * the caller's task, after the slot lock), then merges if its key's bundle
+ * is still open. Returns true when it merged: `values` then holds the live
+ * bundle and `*handle_out` its handle, as a MERGED admit leaves them.
+ * False (nothing merged, `*handle_out` 0) for an emit admit could not key
+ * or whose bundle is no longer open: that emit is an opening, and the
+ * chokepoint decides it as one.
+ */
+bool csi_bundler_refresh(const char*         module_id,
+                         const char*         type_name,
+                         csi_event_values_t* values,
+                         uint32_t*           handle_out);
 
 /**
  * Copy up to `max` currently OPEN bundles into `out`, newest activity first.

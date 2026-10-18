@@ -209,6 +209,42 @@ def _event_verifier_for(data: dict[str, Any]):
     return verify_event
 
 
+# What firmware/common/csi/src/csi_event_wire.h writes as a row's `state`,
+# and so as its `event_type`, when the row has no state of its own.
+_WIRE_NO_STATE = "unknown"
+
+# The stateless rows Last event names by their `type` (HA28): the firmware's
+# two summaries, meta.daily_summary's nightly row and meta.quiet_hours' row
+# when a Quiet Hours window ends. A tuple, not a set: `in` compares, so a
+# `type` that is not hashable (a JSON list) cannot raise here.
+_SUMMARY_TYPES = ("daily_summary", "held_summary")
+
+
+def _canary_event_name(data: dict[str, Any]) -> Any:
+    """The Last event state for one events-topic body (HA28).
+
+    The CSI dialect's `event_type` is the row's state. A row with no state
+    of its own carries the wire's placeholder `unknown` there and its name
+    only in `type`. Every stateless row does: the summaries, the activity
+    ribbon's ribbon_bucket_advanced every 15 minutes, and ble.events' link
+    and discovery rows (declared, though no firmware emits them today).
+    Only a summary row is named by its type, so a summary reads
+    `daily_summary` or `held_summary`, and every other stateless row reads
+    `unknown`, as before HA28.
+
+    An `event_type` that is missing, null or empty (no firmware writes the
+    last two) falls back to `type`, then to `event` (the canary-sense and
+    canary-sentinel dialects), then to `unknown`, whatever the type. A
+    stateful row's `event_type` still wins over its `type`. The signed
+    canonical carries `state`, not this value, so the fallback changes what
+    is shown, never what is verified."""
+    event_type = data.get("event_type")
+    if event_type == _WIRE_NO_STATE:
+        row_type = data.get("type")
+        return row_type if row_type in _SUMMARY_TYPES else _WIRE_NO_STATE
+    return event_type or data.get("type") or data.get("event") or _WIRE_NO_STATE
+
+
 def _is_replay(verdict: TrustVerdict | None) -> bool:
     return verdict is not None and verdict.reason == "replay"
 
@@ -1052,9 +1088,9 @@ class SecuraCVCanaryLastEventSensor(SecuraCVCanarySensorBase):
                 # AttributeError out of the @callback and stall the entity.
                 raise TypeError("Event payload is not a JSON object")
             previous_value = getattr(self, "_attr_native_value", None)
-            self._attr_native_value = data.get(
-                "event_type", data.get("type", data.get("event", "unknown"))
-            )
+            # A summary row reads as its type, not as `unknown` (HA28);
+            # the voice brief below records this same value.
+            self._attr_native_value = _canary_event_name(data)
             # Three event dialects share the events topic: the CSI canary's
             # (event_id/state/category/...), the radar witness's canary-sense
             # shape (event/seq/occupants/range) and canary-sentinel's fused

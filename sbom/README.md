@@ -82,11 +82,17 @@ it — naming the row, the profile and the remedy:
 
 Not asserted, on purpose: a workflow row on the action's "latest" has no
 version to agree with, and a sketch may pin libraries its row leaves floating.
-That leaves one recorded residual, not a drift: every WAP workflow row builds
-on "latest" while the WAP sketch pins 3.3.8 — the core inside
-`platform_core3`, the PlatformIO path the sketch tracks. Rule 2 is what makes
-that legal; pinning those rows would be a release decision
-([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)), not a lint's.
+That leaves one recorded residual, not a drift: the WAP's release rows
+(`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
+`csi_module_disable_matrix.yml`) pin 3.3.8, the WAP sketch's core and the one
+inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
+PR row still builds on "latest" by design, the early warning for the next
+core, and appears under the `framework:arduino-esp32@latest` component. That
+split is a release decision ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md),
+#1802), not a lint's. The generator does not refuse a row moved back to
+"latest" (it moves that build path to the `@latest` component, and `--check`
+is red until the document is regenerated); `scripts/tests/test_gen_firmware_sbom.py`
+holds each WAP row to its side of the split.
 
 ### What is still declared by hand
 

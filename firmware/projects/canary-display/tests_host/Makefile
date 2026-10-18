@@ -319,6 +319,34 @@ clean-mark-seat:
 run: run-mark-seat
 clean: clean-mark-seat
 
+# The nightlight's tumble wears its Startle (F242): the REAL
+# src/ui/nightlight_ui.cpp and canary_mark.cpp against fake_lvgl/lvgl.h, with
+# the nightlight's config and pin map and the real color engine and plumage
+# behind the lamp, turned the way main.cpp's apply path turns it (the face
+# rebuilt, the tumble, then the first update). Every turn on both glass shapes
+# hops with its Startle once the bird has its first mood; asleep, inside the
+# mark's ration, after the tumble and on a face built without a turn it does
+# not. Hooked into `run` and `clean` by prerequisite.
+NLTUMBLE_BIN = test_nightlight_tumble
+NLTUMBLE_SRC = test_nightlight_tumble.cpp ../src/ui/nightlight_ui.cpp ../src/ui/canary_mark.cpp \
+  ../src/fleet/fleet_model.cpp ../../../common/color/color_engine.cpp \
+  ../../../common/color/look_engine.cpp ../../../common/color/plumage.cpp
+
+$(NLTUMBLE_BIN): $(NLTUMBLE_SRC) ../include/canary/ui/nightlight_ui.h ../include/canary/ui/canary_mark.h \
+	  fake_lvgl/lvgl.h fake_lvgl/esp_random.h lv_txt_wrap.h
+	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl $(INC) -I ../../../configs/canary-display/nightlight \
+	  -I ../../../boards/waveshare-esp32c3-lcd147/pins -I ../../../common \
+	  -o $@ $(NLTUMBLE_SRC)
+
+.PHONY: run-nl-tumble clean-nl-tumble
+run-nl-tumble: $(NLTUMBLE_BIN)
+	$(call run_marked,$(NLTUMBLE_BIN))
+clean-nl-tumble:
+	rm -f $(NLTUMBLE_BIN)
+
+run: run-nl-tumble
+clean: clean-nl-tumble
+
 # What the onboarding scenes DRAW (F64, F65, F66, F84): the REAL
 # src/ui/onboard_ui.cpp, round_frame.cpp and canary_mark.cpp against
 # fake_lvgl/lvgl.h, driven through every scene the way provision.cpp drives
@@ -381,8 +409,8 @@ MODBUS_SRC = test_modbus_rtu.cpp
 
 # The CAN 2.0 frame model (canary/io/can_frame.h): id-width/DLC validity,
 # SocketCAN-style acceptance filtering, and the ASCII log formatter. The TWAI
-# transport itself is compile-checked by the canary-display-dash-can
-# PlatformIO env.
+# transport itself (src/io/can_bus.cpp) is driven by test_fieldbus_glue below
+# and compile-checked by the canary-display-dash-can PlatformIO env.
 CAN_BIN = test_can_frame
 CAN_SRC = test_can_frame.cpp
 
@@ -444,6 +472,56 @@ clean-io-cores:
 
 run: run-io-cores
 clean: clean-io-cores
+
+# The fieldbus stations and their transports (F253): the REAL
+# src/playground/playground.cpp, src/io/rs485.cpp and src/io/can_bus.cpp
+# against fake_fieldbus/ (a recording Serial1 with the HardwareSerial members
+# both Arduino cores declare, a scripted ESP-IDF TWAI driver, a fake clock, an
+# empty I2C bus), the 4.3B pins and the dash config. Three builds, one per env
+# that compiles the playground: _inline is the canary-display-playground env
+# (dash-b and dash-modes compile the same stations), where the stations bring
+# up their own thin transport; _rs485 is canary-display-dash-rs485
+# (FEATURE_DEVMODE + FEATURE_RS485), where the RS-485 station reads through
+# canary::io::rs485_*; _can is canary-display-dash-can (FEATURE_DEVMODE +
+# FEATURE_CAN), where the CAN station sends and drains through canary::io::can_*.
+# Every build is held to the same wire trace (request bytes, UART and TWAI
+# configuration, reply window, test frame, drain, PG1 lines); the driver builds
+# also check the station went through the driver and drive the driver API
+# directly. Hooked into `run` and `clean` by prerequisite. Which env each build
+# stands for is checked, not just stated: scripts/tests/test_display_fieldbus_envs.py
+# reads this plan (`make -n -B`) and canary-display.ini and requires each build's
+# feature flags, config dir and pins board to be an env's, and every env that
+# turns a driver on to have a build with exactly its own.
+FIELDBUS_SRC = test_fieldbus_glue.cpp ../src/playground/playground.cpp \
+  ../src/io/rs485.cpp ../src/io/can_bus.cpp
+FIELDBUS_DEPS = $(FIELDBUS_SRC) fake_fieldbus/Arduino.h fake_fieldbus/Wire.h \
+  fake_fieldbus/lvgl.h fake_fieldbus/driver/twai.h \
+  ../include/canary/io/rs485.h ../include/canary/io/can_bus.h \
+  ../include/canary/io/modbus_rtu.h ../include/canary/io/can_frame.h \
+  ../include/canary/playground/playground.h ../include/canary/log.h \
+  ../../../boards/waveshare-esp32s3-lcd43b/pins/pins.h \
+  ../../../configs/canary-display/dash/config.h
+FIELDBUS_FLAGS = $(CXXFLAGS) -Werror -I fake_fieldbus $(INC) -I ../../../common \
+  -I ../../../configs/canary-display/dash \
+  -I ../../../boards/waveshare-esp32s3-lcd43b/pins
+
+test_fieldbus_glue_inline: $(FIELDBUS_DEPS)
+	$(CXX) $(FIELDBUS_FLAGS) -DFEATURE_PLAYGROUND=1 -o $@ $(FIELDBUS_SRC)
+test_fieldbus_glue_rs485: $(FIELDBUS_DEPS)
+	$(CXX) $(FIELDBUS_FLAGS) -DFEATURE_DEVMODE=1 -DFEATURE_RS485=1 -o $@ $(FIELDBUS_SRC)
+test_fieldbus_glue_can: $(FIELDBUS_DEPS)
+	$(CXX) $(FIELDBUS_FLAGS) -DFEATURE_DEVMODE=1 -DFEATURE_CAN=1 -o $@ $(FIELDBUS_SRC)
+
+.PHONY: run-fieldbus-glue clean-fieldbus-glue
+run-fieldbus-glue: test_fieldbus_glue_inline test_fieldbus_glue_rs485 test_fieldbus_glue_can
+	$(call run_marked,test_fieldbus_glue_inline)
+	$(call run_marked,test_fieldbus_glue_rs485)
+	$(call run_marked,test_fieldbus_glue_can)
+clean-fieldbus-glue:
+	rm -f test_fieldbus_glue_inline test_fieldbus_glue_rs485 test_fieldbus_glue_can
+
+run: run-fieldbus-glue
+clean: clean-fieldbus-glue
 
 # The boot splash's seats (canary/ui/splash_layout.h, F88): on every canvas
 # the splash runs on (each display env's panel, and the panel turned for the

@@ -100,8 +100,8 @@
 
   var scene=document.getElementById('scene'), shell=document.getElementById('shell');
   var KEY='scv-lab-3d';
-  function loadB(){try{var v=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(v)?v:[];}catch(e){return[];}}
-  function saveB(l){try{localStorage.setItem(KEY,JSON.stringify(l));}catch(e){}}
+  function loadB(){try{var v=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(v)?v:[];}catch{return[];}}
+  function saveB(l){try{localStorage.setItem(KEY,JSON.stringify(l));}catch{}}
   var built=loadB().map(String);
   function isBuilt(id){return built.indexOf(String(id))!==-1;}
   var connPaths={};
@@ -340,12 +340,12 @@
     var ctx=null,muted=false,master=null;
     // every voice routes through one master gain, so hiding the page can cut
     // ALL sound at once — including tones already scheduled ahead
-    function ac(){ try{ if(!ctx){ ctx=new (window.AudioContext||window.webkitAudioContext)(); master=ctx.createGain(); master.gain.value=document.hidden?0:1; master.connect(ctx.destination); } if(ctx.state==='suspended') ctx.resume(); }catch(e){ ctx=null; } return ctx; }
+    function ac(){ try{ if(!ctx){ ctx=new (window.AudioContext||window.webkitAudioContext)(); master=ctx.createGain(); master.gain.value=document.hidden?0:1; master.connect(ctx.destination); } if(ctx.state==='suspended') ctx.resume(); }catch{ ctx=null; } return ctx; }
     // The creation-time document.hidden guards below can't catch a tone that
     // was already scheduled (the five-note done() fanfare runs ~0.7s ahead, a
     // whoosh half a second) — this mutes the master the instant the page
     // hides, and restores it on return.
-    document.addEventListener('visibilitychange',function(){ if(!ctx||!master) return; try{ master.gain.setTargetAtTime(document.hidden?0:1,ctx.currentTime,0.02); }catch(e){} });
+    document.addEventListener('visibilitychange',function(){ if(!ctx||!master) return; try{ master.gain.setTargetAtTime(document.hidden?0:1,ctx.currentTime,0.02); }catch{} });
     // document.hidden gates every oscillator: a page that isn't on screen
     // never makes a sound, no matter who asks. (Interaction sounds can't fire
     // unfocused anyway; this is the backstop for anything timer-driven.)
@@ -433,7 +433,7 @@
     });
     particles(env);
     // auto-fit once, then reuse — stable while tokens move in the overlay
-    if(!savedVB){ try{ var bb=scene.getBBox(); var pd=24; savedVB=(bb.x-pd)+' '+(bb.y-pd)+' '+(bb.width+2*pd)+' '+(bb.height+2*pd); }catch(e){} }
+    if(!savedVB){ try{ var bb=scene.getBBox(); var pd=24; savedVB=(bb.x-pd)+' '+(bb.y-pd)+' '+(bb.width+2*pd)+' '+(bb.height+2*pd); }catch{} }
     if(savedVB) scene.setAttribute('viewBox',savedVB);
     scene.appendChild(ov); // persistent overlay on top (tokens, sparkles, toasts)
     ensureAmbient();
@@ -506,7 +506,7 @@
     ovl().appendChild(s); setTimeout(function(){ if(s.parentNode) s.parentNode.removeChild(s); },900);
   }
   function clientToScene(cx,cy){
-    try{ var pt=scene.createSVGPoint(); pt.x=cx; pt.y=cy; var m=scene.getScreenCTM(); if(!m) return null; var sp=pt.matrixTransform(m.inverse()); return [sp.x,sp.y]; }catch(e){ return null; }
+    try{ var pt=scene.createSVGPoint(); pt.x=cx; pt.y=cy; var m=scene.getScreenCTM(); if(!m) return null; var sp=pt.matrixTransform(m.inverse()); return [sp.x,sp.y]; }catch{ return null; }
   }
   function bigToast(txt){
     if(!savedVB) return; var vb=savedVB.split(' ').map(Number); var cx=vb[0]+vb[2]/2, cy=vb[1]+vb[3]*0.3, w=txt.length*10.5+36;

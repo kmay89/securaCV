@@ -1,0 +1,107 @@
+name: Lab assets lint
+
+# Keeps dead code out of the Lab's browser assets (sweeps CI12, CI16). The
+# 2026-10 cleanup removed unused functions, constants and CSS from
+# canary-local/assets by hand; the no-unused-vars job keeps the JavaScript half
+# of that from growing back, and the unused-css job the stylesheet half.
+#
+# ESLint with ONE rule, no-unused-vars at its defaults, and the module source
+# type, and nothing else. Nothing in the tree can weaken that rule: no config
+# file is read (--no-config-lookup), and no comment in a linted file is obeyed
+# (--no-inline-config), so `// eslint-disable-next-line`, `/* eslint-disable */`
+# and `/* eslint no-unused-vars: "off" */` change nothing. It lints the
+# first-party files only: the glob stops at canary-local/assets/, so the
+# third-party code under assets/vendor/ is not read.
+#
+# The ESLint is the one canary-vision's lockfile pins, installed the way
+# viewer.yml's "ESLint (canary-vision)" job installs it (setup-node's npm
+# cache, then `npm ci` in canary-vision/): one ESLint for the repo, bumped by
+# Dependabot in one place. Those manifests are in the path filters below, so a
+# bump re-runs this job on its own PR instead of turning the next Lab PR red.
+#
+# Its own workflow rather than a job in canary-local.yml (CI.md R5): that
+# workflow builds the firmware to wasm and walks it in a browser, and an
+# ESLint bump in canary-vision has no reason to pay for that.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "canary-local/assets/**"
+      # unused-css reads the pages too: a class only a page names is used.
+      - "canary-local/*.html"
+      - "canary-local/tools/lint_css_selectors.mjs"
+      - "canary-vision/package.json"
+      - "canary-vision/package-lock.json"
+      - "canary-vision/device-api/package.json"
+      - ".github/workflows/lab-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "canary-local/assets/**"
+      # unused-css reads the pages too: a class only a page names is used.
+      - "canary-local/*.html"
+      - "canary-local/tools/lint_css_selectors.mjs"
+      - "canary-vision/package.json"
+      - "canary-vision/package-lock.json"
+      - "canary-vision/device-api/package.json"
+      - ".github/workflows/lab-lint.yml"
+
+# Read-only token: this workflow only checks out and lints.
+permissions:
+  contents: read
+
+concurrency:
+  # PRs collapse per branch; each main commit gets its own group, so a burst
+  # of merges can never evict the main run queued behind another (CI.md R3).
+  group: lab-lint-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  no-unused-vars:
+    name: ESLint no-unused-vars (canary-local/assets)
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: canary-vision/package-lock.json
+      - name: Install the pinned ESLint (canary-vision's lockfile)
+        working-directory: canary-vision
+        run: npm ci
+      - name: ESLint no-unused-vars over the Lab's first-party assets
+        # The glob is quoted so ESLint expands it, not the shell.
+        run: >-
+          canary-vision/node_modules/.bin/eslint
+          --no-config-lookup
+          --no-inline-config
+          --rule '{"no-unused-vars": "error"}'
+          --parser-options sourceType:module
+          'canary-local/assets/*.js'
+
+  unused-css:
+    # No class or id selector in canary-local/assets/*.css that no page
+    # (canary-local/*.html) or first-party script (canary-local/assets/*.js
+    # and *.mjs) names (sweep CI16). Classes a script builds at run time
+    # (`wire-${dir}`, "flash-map-" + kind) are read from the scripts: a built
+    # prefix plus a value the pages or scripts name counts as used. A name
+    # built from data the scripts transform is listed in the tool's ALLOW
+    # with where it is built, and an entry that is no longer needed fails the
+    # job. Strings and comments are read in one pass, and a sheet the pass
+    # cannot read (a string or comment that never closes, a stray brace, an
+    # escaped selector) fails the job rather than being skipped. The tool runs
+    # its own probes first and refuses to pass the stylesheets if one comes
+    # out wrong. Node only, no install: plain fs reads.
+    name: Unused CSS selectors (canary-local/assets)
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Every selector name is used by a page or script
+        run: node canary-local/tools/lint_css_selectors.mjs

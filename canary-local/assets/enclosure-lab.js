@@ -576,7 +576,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
   }
 
   // ── print guide: on the plate, as modeled, scrubbed by layers ──
-  function renderPrintGuide(set) {
+  function renderPrintGuide() {
     stopPlay();
     scene.clearParts();
     printCtl.innerHTML = "";
@@ -760,13 +760,13 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       if (id === lab.shellMaterial) o.selected = true;
       matSel.append(o);
     }
-    matSel.addEventListener("change", () => { lab.shellMaterial = matSel.value; renderPrintGuide(lab.set); });
+    matSel.addEventListener("change", () => { lab.shellMaterial = matSel.value; renderPrintGuide(); });
     const elecIn = document.createElement("input");
     elecIn.type = "number"; elecIn.step = "0.01"; elecIn.min = "0";
     elecIn.value = String(lab.electricity); elecIn.className = "est-elec";
     elecIn.addEventListener("change", () => {
       const v = parseFloat(elecIn.value);
-      if (Number.isFinite(v) && v >= 0) { lab.electricity = v; renderPrintGuide(lab.set); }
+      if (Number.isFinite(v) && v >= 0) { lab.electricity = v; renderPrintGuide(); }
     });
     const mlabel = el("label", "est-field");
     mlabel.append(el("span", "muted", "shell plastic"), matSel);
@@ -1048,7 +1048,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       bShow.classList.add("on");
       bPrint.classList.remove("on");
     }
-    if (lab.mode === "print") renderPrintGuide(set);
+    if (lab.mode === "print") renderPrintGuide();
     else renderShowroom();
     renderLegend();
 

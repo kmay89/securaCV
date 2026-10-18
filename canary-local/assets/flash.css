@@ -239,7 +239,6 @@ button.flash-map-key:hover { color: var(--text); }
   font: 13px/1.4 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 .flash-mon-input input:focus { outline: none; border-color: var(--canary-deep); }
-.flash-console-ok { display: flex; gap: 8px; align-items: baseline; color: var(--ok); margin-top: 8px; }
 
 /* ── done ──────────────────────────────────────────────────────────────── */
 .flash-done { text-align: center; }

@@ -54,6 +54,7 @@
 #include "hardware_state.h"
 #include "sd_storage.h"
 #include "selftest_logic.h"
+#include "wap_json_writer.h"   // an SSID's control bytes as U+FFFD (F262)
 // Optional-peripheral probes. All three are header-only and self-guard on
 // their FEATURE_* flags (power_monitor is always compiled; audible_chirp
 // ships a no-op stub namespace when FEATURE_AUDIBLE_CHIRP is 0), so it is
@@ -176,12 +177,22 @@ inline void probe_wifi(ProbeResult* r, JsonObject metric) {
   switch (kind) {
     case selftest_logic::WifiKind::JOINED: {
       const int32_t rssi = WiFi.RSSI();
+      // The joined network's SSID with its control bytes as U+FFFD (sweep
+      // F262: ArduinoJson writes one raw, and this answer is the setup
+      // wizard's last step): whole in the metric (an SSID is at most 32
+      // bytes), and cut on a character to the room the detail line leaves
+      // it ("Joined " and " · <rssi>dBm" take at most 25 of its 96 bytes).
+      const String joined = WiFi.SSID();
+      char ssid[wap_json::replaced_cap(32)];
+      wap_json::replaced_text(ssid, sizeof(ssid), joined.c_str());
+      char line_ssid[sizeof(ProbeResult::detail) - 25];
+      wap_json::replaced_text(line_ssid, sizeof(line_ssid), joined.c_str());
       metric["rssi_dbm"] = rssi;
-      metric["ssid"]     = WiFi.SSID();
+      metric["ssid"]     = ssid;
       metric["ip"]       = WiFi.localIP().toString();
       metric["channel"]  = WiFi.channel();
       r->code = rssi;
-      set_detail(r, "Joined %s · %lddBm", WiFi.SSID().c_str(), (long)rssi);
+      set_detail(r, "Joined %s · %lddBm", line_ssid, (long)rssi);
       break;
     }
     case selftest_logic::WifiKind::HOTSPOT:

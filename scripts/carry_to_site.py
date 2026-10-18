@@ -21,6 +21,14 @@ and several of its pages state facts whose source of truth lives HERE:
     (rides the verifier carry; pinned in           fleet_contract_vectors.json:
     the same PROVENANCE.txt)                       the GET /api/fleet contract the
                                                    Wall's parseFleet replays
+  js/playground-data.js                         canary-local/devices/playground.json
+                                                   (gen_playground.py): the /playground
+                                                   Test bench's pins, stations and
+                                                   fw_version
+  js/playground-sim.js, js/mode-sim.js          canary-local/assets/{playground,mode}-
+                                                   sim.js: the bench's PG1 driver port
+                                                   and the /modes page's mode registry
+                                                   port, each drift-gated here
 
 (The CAD carries — /scad, js/builder-data.js, scad/cad-dims.json — have their
 own tool, docs/hardware/enclosure/gen_builder_manifest.py --site.)
@@ -33,14 +41,19 @@ scripts/vendor_tv_verifier.sh but nothing ran it. Each could sit stale but
 internally consistent, green in both repos' CI, indefinitely. This is the one
 command that refreshes all three, and the website's weekly "Update everything"
 carry job runs it from a fresh checkout of this repo and opens a PR when the
-bytes moved.
+bytes moved. The playground carry joined them in 2026-10: its three files were
+website hand copies headed HAND-COPIED, and every firmware version bump left
+playground-data.js's fw_version behind.
 
 Direction, honestly: onboarding-spec.json as a whole is WEBSITE-authored (the
 probe fixes, the serial-command copy, the OS table). Only its `builds` block is
 a projection of build_matrix.json, so this tool STAMPS that one block into the
 website's file and leaves every other byte alone — the same way
 tools/gen_kernel_status.py stamps a block into docs/witness-kernel.html. The
-other two carries are whole files, copied verbatim.
+other carries are whole files: copied verbatim, or (the playground carry) the
+upstream bytes under a CARRIED header the website's tests/carry-claims.test.mjs
+reads, with playground.json wrapped as an ES module (`export const PLAYGROUND =`
+and the JSON, its trailing newline replaced by `;\n`).
 
 Byte-reproducible: no dates, no commit shas. The same upstream tree always
 produces the same bytes, so "did anything change?" is an exact answer.
@@ -51,6 +64,7 @@ Usage (DIR is the website checkout root):
   python3 scripts/carry_to_site.py --site DIR --only builds
   python3 scripts/carry_to_site.py --site DIR --only kernel-status
   python3 scripts/carry_to_site.py --site DIR --only verifier
+  python3 scripts/carry_to_site.py --site DIR --only playground
 
 Pinned by scripts/tests/test_carry_to_site.py (discovered by lint.yml).
 """
@@ -94,6 +108,19 @@ ENVELOPE_FIXTURES = [
     "tampered_digest.json",
 ]
 BUNDLE_FIXTURES = ["valid_bundle.json"]
+
+# The /playground Test bench and the /modes page run on these three upstream
+# files. Each was a hand copy on the website, headed HAND-COPIED, and lagged:
+# every firmware version bump left playground-data.js's fw_version behind, and
+# an upstream fix to a sim waited for someone to re-copy it. The site paths are
+# the website's contract (its pages import them by these names), fixed here
+# rather than derived from the upstream names.
+PLAYGROUND_JSON = REPO / "canary-local" / "devices" / "playground.json"
+PLAYGROUND_SIM = REPO / "canary-local" / "assets" / "playground-sim.js"
+MODE_SIM = REPO / "canary-local" / "assets" / "mode-sim.js"
+SITE_PLAYGROUND_DATA = "js/playground-data.js"
+SITE_PLAYGROUND_SIM = "js/playground-sim.js"
+SITE_MODE_SIM = "js/mode-sim.js"
 
 # Website-only decoration for the /checkup product chips. Not a fact about the
 # firmware, so it lives in the transform rather than in build_matrix.json; a
@@ -406,11 +433,102 @@ def carry_verifier(site: Path) -> list[Path]:
 
 
 # --------------------------------------------------------------------------- #
+# 4. js/playground-data.js, js/playground-sim.js, js/mode-sim.js
+#    <- canary-local/devices/playground.json, canary-local/assets/
+# --------------------------------------------------------------------------- #
+
+# Each header is a comment block the website's tests/carry-claims.test.mjs
+# reads in a carried file's first lines: it must say CARRIED, name the upstream
+# file and name this tool. No date, no sha: byte-reproducible like the rest.
+PLAYGROUND_DATA_HEADER = (
+    "// js/playground-data.js — CARRIED from the securaCV repo by its\n"
+    "//   scripts/carry_to_site.py (the `playground` carry): the object below is\n"
+    "//   canary-local/devices/playground.json verbatim, generated there by\n"
+    "//   canary-local/tools/gen_playground.py from the Waveshare 4.3B firmware\n"
+    "//   pins.h + the playground driver, and drift-gated in CI there.\n"
+    "// Do not edit it here: the website's weekly carry job rewrites it whenever\n"
+    "// upstream moves (fw_version moves with every firmware release). Only the\n"
+    "// terminal endpoints are claims; the board body + wire routing are\n"
+    "// schematic stand-ins staged for legibility.\n"
+    "\n"
+)
+
+
+def sim_header(site_path: str, upstream: str, gate: str, subject: str) -> str:
+    return (
+        f"// {site_path} — CARRIED VERBATIM from the securaCV repo by its\n"
+        "//   scripts/carry_to_site.py (the `playground` carry): everything below\n"
+        f"//   this header is {upstream}, byte for byte.\n"
+        f"// The authoritative copy is drift-gated there by {gate}\n"
+        f"// against {subject}. Do not edit it here: the\n"
+        "// website's weekly carry job rewrites it whenever upstream moves.\n"
+        "\n"
+    )
+
+
+def _shown(path: Path) -> str:
+    """A path as an error message names it: repo-relative when it is in the repo."""
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
+def playground_data_js(json_text: str) -> str:
+    """playground.json as the ES module the /playground page imports: the
+    header, then `export const PLAYGROUND = ` and the JSON with its trailing
+    newline replaced by `;\\n`. Refuses a file that is not one JSON object,
+    so a broken upstream file stops the carry instead of shipping a module
+    that throws on import."""
+    try:
+        doc = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        fail(f"{_shown(PLAYGROUND_JSON)} is not JSON ({e}) — not carrying it")
+    if not isinstance(doc, dict):
+        fail(f"{_shown(PLAYGROUND_JSON)} is not a JSON object — not carrying it")
+    body = json_text[:-1] if json_text.endswith("\n") else json_text
+    return PLAYGROUND_DATA_HEADER + "export const PLAYGROUND = " + body + ";\n"
+
+
+def playground_outputs() -> dict[str, str]:
+    """Site path -> the exact text the playground carry writes there."""
+    for src in (PLAYGROUND_JSON, PLAYGROUND_SIM, MODE_SIM):
+        if not src.is_file():
+            fail(f"missing {_shown(src)}")
+    return {
+        SITE_PLAYGROUND_DATA: playground_data_js(PLAYGROUND_JSON.read_text(encoding="utf-8")),
+        SITE_PLAYGROUND_SIM: sim_header(
+            SITE_PLAYGROUND_SIM, "canary-local/assets/playground-sim.js",
+            "canary-local/tests/playground.test.js",
+            "the Waveshare 4.3B playground firmware")
+        + PLAYGROUND_SIM.read_text(encoding="utf-8"),
+        SITE_MODE_SIM: sim_header(
+            SITE_MODE_SIM, "canary-local/assets/mode-sim.js",
+            "canary-local/tests/mode.test.js",
+            "the canary-display mode firmware")
+        + MODE_SIM.read_text(encoding="utf-8"),
+    }
+
+
+def carry_playground(site: Path) -> list[Path]:
+    # Every source is read and checked before the first write, so a missing or
+    # broken upstream file leaves the website's three files as they were.
+    outputs = playground_outputs()
+    written = []
+    for rel, text in outputs.items():
+        dest = site / rel
+        dest.write_text(text, encoding="utf-8")
+        written.append(dest)
+    return written
+
+
+# --------------------------------------------------------------------------- #
 
 CARRIES = {
     "builds": carry_builds,
     "kernel-status": carry_kernel_status,
     "verifier": carry_verifier,
+    "playground": carry_playground,
 }
 
 

@@ -77,7 +77,7 @@ async function main() {
   if (data.flash) renderFlash(data);
   renderNetwork(data, bus);
   renderSandbox(data, bus);
-  renderKeepGoing(data);
+  renderKeepGoing();
 
   function section(id, kicker, title, lede) {
     const s = el("section", "hub-section");
@@ -205,7 +205,7 @@ async function main() {
   }
 
   // ── §keep going ──
-  function renderKeepGoing(d) {
+  function renderKeepGoing() {
     const s = section("more", "keep going", "Where this goes next", null);
     const grid = el("div", "hub-links");
     const items = [

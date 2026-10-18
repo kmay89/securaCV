@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   refresh:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       # FRESHNESS_PAT (optional): pushes/PRs by the default GITHUB_TOKEN don't

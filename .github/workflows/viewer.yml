@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   viewer:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -71,7 +71,7 @@ jobs:
       run: node --test src/break_glass/breakglass.test.js
 
   canary-bridge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -102,7 +102,7 @@ jobs:
       run: node --test tests/spa/*.test.js
 
   selftest-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
@@ -115,10 +115,14 @@ jobs:
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js
     - name: Admin dashboard logic tests (peek URL, retry policy, BLE endpoint)
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/web_ui_logic.test.js
+    - name: Recovery kit offer (dashboard BOOT-tap sign-in, wizard close-out)
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
+    - name: Dashboard gates (Camera and Community views only where the build serves them, Export saves its answer)
+      run: node --test firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js
 
   canary-vision-lint:
     name: ESLint (canary-vision)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7

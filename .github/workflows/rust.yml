@@ -60,7 +60,7 @@ permissions:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
 
     steps:
@@ -113,7 +113,7 @@ jobs:
   # this job's rust-cache entry instead of build's.
   bench-harness:
     name: Bench harness (release run, tables kept as an artifact)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     steps:
     - uses: actions/checkout@v7
@@ -142,7 +142,7 @@ jobs:
 
   conformance:
     name: Chain conformance (fixture DB round-trip through log_verify)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
@@ -160,7 +160,7 @@ jobs:
 
   adapters:
     name: Adapters (behavioral tests, all features)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
@@ -178,7 +178,7 @@ jobs:
 
   ingest-ffmpeg:
     name: Ingest (ffmpeg file decode)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
@@ -200,7 +200,7 @@ jobs:
 
   ingest-rtsp:
     name: Ingest (rtsp end-to-end)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     env:
       # Pinned MediaMTX (RTSP server) used to serve the fixture over RTSP.
@@ -235,7 +235,7 @@ jobs:
 
   frigate-mqtt-e2e:
     name: Frigate MQTT (live broker)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
@@ -256,7 +256,7 @@ jobs:
 
   optional-features:
     name: Optional feature build gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     # Compile-gates the pure-Rust optional features that have no dedicated job, so a
     # dependency bump that isn't migrated in-source (e.g. ureq for ingest-esp32, tract
@@ -356,7 +356,7 @@ jobs:
 
   ingest-gstreamer:
     name: Ingest (gstreamer rtsp)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     # Compile-gate for the rtsp-gstreamer feature, which needs the GStreamer dev
     # libraries and so cannot live in the optional-features job above.
@@ -375,7 +375,7 @@ jobs:
 
   status-grid:
     name: witness-kernel status grid matches the code
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v7

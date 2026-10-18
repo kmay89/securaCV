@@ -560,23 +560,31 @@ header nonce (above).
 | O1 | Medium | PR #450 | `mesh_network.cpp:561-572` | `test_mesh_opera_security::test_o1_counter_replay_protection` |
 | O2 | High | PR #450 | `mesh_network.cpp::flash_encryption_enabled` + `persist_opera_config`/`load_opera_config` | `test_mesh_opera_security::test_o2_load_refuses_when_fe_off` |
 | O3 | High | PR #450 (in-memory) + PR #454 (full transactional ACK); PIO tree: F10-rekey (review pending) | `mesh_network.cpp::remove_peer` + `maybe_finalize_rekey` + `MSG_OPERA_REKEY{,_ACK}` cases; PIO: `mesh_rekey.cpp` + `mesh_session::remove_peer` | `test_mesh_opera_security::test_o3_rekey_commits_on_all_acks` + `test_o3_rekey_timeout_marks_unacked_stale`; PIO: `test_mesh_rekey` + `test_mesh_session::test_rekey_*` |
-| C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::test_witness_canonical_layout` |
-| C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::test_c2_c3_no_self_count` |
-| C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::test_c2_c3_no_self_count` |
-| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` | `test_chirp_protocol_invariants::test_canonical_distinguishes_signers` |
-| C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::test_c5_ack_dedup_by_pubkey` |
-| C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::test_canonical_distinguishes_signers` |
-| C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_security::test_c7_suppress_dedup` |
-| C8 | High | PR #450 | `chirp_channel.cpp::priority_heap_insert` | `test_chirp_security::test_c8_priority_storage_eviction` |
-| C9 | Medium | PR #450 (1024 array) + PR #454 (4 KB Bloom) | `chirp_channel.cpp::bloom_hash` + `is_nonce_seen` + `cache_nonce` | `test_chirp_security::test_c9_bloom_flood` |
-| C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_security::test_c11_emoji_size_lifted` (companion) |
-| C11 | Medium | PR #450 | `chirp_channel.cpp::generate_emoji_string` (5 emojis) | `test_chirp_security::test_c11_emoji_size_lifted` |
+| C1 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (Ed25519::verify against carried `session_pubkey`) | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
+| C2 | Critical | PR #450 | `chirp_channel.cpp::handle_witness` (initial `confirm_count = 0`; ignored on wire) | `test_chirp_security::c2_c3_no_self_count` |
+| C3 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` (different-pubkey check) + `send_chirp` (initial 0) | `test_chirp_security::c2_c3_no_self_count` |
+| C4 | Critical | PR #450 (envelope) + PR #454 (origin signature persistence) | `chirp_channel.cpp::handle_witness` + `relay_chirp` + `ReceivedChirp::origin_signature` | `test_chirp_protocol_invariants::canonical_distinguishes_signers` |
+| C5 | Critical | PR #450 | `chirp_channel.cpp::handle_ack` + `pubkey_set_contains` | `test_chirp_security::c5_ack_dedup_by_pubkey` |
+| C6 | Critical (design) | PR #450 | `ChirpWitnessPayload::session_pubkey` + `session_id_from_pubkey` validation | `test_chirp_protocol_invariants::c1_c6_a_witness_must_verify` + `witness_canonical_layout` |
+| C7 | High | PR #450 | `chirp_channel.cpp::handle_suppress_vote` + `CHIRP_MSG_SUPPRESS_VOTE` | `test_chirp_suppress_wap::a_repeated_voter_counts_once` + `a_vote_must_verify` |
+| C8 | High | PR #450 | `chirp_channel.cpp::priority_heap_insert` | `test_chirp_security::c8_priority_storage_eviction` |
+| C9 | Medium | PR #450 (1024 array) + PR #454 (4 KB Bloom) + #1802 (two halves, F270) | `chirp_channel.cpp::bloom_hash` + `is_nonce_seen` + `cache_nonce` | `test_chirp_security::c9_bloom_flood` + `test_chirp_suppress_wap::a_nonce_outlives_the_freshness_window` |
+| C10 | High | PR #450 | `chirp_channel.cpp::wall_clock_is_synced` + `MIN_UNIX_TIME` gate | `test_chirp_commands_wap::a_refused_send_names_why` (`clock_unsynced`) |
+| C11 | Medium | PR #450 | `chirp_channel.cpp::generate_emoji_string` (5 emojis) | `test_chirp_commands_wap::every_session_display_is_five_emoji_in_its_field` |
 | C12 | High (latent) | PR #454 | `chirp_api.h::chirp_auth_gated<>` + `canary_wap.ino` registration under `FEATURE_MESH_NETWORK` | manual: cURL with/without Bearer header |
-| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` | covered by integration of C5 test |
+| C13 | High | PR #450 | `chirp_channel.cpp::confirm_chirp` (presence check) + `nearby_has_pubkey_with_presence` | `test_chirp_security::c5_ack_dedup_by_pubkey` (a key with no nearby row) |
 | C14 | High | PR #450 | `chirp_channel.cpp::pubkey_rate_check_and_record` | manual flood test |
 | C15 | Medium | PR #450 | `chirp_channel.cpp::is_night_mode` (conservative when unsynced) | covered by C10 |
 | C16 | High | PR #450 (partial) + PR #454 (full per-finding suite) | `firmware/projects/canary-wap/tests_host/` | 6 host-test binaries, all green |
-| C17 | Design | PR #450 | template enum removal + reserved slot comment at `mesh_network.h:615-619` | `test_chirp_protocol_invariants::test_protocol_version_is_v02` |
+| C17 | Design | PR #450 | template enum removal + reserved slot comment at `mesh_network.h:615-619` | `test_chirp_protocol_invariants::removed_template_is_refused` |
+
+Sweep F271 (#1802): until then the C1 to C9, C11 and C17 rows named cases in
+`test_chirp_security.cpp` and `test_chirp_protocol_invariants.cpp` that
+re-implemented the code and tested the copies (no change to
+`chirp_channel.cpp` could fail them), C10 named the emoji-size case, which
+tests no clock, and C17 the version case, which tests no template. Each row
+now names a case on the real `chirp_channel.cpp`; the two files' headers say
+which old case became which.
 
 ## 10. References
 

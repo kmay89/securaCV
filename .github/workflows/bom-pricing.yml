@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   snapshot:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     # ~60 MPNs at polite pacing is a 2-5 minute run; 15 is the circuit breaker
     timeout-minutes: 15
     steps:

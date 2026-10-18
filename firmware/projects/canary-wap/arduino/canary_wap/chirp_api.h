@@ -298,7 +298,7 @@ inline esp_err_t handle_chirp_recent(httpd_req_t* req) {
     // Encode nonce as hex for referencing
     char nonce_hex[17];
     for (int j = 0; j < 8; j++) {
-      sprintf(nonce_hex + j * 2, "%02x", chirps[i].nonce[j]);
+      snprintf(nonce_hex + j * 2, 3, "%02x", chirps[i].nonce[j]);
     }
     c["nonce"] = nonce_hex;
   }

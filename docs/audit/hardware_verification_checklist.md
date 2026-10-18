@@ -64,7 +64,9 @@ host tests assert they do, on real radio.
     frames (mostly with bad signatures so they're dropped at verify,
     but valid magic + version so they hit the dedup path first).
   - Post-fix expected: a legitimate chirp sent immediately afterward
-    is still delivered (Bloom FPR ~0.4%, the legitimate nonce is
+    is still delivered (after 1,000 nonces a half's false-positive
+    rate is about 0.02 %, up to about twice that for a lookup of both
+    halves, spec §5.3; the legitimate nonce is
     not in the filter), and the receiver's free heap is unchanged
     (no malloc churn).
   - Artifact: `docs/audit/repro/C9/`.
@@ -707,6 +709,129 @@ Host-tested (`test_wap_event_egress.cpp`, `test_mqtt_reinit.cpp`,
     come back, started over, with the `egress` publish that follows it.
   - Artifact: `docs/audit/repro/HA24/ha-entities/`.
 
+## canary-wap MQTT settings at their limit (F241) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`
+(`config_load()` reads the broker host, user, password and topic prefix with
+each member's whole size, so a value of `MAX_*_LEN` bytes reads back;
+`handle_config_post()` refuses a value longer than its member, and a TLS CA
+longer than 3071 bytes, with 400 and the limit in bytes in the reason, where
+it used to cut a long user, prefix or CA; the `/mqtt` page's inputs and the
+companion wizard's Home Assistant step carry the same maxlengths, and the
+wizard shows the device's reason). Host-tested
+(`tests_host/test_mqtt_reinit.cpp`: `each_setting_reads_back_at_its_limit`,
+`the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past`,
+`the_settings_page_limits_each_field`, `the_config_post_limits_are_bytes`,
+`the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past`, over a
+Preferences stand-in that refuses as arduino-esp32 3.3.8's `getString()`
+does; `test_ha_discovery_ids.cpp` at the 32-character prefix;
+`wizard_logic.test.js`). Compile is CI's. Owner: U1.
+
+- [ ] **A 32-character topic prefix is the prefix the device publishes under**
+  - Setup: a canary-wap board joined to Wi-Fi, a broker on the LAN,
+    `mosquitto_sub -v -t '#'` on a laptop, and a paired session.
+  - Repro: on the `/mqtt` page set the broker and the topic prefix
+    `abcdefghijklmnopqrstuvwxyz012345` (32 characters), Save, then reboot the
+    board. Try to type a 33rd character into the field, and send
+    `POST /api/mqtt/config` with a 33-character prefix.
+  - Expected: after Save and after the reboot, `GET /api/mqtt/config`
+    answers the 32-character prefix, and the broker sees
+    `<prefix>/<device id>/status` and the discovery configs' `stat_t` under
+    it (before this fix, `securacv/...`). The field takes no 33rd character;
+    the POST answers 400 `{"ok":false,"reason":"prefix must be at most 32
+    bytes"}` and the stored prefix is unchanged.
+  - Artifact: `docs/audit/repro/F241/prefix-32/`.
+- [ ] **A 128-character broker password still authenticates after a reboot**
+  - Setup: as above, with a broker user whose password is 128 characters.
+  - Repro: save that user and password on the `/mqtt` page, reboot, and
+    watch the broker's log; then `POST /api/mqtt/config` a 129-character
+    password.
+  - Expected: after the reboot the board logs in with the saved password
+    (`GET /api/mqtt/config` answers `"password_set":true` and
+    `"connected":true`); before this fix the password read back empty and
+    the broker refused the login. The 129-character POST answers 400 naming
+    the 128-byte limit, and the board keeps the saved password.
+  - Artifact: `docs/audit/repro/F241/password-128/`.
+- [ ] **A CA chain longer than the device keeps is refused, not saved cut**
+  - Setup: as above, with a broker on TLS (8883) whose CA file is one
+    certificate, and a second PEM file holding that certificate and another
+    (over 3071 bytes together: `wc -c`).
+  - Repro: on the `/mqtt` page choose the "check" option, paste the long
+    chain, Save; then paste the single certificate, Save, and reboot.
+  - Expected: the long chain answers "Save failed. ca must be at most 3071
+    bytes" and `GET /api/mqtt/config`'s `ca_set` is what it was (before this
+    fix it answered "Saved." and stored the chain cut mid-certificate); the
+    single certificate saves, and after the reboot the board connects over
+    TLS (`"transport"` names the CA mode, `"connected":true`).
+  - Artifact: `docs/audit/repro/F241/ca-chain/`.
+
+## canary-wap MQTT config body, settings read and card event lines (F264, F266, F267) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`
+(`handle_config_post()` refuses a Content-Length of 0 or past
+`csi_mqtt::MAX_CONFIG_BODY_LEN`, 6845 bytes, with 400 before reading, then
+reads the body with `http_body_reader.h`'s `read_all()` until it is whole;
+`config_load()` reads `mqtt.host`, `mqtt.user`, `mqtt.pass` and
+`mqtt.prefix` only behind `isKey()`) and
+`firmware/common/csi/src/csi_event_log_line.h` (staged in the sketch:
+`parse()` refuses a line whose string field holds a backslash or a byte
+outside printable ASCII, which the backfill skips and counts and the boot
+load leaves out of the ring; the tail scan reads only a line's id,
+`record_id()`, so an edited last line still marks the card's end). Host-tested
+(`tests_host/test_mqtt_reinit.cpp`:
+`the_config_post_reads_a_body_that_arrives_in_pieces`,
+`the_config_post_refuses_a_body_past_its_cap`,
+`an_unconfigured_bridge_reads_its_settings_without_an_error_line`;
+`test_csi_event_log_load.cpp`, `test_wap_event_egress.cpp`;
+`firmware/tests_host/test_csi_event_log_line.cpp`,
+`test_csi_event_backfill.cpp`). Compile is CI's. Owner: U1.
+
+- [ ] **A config body that arrives in several TCP segments is read whole**
+  - Setup: a canary-wap board joined to Wi-Fi with a paired session token, a
+    TLS broker whose CA PEM is about 2 KB, and a laptop with Python 3.
+  - Repro: send `POST /api/mqtt/config` with a body of
+    `{"tls_mode":1,"ca":"<the PEM, newlines as \n>","host":"<broker>","user":"<user>"}`
+    from a script that writes the headers, then the body in three
+    `sendall()` calls with `TCP_NODELAY` set and 300 ms between them (so the
+    CA crosses all three). Then send a request whose `Content-Length` is
+    7000 with that body padded to 7000 bytes.
+  - Expected: the first answers `{"ok":true}`; `GET /api/mqtt/config`
+    answers `"ca_set":true` and the host and user from the body's tail, and
+    the board connects over TLS (before this fix: "ca must be a PEM
+    certificate" or a CA stored cut, and the fields after the cut lost). The
+    second answers 400 `{"ok":false,"reason":"body must be at most 6845
+    bytes"}` at once, and nothing stored changes.
+  - Artifact: `docs/audit/repro/F266/segmented-body/`.
+- [ ] **A debug build whose MQTT bridge was never configured boots without NVS error lines**
+  - Setup: a canary-wap board flashed with `canary-wap-debug` after an NVS
+    erase, a serial monitor at 115200.
+  - Repro: boot it, let the egress write its delivery ceiling, reboot, open
+    `/mqtt` once.
+  - Expected: no `nvs_get_str len fail: mqtt.host NOT_FOUND` line (nor for
+    `mqtt.user`, `mqtt.pass`, `mqtt.prefix`) at either boot or on the page's
+    GET (before this fix: four such lines each time); the page shows the
+    bridge disabled, port 1883 and the default prefix.
+  - Artifact: `docs/audit/repro/F267/debug-boot-log/`.
+- [ ] **An events-log line edited on the card is skipped, not published**
+  - Setup: a canary-wap board with a card and a broker, `mosquitto_sub -v
+    -t '<prefix>/#'` on a laptop.
+  - Repro: stop the broker, let six or more events commit, power off, and
+    on a computer change the `"state":"…"` of one held line that is not the
+    last in `/EVENTS/today.ndjson` to `"state":"occ\"`; put the card back,
+    boot, start the broker. Then do it again, editing the last held line
+    instead.
+  - Expected: every other held row arrives on `<prefix>/<id>/events` once,
+    in order, and each body parses (`jq .`); no edited row ever does, and
+    `GET /api/events/today` parses and does not list one. In the retained
+    `<prefix>/<id>/egress` topic, `csi_event_egress.planner.replayed`
+    counts the held rows that arrived from the card (the edited ones are
+    not among them) and `planner.skipped` is at least the number of edited
+    lines (it also counts every line delivered before the outage that the
+    walk passes from the card's start, so on a card with history it reads
+    far higher). Before this fix the edited row went out as a body `jq`
+    refuses and the ring row made the events-today answer unparseable.
+  - Artifact: `docs/audit/repro/F264/edited-card-line/`.
+
 ## canary-wap loop-task ownership (F96, F106) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp`
@@ -1338,7 +1463,7 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
-## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers (F190, F167, F189, F196 Bluetooth half) — on-device verification
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up (F190, F167, F189, F196 Bluetooth half, F235) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
@@ -1360,16 +1485,28 @@ room, and never deletes a bond to make room;
 the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
-(`send_doc()`: every answer serialized at its own measured length).
+(`send_doc()`: every answer serialized at its own measured length;
+Start Advertising and Pair bring the stack up on the HTTP task whenever it
+is down, `bring_up()`, but on a device saved on only once the sketch's boot
+bring-up is over, `waits_for_boot_bring_up()`, which `canary_wap.ino`'s
+finalize stage ends with `bluetooth_channel::boot_bring_up_finished()`
+after the Scout's own NimBLE init; before it, and while another bring-up
+runs, they answer 503, `send_boot_bring_up_pending()` /
+`send_bring_up_refused()`: "still starting" once the sketch has started its
+boot bring-up, `bluetooth_channel::boot_bring_up_started()`, set by
+`bringup_worker_started()` as the gate opens, and "has not started yet"
+only before that).
 Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
 stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
 store, its full-store event at a Pairing Request, its default evictions
 (the oldest bond; for a CCCD the oldest but the writer's) and an
 advertising start that walks the server's services; the bring-up worker,
 the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
-held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6
-and BV7; a phone's real pairing, NimBLE's real stores and the real
-bring-up worker are not something a host test can run. Compile is CI's.
+held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6,
+BV7 and C3; a phone's real pairing, NimBLE's real stores, the real
+bring-up worker and the real join window are not something a host test can
+run (the stand-in's NimBLE init failure is the retryable kind; one past the
+controller's init stays failed on a device until a reboot). Compile is CI's.
 Owner: U1.
 
 - [ ] **Pairing mode reads pairing**
@@ -1455,6 +1592,59 @@ Owner: U1.
   - Expected: every answer parses as one JSON document with nothing after
     it; the name reads back as set.
   - Artifact: `docs/audit/repro/F196/bt-answers/`.
+- [ ] **Start Advertising and Pair wait for the boot bring-up, then bring a refused stack up (F235)**
+  - Setup: one canary-wap flashed with the default FULL profile, Bluetooth
+    saved on (the default), Wi-Fi credentials stored; a serial console at
+    boot; the web UI's Bluetooth tab open; a phone with a BLE scanner (nRF
+    Connect); for the second part, a boot state that leaves the internal
+    heap under the bring-up guard's floor, if one can be arranged.
+  - Repro: the serial console prints, in order, `[..] Initializing
+    Bluetooth Low Energy (post-join-window)...`, then `[OK] Bluetooth
+    initialized` (or, refused, `[--] Bluetooth init failed (reason
+    recorded for self-test)`), then, at the default log level (Device tab:
+    INFO), `[INFO/BLUETOOTH] BLE bring-up finalized (post-provisioning
+    window)`, which `GET /api/logs` lists too. (a) Reboot and, from the
+    SoftAP or the LAN, tap Start Advertising and then Pair in each of three
+    windows: before `Initializing Bluetooth Low Energy` (the join window,
+    up to 5 min with the SoftAP up); between it and `[OK] Bluetooth
+    initialized`; and between that and `BLE bring-up finalized` (on FULL
+    it spans ble_status's registration and ble_manager's bring-up, seconds;
+    a scripted `curl` loop catches it more surely than a finger). Then boot
+    into safe mode and tap both again. (b) After a refused boot bring-up
+    (`[--] Bluetooth init failed`; `GET /api/bluetooth` names
+    `init_fail_reason`), tap Start Advertising once before `BLE bring-up
+    finalized` if quick enough, then twice after it; free the heap if the
+    setup allows and tap Start Advertising, timing how long a second
+    browser tab's `GET /api/status` waits meanwhile; then tap Pair.
+  - Expected: (a) before `Initializing Bluetooth Low Energy` (the gate
+    shut) each tap answers 503 `Bluetooth has not started yet; it starts
+    once Wi-Fi setup is done or within five minutes (never in safe mode)`;
+    from the gate's opening, a moment before that line, until `[OK]
+    Bluetooth initialized` (the worker's init running) 503 `Bluetooth is
+    still starting; try again in a moment`; the web UI alerts each text.
+    Between `[OK] Bluetooth initialized` and `BLE bring-up finalized` each
+    tap answers 200 (`Advertising started`, `Pairing mode started`) and
+    runs no bring-up of its own, and its advertising starts only when the
+    finalize stage takes the worker's result. In every one of these windows the scanner sees no WAP
+    advertising before `BLE bring-up finalized` (the finalize stage starts
+    it a moment before that line, in the same loop pass; before the F235
+    review a tap in the join window brought NimBLE up on the HTTP task and
+    advertised at once); the console shows `[OK] Bluetooth initialized`,
+    never `Bluetooth init failed` with no reason after such a tap; in safe
+    mode every tap answers the "has not started yet" text and none ever
+    brings Bluetooth up. (b) a tap after `[--] Bluetooth init failed` and
+    before `BLE bring-up finalized` answers 503 `Bluetooth is still
+    starting; try again in a moment` (until wave 16's verify it was told
+    Bluetooth had not started yet); each tap after `finalized` while
+    refused answers the refusal by name (the heap guard's measured RAM)
+    with no crash or watchdog reset; once the heap allows, the tap brings
+    Bluetooth up and advertises (before F235 every tap answered `Failed to
+    start advertising` and the stack stayed down until Enable), the
+    Bluetooth card's subtitle goes back to `BLE connectivity` without a
+    reload, and the other tab's request waits for that bring-up (seconds),
+    as it does behind an Enable tap; the Pair tap after it starts pairing
+    mode.
+  - Artifact: `docs/audit/repro/F235/tap-brings-up/`.
 
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
 
@@ -1665,7 +1855,78 @@ Compile is CI's. Owner: U1.
     the host test covers it.
   - Artifact: `docs/audit/repro/F213/nearby-emoji/`.
 
-## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed (F211, F212) — on-device verification
+## canary-wap Chirp: community suppression by more than half, within two minutes (F233) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_suppress_vote()`: a vote counts within `SUPPRESS_WINDOW_MS` of the
+chirp's arrival, into a set of `MAX_SUPPRESS_VOTERS` keys, and suppresses
+the chirp at `suppress_votes_needed(nearby_count)`, more than half of the
+nearby rows and at least three, `mesh_network.h`). Host-tested
+(`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, a signed
+witness and signed votes at every table size from 3 to 32 rows, a repeated
+voter, votes across the window, a second copy of one chirp, votes that do
+not verify, one log line per suppressed chirp). Compile is CI's. Owner: U1.
+
+- [ ] **Three of four nearby rows suppress a chirp; a late third vote does not**
+  - Setup: five canary-wap boards, A to E, in ESP-NOW range of A, Chirp on
+    for at least ten minutes on each (the presence requirement a vote
+    needs), each with a GPS fix (no vote goes out on an unset clock).
+  - Repro: on A, `curl -s /api/chirp/nearby` lists four rows. B sends a
+    chirp; within two minutes dismiss it on C, D and E (each dismiss answers
+    `"vote_sent":true`), reading A's `GET /api/chirp/recent` after each.
+    Then C sends a chirp; dismiss it on B and D within a minute, and on E
+    three minutes after it went out.
+  - Expected: B's chirp reads `"suppressed":false` on A after the first two
+    dismissals and is gone from the list at the first read after the third
+    (since F269; before it, it read `true` and left within 30 s);
+    A's `GET /api/logs` holds one `chirp: community-suppressed` line for it;
+    C's chirp still reads `"suppressed":false` after all three (the third
+    vote came after the window; before F233 it counted). Tables of 18 rows
+    and more, where no chirp could be suppressed before F233, take nineteen
+    boards and are the host test's.
+  - Artifact: `docs/audit/repro/F233/suppress-window/`.
+
+## canary-wap Chirp: a suppressed chirp stops at once, and its frame is not stored again (F269, F270) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`handle_suppress_vote()` takes a chirp out of the recent table at the vote
+that suppresses it; `handle_witness()` refuses a frame whose nonce the
+two-half nonce filter or a recent row holds; the filter clears its older
+half at the start of each `NONCE_FILTER_HALF_MS` slot, 331 s,
+`mesh_network.h`, so a nonce is held at least 331 s and at most 662 s).
+Host-tested
+(`tests_host/test_chirp_suppress_wap.cpp`: real signed beacons, witnesses,
+votes, confirmations and relays; a frame 30 s ahead heard 1 ms before each
+second from 1 to 700 s after boot, refused at the last millisecond of its
+window). Compile is CI's. Owner: U1.
+
+- [ ] **After the suppressing vote nothing relays, lists or confirms the chirp; the frame heard again is refused**
+  - Setup: the five boards of the F233 row, A to E, Chirp on for at least
+    ten minutes on each, each with a GPS fix; a sniffer for ESP-NOW
+    broadcasts on A's channel, to see what A sends and to replay a frame.
+  - Repro: B sends an infrastructure chirp (Power outage). Dismiss it on C,
+    D and E, one right after another, within two minutes of the send (three
+    of four rows: suppressed on A at E's). Then at once confirm it on C and
+    D with `POST /api/chirp/confirm` (their dashboards hide a chirp they
+    dismissed): a board keeps a chirp it dismissed only until its next
+    prune, at most 30 s later, and its confirm then answers 404
+    `not_found` and sends nothing, so if either confirm answers 404, run the
+    scene again. On A `curl -s -X POST /api/chirp/confirm -d
+    '{"nonce":"<its nonce>"}'` with the nonce read from A's list before the
+    third dismissal. Then, within five minutes of B's send, replay B's frame
+    to A from the sniffer capture (or let C relay it, if C validated it).
+  - Expected: A's `GET /api/chirp/recent` drops the chirp at the first read
+    after the third dismissal; C's and D's confirms answer 200 and the
+    sniffer shows each one's signed ACK (confirmed) on the air after E's
+    vote, and they make A send no relay (no hop-1 witness frame from A); A's
+    confirm answers 404 `not_found` and sends no ACK; the replayed frame adds
+    no row to A's list.
+    Before F269 A listed it `"suppressed":true`, relayed it after the second
+    confirmation, and sent an ACK for the local confirm; before F270 a frame
+    replayed just after A's 5-minute filter reset came back unsuppressed.
+  - Artifact: `docs/audit/repro/F269/suppressed-stops/`.
+
+## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/fleet_scan_cache.h`
 (`fleet_scan_task()`'s cache, through `fill()`: every result of the browse
@@ -1673,14 +1934,18 @@ offered, the shortest rows that fit together kept whole, at most eight,
 written in browse order, a complete document after every row),
 `identity_json.h` (GET `/api/device-info` and the provisioning receipt, every
 string escaped, each answer measured and written into a heap buffer of its own
-length), both on `wap_json_writer.h`, and their glue in `canary_wap.ino`.
+length), both on `wap_json_writer.h`, `device_name_rule.h` with
+`setup_wizard.h` (no control byte in the device name: the setter refuses one,
+a stored one reads back as a space), and their glue in `canary_wap.ino`.
 Host-tested (`tests_host/test_fleet_scan_cache.cpp`,
-`tests_host/test_identity_json.cpp`) and held by
+`tests_host/test_identity_json.cpp`, `tests_host/test_device_name.cpp`,
+`tests_host/test_wap_json_writer.cpp`) and held by
 `firmware/scripts/check_wap_json_answers.py` (J4 the cache's writer, J5 the
 `snprintf()` answers measured and their `%s` escaped, J6 the identity answers'
-measured form). The old cache's failure was shown only in a scratch harness
-over ArduinoJson 7.4.1 (the library is not in the repo). Compile is CI's.
-Owner: U1.
+measured form, J8 the device name's setter, loader and routes). The old
+cache's failure, and the answers' with a control byte in the name, were shown
+only in scratch harnesses over ArduinoJson 7.4.1 (the library is not in the
+repo). Compile is CI's. Owner: U1.
 
 - [ ] **Long mDNS adverts cost their own rows, not the other Canaries'**
   - Setup: a canary-wap on a LAN with at least one other Canary, and a
@@ -1721,6 +1986,89 @@ Owner: U1.
     parses and its token and AP password are unchanged. Before F212 the
     device-info answer did not parse.
   - Artifact: `docs/audit/repro/F212/quoted-name/`.
+- [ ] **A device name holding a control byte is refused, and one stored before keeps the answers whole (F226)**
+  - Setup: a canary-wap with its API token, on the LAN with another Canary;
+    for the second half, a canary-wap still on firmware from before F226.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    --data-binary $'{"name":"kit\x01chen"}' http://<wap>/api/device-name`;
+    then `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/fleet/scan
+    | python3 -m json.tool` and open the Fleet sheet. On the older device,
+    rename it the same way (it takes the name), read
+    `curl -s http://<wap>/api/device-info`, then flash this firmware without
+    erasing NVS and read `/api/fleet/scan` and `/api/device-info` again, and
+    `ping canary-kit-chen.local`.
+  - Expected: the rename answers `"ok":false` with "Invalid name: 1 to 32
+    bytes, no byte below 0x20, and at least one ASCII letter or digit" (the
+    rule the route applies, since F263) and the device keeps its old name; the
+    scan answer parses and the Fleet sheet lists the device. On the upgraded
+    device both answers parse, the name reads `kit chen` (the control byte as
+    a space), and its host is still `canary-kit-chen.local` (before F226 the
+    stored byte made `/api/fleet/scan` unparseable and the Fleet sheet said it
+    could not reach the device). A later rename replaces the stored bytes.
+  - Artifact: `docs/audit/repro/F226/control-byte-name/`.
+
+## canary-wap: no control byte reaches a JSON answer through the Bluetooth name or an SSID (F261, F262) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.h` /
+`.cpp` (`name_storable()`, on `device_name_rule.h`'s control-byte test:
+`set_device_name()` and the settings command refuse a name holding a byte
+below 0x20, and a saved one is not loaded), `bluetooth_api.h` (POST
+`/api/bluetooth/settings` and `/api/bluetooth/name` answer
+`DEVICE_NAME_REFUSAL`), `wap_json_writer.h` (`replaced_text()`: each control
+byte as U+FFFD, cut on a character; `shows_as()` and `listed_by_shown()`: a
+posted SSID read back to the listed network), and its callers in
+`canary_wap.ino` (the routes, `scan_cache_listed_ssid()`), `selftest_api.h`
+and `ble_provision.cpp` (the list fitted to its 480 bytes, CREDS read back).
+Host-tested (`tests_host/test_bluetooth_commands_wap.cpp` on the real
+`bluetooth_channel.cpp` and `bluetooth_api.h`, `tests_host/test_wap_json_writer.cpp`
+on the real header, a model of ArduinoJson 7.4.1's string spelling and a
+WHATWG UTF-8 decoder, `tests_host/test_ble_provision.cpp` on the real
+`ble_provision.cpp` over stand-ins) and held by
+`firmware/scripts/check_wap_json_answers.py` (J9); no host test runs the
+radio, a real access point's beacon, a phone, or a browser reading the
+device.
+
+- [ ] **A Bluetooth name holding a control byte is refused, and a saved one is not loaded (F261)**
+  - Setup: a canary-wap with its API token and Bluetooth on; for the second
+    half, a canary-wap still on firmware from before F261.
+  - Repro: `curl -X POST -H "Authorization: Bearer <token>"
+    --data-binary $'{"device_name":"kit\x01chen"}' http://<wap>/api/bluetooth/settings`,
+    and the same name as `{"name":...}` to `/api/bluetooth/name`; then
+    `curl -s -H "Authorization: Bearer <token>" http://<wap>/api/bluetooth
+    | python3 -m json.tool`, the same for `/api/bluetooth/settings`, and a
+    phone's Bluetooth scan. On the older device, set the name the same way (it
+    takes it), then flash this firmware without erasing NVS and read both
+    answers and `/api/logs` again.
+  - Expected: both POSTs answer `"success":false` with "Invalid Bluetooth
+    name: 1 to 32 bytes, no byte below 0x20" and nothing else in the
+    settings POST is applied; both GETs parse and the radio still advertises
+    the old name. On the upgraded device both answers parse, the name is the
+    default one, and the health log holds "Saved Bluetooth name held a control
+    byte: the default name is used" (before F261 both answers were
+    unparseable in the browser).
+  - Artifact: `docs/audit/repro/F261/control-byte-bt-name/`.
+- [ ] **An SSID holding a control byte reaches every answer as U+FFFD, and the device joins it from every list (F262)**
+  - Setup: a canary-wap with its API token, an access point whose SSID holds
+    0x01 (hostapd with `ssid2=P"kit\x01chen"`) in range, a second one whose
+    SSID is 32 bytes of 0x01 (`ssid2=P"\x01\x01...\x01"`), and a phone with
+    the companion page for the BLE provisioning list.
+  - Repro: `curl -s http://<wap>/api/wifi/scan | python3 -m json.tool`; pick
+    `kit�chen` in the setup wizard's network list and join it; on a second
+    device, pick it in the dashboard's Settings list; on a third, pick it in
+    the phone's BLE provisioning list; pick the 32-byte one in the wizard;
+    read `/api/wifi`, `/api/selftest` and `/api/logs` (with the token) once
+    joined, and open the Fleet sheet and make its QR code. Read the BLE
+    provisioning list's length with 20 such networks in range.
+  - Expected: every answer parses; each shows the network as `kit�chen`
+    (U+FFFD where the byte was); a pick from each list joins it (the wizard,
+    the dashboard and the phone post back the text they were shown, and the
+    device reads it back to the network's own bytes); the 32-byte one joins
+    from the wizard (its text is 96 bytes); the Fleet QR code, scanned by
+    another Canary, joins the home network; the BLE list is at most 480
+    bytes and lists the strongest networks that fit. Before F262 the scan
+    answer did not parse in the browser; with F262 alone a pick named no
+    network and the join failed.
+  - Artifact: `docs/audit/repro/F262/control-byte-ssid/`.
 
 ## One event-id space (F46) — on-device verification
 
@@ -2160,6 +2508,158 @@ not run on a device. Owner: U1.
     `"current":{"motion":25,"active":60,"breathing":20}` with
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
+
+## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification
+
+Code: `receipt_authority.h`, and `request_local_ipv4()` / `request_reach()`
+/ `send_provisioning_receipt()` / `handle_https_redirect()` in
+`canary_wap.ino` (F255); the `RECOVERY_KIT` block in `web_ui.h` and
+`companion_pwa.h`, the dashboard's `requestFromDevice()` /
+`offerRecoveryKit()` and its Settings save `saveRecoveryKitFromSettings()`
+(F257). Host-tested (`tests_host/test_receipt_authority.cpp`: every grant
+and the redirect on the SoftAP, on the STA, with the STA down and with the
+SoftAP dropped; `recovery_kit.test.js`: the dashboard's sign-in and
+Settings save run against a fake device); the compile is CI's; not run on
+a device. Owner: U1.
+
+An installed WAP serves its dashboard and API over https on 443 from the
+first boot after setup (a self-signed certificate; the browser warns once,
+and the receipt's `tls_cert_fp` is that certificate's SHA-256), and port
+80 answers everything but the captive probes and `/api/fleet` with a 301
+to https. The rows below use https; on an http-only build (or one whose
+`/api/status` `tls_mode_reason` says TLS is off) use http and expect no
+301.
+
+- [ ] **A receipt fetched over the home network names the `.local` name; port 80's redirect does too**
+  - Setup: a canary-wap on this firmware, joined to the home Wi-Fi, a laptop
+    on the home network, a phone on the setup network inside the SoftAP's
+    grace window after the join, the API token. Then the same laptop after
+    the grace window, once `/api/status` shows the AP dropped.
+  - Repro: on the laptop, `curl -sk -H "Authorization: Bearer <token>"
+    https://canary-<suffix>.local/api/provisioning-receipt`; short-tap BOOT
+    and, within 30 s, `curl -sk https://<the WAP's home-network
+    address>/api/provisioning-receipt`; compare the certificate `openssl
+    s_client -connect canary-<suffix>.local:443 </dev/null | openssl x509
+    -outform DER | sha256sum` shows with the receipt's `tls_cert_fp`.
+    `curl -si http://canary-<suffix>.local/settings` and `curl -si
+    http://<the WAP's home-network address>/settings`. On the phone, short-tap
+    BOOT and fetch `https://192.168.4.1/api/provisioning-receipt`, then
+    `http://192.168.4.1/settings` with redirects shown. Repeat the laptop's
+    four requests after the AP dropped.
+  - Expected: both laptop receipts carry `"base_url":
+    "https://canary-<suffix>.local"` (before F255 both named `192.168.4.1`)
+    and the certificate's SHA-256 equals `tls_cert_fp`; both port-80 answers
+    are `301` with `Location: https://canary-<suffix>.local/settings`
+    (before, `https://192.168.4.1/settings`, and `https://0.0.0.0/settings`
+    once the AP dropped on core 3.x); the phone's receipt and redirect name
+    `192.168.4.1`. Nothing read after the AP dropped names `192.168.4.1` or
+    `0.0.0.0`.
+  - Artifact: `docs/audit/repro/F255/receipt-authority/`.
+- [ ] **The dashboard offers the recovery kit, signed out (BOOT tap) and signed in (Settings), and the kit pairs the iPhone**
+  - Setup: a canary-wap set up through the Bluetooth setup door (so its
+    wizard's close-out never ran), a laptop browser with no session for it
+    (a private window), the iPhone app with the WAP under **Ready to pair**.
+  - Repro: open `https://canary-<suffix>.local/settings` (accept the
+    certificate warning), choose **Use BOOT Tap Once**, short-tap BOOT; on
+    the card, choose **Save my recovery kit**, with the browser's network
+    log open. Move `canary-recovery-kit.json` to the iPhone and add the WAP
+    from its **Ready to pair** row with the file. Reload the page (the
+    session resumes, no sign-in), open **Settings**, **Device**, **Recovery
+    kit**, choose **Save my recovery kit**. Reboot the WAP and choose it
+    again from the open page. Last, in a fresh private window, sign in with
+    **Use BOOT Tap Once** and press nothing until the minute runs out.
+  - Expected: after the tap the dashboard opens with the card "Save your
+    recovery kit" in the wizard's words; the saved file is the receipt
+    (`device_id`, `base_url` at `https://canary-<suffix>.local`, `token`,
+    `tls_cert_fp`, the AP name and password); choosing **Save my recovery
+    kit** adds no request to the network log (the file comes from a `blob:`
+    URL), and no request carries the kit's text, while the dashboard's own
+    refreshes go on; the iPhone pairs from the file. The Settings save
+    makes one `GET /api/provisioning-receipt` and saves the same receipt;
+    after the reboot (sessions are dropped) it saves nothing and the
+    sign-in comes back. The sign-in whose tap never came shows no card.
+    Before F257 the dashboard offered no kit.
+  - Artifact: `docs/audit/repro/F257/dashboard-kit/`.
+
+## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
+
+Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
+(`display_set_rotation()`'s MADCTL table), `include/canary/io/orientation.h`
+(the classifier), `firmware/boards/waveshare-esp32c3-lcd147/pins/pins.h`
+(`IMU_AXES_SWAP_XY`, `IMU_X_SIGN`, `IMU_Y_SIGN`: a seed guess),
+`src/ui/nightlight_ui.cpp` (the tumble's Startle) and `src/ui/canary_mark.cpp`
+(the hop). Host-tested (`test_orientation`, `test_nightlight_tumble`,
+`test_canary_mark_seat`) and run natively on LVGL 8.4
+(`canary-local/emulator/test/runtime_turn.sh`); what the panel draws for each
+turn is not. Compile is CI's. Owner: U1.
+
+- [ ] **Each pose commits its rotation, then reads upright**
+  - Setup: a `canary-display-nightlight` build on the C3-LCD-1.47 on a
+    serial monitor (or provisioned, its address on the LAN), "turn with the
+    room" on, daytime. Every commit writes one serial line naming the
+    rotation, the one before it and who asked, `[orient] IMU -> rotation 1
+    (was 0)` (F285; a triple-press says `triple-press`, just after its
+    `[input] triple-press -> turn the face` line, and the app's picker
+    `app picker`); the committed rotation is also `"orientation"` in
+    `GET http://<glass>/api/settings` (`care::nightlight_rotation()`, saved
+    by every commit).
+  - Repro: stand it upright (USB down) and hold it still for 3 s, then read
+    the `[orient]` line (or `"orientation"`); the same after a quarter turn clockwise onto its right
+    edge (USB to the left), after standing it upright again and turning it a
+    quarter counter-clockwise onto its left edge (USB to the right), and
+    upside down (USB up). Photograph the glass in each pose.
+  - Expected, in this order. First the IMU: each pose commits about 1.2 s
+    after the device comes to rest, with one `[orient] IMU -> rotation R
+    (was P)` line, and the rotation (that line's R, or `"orientation"`)
+    reads 0 upright, 1 after the clockwise turn, 3 after the
+    counter-clockwise turn and 2 upside down. If it does not, fix `pins.h` (`IMU_AXES_SWAP_XY`,
+    `IMU_X_SIGN`, `IMU_Y_SIGN`) until it does, and only then judge the
+    glass. `io/orientation.h`'s classifier wants the gravity vector, while
+    an accelerometer at rest reads +1 g along the axis that points up and
+    `imu_read_accel()` passes that on unnegated; so if the identity seed
+    has the chip's mounting right, both in-plane signs read reversed
+    (upright commits 2, the clockwise turn 3) and both signs need flipping.
+    With that seed, flipping `IMU_Y_SIGN` alone makes every pose read
+    upright on the glass while 1 then means the counter-clockwise turn,
+    the opposite of the emulator and the Lab's 3D case, and the tumble
+    enters a side turn from the edge that was down. Then the glass: with the values right,
+    the clock reads upright in every pose and the companion tumbles in
+    from the edge that was up. By `display_1in47.cpp`'s own model of its
+    MADCTL bytes, rotation 1 (0x28) draws the face for the
+    counter-clockwise turn and rotation 3 (0xE8) for the clockwise one,
+    the opposite of what the values ask for: if both side turns read
+    upside down, swap the r1/r3 bytes in `kMadctl`. A mirrored face is an
+    MX/MY fault, not this one.
+  - Artifact: `docs/audit/repro/F250/side-turns/` (a photo and the
+    `[orient]` line or `"orientation"` value per pose).
+
+- [ ] **The companion startles with each turn, and its hop is smooth**
+  - Setup: as above. The mark lets one Tilt or Startle through per 8 s, the
+    first one after power-on included (F279: it used to refuse both for the
+    first 8 s of uptime), so leave 8 s between turns.
+  - Repro: turn it a quarter clockwise, wait 10 s, turn it back; the same a
+    quarter counter-clockwise and a half turn; then once more during quiet
+    hours.
+  - Expected: the companion tumbles in from the edge that was up with its
+    eye wide, a little high, and settles onto its perch as it lands, then
+    breathes there. The Startle's hop (about 12 px, 240 ms up and 320 ms
+    down) starts with the face's first render after the turn, so it peaks
+    about 200 ms in while the 700 ms slide is still bringing the bird in.
+    Where it enters past the glass's edge the slide hides much of the rise
+    and the bird is mostly seen coming down onto its perch; where it enters
+    already on the glass the whole hop shows. Natively on LVGL 8.4
+    (`runtime_turn.sh` prints it per turn; its turns come 7 s after
+    power-on) the apex comes at 185 ms, and the whole bird is on the glass
+    in none of the hop's 113 frames when it enters over the landscape
+    glass's right edge (its perch is at that edge), 54 when it falls from
+    above onto the landscape glass, 60 when it enters either side of the
+    portrait glass, and all 113 when it enters from the landscape glass's
+    left or falls from above onto the portrait glass. Where the hop falls
+    against the render tick moves these by a frame or a few (F242's
+    measurement, with the turns at 9 s, read 195 ms and 8, 56, 62 and 115
+    of 115). Either way the bird never drops back to its perch for a frame
+    mid-hop. In quiet hours it tumbles in without the hop (asleep).
+  - Artifact: `docs/audit/repro/F242/tumble-video/`.
 
 ## SoftAP WPA2/WPA3 transition + PMF (F16) — on-device verification
 

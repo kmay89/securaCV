@@ -1,8 +1,10 @@
 // canary-local/emulator/test/native9/Arduino.h — the Arduino core as
-// ui/lvgl_port.cpp and canary/log.h use it, for glass_turn_lvgl9.sh (F225):
-// millis() for LVGL 9's tick callback (glass_turn_lvgl9_test.cpp defines
-// it) and a Serial whose printf the test reads (the port logs a refused
-// turn). Nothing else of the core is reached from the port.
+// ui/lvgl_port.cpp, canary/log.h and (F246) ui/splash.cpp use it, for
+// glass_turn_lvgl9.sh (F225): millis() for LVGL 9's tick callback and the
+// splash's storyboard (each test defines it), delay() for the splash's pump
+// (glass_splash_lvgl9_test.cpp defines it), and a Serial whose printf the
+// test reads (the port logs a refused turn). Nothing else of the core is
+// reached from those sources.
 #pragma once
 #include <stdarg.h>
 #include <stdint.h>
@@ -30,3 +32,7 @@ struct Native9Serial {
 extern Native9Serial Serial;  // defined by the test
 
 extern "C" uint32_t millis(void);  // defined by the test
+// Defined by the tests that play a blocking storyboard (splash.cpp's pump):
+// it advances the clock millis() reads. glass_turn_lvgl9_test.cpp calls
+// nothing that waits.
+extern "C" void delay(uint32_t ms);

@@ -65,6 +65,11 @@ on:
       - "devices/**"
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
+      # gen_figures.mjs reads every firmware/projects/<p>/*.ini (globIni, one
+      # level down: the envs, and the [platformio] src_dir and extra_configs
+      # that say which env builds which sketch tree, sweep A89), not only the
+      # four projects above: canary-ota's and canary-sentinel's too.
+      - "firmware/projects/*/*.ini"
       - "canary-local/tools/gen_flash.py"
       # the display host test's LVGL font metrics are generated from the
       # emulator's pinned LVGL checkout (checked after the build below)
@@ -203,6 +208,11 @@ on:
       # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
       - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
+      # desktop_parity.test.js and the tools tests hold each flash.json
+      # product's monitor chips to the command handler that answers them
+      # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
+      # and the display's are under globs above)
+      - "firmware/canary/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -285,6 +295,11 @@ on:
       - "devices/**"
       - "firmware/boards/boards.json"
       - "firmware/envs/**"
+      # gen_figures.mjs reads every firmware/projects/<p>/*.ini (globIni, one
+      # level down: the envs, and the [platformio] src_dir and extra_configs
+      # that say which env builds which sketch tree, sweep A89), not only the
+      # four projects above: canary-ota's and canary-sentinel's too.
+      - "firmware/projects/*/*.ini"
       - "canary-local/tools/gen_flash.py"
       # the display host test's LVGL font metrics are generated from the
       # emulator's pinned LVGL checkout (checked after the build below)
@@ -423,6 +438,11 @@ on:
       # reads -> broker_nvs); canary_local.test.js replays the Witness
       # Wall contract vectors against both vendored walls
       - "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
+      # desktop_parity.test.js and the tools tests hold each flash.json
+      # product's monitor chips to the command handler that answers them
+      # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
+      # and the display's are under globs above)
+      - "firmware/canary/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -465,7 +485,7 @@ concurrency:
 jobs:
   logic-tests:
     name: page logic tests (committed artifacts)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -873,7 +893,7 @@ jobs:
 
   wasm-build-and-boot:
     name: firmware → wasm → boots in a browser
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -920,7 +940,7 @@ jobs:
         # turns the probes below red and skips every later step, and this is
         # the one proof of these sources that does not need the dist.
         run: bash canary-local/emulator/test/glass_turn.sh
-      - name: Runtime turn — the nightlight turned while it runs seats its companion on the perch (native g++, F222)
+      - name: Runtime turn — the nightlight turned while it runs seats its companion on the perch and hops once, one writer of its y, and logs the commit (native g++, F222, F242, F244, F279, F285)
         # build.sh's whole nightlight TU list (the real main.cpp and firmware,
         # the emulator's sources) with g++ against build.sh's pinned LVGL 8.4,
         # Crypto and ArduinoJson (the cached checkouts, or fetched into them at
@@ -928,7 +948,11 @@ jobs:
         # booted natively on a virtual clock: a unit turned at 7 s from each
         # rotation to each other through nightlight_request_rotation() (the
         # app's picker) must seat its companion where a boot at that rotation
-        # seats it. Proves the sources, not the dist's bytes. Before every step
+        # seats it, hop with the tumble's Startle (F242; inside the first 8 s
+        # of uptime, F279), keep one owner of the bird's y through that hop
+        # (F244) and write one [orient] line naming the turn and who asked
+        # (F285). Proves the sources, not the
+        # dist's bytes. Before every step
         # that reads the committed dist, for the step above's reason; bounded,
         # since a firmware loop that stops yielding would never end.
         timeout-minutes: 10
@@ -1116,6 +1140,17 @@ jobs:
         # frames and for partial updates (areas right of logical x 0, narrower
         # than the canvas); touch lands on what is drawn; the splash's turned
         # tail square draws; a glass with no turn buffer stays landscape.
+        # Then the same test in nightstand-c6's config (F248: the lean
+        # lv_conf, LVGL compiled lean, the C6 pin map's 172x320, the port's
+        # static buffer, never turned), whole frames and partial updates
+        # against a plain 172x320 display. And in both configs the boot
+        # splash's own speech-bubble tail (F246): the REAL splash.cpp and
+        # canary_mark.cpp play the first meeting on the dash's 800x480 and
+        # 480x800 and nightstand-c6's 172x320, typing every line of the
+        # script, and the tail, read off the frame at each new line, is
+        # drawn where its box and styles put it (as each of F185's options
+        # would be; the choice is not taken here).
+        # Every suite runs; the step fails at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift
         # self-test). Proves the sources on a 64-bit host, not an ESP32 build;

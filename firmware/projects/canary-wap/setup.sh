@@ -212,7 +212,7 @@ setup_arduino() {
 
     # No board pins or config header is staged: the sketch includes neither
     # (its pins are in canary_wap.ino, its feature flags in build_config.h),
-    # and firmware/configs/canary-wap/ is on no build's include path. Copying
+    # and there is no firmware/configs/canary-wap/ directory. Copying
     # pins.h, camera.h and config.h here made it look as if they configured
     # the build; they never did.
 

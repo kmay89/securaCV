@@ -31,7 +31,7 @@ concurrency:
 jobs:
   welcome:
     name: Label and welcome a new idea
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     # Cheap pre-filter so unrelated issues (bugs, security, board ports) never
     # start a runner. The real check is in the script: the form prefixes every

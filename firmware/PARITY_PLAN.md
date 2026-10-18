@@ -64,7 +64,8 @@ is already at parity ✅) are omitted.
 > **Chirp API consolidation (2026-06-09):** the chirp **API** was consolidated as a precursor to
 > the body port. `firmware/common/chirp/chirp_channel.h` is ratified as the **single canonical
 > C-ABI chirp-channel API** (no build includes it yet: the canary-wap PIO lane that was said to
-> consume it was the deleted `src/` scaffold, and firmware/tests_host only syntax-checks it); the Arduino
+> consume it was the deleted `src/` scaffold; firmware/tests_host syntax-checks it, and canary-wap's
+> `test_chirp_protocol_invariants.cpp` holds its values to the reference's, sweep F272); the Arduino
 > `chirp_channel::` C++ namespace (in that lane's `mesh_network.h` + `chirp_channel.cpp`) is the
 > reference implementation to adapt, and `chirp_api.h` (HTTP layer) / `ble_chirp.h` (separate BLE
 > feature) are adjacent surfaces, not competing core APIs. The catalog + the

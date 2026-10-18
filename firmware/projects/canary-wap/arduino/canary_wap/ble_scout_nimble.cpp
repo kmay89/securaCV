@@ -48,11 +48,13 @@
 
 #include "ble_scout.h"
 #include "ble_scan.h"
+#include "ble_scout_advert_kind.h"  // keeps the fleet's own adverts out of pairing
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEScan.h>
 #include "ble_heap_guard.h"
+#include <string>
 
 namespace ble_scout {
 
@@ -82,7 +84,15 @@ class ScoutScanCallbacks : public NimBLEScanCallbacks {
      * agree, and no MAC is ever typed, stored or sent anywhere. */
     const uint8_t* mac  = device->getAddress().getBase()->val;
     const int8_t   rssi = (int8_t)device->getRSSI();
-    ble_scout_on_advert(mac, rssi, millis());
+    /* The manufacturer data, read once (empty when the advert carries none).
+     * An advert in the fleet's own formats — another Canary's presence
+     * beacon or Chirp — is never offered to the pairing window (repo sweep
+     * F36); tracking a paired device is unchanged either way. */
+    const std::string mfg =
+        device->haveManufacturerData() ? device->getManufacturerData() : std::string();
+    const uint8_t* mfg_bytes = reinterpret_cast<const uint8_t*>(mfg.data());
+    const bool offerable = advert_kind::offerable(mfg_bytes, mfg.size());
+    ble_scout_on_advert(mac, rssi, millis(), offerable);
   }
   void onScanEnd(const NimBLEScanResults& /*results*/, int reason) override {
     /* An "infinite" (duration=0) scan still ends — host reset, controller

@@ -168,6 +168,9 @@
 #include "wap_diagnostics.h"     // pure, host-tested: GET /api/diagnostics's body (F149)
 #include "fleet_scan_cache.h"    // pure, host-tested: the fleet scan's cache keeps the adverts that fit (F211)
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
+#include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
+#include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
+#include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
 #include "csi_event_log.h"       // SD-backed event persistence + MQTT backfill
@@ -1216,6 +1219,16 @@ static void print_quick_connect_details(const char* title);
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out);
 // log_health is declared extern in health_log.h for use by other modules
 void log_health(LogLevel level, LogCategory category, const char* message, const char* detail = nullptr);
+// A health-log line whose detail is an SSID (sweep F262): GET /api/logs
+// writes the detail through ArduinoJson, which writes a control byte raw, and
+// an SSID is whatever bytes an access point broadcast or a person typed. The
+// SSID goes in with its control bytes as U+FFFD (wap_json::replaced_text()),
+// cut on a character to the detail the ring keeps whole.
+static void log_health_ssid(LogLevel level, LogCategory category, const char* message, const char* ssid) {
+  char shown[sizeof(HealthLogRingEntry::detail)];
+  wap_json::replaced_text(shown, sizeof(shown), ssid);
+  log_health(level, category, message, shown);
+}
 
 // WiFi provisioning
 static bool wifi_load_credentials();
@@ -4709,79 +4722,63 @@ static esp_err_t handle_config_post(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// POST /api/export: the witness bundle header (version, device, firmware,
+// ruleset, export time, chain position, record count, public key), answered
+// INLINE beside ok:true (sweep F278). It used to be written only to the card
+// and answered as download_url "/api/download?path=...", a route nothing
+// registers, so the dashboard's Export always failed after a good export.
+// The bundle is a fixed set of short fields (a few hundred bytes of JSON), so
+// the handler holds it whole and the page saves the answer itself, as the
+// PlatformIO canary's handle_export does. With a card in, the same header is
+// still written to /EXPORT/bundle_<ms>.json (the export staging area POST
+// /api/logs/rotate trims), and the answer names that copy in card_path; a
+// card that is missing or refuses the write costs the copy, not the export.
 static esp_err_t handle_export(httpd_req_t* req) {
   g_health.http_requests++;
 
-  // Check SD card availability using hardware state (non-blocking)
-  if (!sd_is_available()) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "SD card not available";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    doc["sd_available"] = false;
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Verify SD card is still present before proceeding
-  if (!sd_verify_present()) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "SD card was removed during operation";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    doc["sd_available"] = false;
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Create export bundle
-  char export_path[64];
-  // Root-level /EXPORT: the SD library already roots paths at the card, so
-  // the old "/sd/EXPORT" spelling addressed a literal "sd" subdirectory
-  // that nothing ever created — every bundle write failed on a card
-  // provisioned with the /EXPORT dir the mount path mkdirs.
-  snprintf(export_path, sizeof(export_path), "/EXPORT/bundle_%u.json", (unsigned)millis());
-
-  File file = SD.open(export_path, FILE_WRITE);
-  if (!file) {
-    // SD operation failed - mark as error
-    sd_op_failure();
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Failed to create export file";
-    doc["sd_state"] = sd_state_name(g_hw.sd_state);
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  // Write export header
-  JsonDocument header;
-  header["version"] = PROTOCOL_VERSION;
-  header["device_id"] = g_device.device_id;
-  header["firmware"] = FIRMWARE_VERSION;
-  header["ruleset"] = RULESET_ID;
-  header["export_time_ms"] = millis();
-  header["chain_seq"] = g_device.seq;
-  header["records_total"] = g_health.records_created;
+  JsonDocument doc;
+  doc["version"] = PROTOCOL_VERSION;
+  doc["device_id"] = g_device.device_id;
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["ruleset"] = RULESET_ID;
+  doc["export_time_ms"] = millis();
+  doc["chain_seq"] = g_device.seq;
+  doc["records_total"] = g_health.records_created;
 
   char pubkey_hex[65];
   hex_to_str(pubkey_hex, g_device.pubkey, 32);
-  header["pubkey"] = pubkey_hex;
+  doc["pubkey"] = pubkey_hex;
 
-  serializeJson(header, file);
-  file.close();
+  // The card copy. Root-level /EXPORT: the SD library already roots paths
+  // at the card, so the old "/sd/EXPORT" spelling addressed a literal "sd"
+  // subdirectory that nothing ever created.
+  char export_path[64] = "";
+  const bool card = sd_is_available() && sd_verify_present();
+  if (card) {
+    snprintf(export_path, sizeof(export_path), "/EXPORT/bundle_%u.json", (unsigned)millis());
+    File file = SD.open(export_path, FILE_WRITE);
+    bool whole = false;
+    if (file) {
+      // The header alone, as before; a short write is no copy.
+      whole = serializeJson(doc, file) == measureJson(doc);
+      file.close();
+      if (!whole) SD.remove(export_path);
+    }
+    if (whole) {
+      sd_op_success();
+      log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created", export_path);
+    } else {
+      sd_op_failure();
+      export_path[0] = '\0';
+      log_health(SCV_LOG_NOTICE, SCV_CAT_STORAGE, "Export card copy failed", nullptr);
+    }
+  } else {
+    log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created (no card copy)", nullptr);
+  }
 
-  // Mark successful SD operation
-  sd_op_success();
-
-  log_health(SCV_LOG_INFO, SCV_CAT_USER, "Export created", export_path);
-
-  JsonDocument doc;
   doc["ok"] = true;
-  doc["download_url"] = String("/api/download?path=") + export_path;
+  doc["sd_available"] = card;
+  if (export_path[0]) doc["card_path"] = export_path;
 
   String response;
   serializeJson(doc, response);
@@ -6402,11 +6399,17 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["ok"] = true;
   doc["state"] = wifi_state_name(g_wifi_status.state);
   doc["ap_active"] = g_wifi_status.ap_active;
-  doc["ap_ssid"] = g_device.ap_ssid;
+  // Every SSID the answer carries, with its control bytes as U+FFFD (sweep
+  // F262): the home network's is whatever a person typed or a QR code held.
+  char ap_ssid[wap_json::replaced_cap(sizeof(g_device.ap_ssid) - 1)];
+  wap_json::replaced_text(ap_ssid, sizeof(ap_ssid), g_device.ap_ssid);
+  char sta_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(sta_ssid, sizeof(sta_ssid), g_wifi_creds.configured ? g_wifi_creds.ssid : "");
+  doc["ap_ssid"] = ap_ssid;
   doc["ap_ip"] = g_wifi_status.ap_ip;
   doc["ap_clients"] = g_wifi_status.ap_clients;
   doc["sta_connected"] = g_wifi_status.sta_connected;
-  doc["sta_ssid"] = g_wifi_creds.configured ? g_wifi_creds.ssid : "";
+  doc["sta_ssid"] = sta_ssid;
   doc["sta_ip"] = g_wifi_status.sta_ip;
   doc["rssi"] = g_wifi_status.rssi;
   doc["configured"] = g_wifi_creds.configured;
@@ -6558,7 +6561,11 @@ static String scan_cache_json(bool from_cache, uint32_t now) {
   JsonArray networks = doc["networks"].to<JsonArray>();
   for (int i = 0; i < g_scan_cache_count; i++) {
     JsonObject net = networks.add<JsonObject>();
-    net["ssid"] = g_scan_cache[i].ssid;
+    // Up to 32 bytes the access point chose, any of them a control byte
+    // ArduinoJson would write raw (sweep F262): written as U+FFFD, whole.
+    char ssid[wap_json::replaced_cap(sizeof(ScanCacheEntry::ssid) - 1)];
+    wap_json::replaced_text(ssid, sizeof(ssid), g_scan_cache[i].ssid);
+    net["ssid"] = ssid;
     net["rssi"] = g_scan_cache[i].rssi;
     net["channel"] = g_scan_cache[i].channel;
     net["security"] = g_scan_cache[i].security;
@@ -6566,6 +6573,26 @@ static String scan_cache_json(bool from_cache, uint32_t now) {
   String out;
   serializeJson(doc, out);
   return out;
+}
+
+// The cached network a posted SSID names (the F262 review). The list above
+// shows each network's control bytes as U+FFFD and a browser shows any byte
+// that is not UTF-8 the same way, so the wizard and the dashboard post back
+// a text no access point broadcasts. When `posted` is a cached network's
+// name as a page shows it (wap_json::listed_by_shown()), that network's own
+// bytes are copied to out[cap] and the answer is true; a name no cached
+// network shows as (typed by hand, a hidden network, a cache swept since,
+// or a cache busy past the httpd task's wait) answers false, and the
+// caller joins the name as posted.
+static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
+  if (out == nullptr || cap == 0 || !scan_cache_take(SCAN_CACHE_WAIT_HTTPD_MS)) return false;
+  const int i = wap_json::listed_by_shown(posted, g_scan_cache_count,
+                                          [](int k) { return (const char*)g_scan_cache[k].ssid; });
+  const size_t len = i >= 0 ? strlen(g_scan_cache[i].ssid) : 0;
+  const bool found = i >= 0 && len < cap;
+  if (found) memcpy(out, g_scan_cache[i].ssid, len + 1);
+  scan_cache_give();
+  return found;
 }
 
 // A request that asked for the device by its real name (vs a captive-portal
@@ -6833,7 +6860,12 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     case WifiChangeAuth::INVALID_TOKEN: return wifi_change_send_invalid_token(req);
   }
 
-  const char* ssid = body["ssid"] | "";
+  // A network the scan list showed is joined by its own bytes: the page
+  // posts back the text it was shown, U+FFFD and all (the F262 review).
+  const char* posted_ssid = body["ssid"] | "";
+  char listed_ssid[sizeof(ScanCacheEntry::ssid)];
+  const char* ssid = scan_cache_listed_ssid(posted_ssid, listed_ssid, sizeof(listed_ssid))
+                         ? listed_ssid : posted_ssid;
   const char* password = body["password"] | "";
 
   // The ONE credential rule (wifi_credential_policy.h, staged from
@@ -6867,15 +6899,12 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // persists to NVS ("dev_name") and becomes this device's unique mDNS
   // hostname canary-<name>.local, so multiple Canaries are easy to tell apart.
   // We only accept a name that survives RFC-1123 sanitization (otherwise it
-  // would yield an empty/degenerate label); silently ignore an unusable name
-  // rather than failing the whole WiFi save.
+  // would yield an empty/degenerate label) and holds no control byte (sweep
+  // F226: device_name_rule.h); silently ignore an unusable name rather than
+  // failing the whole WiFi save.
   const char* device_name = body["device_name"] | "";
-  if (strlen(device_name) > 0 && strlen(device_name) <= setup_wizard::DEVICE_NAME_MAX) {
-    char probe[setup_wizard::DEVICE_NAME_MAX + 1];
-    sanitize_mdns_label(device_name, probe, sizeof(probe));
-    if (probe[0] && setup_wizard::set_device_name(device_name)) {
-      generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
-    }
+  if (device_name_rule::usable(device_name) && setup_wizard::set_device_name(device_name)) {
+    generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
   }
 
   // Household time zone seed (repo sweep F28): the setup wizard sends the
@@ -6933,10 +6962,13 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   // Attempt connection
   wifi_connect_to_home();
 
+  // The SSID as saved, its control bytes as U+FFFD (sweep F262).
+  char saved_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(saved_ssid, sizeof(saved_ssid), g_wifi_creds.ssid);
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Credentials saved, attempting connection";
-  doc["ssid"] = g_wifi_creds.ssid;
+  doc["ssid"] = saved_ssid;
   doc["tz"] = tz_outcome;
 
   String response;
@@ -7092,9 +7124,9 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
   __atomic_store_n(&g_onboard_creds_submitted, true, __ATOMIC_RELAXED);
   wifi_connect_to_home();
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "WiFi credentials applied via BLE provisioning",
-             g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "WiFi credentials applied via BLE provisioning",
+                  g_wifi_creds.ssid);
   return true;
 }
 
@@ -7147,9 +7179,9 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
   __atomic_store_n(&g_onboard_creds_submitted, true, __ATOMIC_RELAXED);
   wifi_connect_to_home();
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "Setup door: WiFi credentials applied for one join (saved once it works)",
-             g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "Setup door: WiFi credentials applied for one join (saved once it works)",
+                  g_wifi_creds.ssid);
   return true;
 }
 
@@ -7184,9 +7216,9 @@ bool ble_improv_join_verdict(bool joined) {
                  "Setup door: joined, but the credentials were forgotten meanwhile — nothing saved",
                  nullptr);
     } else if (!wifi_save_credentials()) {
-      log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-                 "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
-                 g_wifi_creds.ssid);
+      log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                      "Setup door: joined, but the credentials were NOT saved (NVS) — kept until reboot",
+                      g_wifi_creds.ssid);
     }
     return true;
   }
@@ -7491,10 +7523,13 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
 
   wifi_connect_to_home();
 
+  // The SSID as saved, its control bytes as U+FFFD (sweep F262).
+  char saved_ssid[wap_json::replaced_cap(sizeof(g_wifi_creds.ssid) - 1)];
+  wap_json::replaced_text(saved_ssid, sizeof(saved_ssid), g_wifi_creds.ssid);
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "Attempting to reconnect";
-  doc["ssid"] = g_wifi_creds.ssid;
+  doc["ssid"] = saved_ssid;
 
   String response;
   serializeJson(doc, response);
@@ -7612,6 +7647,15 @@ static esp_err_t handle_fleet_qr(httpd_req_t* req) {
 
   url_decode_inplace(ssid);
   url_decode_inplace(pass);
+
+  // The Fleet sheet fills the name in from GET /api/wifi, which shows the
+  // home network's control bytes as U+FFFD (F262): that text is the home
+  // network, and the scanning Canary joins by what the code says, so it
+  // carries the network's own bytes (the F262 review).
+  if (wap_json::shows_as(g_wifi_creds.ssid, ssid)) {
+    strncpy(ssid, g_wifi_creds.ssid, sizeof(ssid) - 1);
+    ssid[sizeof(ssid) - 1] = '\0';
+  }
 
   // The SECURACV: payload is ';'-delimited and the scanner's parser has no
   // escape sequence — credentials containing ';' would encode a QR that
@@ -8159,10 +8203,10 @@ static void qr_scan_task_fn(void* param) {
         // The "for sure it saw it" answer: an ascending chirp (or LED
         // blink on silent hardware) the moment credentials are accepted.
         audible_chirp::play_pattern(audible_chirp::PATTERN_SUCCESS);
-        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-                   hub_saved ? "WiFi + hub applied via QR scan"
-                             : "WiFi credentials applied via QR scan",
-                   ssid);
+        log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                        hub_saved ? "WiFi + hub applied via QR scan"
+                                  : "WiFi credentials applied via QR scan",
+                        ssid);
       }
 
       memset(pass, 0, sizeof(pass));
@@ -8346,8 +8390,11 @@ static esp_err_t handle_qr_scan_status(httpd_req_t* req) {
   doc["ok"] = true;
   doc["scanning"] = (bool)g_qr_scan_active;
   doc["success"] = (bool)g_qr_scan_success;
-  if (g_qr_scanned_ssid[0])
-    doc["ssid"] = g_qr_scanned_ssid;
+  // The SSID the QR code held, its control bytes as U+FFFD (sweep F262).
+  char scanned_ssid[wap_json::replaced_cap(sizeof(g_qr_scanned_ssid) - 1)];
+  wap_json::replaced_text(scanned_ssid, sizeof(scanned_ssid), g_qr_scanned_ssid);
+  if (scanned_ssid[0])
+    doc["ssid"] = scanned_ssid;
   if (g_qr_scan_error[0])
     doc["error"] = g_qr_scan_error;
 
@@ -8473,11 +8520,16 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
   in.ap_auth      = g_wifi_status.ap_auth[0] ? g_wifi_status.ap_auth : "unknown";
 
   // Measured, then written into exactly that much heap (sweep F212): no
-  // fixed buffer to outgrow, and never a cut answer.
+  // fixed buffer to outgrow, and never a cut answer. ap_auth is the loop
+  // task's: a label that grew between the measure and the write is refused
+  // by the builder (sweep F230), and so is the answer, never sent empty.
   const size_t need = identity_json::device_info(in, nullptr, 0) + 1;
   char* json = (char*)malloc(need);
   if (!json) return http_send_error(req, 500, "out_of_memory");
-  identity_json::device_info(in, json, need);
+  if (identity_json::device_info(in, json, need) >= need) {
+    free(json);
+    return http_send_error(req, 503, "answer_changed");
+  }
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -8490,32 +8542,84 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // API: PROVISIONING RECEIPT (physical gate or Bearer auth)
 // ════════════════════════════════════════════════════════════════════════════
 
-// `via_claim`: the caller spent a setup-door claim, so it is on the home LAN
-// by construction (claim_ticket.h), and this receipt is the one the phone
-// KEEPS for the life of the pairing — so it spells the STEADY-STATE address,
-// not this boot's: base_url at the device's .local name (the SoftAP address
-// the other two grants answer with is gone once the AP drops), https with
-// the certificate's fingerprint when TLS will be on after setup
-// (tls_after_setup()). The door joins inside the first-boot wizard, where
-// the HTTPS server is held off; the WAP reboots into https a short runway
-// after this answer leaves (loop(), g_improv_claim_spent_at_ms). A phone
-// that stored this boot's http base_url, as it did, could never reach the
-// device again. The bearer and BOOT-tap answers are unchanged: the servers
-// up now, the SoftAP address (the app rebases it onto the address it
-// discovered).
-static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = false) {
+// Host-order IPv4 (a<<24 | b<<16 | c<<8 | d) of an Arduino IPAddress: the
+// packing receipt_authority.h holds (and the host test checks).
+static uint32_t ipv4_host_order(const IPAddress& ip) {
+  return receipt_authority::ipv4_from_octets(ip[0], ip[1], ip[2], ip[3]);
+}
+
+// The IPv4 address this request arrived on: the socket's LOCAL address
+// (getsockname), host order, or 0 when the socket cannot say. On the
+// dual-stack listener both cores open, an IPv4 request reads as
+// ::ffff:a.b.c.d (receipt_authority::ipv4_from_addr maps it). The same
+// fd works under esp_https_server, whose sessions sit on the httpd socket.
+static uint32_t request_local_ipv4(httpd_req_t* req) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return 0;
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof(ss);
+  memset(&ss, 0, sizeof(ss));
+  if (getsockname(fd, (struct sockaddr*)&ss, &len) != 0) return 0;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return receipt_authority::ipv4_from_addr(receipt_authority::AddrFamily::IPV4,
+                                             (const uint8_t*)&sin->sin_addr.s_addr);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return receipt_authority::ipv4_from_addr(receipt_authority::AddrFamily::IPV6,
+                                             (const uint8_t*)&sin6->sin6_addr);
+  }
+#endif
+  return 0;
+}
+
+// What receipt_authority.h decides from, read where the device keeps it:
+// the request's own local address, the SoftAP's (0.0.0.0 on core 3.x once
+// wifi_drop_ap() released the AP netif), the STA's while it is connected,
+// and the mDNS host. The receipt and port 80's redirect both ask it.
+static receipt_authority::Inputs request_reach(httpd_req_t* req, receipt_authority::Grant grant) {
+  receipt_authority::Inputs reach = {};
+  reach.request_local = request_local_ipv4(req);
+  reach.softap_ip     = ipv4_host_order(WiFi.softAPIP());
+  reach.sta_ip        = WiFi.isConnected() ? ipv4_host_order(WiFi.localIP()) : 0;
+  reach.mdns_host     = g_device.mdns_hostname;
+  reach.grant         = grant;
+  return reach;
+}
+
+// `grant`: what admitted the request. The base_url's authority is
+// receipt_authority.h's choice (sweep F255): the device's .local name
+// whenever the STA holds an address and the request did not arrive on the
+// SoftAP (a receipt fetched over the home LAN used to name 192.168.4.1,
+// which no LAN reader reaches and which is gone once the AP drops); the
+// SoftAP address for a bearer or BOOT-tap request made over the SoftAP, or
+// whenever the STA is down. A spent setup-door claim answers the .local
+// name whenever the STA holds an address, as it always did. A device with
+// no name and no address at all refuses rather than name nothing.
+static esp_err_t send_provisioning_receipt(httpd_req_t* req, receipt_authority::Grant grant) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
-  String authority = WiFi.softAPIP().toString();
-  if (via_claim && g_device.mdns_hostname[0] != '\0') {
-    authority = String(g_device.mdns_hostname) + ".local";
+  char authority[80];
+  if (receipt_authority::write(authority, sizeof(authority), request_reach(req, grant)) == 0) {
+    return http_send_error(req, 503, "no_address");
   }
-  const bool tls = via_claim ? tls_after_setup() : g_tls_enabled;
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
+  // A spent setup-door claim is the receipt the phone KEEPS for the life
+  // of the pairing, so it spells the STEADY-STATE transport, not this
+  // boot's: https with the certificate's fingerprint when TLS will be on
+  // after setup (tls_after_setup()). The door joins inside the first-boot
+  // wizard, where the HTTPS server is held off; the WAP reboots into https
+  // a short runway after this answer leaves (loop(),
+  // g_improv_claim_spent_at_ms). The bearer and BOOT-tap answers name the
+  // servers up now.
+  const bool tls = (grant == receipt_authority::Grant::SETUP_DOOR_CLAIM) ? tls_after_setup()
+                                                                      : g_tls_enabled;
   in.tls_enabled = tls;
-  in.ap_ip       = authority.c_str();
+  in.ap_ip       = authority;
   in.token       = g_device.api_token_str;
   in.pubkey_fp   = g_device.fingerprint_hex;
   in.firmware    = FIRMWARE_VERSION;
@@ -8533,7 +8637,11 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = fa
   const size_t need = identity_json::provisioning_receipt(in, nullptr, 0) + 1;
   char* json = (char*)malloc(need);
   if (!json) return http_send_error(req, 500, "out_of_memory");
-  identity_json::provisioning_receipt(in, json, need);
+  if (identity_json::provisioning_receipt(in, json, need) >= need) {
+    secure_zero(json, need);   // a refused write pass leaves its whole pieces behind
+    free(json);
+    return http_send_error(req, 503, "answer_changed");
+  }
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -8560,7 +8668,7 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 
   // 1. A valid Bearer token always serves (for SAP re-sync).
   if (api_auth_check_optional(req, g_device.api_token_str)) {
-    return send_provisioning_receipt(req);
+    return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
   // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
@@ -8626,7 +8734,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
     }
   }
-  esp_err_t result = send_provisioning_receipt(req, claim_served);
+  esp_err_t result = send_provisioning_receipt(
+      req, claim_served ? receipt_authority::Grant::SETUP_DOOR_CLAIM
+                        : receipt_authority::Grant::BOOT_TAP);
   if (claim_served) {
     // The phone holds the steady-state address now; the loop task brings
     // the reboot that answers it to a short runway from here (HTTP task →
@@ -8647,49 +8757,21 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
-// Port 80 → https, at the address the client used. The Location used to
-// name WiFi.softAPIP(): right for a phone on the SoftAP, dead for one on
-// the LAN — where every client is once the AP drops after setup, and where
-// a paired phone that kept an http base_url landed. So the Host the request
-// carried, when it is one (letters, digits, dots, dashes; an IPv6 literal's
-// brackets and colons; a port is dropped — the HTTPS server is on 443);
-// without one (HTTP/1.0), or with anything else, the STA address when the
-// STA holds one, else the .local name (the captive DNS answers it on the
-// AP). A Host header is attacker-chosen text headed into a response header,
-// so anything outside that alphabet is refused, not forwarded.
-static bool redirect_host_ok(const char* host) {
-  if (host[0] == '\0') return false;
-  for (const char* p = host; *p; ++p) {
-    const unsigned char c = (unsigned char)*p;
-    if (!(isalnum(c) || c == '.' || c == '-' || c == ':' || c == '[' || c == ']')) return false;
-  }
-  return true;
-}
-
+// The Location names the WAP the way the receipt's base_url does
+// (receipt_authority.h): a caller on the setup network keeps the SoftAP
+// address, anyone else gets the .local name. It used to be WiFi.softAPIP()
+// for everyone, so http://canary-<suffix>.local/ typed on the home network
+// went to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
+// which the home network cannot reach.
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char host[96] = {0};
-  bool have = httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
-              redirect_host_ok(host);
-  if (have) {
-    // Drop a ":port" — not the colons of a bare IPv6 literal, whose port
-    // follows its closing bracket.
-    char* colon = strrchr(host, ':');
-    if (colon && strchr(colon, ']') == nullptr) *colon = '\0';
-    have = host[0] != '\0';
+  char authority[80];
+  if (receipt_authority::write(authority, sizeof(authority),
+                               request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "No address to redirect to.");
   }
-  if (!have) {
-    if (WiFi.isConnected()) {
-      snprintf(host, sizeof(host), "%s", WiFi.localIP().toString().c_str());
-    } else {
-      snprintf(host, sizeof(host), "%s.local", g_device.mdns_hostname);
-    }
-  }
-  char location[256];
-  const int n = snprintf(location, sizeof(location), "https://%s%s", host, req->uri);
-  if (n < 0 || (size_t)n >= sizeof(location)) {
-    // A cut URI would redirect to the wrong page: the root instead.
-    snprintf(location, sizeof(location), "https://%s/", host);
-  }
+  char location[128];
+  snprintf(location, sizeof(location), "https://%s%s", authority, req->uri);
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
@@ -8854,11 +8936,12 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
     if (deserializeJson(body, content) == DeserializationError::Ok) {
       name = body["name"] | "";
     }
-    char probe[setup_wizard::DEVICE_NAME_MAX + 1] = {0};
-    if (name) sanitize_mdns_label(name, probe, sizeof(probe));
-    if (!name || strlen(name) == 0 || strlen(name) > setup_wizard::DEVICE_NAME_MAX || !probe[0]) {
+    // 1-32 bytes, no control byte, a letter or digit for the mDNS label
+    // (sweep F226: device_name_rule.h, the setter's own rule), refused in
+    // that rule's own words (F263).
+    if (!device_name_rule::usable(name)) {
       doc["ok"] = false;
-      doc["error"] = "Invalid name (1-32 chars, letters/digits/hyphen)";
+      doc["error"] = device_name_rule::kRefusal;
     } else if (!setup_wizard::set_device_name(name)) {
       doc["ok"] = false;
       doc["error"] = "Could not save name";
@@ -10128,7 +10211,7 @@ static void wifi_store_note_joined(const char* ssid, const char* pass) {
     g_wifi_store_dirty = false;
   } else {
     g_wifi_store_dirty = true;
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "Saved-networks ring NOT written (NVS)", ssid);
+    log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK, "Saved-networks ring NOT written (NVS)", ssid);
   }
 }
 
@@ -10157,8 +10240,8 @@ static void wifi_store_rotate_if_due() {
   const int next = canary::net::wifi_store::pick(g_wifi_store, nullptr, nullptr, 0, cur);
   if (next < 0 || next == cur) return;
   wifi_store_adopt(next);
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
-             "Network not found twice - trying the next saved network", g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                  "Network not found twice - trying the next saved network", g_wifi_creds.ssid);
 }
 
 static bool wifi_load_credentials() {
@@ -10255,14 +10338,14 @@ static bool wifi_save_credentials() {
     ok = nvs->putBool(NVS_KEY_WIFI_AP_ONLY, false) == sizeof(bool) && ok;
   }
   if (!ok) {
-    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK,
-               "WiFi credentials NOT saved (NVS write failed)", g_wifi_creds.ssid);
+    log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK,
+                    "WiFi credentials NOT saved (NVS write failed)", g_wifi_creds.ssid);
     return false;
   }
   g_wifi_ap_only = false;
   g_wifi_creds.configured = true;
 
-  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
+  log_health_ssid(SCV_LOG_INFO, SCV_CAT_NETWORK, "WiFi credentials saved", g_wifi_creds.ssid);
   return true;
 }
 
@@ -10391,8 +10474,12 @@ static void wifi_connect_to_home() {
   g_wifi_status.connect_attempts++;
   g_wifi_status.last_connect_ms = millis();
 
+  // The SSID with its control bytes as U+FFFD, cut on a character to what
+  // the line has room for (sweep F262: GET /api/logs writes the line raw).
   char msg[64];
-  snprintf(msg, sizeof(msg), "Connecting to: %s", g_wifi_creds.ssid);
+  char shown[sizeof(msg) - (sizeof("Connecting to: ") - 1)];
+  wap_json::replaced_text(shown, sizeof(shown), g_wifi_creds.ssid);
+  snprintf(msg, sizeof(msg), "Connecting to: %s", shown);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, nullptr);
 
   // Start connection (non-blocking)
@@ -10512,7 +10599,9 @@ static void wifi_check_connection() {
         }
 
         char msg[80];
-        snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
+        char shown[sizeof(msg) - (sizeof("Connected to ") - 1)];   // F262, as "Connecting to: "
+        wap_json::replaced_text(shown, sizeof(shown), g_wifi_creds.ssid);
+        snprintf(msg, sizeof(msg), "Connected to %s", shown);
         log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.sta_ip);
         break;
       }
@@ -10539,7 +10628,7 @@ static void wifi_check_connection() {
         snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
                  "%s", label);
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, label, g_wifi_creds.ssid);
+        log_health_ssid(SCV_LOG_WARNING, SCV_CAT_NETWORK, label, g_wifi_creds.ssid);
         // The ring's tally (RAM; written with the next proven join): a
         // NotFound twice running on this pick is what lets the FAILED
         // retry below move on to the next saved network.
@@ -10942,8 +11031,12 @@ static void wifi_init_provisioning() {
     Serial.println("[OK] Pre-scanning WiFi networks for the setup wizard");
   }
 
+  // The device's own AP name, written as every SSID in a log line is
+  // (sweep F262): its control bytes (it has none) as U+FFFD.
   char msg[64];
-  snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
+  char shown_ssid[sizeof(msg) - (sizeof("AP: ") - 1)];
+  wap_json::replaced_text(shown_ssid, sizeof(shown_ssid), ap_ssid);
+  snprintf(msg, sizeof(msg), "AP: %s", shown_ssid);
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status.ap_ip);
 
   // Start mDNS with this device's UNIQUE hostname (e.g. canary-kitchen or
@@ -12763,6 +12856,16 @@ static void ble_bringup_finalize_if_done() {
   ble_scout::ble_scout_init();
   #endif
 
+  // Last (sweep F235's review): the boot bring-up is over. Only from here
+  // does a Start Advertising or Pair tap on a device saved on bring the
+  // stack up on the HTTP task (bluetooth_api.h's waits_for_boot_bring_up()):
+  // everything above that can run NimBLEDevice::init() (the worker's
+  // channel and ble_manager inits, the Scout's nimble_scan_init() just
+  // above) has run, so a tap's init() runs beside none of them.
+  #if FEATURE_BLUETOOTH
+  bluetooth_channel::boot_bring_up_finished();
+  #endif
+
   log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH,
              "BLE bring-up finalized (post-provisioning window)", nullptr);
 }
@@ -12821,6 +12924,7 @@ static void ble_discovery_start_if_due() {
       != pdPASS) {
     #if FEATURE_BLUETOOTH
     bluetooth_channel::bringup_worker_finished();   // no worker: nothing to wait for
+    bluetooth_channel::boot_bring_up_finished();    // and no finalize stage: a tap may bring it up (F235)
     #endif
     g_ble_init_attempted = true;
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,

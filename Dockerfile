@@ -55,7 +55,10 @@ WORKDIR /data
 
 COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
 # Operator tooling: verify, export, and manage break-glass on the sealed
-# log/vault this container owns under /data, without copying the encrypted
+# log/vault this container owns under /data, and mint the Witness Wall's
+# viewer tokens (`witness_api mint-viewer-token`, run with `docker exec`:
+# it writes the token file witnessd re-reads per request and never serves
+# here — witnessd stays the entrypoint), without copying the encrypted
 # database out of the volume. Already compiled by the build above (none of
 # these are feature-gated); adds binaries only, no extra runtime deps and
 # no new listening ports. (`log_anchor` here is the offline flow plus
@@ -71,6 +74,7 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 COPY --from=build /app/target/release/log_anchor /usr/local/bin/log_anchor
 COPY --from=build /app/target/release/court_export /usr/local/bin/court_export
+COPY --from=build /app/target/release/witness_api /usr/local/bin/witness_api
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
 # The default build of this image terminates no TLS in-process, so witnessd

@@ -90,6 +90,44 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "h",
+            "help"
+          ],
+          [
+            "j",
+            "self-manifest"
+          ],
+          [
+            "i",
+            "identity"
+          ],
+          [
+            "s",
+            "status"
+          ],
+          [
+            "t",
+            "all tests"
+          ],
+          [
+            "e",
+            "last boot"
+          ],
+          [
+            "f",
+            "provenance"
+          ],
+          [
+            "w",
+            "tamper log"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "canary",
       "prove": {
         "real": {
@@ -140,6 +178,44 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "h",
+            "help"
+          ],
+          [
+            "j",
+            "self-manifest"
+          ],
+          [
+            "i",
+            "identity"
+          ],
+          [
+            "s",
+            "status"
+          ],
+          [
+            "t",
+            "all tests"
+          ],
+          [
+            "e",
+            "last boot"
+          ],
+          [
+            "f",
+            "provenance"
+          ],
+          [
+            "w",
+            "tamper log"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "canary",
       "prove": {
         "real": {
@@ -204,6 +280,44 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "h",
+            "help"
+          ],
+          [
+            "j",
+            "self-manifest"
+          ],
+          [
+            "i",
+            "identity"
+          ],
+          [
+            "s",
+            "status"
+          ],
+          [
+            "t",
+            "all tests"
+          ],
+          [
+            "e",
+            "last boot"
+          ],
+          [
+            "f",
+            "provenance"
+          ],
+          [
+            "w",
+            "tamper log"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "canary",
       "prove": {
         "real": {
@@ -267,6 +381,44 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "h",
+            "help"
+          ],
+          [
+            "j",
+            "self-manifest"
+          ],
+          [
+            "i",
+            "identity"
+          ],
+          [
+            "s",
+            "status"
+          ],
+          [
+            "t",
+            "all tests"
+          ],
+          [
+            "e",
+            "last boot"
+          ],
+          [
+            "f",
+            "provenance"
+          ],
+          [
+            "w",
+            "tamper log"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "canary",
       "prove": {
         "real": {
@@ -317,6 +469,44 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "h",
+            "help"
+          ],
+          [
+            "i",
+            "identity"
+          ],
+          [
+            "s",
+            "status"
+          ],
+          [
+            "t",
+            "time"
+          ],
+          [
+            "w",
+            "Wi-Fi AP"
+          ],
+          [
+            "m",
+            "system"
+          ],
+          [
+            "b",
+            "battery"
+          ],
+          [
+            "g",
+            "GPS"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "wap",
       "prove": {
         "real": {
@@ -374,6 +564,20 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "j",
+            "install receipt"
+          ],
+          [
+            "h",
+            "help"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "vision",
       "prove": {
         "real": {
@@ -547,6 +751,20 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "j",
+            "install receipt"
+          ],
+          [
+            "h",
+            "help"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "vision",
       "prove": {
         "real": {
@@ -712,6 +930,20 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "j",
+            "install receipt"
+          ],
+          [
+            "h",
+            "help"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "vision",
       "prove": {
         "real": {
@@ -886,6 +1118,20 @@
         ]
       },
       "serial_receipt": true,
+      "monitor": {
+        "kind": "keys",
+        "cmds": [
+          [
+            "j",
+            "install receipt"
+          ],
+          [
+            "h",
+            "help"
+          ]
+        ],
+        "placeholder": "type a command — the firmware answers single keys; h shows its menu"
+      },
       "role": "vision",
       "prove": {
         "real": {
@@ -1060,6 +1306,28 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "words",
+        "cmds": [
+          [
+            "help",
+            "help"
+          ],
+          [
+            "cfg",
+            "all knobs"
+          ],
+          [
+            "stream on",
+            "radar line on"
+          ],
+          [
+            "stream off",
+            "radar line off"
+          ]
+        ],
+        "placeholder": "type a command — the tuning console reads words; help lists them"
+      },
       "role": "sense",
       "prove": {
         "real": {
@@ -1289,6 +1557,28 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "words",
+        "cmds": [
+          [
+            "help",
+            "help"
+          ],
+          [
+            "cfg",
+            "all knobs"
+          ],
+          [
+            "stream on",
+            "radar line on"
+          ],
+          [
+            "stream off",
+            "radar line off"
+          ]
+        ],
+        "placeholder": "type a command — the tuning console reads words; help lists them"
+      },
       "role": "sense",
       "prove": {
         "real": {
@@ -1670,6 +1960,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -1741,6 +2036,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -1798,6 +2098,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -1847,6 +2152,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -1904,6 +2214,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -1956,6 +2271,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -2013,6 +2333,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -2070,6 +2395,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -2127,6 +2457,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -2184,6 +2519,11 @@
         ]
       },
       "serial_receipt": false,
+      "monitor": {
+        "kind": "none",
+        "cmds": [],
+        "placeholder": "this firmware reads no serial commands — its console only prints"
+      },
       "role": "display",
       "prove": {
         "real": {
@@ -2215,6 +2555,11 @@
       }
     }
   ],
+  "monitor_unknown": {
+    "kind": "unknown",
+    "cmds": [],
+    "placeholder": "type a command — this board’s firmware wasn’t identified, so no command chips are shown"
+  },
   "displays": [
     {
       "id": "canary-display-watch",
@@ -2602,7 +2947,7 @@
     },
     "serial_monitor": {
       "label": "Serial monitor",
-      "what": "The board's live voice over USB: watch it think, send its single-key commands. Nothing typed here can break it."
+      "what": "The board's live voice over USB: watch it think, and send the commands its firmware answers (a display's reads none). Nothing typed here can break it."
     },
     "rescue": {
       "label": "Rescue",

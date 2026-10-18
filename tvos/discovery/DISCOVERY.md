@@ -98,7 +98,9 @@ The credential the Wall holds is a **viewer token**, not the capability
 token: that one rotates every ten minutes in a file a television cannot
 read. The operator mints a viewer token once on the hub (`witness_api
 mint-viewer-token --label <room>`; `entrypoint.sh mint-viewer-token` in
-the Docker sidecar) and pastes the one line it prints — the pairing
+the Docker sidecar; `docker exec <container> witness_api mint-viewer-token
+--label <room>` in the root `witnessd` image, started with a token path —
+`docs/container.md`) and pastes the one line it prints — the pairing
 receipt, `{"sealed_log_token", "verifying_key", "token_id", "base_url"?}`
 — into the Wall's Settings → Verification. The kernel honors that token on
 `GET /api/sealed-log` alone (anywhere else it is a bad token that counts

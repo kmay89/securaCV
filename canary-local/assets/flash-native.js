@@ -7,8 +7,8 @@
 // mounts this bench instead: the ports come from the OS (`list_ports`), the
 // board is read and written by the Lab's bundled espflash through the SAME
 // commands the SecuraCV Flasher uses (`detect_chip`, `fetch_manifest`,
-// `flash`, `start_serial_monitor` — desktop/flash-engine, shared by both
-// apps), and the same events stream back (`flash:log`, `flash:progress`,
+// `flash`, `start_serial_monitor`, `serial_monitor_send` — desktop/flash-engine,
+// shared by both apps), and the same events stream back (`flash:log`, `flash:progress`,
 // `serial:status`, `serial:log`, `serial:receipt`; `flash:changemap` is drawn
 // from a safety copy, which this bench doesn't take, so it never comes).
 //
@@ -198,7 +198,12 @@ const requiresLiveReceipt = (product) => !product || product.serial_receipt !== 
 
 /** Mount the native bench. `renderWifiFields(box, product)` is flash.js's own
     Wi-Fi / broker form — the browser's form, reused, so a Canary set up here
-    gets exactly the fields (and the saved network) it gets in the browser. */
+    gets exactly the fields (and the saved network) it gets in the browser.
+    The post-flash monitor's command chips are the flashed product's own, from
+    the `catalog` handed in (products[].monitor through flash-core.js
+    monitorVocabulary — sweep A86): the record the browser flasher's monitor
+    and the Flasher read too, held to each firmware's command handler by
+    gen_flash.py. */
 export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   const st = {
     ports: [], port: null, portInfo: null, chip: null, flashBytes: null, mac: null,
@@ -207,6 +212,27 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     baudCeiling: null, monitoring: false, pollTimer: null,
   };
   const manifestUrl = () => (st.devChannel ? core.DEV_FLASH_MANIFEST_URL : catalog.manifest_url);
+  // The monitor's command row (its chips, the typed command and Send) is
+  // usable exactly while the monitor runs, the Flasher's setMonitorButtons:
+  // every place the bench takes the port back or the monitor ends goes
+  // through here, so a stopped monitor never leaves a live-looking Send.
+  let monitorControls = [];
+  const setMonitoring = (on) => {
+    st.monitoring = on;
+    for (const c of monitorControls) c.disabled = !on;
+  };
+  // The receipt card's serial:status / serial:log / serial:receipt listeners
+  // belong to that card alone (sweep A85). A new flash, a new card and a
+  // re-read each let go of the last card's three, or every further flash in
+  // one session leaves another set writing into a card that is no longer on
+  // the page (and a failed reflash, which draws no card, leaves them
+  // listening to a monitor that is not running).
+  let receiptCard = null; // { unlisteners: [] } while a card is drawn
+  const releaseReceipt = (card = receiptCard) => {
+    if (!card) return;
+    for (const u of card.unlisteners.splice(0)) u();
+    if (receiptCard === card) receiptCard = null;
+  };
 
   // ── the cards ────────────────────────────────────────────────────────────
   const head = el("section", "flash-card");
@@ -359,8 +385,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // taking it back first.
     if (st.monitoring) {
       try { await invoke("stop_serial_monitor"); } catch { /* already stopped */ }
-      st.monitoring = false;
+      setMonitoring(false);
     }
+    releaseReceipt(); // the card's listeners go with the port it watched
     st.failedPort = null;
     st.chip = null;
     pollPorts();
@@ -568,7 +595,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       }
     });
     try { await invoke("stop_serial_monitor"); } catch { /* not running is fine */ }
-    st.monitoring = false;
+    setMonitoring(false);
+    releaseReceipt(); // the last card's monitor is over; its listeners go too
     try {
       const receipt = await withBaudLadder((baud) => invoke("flash", {
         port: st.port,
@@ -614,7 +642,11 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // Claim the port for the monitor BEFORE anything awaits: the poll must
     // not read the rebooting board (a board-info resets it) while the
     // monitor is still starting.
-    st.monitoring = true;
+    monitorControls = []; // the last receipt's row went with its card
+    releaseReceipt(); // …and so do its listeners, before this card adds its own
+    const card = { unlisteners: [] };
+    receiptCard = card;
+    setMonitoring(true);
     result.innerHTML = "";
     result.classList.remove("flash-hidden");
     result.append(el("h2", null, `${product.name} v${receipt.version} is on the board`));
@@ -634,18 +666,18 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // The serial monitor, started the way the Flasher starts it after a flash:
     // one deliberate reboot of a native-USB board so its boot streams from
     // the first line, then a pure observer that rides out re-enumeration.
-    const unlisteners = [];
-    unlisteners.push(await listen("serial:status", (ev) => {
+    const hold = async (pending) => { card.unlisteners.push(await pending); };
+    await hold(listen("serial:status", (ev) => {
       status.textContent = String(ev.payload);
       // The monitor thread only ends when stopped; hand the port back to the
       // poll then (the Flasher reads the same word).
-      if (String(ev.payload).toLowerCase().includes("stopped")) st.monitoring = false;
+      if (String(ev.payload).toLowerCase().includes("stopped")) setMonitoring(false);
     }));
-    unlisteners.push(await listen("serial:log", (ev) => {
+    await hold(listen("serial:log", (ev) => {
       boot.textContent = (boot.textContent + String(ev.payload)).slice(-16 * 1024);
       boot.scrollTop = boot.scrollHeight;
     }));
-    unlisteners.push(await listen("serial:receipt", (ev) => {
+    await hold(listen("serial:receipt", (ev) => {
       const r = ev.payload || {};
       const m = r.manifest || {};
       // The self-manifest's `firmware` is the version string the board
@@ -655,11 +687,66 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
         ? `✓ ${m.board || product.name} booted and answered with its receipt${fw}.`
         : `The board answered${fw} — still waiting for everything it reports to come up.`;
     }));
+    // Talk back to the firmware's console: the Flasher's command row (its
+    // monitor chips and command box, desktop/src/app.js renderMonitorCmds and
+    // #monitor-cmd-form), in its words. The chips are the flashed product's
+    // own commands (sweep A86) and the box's placeholder says what that
+    // firmware reads — single keys, the tuning console's words, or nothing.
+    // Each chip sends its command and the box sends what was typed, each with
+    // the newline the firmware's command parser reads (the engine sends
+    // exactly what it is handed and appends nothing). A refused send is said
+    // in the status line, as the Flasher says it, never dropped. No
+    // line-ending picker: the Flasher's is for raw keystrokes, and this box is
+    // the browser flasher's, newline only.
+    const sendCommand = async (command) => {
+      if (!st.monitoring) return false;
+      try {
+        await invoke("serial_monitor_send", { command });
+        return true;
+      } catch (e) {
+        status.textContent = String(e);
+        return false;
+      }
+    };
+    const vocab = core.monitorVocabulary(catalog, product);
+    const chips = el("div", "flash-mon-chips");
+    for (const [cmd, label] of vocab.cmds) {
+      const b = el("button", "ghost small", `${label} (${cmd})`);
+      b.type = "button";
+      b.dataset.cmd = cmd;
+      b.addEventListener("click", () => { sendCommand(cmd + "\n"); });
+      chips.append(b);
+      monitorControls.push(b);
+    }
+    const inRow = el("div", "flash-mon-input");
+    const input = el("input");
+    input.type = "text";
+    input.placeholder = vocab.placeholder;
+    input.setAttribute("aria-label", "Serial command");
+    input.maxLength = 128;
+    const sendBtn = el("button", "primary small", "Send");
+    sendBtn.type = "button";
+    const sendTyped = async () => {
+      const text = input.value;
+      if (!text) return;
+      if (await sendCommand(text + "\n")) input.value = "";
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      if (ev.preventDefault) ev.preventDefault();
+      sendTyped();
+    });
+    sendBtn.addEventListener("click", () => { sendTyped(); });
+    inRow.append(input, sendBtn);
+    monitorControls.push(input, sendBtn);
+    setMonitoring(st.monitoring); // the row starts as usable as the monitor
+    result.append(chips, inRow);
+
     const stop = el("button", "ghost", "Stop watching");
     stop.addEventListener("click", async () => {
       try { await invoke("stop_serial_monitor"); } catch { /* already stopped */ }
-      st.monitoring = false;
-      for (const u of unlisteners.splice(0)) u();
+      setMonitoring(false);
+      releaseReceipt(card);
       stop.remove();
     });
     result.append(stop);
@@ -672,7 +759,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
         postFlash: true,
       });
     } catch (e) {
-      st.monitoring = false;
+      setMonitoring(false);
       status.textContent = `The write landed${receipt.chip_write_verified ? " (espflash confirmed it on the chip)" : ""}, ` +
         `but the serial monitor didn’t start (${e}).`;
     }

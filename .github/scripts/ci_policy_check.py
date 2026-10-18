@@ -61,6 +61,17 @@ an exemption must be visible and reviewable, with a comment saying why):
       inline (git clone / curl / wget of emsdk, or `emsdk install`) fails;
       the composite actions themselves are where those lines live
       (exemptions: `inline_toolchain_ok`, `<workflow>.yml:<job>`)
+  R11 no workflow names the floating `ubuntu-latest` runner label anywhere
+      outside its steps (a job's `runs-on`, a matrix value it reads, an
+      input default, a reusable call's `with:`) — the label moves to a new
+      Ubuntu image under every job at once (26.04 from 2026-10-19), so a
+      job pins the image it was tested on (`ubuntu-24.04`) with a reason
+      comment, and moving images is a deliberate, reviewable change.
+      Comments are free and so are `run:` scripts (a step cannot choose its
+      runner). Checked on the repo's own workflow files only, in main(); the
+      unit tests' synthetic workflows are not workflows this repo runs.
+      Exemptions: `ubuntu_latest_ok` (workflow file names) — a temporary
+      list for files another open change owns; it should be empty
 """
 
 from __future__ import annotations
@@ -105,6 +116,13 @@ SHA_USES_LINE_RE = re.compile(r"uses:\s*([^\s#]+)@([0-9a-f]{40})(.*)$")
 # R9 (reason half): a `python-version:` key (not `python-version-file:`), in
 # block or flow style, with whatever follows its colon captured.
 PYTHON_VERSION_LINE_RE = re.compile(r"(?<![\w.-])python-version\s*:(.*)$")
+
+# R11: the floating Ubuntu runner label, as a label: `ubuntu-latest` on its
+# own or as the head of a larger-runner label (`ubuntu-latest-8-cores` floats
+# too), never inside a longer word. In any case: runner labels are
+# case-insensitive (actionlint lowercases one before it matches the hosted
+# labels), so `Ubuntu-Latest` floats exactly as far.
+FLOATING_RUNNER_RE = re.compile(r"(?<![\w.-])ubuntu-latest\b", re.IGNORECASE)
 
 # R10: the toolchains that have a composite action, and how an inline copy
 # of their setup looks in COMMAND position. Each entry: (label, predicate on
@@ -612,6 +630,70 @@ def check_python_version_reasons(path: str, label: str) -> list[str]:
     return problems
 
 
+def _floating_runner_paths(node, path: str) -> list[str]:
+    """Every string under `node` that names the floating runner label, as
+    `<path>: <value>`."""
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.extend(_floating_runner_paths(value, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found.extend(_floating_runner_paths(value, f"{path}[{i}]"))
+    elif isinstance(node, str) and FLOATING_RUNNER_RE.search(node):
+        found.append(f"{path}: {node}")
+    return found
+
+
+def floating_runners_in(wf: dict) -> list[str]:
+    """R11: where a parsed workflow names `ubuntu-latest` outside its steps.
+
+    yaml.safe_load has already dropped every comment, so a comment saying why
+    a job is NOT on ubuntu-latest never counts. A job's `steps` are skipped
+    whole: a step cannot choose the runner, and a `run:` script that mentions
+    the label (an echo, a URL) is not a runner choice. Everything else is
+    walked — `runs-on` in any form (a string, a list of labels, a `group` /
+    `labels` mapping, an expression's string literal), the whole `strategy`
+    a `runs-on: ${{ matrix.x }}` reads from, workflow inputs' defaults and
+    options, and a reusable call's `with:`.
+    """
+    found = []
+    for key, value in wf.items():
+        if key == "jobs" and isinstance(value, dict):
+            for job, spec in value.items():
+                if not isinstance(spec, dict):
+                    continue
+                for jkey, jvalue in spec.items():
+                    if jkey == "steps":
+                        continue
+                    found.extend(
+                        _floating_runner_paths(jvalue, f"jobs.{job}.{jkey}"))
+            continue
+        label = "on" if key is True else str(key)
+        found.extend(_floating_runner_paths(value, label))
+    return found
+
+
+def check_floating_runners(path: str, policy: dict) -> list[str]:
+    """R11, on one of the repo's own workflow files (see main())."""
+    name = os.path.basename(path)
+    if name in set(policy.get("ubuntu_latest_ok") or []):
+        return []
+    with open(path, encoding="utf-8") as f:
+        wf = yaml.safe_load(f)
+    if not isinstance(wf, dict):
+        return []  # check_workflow already reports a file that is no mapping
+    return [
+        f"{name}: R11 — `{where}` names the floating `ubuntu-latest` runner "
+        f"label, which GitHub moves to a new Ubuntu image under every job at "
+        f"once (26.04 from 2026-10-19). Pin the image the job was tested on, "
+        f"`ubuntu-24.04`, with a reason comment; moving to a newer image is "
+        f"its own reviewed change. (ci-policy.yml → ubuntu_latest_ok is a "
+        f"temporary list for files another open change owns.)"
+        for where in floating_runners_in(wf)
+    ]
+
+
 def check_composite_actions(policy: dict) -> list[str]:
     """R4/R8 also apply to steps inside local composite actions."""
     problems = []
@@ -670,6 +752,10 @@ def main() -> int:
             check_sha_pin_comments(path, os.path.basename(path)))
         all_problems.extend(
             check_python_version_reasons(path, os.path.basename(path)))
+        # R11 reads the repo's own workflows only: the unit tests' synthetic
+        # workflows go through check_workflow and say `runs-on: ubuntu-latest`
+        # for brevity, and they are not workflows this repo runs.
+        all_problems.extend(check_floating_runners(path, policy))
     all_problems.extend(check_composite_actions(policy))
 
     if all_problems:

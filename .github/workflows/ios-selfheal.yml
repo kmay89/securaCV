@@ -66,8 +66,9 @@ on:
       - ".github/workflows/ios-selfheal.yml"
   # And main's post-lint compiler. The linters that gate iOS sources
   # (lint_apple_parity.py, lint_apple_plists.py, lint_cloudkit_container.py,
-  # ios/scripts/check_app_icon.py — all in lint.yml's `scripts` job) run on
-  # every push to main, but nothing then compiled what they had just passed:
+  # lint_ios_keychain_reads.py, ios/scripts/check_app_icon.py — all in
+  # lint.yml's `scripts` job) run on every push to main, but nothing then
+  # compiled what they had just passed:
   # main's iOS state between nightlies was whatever the last PR build said.
   # This fires when "Repo Lints" completes on main; the job builds only when
   # that run succeeded (a red lint already reports itself — compiling on top

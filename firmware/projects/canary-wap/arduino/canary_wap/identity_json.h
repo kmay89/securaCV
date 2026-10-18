@@ -20,7 +20,10 @@
  * allocates exactly that plus the NUL (the measureJson() pattern of F196) and
  * no field's length or bytes has to be assumed. Given a buffer too small, a
  * builder writes nothing (out[0] = '\0') and returns the length it needed:
- * never a cut answer. The bytes are the old answers' bytes for every string
+ * never a cut answer. A write pass that meets an input grown since the
+ * measure (another task writing a global) is refused the same way and
+ * returns the buffer's size, which the handler answers as a refusal (sweep
+ * F230). The bytes are the old answers' bytes for every string
  * that needs no escape (pinned by the host test against the old formats).
  *
  * Pure hosted C++ (no Arduino, ESP-IDF or heap): host-tested in
@@ -57,7 +60,8 @@ struct DeviceInfo {
 struct Receipt {
   const char* device_id;     /* g_device.device_id */
   bool        tls_enabled;   /* g_tls_enabled: the base_url's scheme */
-  const char* ap_ip;         /* WiFi.softAPIP().toString() */
+  const char* ap_ip;         /* the base_url's authority: receipt_authority::write()'s
+                                .local name or address (sweep F255) */
   const char* token;         /* g_device.api_token_str */
   const char* pubkey_fp;     /* g_device.fingerprint_hex */
   const char* firmware;      /* FIRMWARE_VERSION */
@@ -123,8 +127,18 @@ inline void write_receipt(wap_json::Writer& w, const Receipt& in) {
 }
 
 /* Measures with `write`, then writes into out[cap] when the answer and its
- * NUL fit; otherwise out[0] = '\0'. Returns the answer's length either way
- * (the NUL excluded), like snprintf(): NULL `out` only measures. */
+ * NUL fit; otherwise out[0] = '\0'. Like snprintf(), a return under `cap`
+ * is the length written (the NUL excluded) and one of `cap` or more means
+ * nothing was: NULL `out` only measures, and a buffer too small gets the
+ * length it needed.
+ *
+ * The inputs are live globals (the loop task writes g_wifi_status.ap_auth
+ * while the HTTP task builds), so the write pass can meet a string longer
+ * than the one measured. Every write re-measures what it writes, and
+ * wap_json_writer.h bounds each copy by the room it checked (sweep F230), so
+ * such a pass is refused, never written past out[cap]: out[0] = '\0' and the
+ * return is `cap`, and the caller answers a refusal instead of an empty
+ * text. */
 template <typename In>
 inline size_t build(void (*write)(wap_json::Writer&, const In&), const In& in, char* out, size_t cap) {
   wap_json::Writer m;
@@ -134,11 +148,17 @@ inline size_t build(void (*write)(wap_json::Writer&, const In&), const In& in, c
   if (out == nullptr || cap == 0) return need;
   out[0] = '\0';
   if (need >= cap) return need;
+#ifdef IDENTITY_JSON_TEST_HOOK_BETWEEN_PASSES
+  IDENTITY_JSON_TEST_HOOK_BETWEEN_PASSES();   /* host tests only: change an input here */
+#endif
   wap_json::Writer w;
   wap_json::begin(w, out, cap);
   write(w, in);
-  if (!wap_json::ok(w)) out[0] = '\0';
-  return need;
+  if (!wap_json::ok(w)) {
+    out[0] = '\0';
+    return cap;
+  }
+  return w.len;
 }
 
 /* GET /api/device-info's answer into out[cap]; see build(). */

@@ -38,9 +38,16 @@ fi
 # payload: a jq error here would make run.sh fall back to "[]" and lose
 # every good camera with it. Zone IDs must match zone:[a-z0-9_-]{1,64}, so
 # the stream name is lowercased BEFORE the character sweep ("FrontDoor" ->
-# "zone:frontdoor", not "zone:_ront_oor"). Rows come out sorted by name.
-# Every `if` carries an `else`: the add-on's Alpine 3.18 ships jq 1.6.
-echo "$streams" | jq -r '
+# "zone:frontdoor", not "zone:_ront_oor"). A stream whose name slugs to
+# nothing (the empty name) is skipped: `zone:` fails that pattern, and run.sh
+# takes the first row by name as the primary camera, so "" sorted first and
+# stopped the app at start (sweep HA34). Rows come out sorted by name.
+# Every `if` carries an `else`: the add-on's Alpine 3.18 ships jq 1.6, and
+# pwk-wizard-tests.yml runs the parity cases on the jq-1.6 release binary.
+# The payload goes to jq through printf, not echo: dash's echo (the runner's
+# /bin/sh) turns a JSON "\t" or "\\" into the byte it names, Alpine's busybox
+# echo does not, and printf '%s' passes the bytes as they are in both.
+printf '%s\n' "$streams" | jq -r '
     if type != "object" then [] else
     to_entries | sort_by(.key) | map(
         select(.value | type == "object") |
@@ -51,6 +58,8 @@ echo "$streams" | jq -r '
            | select(type == "string" and length > 0)
          ]) as $urls |
         select(($urls | length) > 0) |
+        (.key | ascii_downcase | gsub("[^a-z0-9_-]"; "_") | .[0:64]) as $slug |
+        select(($slug | length) > 0) |
         {
             name: .key,
             url: (
@@ -58,7 +67,7 @@ echo "$streams" | jq -r '
                 ($urls | map(select(startswith("rtsp://"))) | first) //
                 ($urls | first)
             ),
-            zone_id: "zone:\(.key | ascii_downcase | gsub("[^a-z0-9_-]"; "_") | .[0:64])",
+            zone_id: "zone:\($slug)",
             fps: 10,
             width: 640,
             height: 480,

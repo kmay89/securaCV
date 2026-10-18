@@ -336,7 +336,8 @@ export class PresenceFSM {
       this.rawTarget = false;
     }
     if (this.state !== Presence.Unknown && now - this.lastFrameMs >= this.cfg.stall_timeout_ms) {
-      ev.count_changed = this.count !== CountBucket.Zero;
+      // a stall is a state change: it carries the dropped count (Zero) and
+      // reports no separate count move (mirrors mr60_presence.cpp, F131)
       this.state = Presence.Unknown;
       this.count = CountBucket.Zero;
       this.range = RangeBand.Unknown;
@@ -376,12 +377,20 @@ export class PresenceFSM {
       }
     }
 
+    // The count follows the debounced state, not each frame (F131): Zero
+    // unless Present; while Present a frame that names a count updates the
+    // bucket and one that names none (no target, or a target frame whose
+    // count is still 0) keeps it, so a dropout signs nothing and Clear
+    // carries the zero. Range keeps following each frame.
     const prevCount = this.count;
-    this.count = frame.has_target ? this.bucketOf(frame.target_count) : CountBucket.Zero;
+    if (this.state !== Presence.Present) this.count = CountBucket.Zero;
+    else if (frame.has_target && frame.target_count > 0) this.count = this.bucketOf(frame.target_count);
     this.range = frame.has_target ? this.bandOf(frame.distance_cm) : RangeBand.Unknown;
 
     ev.state_changed = this.state !== prevState;
-    ev.count_changed = this.count !== prevCount;
+    // a state change carries its count, so a count move is reported only
+    // while the state held: one record per transition (mirrors mr60_presence.cpp)
+    ev.count_changed = !ev.state_changed && this.count !== prevCount;
     ev.state = this.state; ev.count = this.count; ev.range = this.range;
     return ev;
   }

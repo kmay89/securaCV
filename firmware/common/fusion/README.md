@@ -15,7 +15,7 @@ is fully deterministic and host-tested under
 
 ## Why this exists
 
-OR-ing sensors maximises false alarms. AND-ing them hands an intruder a single
+OR-ing sensors maximizes false alarms. AND-ing them hands an intruder a single
 channel to defeat. Sentinel does neither — it **scores evidence** and rewards
 agreement across *independent physical modalities*.
 
