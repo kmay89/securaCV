@@ -1733,7 +1733,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 98,
+   "engineering_param_count": 100,
    "alternatives": [
     "c6_display",
     "watch_station"

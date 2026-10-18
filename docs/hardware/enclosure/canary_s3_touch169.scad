@@ -164,7 +164,8 @@ pry_notch = true;    // fingernail notches in the bezel's BOTTOM (-Y) wall rear 
                      // channel: the back snaps closed on a flush parting line with nothing to lift it by
                      // (0.6 into the wall, 0.8 below the rim)
 pry_w = 4.0;         // notch width  // [3:0.5:8]
-skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed back_stack (see assert)
+skirt_wall = 1.6;    // skirt ring wall thickness — the back's skirt rises skirt_dep off the plate this thick inside its outline, carries the snap nubs and is notched over the USB channel
+skirt_dep = back_stack;   // must not exceed back_stack (see assert)
 
 /* [Stand] */
 opt_stand = true;

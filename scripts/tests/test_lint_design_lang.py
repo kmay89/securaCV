@@ -69,6 +69,17 @@ class HelpLines(_Case):
         p = self.scad('/* [B] */\nvm_l = 40.0;  vm_w = brd_w("grove_v2");   // Grove Vision AI V2\n')
         self.assertEqual(L.lint_help_lines(p)[0], [])
 
+    def test_the_169_skirt_wall_keeps_its_own_help(self):
+        # `skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed
+        # back_stack` passed the rule above (skirt_dep is computed, so not a
+        # knob) and handed skirt_dep's help to skirt_wall in the builder and
+        # the Lab (C10c-2). Split, each line says its own fact.
+        groups = L.gen_builder_manifest.parse_scad(L.ENC / "canary_s3_touch169.scad")
+        knobs = {p["name"]: p for g in groups for p in g["params"]}
+        desc = knobs["skirt_wall"].get("desc", "")
+        self.assertIn("skirt", desc)
+        self.assertNotIn("back_stack", desc)
+
     def test_debt_entry_is_reported_seen_not_failed(self):
         p = self.scad('/* [B] */\nlob_d = 9.0;  lob_o = 3.0;   // lobe Ø / offset\n')
         problems, seen = L.lint_help_lines(p, {("canary_probe.scad", "lob_d")})

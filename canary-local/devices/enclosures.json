@@ -15432,6 +15432,16 @@
         8.0
        ],
        "comment": "notch width"
+      },
+      {
+       "name": "skirt_wall",
+       "default": "1.6",
+       "comment": "skirt ring wall thickness — the back's skirt rises skirt_dep off the plate this thick inside its outline, carries the snap nubs and is notched over the USB channel"
+      },
+      {
+       "name": "skirt_dep",
+       "default": "back_stack",
+       "comment": "must not exceed back_stack (see assert)"
       }
      ]
     },
