@@ -138,14 +138,14 @@ seal_mid_posts = true;   // (seal mode) evenly spaced mid posts along every wall
 /* [LoRa board] — Heltec WiFi LoRa 32 V3-class. MEASURE yours */
 lb_l  = 51.0;        // board length (Y, USB end down)
 lb_w  = 26.0;        // board width (X)
-pcb_t = 1.2;
+pcb_t = 1.2;         // LoRa board PCB thickness — the 1.2 spec, brd_t("heltec_v3"); the clips hook over it, and the USB opening's axis and the cavity depth stack on it
 lb_stack = 12.0;     // tallest top-side part (OLED/pin headers)
-board_clear = 0.6;
+board_clear = 0.6;   // clearance round the LoRa board — its column is lb_w + 2 x (clip_t + clip_clear + this) + 0.5 wide, and its USB edge sits at least this off the bottom wall (floor_cove + 0.4 when that is more)
 
 /* [18650 holder] (single-cell holder with leads) */
-bh_l = 78.0;
-bh_w = 21.5;
-bh_h = 15.0;
+bh_l = 78.0;         // holder length (Y, leads down) — the bay's pocket is this + 0.6 inside a ring wall this + 3 long, and the cavity is at least this + 2 x bay_margin + 10 long (the + 10 is wire room at the top)
+bh_w = 21.5;         // holder width (X) — the bay's pocket is this + 0.6 inside a ring wall this + 3 wide, in a battery column this + 2.0 wide; the gap weep must clear the ring wall (asserted)
+bh_h = 15.0;         // holder height above the plate, cell fitted — the cavity is at least this + 1.5 deep (the LoRa stack sets it when taller). An 18650 is 18 mm across, more than this default: MEASURE yours
 
 /* [Antenna] — SMA bulkhead on the TOP wall */
 sma_d = 6.8;         // 1/4-36 SMA thread is Ø6.35: 6.8 with the D-flat at 5.7 (was 6.5/5.9 — 0.075 a side, under FDM hole shrink)
@@ -182,10 +182,10 @@ clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; canary_s
 clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
 clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
 clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
-standoff_h = 3.0;
+standoff_h = 3.0;    // LoRa board height off the plate — its two rails stand this tall, and the clip beams root on the plate, this + pcb_t long (snap_boardclip asserts the insertion strain); the USB opening's axis rises with it, and must keep a web over the gasket groove (asserted)
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
-foot_cham = 0.5;
+foot_cham = 0.5;  // 45° chamfer round the shell's back edge — the library's foot_chamfer_ring (0 = off)
 floor_cove = 0.8;  // 45° cove where the cavity meets the walls, at the face and at the ledge (canary_core_lib pl_cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
                    // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
                    // hinges the floor about it along one layer boundary.

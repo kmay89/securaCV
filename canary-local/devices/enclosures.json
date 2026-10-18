@@ -7275,7 +7275,8 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "LoRa board PCB thickness — the 1.2 spec, brd_t(\"heltec_v3\"); the clips hook over it, and the USB opening's axis and the cavity depth stack on it"
       },
       {
        "name": "lb_stack",
@@ -7284,7 +7285,8 @@
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "clearance round the LoRa board — its column is lb_w + 2 x (clip_t + clip_clear + this) + 0.5 wide, and its USB edge sits at least this off the bottom wall (floor_cove + 0.4 when that is more)"
       }
      ]
     },
@@ -7294,15 +7296,18 @@
      "params": [
       {
        "name": "bh_l",
-       "default": "78.0"
+       "default": "78.0",
+       "comment": "holder length (Y, leads down) — the bay's pocket is this + 0.6 inside a ring wall this + 3 long, and the cavity is at least this + 2 x bay_margin + 10 long (the + 10 is wire room at the top)"
       },
       {
        "name": "bh_w",
-       "default": "21.5"
+       "default": "21.5",
+       "comment": "holder width (X) — the bay's pocket is this + 0.6 inside a ring wall this + 3 wide, in a battery column this + 2.0 wide; the gap weep must clear the ring wall (asserted)"
       },
       {
        "name": "bh_h",
-       "default": "15.0"
+       "default": "15.0",
+       "comment": "holder height above the plate, cell fitted — the cavity is at least this + 1.5 deep (the LoRa stack sets it when taller). An 18650 is 18 mm across, more than this default: MEASURE yours"
       }
      ]
     },
@@ -7479,7 +7484,8 @@
       },
       {
        "name": "standoff_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "LoRa board height off the plate — its two rails stand this tall, and the clip beams root on the plate, this + pcb_t long (snap_boardclip asserts the insertion strain); the USB opening's axis rises with it, and must keep a web over the gasket groove (asserted)"
       },
       {
        "name": "lid_edge",
@@ -7503,7 +7509,8 @@
       },
       {
        "name": "foot_cham",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "45° chamfer round the shell's back edge — the library's foot_chamfer_ring (0 = off)"
       },
       {
        "name": "floor_cove",
@@ -12504,7 +12511,8 @@
       },
       {
        "name": "vent_w",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "slot width along the side wall (Y) — each slot is cut through both ±X walls from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end"
       }
      ]
     },

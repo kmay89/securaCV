@@ -191,10 +191,17 @@ def knobs_without_help(path: Path) -> list[str]:
 # (gen_enclosures.py reads one assignment per line), which moves the catalog's
 # engineering_param_count; field_case's bez_on is a catalog option whose help
 # would become its label.
+# C10c-2 did the same for the next monorepo-only cases, the four carried ones
+# (combo, fit_coupon, dash_display, watch_station) and the released four left
+# out: every numeric or text knob alone on its line has help read off the
+# geometry that uses it. What is left in those files is the same two kinds,
+# shared lines and boolean catalog options.
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
+    "canary_c3_lcd147.scad": 12,       # six bool options, tol_* and snap_* (two shared lines)
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
     "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
+    "canary_relay_solar.scad": 8,      # opt_seal, wall_t..corner_r and gasket_* (two shared lines)
 }
 
 

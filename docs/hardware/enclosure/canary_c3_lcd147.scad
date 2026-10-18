@@ -819,7 +819,7 @@ mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
 opt_vent = true;
 vent_n = 6;          // slots per side wall — 12 in all, a column not a band
 vent_pitch = 4.0;    // tightened from 5.0 so six fit under the corner radius
-vent_w = 1.4;
+vent_w = 1.4;        // slot width along the side wall (Y) — each slot is cut through both ±X walls from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end
 
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
    symmetric pattern: the USB-end pair sits wide, the far pair inboard. The
