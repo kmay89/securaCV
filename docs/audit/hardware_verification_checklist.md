@@ -1574,7 +1574,7 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
-## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up, no pairing without the owner (F190, F167, F189, F196 Bluetooth half, F235, F191, F209) — on-device verification
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up, no pairing without the owner, a late bring-up (F190, F167, F189, F196 Bluetooth half, F235, F191, F209, F259, F260) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
@@ -1603,16 +1603,23 @@ F209; the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
 (`send_doc()`: every answer serialized at its own measured length;
-Start Advertising and Pair bring the stack up on the HTTP task whenever it
-is down, `bring_up()`, but on a device saved on only once the sketch's boot
-bring-up is over, `waits_for_boot_bring_up()`, which `canary_wap.ino`'s
-finalize stage ends with `bluetooth_channel::boot_bring_up_finished()`
-after the Scout's own NimBLE init; before it, and while another bring-up
-runs, they answer 503, `send_boot_bring_up_pending()` /
-`send_bring_up_refused()`: "still starting" once the sketch has started its
-boot bring-up, `bluetooth_channel::boot_bring_up_started()`, set by
-`bringup_worker_started()` as the gate opens, and "has not started yet"
-only before that).
+Enable, Start Advertising, Pair and a settings POST turning Bluetooth on
+bring the stack up on the HTTP task whenever it is down, `bring_up()`, but
+only once the sketch's boot bring-up is over, saved on or off (F235's
+review; F259 for Enable, the settings POST and a device saved off),
+`waits_for_boot_bring_up()`, which `canary_wap.ino`'s finalize stage ends
+with `bluetooth_channel::boot_bring_up_finished()` after the Scout's own
+NimBLE init; before it, and while another bring-up runs, they answer 503,
+`send_boot_bring_up_pending()` / `send_bring_up_refused()`: "still
+starting" once the sketch has started its boot bring-up,
+`bluetooth_channel::boot_bring_up_started()`, set by
+`bringup_worker_started()` as the gate opens, "has not started yet" only
+before that, and in safe mode, which the sketch marks with
+`bluetooth_channel::skip_boot_bring_up_for_safe_mode()`, that Bluetooth
+stays off; a stack a tap brings up after the boot bring-up left it down
+carries none of the worker's services, which the worker reports with
+`boot_service_registered()`, and GET /api/bluetooth's `late_bring_up` and
+`services_missing` and one health-log line say so, F260).
 Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
 stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
 store, its full-store event at a Pairing Request, its default evictions
@@ -1620,7 +1627,7 @@ store, its full-store event at a Pairing Request, its default evictions
 advertising start that walks the server's services; the bring-up worker,
 the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
 held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6,
-BV7, BV9 and C3; a phone's real pairing, NimBLE's real stores and security
+BV7, BV9, BV10 and C3; a phone's real pairing, NimBLE's real stores and security
 manager (that it refuses a passkey above 999999 and times that pairing out
 is read from NimBLE-Arduino 2.3.8 and 2.5.0's `ble_sm.c`, not run), the real
 bring-up worker and the real join window are not something a host test can
@@ -1745,7 +1752,7 @@ Owner: U1.
   - Expected: every answer parses as one JSON document with nothing after
     it; the name reads back as set.
   - Artifact: `docs/audit/repro/F196/bt-answers/`.
-- [ ] **Start Advertising and Pair wait for the boot bring-up, then bring a refused stack up (F235)**
+- [ ] **Every tap waits for the boot bring-up, then brings a refused stack up (F235, F259)**
   - Setup: one canary-wap flashed with the default FULL profile, Bluetooth
     saved on (the default), Wi-Fi credentials stored; a serial console at
     boot; the web UI's Bluetooth tab open; a phone with a BLE scanner (nRF
@@ -1768,7 +1775,12 @@ Owner: U1.
     `init_fail_reason`), tap Start Advertising once before `BLE bring-up
     finalized` if quick enough, then twice after it; free the heap if the
     setup allows and tap Start Advertising, timing how long a second
-    browser tab's `GET /api/status` waits meanwhile; then tap Pair.
+    browser tab's `GET /api/status` waits meanwhile; then tap Pair. (c)
+    Repeat (a) with the Bluetooth card's Enable toggle and with `POST
+    /api/bluetooth/settings {"enabled": true}` in place of the two taps,
+    first with Bluetooth saved on, then saved off (`POST
+    /api/bluetooth/disable` and a reboot); and once with `{"auto_advertise":
+    true}` alone in the join window.
   - Expected: (a) before `Initializing Bluetooth Low Energy` (the gate
     shut) each tap answers 503 `Bluetooth has not started yet; it starts
     once Wi-Fi setup is done or within five minutes (never in safe mode)`;
@@ -1784,8 +1796,9 @@ Owner: U1.
     review a tap in the join window brought NimBLE up on the HTTP task and
     advertised at once); the console shows `[OK] Bluetooth initialized`,
     never `Bluetooth init failed` with no reason after such a tap; in safe
-    mode every tap answers the "has not started yet" text and none ever
-    brings Bluetooth up. (b) a tap after `[--] Bluetooth init failed` and
+    mode every tap answers 503 `Bluetooth stays off in safe mode; it starts
+    after a normal boot` and none ever brings Bluetooth up (until F259 it
+    said Bluetooth would start within five minutes). (b) a tap after `[--] Bluetooth init failed` and
     before `BLE bring-up finalized` answers 503 `Bluetooth is still
     starting; try again in a moment` (until wave 16's verify it was told
     Bluetooth had not started yet); each tap after `finalized` while
@@ -1796,8 +1809,36 @@ Owner: U1.
     Bluetooth card's subtitle goes back to `BLE connectivity` without a
     reload, and the other tab's request waits for that bring-up (seconds),
     as it does behind an Enable tap; the Pair tap after it starts pairing
-    mode.
+    mode. (c) Enable and the `{"enabled": true}` POST answer exactly as the
+    two taps do in each window, saved on or off (before F259 each brought
+    NimBLE up on the HTTP task at once and answered 200, as did Start
+    Advertising and Pair on a device saved off); after `BLE bring-up
+    finalized` a saved-off device's Enable answers `Bluetooth enabled` and
+    brings nothing up (the worker's init already did), and the
+    `auto_advertise`-only POST answers `Settings updated` in every window.
   - Artifact: `docs/audit/repro/F235/tap-brings-up/`.
+- [ ] **A late bring-up says what it left out (F260)**
+  - Setup: the FULL build; a serial console at boot; nRF Connect; a boot
+    state that leaves the internal heap under the bring-up guard's floor,
+    if one can be arranged (the same as the row above's part (b)).
+  - Repro: boot normally and read `GET /api/bluetooth`; list the WAP's GATT
+    services in nRF Connect. Then boot into the refused bring-up
+    (`[--] Bluetooth init failed (reason recorded for self-test)`), wait for
+    `BLE bring-up finalized`, free the heap if the setup allows and tap
+    Start Advertising; read `GET /api/bluetooth` and `GET /api/logs`, and
+    list the services again; tap Pair and read the log once more; reboot
+    normally and read `GET /api/bluetooth`.
+  - Expected: after the normal boot `"late_bring_up": false` and
+    `"services_missing": []`, and the GATT browser lists the status service
+    (and on FULL Opera's). After the late tap `"late_bring_up": true` and
+    `"services_missing"` names `ble_status` (and `ble_discovery` unless the
+    console showed `[OK] BLE Discovery initialized` on that boot), the
+    health log has `BLE brought up after the boot bring-up: these services
+    are off until a reboot` once, with the same names, the GATT browser
+    lists no status service (nothing is registered on the running server),
+    and no crash follows; the Pair tap adds no second line; after the
+    normal reboot both read false and [] again.
+  - Artifact: `docs/audit/repro/F260/late-bring-up/`.
 
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
 
