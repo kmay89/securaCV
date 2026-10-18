@@ -52,6 +52,12 @@ bool mqtt_credentials_configured();
 // from the patched cache but the next boot re-opens setup.
 bool set_wifi_credentials(const char* ssid, const char* pass);
 
+// Forget the saved network (the credentials half of a factory reset, and the
+// shared supervisor's persist_current("", "")). Returns whether the store
+// VERIFIABLY let go (readback) — a remove that silently failed is exactly the
+// case where rebooting into "setup will open" would be a lie.
+bool forget_wifi_credentials();
+
 // Persist a broker handed over at runtime (the Bluetooth setup door's hub
 // hand-off) and patch the cached config, so the MQTT manager's next bind in
 // this same boot dials it. `user` / `pass` null or empty = no login (the

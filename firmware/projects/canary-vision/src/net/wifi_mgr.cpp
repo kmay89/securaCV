@@ -1,325 +1,118 @@
-#include "canary/net/wifi_mgr.h"
-#include "canary/log.h"
+// src/net/wifi_mgr.cpp — this board's thin shim over the fleet's ONE Wi-Fi
+// supervisor (firmware/common/network/wifi_supervisor.cpp).
+//
+// Three boards used to carry this file as 300 near-identical lines each
+// (docs/FIRMWARE_MAP.md §3). Now the rules live once in common/ and this file
+// only says what is this board's: its product name, its node type, its
+// retry tunables (by name — scripts/lint_wifi_join_policy.py holds every
+// shim to `p.base_ms = WIFI_RETRY_BASE_MS;` and friends), its power policy,
+// and how its runtime_config persists the current network.
+//
+// canary-sense and canary-sentinel carry the same shim (byte-identical but
+// for the product-name line); this one differs in its portal channel.
 
-#include <WiFi.h>
-#include <esp_wifi.h>
-#include <esp_random.h>  // esp_random() for reconnect jitter
+#include "canary/net/wifi_mgr.h"
+
+#include <Preferences.h>
 
 #include "canary/config.h"
-#include "canary/runtime_config.h"  // NVS-backed credentials (OTA-safe)
+#include "canary/runtime_config.h"       // NVS-backed credentials (OTA-safe)
 #include "identity/device_pseudonym.h"   // MAC-free setup-AP suffix
-#include "network/setup_portal.h"        // shared recovery portal (common/)
-#include "network/wifi_join_policy.h"  // fleet-wide join/retry rules (common/)
-#include <fleet_beacon_espnow.h>  // portal channel = the fleet fallback
+#include <fleet_beacon_espnow.h>         // portal channel = the fleet fallback
+#include "network/onboarding_fsm.h"      // NODE_* words / node_type_from_device_type
+#include "network/wifi_join_policy.h"    // fleet-wide join/retry rules (common/)
+#include "network/wifi_supervisor.h"     // the one supervisor (common/)
+#include "time/tz_rule.h"                // IANA → POSIX for the clock
 
 namespace canary::net {
 
 namespace {
 
-// STA supervision state (see wifi_loop). All timestamp math is wrap-safe
-// signed-delta, per the firmware idiom for millis() arithmetic.
-bool     s_online          = false;
-bool     s_configured      = false;
-// Have we EVER associated on this power cycle? The outage watchdog may only
-// reboot a link that once worked — see common/network/wifi_join_policy.h.
-bool     s_ever_online     = false;
-uint32_t s_lost_since_ms   = 0;   // start of the current outage
-uint32_t s_last_attempt_ms = 0;   // last reconnect attempt
-uint32_t s_attempts        = 0;   // consecutive failed attempts this outage
-uint32_t s_jitter          = 0;   // re-sampled once per attempt (see wifi_loop)
-// Why the most recent attempt failed — feeds wifi_should_open_setup, so a
-// wrong password or a renamed SSID raises the setup network instead of
-// retrying into the void forever.
-canary::net::JoinFailure s_last_failure = canary::net::JoinFailure::Unknown;
-uint32_t s_portal_retry_ms = 0;   // last attempt to (re)raise a failed portal
+char s_suffix[device_pseudonym::HEX_LEN + 1] = {0};
+char s_posix_tz[64] = {0};
 
-// Modem sleep + TX power cap, from canary/config.h. Same semantics as the
-// ESP32-S3 tree's network_set_wifi_power_save / network_set_tx_power.
-void apply_power_policy() {
-  const wifi_ps_type_t ps = WIFI_POWER_SAVE ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE;
-  if (esp_wifi_set_ps(ps) != ESP_OK) {
-    log_line("WIFI", "Power-save mode set failed.");
-  } else if (WIFI_POWER_SAVE) {
-    log_line("WIFI", "Modem sleep enabled (WIFI_PS_MIN_MODEM).");
-  }
-
-  if (WIFI_TX_POWER_QDBM >= 0) {
-    /* esp_wifi_set_max_tx_power() takes quarter-dBm units (int8_t);
-     * valid range 8 (2 dBm) .. 84 (21 dBm) — clamp, don't trust config. */
-    int8_t q = WIFI_TX_POWER_QDBM;
-    if (q < 8)  q = 8;
-    if (q > 84) q = 84;
-    if (esp_wifi_set_max_tx_power(q) == ESP_OK) {
-      log_header("WIFI");
-      canary::dbg_serial().printf("TX power capped at %d x0.25 dBm\n", (int)q);
-    } else {
-      log_line("WIFI", "TX power set failed.");
-    }
-  }
+// Keep the legacy `wifi_ssid`/`wifi_pass` pair equal to the network on the
+// air (runtime_config owns those keys; the flashers seed them). An empty
+// SSID is the forget half of a factory reset.
+bool persist_current(const char* ssid, const char* pass) {
+  if (ssid == nullptr || ssid[0] == '\0') return canary::cfg::forget_wifi_credentials();
+  return canary::cfg::set_wifi_credentials(ssid, pass);
 }
 
-uint32_t next_jitter() { return esp_random(); }
+// The wizard's optional name and the phone's zone, persisted beside the
+// credentials (namespace "securacv": `dev_name`, `tz`). Readback, not the
+// write calls, decides durability — the runtime_config rule.
+bool save_identity(const char* name, const char* tz) {
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) return false;
+  bool ok = true;
+  if (name && name[0]) ok = prefs.putString("dev_name", name) > 0 && prefs.getString("dev_name", "") == name && ok;
+  if (tz && tz[0]) {
+    ok = prefs.putString("tz", tz) > 0 && prefs.getString("tz", "") == tz && ok;
+    const char* posix = tz_rule::posix_for_iana(tz);
+    if (posix) snprintf(s_posix_tz, sizeof(s_posix_tz), "%s", posix);
+  }
+  prefs.end();
+  return ok;
+}
 
-void begin_sta() {
+void load_posix_tz() {
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/true)) return;
+  const String tz = prefs.getString("tz", "");
+  prefs.end();
+  const char* posix = tz.length() ? tz_rule::posix_for_iana(tz.c_str()) : nullptr;
+  if (posix) snprintf(s_posix_tz, sizeof(s_posix_tz), "%s", posix);
+}
+
+}  // namespace
+
+void wifi_init_or_reboot(void (*idle_poll)()) {
+  device_pseudonym::device_id_hex(s_suffix, sizeof(s_suffix));
+  load_posix_tz();
   const auto& cfg = canary::cfg::get();
-  WiFi.disconnect();
-  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
-}
 
-
-// The one board-specific line: this radio's status -> the fleet's shared
-// vocabulary. Everything downstream (the words, the retry schedule, whether a
-// reboot could possibly help) lives in common/network/wifi_join_policy.h so
-// three boards cannot drift apart again.
-canary::net::JoinFailure classify(wl_status_t st) {
-  switch (st) {
-    case WL_NO_SSID_AVAIL:  return canary::net::JoinFailure::NotFound;
-    case WL_CONNECT_FAILED: return canary::net::JoinFailure::BadPassword;
-    case WL_IDLE_STATUS:    return canary::net::JoinFailure::NoAddress;
-    default:                return canary::net::JoinFailure::Unknown;
-  }
-}
-
-// The per-board tunables still win; only the RULES are shared.
-canary::net::WifiRetryPolicy retry_policy() {
+  // The retry schedule: this board's numbers, the shared header's rules.
   canary::net::WifiRetryPolicy p;
   p.base_ms          = WIFI_RETRY_BASE_MS;
   p.max_ms           = WIFI_RETRY_MAX_MS;
   p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;
-  return p;
-}
 
-// ── The shared setup portal (common/network/setup_portal) ────────────────
-// This used to be the "no recovery path but re-flashing" board in
-// docs/design/onboarding_shared_module.md. Now: no credentials, or a join
-// that keeps failing for a reason a human can fix, raises the device-unique
-// SecuraCV-XXXX setup network; sensing continues underneath.
-
-bool portal_save(const char* ssid, const char* pass) {
-  // The durable verdict flows to the portal, which logs the "store refused"
-  // warning; the session still runs from the patched cache either way.
-  const bool durable = canary::cfg::set_wifi_credentials(ssid, pass);
-  s_configured = true;
-  return durable;
-}
-
-void portal_begin_saved() { begin_sta(); }
-
-// `for_tap`: a BOOT tap on a witness that already has a network raises the
-// portal underneath the Bluetooth door for the tap's minute, because the
-// door's join path IS the portal's (setup_portal_submit_join). No quiet
-// retry of the saved network under it: that retry would succeed at once and
-// tear the portal down before the phone could use the door; the saved link
-// stays up underneath (the AP rides the STA's channel), and
-// wifi_close_tap_portal() lowers the portal when the door shuts.
-static bool s_tap_portal = false;
-
-void open_setup_portal(bool for_tap = false) {
-  char token[device_pseudonym::HEX_LEN + 1] = {0};
-  device_pseudonym::device_id_hex(token, sizeof(token));
-  canary::net::SetupPortalConfig pc{};
+  wifi_sup::Config pc{};
   pc.product_name = "Canary Vision";
-  pc.id_suffix = token;
+  pc.node_type = onboard::node_type_from_device_type(DEVICE_TYPE);
+  pc.id_suffix = s_suffix;
   // Park the portal on the fleet fallback channel, exactly where a
   // never-provisioned radio already sits (fleet_espnow.cpp) — so a boxed
   // pair stays audible to each other while both are unprovisioned. Phones
   // scan every channel for an SSID; they do not care which one this is.
   pc.ap_channel = FLEET_BEACON_ESPNOW_FALLBACK_CHANNEL;
-  pc.have_saved_credentials = s_configured;
-  pc.save_credentials = portal_save;
-  pc.begin_saved = for_tap ? nullptr : portal_begin_saved;
-  pc.keep_sta_link = for_tap;   // the live link is ours; a join through the portal replaces it
-  s_portal_retry_ms = canary::ms_now();
-  if (setup_portal_begin(pc) && for_tap) s_tap_portal = true;
+  pc.seed_ssid = cfg.wifi_ssid;
+  pc.seed_pass = cfg.wifi_pass;
+  pc.seed_configured = canary::cfg::wifi_credentials_configured();
+  pc.persist_current = persist_current;
+  pc.save_identity = save_identity;
+  pc.hub_host = canary::cfg::mqtt_credentials_configured() ? cfg.mqtt_host : nullptr;
+  pc.posix_tz = s_posix_tz[0] ? s_posix_tz : nullptr;
+  pc.boot_timeout_ms = WIFI_BOOT_TIMEOUT_MS;
+  pc.retry = p;
+  pc.power_save = WIFI_POWER_SAVE;
+  pc.tx_power_qdbm = WIFI_TX_POWER_QDBM;
+  wifi_sup::begin(pc, idle_poll);
 }
 
-}  // namespace
-
-void wifi_init_or_reboot() {
-  const auto& cfg = canary::cfg::get();
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);  // wifi_loop owns retry policy (backoff)
-  s_configured = canary::cfg::wifi_credentials_configured();
-  if (!s_configured) {
-    s_lost_since_ms = canary::ms_now();
-    log_line("WIFI", "No credentials yet — raising the setup network; sensing continues.");
-    open_setup_portal();
-    return;
-  }
-  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
-
-  log_header("WIFI");
-  canary::dbg_serial().println("Connecting to the provisioned WiFi network ...");
-
-  const uint32_t start = canary::ms_now();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    canary::dbg_serial().print(".");
-
-    if ((canary::ms_now() - start) > WIFI_BOOT_TIMEOUT_MS) {
-      canary::dbg_serial().println();
-      // Say WHY, not just that it failed: the reason is the whole diagnostic
-      // a headless camera can give. Shared wording — one place, three boards.
-      s_last_failure = classify(WiFi.status());
-      log_line("WIFI", canary::net::join_failure_detail(s_last_failure));
-      s_lost_since_ms = canary::ms_now();
-      s_last_attempt_ms = s_lost_since_ms;
-      s_attempts = 1;
-      return;
-    }
-  }
-
-  canary::dbg_serial().println();
-  log_header("WIFI");
-  canary::dbg_serial().printf(
-    "Connected IP=%s RSSI=%ddBm\n",
-    WiFi.localIP().toString().c_str(),
-    WiFi.RSSI()
-  );
-
-  apply_power_policy();
-  s_online = true;
-  s_ever_online = true;
-}
-
-void wifi_loop(uint32_t now_ms) {
-  // While the setup portal is up it owns the radio — its wizard join (or
-  // quiet retry of the saved network) is the retry policy. Pump it and stand
-  // down; it tears itself down after a successful join.
-  if (setup_portal_active()) {
-    setup_portal_loop(now_ms);
-    return;
-  }
-  if (setup_portal_take_joined()) {
-    // Portal handed us a live STA link; adopt it (the CONNECTED branch below
-    // marks online/ever_online and logs).
-    s_configured = true;
-    s_attempts = 0;
-  }
-  if (!s_configured) {
-    // No credentials and no portal: the setup AP failed to start (or was
-    // stopped). Keep offering it, gently.
-    if ((int32_t)(now_ms - s_portal_retry_ms) >= 30000) open_setup_portal();
-    return;
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!s_online) {
-      s_online = true;
-      s_ever_online = true;
-      s_attempts = 0;
-      log_header("WIFI");
-      canary::dbg_serial().printf(
-        "Reconnected IP=%s RSSI=%ddBm\n",
-        WiFi.localIP().toString().c_str(),
-        WiFi.RSSI()
-      );
-      apply_power_policy();  // power settings do not survive a link cycle
-    }
-    return;
-  }
-
-  if (s_online) {
-    // Link just dropped: start the outage clock and kick an immediate retry.
-    s_online = false;
-    s_lost_since_ms = now_ms;
-    s_last_attempt_ms = now_ms;
-    s_attempts = 1;
-    log_line("WIFI", "Link lost. Reconnecting...");
-    begin_sta();
-    return;
-  }
-
-  // One shared decision for the whole fleet — see
-  // common/network/wifi_join_policy.h, and the host test that proves a link
-  // which never associated is never rebooted.
-  canary::net::WifiRetry st;
-  st.online          = s_online;
-  st.ever_online     = s_ever_online;
-  st.lost_since_ms   = s_lost_since_ms;
-  st.last_attempt_ms = s_last_attempt_ms;
-  st.attempts        = s_attempts;
-
-  // A never-online link failing for a human-fixable reason (wrong password,
-  // renamed SSID) gets the setup network after three attempts — the same
-  // shared threshold the display uses. The saved network keeps being retried
-  // quietly underneath the portal, so a router that was merely rebooting
-  // rejoins with no human involved.
-  if (canary::net::wifi_should_open_setup(st, s_last_failure,
-                                          /*attempts_before_setup=*/3)) {
-    log_line("WIFI", "Join keeps failing for a fixable reason — raising the setup network.");
-    open_setup_portal();
-    return;
-  }
-
-  switch (canary::net::wifi_next_action(retry_policy(), st, now_ms, s_jitter)) {
-    case canary::net::WifiAction::Reboot:
-      // Only reachable for a link that WAS associated and then dropped, where
-      // a reboot plausibly clears a wedged radio or a stale lease.
-      log_line("WIFI", "Outage persisted on a link that was working. Rebooting...");
-      delay(200);
-      ESP.restart();
-      break;
-
-    case canary::net::WifiAction::Retry:
-      // The status we read here is the LAST attempt's verdict — capture it
-      // before begin_sta() resets the radio, so the setup-portal decision
-      // above always judges a completed attempt, never a half-started one.
-      s_last_failure = classify(WiFi.status());
-      s_last_attempt_ms = now_ms;
-      s_attempts++;
-      // Re-sample jitter ONCE per attempt, not once per loop iteration. The
-      // old code re-rolled it on every pass, so the effective deadline was the
-      // minimum of hundreds of samples — which collapses toward zero jitter and
-      // quietly defeats the decorrelation it was added for.
-      s_jitter = next_jitter();
-      log_header("WIFI");
-      canary::dbg_serial().printf("Reconnect attempt %lu ...\n",
-                                  (unsigned long)s_attempts);
-      begin_sta();
-      break;
-
-    case canary::net::WifiAction::Wait:
-      break;
-  }
-}
-
-
-void wifi_open_tap_portal() {
-  if (setup_portal_active()) return;   // the first-boot or recovery portal is already the door's path
-  log_line("WIFI", "BOOT tap — raising the setup network under the Bluetooth door for a minute.");
-  open_setup_portal(/*for_tap=*/true);
-}
-
-void wifi_close_tap_portal() {
-  if (!s_tap_portal) return;
-  if (!setup_portal_active()) { s_tap_portal = false; return; }   // it tore itself down (a join)
-  // A join in flight is owed its verdict, and a succeeded one its linger
-  // and its own teardown (which hands the new link to wifi_loop).
-  if (setup_portal_join_in_flight() ||
-      setup_portal_join_state() == SetupPortalJoin::Success) return;
-  setup_portal_stop();
-  s_tap_portal = false;
-  log_line("WIFI", "Tap window over — setup network lowered.");
-  if (WiFi.status() != WL_CONNECTED) {
-    // The saved link did not survive the mode flips: retry it now, and let
-    // wifi_loop's policy take over from there.
-    const uint32_t now = canary::ms_now();
-    s_online = false;
-    s_lost_since_ms = now;
-    s_last_attempt_ms = now;
-    s_attempts = 1;
-    begin_sta();
-  }
-}
-
-bool wifi_tap_portal_open() { return s_tap_portal && setup_portal_active(); }
-
-bool wifi_connected() { return WiFi.status() == WL_CONNECTED; }
-
-bool wifi_configured() { return s_configured; }
-
-int wifi_rssi() {
-  return (WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0;
-}
+void wifi_loop(uint32_t now_ms) { wifi_sup::loop(now_ms); }
+bool wifi_connected() { return wifi_sup::connected(); }
+bool wifi_configured() { return wifi_sup::configured(); }
+void wifi_open_tap_portal() { wifi_sup::open_tap_portal(); }
+void wifi_close_tap_portal() { wifi_sup::close_tap_portal(); }
+bool wifi_tap_portal_open() { return wifi_sup::tap_portal_open(); }
+int wifi_rssi() { return wifi_sup::rssi(); }
+canary::net::onboard::State wifi_onboarding_state() { return wifi_sup::state(); }
+bool wifi_setup_ap_up() { return wifi_sup::ap_up(); }
+int wifi_saved_networks() { return wifi_sup::saved_count(); }
+canary::time_sync::Source wifi_clock_source() { return wifi_sup::clock_source(); }
+bool wifi_current_network(const char** ssid, const char** pass) { return wifi_sup::current_network(ssid, pass); }
+bool wifi_forget_all() { return wifi_sup::forget_all(); }
 
 } // namespace canary::net

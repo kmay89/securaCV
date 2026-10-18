@@ -61,6 +61,17 @@
 #include "canary/net/mdns_mgr.h"
 #include "canary/net/mqtt_mgr.h"
 #include "canary/net/ota_mgr.h"
+#include <Preferences.h>
+#include <WiFi.h>
+#include "securacv_ota.h"                 // the engine's state word for /api/status
+#include "network/node_http.h"            // GET /api/status + /api/fleet once online (common/)
+#include "network/node_status.h"          // the one status body (common/)
+#include "network/setup_portal.h"         // portal-up fact for the node surface
+#include "io/reset_hold.h"                // the 10 s factory-reset hold (common/)
+#include "identity/key_at_rest.h"         // the creds_at_rest word (common/)
+#include "network/peer_link.h"            // the hub-less mesh: authenticated heartbeats, the coordinator (common/)
+#include "network/mdns_txt.h"             // the coord TXT word
+#include "identity/device_signature.h"    // fingerprint_hex() for the peer identity
 
 // Board-agnostic fusion brain + channel adapters (firmware/common via -I).
 #include "canary/sentinel_config.h"        // build_fusion_config() from the preset
@@ -423,6 +434,234 @@ static void sentinel_serial_write(const char* str) {
 // ----------------------------------------------------------------------------
 // Arduino entry points
 // ----------------------------------------------------------------------------
+
+// Where this node stands with its hub: none (nobody pointed it at one), down
+// (configured, unreachable), ok — three values, not a bool, because the first
+// two need different people to act (fleet_selfreport.h's hub note).
+static int hub_word() {
+  if (!canary::cfg::mqtt_credentials_configured()) return NS_HUB_NONE;
+  return canary::net::mqtt_connected() ? NS_HUB_OK : NS_HUB_DOWN;
+}
+
+static void fill_node_status(NodeStatus& st) {
+  static char ip[16];
+  static char tz[64];
+  const auto& cfg = canary::cfg::get();
+  const uint32_t now = canary::ms_now();
+  st.node = DEVICE_TYPE;
+#ifdef SECURACV_OTA_PRODUCT
+  st.product = SECURACV_OTA_PRODUCT;
+#endif
+  st.fw = CANARY_FW_VERSION;
+#ifdef CANARY_FIGURE_HARDWARE
+  st.hardware = CANARY_FIGURE_HARDWARE;
+#endif
+  st.name = cfg.device_id;
+  st.uptime_s = now / 1000u;
+  if (canary::net::wifi_connected()) {
+    snprintf(ip, sizeof(ip), "%s", WiFi.localIP().toString().c_str());
+    st.ip = ip;
+    st.rssi = canary::net::wifi_rssi();
+  }
+  st.onboarding = canary::net::onboard::state_label(canary::net::wifi_onboarding_state());
+  st.setup_ap = canary::net::wifi_setup_ap_up() ? 1 : 0;
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  st.ble_door = canary::net::improv_ble::setup_open() ? 1 : 0;
+#endif
+  st.saved_networks = canary::net::wifi_saved_networks();
+  st.hub = hub_word();
+#if defined(FEATURE_FLEET_ROSTER) && FEATURE_FLEET_ROSTER
+  st.peers_seen = canary::net::fleet_roster_scan_peer_count();
+#endif
+  // The Witness Wall reads this node directly when it has polled /api/fleet
+  // lately; otherwise the hub's roll-call carries it, or nothing does.
+  st.wall = canary::net::node_http::wall_polling(now) ? "direct"
+            : (st.hub == NS_HUB_OK ? "hub" : "none");
+  st.wall_polled_s_ago = canary::net::node_http::fleet_polled_s_ago(now);
+  // The mesh: on when a fleet key could be made, off on an open network; who
+  // coordinates; peers = the most any band has heard.
+  st.peer = canary::net::peer_link::armed() ? "on" : "off";
+  {
+    static char coord[17];
+    if (canary::net::peer_link::coord_word(coord, sizeof(coord), now) > 0) st.coord = coord;
+  }
+  {
+    const int mesh_peers = canary::net::peer_link::peers();
+    if (mesh_peers > st.peers_seen) st.peers_seen = mesh_peers;
+  }
+  st.ota_state = securacv_ota_state_word(securacv_ota_get_state());
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  if (m != nullptr && m->version[0] && securacv_ota_update_available()) st.ota_target = m->version;
+  // Honest posture: every shipped build keeps its secrets in plaintext NVS
+  // (common/identity/key_at_rest.h Tier 0); the secure kit is the path up.
+  st.creds_at_rest = key_at_rest::wire_label(key_at_rest::Tier::PlaintextNvs);
+  st.clock = canary::time_sync::source_label(canary::net::wifi_clock_source());
+  {
+    Preferences prefs;
+    if (prefs.begin("securacv", /*readOnly=*/true)) {
+      snprintf(tz, sizeof(tz), "%s", prefs.getString("tz", "").c_str());
+      prefs.end();
+      if (tz[0]) st.tz = tz;
+    }
+  }
+}
+
+// The self row of GET /api/fleet — the roll-call the Witness Wall polls
+// (tvos/discovery/DISCOVERY.md). Coarse: presence + health, never raw media.
+static void fill_fleet_self(FleetSelfDevice& d) {
+  const auto& cfg = canary::cfg::get();
+  d.name = cfg.device_id;
+  d.product = DEVICE_TYPE;
+  d.online = 1;
+  d.chain_ok = canary::witness::ready() ? 1 : 0;
+  d.chain_height = canary::witness::ready() ? (int)canary::witness::chain_length() : -1;
+#ifdef CANARY_FIGURE_HARDWARE
+  d.hardware = CANARY_FIGURE_HARDWARE;
+#endif
+  d.hub = hub_word();
+}
+
+static const char* node_kernel_name() { return canary::cfg::get().device_id; }
+
+static canary::net::node_http::Hooks node_http_hooks() {
+  canary::net::node_http::Hooks h{};
+  h.fill_status = fill_node_status;
+  h.fill_fleet = fill_fleet_self;
+  h.kernel_name = node_kernel_name;
+  return h;
+}
+
+
+// ── The hub-less mesh (common/network/peer_link): the household fleet key,
+// authenticated heartbeats on the beacon's multicast group, and the one
+// deterministic coordinator every node computes the same way. docs/TRUST_MODEL.md.
+static bool peer_hub_ok() { return canary::net::mqtt_connected(); }
+
+static void peer_fill_heartbeat(canary::net::peer::Heartbeat& hb) {
+  hb.onboarding = (uint8_t)canary::net::wifi_onboarding_state();
+  hb.hub = (uint8_t)hub_word();
+  hb.ota = (uint8_t)securacv_ota_get_state();
+  hb.rssi = (int8_t)canary::net::wifi_rssi();
+  const int saved = canary::net::wifi_saved_networks();
+  hb.saved_networks = (uint8_t)(saved < 0 ? 0 : saved > 255 ? 255 : saved);
+}
+
+// The 16-hex fingerprint everything else uses → the 8 bytes a peer frame
+// carries. A node without a key (witness init failed) gets all-zero bytes
+// and still speaks, so the fleet can see it is up and keyless.
+static void peer_fp_bytes(uint8_t out[canary::net::peer::FP_BYTES]) {
+  memset(out, 0, canary::net::peer::FP_BYTES);
+  const char* hex = device_signature::fingerprint_hex();
+  if (hex == nullptr || strlen(hex) < 16) return;
+  auto nib = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+  };
+  for (size_t i = 0; i < canary::net::peer::FP_BYTES; i++) {
+    out[i] = (uint8_t)((nib(hex[2 * i]) << 4) | nib(hex[2 * i + 1]));
+  }
+}
+
+static void peer_link_setup() {
+  canary::net::peer_link::Identity id{};
+  peer_fp_bytes(id.fp);
+  id.role = canary::net::peer::ROLE_WITNESS;
+  id.caps = canary::net::mdns_txt::CAP_STATUS | canary::net::mdns_txt::CAP_FLEET |
+            canary::net::mdns_txt::CAP_OTA | canary::net::mdns_txt::CAP_MQTT |
+            canary::net::mdns_txt::CAP_PEER;
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  id.caps |= canary::net::mdns_txt::CAP_BLE_DOOR;
+#endif
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  id.caps |= canary::net::mdns_txt::CAP_BEACON;
+#endif
+  canary::net::peer_link::Hooks hooks{};
+  hooks.fill_heartbeat = peer_fill_heartbeat;
+  hooks.hub_ok = peer_hub_ok;
+  canary::net::peer_link::begin(id, hooks);
+}
+
+// Each pass: arm on (re)join with the network on the air (the key is derived
+// from it, or the stored replacement wins), tick the socket, and keep the
+// advert's `coord` word current (re-applied only when it changes).
+static void peer_link_tick(uint32_t now) {
+  static bool was_online = false;
+  static uint32_t next_coord_ms = 0;
+  const bool online = canary::net::wifi_connected();
+  if (online && !was_online) {
+    const char* ssid = nullptr;
+    const char* pass = nullptr;
+    // The witness key may have been established after peer_link_setup()
+    // (vision inits it late in setup); take the fingerprint again now.
+    uint8_t fp[canary::net::peer::FP_BYTES];
+    peer_fp_bytes(fp);
+    canary::net::peer_link::set_fp(fp);
+    if (canary::net::wifi_current_network(&ssid, &pass)) canary::net::peer_link::arm(ssid, pass);
+  }
+  if (!online && was_online) canary::net::peer_link::disarm();
+  was_online = online;
+  canary::net::peer_link::tick(now, online);
+  if ((int32_t)(now - next_coord_ms) >= 0) {
+    next_coord_ms = now + 5000;
+    char word[17];
+    canary::net::peer_link::coord_word(word, sizeof(word), now);
+    canary::net::mdns_set_coord(word);
+  }
+}
+
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+// The 10 s factory-reset hold (common/io/reset_hold.h): saved networks, the
+// setup AP's key, the hub and the settings go; the witness identity and the
+// chain stay (onboarding_fsm.h says why: every hub and display that pinned
+// this key would otherwise see a stranger). The BOOT pin is a strapping pin,
+// so it is only ever read.
+static void forget_settings_keep_identity() {
+  canary::net::wifi_forget_all();
+  Preferences prefs;
+  if (prefs.begin("securacv", /*readOnly=*/false)) {
+    // "mqtt_tls" is canary::net::mqtt_tls::NVS_KEY_MODE (mqtt_transport.h).
+    static const char* const kKeys[] = {"mqtt_host", "mqtt_port", "mqtt_user",
+                                        "mqtt_pass", "mqtt_tls", "dev_name", "tz"};
+    for (const char* k : kKeys) prefs.remove(k);
+    prefs.end();
+  }
+}
+
+static void reset_hold_tick(uint32_t now) {
+  static canary::io::ResetHold hold;
+  static bool pin_ready = false;
+  if (!pin_ready) {
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    pin_ready = true;
+  }
+  switch (hold.step(digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE, now)) {
+    case canary::io::HoldEvent::Warn:
+      canary::log_line("RESET", "BOOT held 3 s - keep holding to 10 s to forget the saved networks, hub and settings (identity kept).");
+      break;
+    case canary::io::HoldEvent::Reset:
+      // The erase happens NOW, while the hand is still on the button, so the
+      // feedback lands; the restart waits for the release. BOOT is a
+      // strapping pin (GPIO0 / GPIO9): a reset with it held low is the ROM's
+      // download-mode gesture, and a node that reboots into the serial
+      // bootloader instead of its setup network reads as bricked.
+      canary::log_line("RESET", "BOOT held 10 s - factory reset: credentials and settings forgotten; the witness identity is kept. Let go to restart into setup.");
+      forget_settings_keep_identity();
+      break;
+    case canary::io::HoldEvent::Released:
+      if (hold.released_stage >= 2) {
+        canary::log_line("RESET", "Restarting into setup.");
+        delay(200);
+        ESP.restart();
+      }
+      break;
+    default:
+      break;
+  }
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   delay(600);
@@ -486,6 +725,9 @@ void setup() {
   // app, canary-display and sibling Canaries find and label this witness.
   // Failure is non-fatal — MQTT/HA never depends on it.
   canary::net::mdns_init();
+  // The node's LAN surface: GET /api/status + /api/fleet (common/network/node_http).
+  canary::net::node_http::begin(node_http_hooks());
+  peer_link_setup();   // the hub-less mesh (docs/TRUST_MODEL.md)
 
   // Seed the heap-health snapshot so the first status publish carries real
   // numbers instead of zeros.
@@ -567,6 +809,14 @@ void loop() {
 
   // ── Network supervision ──
   canary::net::wifi_loop(now);
+  // The node's LAN surface rides the link: up when online and the setup
+  // portal (which owns port 80) is down, torn down otherwise.
+  canary::net::node_http::loop(now, canary::net::wifi_connected(),
+                               canary::net::setup_portal_active());
+  peer_link_tick(now);
+#if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
+  reset_hold_tick(now);   // the 10 s factory-reset hold (identity kept)
+#endif
   canary::net::mdns_loop(now);  // drain deferred re-announce (event task latches only)
   canary::diag::loop(now);
 
@@ -580,6 +830,7 @@ void loop() {
 
   canary::net::mqtt_loop();
   canary::net::ota_loop(now);
+  canary::net::ota_health_tick(now, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
   if (g_state_dirty) {
     publish_state_now(now);

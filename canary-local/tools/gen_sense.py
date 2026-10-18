@@ -49,7 +49,9 @@ from _tooling import die, repo_root
 REPO = repo_root()
 PRJ = REPO / "firmware/projects/canary-sense"
 MAIN_CPP = PRJ / "src/main.cpp"
-WIFI_CPP = PRJ / "src/net/wifi_mgr.cpp"
+# The join itself is the shared supervisor's (wifi_mgr.cpp is the board's
+# shim around it); its serial lines are anchored where they are printed.
+WIFI_SUP_CPP = REPO / "firmware/common/network/wifi_supervisor.cpp"
 MQTT_CPP = PRJ / "src/net/mqtt_mgr.cpp"
 MDNS_CPP = PRJ / "src/net/mdns_mgr.cpp"
 OTA_CPP = PRJ / "src/net/ota_mgr.cpp"
@@ -448,9 +450,9 @@ BOOT = [
     {"tag": "[BH1750]", "text": "ambient light sensor online", "src": '"BH1750", "ambient light sensor online"', "srcf": MAIN_CPP},
     {"tag": "[WITNESS]", "text": "Generated new Ed25519 identity (first boot).", "src": "Generated new Ed25519 identity (first boot).", "srcf": WITNESS_CPP},
     {"tag": "[WITNESS]", "text": f"Ed25519 ready  fp={EX_FP}  chain_len=0", "src": "Ed25519 ready  fp=%s  chain_len=%lu", "srcf": WITNESS_CPP},
-    {"tag": "[WIFI]", "text": 'Connecting SSID="Loft 2.4G" ...', "src": 'Connecting SSID=\\"%s\\" ...', "srcf": WIFI_CPP},
+    {"tag": "[WIFI]", "text": 'Connecting SSID="Loft 2.4G" ...', "src": 'Connecting SSID=\\"%s\\" ...', "srcf": WIFI_SUP_CPP},
     {"tag": "", "text": ". . . . ."},
-    {"tag": "[WIFI]", "text": "Connected IP=192.168.1.62 RSSI=-54dBm", "src": "Connected IP=%s RSSI=%ddBm", "srcf": WIFI_CPP},
+    {"tag": "[WIFI]", "text": "Connected IP=192.168.1.62 RSSI=-54dBm", "src": "Connected IP=%s RSSI=%ddBm", "srcf": WIFI_SUP_CPP},
     {"tag": "[MDNS]", "text": f"Fleet advert up as {EX_HOST}.local (_securacv._tcp)", "src": "Fleet advert up as %s.local", "srcf": MDNS_CPP},
     # a line with no tag prints verbatim (sense-ui.js bootLines keeps its indent)
     *({"tag": "", "text": line} for line in MQTT_SCENE),
