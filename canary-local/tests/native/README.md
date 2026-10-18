@@ -66,7 +66,11 @@ is a window the harness sends to the core before each call and reads back
 after it. A pointer export needs that window declared in `CORES` in
 `cores.js`, or the build refuses it. If the core crashes, the call throws
 with the exit status. A call with no answer throws after 30 s, and the
-stuck core is killed so it cannot outlive the test.
+stuck core is killed so it cannot outlive the test. The waiting thread
+takes the answer's state as the answer, never a wake-up alone: the worker
+stores the state before it notifies, so on a loaded machine its notify can
+land after the test's thread has read that answer and is waiting on the
+next call (sweep A50 found that race failing a run).
 
 ## What a pass does and does not say
 

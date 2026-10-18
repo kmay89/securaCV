@@ -363,16 +363,26 @@ function rpc(msg, what, pid) {
   const ch = open();
   Atomics.store(ch.ctl, 0, 0);
   ch.worker.postMessage(msg);
-  if (Atomics.wait(ch.ctl, 0, 0, limits.timeoutMs) === "timed-out") {
-    // The core is stuck (it would outlive the test: a loop never reads the
-    // stdin that closes when the test exits), so it is killed; and a late
-    // answer would land on the next request, so the channel starts over.
-    if (pid) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  // The state says whether this request is answered, never the wake-up: the
+  // worker stores an answer's state before it notifies, so this thread can
+  // see that state, return, and be waiting here on its next request when
+  // that notify lands. Taken as an answer, it read the last reply again and
+  // threw it as an error (sweep A50's load-sensitive failure).
+  const deadline = Date.now() + limits.timeoutMs;
+  while (Atomics.load(ch.ctl, 0) === 0) {
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      // The core is stuck (it would outlive the test: a loop never reads the
+      // stdin that closes when the test exits), so it is killed; and a late
+      // answer would land on the next request, so the channel starts over.
+      if (pid) {
+        try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+      }
+      ch.worker.terminate();
+      channel = null;
+      throw new Error(`native core: no answer to ${what} in ${limits.timeoutMs / 1000} s (core killed)`);
     }
-    ch.worker.terminate();
-    channel = null;
-    throw new Error(`native core: no answer to ${what} in ${limits.timeoutMs / 1000} s (core killed)`);
+    Atomics.wait(ch.ctl, 0, 0, left);
   }
   const text = Buffer.from(ch.data.subarray(0, Atomics.load(ch.ctl, 1))).toString("utf8");
   if (Atomics.load(ch.ctl, 0) !== 1) throw new Error(text);
@@ -501,8 +511,10 @@ function nativeFactory(name) {
   return async () => instance(await build(plan));
 }
 
-// instance and limits are exported for native_cores.test.js, which drives the
-// pipe with a stand-in core (fake_core.js) instead of a compiled one; build
-// for probe_cores.js, which compiles a core once before its probe's browser
+// instance, limits and channel are exported for native_cores.test.js, which
+// drives the pipe with a stand-in core (fake_core.js) instead of a compiled
+// one, and wakes the waiting thread from a second one (channel); build for
+// probe_cores.js, which compiles a core once before its probe's browser
 // starts and hands each page its own instance.
-module.exports = { coreFactory, buildPlan, build, exportsOf, exportTable, mode, CORES, instance, limits };
+module.exports = { coreFactory, buildPlan, build, exportsOf, exportTable, mode, CORES, instance, limits,
+  channel: open };

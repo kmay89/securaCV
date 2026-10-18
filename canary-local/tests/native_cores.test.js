@@ -213,6 +213,7 @@ const FAKE_PLAN = { name: "fake-core", sources: [], runtime: ["ccall", "cwrap"],
   { name: "die", ret: "void", kind: "v", params: [] },
   { name: "noise", ret: "int", kind: "n", params: [] },
   { name: "spin", ret: "void", kind: "v", params: [] },
+  { name: "slow", ret: "int", kind: "n", params: ["int"] },
 ] };
 const fakeCore = () => cores.instance({ plan: FAKE_PLAN, bin: process.execPath, args: [join(__dirname, "native/fake_core.js")] });
 
@@ -228,6 +229,37 @@ test("the pipe answers synchronously, with the i32s a wasm call would pass", () 
   assert.throws(() => m.cwrap("num", "string", ["number"]), /returns int, not a C string/);
   assert.throws(() => m.cwrap("gone", "number", []), /no export gone/);
   assert.throws(() => m.cwrap("num", "number", ["string"]), /passes number arguments only, not string/);
+});
+
+// The worker stores an answer's state and then wakes the waiting thread, so
+// that thread can see the state, return, and be waiting on its next call by
+// the time the wake-up lands (a worker descheduled between the two, under
+// load). The next call must not take that stray wake-up as its own answer:
+// before the fix it read the last answer's text again and threw it as an
+// error (sweep A50: under the path-filter recorder on a loaded machine, the
+// probes' stand-in test failed with "=p 55a721141700", a pointer reply
+// thrown by the window read after it). Here a second thread wakes the
+// waiting thread every 10 ms through a slow call, as a late wake-up would.
+test("a stray wake-up while a call waits is not read as its answer (the late-notify race)", async () => {
+  const { Worker } = require("node:worker_threads");
+  const m = fakeCore();
+  const num = m.cwrap("num", "number", ["number"]);
+  assert.strictEqual(num(41), 41, "a first answer, so the reply slot holds one");
+  const stop = new Int32Array(new SharedArrayBuffer(4));
+  const waker = new Worker(`
+    const { workerData } = require("node:worker_threads");
+    const ctl = new Int32Array(workerData.sab, 0, 2);
+    const stop = new Int32Array(workerData.stop);
+    while (!Atomics.load(stop, 0)) { Atomics.notify(ctl, 0); Atomics.wait(stop, 0, 0, 10); }
+  `, { eval: true, workerData: { sab: cores.channel().ctl.buffer, stop: stop.buffer } });
+  try {
+    await new Promise((ok) => waker.once("online", ok));
+    assert.strictEqual(m.cwrap("slow", "number", ["number"])(7), 7, "the slow call's own answer, after every wake-up");
+    assert.strictEqual(num(8), 8, "and the call after it");
+  } finally {
+    Atomics.store(stop, 0, 1);
+    await waker.terminate();
+  }
 });
 
 // What the dist's cwrap and ccall hand back for a "boolean" return, read off
