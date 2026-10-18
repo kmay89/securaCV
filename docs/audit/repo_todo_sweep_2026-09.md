@@ -8018,12 +8018,12 @@ so — see D2 below.)
   (`read_status()`) and read nothing else of the session or the transport: the
   status body is `mesh_api::build_mesh_status_json_from_view`, and the peers
   join moved out of the handler into the host-tested
-  `mesh_api::peer_views_from_status`, the members still the persisted pubkeys
-  (F199; the session's members since F199, #1802) and the age still
-  counted at the read. Every field of both bodies is
-  unchanged; after a pass they equal the old handlers' bodies byte for byte.
-  Neither route waits for the main loop. Cost: 240 B of internal SRAM for the
-  view plus its lock, and per pass a build of the view and a 240 B compare
+  `mesh_api::peer_views_from_status`, the members then still the persisted
+  pubkeys (F199; since F199, #1802, the session's members) and the age still
+  counted at the read. Every field of both bodies is unchanged; after a pass
+  they equal the old handlers' bodies byte for byte. Neither route waits for
+  the main loop. Cost: 240 B of internal SRAM for the view plus its lock, and
+  per pass a build of the view and a 240 B compare
   (the lock is taken only when the view changed). Pinned by eight new
   `test_mesh_session` tests:
   `test_a_read_before_any_publish_is_the_state_before_init`,
@@ -10507,7 +10507,8 @@ so — see D2 below.)
   hold the new code's own windows and reset (a create() that keeps the tumble,
   a 100 ms glance, and a clock written under the breath-in each fail at least
   one). Host-tested; not bench-tested. The emulator dist moves for the
-  nightlight flavor; CI's pinned emsdk rebuilds it.
+  nightlight flavor; CI's pinned emsdk rebuilds it, and the rebuilt dist was
+  not run here.
 - [x] **F281 [code] A hop hands a quickened canary back the calm breath.**
   `hop_done()` always starts `start_bob(1400, 2)`. So a bird in Worried,
   Distressed, Searching or Calling, which breathes at 1100 ms, breathes at the
@@ -10528,7 +10529,8 @@ so — see D2 below.)
   breath. The old file fails 5 of the 8 checks (the four quickened moods'
   Startles and the search hop, each 1400 ms where 1100 is owed). Host-tested;
   not bench-tested. The emulator dist moves for all six display flavors
-  (`canary_mark.cpp`).
+  (`canary_mark.cpp`); CI's pinned emsdk rebuilds it on #1802's branch after
+  this push, and the rebuilt dist was not run here.
 - [ ] **F282 [code+human] The nightlight's IMU sign convention and its MADCTL
   table must be settled together.** By `display_1in47.cpp`'s own model of
   MADCTL, rotation 1's 0x28 draws the face upright for a device turned
@@ -10602,7 +10604,8 @@ so — see D2 below.)
   checks fail); the rebuild and quarter-turn cases pass on it (it kept no fall
   offset) and fail 5 checks with the new reset removed. Host-tested; not run
   natively (runtime_turn.sh plays no visit); not bench-tested. The emulator
-  dist moves for the nightlight flavor.
+  dist moves for the nightlight flavor; CI's pinned emsdk rebuilds it on
+  #1802's branch after this push, and the rebuilt dist was not run here.
 - [x] **F285 [code] An IMU orientation commit writes nothing to serial.**
   `nightlight_apply_orientation()` and `care::nightlight_set_rotation()` log
   nothing; the only orientation line is the triple-press's "[input]
@@ -10625,21 +10628,23 @@ so — see D2 below.)
   the real `main.cpp` natively and its driver now reads the firmware's serial:
   each of the 12 turns writes exactly `[orient] app picker -> rotation R (was
   P)`, and each reference boot, asked for its own rotation, exactly `...
-  (already worn)` with its companion on stage throughout (140 checks, 0
-  failed; the 16 line checks fail on the base firmware). `onboard.test.js`
-  pins the three askers: the mailbox drain names the picker, the IMU's commit
-  names `IMU`, and the triple-press logs its `[input]` line and then turns the
-  face naming `triple-press` (that pin fails on the previous order). U1's
+  (already worn)` with its companion on stage throughout (140 checks in the
+  package; 156 on the integrated tree beside A81's 16 turn checks, 0 failed;
+  the 16 line checks fail on the base firmware). `onboard.test.js` pins the
+  three askers: the mailbox drain names the picker, the IMU's commit names
+  `IMU`, and the triple-press logs its `[input]` line and then turns the face
+  naming `triple-press` (that pin fails on the previous order). U1's
   orientation row now reads the `[orient]` line from a serial monitor, or
   `"orientation"` from `GET /api/settings`. The IMU and triple-press paths are
   compile-tested by CI only (the emulator has no IMU and the driver presses no
   button); not bench-tested. The emulator dist moves for the nightlight
-  flavor. Integration (#1802): A80's pin in `onboard.test.js` held
-  `nightlight_apply_orientation()`'s early return for a turn the glass already
-  wears, and this item writes the `(already worn)` line just before that
-  return, so the two packages each passed alone and failed together. The pin
-  now reads the line (82f557c9), and `onboard.test.js` passes on the
-  integrated tree (42 tests).
+  flavor; CI's pinned emsdk rebuilds it on #1802's branch after this push, and
+  the rebuilt dist was not run here. Integration (#1802): A80's pin in
+  `onboard.test.js` held `nightlight_apply_orientation()`'s early return for a
+  turn the glass already wears, and this item writes the `(already worn)` line
+  just before that return, so the two packages each passed alone and failed
+  together. The pin now reads the line (82f557c9), and `onboard.test.js`
+  passes on the integrated tree (42 tests).
 - [ ] **F298 [decision] The first meeting's scripted Tilt and Startle beats
   share the mark's 8 s ration.** `splash.cpp` sends kHello's Tilt beats and
   its Preen beat (a Startle) through `canary_mark_react()`, which lets one
@@ -13524,7 +13529,8 @@ so — see D2 below.)
   "side" (the edge it rests on, or the way its top points). A person with a
   Nightlight on a desk should settle which edge each value stands it on; then
   one wording goes into both, with a test that holds the Swift labels to the
-  header. Found by A80 (#1802).
+  header. Related: F282 (which way R90 turns on the glass), to be settled on
+  the same device. Found by A80 (#1802).
 - [x] **A62 [code] `fleet.html` turns a malformed deep link into a page
   error.** `canary-local/assets/app.js` reads its card with a bare
   `decodeURIComponent(location.hash.slice(1))`, so `fleet.html#%E0` throws
@@ -13623,13 +13629,14 @@ so — see D2 below.)
   and after each nightlight turn through `nightlight_request_rotation()` one
   made after the ask, to carry no round mask and the turn written from
   `io/orientation.h`'s `Orient` (R90, R180, R270 as 1, 2, 3): 140 checks
-  natively against LVGL 8.4 (124 before). A HAL that announces 1 for every
-  side turn passes the old driver and fails four new checks; one that
-  announces no turn fails twelve; one that names R90 and R270 the wrong way
-  round passes the old driver and fails eight. `onboard.test.js` now holds
-  every page call the three native drivers define to the EM_JS it stands in
-  for (return and parameter types, none undefined or stale); it fails on the
-  old driver. The emulator dist does not move. Host-tested.
+  natively against LVGL 8.4 in the package (124 before), and 156 on the
+  integrated tree beside F285's 16 `[orient]` line checks. A HAL that
+  announces 1 for every side turn passes the old driver and fails four new
+  checks; one that announces no turn fails twelve; one that names R90 and R270
+  the wrong way round passes the old driver and fails eight. `onboard.test.js`
+  now holds every page call the three native drivers define to the EM_JS it
+  stands in for (return and parameter types, none undefined or stale); it
+  fails on the old driver. The emulator dist does not move. Host-tested.
 - [x] **A82 [code] `glass_turn.sh` and `runtime_turn.sh` leave their default
   temporary build directory behind.** Without `GLASS_TURN_OUT` /
   `RUNTIME_TURN_OUT` each run makes a `mktemp -d` (about 3.5 MB of objects)
@@ -15124,9 +15131,8 @@ so — see D2 below.)
   sparse checkout, as its own step so a broken link does not raise the "mirror
   has drifted" issue. Found by the 2026-10 cleanup's mirror package.
   *Done (the mirror PR, securacv-homeassistant#28, merged 2026-10-13):* the
-  mirror's
-  `lint_readme.py --source <monorepo-checkout>` resolves every URL the
-  mirror-owned prose (`README.md`, `AGENTS.md`, `CLAUDE.md`) writes into
+  mirror's `lint_readme.py --source <monorepo-checkout>` resolves every URL
+  the mirror-owned prose (`README.md`, `AGENTS.md`, `CLAUDE.md`) writes into
   `kmay89/securaCV` against a checkout of `main`. That covers links, bare
   text, code spans, fenced code (the store page's one-command installer,
   `scripts/install.sh`) and HTML comments; nothing is masked, so no stray
@@ -15332,7 +15338,7 @@ so — see D2 below.)
   build with the mesh feature, every 30 s on mains or a normal battery,
   stretched to 2 or 4 minutes in the battery saver and low power modes).
   `CHIRP_STATE_IS_ON` decides: `active`, `cooldown` (an active channel whose
-  send timer runs), `muted` and `listening` (named by `state_name()`, never
+  send timer runs), `muted`, and `listening` (named by `state_name()`, never
   entered by the canary-wap) read on, a channel that is on with a session;
   `disabled` and `initializing` read off; any other word, `state_name()`'s own
   `unknown` included, reads unknown. The lookup is exact, since the firmware
@@ -15761,8 +15767,7 @@ so — see D2 below.)
   only `<style>` blocks, which is how `checkup.html`'s inline `color:#065f46`
   passed. Found by the 2026-10 cleanup's site review.
   *Done (the website PR, securacv_website#227, merged 2026-10-13):* the seven
-  rules
-  (compare `.category`, store `.batchnote`, the how-it-works and vault
+  rules (compare `.category`, store `.batchnote`, the how-it-works and vault
   `.noscript-note`, ideas `.noob`, playground `.pill.honest` and `.btn.on`)
   take a `:root` ink token their page lifts in a night block, in both dark
   sources, and the panels' light hairlines get night values in the same block
@@ -15964,28 +15969,27 @@ so — see D2 below.)
   and hold it. (4) `css/site.css`'s two `.announce-badge` night overrides
   style nothing since the homepage's hero pill was cut.
   *Done (the website PR, securacv_website#227, merged 2026-10-13):* (1)
-  `/help`'s flasher
-  door says the Flasher "backs up before it writes and checks the write
-  after", and its "board disappears" card (also in `llms-full.txt`) says the
-  flasher "checks the image before it writes and checks the write after it";
-  `tests/copy-honesty.test.mjs` refuses a write, flash or backup hung on
-  "verify" in any word order on every page, page script and llms file. (2) The
-  `l` command's plain copy says "its public key turned into a little picture".
-  The serial-command copy is website-authored (the carry stamps only the
-  `builds` block, and the firmware's help line already says "key fingerprint
-  as randomart"), so nothing changes upstream; `js/onboarding-spec.js` was
-  regenerated with `scripts/carry_to_site.py --only builds` from #1802's tree,
-  which moved only that line, and `tests/plugin-facts.test.mjs` holds both
-  lines to the public key. (3) An `INTENTS` row (`Apple TV, on tvOS — in
-  testing`, words `apple tv tvos`) sends "apple tv" to `/apple-tv`; over every
-  title, indexed word and `PAGE_WORDS` pair it is the only ask whose top
-  result moves. The words this item suggested also took "witness wall" from
-  `/witness-wall`, so `tests/site-map.test.mjs` probes "witness wall", "app
-  store" and "apple" beside "apple tv". (4) `css/site.css` loses the
-  `.announce-badge` night overrides and, found by a new
-  `tests/dark-mode.test.mjs` check that every class or id a night override
-  names still appears in a page or script, the `.lab-promo-section` ones too.
-  Host-tested.
+  `/help`'s flasher door says the Flasher "backs up before it writes and
+  checks the write after", and its "board disappears" card (also in
+  `llms-full.txt`) says the flasher "checks the image before it writes and
+  checks the write after it"; `tests/copy-honesty.test.mjs` refuses a write,
+  flash or backup hung on "verify" in any word order on every page, page
+  script and llms file. (2) The `l` command's plain copy says "its public key
+  turned into a little picture". The serial-command copy is website-authored
+  (the carry stamps only the `builds` block, and the firmware's help line
+  already says "key fingerprint as randomart"), so nothing changes upstream;
+  `js/onboarding-spec.js` was regenerated with `scripts/carry_to_site.py
+  --only builds` from #1802's tree, which moved only that line, and
+  `tests/plugin-facts.test.mjs` holds both lines to the public key. (3) An
+  `INTENTS` row (`Apple TV, on tvOS — in testing`, words `apple tv tvos`)
+  sends "apple tv" to `/apple-tv`; over every title, indexed word and
+  `PAGE_WORDS` pair it is the only ask whose top result moves. The words this
+  item suggested also took "witness wall" from `/witness-wall`, so
+  `tests/site-map.test.mjs` probes "witness wall", "app store" and "apple"
+  beside "apple tv". (4) `css/site.css` loses the `.announce-badge` night
+  overrides and, found by a new `tests/dark-mode.test.mjs` check that every
+  class or id a night override names still appears in a page or script, the
+  `.lab-promo-section` ones too. Host-tested.
 - [ ] **W24 [decision] The TV app's store text says "verified record".**
   `tv/appinfo.json`'s `appDescription`, `tv/config.xml`'s `<description>` and
   `tv/README.md`'s opening line call the Wall "a calm, always-on view of your
@@ -16291,7 +16295,8 @@ major, by theme") — work its themes, then tick here.
 
   Still open: the remaining development-case knobs without help, the three dev
   cases' 42 among them, whose shared lines must be split, which moves
-  `catalog.json`'s `engineering_param_count` (a verified patch also gives
+  `catalog.json`'s `engineering_param_count` (the package's patch for that
+  split, handed to the integrator with #1802 and not applied, also gives
   `bez_on` and `opt_weep` their help, and those helps become their catalog
   labels; decision pending); the Lab stopping at the first module like the
   builder (C21, which also moves `engineering_param_count`); and the
@@ -16334,8 +16339,8 @@ major, by theme") — work its themes, then tick here.
   to eight. Found by C10c-1's review (#1802).
 - [ ] **C24 [code] Long group notes in the Lab's param dump.** Since C10a, the
   52 multi-line Customizer headers reach `enclosures.json` as group notes, up
-  to 2056 characters (`canary_c3_lcd147.scad`'s "Ventilation"; "USB-A" 1525,
-  "Press dot" 945). `canary-local/assets/enclosure-lab.js`'s `renderParamDump`
+  to 2058 characters (`canary_c3_lcd147.scad`'s "Ventilation"; "USB-A" 1527,
+  "Press dot" 947). `canary-local/assets/enclosure-lab.js`'s `renderParamDump`
   puts each note in a span inside its group's `<summary>`, so each one is a
   paragraph on the summary line. Show the note's first sentence in the summary
   and the full note as the first row inside the details. Found by C10a's
@@ -17073,8 +17078,8 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   at once, unreviewed), and narrowing R11 to the keys that choose a runner (a
   job `name:` naming the label is refused too, which errs on the safe side).
   Runner resolution is proven only by CI. The R11 row for `.github/CI.md` is
-  handed to the integrator. Found here: CI17 (the 26.04 trial), CI18 (a stale
-  `ubuntu_latest_ok` entry), CI19 (a release job's core cache).
+  handed to the integrator. Found here: CI17 (the 26.04 trial) and CI18 (a
+  stale `ubuntu_latest_ok` entry); CI19 (a release job's core cache) is F21's.
 - [ ] **CI17 [code] Trial the jobs on `ubuntu-26.04` before 24.04 retires.**
   CI11 (#1802) pinned every job that floated on `ubuntu-latest` to
   `ubuntu-24.04` in all three repos, ahead of the 2026-10-19 image move, and

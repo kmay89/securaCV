@@ -2,12 +2,13 @@
 
 ## [Unreleased]
 
-### Every workflow runs on a pinned Ubuntu image and the WAP's release rows on their sketch's core, the hourly ceiling never refuses a refresh and keeps its last slot for a change, a PlatformIO Canary in an opera refuses a join and says it paired at once, another Canary cannot win the Scout's pairing window, the 4.3B fieldbus station reads a Modbus exception and recovers a bus-off, the Sense's count follows its presence, a Canary's Last event names its summaries, the root image mints Witness Wall viewer tokens, and the Lab groups enclosure knobs as the builder does (#1802, wave 19)
+### No job floats on `ubuntu-latest`, the WAP's release rows build on their sketch's core, the hourly ceiling never refuses a refresh and keeps its last slot for a change, a PlatformIO Canary in an opera refuses a join and says it paired at once, another Canary cannot win the Scout's pairing window, the 4.3B fieldbus station reads a Modbus exception and recovers a bus-off, the Sense's count follows its presence, a Canary's Last event names its summaries, the root image mints Witness Wall viewer tokens, and the Lab groups enclosure knobs as the builder does (#1802, wave 19)
 
-- **CI: every job in the three repos runs on `ubuntu-24.04`, the WAP's release
-  rows build on the sketch's core and the LVGL 9 rows on exactly 9.5.0 (sweep
-  CI11, F21, F247, F34; with the website PR securacv_website#228 and the
-  mirror PR securacv-homeassistant#29, both merged 2026-10-14).**
+- **CI: every job in the three repos that floated on `ubuntu-latest` runs on
+  `ubuntu-24.04`, the WAP's release rows build on the sketch's core and the
+  LVGL 9 rows on exactly 9.5.0 (sweep CI11, F21, F247, F34; with the website
+  PR securacv_website#228 and the mirror PR securacv-homeassistant#29, both
+  merged 2026-10-14).**
   `ubuntu-latest` becomes Ubuntu 26.04 on 2026-10-19 and would move every job
   to a new image at once. Every monorepo job that floated on it now names
   `ubuntu-24.04` with a one-line reason comment: the ci-pins package pinned 80
