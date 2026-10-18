@@ -5387,14 +5387,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::{problem}")
     if errors or problems:
         return 1
-    print(f"canary-wap loop-task ownership holds: the mesh's, Chirp's and Bluetooth's owner "
-          f"commands are internal to their channels and run from update()'s drain, the REST "
-          f"handlers only submit, the mesh, Chirp and Bluetooth status routes read only what the "
-          f"loop task published, the NimBLE host task's callbacks only post events update() "
-          f"applies, "
-          f"the MQTT client is replaced only by loop()'s re-init, which never stops a client "
-          f"(the retire_task worker does), and every client's network timeout keeps a "
-          f"loop-task publish under the watchdog "
+    print("canary-wap loop-task ownership holds: the mesh's, Chirp's and Bluetooth's owner "
+          "commands are internal to their channels and run from update()'s drain, the REST "
+          "handlers only submit, the mesh, Chirp and Bluetooth status routes read only what the "
+          "loop task published, the NimBLE host task's callbacks only post events update() "
+          "applies, "
+          "the MQTT client is replaced only by loop()'s re-init, which never stops a client "
+          "(the retire_task worker does), and every client's network timeout keeps a "
+          "loop-task publish under the watchdog "
           + ("(self-test skipped)." if "--no-self-test" in argv
              else f"({len(MUTATIONS)} mutations refused)."))
     return 0
