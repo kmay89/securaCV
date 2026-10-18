@@ -535,7 +535,10 @@ clean: clean-fieldbus-glue
 # moved the speech bubble hangs under it, its tallest form (the script's
 # lines wrapped the way LVGL 8.4 wraps a label, held to the heights a native
 # harness drew) on the canvas and clear of the bird; the bubble is as wide
-# as bubble_w() gives each canvas (F160). The test is C++17
+# as bubble_w() gives each canvas (F160); where the bubble stays centered,
+# the first meeting's bird sits clear of its tallest form and the tail on
+# it wherever the canvas holds that seat's hop (F159, for every tallest a
+# canvas could measure). The test is C++17
 # (story_scripts.h's inline variables); the header alone is held to gnu++11
 # first, since the core-2.0.17 sketch compiles it there. Hooked into `run`
 # and `clean` by prerequisite.
@@ -567,8 +570,9 @@ clean: clean-splash-layout
 # the bubble sits where seat() says (hung under a moved bird, centered
 # otherwise) in whatever height its typed line wraps to, on the canvas, its
 # sides too (F160), and clear of a moved bird, with its tail object on its
-# top edge at every refresh (F158; only the LVGL 9 builds draw the tail);
-# its tallest is test_splash_layout's measure. Three
+# top edge at every refresh (F158), square and turned about its center
+# (F185), and the bird clear of the tail's reach wherever seat() says so
+# (F159); its tallest is test_splash_layout's measure. Three
 # builds, because the glass family is the config's call: the watch's (the
 # round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
 # the nightlight's turned one included) and the dash's (the wide glass).

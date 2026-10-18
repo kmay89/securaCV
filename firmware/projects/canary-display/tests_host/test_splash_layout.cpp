@@ -14,9 +14,10 @@
 //    bird's whole box on the canvas over its breath and its highest hop
 //    (sl::kHopReach, which this test derives from canary_mark.cpp's hop and
 //    LVGL's overshoot curve);
-//  * the seat is the one the splash always had wherever that holds: only
-//    the canvases that needed it move (pinned: the landscape nightlight's
-//    first meeting);
+//  * the seat is the one the splash always had wherever that holds the
+//    hop: only the canvases that needed it drop (pinned: the landscape
+//    nightlight's first meeting), and a first meeting's bird otherwise
+//    moves only up, clear of its bubble (F159, below);
 //  * where the bird moved, the speech bubble hangs from under it: its
 //    tallest form (the script's longest line, wrapped the way LVGL wraps a
 //    label, in each type ladder's label face) stays on the canvas and clear
@@ -27,11 +28,23 @@
 //    less its margin — so its sides stay on the glass — and its tallest
 //    form is measured at that width (pinned: only the 172 and 180 px
 //    portrait glass narrow it, and only the 172 px glass under Heirloom
-//    wraps a line more).
-// The bird/bubble overlap on the canvases whose seats did not move is
-// printed, not held: on the AMOLED the centered bubble's tallest form
-// reaches into the bird's box (filed), and on the 172 px glass under
-// Heirloom the narrowed bubble's does by more (F160's cost, filed).
+//    wraps a line more);
+//  * where the bubble stays centered, the first meeting's bird sits clear
+//    of its tallest form and the tail on it (F159): its box, over its
+//    breath, ends sl::kGap above the tail's reach (sl::kTailRise, which
+//    this test derives from the tail's side, inset and pivot), wherever the
+//    canvas holds that seat's hop; it rises just enough, and not at all
+//    where its family's seat already clears. Held for every tallest bubble
+//    a canvas could measure (seat() takes splash.cpp's measure, so a
+//    pseudonym of mixed letters is covered too), and for the bubbles the
+//    script's lines wrap to with each one-letter pseudonym. Pinned: the
+//    seats that rise (the AMOLED, the 172 and 180 px portrait glass, the
+//    touch169, the dash under Heirloom with a wide-lettered pseudonym), and
+//    the only ones not clear: the round watch, whose raised seat would lift
+//    its hop off the disc (its bubble's top stays in the bird's box by 2 px,
+//    6 under Heirloom, the tail 10 px above that), and the landscape
+//    nightlight, whose hung bubble keeps kGap under the bird and stands its
+//    tail in the foot of the bird's box.
 //
 // This test holds the header. test_splash_scenes.cpp holds splash.cpp to it:
 // it compiles the real splash.cpp against fake_lvgl and reads where the bird
@@ -42,6 +55,8 @@
 // variables); the Makefile holds the header alone to gnu++11 first, since
 // the core-2.0.17 sketch compiles it there. Prints "ALL SPLASH LAYOUT TESTS
 // PASSED" on success.
+
+#include <cmath>
 
 #include "splash_test_env.h"
 
@@ -65,6 +80,23 @@ double number_after(const std::string& text, const char* key) {
   CHECK(at != std::string::npos, "canary_mark.cpp: \"%s\" not found", key);
   return at == std::string::npos ? 0 : std::atof(text.c_str() + at +
                                                   std::strlen(key));
+}
+
+// The tail's reach above the bubble's top edge: its box, kTailSide square,
+// kTailInset px into the edge, turned 45 degrees about kTailPivot (the
+// square's center); the tip stands half a diagonal above the pivot.
+int derived_tail_rise() {
+  const double pivot_above = sl::kTailSide - sl::kTailInset - sl::kTailPivot;
+  const double tip = pivot_above + sl::kTailSide * std::sqrt(2.0) / 2.0;
+  const int rise = (int)std::ceil(tip);
+  std::printf("the tail: a %d px square %d px into the bubble, turned about (%d, %d): its tip "
+              "%.2f px above the bubble's top edge, %d rows; kTailRise %d\n",
+              sl::kTailSide, sl::kTailInset, sl::kTailPivot, sl::kTailPivot, tip, rise,
+              sl::kTailRise);
+  CHECK(sl::kTailPivot * 2 == sl::kTailSide,
+        "kTailPivot is %d; the tail turns about the center of its %d px square (F185)",
+        sl::kTailPivot, sl::kTailSide);
+  return rise;
 }
 
 int derived_hop_reach() {
@@ -150,8 +182,41 @@ void check_wrap_model() {
   }
 }
 
+// seat()'s rule on a canvas whose family's first-meeting seat holds its hop
+// (the bubble centered), for every tallest bubble the canvas could measure:
+// the bird stays on the canvas over its hop and breath; it is clear of the
+// tail on that bubble wherever a seat that clears holds the hop; it rises
+// only when its family's seat does not clear, and then just enough; and
+// where it cannot clear it keeps its family's seat.
+void check_seat_rule(const Canvas& c, const sl::Family& fam, const char* who, int hop_reach) {
+  const int nominal = sl::bird_top(c.h, fam.bird, fam.intro_off);
+  if (nominal - hop_reach < 0) return;  // the hung bubble (below)
+  int fails = 0;
+  for (int t = 1; t <= c.h; ++t) {
+    const sl::Seat s = sl::seat(c.h, fam, true, t);
+    const int top = sl::bird_top(c.h, fam.bird, s.bird_off);
+    const int b_top = sl::centered_top(c.h, fam, t);
+    const int need = top + fam.bird + sl::kBreath + sl::kGap + sl::kTailRise;  // <= b_top
+    const int deepest = b_top - (fam.bird + sl::kBreath + sl::kGap + sl::kTailRise);
+    bool ok = !s.hang && s.bubble_top == b_top && top - hop_reach >= 0;
+    if (deepest >= hop_reach) {
+      ok = ok && s.clear && need <= b_top &&
+           (nominal <= deepest ? (s.bird_off == fam.intro_off && !s.raised)
+                               : (top == deepest && s.raised));
+    } else {
+      ok = ok && !s.clear && !s.raised && s.bird_off == fam.intro_off;
+    }
+    if (!ok && fails++ == 0)
+      CHECK(false, "%s: for a %d px tallest bubble (top y %d) seat() puts the bird at y %d "
+            "(%s, %s); its family's seat is y %d, the deepest clear one y %d, the hop "
+            "needs %d", who, t, b_top, top, s.raised ? "raised" : "not raised",
+            s.clear ? "clear" : "not clear", nominal, deepest, hop_reach);
+  }
+}
+
 void check_canvas(const Canvas& c, int which, int hop_reach,
-                  std::vector<std::string>* moved) {
+                  std::vector<std::string>* moved, std::vector<std::string>* raised,
+                  std::vector<std::string>* unclear) {
   const sl::Family& fam = c.wide ? sl::kWideGlass : sl::kSmallGlass;
   const char* lad = which ? "heirloom" : "default";
   char who[96];
@@ -172,10 +237,28 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
         sl::kBubbleMargin);
   const int tallest = tallest_bubble(*f, drawn, nullptr);
   const int tallest_family = tallest_bubble(*f, fam, nullptr);
+  check_seat_rule(c, fam, who, hop_reach);
+  // The script's own bubbles: each one-letter pseudonym's tallest, as
+  // splash.cpp would measure it on this canvas.
+  for (size_t k = 0; k < g_minted.alpha.size(); ++k) {
+    const std::string subject((size_t)g_hex_len, g_minted.alpha[k]);
+    const int t = tallest_for(*f, drawn, subject, nullptr);
+    const sl::Seat s = sl::seat(c.h, fam, true, t);
+    const int top = sl::bird_top(c.h, fam.bird, s.bird_off);
+    if (!s.hang)
+      CHECK(sl::centered_top(c.h, fam, t) - sl::kTailRise >= 0 &&
+                sl::centered_top(c.h, fam, t) + t <= c.h,
+            "%s, pseudonym \"%s\": the centered bubble (%d px tall) or its tail "
+            "leaves the canvas", who, subject.c_str(), t);
+    CHECK(s.clear == (s.hang ? false : top + fam.bird + sl::kBreath + sl::kGap +
+                                           sl::kTailRise <= sl::centered_top(c.h, fam, t)),
+          "%s, pseudonym \"%s\": seat() says the bird is %s the tail on its %d px "
+          "bubble", who, subject.c_str(), s.clear ? "clear of" : "not clear of", t);
+  }
   std::string summary;
   for (int fm = 1; fm >= 0; --fm) {
     const bool first = fm == 1;
-    const sl::Seat s = sl::seat(c.h, fam, first);
+    const sl::Seat s = sl::seat(c.h, fam, first, first ? tallest : 0);
     const int nominal_off = first ? fam.intro_off : fam.hello_off;
     const int nominal = sl::bird_top(c.h, fam.bird, nominal_off);
     const int top = sl::bird_top(c.h, fam.bird, s.bird_off);
@@ -187,12 +270,14 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
           "%s: the %s bird (%d px at y %d) leaves the canvas: y %d..%d over "
           "its hop and breath", who, what, fam.bird, top, top - hop_reach,
           top + fam.bird + sl::kBreath);
-    // The seat it always had, wherever that holds the hop; moved just
-    // enough where it does not.
+    // The seat it always had, wherever that holds the hop (risen clear of
+    // the bubble's tallest form, F159, checked by check_seat_rule); moved
+    // down just enough where it does not.
     if (nominal - hop_reach >= 0) {
-      CHECK(s.bird_off == nominal_off && !s.hang,
+      CHECK((s.bird_off == nominal_off || (first && s.raised)) && !s.hang,
             "%s: the %s seat moved from %d to %d though the canvas holds it",
             who, what, nominal_off, s.bird_off);
+      if (s.raised) raised->push_back(std::string(who) + " " + what);
     } else {
       CHECK(top == hop_reach && s.hang == first,
             "%s: the %s seat is y %d; the hop needs %d (and only the first "
@@ -224,12 +309,27 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
             "%s: the centered bubble (y %d..%d, its tallest) leaves the "
             "canvas", who, b_top, b_bottom);
     }
-    // Printed, not held where the seat did not move (the AMOLED's).
+    // Clear of the tail on the tallest bubble wherever seat() says so
+    // (check_seat_rule holds when that is); printed, and pinned in main(),
+    // where it is not.
     const int overlap = bird_bottom - b_top;
-    char tail[64] = "";
+    const int tail_overlap = bird_bottom + sl::kGap - (b_top - sl::kTailRise);
+    if (s.clear)
+      CHECK(tail_overlap <= 0, "%s: the bird (to y %d over its breath) is within %d px of "
+            "the tail on its tallest bubble (from y %d)", who, bird_bottom, sl::kGap,
+            b_top - sl::kTailRise);
+    else
+      unclear->push_back(who);
+    char tail[96] = "";
     if (overlap > 0)
-      std::snprintf(tail, sizeof(tail), " (in the bird's box by %d px)",
-                    overlap);
+      std::snprintf(tail, sizeof(tail), " (in the bird's box by %d px, its tail %d)",
+                    overlap, overlap + sl::kTailRise);
+    else if (!s.clear)
+      std::snprintf(tail, sizeof(tail), " (its tail in the bird's box by %d px)",
+                    bird_bottom - (b_top - sl::kTailRise));
+    else
+      std::snprintf(tail, sizeof(tail), " (its tail %d px under the bird's breath)",
+                    (b_top - sl::kTailRise) - bird_bottom);
     char narrowed[64] = "";
     if (drawn.bubble_w != fam.bubble_w)
       std::snprintf(narrowed, sizeof(narrowed), " %d px wide (tallest %d at "
@@ -237,7 +337,7 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
     std::snprintf(one, sizeof(one),
                   "first meeting y %3d..%3d (hop to %3d)%s, bubble %s%s y "
                   "%3d..%3d%s;", top, top + fam.bird, top - hop_reach,
-                  s.bird_off != nominal_off ? " (moved)" : "",
+                  s.raised ? " (raised)" : s.bird_off != nominal_off ? " (moved)" : "",
                   s.hang ? "hung" : "centered", narrowed, b_top, b_bottom,
                   tail);
     summary = one + summary;
@@ -252,16 +352,19 @@ int main() {
   load_minted_core();
   load_hex_len();
   const std::vector<Env> envs = load_envs();
+  const int rise = derived_tail_rise();
+  CHECK(rise == sl::kTailRise, "splash_layout.h's kTailRise is %d; the turned tail reaches "
+        "%d rows above the bubble", sl::kTailRise, rise);
   const int reach = derived_hop_reach();
   CHECK(reach == sl::kHopReach, "splash_layout.h's kHopReach is %d; canary_mark's "
         "hop reaches %d", sl::kHopReach, reach);
   check_wrap_model();
   std::printf("the splash on every canvas it runs on:\n");
   const std::vector<Canvas> cs = canvases(envs);
-  std::vector<std::string> moved;
+  std::vector<std::string> moved, raised, unclear;
   for (size_t i = 0; i < cs.size(); ++i)
     for (int which = 0; which < 2; ++which)
-      check_canvas(cs[i], which, sl::kHopReach, &moved);
+      check_canvas(cs[i], which, sl::kHopReach, &moved, &raised, &unclear);
   // Pinned: the only seats that moved are the landscape nightlight's first
   // meeting (both ladders). Anything else moving is a change to a canvas
   // whose splash was right.
@@ -274,6 +377,35 @@ int main() {
         "meeting should (first: %s)", (int)moved.size(),
         moved.empty() ? "none" : moved[0].c_str());
   CHECK(cs.size() >= 8, "only %d canvases", (int)cs.size());
+  // Pinned (F159): with each canvas's tallest bubble (any pseudonym), the
+  // first meetings whose bird rises clear of it, and the only ones it
+  // cannot clear. Anything else rising is a canvas whose seat was clear.
+  const auto joined = [](const std::vector<std::string>& v, const char* cut) {
+    std::string out;
+    for (size_t i = 0; i < v.size(); ++i) {
+      std::string one = v[i];
+      const size_t at = one.find(cut);
+      if (at != std::string::npos) one = one.substr(0, at);
+      out += (out.empty() ? "" : ", ") + one;
+    }
+    return out;
+  };
+  const std::string rose = joined(raised, " first meeting");
+  const std::string not_clear = joined(unclear, "\x01");
+  std::printf("the first meetings whose bird rose clear of its bubble (F159): %s\n"
+              "  and the only ones not clear of its tail: %s\n", rose.c_str(),
+              not_clear.c_str());
+  CHECK(rose == "dash 800x480/heirloom, dash 480x800/heirloom, nightstand-s3 172x320/default, "
+                "nightstand-s3 172x320/heirloom, touch169 240x280/default, "
+                "touch169 240x280/heirloom, amoled241 450x600/default, "
+                "amoled241 450x600/heirloom, nightstand-c6 172x320/default, "
+                "nightstand-c6 172x320/heirloom, nightlight-c3 180x320/default, "
+                "nightlight-c3 180x320/heirloom",
+        "the birds that rise clear of the bubble are \"%s\"", rose.c_str());
+  CHECK(not_clear == "watch 240x240/default, watch 240x240/heirloom, "
+                     "nightlight-c3 320x180/default, nightlight-c3 320x180/heirloom",
+        "the first meetings not clear of the tail are \"%s\"; only the round watch's "
+        "and the landscape nightlight's should be", not_clear.c_str());
   // Pinned (F160): the bubble narrows on the 172 and 180 px portrait glass
   // alone (164 and 172 px), and only the 172 px glass under Heirloom wraps
   // its tallest line once more (94 px to 112, with a wide-lettered
