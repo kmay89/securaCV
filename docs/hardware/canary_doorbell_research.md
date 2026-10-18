@@ -349,7 +349,7 @@ security-screw continuity on the existing blind boss — `TamperDetected`, no ne
 **Out:** MAX98357A I²S amplifier ($3–6) into an IP67 driver — Same Sky CMS-15113-078SP-67
 (0.7 W, $5) for the quick replies and a chime tone, or a Visaton K64WP if the doorbell *is* the
 chime. (The Lite's v0.8 case already carries a 36 mm 3 W-class sealed driver on a PAM8302A fed
-by one PWM pin — the chime, the tick and the reply tones, with a street-carrying loudness as the
+by one PWM pin (D10, the stacked module's SPI MOSI input, with its SPI clock held low) — the chime, the tick and the reply tones, with a street-carrying loudness as the
 unmetered target; the Pro keeps the
 I²S path because its carrier has the pins and the voice clips need the fidelity.) **In: none, by default.** The Pro carrier has a footprint for the WAP's envelope-only
 PDM microphone, **do-not-populate**, for owners who want the `knock` and `glass_break` acoustic

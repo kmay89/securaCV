@@ -5,7 +5,8 @@
 // this is one PWM pin, a sample timer and NVS around it.
 //
 // Compiled in on the boards whose pins.h names DOORBELL_AUDIO_PIN (the XIAO
-// hosts the doorbell case takes, on D3); elsewhere every call is a no-op
+// hosts the doorbell case takes, on D10 with D8 held low: never D3, which is
+// the stacked module's reset); elsewhere every call is a no-op
 // and available() is false. The pin feeds an RC-filtered class-D amplifier
 // (PAM8302A class) and a sealed driver behind the face's grille:
 // docs/hardware/canary_vision_doorbell_wiring.md, "The speaker".

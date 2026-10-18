@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Vision Doorbell: the speaker moves off the camera module's reset pin (D3 → D10)
+
+The doorbell speaker's PWM was on XIAO D3, documented as the stacked Grove
+Vision AI V2's SPI chip select. It is the module's **reset**: the module's
+silkscreen prints `RST` there, and Seeed's own library drives it as one
+(`AI.begin(&Wire, D3)`; SPI mode is `begin(&SPI, cs = D1, sync = D0,
+rst = D3)`). The 78 kHz carrier runs from boot even while the speaker is
+silent, so a doorbell wired as documented would hold its camera in reset.
+
+- **The speaker is on D10** (the module's SPI MOSI, an input) on both XIAO
+  hosts — S3 GPIO9, C3 GPIO10 — and the speaker driver holds **D8** (the
+  module's SPI clock) low before the carrier starts, so the carrier never
+  clocks a bit into the module. `DOORBELL_AUDIO_PIN`,
+  `DOORBELL_AUDIO_PIN_NAME` and `DOORBELL_AUDIO_SPI_CLK_HOLD_PIN` in the two
+  XIAO `pins.h`; the boot line now names the pin
+  (`[BELL] Speaker on D10 (GPIO10, …)`).
+- **The XIAO socket is mapped once, from the module's sources:** D0 SYNC
+  (module output), D1 SPI CS, D2 SWDIO, D3 RST, D4/D5 I²C, D6/D7 UART,
+  D8/D9/D10 SPI clock / MISO (module output) / MOSI — in both `pins.h`, the
+  [Grove guide](docs/hardware/grove_vision_ai_v2_guide.md) and the
+  [doorbell wiring page](docs/hardware/canary_vision_doorbell_wiring.md),
+  which now says never to wire D0, D3 or D9.
+- **The wiring drawing is redrawn**: the old one ended mid-speaker and drew
+  R9 before R8 against its own label (R8 is in series to A+, R9 from A+ to
+  GND). The BOM's AMP1 row, `build.json` and `PIN_BUDGET.md` follow. The
+  wiring page also stops saying the module has no microSD slot (it has
+  one; this build does not use it) and notes what the Adafruit 2130 breakout
+  already carries (an SD pull-up, 1 µF input caps, a volume trim).
+- **Rewire a doorbell built to the old page:** move the amplifier's filter
+  input from D3 to D10. Nothing else moves.
+
 ### Several 1.47" C6 nightstands: offered by the flasher, and each on every wall once (Flasher 0.12.1, Lab 0.3.1)
 
 - **The flashers show the ESP32-C6 display card next to the Sense** (and the

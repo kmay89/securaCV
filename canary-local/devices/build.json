@@ -1006,7 +1006,7 @@
       "mpn": "PAM8302A / 2130",
       "mfr": "Diodes Inc / Adafruit",
       "usd": 1.5,
-      "notes": "Doorbell v0.8: XIAO 5V -> VIN (SD tied to VIN; the 5V pin is USB only, so the speaker is silent on the LiPo ride-through), XIAO D3 (PWM audio) -> R6/C3/R7/C5 filter -> C4 -> R8/R9 divider -> A+; A- through 1 uF to GND; + / - to SPK1. Parks on edge beside the button, taped to the -X wall. Fixed 24 dB gain: the divider keeps the XIAO's swing at ~0.6 V peak",
+      "notes": "Doorbell v0.8: XIAO 5V -> VIN (SD tied to VIN; the 5V pin is USB only, so the speaker is silent on the LiPo ride-through), XIAO D10 (PWM audio; the firmware holds D8 low; never D3, which is the Grove Vision AI V2's reset) -> R6/C3/R7/C5 filter -> C4 -> R8 -> A+ with R9 from A+ to GND; A- through 1 uF to GND; + / - to SPK1. Parks on edge beside the button, taped to the -X wall. Fixed 24 dB gain: the divider keeps the XIAO's swing at ~0.6 V peak",
       "orderable": false
      },
      {
