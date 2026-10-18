@@ -147,21 +147,25 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * finds the card ready latches; a call with no card returns 0 and leaves the
  * next call to try. If a live event is already in the ring by then (a card
  * that mounted late), it latches without reading the card, since inject
- * would refuse every row. A card that is not this device's (a canary base's
+ * would refuse every row. Since sweep F77 a closed bundle is such an event
+ * too, and on a crash boot system.integrity's boot row (which closes its own
+ * bundle at the emit) commits on the first loop pass, so a card adopted
+ * after that pass restores nothing on such a boot; a card that mounts in
+ * setup() (the usual case) or on the first pass reloads first. A card that is not this device's (a canary base's
  * owner file) is left alone, as poll() leaves it.
  *
  * The rows it restores are the log's newest, not today's: see "today is a
  * name, not a bound" above.
  *
  * It restores what the log holds, and the log holds less than the Today
- * sheet shows live: the egress logs only ring rows (csi_event_find), and a
- * bundle the bundler closes (csi_bundler.cpp commit_closed, through the
- * chokepoint's csi_event_commit_bundle_) never enters the ring, so closed
- * bundles are neither on the card nor restored (backlog F77). Only direct (stateless /
- * ambient) commits are. Found 2026-09 while wiring this. Since backlog F46
- * a closed bundle takes its event id from the same persisted allocator as
- * every other row, so the old reason not to log it (ids from a separate,
- * unpersisted space) is gone; putting it in the ring is still open.
+ * sheet shows live: the egress logs every committed ring row but an ambient
+ * one (sweep F105: wifi.channel_activity's rows go to neither the card nor
+ * the broker), so ambient rows are not restored. Closed bundles are: since
+ * sweep F77 a bundle the bundler closes (csi_bundler.cpp commit_closed,
+ * through the chokepoint's csi_event_commit_bundle_) enters the ring like a
+ * direct commit, so the egress logs it. Until F77 none did, and a reboot
+ * emptied the sheet of every presence and tamper row; F46 had removed the
+ * old reason not to log them (ids from a separate, unpersisted space).
  *
  * A dismissal survives the reboot: a record the tail also holds a
  * dismissal line for (flush_dismissals() below) is restored dismissed, and

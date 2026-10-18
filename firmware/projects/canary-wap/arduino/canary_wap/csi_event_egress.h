@@ -31,12 +31,13 @@
  * Order. Home Assistant's replay gate refuses an event_id below the last
  * one it verified, so a row that overtakes an older one gets the older one
  * refused. A row goes out live only when nothing older waits:
- *   - a row the SD log keeps (a ring row: a stateless commit) is
- *     appended to the card; if anything older is still waiting, on the card
- *     or in RAM, it waits on the card and the backfill sends it in turn;
- *   - a row the card does not keep (a closed bundle, which never enters the
- *     ring, backlog F77; any row while the card is not open; a row whose
- *     append failed) waits in RAM, at most kHeldMax of them, oldest dropped
+ *   - a row the SD log keeps (a ring row: a stateless commit or, since
+ *     sweep F77, a closed bundle) is appended to the card; if anything older
+ *     is still waiting, on the card or in RAM, it waits on the card and the
+ *     backfill sends it in turn;
+ *   - a row the card does not keep (any row while the card is not open, a
+ *     row whose append failed; until sweep F77 put them in the ring, every
+ *     closed bundle) waits in RAM, at most kHeldMax of them, oldest dropped
  *     first, while anything older waits or the link is down, and goes out in
  *     id order with the card's rows. "Anything older" includes a card that is
  *     not open but may hold older rows: from boot until its log first opens

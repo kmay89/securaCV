@@ -22,6 +22,8 @@
 //
 // Each test fails on the bridge before F81 (built with a no-op
 // securacv_csi_modules_tick, which is what main.cpp ran there: nothing).
+// test_a_closed_bundle_reaches_the_ring fails on the library before sweep
+// F77, where a closed bundle committed without a ring row.
 //
 // Backlog F90, on the same bridge and clock: a state held one, two or three
 // hours (plus 0, 7, 133 or 301 s of phase) reopens its
@@ -76,6 +78,7 @@ void set_watchdog(uint32_t, WatchdogCallback) {}
 
 // ── Rows: what the canary's egress override would queue ─────────────────
 struct Row {
+  uint32_t id;
   uint32_t at_ms;
   char state[CSI_EVENT_NAME_MAX];
   uint16_t bundled;
@@ -83,11 +86,12 @@ struct Row {
 };
 static std::vector<Row> g_presence_rows;
 
-extern "C" void csi_event_on_committed(uint32_t, const char* module_id, const char*,
+extern "C" void csi_event_on_committed(uint32_t event_id, const char* module_id, const char*,
                                        csi_event_category_t, csi_privacy_class_t,
                                        const csi_event_values_t* v) {
   if (!module_id || std::strcmp(module_id, "core.presence") != 0 || !v) return;
   Row r;
+  r.id = event_id;
   r.at_ms = g_host_millis;
   std::memset(r.state, 0, sizeof(r.state));
   std::strncpy(r.state, v->state_name, sizeof(r.state) - 1);
@@ -239,6 +243,38 @@ static int test_a_closed_bundle_commits_once() {
   return 0;
 }
 
+// Sweep F77: the closed bundle enters the ring, so csi_event_recent() (the
+// daily summary's walk; the canary-wap's /api/events/today) and
+// csi_event_find() (what the canary-wap's egress logs on its card) see it.
+// Its ring row ends at the close and starts duration_sec before it: here the
+// gap close two minutes after the last refresh, so it starts two minutes
+// after the bundle opened. Fails on the library before F77, where a closed
+// bundle never reached the ring.
+static int test_a_closed_bundle_reaches_the_ring() {
+  fresh();
+  const uint32_t opened = walk_in();
+  CHECK(opened != 0);
+  while (g_host_millis - opened < 300 * 1000) loop_pass(&kActive);
+  for (int i = 0; i < 200; ++i) loop_pass(&kEmpty);
+  const Row* row = only_row_of("active");
+  CHECK(row != nullptr);
+
+  csi_event_record_t rec;
+  CHECK(csi_event_find(row->id, &rec));
+  CHECK(std::strcmp(rec.values.state_name, "active") == 0);
+  CHECK(rec.bundled_count == row->bundled && rec.values.duration_sec == 300);
+  CHECK(rec.last_seen_ms == row->at_ms);                  // the close
+  CHECK(rec.first_seen_ms == row->at_ms - 300u * 1000u);  // the close less the span
+  CHECK(rec.first_seen_ms > opened);                      // by the quiet gap: not the opening
+
+  csi_event_record_t recent[16];
+  const size_t n = csi_event_recent(recent, 16);
+  bool listed = false;
+  for (size_t i = 0; i < n; ++i) listed = listed || recent[i].event_id == row->id;
+  CHECK(listed);
+  return 0;
+}
+
 // Stay in the room: the bundle closes on its 10-minute window, as one row,
 // and the refresh that found it due opens the next. Before F81 the first
 // ten minutes were six rows (and the ceiling refused the rest).
@@ -342,6 +378,7 @@ static int test_a_held_state_keeps_its_refreshes_and_the_way_out() {
 int main() {
   if (test_a_refresh_inside_the_window_commits_nothing_and_spends_nothing()) return 1;
   if (test_a_closed_bundle_commits_once()) return 1;
+  if (test_a_closed_bundle_reaches_the_ring()) return 1;
   if (test_a_window_closes_into_one_row_and_reopens()) return 1;
   if (test_a_bundle_commits_while_csi_is_shed()) return 1;
   if (test_a_held_state_keeps_its_refreshes_and_the_way_out()) return 1;

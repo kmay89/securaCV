@@ -6,9 +6,12 @@
  * The decisions are csi_event_backfill.h's Planner (staged copy), the same
  * the canary PIO tree's src/csi_event_egress.cpp runs; this file is the
  * glue: the commit queue, the card through csi_event_log's adapter, the
- * wire through csi_mqtt, the NVS ceiling, and the one thing the canary does
- * not need, a RAM hold for rows the card does not keep (closed bundles,
- * backlog F77), so they wait behind the backlog instead of overtaking it.
+ * wire through csi_mqtt, the NVS ceiling, and a RAM hold for rows the card
+ * does not keep (every row while the card is not open, a row whose append
+ * failed), so they wait behind the backlog instead of overtaking it. The
+ * canary keeps the same hold beside an MQTT offline queue this device does
+ * not have. Closed bundles were the hold's main tenant until sweep F77 put
+ * them in the ring, and so on the card.
  */
 
 #include "csi_event_egress.h"
@@ -195,8 +198,9 @@ uint32_t      s_ambient_dropped = 0;
 loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock> s_stats_view;
 
 AppendResult WapPort::card_append(const char* line, size_t len) {
-  /* A row the card does not keep (a closed bundle, or a row from the RAM
-   * hold): refused here, so the planner takes its not-on-card route. */
+  /* A row the card does not keep (one the ring could not take, or a row
+   * from the RAM hold): refused here, so the planner takes its not-on-card
+   * route. */
   if (!row_on_card) return AppendResult{false, m_st->planner.log_size(), 0};
   const AppendResult r = csi_event_log::append_line(line, len);
   /* The append failed, so the planner takes its not-on-card route, which
@@ -396,15 +400,22 @@ void on_committed(uint32_t                  event_id,
   }
   Committed c;
   memset(&c, 0, sizeof(c));
-  /* A ring row (a stateless commit) is the record the SD log keeps: the ring's copy, so the line matches what csi_event_recent
-   * returns (first/last seen, bundled count). csi_event_find takes the ring
-   * lock, which the chokepoint's lock order allows under the commit lock.
-   * Logged as the original: a dismissal that reached the ring row first is
-   * its own later line (csi_event_log.h, queue_dismissal). A closed bundle
-   * never enters the ring (backlog F77): its copy is built from the commit. */
+  /* Every committed row is in the ring by now (sweep F77: closed bundles
+   * too), and the ring's copy is the record the SD log keeps, so the line's
+   * values and bundled count are what csi_event_recent returns and what the
+   * boot reload restores. csi_event_find takes the ring lock, which the
+   * chokepoint's lock order allows under the commit lock. Logged as the
+   * original: a dismissal that reached the ring row first is its own later
+   * line (csi_event_log.h, queue_dismissal). Its first/last seen are the
+   * commit, the ring row's last_seen: the events body's `timestamp` is the
+   * close for a bundle (csi_event_wire.h, docs/csi_developer_api.md), as on
+   * the canary, while the ring row spans the bundle's observations. A row
+   * the ring could not take (no memory for it) is built from the commit,
+   * and the card does not keep it. */
   if (csi_event_find(event_id, &c.rec)) {
     c.ring = true;
     c.rec.values.dismissed = 0;
+    c.rec.first_seen_ms = c.rec.last_seen_ms;
   } else {
     c.ring = false;
     c.rec.event_id      = event_id;

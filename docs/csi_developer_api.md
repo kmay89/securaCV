@@ -412,9 +412,13 @@ differs from the canary base in five ways:
 - it has no MQTT offline queue. Rows its card does not keep wait in RAM
   instead (8 rows, the oldest dropped first) while anything older waits or
   the broker is unreachable, and go out in id order with the card's rows.
-  These are closed bundles (presence, `system.integrity` tampers), which
-  never reach its card (sweep F77), every row when there is no card or the
-  card is not open, and a row whose card append failed. "Anything older"
+  These are every row when there is no card or the card is not open, and a
+  row whose card append failed. Closed bundles (presence, `system.integrity`
+  tampers) were among them until sweep F77 put them in the ring: now its
+  card keeps them like any other row, the backfill replays them after an
+  outage or a reboot, and the boot reload restores them to the Today sheet
+  (before, a reboot, or more than eight of them waiting, lost them).
+  "Anything older"
   includes a card that is not open but may hold older rows: from boot until
   its log first opens (a slow card mounts after boot), and after it closes
   with rows still waiting (an SD error's remount), for at most 45 s; past
@@ -423,10 +427,9 @@ differs from the canary base in five ways:
   reaches the queue, so never the card, the broker or the hold: the commit
   hook drops every one, counted (sweep F105); the ring, the
   `/api/csi/stream` snapshot and the Today sheet still show it. RAM does
-  not survive a reboot. The canary base holds the same rows the same way (its
-  card keeps closed bundles, so those are not among them), but once nothing
-  older waits and no card is open its offline queue takes them while the
-  broker is unreachable;
+  not survive a reboot. The canary base holds the same rows the same way,
+  but once nothing older waits and no card is open its offline queue takes
+  them while the broker is unreachable;
 - it writes no owner file and leaves a card that has one alone;
 - the tamper-topic bridge publishes when the loop task takes the row from
   the queue, before the row itself, whatever the backfill is doing;
