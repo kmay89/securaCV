@@ -207,28 +207,28 @@ def knobs_without_help(path: Path) -> list[str]:
 # numeric or text knob has help read off the geometry that uses it,
 # and their shared lines are split one knob per line, each with its own help
 # (that split moved catalog.json's engineering_param_count for seven products,
-# +36 in all). What is left in those files is boolean catalog options, whose
-# help would become their catalog label.
+# +36 in all), and their boolean options have help too, which is also their
+# catalog label (21 labels moved from the bare knob name). They hold at zero.
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
-    "canary_c3_lcd147.scad": 6,        # opt_btn, light_seam, pry_notch, loc_rib, egg_ring, opt_vent
-    "canary_c6_display.scad": 2,       # opt_btn, opt_vent
+    "canary_c3_lcd147.scad": 0,
+    "canary_c6_display.scad": 0,
     "canary_dock.scad": 0,
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
     "canary_hammond_chassis.scad": 0,
-    "canary_hub_din.scad": 1,          # din (a bool option)
+    "canary_hub_din.scad": 0,
     "canary_inserts.scad": 0,
     "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
     "canary_mount_adapters.scad": 0,
     "canary_outlet_cradle.scad": 0,
-    "canary_relay_solar.scad": 1,      # opt_seal
-    "canary_s3_lcd147.scad": 4,        # collar_on, opt_btn, light_seam, mark_show (bool options)
+    "canary_relay_solar.scad": 0,
+    "canary_s3_lcd147.scad": 0,
     "canary_s3_lcd7.scad": 0,
-    "canary_s3_touch169.scad": 5,      # opt_usb, opt_btn, opt_side, opt_vent, opt_stand
+    "canary_s3_touch169.scad": 0,
     "canary_sense_gang.scad": 0,
-    "canary_sense_stand.scad": 1,      # hinge_teeth (a bool option)
+    "canary_sense_stand.scad": 0,
     "canary_shop_tools.scad": 0,
-    "canary_sign.scad": 1,             # screws (a bool option)
+    "canary_sign.scad": 0,
     "canary_vehicle_mount.scad": 0,
     "canary_vision_pro_mount.scad": 0,
     "canary_wear_clip.scad": 0,

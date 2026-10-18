@@ -151,7 +151,7 @@ usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
    actuators. They overhang the PCB edge, so each side wall carries a
    full-depth clearance channel (an "ear") the overhang slides down during
    insertion. */
-opt_btn = true;
+opt_btn = true;      // BOOT/RST access holes in the two side walls, over the channels the back-mounted switches slide down
 btn_d   = 3.0;                 // access hole Ø — big enough for a tool tip, small enough to shield
 btn_up  = 7.0;                 // button center up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE
 btn_dz  = 1.0;                 // actuator center behind the PCB BACK face — MEASURE
@@ -173,7 +173,7 @@ kh_face = 1.0;                 // face web the screw head grips behind — catal
 
 /* [Ventilation] — let the backlight/regulator heat convect out (side slots +
    a back grille). Even this small board runs warm on full brightness. */
-opt_vent = true;
+opt_vent = true;     // heat slots in both side walls and a grille in the back plate
 vent_n = 5;          // slots per side wall
 vent_pitch = 5.0;    // slot spacing
 vent_w = 1.4;        // slot width

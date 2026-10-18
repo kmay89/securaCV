@@ -80,7 +80,7 @@ lid_edge  = 0.8;   // first (45°) stage of the cover's edge break, mm — the h
 lid_edge2 = 0.8;   // second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]
 
 /* [DIN rail] — 35 mm top-hat (EN 50022) */
-din = true;
+din = true;          // the DIN-rail clip: its four M3 seats through the tray floor and part "clip" (false = no clip; the tray screws flat)
 din_w = 35.2;        // rail width across the flanges
 din_lip = 1.2;       // hook capture depth behind each flange edge (TS35 lip ~1 mm)
 din_t = 1.5;         // rail metal + spring clearance

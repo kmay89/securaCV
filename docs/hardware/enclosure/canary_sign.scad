@@ -25,7 +25,7 @@ sign_t = 3.0;        // plate thickness — the text, the 0.5-deep border groove
 edge_ch = 1.0;       // 45° chamfer round the face's edge: the face is this smaller on every side than the plate
 screw_d = 4.2;       // countersunk corners; or use VHB and set screws=false
 cs_head_d = 8.2;     // #8 82° flat-head Ø — the seat's rim at the face, so the head lands flush
-screws  = true;
+screws  = true;      // four corner holes with 82° countersinks for #8 flat heads (false for a VHB mount)
 back_ribs = false;   // rib_lib loop + two cross ribs on the BACK (rib_h tall): a 110 x 70 x 3 sheet stays
                      // flat and the screws pull on a frame, not a plate. The sign then exports FACE-DOWN
                      // (the text becomes first-layer voids — the catalog's crisp deboss). Leave OFF for a

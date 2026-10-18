@@ -92,11 +92,11 @@ back_stack = 4.5;    // tallest thing behind the PCB (USB-C / JST / buzzer) — 
    wall — the shell latched on 2.25 mm of its 6.5 mm insertion. The channel
    is the Type-C spec's maximum overmold envelope (canary_port_lib) cut clear
    through to the receptacle, so any compliant cable seats and latches. */
-opt_usb = true;
+opt_usb = true;      // USB-C overmold channel through the bottom (-Y) wall, the Type-C spec's largest overmold, so any compliant cable seats and latches
 usb_dx = 0.0;        // channel center along the bottom edge — MEASURE
 
 /* [Buttons] — PWR / BOOT / RST on the TOP (+Y) edge (side access holes) */
-opt_btn = true;
+opt_btn = true;      // PWR/BOOT/RST access holes in the top (+Y) wall
 btn_d = 3.4;                       // access hole Ø
 btn_xs = [-9.0, 0.0, 9.0];         // button X centers on the top edge — MEASURE
 
@@ -109,7 +109,7 @@ usb_side = "back";   // ["back","front"] which PCB face carries the USB-C — ME
 usb_dz   = 0.0;      // measured correction to the derived USB-C center (+ = toward the back)
 btn_side = "back";   // ["back","front"] which PCB face carries the buttons — MEASURE
 btn_dz   = 1.0;      // actuator center off that face (side tact switches sit ~1.0) — MEASURE
-opt_side = true;
+opt_side = true;     // battery/RTC/pin cluster slot in the right (+X) wall, behind the PCB
 side_open_h = 10.0;   // side slot height — MEASURE; capped by the snap windows either side of it (asserted)
 side_open_dy = 0.0;   // side slot center offset (Y) — MEASURE
 
@@ -126,7 +126,7 @@ kh_head_h  = 3.5;      // total pocket depth, face web included — mount_kh_hea
 kh_face    = 1.0;      // face web the screw head grips behind — mount_kh_face()
 
 /* [Ventilation] — let the S3 / backlight / charger heat convect out */
-opt_vent = true;
+opt_vent = true;     // heat slots low on both side walls and a grille in the back plate
 vent_n = 6;          // side slots per long wall
 vent_pitch = 4.6;    // slot spacing
 vent_w = 1.4;        // slot width
@@ -168,7 +168,7 @@ skirt_wall = 1.6;    // skirt ring wall thickness — the back's skirt rises ski
 skirt_dep = back_stack;   // must not exceed back_stack (see assert)
 
 /* [Stand] */
-opt_stand = true;
+opt_stand = true;    // lay the desk stand out with the other parts in the default view and check it for tip-over (part = "stand" renders it alone either way)
 stand_ang = 22;      // the stand's recline from vertical, in degrees — the slab leans back this far on the seat and the plug leaves its bottom edge this far forward of straight down; the seat height, the boot clearance and the cable channel are derived from it
 stand_w = 70.0;      // stand base width (X); the pedestal, the front lip and the fin run stand_w - 16 wide
 stand_d = 52.0;      // stand base depth, front to back — the tip-over margin is this/2 either way (asserted against a push at the slab's top edge), and the front lip and the fin's top must stay on it (asserted)

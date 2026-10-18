@@ -125,7 +125,7 @@ use <canary_rib_lib.scad>    // corner_gusset (the post webs), plate_ribs under 
 part = "all";        // ["body","lid","roof","gasket","all"] — body = the PLATE (back), lid = the SHELL (front)
 
 /* [Options] */
-opt_seal = true;
+opt_seal = true;         // sealed build: a TPU gasket (part "gasket") in the ledge groove, an O-ring under every plate screw head and, with seal_mid_posts, mid posts holding each clamp span to 40 mm
 opt_weep = true;         // Ø2 drains, straight out through the BOTTOM wall (the pod hangs USB-down on
                          // its pole), a web above the gasket groove: condensate leaves at the low wall
                          // instead of pooling under the LoRa board and the 18650. The pressure path is the ePTFE vent.
