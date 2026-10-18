@@ -54,11 +54,11 @@ namespace net {
 namespace wifi_credential {
 
 /// The firmware's own buffers: char[33] and char[65].
-inline constexpr size_t SSID_MAX_BYTES     = 32;
-inline constexpr size_t PASSWORD_MAX_BYTES = 64;
+static constexpr size_t SSID_MAX_BYTES     = 32;
+static constexpr size_t PASSWORD_MAX_BYTES = 64;
 /// Stated once so no surface re-derives a floor: zero. An open network has
 /// no password, and a secured network's floor is its router's business.
-inline constexpr size_t PASSWORD_MIN_BYTES = 0;
+static constexpr size_t PASSWORD_MIN_BYTES = 0;
 
 enum class Verdict : uint8_t {
   Ok = 0,
@@ -102,13 +102,13 @@ inline const char* verdict_code(Verdict v) {
 // wizards, and (by test) the apps. No surface invents its own.
 
 /// The label over, or placeholder in, the field.
-inline constexpr const char* FIELD_LABEL =
+static constexpr const char* FIELD_LABEL =
     "Wi-Fi network password";
 /// The one-line hint under it.
-inline constexpr const char* FIELD_HINT =
+static constexpr const char* FIELD_HINT =
     "The password you already use for this network, exactly as your router has it. Nothing to invent.";
 /// Shown instead of the field when the picked network is open.
-inline constexpr const char* OPEN_NETWORK_NOTE =
+static constexpr const char* OPEN_NETWORK_NOTE =
     "Open network — no password needed.";
 
 /// Human words for a refused credential (the `reason` a portal answers).

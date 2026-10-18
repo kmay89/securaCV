@@ -878,6 +878,17 @@ jobs:
           chmod +x firmware/scripts/check_ap_security_sync.sh
           firmware/scripts/check_ap_security_sync.sh
           chmod +x firmware/scripts/check_wifi_credential_sync.sh
+
+      - name: Verify the onboarding parity family stays identical in common/ and the canary-wap sketch
+        # onboarding_fsm.h (+ its provision_core.h include), wifi_join_policy.h,
+        # wifi_store.h, node_status.h and io/reset_hold.h live once in
+        # firmware/common and are host-tested there; the wap sketch carries
+        # byte-identical staged copies. Drift here means two products name
+        # their setup network, judge a failed join, hold their AP or reset by
+        # button differently.
+        run: |
+          chmod +x firmware/scripts/check_onboarding_sync.sh
+          firmware/scripts/check_onboarding_sync.sh
           firmware/scripts/check_wifi_credential_sync.sh
 
       - name: Verify on-glass text stays inside the display font's glyph range

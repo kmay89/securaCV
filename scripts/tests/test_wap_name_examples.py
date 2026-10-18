@@ -52,7 +52,7 @@ INO = REPO / "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"
 # The recipe, as canary_wap.ino spells it. A move fails here, not silently.
 PINS = (
     'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)',
-    'snprintf(out, cap, "SecuraCV-%s", suffix)',
+    'canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_WAP, suffix, nullptr);',
     "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];",
     "v = (uint16_t)(v / UNAMBIGUOUS_LEN);",
     'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
@@ -60,7 +60,10 @@ PINS = (
 )
 PLACEHOLDERS = {"XXXX"}
 
-ID_OR_SSID = re.compile(r"(?<![\w-])(canary-[cs]3-|SecuraCV-)([A-Za-z0-9]{4})(?![\w-])")
+# The setup network is `SecuraCV-wap-<4>` since the onboarding state machine
+# (firmware/common/network/onboarding_fsm.h) named every node's AP by type;
+# the untyped `SecuraCV-<4>` is the shape older firmware still raises.
+ID_OR_SSID = re.compile(r"(?<![\w-])(canary-[cs]3-|SecuraCV-(?:wap-)?)([A-Za-z0-9]{4})(?![\w-])")
 # A host no WAP advertises: the device id as a host, or a template built
 # from the MAC or the device id alone.
 BAD_HOST = re.compile(
@@ -136,7 +139,8 @@ def source_files(root: Path) -> list[str]:
 
 ABC = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"
 MUST_PASS = [
-    "device_id = `canary-s3-4dC2`, AP SSID `SecuraCV-4dC2`",
+    "device_id = `canary-s3-4dC2`, AP SSID `SecuraCV-wap-4dC2`",
+    "AP SSID `SecuraCV-4dC2` (older firmware)",
     "join `SecuraCV-XXXX`",
     "open http://canary-7916.local or http://canary-kitchen.local",
     "canary-<name>.local, or canary-<4 hex>.local if unnamed",

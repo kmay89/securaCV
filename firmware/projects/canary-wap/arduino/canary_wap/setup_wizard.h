@@ -172,6 +172,22 @@ inline bool set_device_name(const char* name) {
   return true;
 }
 
+// The factory reset's share (canary_wap.ino factory_reset_by_hold, BOOT held
+// 10 s): back to the first-boot wizard, unnamed. Removes only this header's
+// two keys — the identity key and the chain state in the same namespace are
+// not its to touch. The caller restarts the device next, so the in-RAM
+// wizard state is not re-armed here.
+inline bool reset_to_first_boot() {
+  Preferences prefs;
+  if (!prefs.begin("securacv", false)) return false;
+  prefs.remove("setup_ok");
+  prefs.remove("dev_name");
+  const bool ok = !prefs.isKey("setup_ok") && !prefs.isKey("dev_name");
+  prefs.end();
+  s_device_name[0] = '\0';
+  return ok;
+}
+
 }  /* namespace setup_wizard */
 
 #endif  /* SECURACV_SETUP_WIZARD_H */
