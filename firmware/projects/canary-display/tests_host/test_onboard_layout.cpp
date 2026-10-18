@@ -90,6 +90,10 @@
 #include "canary/ui/splash_layout.h"
 namespace sl = canary::ui::splashlayout;
 
+// The unit's own characters at the end of its setup name (onboarding_fsm.h:
+// four of the pseudonym, then "-tt" on the store-refused path).
+static const size_t kSsidSuffix = canary::net::onboard::SSID_SUFFIX_CHARS;
+
 // printf a line template (kJoinedFmt and friends) around slot runs.
 static std::string fmt2(const char* fmt, const std::string& a,
                         const std::string& b) {
@@ -421,15 +425,34 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
   const char* narrow = hints.size() > 1 ? hints[1].c_str() : nullptr;
 
   // The guarantee: the last thing each row can fall back to fits whatever
-  // the unit minted — the network name and the bare key in the floor face.
+  // the unit minted — the bare key in the floor face, and the network name
+  // whole in the floor face or, where the fleet's typed name is wider than
+  // the row at its widest minting (F45's rule, last bullet), name_line's cut
+  // with the unit's tail (its four characters, and the tag) still on it.
   const std::string& A = g_minted.alpha;
   const Worst ssid_p = worst_line(*floor, g_minted.ssid_plain, A);
   const Worst ssid_t = worst_line(*floor, g_minted.ssid_tagged, A);
   const Worst key = worst_line(*floor, slots(g_minted.key_len), A);
-  CHECK(ssid_p.w <= creds_w && ssid_t.w <= creds_w,
-        "%s/%s: a network name can be %d px (\"%s\") on a %d px row", n,
-        lad_name, ssid_t.w > ssid_p.w ? ssid_t.w : ssid_p.w,
-        (ssid_t.w > ssid_p.w ? ssid_t : ssid_p).text.c_str(), creds_w);
+  const std::string realistic = fill_slots(g_minted.ssid_plain, 'A');
+  CHECK(text_px(*floor, realistic.c_str()) <= creds_w,
+        "%s/%s: a typical network name (\"%s\", %d px) does not fit the %d px "
+        "row whole", n, lad_name, realistic.c_str(),
+        text_px(*floor, realistic.c_str()), creds_w);
+  for (int t = 0; t < 2; t++) {
+    const Worst& w = t ? ssid_t : ssid_p;
+    Line cut;
+    name_line(cut, w.text.c_str(), creds_w, m);
+    const size_t tail_n = t ? kSsidSuffix + 3 : kSsidSuffix;  // XXXX[-tt]
+    const std::string tail = w.text.substr(w.text.size() - tail_n);
+    const bool whole = w.w <= creds_w;
+    CHECK(whole || (cut.fits && cut.cut && m(cut.text, cut.floor) <= creds_w &&
+                    std::strlen(cut.text) >= tail.size() &&
+                    std::strcmp(cut.text + std::strlen(cut.text) - tail.size(),
+                                tail.c_str()) == 0),
+          "%s/%s: a network name can be %d px (\"%s\") on a %d px row, and "
+          "its cut \"%s\" does not keep the unit's \"%s\"", n, lad_name, w.w,
+          w.text.c_str(), creds_w, cut.text, tail.c_str());
+  }
   CHECK(key.w <= low_w, "%s/%s: a key can be %d px (\"%s\") on a %d px row",
         n, lad_name, key.w, key.text.c_str(), low_w);
 
@@ -439,7 +462,7 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
   const Worst wide_ssid_p = worst_line(*own, g_minted.ssid_plain, A);
   const Worst wide_ssid_t = worst_line(*own, g_minted.ssid_tagged, A);
   const Worst wide_key = worst_line(*own, fmt1(kPassFmt, slots(g_minted.key_len)), A);
-  const char* ssids[3] = {"SecuraCV-A7K2", wide_ssid_p.text.c_str(),
+  const char* ssids[3] = {realistic.c_str(), wide_ssid_p.text.c_str(),
                           wide_ssid_t.text.c_str()};
   const char* keys[3] = {"p7Rm2Kqf", wide_key.ssid_or_key.c_str(),
                          wide_key.ssid_or_key.c_str()};
@@ -465,8 +488,17 @@ static void check_rows(const Env& e, int which, const Stack& s, const Rows& r,
               "%s/%s: joined line kept though it does not fit", n, lad_name);
       }
       // The name and the key are on the glass, hint or no hint: joined on
-      // the credentials row, or split over it and the row under it.
-      CHECK(std::strstr(j.creds.text, ssids[u]) != nullptr &&
+      // the credentials row, or split over it and the row under it — the
+      // name whole, or (its widest minting on a narrow row) cut around
+      // "..." with the unit's tail kept (checked above).
+      const size_t ulen = std::strlen(ssids[u]);
+      const size_t utail = u == 2 ? kSsidSuffix + 3 : kSsidSuffix;
+      const size_t clen = std::strlen(j.creds.text);
+      const bool name_on = std::strstr(j.creds.text, ssids[u]) != nullptr ||
+                           (j.creds.cut && clen >= utail &&
+                            std::strcmp(j.creds.text + clen - utail,
+                                        ssids[u] + ulen - utail) == 0);
+      CHECK(name_on &&
                 std::strstr(j.split ? j.low.text : j.creds.text, keys[u]) !=
                     nullptr,
             "%s/%s: %s, the rows say \"%s\" | \"%s\" — the name or the key "
@@ -534,8 +566,11 @@ static void check_wide_rows(const Env& e, int which, int fam,
   const std::string& A = g_minted.alpha;
   const std::string key = slots(g_minted.key_len);
   // The worded line, one row: the widest any name and key can lay it out
-  // (exact). On the 800 px panel it always fits, so that glass never splits
-  // (F43's composition holds); on a narrower one it may not.
+  // (exact). With the fleet's typed setup name a 800 px panel under Heirloom
+  // (the 24 px label face) can be handed a line wider than its row — 867 px
+  // at the widest minting — so it splits there the way the portrait glass
+  // does (F156); a typical name keeps one row (checked below). On a narrower
+  // panel it splits more often.
   const char* fmts[2] = {kWideScanFmt, kWideTypeFmt};
   int widest = 0;
   for (int f = 0; f < 2; f++) {
@@ -545,9 +580,12 @@ static void check_wide_rows(const Env& e, int which, int fam,
     if (t.w > widest) widest = t.w;
   }
   const bool can_split = widest > row;
-  CHECK(e.w < 800 || !can_split,
-        "%s/%s: the credentials line can be %d px on the 800 px panel's %d px "
-        "row: it would split there", n, lad_name, widest, row);
+  const std::string realistic = fill_slots(g_minted.ssid_plain, 'A');
+  const std::string realistic_line = fmt2(kWideScanFmt, realistic, "p7Rm2Kqf");
+  CHECK(e.w < 800 || text_px(*label, realistic_line.c_str()) <= row,
+        "%s/%s: a typical credentials line (\"%s\", %d px) splits on the 800 "
+        "px panel's %d px row", n, lad_name, realistic_line.c_str(),
+        text_px(*label, realistic_line.c_str()), row);
   // The rungs a split falls back to fit whatever the unit minted: the name
   // alone and the bare key, in the label's floor face.
   const Worst name_t = worst_line(*label_fl, g_minted.ssid_tagged, A);
@@ -563,7 +601,7 @@ static void check_wide_rows(const Env& e, int which, int fam,
   const char* narrow = hints.size() > 1 ? hints[1].c_str() : nullptr;
   const Worst wn = worst_line(*label, g_minted.ssid_tagged, A);
   const Worst wk = worst_line(*label, key, A);
-  const char* ssids[2] = {"SecuraCV-A7K2", wn.text.c_str()};
+  const char* ssids[2] = {realistic.c_str(), wn.text.c_str()};
   const char* keys[2] = {"p7Rm2Kqf", wk.ssid_or_key.c_str()};
   bool split_seen = false, narrow_seen = false;
   for (int qr = 0; qr < 2; qr++) {
@@ -601,8 +639,14 @@ static void check_wide_rows(const Env& e, int which, int fam,
           CHECK(e.w < 800 || whole, "%s/%s: the 800 px glass shows the hint "
                 "as \"%s\"", n, lad_name, hint_row);
         }
-        CHECK(e.w < 800 || !j.split, "%s/%s: the 800 px glass split \"%s\"",
-              n, lad_name, j.creds.text);
+        // The 800 px glass keeps a typical name's line on one row; its
+        // widest minting under Heirloom may split (can_split above).
+        CHECK(e.w < 800 || u > 0 || !j.split,
+              "%s/%s: the 800 px glass split \"%s\"", n, lad_name,
+              j.creds.text);
+        CHECK(!j.split || can_split || e.w < 800,
+              "%s/%s: the 800 px glass split \"%s\" though no minting is "
+              "wider than its row", n, lad_name, j.creds.text);
         split_seen = split_seen || j.split;
       }
     }
@@ -1129,19 +1173,24 @@ static void check_glass(const Env& e, int which, int also) {
   CHECK(s.qr / kJoinQrModules == r.card.qr / kJoinQrModules,
         "%s/%s: the join code's module pitch changed", n, lad_name);
   if (land) {
-    // F157: the halo stands at the panel's right, kMinGap from its edge,
-    // centered down the panel, the smallest even ring that holds the card
-    // at its floor canvas; the text column runs from the side pad to
-    // kMinGap short of it; the Join title rides the scenes' title latitude
-    // and the rows stack under the lowest body; the block is centered.
+    // F157: the card stands at the panel's right, kMinGap from its edge,
+    // centered down the panel, at its floor canvas; the halo is the
+    // smallest even ring that holds it, concentric, running off the right
+    // edge by its overhang; the text column runs from the side pad to
+    // kMinGap short of the ring; the Join title rides the scenes' title
+    // latitude and the rows stack under the lowest body; the block is
+    // centered.
     const Ring& ring = sj.halo;
     const int x1 = e.w / 2 - ring.d / 2 + ring.x;
+    const int card_x = e.w / 2 - s.card / 2 + ring.x;
     int floor_qr = r.card.qr;
     while (floor_qr - 2 >= qr_floor(r.card.qr)) floor_qr -= 2;
-    CHECK(s.qr == floor_qr && ring.d % 2 == 0 && x1 + ring.d + kMinGap == e.w &&
+    CHECK(s.qr == floor_qr && ring.d % 2 == 0 && card_x + s.card + kMinGap == e.w &&
+              x1 + ring.d >= e.w && 2 * card_x + s.card == 2 * x1 + ring.d &&
               ring.top == (e.h - ring.d) / 2 && ring.top >= kMinGap,
-          "%s/%s: the landscape halo is %d px at (%d, %d), the card's canvas "
-          "%d (floor %d)", n, lad_name, ring.d, x1, ring.top, s.qr, floor_qr);
+          "%s/%s: the landscape halo is %d px at (%d, %d), the card %d at %d, "
+          "its canvas %d (floor %d)", n, lad_name, ring.d, x1, ring.top,
+          s.card, card_x, s.qr, floor_qr);
     {
       Ring smaller = ring;
       smaller.d -= 2;
@@ -1385,10 +1434,14 @@ static void test_f45_pins() {
                  nullptr, watch12);
   CHECK(j.split && std::strcmp(j.low.text, "WWWWWWWW") == 0 && !j.low.floor,
         "wide key on round glass \"%s\"", j.low.text);
-  // And the degenerate case says so rather than claiming a fit.
+  // And the degenerate case says so rather than claiming a fit: the key and
+  // the hint rows cannot; the name row's last rung is name_line's, whose
+  // "..." alone is 20 px and does fit, so it says `cut` instead of a fit it
+  // does not have.
   j = join_lines(false, 40, 40, 40, ssid, key, hint, narrow, std12);
-  CHECK(!j.creds.fits && !j.low.fits && !j.note.fits,
-        "a 40 px row claimed to fit");
+  CHECK(j.creds.cut && !j.low.fits && !j.note.fits,
+        "a 40 px row claimed to fit (\"%s\" | \"%s\" | \"%s\")", j.creds.text,
+        j.low.text, j.note.text);
 }
 
 // ── the F50 glass, pinned (LVGL's metrics, the real hint copy) ──────────
@@ -1827,21 +1880,29 @@ static void test_f156_pins() {
                                g_minted.alpha);
   const char* hint = g_minted.hint_wide[0].c_str();
   const char* narrow = g_minted.hint_wide[1].c_str();
-  CHECK(c20.w == 655 && c24.w == 773 && text_px(*f16, hint) == 513 &&
+  // (655 / 773 px with the typeless "SecuraCV-XXXX-tt" name; the fleet's
+  // typed "SecuraCV-display-XXXX-tt" is eight characters longer.)
+  CHECK(c20.w == 736 && c24.w == 867 && text_px(*f16, hint) == 513 &&
             text_px(*f20, hint) == 644,
         "the worded line %d / %d px, the hint %d / %d px", c20.w, c24.w,
         text_px(*f16, hint), text_px(*f20, hint));
   // The fix: the shorter title forms hold the row in the title face; the
-  // split rows hold it in the label face for the widest name and key; the
-  // hint's shorter form holds it, in the floor face under Heirloom.
+  // split rows hold it in the label face for the widest name and key — the
+  // worded name row ("or join "<name>"") where it fits, else the bare name,
+  // which the typed name's widest minting under Heirloom needs (491 px
+  // worded, 391 bare, on the 464 px row); the hint's shorter form holds it,
+  // in the floor face under Heirloom.
   CHECK(text_px(*f36, qr_t.narrow) == 404 && text_px(*f36, no_t.narrow) == 318,
         "the shorter Join titles are %d / %d px", text_px(*f36, qr_t.narrow),
         text_px(*f36, no_t.narrow));
   const Worst n24 = worst_line(*f24, fmt1(kWideScanNameFmt, g_minted.ssid_tagged),
                                g_minted.alpha);
+  const Worst b24 = worst_line(*f24, g_minted.ssid_tagged, g_minted.alpha);
   const Worst k24 = worst_line(*f24, fmt1(kWidePassFmt, key), g_minted.alpha);
-  CHECK(n24.w == 397 && k24.w == 344 && n24.w <= row && k24.w <= row,
-        "the split rows are %d / %d px under Heirloom", n24.w, k24.w);
+  CHECK(n24.w == 491 && b24.w == 391 && k24.w == 344 && b24.w <= row &&
+            k24.w <= row,
+        "the split rows are %d (worded) / %d (bare) / %d px under Heirloom",
+        n24.w, b24.w, k24.w);
   CHECK(text_px(*f16, narrow) == 427 && text_px(*f20, narrow) == 536,
         "the shorter hint is %d / %d px", text_px(*f16, narrow),
         text_px(*f20, narrow));
@@ -1899,20 +1960,25 @@ static void test_f157_pins() {
             scene_bird_top(nl, old_ring, kSmallBirdPx) == 6,
         "the portrait rule on 320x180 no longer documents the defect: halo "
         "%d at %d, note %d", old_ring.d, old_ring.top, old.note_top);
-  // The fix: the halo at the right (x 168..318, y 15..165), the card at its
-  // floor canvas (88 px, 104 with its pad) concentric in it, the bird at its
-  // center (223, 70), the text column x 8..166 shifted 23 px up: the Join
-  // title at 42, the rows at 93 / 108 / 123 (to 138).
+  // The fix: the card at the right (x 202..318) at its floor canvas (100 px
+  // — the version-4 join code's 33 modules at 3 px — 116 with its pad), the
+  // halo concentric with it (166 px, x 177..343, running off the right edge
+  // by 23 px; y 7..173), the bird at its center (240, 70), the text column
+  // x 8..175 shifted 23 px up: the Join title at 42, the rows at 93 / 108 /
+  // 123 (to 138). (With the typeless name's version-3 code the halo stood
+  // whole on the glass: 150 px at x 168, the card 104 at its center, the
+  // column 158 px — the F157 numbers before the fleet's typed name.)
   CHECK(small_landscape(nl), "320x180 is not landscape small glass");
   const SmallJoin j = small_join(nl, dr);
   const Seat bird = bird_seat(nl, false, j.stack, j.halo, ObStage::Success);
-  CHECK(j.halo.d == 150 && j.halo.top == 15 &&
-            nl.w / 2 - j.halo.d / 2 + j.halo.x == 168 && j.stack.qr == 88 &&
-            j.stack.card == 104 && j.stack.card_top == 38 &&
-            j.col.w == 158 && nl.w / 2 - j.col.w / 2 + j.col.x == 8 &&
+  CHECK(j.halo.d == 166 && j.halo.top == 7 &&
+            nl.w / 2 - j.halo.d / 2 + j.halo.x == 177 && j.stack.qr == 100 &&
+            j.stack.card == 116 && j.stack.card_top == 32 &&
+            nl.w / 2 - j.stack.card / 2 + j.halo.x == 202 &&
+            j.col.w == 167 && nl.w / 2 - j.col.w / 2 + j.col.x == 8 &&
             j.col.dy == -23 && j.stack.title_top == 42 &&
             j.stack.creds_top == 93 && j.stack.hint_top == 108 &&
-            j.stack.note_top == 123 && bird.x == 223 && bird.y == 70 &&
+            j.stack.note_top == 123 && bird.x == 240 && bird.y == 70 &&
             j.stack.fits,
         "320x180 land_join: halo %d at (%d, %d), card %d (qr %d) at %d, "
         "column %d at %d dy %d, rows %d/%d/%d/%d, bird (%d, %d)", j.halo.d,
@@ -1922,13 +1988,14 @@ static void test_f157_pins() {
         j.stack.creds_top, j.stack.hint_top, j.stack.note_top, bird.x,
         bird.y);
   // The Hello body reads whole in the column ("Let's get you connected."
-  // is 148 px in the floor face; the old line was 96).
+  // is 148 px in the floor face; the old line was 96, and a whole-on-glass
+  // halo round the version-4 card would have left 142).
   const LineSeat hb = scene_line(nl, j.halo, j.col, kHelloBodyOff, 15);
-  CHECK(hb.w == 158 && hb.x == j.col.x && hb.y == kHelloBodyOff - 23,
+  CHECK(hb.w == 167 && hb.x == j.col.x && hb.y == kHelloBodyOff - 23,
         "the Hello body sits %d px wide at (%d, %d)", hb.w, hb.x, hb.y);
   // Under Heirloom: the same halo and card, the rows a px lower.
   const SmallJoin h = small_join(nl, hr);
-  CHECK(h.halo.d == 150 && h.halo.top == 15 && h.stack.card == 104 &&
+  CHECK(h.halo.d == 166 && h.halo.top == 7 && h.stack.card == 116 &&
             h.col.dy == -23 && h.stack.title_top == 40 &&
             h.stack.creds_top == 93 && h.stack.note_top == 125 &&
             h.stack.fits,
@@ -1982,21 +2049,27 @@ static void test_short_glass() {
         "heirloom watch qr %d", t.qr);
 }
 
-// ── the join code really is 29 modules ─────────────────────────────────────
+// ── the join code really is 33 modules ─────────────────────────────────────
 static void test_join_payload() {
   std::printf("join payload:\n");
-  // provision.cpp's AP: "SecuraCV-" + 4 pseudonym chars (+ "-" and a 2-char
-  // tag when the password store refuses a durable key), AP_PASS_LEN 8.
-  const char* ssids[] = {"SecuraCV-A7K2", "SecuraCV-A7K2-Xy"};
+  // provision.cpp's AP: onboarding_fsm.h's "SecuraCV-display-" + 4 pseudonym
+  // chars (+ "-" and a 2-char tag when the password store refuses a durable
+  // key), AP_PASS_LEN 8 — the two shapes load_minted_core read off the
+  // builder, over a real alphabet (the slot byte is one byte like any other).
+  const std::string plain = fill_slots(g_minted.ssid_plain, 'A');
+  const std::string tagged = fill_slots(g_minted.ssid_tagged, 'A');
+  const char* ssids[] = {plain.c_str(), tagged.c_str()};
   for (int i = 0; i < 2; i++) {
     char payload[224];
     const size_t n =
         canary::net::wifi_qr_payload(ssids[i], "p7Rm2Kqf", payload, sizeof(payload));
-    // Byte-mode capacity at ECC M: version 2 holds 26, version 3 holds 42.
-    CHECK(n > 26 && n <= 42,
-          "join payload for %s is %d bytes — not a version-3 code, so "
-          "kJoinQrModules (29) is wrong", ssids[i], (int)n);
+    // Byte-mode capacity at ECC M: version 3 holds 42, version 4 holds 62.
+    CHECK(n > 42 && n <= 62,
+          "join payload for %s is %d bytes — not a version-4 code, so "
+          "kJoinQrModules (%d) is wrong", ssids[i], (int)n, kJoinQrModules);
   }
+  CHECK(kJoinQrModules == 33, "kJoinQrModules is %d, a version-4 code is 33",
+        kJoinQrModules);
 }
 
 // The panels main.cpp turns before provision_run(): a nightlight's and a

@@ -6,8 +6,9 @@
 > microphone, it is honest work: in stock builds it listens only for the
 > standard smoke and CO alarm cadences as an on/off loudness envelope,
 > never as sound it keeps — see
-> [section 5](#5--listening-for-alarms).) This guide gets one going in
-> five minutes.
+> [section 5](#5--listening-for-alarms).) This guide gets one going.
+> (A Canary joins in one tap or a few minutes of typing; the steps that
+> involve a hub wait on its 10–20 minute first boot.)
 
 **The journey, by surface** (each is optional; every one is free): rehearse
 in [the Lab](https://kmay89.github.io/securaCV/canary-local/) — the real
@@ -66,23 +67,27 @@ That's the entire hardware setup.
 
 ## 2 · Connect with your phone
 
-**The one-tap way (an iPhone, firmware with the Bluetooth setup door).**
-For its first half hour after power-on a Canary with no Wi-Fi saved opens a
-small Bluetooth setup door — the open Improv Wi-Fi standard — and says so on
-the air. Open the SecuraCV iPhone app near it: a card appears within
-seconds, *A new Canary is nearby*. Tap it, pick your home Wi-Fi from the
-networks the Canary itself can see, type the password once, tap **Pair**
-when iOS asks, and the Canary answers with its own verdict. For a WAP that
-one tap also pairs the phone with the device (it reads a one-time claim over
-Bluetooth and trades it for the receipt on your Wi-Fi — the key itself never
-crosses the air). If the card never comes, or you have no iPhone, the setup
-network below is the same door with a key. *(New in 2026-10: host-tested,
-not yet tried on a bench device; the FULL build profile on a WAP.)*
+**The one-tap way (an iPhone and a Sense, Vision or WAP).** Three of the
+Canaries — the **Sense**, the **Vision** and the **WAP** — open a small
+Bluetooth setup door for their first half hour after power-on when they
+have no Wi-Fi saved. Open the SecuraCV iPhone app near one: a card appears
+within seconds, *A new Canary is nearby*. Tap **Continue**, tap **Pair**
+when iOS asks, pick your home Wi-Fi from the networks the Canary itself can
+see and type the password once; the phone then says *<name> is on
+<your Wi-Fi>*. (The iPhone app is on TestFlight by invite today; its App
+Store release is pending.) The all-rounder **Canary** build from
+[`firmware/canary`](../firmware/canary/) has **no door**: it uses the setup
+network below, and so does any Canary when the card never comes or you have
+no iPhone. *(The door itself is host-tested and not yet tried on a bench
+device.)* For makers: the door is the open Improv Wi-Fi standard over LE
+Secure Connections, and on a WAP the same tap trades a one-time claim ticket
+for the pairing receipt over your Wi-Fi — see
+[magic pairing (design)](design/magic_pairing.md).
 
 **The setup network (every phone, every firmware).** On your phone, open
 Wi-Fi settings. You'll see a new network named something like:
 
-> **SecuraCV-4dC2**
+> **SecuraCV-wap-4dC2**
 
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
@@ -644,8 +649,10 @@ your Wi-Fi from the list the Vision sees, type the password once, tap Pair
 when iOS asks (the door is open for 30 minutes after power-on; a short tap
 on BOOT opens it again for a minute later). No card, or no iPhone? It also
 raises its own `SecuraCV-XXXX` setup network — join it from a phone and
-pick your Wi-Fi there, with the key the Flasher printed. Flash once over
-USB; after that, updates arrive over the air.
+pick your Wi-Fi there, with the key on the Flasher's card after the flash
+(it reads the `[SETUP]` line from the Canary's first boot; the serial
+console shows the same line). Flash once over USB; after that, updates
+arrive over the air.
 
 ### Canary Sense
 
@@ -698,7 +705,7 @@ identical white boxes apart while you're labeling rooms.
 
 | | Canary (WAP) | Vision / Sense |
 |---|---|---|
-| First contact | The iPhone app's *new Canary is nearby* card (FULL profile; pairs the phone too), else join its `SecuraCV-XXXX` network and open `canary.local` | Flash with your credentials over USB, or the *new Canary is nearby* card, or join its `SecuraCV-XXXX` setup network |
+| First contact | The iPhone app's *new Canary is nearby* card (pairs the phone too), else join its `SecuraCV-XXXX` network with the key from its serial console and open `canary.local` | Flash with your credentials over USB, or the *new Canary is nearby* card, or join its `SecuraCV-XXXX` setup network with the key on the Flasher's card |
 | Own dashboard | Yes (full web UI) | No — Home Assistant is the UI (setup wizard only, while unprovisioned) |
 | Wi-Fi setup | Captive portal / Settings → Wi-Fi | Flasher fields or `secrets/secrets.h`; setup network as the fallback |
 | Broker address | Set on the dashboard | Flasher fields or `secrets/secrets.h` |
@@ -817,7 +824,7 @@ for evidence, **export the chain before you factory-reset** —
 | Symptom | Likely cause |
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
-| The iPhone app shows no *new Canary is nearby* card | The Bluetooth setup door is open only for 30 minutes after power-on on a unit with no Wi-Fi saved — unplug and replug it. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. A WAP needs the FULL build profile for the door. Nothing here is bench-tested yet; the setup network always works. |
+| The iPhone app shows no *new Canary is nearby* card | Only a Sense, Vision or WAP has the door — the all-rounder Canary build from `firmware/canary` never shows a card and uses its `SecuraCV-XXXX` setup network instead. On a Sense, Vision or WAP the door is open only for 30 minutes after power-on on a unit with no Wi-Fi saved — unplug and replug it. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. Nothing here is bench-tested yet; the setup network always works. |
 | Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
 | `canary.local` doesn't load | Some Android browsers don't resolve `.local` names. Use **http://192.168.4.1** instead — it works on every phone. |
 | Phone drops the Wi-Fi or warns "no internet" | This shouldn't happen on current firmware (the Canary answers the connectivity check to stay connected). If it does, update the firmware, then reconnect. |

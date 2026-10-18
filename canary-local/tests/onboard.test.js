@@ -131,8 +131,21 @@ test("joinBody: the /join body the portal's script builds, exactly", async () =>
   assert.strictEqual(joinBody("Home Net", "p&ss=1", ""), "ssid=Home%20Net&pass=p%26ss%3D1");
   assert.strictEqual(joinBody("HomeNet", "k", "EST5EDT,M3.2.0,M11.1.0"),
     "ssid=HomeNet&pass=k&tz=EST5EDT%2CM3.2.0%2CM11.1.0");
-  // provision.cpp's handle_join caps: the phone must not paper over them.
-  assert.ok(PROVISION.includes("if (ssid.length() == 0 || ssid.length() > 32 || pass.length() > 64) {"));
+  // provision.cpp's handle_join judges the credential with the fleet's ONE
+  // rule (firmware/common/network/wifi_credential_policy.h: SSID 1..32 bytes,
+  // password 0..64 bytes, no minimum): the phone must not paper over it, and
+  // nothing may grow a floor of its own.
+  assert.ok(PROVISION.includes("canary::net::wifi_credential::check(ssid.c_str(), pass.c_str())"),
+    "provision.cpp no longer judges /join with the shared credential rule");
+  const POLICY = read(join(REPO, "firmware/common/network/wifi_credential_policy.h"));
+  assert.ok(POLICY.includes("SSID_MAX_BYTES     = 32;"));
+  assert.ok(POLICY.includes("PASSWORD_MAX_BYTES = 64;"));
+  assert.ok(POLICY.includes("PASSWORD_MIN_BYTES = 0;"), "the rule has no floor — the router's business");
+  // The field says whose password it is, on the portal page and on the phone
+  // sheet that stands in for it.
+  assert.ok(PORTAL_SRC.includes('placeholder="Wi-Fi network password"'));
+  const PHONE = read(join(REPO, "canary-local/assets/onboard-phone.js"));
+  assert.ok(PHONE.includes('pw.placeholder = "Wi-Fi network password";'));
 });
 
 test("bars: the portal's three-bar thresholds", async () => {

@@ -386,8 +386,8 @@ footer a{color:var(--accent);text-decoration:none}
 
   <div class="wiz-step" id="wiz-step-3">
     <h2 class="wiz-h" tabindex="-1">Type the password</h2>
-    <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. Your password is sent only to the Canary.</p>
-    <input type="text" class="wiz-input pw-masked" id="wiz-pw" placeholder="Network password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="wiz-step-3-err" aria-invalid="false">
+    <p class="wiz-sub">Joining <strong id="wiz-picked-ssid">…</strong>. The password you already use for this network — nothing to invent. It is sent only to the Canary.</p>
+    <input type="text" class="wiz-input pw-masked" id="wiz-pw" placeholder="Wi-Fi network password" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="wiz-step-3-err" aria-invalid="false">
     <label style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;color:var(--muted);font-size:.8rem">
       <input type="checkbox" id="wiz-show-pw"> Show password
     </label>
@@ -705,7 +705,7 @@ footer a{color:var(--accent);text-decoration:none}
     <button class="btn btn-secondary" id="scan-btn">Scan for networks</button>
     <div id="ap-list" role="group" aria-label="Heard networks" aria-busy="false" style="margin-top:.5rem"></div>
     <div id="creds-box" class="hidden" style="margin-top:.75rem">
-      <input type="text" class="input pw-masked" id="pw-input" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <input type="text" class="input pw-masked" id="pw-input" placeholder="Wi-Fi network password" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
       <div class="row-flex" style="margin-top:.5rem">
         <button class="btn btn-primary" id="creds-send" style="flex:1">Send credentials</button>
       </div>
@@ -1176,7 +1176,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
           $w('wiz-pw').value = '';
           $w('wiz-pw').setAttribute('placeholder', 'No password (open network)');
         } else {
-          $w('wiz-pw').setAttribute('placeholder', 'Network password');
+          $w('wiz-pw').setAttribute('placeholder', 'Wi-Fi network password');
         }
         /* User has chosen a network — stop polling the radio. The
          * pollScan loop would otherwise keep re-scanning in the

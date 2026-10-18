@@ -68,6 +68,19 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The one word a Canary of this family puts on the air ("Sense-K7MZ")
+    /// and the one every surface names it by ("Canary Sense K7MZ") —
+    /// NearbyCanaries.title. A display never opens a door, so its word is
+    /// only ever read, never parsed off an advert.
+    var word: String {
+        switch self {
+        case .display: return "Display"
+        case .vision: return "Vision"
+        case .sense: return "Sense"
+        case .wap: return "WAP"
+        }
+    }
+
     /// The coarse DeviceType this family publishes, for the figure.
     var deviceType: DeviceType {
         switch self {
@@ -118,7 +131,7 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
         case .display:
             return "It finds the broker on its own: any Canary on the network that already talks to the hub tells it where, and Home Assistant's broker answers on the LAN."
         case .vision, .sense:
-            return "Its hub link is not something this phone can hand over yet: the broker address and the Canary login go in through the Flasher's MQTT fields when you flash it. Copy the login this phone minted for your hub from the step below, or read it from the hub's Mosquitto configuration."
+            return "The same tap that gives it your Wi-Fi hands it your hub — the broker address and the Canary login this phone minted — once your hub is set up. Set the hub up first if you can; otherwise tap the Canary's BOOT button once after the hub exists and it takes the hub from this phone."
         case .wap:
             return "The one tap that gives it your Wi-Fi also pairs it with this phone. Its own setup page has an optional Home Assistant step for the broker, or scan a hub QR from a display."
         }
@@ -129,7 +142,9 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
 enum SetupKeySource: Equatable, Sendable {
     /// The glass draws a `WIFI:` QR for its own setup network.
     case glassQR
-    /// The Flasher prints the key after the flash (the device has no screen).
+    /// The key is in the Flasher's serial console — the `[SETUP]` line the
+    /// device prints at boot (it has no screen, and the Flasher itself
+    /// prints nothing).
     case flasher
 }
 
@@ -176,7 +191,7 @@ enum SetupGuide {
             id: "finish",
             title: "Install the brain",
             short: "This phone installs the broker, Frigate and the witness kernel, saying each step.",
-            body: "With your account, this phone asks Home Assistant for exactly what its own Settings page would: the Mosquitto broker, a login for your Canaries (minted here, kept in this phone's Keychain), the broker connection, Frigate, and the SecuraCV witness kernel — each step narrated, nothing done twice. What stays yours is said out loud: Frigate's camera config, and the integration's files, which install from the hub's terminal in one command.",
+            body: "With your account, this phone asks Home Assistant for exactly what its own Settings page would: the Mosquitto broker, a login for your Canaries (minted here, kept in this phone's Keychain), the broker connection, Frigate, and the SecuraCV witness kernel — each step narrated, nothing done twice. What stays yours is said out loud: Frigate's camera config, and the integration's files, which the SecuraCV panel in the hub's sidebar installs with one click.",
             action: .provisionHub),
         SetupStep(
             id: "next",
@@ -209,13 +224,13 @@ enum SetupGuide {
             steps.append(SetupStep(
                 id: "key",
                 title: keySource == .glassQR ? "Read the key off its glass"
-                    : (family.hasBluetoothDoor ? "If no card appears: the key the Flasher printed" : "The key the Flasher printed"),
+                    : (family.hasBluetoothDoor ? "If no card appears" : "The key in the Flasher's serial console"),
                 short: keySource == .glassQR
                     ? "Scan the QR on its screen — or type its setup network and key."
-                    : "No card? Type the setup network and key the Flasher printed.",
+                    : "No card? Unplug and replug it, or tap BOOT once; then type its setup network and key.",
                 body: keySource == .glassQR
                     ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-XXXX. Scan it with this phone, or type the four characters and the key printed under it. A good scan starts the next step by itself."
-                    : "A camera or radar Canary has no screen, so its setup-network key is printed by the Flasher that hatched it (and if you typed Wi-Fi into the Flasher, the Canary is already on your network — skip to the last step). Type the network name and key here; its setup network is the same door with a key, for a phone with Bluetooth off.",
+                    : "Unplug it and plug it back in — its door opens for another half hour — or tap its BOOT button once for a minute; the card appears within seconds. Still nothing? A camera or radar Canary has no screen, so its setup-network key is in the Flasher's serial console (the [SETUP] line at boot) — and if you typed Wi-Fi into the Flasher, the Canary is already on your network, so skip to the last step. Type the network name and key here; its setup network is the same door with a key, for a phone with Bluetooth off.",
                 action: .readSetupKey))
             steps.append(SetupStep(
                 id: "join",
@@ -248,15 +263,27 @@ enum SetupGuide {
     static let tapSentence = "a short tap on its BOOT button opens it for a minute"
 
     /// When the door is open, for one family. A saved network that stopped
-    /// working does not open it — the walkthrough never promises that.
+    /// working does not open it — the walkthrough never promises that. A
+    /// power cycle re-arms the first-boot window on every door family; the
+    /// BOOT tap is the Sense's and Vision's shorter second way in.
     static func doorWindowLine(_ family: CanaryFamily) -> String {
         switch family {
         case .sense, .vision:
-            return doorWindowSentence + "; after that, " + tapSentence + "."
+            return doorWindowSentence + "; after that, unplug and replug it for another half hour, or " + tapSentence + "."
         case .wap, .display:
             return doorWindowSentence + "; after that, power-cycle it to open it again."
         }
     }
+
+    /// How long a listening row waits in silence before it says what to
+    /// try — long enough for a door to be heard (adverts repeat every few
+    /// seconds), short enough that nobody stares at a spinner.
+    static let nothingYetAfter: TimeInterval = 20
+    /// The second footnote under "Listening…" once that long has passed
+    /// with nothing heard: the two reasons a door is shut, and both ways
+    /// back in — the same rules `doorWindowLine` keeps, said to someone
+    /// holding the device (ListeningRow shows it; SetupGuideTests pins it).
+    static let nothingYetLine = "Nothing yet? If it has been plugged in for more than half an hour, or was on a Wi-Fi before, unplug it and plug it back in — a Sense or Vision also opens up for a minute after one tap on its BOOT button."
 
     private static func firstBootLine(_ family: CanaryFamily) -> String {
         if family.hasBluetoothDoor {

@@ -1238,8 +1238,8 @@ static const char CSI_DASHBOARD_HTML[] PROGMEM = R"DASHBOARD(<!doctype html>
           <input type="text" id="fleetSsid" maxlength="32" autocomplete="off" spellcheck="false">
         </label>
         <label class="fleet-field">
-          <span>Password</span>
-          <input type="text" class="pw-masked" id="fleetPass" maxlength="63" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+          <span>Wi-Fi network password</span>
+          <input type="text" class="pw-masked" id="fleetPass" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
         </label>
         <button class="calibrate" id="fleetGenBtn" style="margin-top:4px">Generate QR</button>
       </div>

@@ -17,6 +17,7 @@
 #include "canary/log.h"
 #include "canary/runtime_config.h"      // NVS-backed device id (OTA-safe)
 #include "identity/device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
+#include "network/mdns_txt.h"           // the one _securacv._tcp TXT schema (common/)
 
 namespace canary::net {
 
@@ -37,6 +38,25 @@ volatile bool s_reannounce_pending = false;
 // cycle can't silently drop (or resurrect) a referral.
 char s_broker[64] = {0};
 uint16_t s_bport = 0;
+// Who coordinates the hub-less fleet, as the peer link last said it
+// ("hub" | "self" | a peer's fingerprint hex | "" unknown) — re-applied with
+// the rest of the TXT set, re-announced only when it changes.
+char s_coord[17] = {0};
+
+// What this build serves, as mdns_txt words — from the feature flags the
+// build was made with, so the advert cannot claim a door or a beacon the
+// image does not carry.
+uint16_t caps_bits() {
+  uint16_t caps = mdns_txt::CAP_STATUS | mdns_txt::CAP_FLEET | mdns_txt::CAP_OTA |
+                  mdns_txt::CAP_MQTT | mdns_txt::CAP_PEER;
+#if defined(FEATURE_IMPROV) && FEATURE_IMPROV
+  caps |= mdns_txt::CAP_BLE_DOOR;
+#endif
+#if defined(FEATURE_FLEET_BEACON) && FEATURE_FLEET_BEACON
+  caps |= mdns_txt::CAP_BEACON;
+#endif
+  return caps;
+}
 
 void copy_str(char* dst, size_t cap, const char* src) {
   if (!dst || cap == 0) return;
@@ -71,40 +91,48 @@ void canonical_dt(char* out, size_t cap) {
 }
 
 void apply_txt() {
-  // cfg device_id is an in-struct array (never NULL), but guard anyway —
-  // a NULL would dereference inside the mDNS library.
+  // The one TXT schema every node advertises (common/network/mdns_txt.h):
+  // same keys, same order, same omit rules as the display, the WAP and the
+  // PIO canary, so one browser labels every SecuraCV advertiser. cfg
+  // device_id is an in-struct array (never NULL), but guard anyway — a
+  // NULL would dereference inside the mDNS library.
   const char* device_id = canary::cfg::get().device_id;
   if (!device_id) device_id = "";
-  MDNS.addServiceTxt(SVC, PROTO, "device_id", device_id);
-  // No separate friendly-name store on this variant (names live on the
-  // HA/display side via the meta topic) — the id doubles as the name.
-  MDNS.addServiceTxt(SVC, PROTO, "name", device_id);
-  MDNS.addServiceTxt(SVC, PROTO, "host", (const char*)s_host);
-  MDNS.addServiceTxt(SVC, PROTO, "fw", CANARY_FW_VERSION);
-  MDNS.addServiceTxt(SVC, PROTO, "model", MODEL);
   char dt[32];
   canonical_dt(dt, sizeof(dt));
-  MDNS.addServiceTxt(SVC, PROTO, "dt", dt);
-  MDNS.addServiceTxt(SVC, PROTO, "role", "witness");
-  if (s_broker[0]) {
-    char p[8];
-    snprintf(p, sizeof(p), "%u", (unsigned)s_bport);
-    MDNS.addServiceTxt(SVC, PROTO, "broker", (const char*)s_broker);
-    MDNS.addServiceTxt(SVC, PROTO, "bport", p);
-  } else {
-    // Empty value is the tombstone — the query side skips zero-length
-    // broker TXT (same contract as canary-display / canary-wap).
-    MDNS.addServiceTxt(SVC, PROTO, "broker", "");
-    MDNS.addServiceTxt(SVC, PROTO, "bport", "");
-  }
+  mdns_txt::Fields f;
+  f.device_id = device_id;
+  // No separate friendly-name store on this variant (names live on the
+  // HA/display side via the meta topic) — the id doubles as the name.
+  f.name = device_id;
+  f.host = s_host;
+  f.fw = CANARY_FW_VERSION;
+  f.model = MODEL;
+  f.dt = dt;
+  f.role = mdns_txt::ROLE_WITNESS;
+#ifdef CANARY_FIGURE_HARDWARE
+  f.hw = CANARY_FIGURE_HARDWARE;
+#endif
+  f.caps = caps_bits();
+  f.coord = s_coord;
+  // Empty values are the tombstone — the query side skips zero-length
+  // broker TXT (same contract as canary-display / canary-wap).
+  f.broker = s_broker;
+  f.bport = s_bport;
+  mdns_txt::Kv kv[mdns_txt::MAX_KEYS];
+  mdns_txt::Scratch scratch;
+  const size_t n = mdns_txt::enumerate(f, kv, mdns_txt::MAX_KEYS, scratch);
+  for (size_t i = 0; i < n; i++) MDNS.addServiceTxt(SVC, PROTO, kv[i].key, kv[i].value);
 }
 
 bool announce() {
   MDNS.end();
   if (!MDNS.begin(s_host)) return false;
-  // The service port is a formality — this variant runs no HTTP listener;
-  // the payload is the TXT set.
-  MDNS.addService(SVC, PROTO, 1);
+  // The port the node actually answers on: GET /api/status and /api/fleet
+  // (common/network/node_http) serve here once the link is up. The dummy
+  // port 1 is gone — a Witness Wall that followed the advert used to get a
+  // refused connection.
+  MDNS.addService(SVC, PROTO, mdns_txt::PORT_HTTP);
   apply_txt();
   return true;
 }
@@ -174,5 +202,13 @@ void mdns_clear_broker() {
 }
 
 const char* mdns_host_label() { return s_host; }
+
+void mdns_set_coord(const char* word) {
+  const char* w = word ? word : "";
+  if (strcmp(w, s_coord) == 0) return;
+  snprintf(s_coord, sizeof(s_coord), "%s", w);
+  if (!s_up) return;
+  MDNS.addServiceTxt(SVC, PROTO, "coord", (const char*)s_coord);
+}
 
 }  // namespace canary::net

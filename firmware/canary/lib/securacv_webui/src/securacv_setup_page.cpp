@@ -103,9 +103,9 @@ textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:
 </div>
 
 <div id="passbox" style="display:none">
-<label id="passlabel" for="pass">Wi-Fi password</label>
+<label id="passlabel" for="pass">Wi-Fi network password</label>
 <div class="pw-wrap">
-<input class="txt pw-masked" id="pass" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Your existing Wi-Fi password">
+<input class="txt pw-masked" id="pass" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Your existing Wi-Fi password">
 <button class="pw-show" id="showpw" type="button">Show</button>
 </div>
 <p class="hint">The password you already use for this network — the one saved in your phone. Nothing new to invent.</p>
@@ -201,7 +201,7 @@ function pick(ssid){
   chosen=ssid;
   $('ssid').value=ssid;
   $('passbox').style.display='block';
-  $('passlabel').textContent='Wi-Fi password for “'+ssid+'”';
+  $('passlabel').textContent='Wi-Fi network password for “'+ssid+'”';
   $('err').style.display='none';
   $('pass').focus();
 }
@@ -211,7 +211,7 @@ $('manual').addEventListener('click',function(){
   $('passbox').style.display='block';
   $('ssid').focus();
 });
-$('ssid').addEventListener('input',function(){chosen=$('ssid').value.trim();$('passlabel').textContent=chosen?'Wi-Fi password for “'+chosen+'”':'Wi-Fi password'});
+$('ssid').addEventListener('input',function(){chosen=$('ssid').value.trim();$('passlabel').textContent=chosen?'Wi-Fi network password for “'+chosen+'”':'Wi-Fi network password'});
 $('showpw').addEventListener('click',function(){
   var p=$('pass');
   if(p.classList.contains('pw-masked')){p.classList.remove('pw-masked');this.textContent='Hide'}

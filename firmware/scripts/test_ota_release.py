@@ -382,6 +382,100 @@ class TestManifest:
 # Public key header generation / parsing
 # ──────────────────────────────────────────────────────────────────────────
 
+class TestManifestV2:
+    """manifest_version 2 signs the board and chip the image was built for.
+
+    An image is already bound to its product; the board and chip close the
+    gap where several boards share one product id (or a release is cut for
+    the wrong chip under the right id). They are only worth having UNDER the
+    signature, so naming them makes a v2 manifest, a v1 manifest may not
+    carry them, and the firmware refuses a mismatch (docs/OTA.md).
+    """
+
+    def build(self, private_key, **overrides):
+        kwargs = dict(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product="securacv-canary-sense",
+            version="2.5.0",
+            url="https://example.com/sense.bin",
+            min_version="2.4.0",
+            board="xiao-esp32c6-mr60",
+            chip="esp32c6",
+        )
+        kwargs.update(overrides)
+        return ota_release.build_manifest(**kwargs)
+
+    def test_naming_hardware_makes_a_v2_manifest_that_verifies(self, private_key):
+        manifest = self.build(private_key)
+        assert manifest["manifest_version"] == 2
+        assert manifest["board"] == "xiao-esp32c6-mr60"
+        assert manifest["chip"] == "esp32c6"
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+
+    def test_the_hardware_fields_are_under_the_signature(self, private_key):
+        manifest = self.build(private_key)
+        for field, other in (("board", "xiao-esp32s3-sense"), ("chip", "esp32s3")):
+            tampered = dict(manifest)
+            tampered[field] = other
+            problems = ota_release.verify_manifest(tampered, FIRMWARE, private_key.public_key())
+            assert "manifest_signature verification failed" in problems, (field, problems)
+
+    def test_the_v2_message_is_the_v1_message_plus_hardware_under_its_own_prefix(self):
+        common = dict(product="p", version="1.0.0", min_version="", url="u", sha256_hex="AB",
+                      size=3, release_notes="", release_url="")
+        v1 = ota_release.manifest_signed_message(**common)
+        v2 = ota_release.manifest_signed_message(**common, board="b", chip="c", manifest_version=2)
+        assert v1.startswith(b"scv-manifest-v1\0")
+        assert v2 == b"scv-manifest-v2\0" + v1[len(b"scv-manifest-v1\0"):] + b"b\0c\0"
+
+    def test_a_v1_manifest_may_not_carry_unsigned_hardware(self, private_key):
+        with pytest.raises(ValueError):
+            self.build(private_key, manifest_version=1)
+        v1 = ota_release.build_manifest(private_key=private_key, firmware=FIRMWARE,
+                                        product="securacv-canary-sense", version="2.5.0",
+                                        url="https://example.com/sense.bin")
+        assert "board" not in v1 and v1["manifest_version"] == 1
+        smuggled = dict(v1, board="xiao-esp32c6-mr60")
+        problems = ota_release.verify_manifest(smuggled, FIRMWARE, private_key.public_key())
+        assert any("unsigned" in p for p in problems), problems
+
+    def test_an_explicit_v2_without_hardware_signs_empty_fields(self, private_key):
+        manifest = self.build(private_key, board=None, chip=None, manifest_version=2)
+        assert manifest["manifest_version"] == 2
+        assert manifest["board"] == "" and manifest["chip"] == ""
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+
+    def test_an_unknown_manifest_version_is_refused(self, private_key):
+        with pytest.raises(ValueError):
+            self.build(private_key, manifest_version=3)
+        manifest = self.build(private_key)
+        manifest["manifest_version"] = 3
+        problems = ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key())
+        assert any("unknown manifest_version" in p for p in problems), problems
+
+    def test_cli_board_and_chip(self, private_key, tmp_path):
+        key = tmp_path / "releaser.pem"
+        fw = tmp_path / "firmware.bin"
+        out = tmp_path / "manifest.json"
+        fw.write_bytes(FIRMWARE)
+        signer = Path(__file__).parent / "ota_release.py"
+
+        def run(*a):
+            return subprocess.run([sys.executable, str(signer), *a], capture_output=True, text=True)
+
+        assert run("keygen", "--private-key", str(key)).returncode == 0
+        result = run("manifest", "--private-key", str(key), "--product", "securacv-canary-sense",
+                     "--version", "2.5.0", "--url", "https://example.com/sense.bin",
+                     "--board", "xiao-esp32c6-mr60", "--chip", "esp32c6", "--out", str(out), str(fw))
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads(out.read_text())
+        assert manifest["manifest_version"] == 2 and manifest["chip"] == "esp32c6"
+        header = tmp_path / "ota_release_key.h"
+        assert run("pubkey-header", "--private-key", str(key), "--out", str(header)).returncode == 0
+        assert run("verify", "--pubkey", str(header), "--manifest", str(out), str(fw)).returncode == 0
+
+
 class TestPubkeyHeader:
     def test_header_contains_key_bytes(self, private_key):
         from cryptography.hazmat.primitives import serialization

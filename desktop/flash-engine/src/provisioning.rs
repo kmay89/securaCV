@@ -168,8 +168,12 @@ fn validate(config: &Provisioning) -> Result<(), String> {
         if byte_len(&config.wifi_ssid) > 32 {
             return Err("Wi-Fi name must be 1–32 UTF-8 bytes".into());
         }
-        if !config.wifi_pass.is_empty() && !(8..=63).contains(&byte_len(&config.wifi_pass)) {
-            return Err("Wi-Fi password must be 8–63 bytes (or empty for an open network)".into());
+        // The firmware's bound and nothing stricter (firmware/common/network/
+        // wifi_credential_policy.h: 0..64 bytes, no minimum — the router sets
+        // its own floor and the join verdict reports). An earlier 8..=63 here
+        // refused real short-key networks on the router's behalf.
+        if byte_len(&config.wifi_pass) > 64 {
+            return Err("A Wi-Fi password is at most 64 characters.".into());
         }
     }
     if !config.device_id.is_empty() && byte_len(&config.device_id) > 47 {
@@ -1015,8 +1019,23 @@ mod tests {
     #[test]
     fn invalid_secrets_are_refused_before_patch() {
         let mut bad = config();
-        bad.wifi_pass = "short".into();
+        bad.wifi_pass = "p".repeat(65);
         assert!(patch_factory_image(&mut factory(), &bad).is_err());
+    }
+
+    #[test]
+    fn a_short_password_is_the_routers_business() {
+        // No minimum: the firmware never had one, and the router (WEP 5/13,
+        // WPA3 any length, WPA2 8..63) is the one that decides. 64 bytes is a
+        // raw hex key and is allowed; 65 is what the firmware refuses.
+        for pass in ["a", "1234567", "hunter22", &"f".repeat(64)] {
+            let mut ok = config();
+            ok.wifi_pass = pass.to_string();
+            assert!(validate(&ok).is_ok(), "{pass} must be accepted");
+        }
+        let mut long = config();
+        long.wifi_pass = "p".repeat(65);
+        assert!(validate(&long).is_err());
     }
 
     // The OTA opt-in lives in the ENGINE'S OWN namespace: securacv_ota.cpp

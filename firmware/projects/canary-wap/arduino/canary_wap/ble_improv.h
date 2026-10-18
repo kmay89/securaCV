@@ -24,8 +24,19 @@
  * and init() hands it to improv::session_begin, which back-dates the
  * window: a window the last boots spent whole begins shut. And a phone at
  * the door is a sign of life for that wizard timer (ble_improv_note_
- * activity on every command, the join and the claim), so the restart
- * cannot land mid-provisioning.
+ * activity on every command, the join and the claim), and the restart
+ * waits while the door is open at all (setup_wizard::check_timeout takes
+ * setup_open(); a person watching the door's card has touched nothing
+ * yet), so it cannot land mid-provisioning or under the card.
+ *
+ * THE CLAIM'S PIN AND THE RECEIPT IT BUYS NAME THE BOOT AFTER THIS ONE. The
+ * join happens inside the first-boot wizard, where the WAP is HTTP-only so
+ * the captive portal renders; the certificate is known on that boot all the
+ * same (init_tls_cert() on every initialized boot), so tls_cert_fp is the
+ * real pin, claim_url is the http address that answers now (spent within
+ * seconds), and the receipt the claim buys — the one the phone keeps — is
+ * https://<name>.local with that pin (sketch: tls_after_setup()). Spending
+ * the claim brings the reboot into steady state to ~10 s from the spend.
  *
  * WHAT IS DIFFERENT FROM ble_provision (the bonded rescue service):
  *   - ble_provision needs an authenticated bond (the dashboard's Numeric

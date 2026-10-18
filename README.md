@@ -84,6 +84,41 @@ Real camera ingest, break-glass exports, service operation, and day-2 commands l
 
 ---
 
+## Getting a node online in 60 seconds
+
+Every Canary — the flagship canary, the WAP, a Vision, a Sense, a Sentinel, a
+display — joins a home the same way, because the steps live once in
+[`firmware/common/network/onboarding_fsm.h`](firmware/common/network/onboarding_fsm.h)
+([`docs/PARITY.md`](docs/PARITY.md) says which node does which part how).
+
+1. **Power it.** It raises its own Wi-Fi network, named
+   `SecuraCV-<type>-<four characters>` (`SecuraCV-sense-4dC2`), and prints
+   that name, the key and a scannable `WIFI:` code on its serial console
+   (`[SETUP] Setup network up: …`, `[SETUP] QR …`). A display shows the same
+   code on its glass; a Sense or Vision also opens a Bluetooth setup door for
+   30 minutes, so the companion app can hand it the network with one tap.
+2. **Join that network from your phone.** The setup page opens by itself
+   (or at `http://192.168.4.1/`). It lists the networks it can see, strongest
+   first, with a lock where one needs a password and "Join another network…"
+   for a hidden one.
+3. **Pick your network and type its password** — the password you already use
+   for that network, exactly as your router has it; nothing to invent, no
+   minimum length, and an open network asks for none.
+4. **Watch it join.** The page says *Joining…*, then *You're all set*, or it
+   says exactly why not (*Wrong password*, *Network not found*, *No address
+   from the router*) and lets you try again without a rescan. The setup
+   network stays up for two minutes so the page can confirm, then closes.
+5. **Done.** The node saves the network (up to four), finds its hub over
+   Bonjour if there is one, hears the other Canaries on your network without
+   one, and from then on answers `http://<its name>.local/api/status` with
+   where it stands.
+
+If a saved network goes away for ten minutes the node raises its setup network
+again without forgetting anything; holding its BOOT button for ten seconds
+forgets the networks and settings (the witness identity is kept, so your hub
+and displays still recognize it). The whole walkthrough with every surface is
+[`docs/manual_test_plan_captive_portal.md`](docs/manual_test_plan_captive_portal.md).
+
 ## How it works
 
 ```text

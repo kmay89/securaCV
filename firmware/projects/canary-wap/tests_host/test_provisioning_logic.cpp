@@ -124,6 +124,78 @@ static void test_reboot_deadline_extend() {
         (uint32_t)(near_wrap + MIN));
 }
 
+// The wizard's idle restart is held while the setup door is open, whatever
+// the idle time; the moment the door shuts the idle rule is back, with the
+// last-activity stamp as it was.
+static void test_wizard_restart_with_door() {
+  const uint32_t WIN = 15u * 60u * 1000u;
+  const uint32_t DOOR = 30u * 60u * 1000u;  // the door's own first-boot window
+  // Door shut: exactly the idle rule.
+  CHECK(!wizard_restart_due(true, WIN - 1, 0, WIN, false));
+  CHECK(wizard_restart_due(true, WIN, 0, WIN, false));
+  CHECK(!wizard_restart_due(false, WIN * 2, 0, WIN, false));
+  // Door open: never due — at the window, long past it (the door's window
+  // bounds the hold: a phone's card showing is a person about to tap).
+  CHECK(!wizard_restart_due(true, WIN, 0, WIN, true));
+  CHECK(!wizard_restart_due(true, WIN * 2, 0, WIN, true));
+  CHECK(!wizard_restart_due(true, DOOR, 0, WIN, true));
+  // The door shuts after an idle window: due at once (the restart the door
+  // delayed, not a new one).
+  CHECK(wizard_restart_due(true, DOOR, 0, WIN, false));
+  // A tap at the door touched the stamp (the sketch's note_activity): the
+  // countdown runs from it once the door shuts.
+  const uint32_t touched = DOOR - 60000u;
+  CHECK(!wizard_restart_due(true, touched + WIN - 1, touched, WIN, false));
+  CHECK(wizard_restart_due(true, touched + WIN, touched, WIN, false));
+  // Grid: door open is false everywhere; door shut IS the idle rule, by name.
+  const uint32_t times[5] = { 0u, WIN - 1, WIN, WIN + 1, WIN * 3 };
+  const bool bools[2] = { false, true };
+  for (uint32_t now : times) {
+    for (bool active : bools) {
+      CHECK(!wizard_restart_due(active, now, 0, WIN, true));
+      CHECK(wizard_restart_due(active, now, 0, WIN, false) ==
+            setup_timeout_due(active, now, 0, WIN));
+    }
+  }
+  // Wrap-safe, like the rule it wraps.
+  const uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(!wizard_restart_due(true, near_wrap + 60000u /* wraps */, near_wrap, WIN, false));
+  CHECK(wizard_restart_due(true, near_wrap + WIN, near_wrap, WIN, false));
+  CHECK(!wizard_restart_due(true, near_wrap + WIN, near_wrap, WIN, true));
+}
+
+// A spent setup-door claim brings the armed reboot to the runway from the
+// spend — in from a far deadline, out from a passed one — and never arms a
+// disarmed one.
+static void test_claim_spent_reboot_deadline() {
+  const uint32_t RUNWAY = 10000u;
+  const uint32_t GRACE = 120000u;
+  // Disarmed stays disarmed: nothing to hurry (a steady-state unit is
+  // already on https).
+  CHECK(claim_spent_reboot_deadline(0, 1000, RUNWAY) == 0);
+  CHECK(claim_spent_reboot_deadline(0, 0xFFFFFFFFu, RUNWAY) == 0);
+  // Armed far out (the join 5 s ago, the grace 120 s): brought IN to
+  // now + runway — the difference this exists for; the floor-only extend
+  // leaves that deadline where it is.
+  const uint32_t join = 1000u;
+  const uint32_t spend = join + 5000u;
+  CHECK(claim_spent_reboot_deadline(join + GRACE, spend, RUNWAY) == spend + RUNWAY);
+  CHECK(reboot_deadline_extend(join + GRACE, spend, RUNWAY) == join + GRACE);
+  // Armed and already past (the hold released by a spend): pushed OUT to
+  // now + runway, so the receipt leaves whole.
+  const uint32_t late = join + GRACE + 30000u;
+  CHECK(claim_spent_reboot_deadline(join + GRACE, late, RUNWAY) == late + RUNWAY);
+  // The reboot follows the spend: due exactly at the runway, not before.
+  const uint32_t at = claim_spent_reboot_deadline(join + GRACE, spend, RUNWAY);
+  CHECK(!deferred_reboot_due(at - 1, at));
+  CHECK(deferred_reboot_due(at, at));
+  // Wrap-safe; never 0 for an armed deadline (0 reads as disarmed).
+  const uint32_t near_wrap = 0xFFFFF000u;
+  CHECK(claim_spent_reboot_deadline(near_wrap + 1000u, near_wrap, RUNWAY) ==
+        (uint32_t)(near_wrap + RUNWAY));
+  CHECK(claim_spent_reboot_deadline(5u, (uint32_t)0u - RUNWAY, RUNWAY) == 1u);
+}
+
 static void test_ble_discovery_start() {
   const uint32_t SETTLE = 45000u;
   const uint32_t MAXHOLD = 300000u;
@@ -347,6 +419,8 @@ int main() {
   test_ap_teardown();
   test_deferred_reboot();
   test_reboot_deadline_extend();
+  test_wizard_restart_with_door();
+  test_claim_spent_reboot_deadline();
   test_ble_discovery_start();
   test_ble_fresh_unit_start();
   test_ble_scanners_held_then_released();

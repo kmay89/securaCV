@@ -46,4 +46,14 @@ void provision_run(bool glass_ok);
 // the rest of this surface — gate the call site.
 bool provision_join_in_flight();
 
+// True while the portal is up (its setup AP is on the air) — onboarding_fsm.h's
+// `ap_up` fact, and GET /api/status's `setup_ap`. Blocking as the portal is,
+// nothing else answers while this is true; the facts are still complete so
+// every surface derives the same onboarding word. Same gate as above.
+bool provision_active();
+
+// True once a phone has handed credentials through this portal session —
+// onboarding_fsm.h's "provisioning" state (false between sessions). Same gate.
+bool provision_credentials_submitted();
+
 }  // namespace canary::net

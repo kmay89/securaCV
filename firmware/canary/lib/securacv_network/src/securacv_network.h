@@ -15,6 +15,11 @@
 #include <ESPmDNS.h>
 #include "esp_http_server.h"
 #include "canary_config.h"
+// Shared, pure (firmware/common via -I ../common): the join-failure words,
+// the saved-networks ring and the fleet's onboarding state machine.
+#include "network/wifi_join_policy.h"
+#include "network/wifi_store.h"
+#include "network/onboarding_fsm.h"
 
 #if FEATURE_WIFI_AP || FEATURE_HTTP_SERVER
 
@@ -55,6 +60,12 @@ struct WiFiStatus {
   char ap_auth[12];
   const char* ap_auth_reason;
   bool sta_pmf;
+  // Why the last join attempt did not end in an address, in the fleet's
+  // words (wifi_join_policy.h via wifi_join_reason.h); valid only while
+  // join_failure_known, which a successful join clears. GET /api/wifi/status
+  // reports join_failure_label() of it as `reason`.
+  canary::net::JoinFailure last_join_failure;
+  bool join_failure_known;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -185,7 +196,38 @@ public:
   const char* getApSsid() const { return m_ap_ssid; }
   const char* getApPassword() const { return m_ap_password; }
 
+  // ── The fleet's onboarding state machine (common/network/onboarding_fsm.h) ──
+  // POST /api/wifi/connect saved credentials this AP session: the facts that
+  // make derive() say "provisioning" while the join has not started. Cleared
+  // when the AP is (re-)raised, i.e. at the next AP session.
+  void noteCredentialsSubmitted() { m_creds_submitted = true; }
+  bool credentialsSubmitted() const { return m_creds_submitted; }
+  // The phone confirmed: GET /api/wifi/status answered "connected" over the
+  // SoftAP. The AP's job is done and it closes after the ack beat instead of
+  // the full post-join hold (ap_teardown_due) — once no client is on it.
+  void notePhoneAck(uint32_t now_ms) {
+    if (!m_phone_acked) { m_phone_acked = true; m_acked_at_ms = now_ms; }
+  }
+  // Where this node stands, in the one word every node's /api/status says.
+  canary::net::onboard::State onboardingState() const;
+  // Saved networks in the wifi_store ring (`wifi_nets`): the legacy
+  // wifi_ssid/wifi_pass pair stays the current pick and is folded in on load.
+  uint8_t savedNetworkCount() const { return m_store.count; }
+
 private:
+  // The saved-networks ring beside the legacy pair. loadStore() parses the
+  // `wifi_nets` blob (a torn write is "no store") and persistStore() writes
+  // it back only when the bytes changed, so a reconnect costs no flash.
+  bool loadStore();
+  bool persistStore();
+  // A join just worked: the network takes its place in the ring (last_good,
+  // fails cleared) and, after a rotation, becomes the legacy current pick.
+  void rememberWorkingNetwork();
+  // A join attempt ended without an address: classify it, count it against
+  // the ring entry and keep the label for /api/wifi/status.
+  void noteJoinFailure(bool count_against_store);
+  // NotFound twice on one saved network with another saved: try the next.
+  void rotateSavedNetworkIfDue();
   // Registers every route on `server` (the TLS server, or the plain one in
   // HTTP-only mode) — one table, whichever server is primary.
   void registerHttpHandlers(httpd_handle_t server);
@@ -213,8 +255,17 @@ private:
                                   // same hostname so we MUST compare TXT.
   PeerEntry m_peers[PEER_CACHE_MAX];
   uint32_t m_peers_last_browse_ms;
-  char m_ap_ssid[33];            // stashed in begin() so raiseAp() can bring the
+  char m_ap_ssid[canary::net::onboard::SSID_CAP];  // stashed in begin() so raiseAp() can bring the
   char m_ap_password[65];        // management SoftAP back up after STA loss.
+
+  // Saved networks (wifi_store.h) and the onboarding facts the shared state
+  // machine derives from (onboarding_fsm.h).
+  canary::net::wifi_store::Store m_store;
+  int m_store_idx;               // ring slot of m_creds, -1 when not in the ring
+  bool m_rotated;                // m_creds came from a rotation; save on success
+  bool m_phone_acked;            // the phone saw "connected" over the SoftAP
+  uint32_t m_acked_at_ms;
+  bool m_creds_submitted;        // POST /api/wifi/connect saved creds this AP session
 
   // F15 TLS state. The DER buffers are malloc'd once (initTls) and live for
   // the server's lifetime: httpd_ssl keeps pointers to them.

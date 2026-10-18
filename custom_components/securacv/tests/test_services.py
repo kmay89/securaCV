@@ -216,13 +216,14 @@ def _stored(hass) -> list:
 # ── Registration ────────────────────────────────────────────────────────
 
 
-def test_async_setup_registers_exactly_the_five_actions() -> None:
+def test_async_setup_registers_exactly_the_six_actions() -> None:
     hass = _hass(with_entry=False)
     assert set(hass.services.registered) == {
         (DOMAIN, "start_watch"),
         (DOMAIN, "end_watch"),
         (DOMAIN, "list_watches"),
         (DOMAIN, "verify"),
+        (DOMAIN, "staged_update"),
         (DOMAIN, "export_evidence"),
     }
     registered = hass.services.registered
@@ -263,14 +264,17 @@ def test_a_failure_to_register_never_fails_setup(monkeypatch, caplog) -> None:
     assert any("actions not registered" in r.getMessage() for r in caplog.records)
 
 
-def test_the_vocabulary_is_the_five_and_nothing_else_registers_actions() -> None:
+def test_the_vocabulary_is_the_six_and_nothing_else_registers_actions() -> None:
     """Action names are a compatibility promise, and trust decisions are
     not automatable: pin / rotate / unpin stay in the options flow and the
-    Repairs fix flow; verify and export only read. A new registration
-    anywhere else in the package (button.py included — the buttons call the
-    same coroutines) would bypass this list."""
+    Repairs fix flow; verify and export only read; staged_update installs
+    firmware each node's own signed engine already accepts (docs/OTA.md §5)
+    and touches no trust. A new registration anywhere else in the package
+    (button.py included — the buttons call the same coroutines) would bypass
+    this list."""
     assert services.SERVICES == (
-        "start_watch", "end_watch", "list_watches", "verify", "export_evidence"
+        "start_watch", "end_watch", "list_watches", "verify", "export_evidence",
+        "staged_update",
     )
     for name in services.SERVICES:
         assert not re.search(r"pin|rotate|trust|key", name), name
@@ -735,6 +739,7 @@ def test_services_yaml_strings_and_schemas_name_the_same_fields() -> None:
         "list_watches": services.LIST_WATCHES_SCHEMA,
         "verify": services.VERIFY_SCHEMA,
         "export_evidence": services.EXPORT_EVIDENCE_SCHEMA,
+        "staged_update": services.STAGED_UPDATE_SCHEMA,
     }
     for action in services.SERVICES:
         assert declared[action] == _schema_fields(schemas[action]), action

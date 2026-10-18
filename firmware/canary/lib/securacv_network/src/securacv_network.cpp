@@ -50,7 +50,35 @@
 // (an IDF 5.x feature; the IDF 4.4 core has no ap.pmf_cfg at all), so the
 // whole AP write compiles out elsewhere and ap_security::decide reports why.
 #include "network/ap_security_policy.h"
+#include "network/wifi_credential_policy.h"  // the one credential rule every portal shares
+#include "network/node_status.h"   // the coarse GET /api/status body every node serves (one writer)
+#include "network/mdns_txt.h"      // the one _securacv._tcp TXT schema every node advertises
+#include "fleet_selfreport/fleet_selfreport.h"  // the GET /api/fleet roll-call row the Witness Wall polls
+#include "time/clock_sync.h"       // believable(): when the wall clock may be reported at all
+#include "wifi_join_reason.h"      // wl_status_t + disconnect reason -> JoinFailure; the rotation rule
+#if FEATURE_HA_MQTT
+#include "securacv_mqtt.h"         // the hub word in /api/status: configured + connected
+#endif
 #include <esp_wifi.h>
+
+// wifi_join_reason.h spells the Arduino and IDF values as integers so a host
+// test can drive it; hold each one to the real enum (the ap_security pattern).
+static_assert((int)WL_IDLE_STATUS == canary::net::join_reason::kWlIdleStatus,
+              "wifi_join_reason.h kWlIdleStatus drifted from WiFiType.h");
+static_assert((int)WL_NO_SSID_AVAIL == canary::net::join_reason::kWlNoSsidAvail,
+              "wifi_join_reason.h kWlNoSsidAvail drifted from WiFiType.h");
+static_assert((int)WL_CONNECT_FAILED == canary::net::join_reason::kWlConnectFailed,
+              "wifi_join_reason.h kWlConnectFailed drifted from WiFiType.h");
+static_assert((int)WIFI_REASON_AUTH_EXPIRE == canary::net::join_reason::kReasonAuthExpire,
+              "wifi_join_reason.h kReasonAuthExpire drifted from esp_wifi_types.h");
+static_assert((int)WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT == canary::net::join_reason::kReason4wayHandshakeTimeout,
+              "wifi_join_reason.h kReason4wayHandshakeTimeout drifted from esp_wifi_types.h");
+static_assert((int)WIFI_REASON_NO_AP_FOUND == canary::net::join_reason::kReasonNoApFound,
+              "wifi_join_reason.h kReasonNoApFound drifted from esp_wifi_types.h");
+static_assert((int)WIFI_REASON_AUTH_FAIL == canary::net::join_reason::kReasonAuthFail,
+              "wifi_join_reason.h kReasonAuthFail drifted from esp_wifi_types.h");
+static_assert((int)WIFI_REASON_HANDSHAKE_TIMEOUT == canary::net::join_reason::kReasonHandshakeTimeout,
+              "wifi_join_reason.h kReasonHandshakeTimeout drifted from esp_wifi_types.h");
 #if defined(CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT) && CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT && \
     ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
   #define CANARY_SOFTAP_SAE_IN_BUILD 1
@@ -243,6 +271,12 @@ ScvNetworkManager::ScvNetworkManager()
   m_tls_cert_fp_hex[0] = '\0';
   m_tls_reason = "initTls() not called (first-boot setup, or FEATURE_HTTPS=0)";
   m_tls_deferred_for_setup = false;
+  canary::net::wifi_store::init(m_store);
+  m_store_idx = -1;
+  m_rotated = false;
+  m_phone_acked = false;
+  m_acked_at_ms = 0;
+  m_creds_submitted = false;
 }
 
 const char* ScvNetworkManager::getTlsModeReason() const {
@@ -251,11 +285,33 @@ const char* ScvNetworkManager::getTlsModeReason() const {
       setup_is_active() || setup_is_first_boot());
 }
 
-// F4 grace window: keep the SoftAP up this long after the STA link reports
-// connected before tearing it down, so a just-provisioned phone still on the
-// AP sees the "connected" result before its association drops. Mirrors the
-// canary-wap sketch's AP_DROP_GRACE_MS.
-static const uint32_t AP_DROP_GRACE_MS = 8000;
+// F4 hold: keep the SoftAP up after the STA link reports connected, so a
+// just-provisioned phone still on the AP sees the "connected" result before
+// its association drops. The numbers are the fleet's (onboarding_fsm.h
+// decision 1): two minutes after the join, or the 1.6 s beat once the phone
+// has confirmed over the AP (notePhoneAck) — this tree used to drop at 8 s,
+// the WAP at 120 s, the headless trio at 25 s, and the shared header is what
+// ended that.
+static const canary::net::onboard::Timing kOnboardTiming{};
+
+// The last STA_DISCONNECTED reason of the current attempt (0 = none seen),
+// written by the Wi-Fi event task, read by checkConnection on the loop task
+// when an attempt is given up: on core 2.0.17 a wrong password mostly ends in
+// a handshake timeout the core files under WL_CONNECTION_LOST, and only the
+// raw reason tells it from a dropped link (wifi_join_reason.h).
+static volatile int s_last_disc_reason = canary::net::join_reason::kReasonNone;
+
+// The serial label both flashers parse for the setup network and its key
+// (canary-local/assets/flash-core.js SETUP_NETWORK_LINE_RES), then the same
+// network as a scannable code. onboarding_fsm.h spells both once; printed
+// whenever the SoftAP comes up (begin, raiseAp) so a flasher attached at
+// recovery hears it too.
+static void announce_setup_network(const char* ssid, const char* pass) {
+  namespace ob = canary::net::onboard;
+  char line[256];
+  if (ob::announce_line(line, sizeof(line), ssid, pass, AP_CHANNEL) > 0) Serial.println(line);
+  if (ob::qr_line(line, sizeof(line), ssid, pass) > 0) Serial.println(line);
+}
 
 // Hard cap on how long an associated AP client can extend that grace (see the
 // F4 drop in checkConnection). The captive sheet holds the phone on the AP
@@ -342,25 +398,46 @@ static void start_mdns(const char* device_id) {
     return;
   }
   MDNS.addService("http", "tcp", 80);
-  MDNS.addService("securacv", "tcp", 80);
-  MDNS.addServiceTxt("securacv", "tcp", "device_id",
-                     (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME);
-  MDNS.addServiceTxt("securacv", "tcp", "fw", FIRMWARE_VERSION);
-  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
-  // F15: tell a discovery client whether HTTPS is live and on which port.
-  // The decision is the pure, host-tested tls_policy helper; the plain
-  // http/securacv services keep advertising 80 (it 307-redirects) for a
-  // client that cannot do TLS.
+  MDNS.addService("securacv", "tcp", canary::net::mdns_txt::PORT_HTTP);
+  // The one TXT schema every node advertises (common/network/mdns_txt.h) —
+  // this tree used to publish device_id/fw/model alone, with no host, name,
+  // dt or role, so a browser that labels the fleet from the advert (the
+  // Witness Wall reads `host`) had to special-case it. The host is the
+  // constant MDNS_HOSTNAME this unit answers to (RFC 6762 renames a second
+  // unit canary-2; its TXT still says what IT answers to).
   {
+    namespace mt = canary::net::mdns_txt;
     const auto adv = canary::net::tls_policy::mdns_tls_advert(
         s_mdns_tls_enabled, s_mdns_secure_port);
-    MDNS.addServiceTxt("securacv", "tcp", "tls", adv.tls_txt);
-    if (adv.advertise_secure_port) {
-      char port_s[6];
-      snprintf(port_s, sizeof(port_s), "%u", (unsigned)adv.secure_port);
-      MDNS.addServiceTxt("securacv", "tcp", "secure_port",
-                         (const char*)port_s);
-    }
+    char dev_name[SETUP_DEVICE_NAME_MAX + 1] = {0};
+    const bool named = setup_get_device_name(dev_name, sizeof(dev_name));
+    mt::Fields f;
+    f.device_id = (device_id && device_id[0]) ? device_id : MDNS_HOSTNAME;
+    f.name = named ? dev_name : f.device_id;
+    f.host = MDNS_HOSTNAME;
+    f.fw = FIRMWARE_VERSION;
+    f.model = "XIAO ESP32S3";
+    f.dt = DEVICE_TYPE;
+    f.role = mt::ROLE_WITNESS;
+#ifdef CANARY_FIGURE_HARDWARE
+    f.hw = CANARY_FIGURE_HARDWARE;
+#endif
+    f.caps = mt::CAP_STATUS | mt::CAP_FLEET | mt::CAP_OTA | mt::CAP_WEB
+#if FEATURE_HA_MQTT
+             | mt::CAP_MQTT
+#endif
+        ;
+    f.coord = "";   // this tree does not speak the peer protocol yet (PARITY.md)
+    f.broker = "";  // no referral: the canary never gossips its broker
+    // F15: whether HTTPS is live and on which port (tls_policy, host-tested);
+    // the plain services keep advertising 80 (it 307-redirects) for a
+    // client that cannot do TLS.
+    f.tls = (strcmp(adv.tls_txt, "1") == 0) ? 1 : 0;
+    f.secure_port = adv.advertise_secure_port ? adv.secure_port : 0;
+    mt::Kv kv[mt::MAX_KEYS];
+    mt::Scratch scratch;
+    const size_t n = mt::enumerate(f, kv, mt::MAX_KEYS, scratch);
+    for (size_t i = 0; i < n; i++) MDNS.addServiceTxt("securacv", "tcp", kv[i].key, kv[i].value);
   }
   char fqdn[48];
   snprintf(fqdn, sizeof(fqdn), "%s.local", MDNS_HOSTNAME);
@@ -496,7 +573,11 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
   // back into the singleton — no captured state.
   static bool s_event_registered = false;
   if (!s_event_registered) {
-    WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t /*info*/) {
+    WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t info) {
+      if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+        // Kept for the verdict when checkConnection gives the attempt up.
+        s_last_disc_reason = (int)info.wifi_sta_disconnected.reason;
+      }
       if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
         // STA just got DHCP. Re-init mDNS so it advertises on both
         // AP and STA interfaces. Without this the home-WiFi side
@@ -550,6 +631,7 @@ bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password,
   char msg[64];
   snprintf(msg, sizeof(msg), "AP: %s", ap_ssid);
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status.ap_ip);
+  announce_setup_network(m_ap_ssid, m_ap_password);
 
   // Bring mDNS up immediately so AP-only clients can already reach
   // `canary.local`. The STA_GOT_IP handler above re-runs this after
@@ -600,7 +682,109 @@ bool ScvNetworkManager::loadCredentials() {
   }
 
   nvs.end();
+
+  // The saved-networks ring beside the legacy pair (wifi_store.h): the pair
+  // stays the current pick — the flashers seed it and every reader keeps
+  // working — and is folded into the ring on first load, persisted only when
+  // that changed the ring.
+  loadStore();
+  if (m_creds.configured &&
+      canary::net::wifi_store::import_legacy(m_store, m_creds.ssid, m_creds.password)) {
+    persistStore();
+  }
+  m_store_idx = canary::net::wifi_store::find(m_store, m_creds.ssid);
   return m_creds.configured;
+}
+
+bool ScvNetworkManager::loadStore() {
+  namespace ws = canary::net::wifi_store;
+  ws::init(m_store);
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadOnly()) return false;
+  uint8_t blob[ws::BLOB_BYTES];
+  const size_t n = nvs.getBytesLength(ws::NVS_KEY);
+  bool ok = false;
+  if (n == sizeof(blob) && nvs.getBytes(ws::NVS_KEY, blob, sizeof(blob)) == sizeof(blob)) {
+    ok = ws::parse(blob, sizeof(blob), m_store);  // a torn write parses as "no store"
+  }
+  nvs.end();
+  return ok;
+}
+
+bool ScvNetworkManager::persistStore() {
+  namespace ws = canary::net::wifi_store;
+  uint8_t blob[ws::BLOB_BYTES];
+  if (ws::serialize(m_store, blob, sizeof(blob)) != sizeof(blob)) return false;
+  NvsManager& nvs = NvsManager::instance();
+  if (!nvs.beginReadWrite()) return false;
+  // Unchanged bytes are not rewritten: a reconnect to last_good must not
+  // cost a flash write.
+  uint8_t have[ws::BLOB_BYTES];
+  const bool same = nvs.getBytesLength(ws::NVS_KEY) == sizeof(have) &&
+                    nvs.getBytes(ws::NVS_KEY, have, sizeof(have)) == sizeof(have) &&
+                    memcmp(have, blob, sizeof(blob)) == 0;
+  const bool ok = same || nvs.putBytes(ws::NVS_KEY, blob, sizeof(blob)) == sizeof(blob);
+  nvs.end();
+  if (!ok) {
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK,
+               "Saved networks NOT written (NVS write failed)", nullptr);
+  }
+  return ok;
+}
+
+void ScvNetworkManager::rememberWorkingNetwork() {
+  namespace ws = canary::net::wifi_store;
+  // Callers persist only on success — the portal rule. add() dedupes, clears
+  // the entry's failure count and makes it last_good.
+  if (ws::add(m_store, m_creds.ssid, m_creds.password)) {
+    m_store_idx = ws::find(m_store, m_creds.ssid);
+    persistStore();
+  }
+  if (m_rotated) {
+    // The network that WORKED becomes the legacy current pick, so the next
+    // boot joins it first instead of the one that had gone missing.
+    m_rotated = false;
+    saveCredentials();
+  }
+}
+
+void ScvNetworkManager::noteJoinFailure(bool count_against_store) {
+  namespace jr = canary::net::join_reason;
+  const canary::net::JoinFailure f = jr::classify((int)WiFi.status(), s_last_disc_reason);
+  m_status.last_join_failure = f;
+  m_status.join_failure_known = true;
+  if (count_against_store) {
+    canary::net::wifi_store::note_result(m_store, m_store_idx, false);
+  }
+  log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, canary::net::join_failure_label(f), m_creds.ssid);
+}
+
+void ScvNetworkManager::rotateSavedNetworkIfDue() {
+  namespace ws = canary::net::wifi_store;
+  namespace jr = canary::net::join_reason;
+  if (!m_status.join_failure_known) return;
+  if (!jr::should_rotate(m_store, m_store_idx, m_status.last_join_failure)) return;
+  const int next = ws::pick(m_store, nullptr, nullptr, 0, m_store_idx);
+  if (next < 0 || next == m_store_idx) return;
+  const ws::Network& n = m_store.nets[next];
+  memset(&m_creds, 0, sizeof(m_creds));
+  strncpy(m_creds.ssid, n.ssid, sizeof(m_creds.ssid) - 1);
+  strncpy(m_creds.password, n.pass, sizeof(m_creds.password) - 1);
+  m_creds.enabled = true;
+  m_creds.configured = true;
+  m_store_idx = next;
+  m_rotated = true;   // the legacy pick follows only once this one works
+  log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Saved network not found; trying the next saved one", m_creds.ssid);
+}
+
+canary::net::onboard::State ScvNetworkManager::onboardingState() const {
+  canary::net::onboard::Facts f;
+  f.have_credentials = m_creds.configured || m_store.count > 0;
+  f.ap_up = m_status.ap_active;
+  f.join_in_flight = (m_status.state == WIFI_PROV_CONNECTING);
+  f.sta_online = m_status.sta_connected;
+  f.credentials_submitted = m_creds_submitted;
+  return canary::net::onboard::derive(f);
 }
 
 bool ScvNetworkManager::saveCredentials() {
@@ -644,10 +828,17 @@ bool ScvNetworkManager::clearCredentials() {
   nvs.remove(NVS_KEY_WIFI_SSID);
   nvs.remove(NVS_KEY_WIFI_PASS);
   nvs.remove(NVS_KEY_WIFI_EN);
+  // "Forget" forgets every saved network, not just the current pick: a ring
+  // left behind would report saved_networks while the node boots AP-only.
+  if (nvs.isKey(canary::net::wifi_store::NVS_KEY)) nvs.remove(canary::net::wifi_store::NVS_KEY);
 
   nvs.end();
 
   memset(&m_creds, 0, sizeof(m_creds));
+  canary::net::wifi_store::init(m_store);
+  m_store_idx = -1;
+  m_rotated = false;
+  m_status.join_failure_known = false;
   m_status.state = WIFI_PROV_AP_ONLY;
 
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "WiFi credentials cleared", nullptr);
@@ -668,6 +859,7 @@ void ScvNetworkManager::connectToHome() {
   m_status.state = WIFI_PROV_CONNECTING;
   m_status.connect_attempts++;
   m_status.last_connect_ms = millis();
+  s_last_disc_reason = canary::net::join_reason::kReasonNone;  // this attempt's verdict starts clean
 
   char msg[64];
   snprintf(msg, sizeof(msg), "Connecting to: %s", m_creds.ssid);
@@ -855,10 +1047,14 @@ void ScvNetworkManager::raiseAp() {
   apply_ap_security(m_status);  // F16: same request as begin()
   m_status.ap_active = true;
   witness_get_health().wifi_active = true;
+  // A new AP session: nobody has confirmed or submitted anything on it yet.
+  m_phone_acked = false;
+  m_creds_submitted = false;
   IPAddress ip = WiFi.softAPIP();
   snprintf(m_status.ap_ip, sizeof(m_status.ap_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
   start_mdns(s_mdns_device_id);  // re-announce on the re-raised AP interface
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "AP re-raised — STA link down", m_status.ap_ip);
+  announce_setup_network(m_ap_ssid, m_ap_password);
 }
 
 void ScvNetworkManager::checkConnection() {
@@ -870,13 +1066,16 @@ void ScvNetworkManager::checkConnection() {
       if (WiFi.isConnected()) {
         m_status.state = WIFI_PROV_CONNECTED;
         m_status.connected_since_ms = now;
+        m_status.join_failure_known = false;
 
         char msg[80];
         snprintf(msg, sizeof(msg), "Connected to %s", m_creds.ssid);
         log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status.sta_ip);
+        rememberWorkingNetwork();  // the ring, and after a rotation the legacy pick
       } else if (now - m_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
         m_status.state = WIFI_PROV_FAILED;
         log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection timeout", m_creds.ssid);
+        noteJoinFailure(true);  // the verdict for /api/wifi/status, counted against the ring entry
       }
       break;
 
@@ -884,6 +1083,7 @@ void ScvNetworkManager::checkConnection() {
       if (!WiFi.isConnected()) {
         m_status.state = WIFI_PROV_FAILED;
         log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WiFi connection lost", nullptr);
+        noteJoinFailure(false);  // a dropped link is not a failed attempt by this network
         // F4: STA link gone — re-raise the management AP so the device stays
         // reachable for reconfiguration while it retries the home network.
         raiseAp();
@@ -893,17 +1093,23 @@ void ScvNetworkManager::checkConnection() {
         if (m_status.connect_attempts > 0) {
           m_status.connect_attempts = 0;
         }
-        // F4: STA has held the home link past the grace window — drop the AP so
-        // the radio runs the stable STA+BLE coexistence combo (vs the unstable
-        // AP+STA+BLE) and no lingering management AP stays exposed. But never
-        // out from under a still-associated client: the captive sheet keeps
-        // the phone on the AP while the wizard's success screen offers the
-        // optional hub step, and dropping then reroutes the sheet's relative
-        // URLs to the home network (the probe hostname stops resolving to us),
-        // so the hub save silently dies. Hold until the sheet closes (client
-        // count hits 0), capped at AP_CLIENT_HOLD_MAX_MS.
+        // F4: STA has held the home link past the hold — drop the AP so the
+        // radio runs the stable STA+BLE coexistence combo (vs the unstable
+        // AP+STA+BLE) and no lingering management AP stays exposed. The hold
+        // is the fleet's (onboarding_fsm.h ap_teardown_due): two minutes
+        // after the join, or the 1.6 s beat once the phone has confirmed over
+        // the AP — a quiet rejoin with nobody on the AP waits the full two
+        // minutes, a confirmed provision closes as soon as the phone leaves.
+        // But never out from under a still-associated client: the captive
+        // sheet keeps the phone on the AP while the wizard's success screen
+        // offers the optional hub step, and dropping then reroutes the
+        // sheet's relative URLs to the home network (the probe hostname stops
+        // resolving to us), so the hub save silently dies. Hold until the
+        // sheet closes (client count hits 0), capped at AP_CLIENT_HOLD_MAX_MS.
         if ((WiFi.getMode() & WIFI_AP) &&
-            now - m_status.connected_since_ms > AP_DROP_GRACE_MS &&
+            canary::net::onboard::ap_teardown_due(now, m_status.connected_since_ms,
+                                                  m_phone_acked, m_acked_at_ms,
+                                                  kOnboardTiming) &&
             (m_status.ap_clients == 0 ||  // fresh: updateStatus() ran above
              now - m_status.connected_since_ms > AP_CLIENT_HOLD_MAX_MS)) {
           dropAp();
@@ -925,6 +1131,9 @@ void ScvNetworkManager::checkConnection() {
 
         if (m_creds.configured && m_creds.enabled &&
             now - m_status.last_connect_ms > backoff_ms) {
+          // A saved network that is simply not there (NotFound, twice) gives
+          // way to the next saved one before this retry (wifi_join_reason.h).
+          rotateSavedNetworkIfDue();
           connectToHome();
         }
       }
@@ -1532,6 +1741,11 @@ static esp_err_t handle_wifi_disconnect(httpd_req_t* req);
 
 // Peer discovery
 static esp_err_t handle_peers(httpd_req_t* req);
+static esp_err_t handle_fleet(httpd_req_t* req);
+static esp_err_t handle_fleet_options(httpd_req_t* req);
+// millis() of the last GET /api/fleet — the Witness Wall reading this node
+// directly (`wall: "direct"` in the status body); 0 = never this boot.
+static uint32_t s_fleet_polled_ms = 0;
 
 #if FEATURE_HA_MQTT
 static esp_err_t handle_mqtt_status(httpd_req_t* req);
@@ -1685,9 +1899,9 @@ static const char* kProbePaths[] = {
 // firmware/canary/scripts/check_route_security.py enforces both: it counts
 // every #if branch against these two numbers and fails a member handle.
 #if defined(FEATURE_MESH_NETWORK) && FEATURE_MESH_NETWORK
-static const uint16_t kRouteTableSlots = 73;
+static const uint16_t kRouteTableSlots = 75;
 #else
-static const uint16_t kRouteTableSlots = 61;
+static const uint16_t kRouteTableSlots = 63;
 #endif
 
 bool ScvNetworkManager::startHttpServer() {
@@ -1874,6 +2088,16 @@ void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   // and the SPA's CanaryAPI.request(... '/api/v1/peers').
   httpd_uri_t peers_ep = { .uri = "/api/v1/peers", .method = HTTP_GET, .handler = handle_peers };
   register_route(server, &peers_ep);
+
+  // The roll-call the Witness Wall polls (tvos/discovery/DISCOVERY.md):
+  // coarse by construction (name, product, online, chain, hub — never a
+  // key, a MAC or an address), CORS-open like the display's and the WAP's,
+  // so a Wall with no hub reads this node directly. Public on purpose; the
+  // allowlist in scripts/check_route_security.py says so.
+  httpd_uri_t fleet_ep = { .uri = "/api/fleet", .method = HTTP_GET, .handler = handle_fleet };
+  register_route(server, &fleet_ep);
+  httpd_uri_t fleet_opt = { .uri = "/api/fleet", .method = HTTP_OPTIONS, .handler = handle_fleet_options };
+  register_route(server, &fleet_opt);
 
   #if FEATURE_HA_MQTT
   httpd_uri_t mqtt_stat = { .uri = "/api/mqtt/status", .method = HTTP_GET, .handler = handle_mqtt_status };
@@ -2441,6 +2665,80 @@ static esp_err_t handle_https_redirect(httpd_req_t* req) {
   return httpd_resp_sendstr(req, "Redirecting to https");
 }
 
+#if FEATURE_OTA_PULL
+#endif
+
+// The coarse GET /api/status body every networked Canary serves
+// (common/network/node_status.h), appended to the canary's rich bearer-gated
+// body under one key — one writer, so a reader of the sense's or the
+// display's status reads this one with the same code. Returns the body's
+// length; `out` is the writer's own fixed buffer (NODE_STATUS_BODY_CAP, which
+// the host test proves the worst case fits).
+static size_t build_node_status(char* out, size_t cap) {
+  namespace ob = canary::net::onboard;
+  ScvNetworkManager& net = network_get_instance();
+  const WiFiStatus& ws = net.getStatus();
+
+  NodeStatus ns;
+  memset(&ns, 0, sizeof(ns));
+  ns.node = DEVICE_TYPE;
+  ns.product = SECURACV_OTA_PRODUCT;
+  ns.fw = FIRMWARE_VERSION;
+#ifdef CANARY_FIGURE_HARDWARE
+  ns.hardware = CANARY_FIGURE_HARDWARE;
+#endif
+  char dev_name[SETUP_DEVICE_NAME_MAX + 1] = {0};
+  if (setup_get_device_name(dev_name, sizeof(dev_name))) ns.name = dev_name;
+  ns.uptime_s = uptime_seconds();
+  ns.ip = ws.sta_connected ? ws.sta_ip : nullptr;
+  ns.rssi = ws.sta_connected ? ws.rssi : 0;
+  ns.onboarding = ob::state_label(net.onboardingState());
+  ns.setup_ap = ws.ap_active ? 1 : 0;
+  ns.ble_door = -1;  // no Improv door on this tree (FIRMWARE_MAP §3): omitted, not "closed"
+  ns.saved_networks = net.savedNetworkCount();
+  // The hub: a configured, enabled broker that is up / down; none configured
+  // reads none (the same words as the WAP's /api/fleet `hub`).
+  ns.hub = NS_HUB_NONE;
+#if FEATURE_HA_MQTT
+  {
+    MqttCredentials mc;
+    if (mqtt_load_credentials(&mc) && mc.enabled && mc.configured) {
+      ns.hub = mqtt_connected() ? NS_HUB_OK : NS_HUB_DOWN;
+    }
+  }
+#endif
+  ns.peers_seen = (int)net.getPeerCount();  // the mDNS browse cache
+  // The Witness Wall reads this node directly when it has polled /api/fleet
+  // lately; otherwise the hub carries this node's row when the broker is up,
+  // else nobody does (FIRMWARE_MAP §4/§5).
+  {
+    const uint32_t now_ms = millis();
+    const bool polled = s_fleet_polled_ms != 0;
+    const int32_t ago = polled ? (int32_t)(now_ms - s_fleet_polled_ms) : -1;
+    ns.wall = (polled && ago < 60000) ? "direct" : (ns.hub == NS_HUB_OK) ? "hub" : "none";
+    ns.wall_polled_s_ago = polled ? (ago < 0 ? 0 : ago / 1000) : -1;
+  }
+  ns.ota_pending_verify = -1;  // no OTA engine in this build: omitted
+#if FEATURE_OTA_PULL
+  ns.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed
+  ns.ota_state = securacv_ota_state_word(securacv_ota_get_state());
+  const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+  ns.ota_target = (m != NULL && m->version[0] != '\0') ? m->version : nullptr;
+#endif
+  // Where the identity key sleeps (a wire label, never key material).
+  ns.creds_at_rest = crypto_key_at_rest_label();
+  // This tree has no SNTP path: GPS is the only wall-clock source
+  // (main.cpp syncClockFromGps), so a believable clock was SET, not fetched
+  // from NTP — "set" is the honest word of clock_sync.h's four.
+  ns.clock = canary::time_sync::source_label(
+      canary::time_sync::believable((int64_t)time(nullptr))
+          ? canary::time_sync::Source::Set : canary::time_sync::Source::None);
+  char tz_iana[SETUP_TZ_MAX + 1] = {0};
+  if (setup_get_tz_iana(tz_iana, sizeof(tz_iana))) ns.tz = tz_iana;
+
+  return node_status_build(out, cap, &ns);
+}
+
 static esp_err_t handle_status(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -2505,6 +2803,20 @@ static esp_err_t handle_status(httpd_req_t* req) {
 
   String response;
   serializeJson(doc, response);
+
+  // The fleet-wide "node_status" sub-object, spliced in as the shared writer
+  // produced it rather than re-parsed into the document. The buffer is a
+  // function static: ~3 KB kept off the HTTP task's 8 KB stack (the CA
+  // route's lesson), and this handler is the only reader on that task.
+  {
+    static char body[NODE_STATUS_BODY_CAP];
+    if (build_node_status(body, sizeof(body)) > 0 && response.endsWith("}")) {
+      response.remove(response.length() - 1);
+      response += ",\"node_status\":";
+      response += body;
+      response += "}";
+    }
+  }
   return http_send_json(req, response.c_str());
 }
 
@@ -2513,6 +2825,56 @@ static esp_err_t handle_status(httpd_req_t* req) {
 // mDNS (_securacv._tcp). The cache is populated by ScvNetworkManager::browsePeers
 // on a slow cadence; this handler is read-only and never blocks on the
 // network. Response shape matches canary-vision/docs/discovery.md.
+// GET /api/fleet — the self row of the roll-call (common/fleet_selfreport).
+static esp_err_t handle_fleet(httpd_req_t* req) {
+  if (!rate_limit_check(req)) return ESP_OK;
+  s_fleet_polled_ms = millis();
+  if (s_fleet_polled_ms == 0) s_fleet_polled_ms = 1;
+  const DeviceIdentity& dev = witness_get_device();
+  char dev_name[SETUP_DEVICE_NAME_MAX + 1] = {0};
+  const bool named = setup_get_device_name(dev_name, sizeof(dev_name));
+  FleetSelfDevice self;
+  memset(&self, 0, sizeof(self));
+  self.name = named ? dev_name : dev.device_id;
+  self.product = DEVICE_TYPE;
+  self.online = 1;
+  bool have_key = false;
+  for (size_t i = 0; i < sizeof(dev.pubkey); i++) have_key = have_key || dev.pubkey[i] != 0;
+  self.chain_ok = have_key ? 1 : 0;
+  self.chain_height = (int)(dev.seq & 0x7fffffff);
+  self.born_day = dev.born_day;
+  self.born_exact = dev.born_exact ? 1 : 0;
+#ifdef CANARY_FIGURE_HARDWARE
+  self.hardware = CANARY_FIGURE_HARDWARE;
+#endif
+  self.hub = FSR_HUB_NONE;
+#if FEATURE_HA_MQTT
+  {
+    MqttCredentials mc;
+    if (mqtt_load_credentials(&mc) && mc.enabled && mc.configured) {
+      self.hub = mqtt_connected() ? FSR_HUB_OK : FSR_HUB_DOWN;
+    }
+  }
+#endif
+  static char body[FLEET_SELFREPORT_BODY_CAP(SETUP_DEVICE_NAME_MAX + 1, 24)];
+  size_t o = fleet_selfreport_open(body, sizeof(body), self.name);
+  o = fleet_selfreport_append_device(body, sizeof(body), o, &self);
+  o = fleet_selfreport_close(body, sizeof(body), o);
+  (void)o;
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, body);
+}
+
+// OPTIONS /api/fleet — CORS preflight (DISCOVERY.md), as the display answers it.
+static esp_err_t handle_fleet_options(httpd_req_t* req) {
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, OPTIONS");
+  httpd_resp_set_status(req, "204 No Content");
+  return httpd_resp_send(req, NULL, 0);
+}
+
 static esp_err_t handle_peers(httpd_req_t* req) {
   if (!rate_limit_check(req)) return ESP_OK;
   if (!auth_gate(req)) return ESP_OK;
@@ -3718,6 +4080,21 @@ static esp_err_t handle_wifi_status(httpd_req_t* req) {
   doc["ap_auth"] = status.ap_auth[0] ? status.ap_auth : "unknown";
   doc["ap_auth_reason"] = status.ap_auth_reason ? status.ap_auth_reason : "";
   doc["sta_pmf"] = status.sta_pmf;
+  // Why the last join did not end in an address, in the fleet's words
+  // (wifi_join_policy.h: Network not found / Wrong password / No address from
+  // the router / Couldn't connect). Present only while there is a verdict and
+  // the link is down; a reader must be able to tell "no reason" from any value.
+  if (status.join_failure_known && !status.sta_connected) {
+    doc["reason"] = canary::net::join_failure_label(status.last_join_failure);
+  }
+
+  // The phone's confirmation (onboarding_fsm.h decision 1): a "connected"
+  // answer served OVER THE SOFTAP is the phone seeing success, so the AP's
+  // post-join hold shortens to the ack beat. A home-LAN poll of the same
+  // route is the dashboard, not a phone on the setup network.
+  if (status.sta_connected && from_ap_subnet(req)) {
+    net.notePhoneAck(millis());
+  }
 
   String response;
   serializeJson(doc, response);
@@ -3782,6 +4159,19 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   if (!ssid || strlen(ssid) == 0) {
     return http_send_error(req, 400, "missing_ssid");
   }
+  // The ONE credential rule (common/network/wifi_credential_policy.h): SSID
+  // 1..32 bytes, password 0..64 bytes, NO minimum (an open network has none;
+  // a secured network's floor is its router's business). This handler used
+  // to strncpy an over-long value into the buffer and silently truncate it,
+  // then join with a password nobody typed.
+  switch (canary::net::wifi_credential::check(ssid, password ? password : "")) {
+    case canary::net::wifi_credential::Verdict::SsidTooLong:
+      return http_send_error(req, 400, "ssid_too_long");
+    case canary::net::wifi_credential::Verdict::PasswordTooLong:
+      return http_send_error(req, 400, "password_too_long");
+    default:
+      break;
+  }
 
   // Household time zone seed (repo sweep F28): the setup page sends the
   // phone's own IANA zone. Mapped on the device; an unknown or absent zone
@@ -3827,6 +4217,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     serializeJson(doc, response);
     return http_send_json(req, response.c_str());
   }
+  net.noteCredentialsSubmitted();  // onboarding reads "provisioning" until the join starts
   net.connectToHome();
 
   // Mark first-time setup as complete now that WiFi credentials are saved

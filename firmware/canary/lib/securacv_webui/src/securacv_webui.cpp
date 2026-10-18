@@ -2360,14 +2360,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             <input type="text" class="form-input" id="wifiSsidInput" placeholder="Or enter SSID manually" style="margin-top:0.5rem;">
           </div>
           <div class="form-group">
-            <label class="form-label">Password</label>
+            <label class="form-label">Wi-Fi network password</label>
             <div style="position:relative;">
               <!-- Deliberately NOT type=password: this is another network's
                    key, not an account credential, and iOS treats a password
                    field here as "sign-up" — covering it with a strong-password
                    suggestion sheet. Masked via -webkit-text-security instead,
-                   with autofill/autocorrect fully off. -->
-              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="WiFi password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+                   with autofill/autocorrect fully off. The words are the
+                   fleet's (common/network/wifi_credential_policy.h). -->
+              <input type="text" class="form-input pw-masked" id="wifiPassword" placeholder="The password you already use for this network" maxlength="64" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
               <button type="button" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;" onclick="togglePasswordVisibility()">Show</button>
             </div>
           </div>

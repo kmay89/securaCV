@@ -41,8 +41,33 @@ struct HubSetupView: View {
         }
         .navigationTitle("A hub")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { if runner.phase == .idle { runner.startWatching() } }
+        .onAppear {
+            // A first visit starts the watch; a return RESUMES it — the
+            // onDisappear below stops the loop, and without this a glance
+            // at another screen mid-boot lost the hub (the phase stayed
+            // "watching", so nothing ever started it again).
+            if runner.phase == .idle {
+                runner.startWatching()
+            } else {
+                runner.resumeWatching(typedHost: typedHost.isEmpty ? nil : typedHost)
+            }
+        }
         .onDisappear { if case .watching = runner.phase { runner.stopWatching() } }
+        // The hub answered. Say so once (only if notifications are already
+        // allowed — nothing here asks), and finish by itself when the form
+        // above is complete; otherwise the button below is the fallback.
+        .onChange(of: runner.phase) { _, phase in
+            guard case .watching(.ready) = phase else { return }
+            let finishing = HubWalkthrough.finishesByItself(ready: true,
+                                                            loginProblem: login.problem(),
+                                                            passwordsMatch: passwordsMatch)
+            Task {
+                await CourtesyNotice.postIfAlreadyAllowed(title: HubWalkthrough.readyNoticeTitle,
+                                                          body: HubWalkthrough.readyNoticeBody(finishing: finishing),
+                                                          threadID: HubWalkthrough.readyNoticeThreadID)
+            }
+            if finishing { startFinish() }
+        }
     }
 
     // MARK: - the watch
@@ -131,11 +156,19 @@ struct HubSetupView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             HStack {
+                // This one IS a new credential — the Home Assistant owner
+                // account being created on the hub — so it says so, and
+                // `.newPassword` lets iOS offer a strong one. It is the only
+                // password a person creates anywhere in setup; every Wi-Fi
+                // field is an existing network's password and is annotated
+                // `.password` instead.
                 if showPassword {
-                    TextField("Password", text: $password)
+                    TextField("New hub account password", text: $password)
+                        .textContentType(.newPassword)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } else {
-                    SecureField("Password", text: $password)
+                    SecureField("New hub account password", text: $password)
+                        .textContentType(.newPassword)
                 }
                 Button { showPassword.toggle() } label: {
                     Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
@@ -143,7 +176,8 @@ struct HubSetupView: View {
                 .buttonStyle(.plain)
             }
             if !showPassword {
-                SecureField("Confirm password", text: $confirm)
+                SecureField("Confirm hub account password", text: $confirm)
+                    .textContentType(.newPassword)
             }
             if let formProblem {
                 Label(formProblem, systemImage: "exclamationmark.triangle")
@@ -155,6 +189,9 @@ struct HubSetupView: View {
     private var login: HubOwnerLogin {
         HubOwnerLogin(name: name, username: username, password: password)
     }
+
+    /// The confirm field exists only while the password is hidden.
+    private var passwordsMatch: Bool { showPassword || confirm == password }
 
     // MARK: - finishing
 
@@ -170,7 +207,9 @@ struct HubSetupView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!ready)
             if !ready {
-                Text("Enabled once Home Assistant answers.").font(.caption).foregroundStyle(.secondary)
+                Text("Fill in the account above and this phone finishes the hub the moment it answers.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         case .onboarding:
             HStack { ProgressView(); Text("Finishing Home Assistant's setup…") }
@@ -237,7 +276,7 @@ struct HubSetupView: View {
             formProblem = problem
             return
         }
-        if !showPassword && confirm != password {
+        if !passwordsMatch {
             formProblem = "The two passwords don't match."
             return
         }

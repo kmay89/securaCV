@@ -31,6 +31,7 @@ import ast
 import json
 import re
 import time
+import types
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
@@ -241,6 +242,29 @@ def _full_disk():
     return hass
 
 
+def _no_canaries():
+    # The stub core has no entity registry, so there is nothing to roll out.
+    return _hass()
+
+
+def _rollout_refused_install():
+    hass = _hass()
+
+    class _State:
+        def __init__(self, state, **attributes):
+            self.state = state
+            self.attributes = dict(attributes)
+
+    states = {"update.porch_firmware": _State("on", installed_version="2.4.16", latest_version="2.5.0")}
+    hass.states = types.SimpleNamespace(get=states.get)
+
+    async def _boom(domain, service, data, blocking=False):
+        raise RuntimeError("the broker is down")
+
+    hass.services.async_call = _boom
+    return hass
+
+
 class Case(NamedTuple):
     key: str
     setup: Callable[[], Any]
@@ -339,11 +363,29 @@ CASES = [
         "export_write_failed", _full_disk, "export_evidence", {},
         "The evidence pack could not be written under the configuration directory: disk full.",
     ),
+    # The staged firmware rollout (docs/OTA.md §5).
+    Case(
+        "rollout_no_update_entities", _no_canaries, "staged_update", {},
+        "No Canary has a firmware update entity yet. A Canary announces one over MQTT once "
+        "it is on the broker; check that the fleet is online.",
+    ),
+    Case(
+        "rollout_not_update_entities", _hass, "staged_update", {"entity_id": ["sensor.porch_lux"]},
+        "['sensor.porch_lux'] are not update entities; name the Canaries' firmware update "
+        "entities (the update domain) or leave entity_id out.",
+    ),
+    Case(
+        "rollout_aborted", _rollout_refused_install, "staged_update",
+        {"entity_id": ["update.porch_firmware"], "node_timeout": 60},
+        "The staged rollout stopped: update.porch_firmware: the install could not be sent "
+        "(the broker is down). 0 installed, 0 not attempted. Fix that node, then run it again.",
+    ),
 ]
 
 # The refusals (validation) and the failures (the kernel did not do it).
 FAILURE_KEYS = {
-    "kernel_unreachable", "kernel_auth_failed", "kernel_bad_response", "export_write_failed"
+    "kernel_unreachable", "kernel_auth_failed", "kernel_bad_response", "export_write_failed",
+    "rollout_aborted",
 }
 
 

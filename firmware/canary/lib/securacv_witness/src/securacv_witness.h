@@ -103,7 +103,7 @@ struct DeviceIdentity {
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
-  char     ap_ssid[32];
+  char     ap_ssid[33];   ///< canary::net::onboard::SSID_CAP: "SecuraCV-canary-XXXX" (main.cpp static_asserts it)
 };
 
 struct SystemHealth {

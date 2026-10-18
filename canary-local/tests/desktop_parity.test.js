@@ -2461,16 +2461,20 @@ const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://ca
 // The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
 // as bases — the test after the run test holds every monorepo wall to them.
 const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
-const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+const wallInvoke = (calls, sightings, caps, answer) => async (cmd, args) => {
   calls.push([cmd, args]);
   if (cmd === "native_capabilities") return caps;
   if (cmd === "fleet_scan") return sightings;
-  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "witness_discover") {
+    const doc = answer && answer(Array.from(args.bases));
+    if (doc) return doc;
+    throw "no kernel answered on the LAN yet";
+  }
   if (cmd === "companion_set_bases") return null;
   throw new Error(`the wall invoked an unexpected command: ${cmd}`);
 };
 const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
-async function runLabWall(typedBase, sightings) {
+async function runLabWall(typedBase, sightings, answer) {
   const calls = [];
   const scan = wallStatusEl();
   const frame = { src: "", contentWindow: { postMessage() {} } };
@@ -2488,15 +2492,17 @@ async function runLabWall(typedBase, sightings) {
     addEventListener() {},
   };
   ctx.window = ctx;
-  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }, answer) } };
+  const posted = [];
+  frame.contentWindow.postMessage = (m) => posted.push(m);
   vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
   for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
     await new Promise((r) => setImmediate(r));
   }
-  await new Promise((r) => setImmediate(r));
-  return { calls, status: scan.textContent };
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent, posted };
 }
-async function runFlasherWall(typedHost, sightings) {
+async function runFlasherWall(typedHost, sightings, answer) {
   const src = read(join(ROOT, "desktop/src/app.js"));
   const grab = (re, what) => {
     const m = re.exec(src);
@@ -2510,16 +2516,48 @@ async function runFlasherWall(typedHost, sightings) {
   ].join("\n");
   const calls = [];
   const scan = wallStatusEl();
+  const posted = [];
   const els = {
     "mqtt-host": { value: typedHost || "" },
     "fleet-scan-status": scan,
-    "witness-frame": { contentWindow: { postMessage() {} } },
+    "witness-frame": { contentWindow: { postMessage: (m) => posted.push(m) } },
   };
   const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
-    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}, answer), () => "New Canary");
   await wall.tick();
-  return { calls, status: scan.textContent };
+  return { calls, status: scan.textContent, posted };
 }
+
+test("witness wall: with no kernel, every answering board reaches the wall, once each", async () => {
+  // Three nightstands, no hub: each answers /api/fleet with itself first and
+  // the siblings it hears after. The wall used to stop at the first answer
+  // and show ONE node. Self-reports win over a sibling's (stale) view.
+  const nodes = [
+    { deviceId: "a", host: "a.local", ip: "192.168.1.61", port: 80 },
+    { deviceId: "b", host: "b.local", ip: "192.168.1.62", port: 80 },
+    { deviceId: "c", host: "c.local", ip: "192.168.1.63", port: 80 },
+  ];
+  const row = (name, online, extra) => ({ name, online, product: "canary-nightstand", ...extra });
+  const docs = {
+    "http://192.168.1.61:80": { kernel: "A", devices: [row("A", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("B", 0)] },
+    "http://192.168.1.62:80": { kernel: "B", devices: [row("B", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("A", 1)] },
+    "http://192.168.1.63:80": { kernel: "C", devices: [row("C", 1)] },
+  };
+  const answer = (bases) => (bases.length === 1 ? docs[bases[0]] : null);
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, nodes, answer)],
+                             ["Flasher app.js", () => runFlasherWall("", nodes, answer)]]) {
+    const { status, posted } = await run();
+    const fleet = posted.filter((m) => m && m.type === "witness:fleet").pop();
+    assert.ok(fleet, `${name} posted no fleet to the wall`);
+    const devs = Array.from(fleet.fleet.devices);
+    assert.deepStrictEqual(devs.map((d) => d.name).sort(), ["A", "B", "C"],
+      `${name}: every board must reach the wall, once each`);
+    const b = devs.find((d) => d.name === "B");
+    assert.strictEqual(b.online, 1, `${name}: B's own self-report must beat A's stale view of it`);
+    assert.strictEqual(b.hardware, "waveshare-esp32c6-lcd147", `${name}: the self row carries the board`);
+    assert.match(status, /3 Canaries on your network/, `${name} must count the merged fleet`);
+  }
+});
 
 test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
   // witness_discover returns the FIRST base whose /api/fleet answers, and a
@@ -2544,8 +2582,14 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
     assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
     assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
     // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
-    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
-      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    // The kernel is asked alone first; only when none answers is every
+    // browsed board asked, each on its own, so all of them reach the wall.
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), kernel,
+      `${name}: the kernel addresses must be asked first, and alone`);
+    const boardPolls = calls.slice(pollAt + 1).filter(([c]) => c === "witness_discover")
+      .map(([, a]) => Array.from(a.bases));
+    assert.deepStrictEqual(boardPolls, WALL_BOARDS.map((b) => [b]),
+      `${name}: every browsed board must be asked on its own, in browse order, after the kernel`);
     assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
       `${name} must say the boards it heard, not "nothing answering yet"`);
     statuses.push(status);
@@ -4928,6 +4972,12 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
       `${label} smartPick no longer detects the ambiguous case`);
     assert.ok(src.includes("Recommended:"),
       `${label} smartPick no longer names its recommendation`);
+    // One chip, several boards (ESP32-C6: Sense node or 1.47" display): each
+    // board gets a card, never just the authored default.
+    assert.ok(/function boardShortlist/.test(src),
+      `${label} smartPick lost the one-card-per-board shortlist`);
+    assert.ok(src.includes("More than one board ` +\n        `uses that chip"),
+      `${label} smartPick no longer admits a chip that spans boards`);
   }
   // The rest of the chip's products stay reachable — folded, never filtered.
   // A recommendation that HIDES a flashable board is worse than a wall of them.
@@ -4935,7 +4985,7 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
     assert.ok(src.includes("for this chip (developer)"),
       `${label} no longer offers the full list behind the recommendation`);
   }
-  assert.match(appJs, /\[pick\.product, \.\.\.matches\.filter\(/,
+  assert.match(appJs, /\[\.\.\.shortlist, \.\.\.matches\.filter\(/,
     "the desktop must ORDER by the recommendation, never filter to it");
 });
 
@@ -5212,4 +5262,153 @@ test("both flashers name a full-flash backup canary-<mac6>…-backup.bin, and th
   // test pins the browser's scheme.
   assert.match(libRs, /\.join\(rescue::backup_filename\(&mac, &stamp\.to_string\(\)\)\)/);
   assert.ok(engineRs("rescue").includes('"canary-ddeeff-backup.bin"'), "rescue.rs no longer pins the browser's scheme");
+});
+
+// ── The setup network's key, off the board's own first-boot line ───────────
+//
+// A Sense or Vision prints its setup network and key exactly once, when the
+// portal comes up; a WAP when its AP starts. Nothing else ever shows that key
+// ("the key the Flasher printed" never existed until both flashers read this
+// line). The browser parses it in flash-core.js; the Mac app inlines the SAME
+// two patterns. Hold them equal, hold both to the firmware's own printf
+// strings, and hold both frontends to rendering the result where the hatch
+// steps ask for it.
+test("setup-network key: one parser, both flashers, pinned to the firmware's printf", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const src = read(join(ROOT, "desktop", "src", "app.js"));
+  const block = src.match(
+    /const SETUP_DOOR_NOTE =[\s\S]*?\nfunction isSetupNetworkSsid\([\s\S]*?\n}\n/);
+  assert.ok(block, "desktop/src/app.js no longer carries the inlined setup-network parser block");
+  const native = new Function(`${block[0]}; return { SETUP_DOOR_NOTE, WIFI_PASS_REQUIRED, ` +
+    `SETUP_NETWORK_LINE_RES, parseSetupNetwork, setupNetworkLine, ` +
+    `SETUP_QR_LINE_RE, parseSetupQr, SETUP_SSID_RE, isSetupNetworkSsid };`)();
+
+  // The copy and the patterns, byte for byte.
+  assert.equal(native.SETUP_DOOR_NOTE, core.SETUP_DOOR_NOTE, "the 'leave blank' note drifted between flashers");
+  assert.equal(native.WIFI_PASS_REQUIRED, core.WIFI_PASS_REQUIRED, "the no-password refusal drifted between flashers");
+  assert.deepEqual(native.SETUP_NETWORK_LINE_RES.map((r) => r.source),
+    core.SETUP_NETWORK_LINE_RES.map((r) => r.source), "the setup-network line patterns drifted");
+  for (const name of ["SETUP_QR_LINE_RE", "SETUP_SSID_RE"]) {
+    assert.equal(native[name].source, core[name].source, `${name} drifted between flashers`);
+    assert.equal(native[name].flags, core[name].flags, `${name}'s flags drifted between flashers`);
+  }
+
+  // The firmware's own format strings — a reworded printf fails here, not on
+  // a bench. The %s slots are rendered with sample values and parsed back.
+  // The Sense/Vision line is built by onboarding_fsm.h announce_line (no
+  // trailing newline: setup_portal.cpp prints it with Serial.println, which
+  // adds CR LF) and the QR line beside it by qr_line; the WAP prints its own.
+  const fsm = read(join(ROOT, "firmware/common/network/onboarding_fsm.h"));
+  const senseFmt = '[SETUP] Setup network up: \\"%s\\"  password %s  (channel %u)';
+  assert.ok(fsm.includes(senseFmt),
+    "onboarding_fsm.h no longer builds the `[SETUP] Setup network up` line both flashers parse");
+  assert.ok(fsm.includes('"[SETUP] QR "'), "onboarding_fsm.h no longer builds the `[SETUP] QR` line");
+  const portal = read(join(ROOT, "firmware/common/network/setup_portal.cpp"));
+  assert.ok(portal.includes("onboard::announce_line("),
+    "setup_portal.cpp no longer prints the announce line through onboarding_fsm.h");
+  assert.ok(portal.includes("onboard::qr_line("),
+    "setup_portal.cpp no longer prints the QR line beside it");
+  const wap = read(join(ROOT, "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"));
+  const wapFmt = "[WIFI] AP started: %s (password: %s)\\n";
+  assert.ok(wap.includes(wapFmt),
+    "canary_wap.ino no longer prints the `[WIFI] AP started` line both flashers parse");
+  const render = (fmt, ...vals) => fmt.replace(/\\"/g, '"').replace(/\\n/g, "\n")
+    .replace(/%[su]/g, () => String(vals.shift()));
+  const qrPayload = "WIFI:T:WPA;S:SecuraCV-sense-4dC2;P:a7Kq2pMx;;";
+  const senseLog = "rst:0x1 (POWERON)\r\n[WIFI] No credentials yet — raising the setup network; sensing continues.\r\n" +
+    render(senseFmt, "SecuraCV-sense-4dC2", "a7Kq2pMx", 1) + "\r\n" +
+    "[SETUP] QR " + qrPayload + "\r\n" +
+    "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\r\n";
+  const legacyLog = render(senseFmt, "SecuraCV-4dC2-k7", "a7Kq2pMx", 6) + "\n";
+  const wapLog = "[PROV] Deriving device-unique AP password...\n" +
+    render(wapFmt, "SecuraCV-wap-m2G2", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
+  for (const [label, log, want] of [
+    ["sense/vision", senseLog, { ssid: "SecuraCV-sense-4dC2", key: "a7Kq2pMx" }],
+    ["older firmware", legacyLog, { ssid: "SecuraCV-4dC2-k7", key: "a7Kq2pMx" }],
+    ["wap", wapLog, { ssid: "SecuraCV-wap-m2G2", key: "cv-7hJ2kQ9mN4pR" }],
+  ]) {
+    assert.deepEqual(core.parseSetupNetwork(log), want, `browser parser misread the ${label} line`);
+    assert.deepEqual(native.parseSetupNetwork(log), want, `native parser misread the ${label} line`);
+    assert.equal(native.setupNetworkLine(want), core.setupNetworkLine(want), "the rendered line drifted");
+    assert.ok(core.isSetupNetworkSsid(want.ssid) && native.isSetupNetworkSsid(want.ssid),
+      `the ${label} name is one the matcher accepts`);
+  }
+  assert.equal(core.parseSetupNetwork("just boot text"), null);
+  assert.equal(native.parseSetupNetwork("[SETUP] Join requested: \"Home\""), null,
+    "a different [SETUP] line must not read as the network-up line");
+  assert.match(core.setupNetworkLine({ ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }),
+    /^Its setup network: SecuraCV-4dC2 · key a7Kq2pMx$/);
+  // The QR line: both read the payload as printed, without println's CR.
+  assert.equal(core.parseSetupQr(senseLog), qrPayload, "browser misread the QR line");
+  assert.equal(native.parseSetupQr(senseLog), qrPayload, "native misread the QR line");
+  assert.equal(native.parseSetupQr(wapLog), null, "a WAP prints no QR line");
+  // The name grammar: the host test's vectors (test_onboarding_fsm.cpp
+  // the_matcher_accepts_every_shape_ever_emitted), same verdict in both.
+  for (const [ssid, ours] of [
+    ["SecuraCV-4dC2", true], ["SecuraCV-4dC2-k7", true], ["SecuraCV-sense-4dC2", true],
+    ["SecuraCV-sentinel-4dC2-k7", true], ["SecuraCV-display-CNRY", true],
+    ["SecuraCV-4dC", false], ["SecuraCV-4dC2x", false], ["SecuraCV-4dC2-", false], ["SecuraCV-4dC2-k", false],
+    ["SecuraCV-Sense-4dC2", false], ["SecuraCV-s3nse-4dC2", false], ["SecuraCV-vision-4dC2-k7x", false],
+    ["SecuraCV-a-b-c-d", false], ["securacv-4dC2", false], ["MyWiFi", false], ["SecuraCV-", false],
+    ["SecuraCV-4d C2", false],
+  ]) {
+    assert.equal(core.isSetupNetworkSsid(ssid), ours, `browser matcher: ${ssid}`);
+    assert.equal(native.isSetupNetworkSsid(ssid), ours, `native matcher: ${ssid}`);
+  }
+
+  // Both frontends LISTEN and RENDER it: the browser's voice/monitor and done
+  // card, the desktop's serial-log listener and hatch card.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+  assert.match(flashJs, /core\.parseSetupNetwork\(v\.buf\)/, "the browser voice no longer parses the key off the stream");
+  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet\)/,
+    "the browser done card no longer listens to the first boot for the key");
+  assert.match(flashJs, /maybeSetupNet\(buf\)/, "the browser monitor no longer renders the key line");
+  assert.match(src, /feedSetupNetwork\(ev\.payload\)/, "the desktop serial:log listener no longer feeds the parser");
+  assert.match(html, /id="hatch-setup-net"/, "the desktop hatch card lost its setup-network line");
+  assert.match(src, /renderSetupNetwork\(\); \/\/ the key, if the first boot has printed it already/,
+    "showHatchCard no longer renders a key that landed before the card");
+});
+
+// ── The Bluetooth setup door: "leave the WiFi blank" only where it is true ──
+test("setup door: catalog-derived, both flashers say it, neither prefills past it", async () => {
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+
+  // Every product carries the derived fact, and the WAP's/all-rounder's
+  // hatch leads with the iPhone card exactly when the door exists.
+  for (const p of catalog.products) {
+    assert.equal(typeof p.setup_door, "boolean", `${p.id}: setup_door must be derived for every product`);
+    if (p.provisioning === "ap") {
+      const leadsWithCard = /iPhone app/.test(p.hatch.steps[0]);
+      assert.equal(leadsWithCard, p.setup_door,
+        `${p.id}: the hatch leads with the iPhone card iff the build compiles the door`);
+      assert.match(p.hatch.steps.join(" "), /key it prints on its serial console/,
+        `${p.id}: the setup-network step must name the key — "nothing to type" was false`);
+      assert.doesNotMatch(p.provisioning_note, /Nothing to type/, `${p.id}: the setup network has a key`);
+    }
+  }
+  assert.ok(catalog.products.some((p) => p.setup_door), "no product derives a setup door — gen_flash.py's has_setup_door broke");
+  assert.ok(catalog.products.filter((p) => p.provisioning === "ap").some((p) => !p.setup_door),
+    "the all-rounder canary compiles no door and must not be told to wait for a card");
+
+  // Both read the catalog fact — never a role guess.
+  assert.match(flashJs, /core\.hasSetupDoor\(product\)/, "browser flasher no longer gates the note on setup_door");
+  assert.match(appJs, /const door = p\.setup_door === true;/, "desktop no longer gates on setup_door");
+  assert.match(appJs, /if \(!door && !\$\("wifi-ssid"\)\.value\) \{\s*\n\s*invoke\("current_ssid"\)/,
+    "desktop prefills the current SSID for a door-bearing product again");
+  // The note sits where the decision is made, in both.
+  assert.match(flashJs, /core\.SETUP_DOOR_NOTE/, "browser flasher lost the 'leave blank' note under WiFi (optional)");
+  assert.match(appJs, /\(door \? " " \+ SETUP_DOOR_NOTE : ""\)/, "desktop provision note lost the 'leave blank' sentence");
+
+  // A name with no password is refused unless the open-network box is ticked,
+  // in both — same words (pinned above), same explicit choice.
+  for (const [label, s] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(s.includes("open network (no password)"), `${label} lost the explicit open-network choice`);
+  }
+  assert.match(flashJs, /core\.wifiFieldsVerdict\(ssid\.value, pass\.value, openChk\.checked\)/,
+    "browser credentials() no longer runs the shared verdict");
+  assert.match(appJs, /if \(\$\("wifi-ssid"\)\.value && !wifiPass && !\(\$\("wifi-open"\) && \$\("wifi-open"\)\.checked\)\) \{\s*\n\s*setStatus\("flash-result", WIFI_PASS_REQUIRED, "err"\)/,
+    "desktop readProvisioning no longer refuses a name with no password");
 });

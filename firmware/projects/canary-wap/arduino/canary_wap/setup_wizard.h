@@ -146,10 +146,16 @@ inline void dns_process() {
   }
 }
 
-inline void check_timeout() {
+// The idle restart. `setup_door_open`: the Bluetooth setup door is open (its
+// first-boot window has not run out) — the restart is not due then, whatever
+// the idle time (provisioning_logic::wizard_restart_due): a phone showing the
+// door's card is a person about to tap, and nothing they do before the tap
+// touches this timer. The door's window bounds the hold; when it shuts, the
+// idle rule applies again.
+inline void check_timeout(bool setup_door_open) {
   uint32_t started = __atomic_load_n(&s_started_ms, __ATOMIC_ACQUIRE);
-  if (provisioning_logic::setup_timeout_due(s_active, millis(), started,
-                                            SETUP_TIMEOUT_MS)) {
+  if (provisioning_logic::wizard_restart_due(s_active, millis(), started,
+                                             SETUP_TIMEOUT_MS, setup_door_open)) {
     s_active = false;
     stop_captive_portal();
     delay(500);
@@ -174,6 +180,22 @@ inline bool set_device_name(const char* name) {
     prefs.end();
   }
   return true;
+}
+
+// The factory reset's share (canary_wap.ino factory_reset_by_hold, BOOT held
+// 10 s): back to the first-boot wizard, unnamed. Removes only this header's
+// two keys — the identity key and the chain state in the same namespace are
+// not its to touch. The caller restarts the device next, so the in-RAM
+// wizard state is not re-armed here.
+inline bool reset_to_first_boot() {
+  Preferences prefs;
+  if (!prefs.begin("securacv", false)) return false;
+  prefs.remove("setup_ok");
+  prefs.remove("dev_name");
+  const bool ok = !prefs.isKey("setup_ok") && !prefs.isKey("dev_name");
+  prefs.end();
+  s_device_name[0] = '\0';
+  return ok;
 }
 
 }  /* namespace setup_wizard */

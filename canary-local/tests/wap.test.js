@@ -73,7 +73,10 @@ test("AP + setup constants are the firmware's own", () => {
   assert.ok(wapServerH.includes('AP_SSID_PREFIX    = "' + data.ap.ssid_prefix + '"'));
   assert.ok(data.ap.ssid_example.startsWith(data.ap.ssid_prefix));
   assert.strictEqual(data.ap.ip, "192.168.4.1");
-  assert.ok(ino.includes('"SecuraCV-%s", suffix'), "AP ssid format drifted");
+  // The name is the fleet's shape (onboarding_fsm.h ap_ssid): SecuraCV-wap-<4>.
+  assert.ok(ino.includes("canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_WAP, suffix, nullptr)"),
+    "AP ssid format drifted");
+  assert.ok(data.ap.ssid_example.startsWith(data.ap.ssid_prefix + "wap-"), "AP ssid example is not the WAP's typed shape");
   assert.ok(ino.includes('"cv-%s", encoded'), "AP password format drifted");
   assert.ok(setupWizardH.includes('prefs.begin("' + data.ap.nvs_namespace + '"'));
   assert.ok(setupWizardH.includes('getBool("' + data.ap.nvs_key + '"'));

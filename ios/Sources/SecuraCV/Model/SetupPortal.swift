@@ -3,9 +3,11 @@
 // A Canary's own first-boot setup network, as a contract the phone can
 // speak — pure, so every judgment here is host-tested.
 //
-// Every Canary that has no Wi-Fi yet raises a SoftAP named `SecuraCV-XXXX`
-// (four characters of its salted pseudonym; a `-xx` suffix when the key
-// could not be made durable) with a captive page at 192.168.4.1. The
+// Every Canary that has no Wi-Fi yet raises a SoftAP named
+// `SecuraCV-<node type>-XXXX` (the type word — sense, vision, display… —
+// then four characters of its salted pseudonym; a `-xx` suffix when the key
+// could not be made durable; older firmware leaves the type out and raises
+// `SecuraCV-XXXX`) with a captive page at 192.168.4.1. The
 // display line and the shared portal the camera and radar Canaries use
 // (firmware/common/network/setup_portal.cpp, canary-display's
 // provision.cpp) serve the same three routes:
@@ -32,17 +34,17 @@ enum SetupPortal {
     static let host = "192.168.4.1"
     static let baseURL = URL(string: "http://192.168.4.1")!
 
-    /// Is this a Canary's setup network? `SecuraCV-A1B2` or `SecuraCV-A1B2-xy`
-    /// — four characters after the prefix, an optional two-character suffix.
+    /// Is this a Canary's setup network? The Swift twin of the firmware's
+    /// `onboard::is_setup_ssid` (firmware/common/network/onboarding_fsm.h):
+    /// every shape `ap_ssid()` ever emitted — `SecuraCV-sense-A1B2` and
+    /// `SecuraCV-sentinel-A1B2-xy`, and older firmware's `SecuraCV-A1B2` and
+    /// `SecuraCV-A1B2-xy`. The type is 1...8 lowercase ASCII letters, the
+    /// suffix four ASCII alphanumerics, the tag two; nothing else is ours.
+    /// One grammar for the app: `NearbyCanaries.suffix(ofSetupSSID:)` reads
+    /// it (the Shared target cannot see this file), and a name is a setup
+    /// network exactly when it has identity characters to give.
     static func isSetupNetwork(_ ssid: String) -> Bool {
-        guard ssid.hasPrefix(ssidPrefix) else { return false }
-        let rest = ssid.dropFirst(ssidPrefix.count)
-        let parts = rest.split(separator: "-", omittingEmptySubsequences: false)
-        guard let first = parts.first, first.count == 4,
-              first.allSatisfy({ $0.isLetter || $0.isNumber }) else { return false }
-        if parts.count == 1 { return true }
-        return parts.count == 2 && parts[1].count == 2
-            && parts[1].allSatisfy({ $0.isLetter || $0.isNumber })
+        NearbyCanaries.suffix(ofSetupSSID: ssid) != nil
     }
 
     /// The `POST /join` body. The portal's page posts form fields, not
@@ -60,7 +62,7 @@ enum SetupPortal {
         let bytes = ssid.utf8.count
         if bytes == 0 { return "Type your Wi-Fi's name." }
         if bytes > 32 { return "A Wi-Fi name can be at most 32 bytes." }
-        if password.utf8.count > 64 { return "A Wi-Fi password can be at most 64 characters." }
+        if password.utf8.count > passwordMaxBytes { return "A Wi-Fi password is at most 64 characters." }
         return nil
     }
 
@@ -104,12 +106,31 @@ enum SetupPortal {
     }
 
     /// Which network to preselect: the remembered household Wi-Fi when the
-    /// Canary can see it, else the strongest it heard, else none (the
-    /// person types a name).
+    /// Canary can see it — and nothing otherwise. It used to fall back to
+    /// the strongest network the Canary heard, which in an apartment
+    /// building is as often a neighbor's as yours, and a preselected wrong
+    /// name is one tap from being sent. An unselected picker with
+    /// `pickYoursNote` under it asks the one question only the person can
+    /// answer; Join stays disabled until they do.
     static func preselect(_ networks: [Network], remembered: String?) -> String? {
-        if let remembered, networks.contains(where: { $0.ssid == remembered }) { return remembered }
-        return networks.first?.ssid
+        guard let remembered, networks.contains(where: { $0.ssid == remembered }) else { return nil }
+        return remembered
     }
+
+    /// The picker's header when nothing was remembered (or the remembered
+    /// network is not on the Canary's list): a question, not a label.
+    static let pickHeader = "Pick your home Wi-Fi"
+    /// Under every picker of the Canary's own list — the list is sorted by
+    /// signal, and the strongest signal is not a choice.
+    static let pickYoursNote =
+        "These are the networks the Canary can hear, strongest first — pick yours, not a neighbor's."
+    /// The footer under a list that has not got the person's network on it.
+    static let notSeenNote =
+        "Don't see yours? Canaries join 2.4 GHz Wi-Fi only — most routers have that band or can turn it on — or choose Another name…"
+    /// A WAP is paired over the home LAN right after it joins, so the phone
+    /// and the WAP must end up on the same network.
+    static let wapSameNetworkNote =
+        "Pick the Wi-Fi this phone is on — a guest network keeps them apart; the 2.4 GHz and 5 GHz names of one router are fine."
 
     // MARK: - saying what went wrong, and what to do
 
@@ -142,11 +163,29 @@ enum SetupPortal {
         return "This Canary can't see \(name) — it only joins 2.4 GHz Wi-Fi. Pick one from its list, or move it closer to your router."
     }
 
-    /// Before anything is sent: a WPA password shorter than 8 characters
-    /// can never work, so say so instead of letting the Canary find out.
+    /// The words every setup surface shows beside the field — the twin of
+    /// `firmware/common/network/wifi_credential_policy.h` FIELD_LABEL /
+    /// FIELD_HINT / OPEN_NETWORK_NOTE. It is the password of the network the
+    /// person picked, never one they are asked to invent.
+    static let passwordFieldLabel = "Wi-Fi network password"
+    static let passwordFieldHint =
+        "The password you already use for this network, exactly as your router has it. Nothing to invent."
+    static let openNetworkNote = "Open network — no password needed."
+
+    /// The firmware's bound (`PASSWORD_MAX_BYTES`): a 63-character WPA
+    /// passphrase or a 64-digit hex key. There is deliberately NO minimum —
+    /// an earlier version of this hint refused anything under 8 characters on
+    /// the router's behalf, which turned real WEP / WPA3 / short-key networks
+    /// into "cannot be typed" and read as the field wanting something new.
+    /// The router decides; the Canary's join verdict ("Wrong password")
+    /// reports, live, with a retry.
+    static let passwordMaxBytes = 64
+
+    /// Before anything is sent: the one thing the firmware will refuse
+    /// outright, named before the join rather than as a 400 after it.
     static func passwordHint(_ password: String, networkIsOpen: Bool) -> String? {
-        guard !networkIsOpen, !password.isEmpty, password.count < 8 else { return nil }
-        return "A Wi-Fi password is at least 8 characters."
+        guard !networkIsOpen, password.utf8.count > passwordMaxBytes else { return nil }
+        return "A Wi-Fi password is at most 64 characters."
     }
 
     /// Where the device stands with the join, from `/status`.

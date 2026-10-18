@@ -64,10 +64,14 @@ Three gaps, found by reading the code rather than the docs:
    on the home Wi-Fi.
 3. **The self-setup bundle never installed the integration.** The plan
    installs Mosquitto, the MQTT entry, Frigate and the kernel *add-on*, but
-   not `custom_components/securacv`, its config entry, the blueprints or the
-   dashboards — only `scripts/install.sh` (the Terminal & SSH path) does
-   those. A "finished" hub still needed HACS. **Not fixed here**; see
-   option G.
+   not `custom_components/securacv`. **Closed by option G, as one click:**
+   the kernel add-on's image carries the integration, and the panel's done
+   screen offers **Install the integration and restart Home Assistant**
+   ([`privacy_witness_kernel/integration_carry.py`](../privacy_witness_kernel/integration_carry.py)).
+   So after self-setup, open the SecuraCV panel in the hub's sidebar and
+   press that button; `scripts/install.sh` (the Terminal & SSH path) is the
+   fallback, and the Flasher's finish line now says exactly this instead of
+   declaring the hub done.
 
 ## 3. The options for finishing with no second device
 
@@ -79,7 +83,7 @@ Three gaps, found by reading the code rather than the docs:
 | **D** | A udev rule as a hook | `CONFIG/udev/*.rules` with `RUN+="systemd-run …"` on the network device's add event | everything, in theory | not recommended — a supported import abused as a hook; timing and udev's sandbox make it fragile across HAOS versions |
 | **E** | A curated backup, restored at onboarding | upload and restore a backup through Home Assistant's onboarding restore (Core ≥ 2025.2) before any account exists | the wizard and the installs | rejected before ([the design](design/raspberry_pi_hub_flashing.md)): a binary blob instead of a narrated, idempotent executor — and still a second device |
 | **F** | A different base OS | Raspberry Pi OS Lite with Imager's `firstrun`/`custom.toml`, Home Assistant Container, Mosquitto and the kernel as containers | everything | rejected for the default hub — Home Assistant Supervised is no longer supported for new installs, Container has no add-ons, and the self-healing OS story is lost; the existing compose stack ([`integrations/ha_frigate_mqtt`](../integrations/ha_frigate_mqtt)) is the Docker-host escape hatch |
-| **G** | The add-on as the provisioner | the kernel add-on's image carries `custom_components/securacv`; on start it places it under `/config/custom_components`, restarts Core once when the bytes changed (needs `hassio_role: manager`), and creates the config entry with the same `scripts/ha_onboard.py` the installer uses | the integration gap, on every path | **proposed** — a maintainer's call, because it grants the add-on a Supervisor role; the whole change is `Dockerfile` + `run.sh` + `config.yaml` |
+| **G** | The add-on as the provisioner | the kernel add-on's image carries `custom_components/securacv`; the panel's done screen installs it under `/config/custom_components` and restarts Core on ONE explicit click (**Install the integration and restart Home Assistant**); on later starts it updates only its own marked copy and never restarts Core by itself ([`integration_carry.py`](../privacy_witness_kernel/integration_carry.py)) | the integration gap, on every path | **shipped, as a click** — the decision taken was the timid one: no silent install on boot, no self-restart, a copy HACS owns is never touched; the terminal one-liner stays the fallback |
 
 ### Why C is the one worth a spike
 
@@ -107,9 +111,9 @@ is also exactly what a person expects of a fresh Home Assistant.
 
 1. **Ship A** (done): the three-state probe, the retries, self-setup on by
    default, and the phone walkthrough.
-2. **Do G next.** It is small, closes gap 3 for every install path at once,
-   and is the "pre-registered provisioner add-on" the bundle manifest already
-   names as the candidate hook. The one decision is the role grant.
+2. **G is done, as one click** (the add-on's done screen; see gap 3 above).
+   What remains of it is only the question it deliberately left open:
+   whether the add-on should ever install or restart without that click.
 3. **Spike C** in the hardware-validation session
    ([runbook](hub_validation_runbook.md)): capture the overlay layout from a
    real hub, place a unit by hand from the developer console, reboot, and see

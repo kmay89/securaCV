@@ -185,6 +185,17 @@
     "shared": false
    },
    {
+    "hardware": "waveshare-esp32c6-lcd147",
+    "figure": "device.canary-display-nightstand-c6",
+    "builds": [
+     "canary-display-nightstand-c6"
+    ],
+    "serves": [
+     "canary-nightstand"
+    ],
+    "shared": false
+   },
+   {
     "hardware": "waveshare-esp32s3-amoled241",
     "figure": "device.canary-display-amoled241",
     "builds": [
@@ -299,15 +310,6 @@
     ],
     "serves": [
      "canary-vision"
-    ]
-   },
-   {
-    "hardware": "waveshare-esp32c6-lcd147",
-    "builds": [
-     "canary-display-nightstand-c6"
-    ],
-    "serves": [
-     "canary-nightstand"
     ]
    },
    {
@@ -1057,7 +1059,10 @@
    "solids": 7,
    "rev": "cbada0b2",
    "svg": "canary-local/figures/device.canary-display-nightstand-c6.svg",
-   "glyph": "canary-local/figures/device.canary-display-nightstand-c6.glyph.svg"
+   "glyph": "canary-local/figures/device.canary-display-nightstand-c6.glyph.svg",
+   "manifests": [
+    "canary-display-nightstand-c6"
+   ]
   },
   {
    "id": "device.canary-display-touch169",

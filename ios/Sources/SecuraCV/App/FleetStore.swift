@@ -10,6 +10,7 @@ import Foundation
 import SwiftUI
 import Combine
 import WidgetKit
+import UserNotifications
 
 @MainActor
 final class FleetStore: ObservableObject {
@@ -37,15 +38,36 @@ final class FleetStore: ObservableObject {
     // radios may run. No mDNS browse, no BLE scan — and therefore no iOS
     // Local Network / Bluetooth permission dialog — before the user says so.
     // (That includes the Bluetooth one: BLEConsole builds no central manager
-    // until the first scan — creating one is itself the prompt.)
+    // until the first scan — creating one is itself the prompt.) The two
+    // radios start at different moments on purpose: the consent tap starts
+    // only the Bluetooth scan, which is what finds and provisions a
+    // brand-new Canary, so one tap raises ONE system prompt; the mDNS
+    // browse — and so the Local Network prompt — waits for its first real
+    // consumer (startLocalNetworkDiscoveryIfConsented).
     @Published private(set) var discoveryConsent: Bool?
-    /// Setup-door suffixes ("AB12") the person waved away this session: the
-    /// card stays quiet for them until the app is relaunched.
-    @Published private(set) var dismissedNearby: Set<String> = []
-    /// Suffixes the card that slides up by itself has already offered this
-    /// session — answered or not, it never offers the same Canary twice
-    /// (the inline card on Today and Fleet still lists it).
-    @Published private(set) var offeredNearby: Set<String> = []
+    /// What the "new Canary nearby" card has already said this session —
+    /// which suffixes ("AB12") the pop-up offered, which the person waved
+    /// away — and when a Canary that went off the air and came back may be
+    /// offered again (Shared/NearbyCanary.swift: NearbyOfferLedger).
+    @Published private(set) var nearbyLedger = NearbyOfferLedger()
+    /// When the foreground Bluetooth scan last began listening — the clock
+    /// behind the "Nothing yet?" footnote (ListeningRow). Nil until consent.
+    @Published private(set) var listeningSince: Date?
+    /// Whether this phone may post a notification at all, read from the
+    /// system without asking (UNUserNotificationCenter.notificationSettings
+    /// never prompts). The listening card promises "tells you when it hears
+    /// one" only while this is true.
+    @Published private(set) var notificationsAllowed = false
+    /// Whether anything has asked for the mDNS browse yet this launch. Set
+    /// by the browse's consumers; once true, every foreground restarts it.
+    private var localNetworkWanted = false
+    /// Suffixes the background door scan has already posted a notification
+    /// for this session — one per Canary, however many times it is heard.
+    private var backgroundNoticed: Set<String> = []
+    /// The title each heard peripheral earned while its door was open
+    /// (FleetMerge.rememberDoorNames), so its Fleet row keeps reading
+    /// "Canary Sense K7MZ" once the door shuts and the advert name is gone.
+    private var doorNames: [UUID: String] = [:]
     /// The Fleet tab's "+" sheet (AddCanarySheet) is up. It lists the nearby
     /// Canaries inline, and at its .medium detent the card that slides up by
     /// itself would show dimmed behind it, so that card stands down — draws
@@ -135,7 +157,23 @@ final class FleetStore: ObservableObject {
         // and simply shows the list when not — an anchor hint, never a
         // capability.
         alerts.onOpen = { [weak self] threadID in
-            self?.pendingRoute = .alerts(witnessID: threadID)
+            // The two courtesy notices are not alerts: a new Canary's door
+            // lands on Today, where its card is; a ready hub lands on its
+            // walkthrough. Everything else is an alert, anchored as before.
+            switch threadID {
+            case NearbyCanaries.noticeThreadID:
+                self?.pendingRoute = .today
+            case HubWalkthrough.readyNoticeThreadID:
+                self?.pendingRoute = .setup(what: SetupTarget.hub.rawValue)
+            default:
+                self?.pendingRoute = .alerts(witnessID: threadID)
+            }
+        }
+        // A door heard by the background scan: decide, once per Canary,
+        // whether to tell the person — never counted as offered, so the
+        // card still comes when the app is opened.
+        ble.onBackgroundDoorSighting = { [weak self] heard in
+            self?.considerBackgroundDoorSighting(heard)
         }
 
         // Tamper heard over a BLE NOTIFY is the fastest signal the fleet
@@ -207,19 +245,37 @@ final class FleetStore: ObservableObject {
                 Task { @MainActor in self?.updateNearness() }
             }
             .store(in: &bag)
+        // The doors, on the same cadence: the offer ledger learns which
+        // doors are on the air (so a Canary that left and came back may be
+        // offered again), and a Canary announcing it has just joined a
+        // network is the first honest reason to look at that network.
+        ble.$heard
+            .throttle(for: .seconds(2), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.noteDoorsHeard() }
+            }
+            .store(in: &bag)
     }
 
     // MARK: - lifecycle
 
     func onAppear() {
+        // A returning owner's fleet is the browse's consumer from the first
+        // screen (Today's rows from /api/fleet come through it), and their
+        // Local Network prompt was answered long ago. A fresh install
+        // starts only the Bluetooth scan.
+        if hasRealFleet { localNetworkWanted = true }
         startRadiosIfConsented()
         WatchLink.shared.activate(store: self)
         // Permission timing: a returning user with a paired fleet expects
         // alerts, so ask at launch. A brand-new user gets asked at the
         // moment alerts first matter (their first Test Alert) — never as an
-        // ambush on first open.
-        if !devices.devices.isEmpty {
-            Task { await alerts.requestAuthorization() }
+        // ambush on first open. Either way, read what the system allows
+        // afterwards (a read never prompts) so the listening card's promise
+        // of a background notification is only made when it can be kept.
+        Task {
+            if !devices.devices.isEmpty { await alerts.requestAuthorization() }
+            await refreshNotificationStanding()
         }
         Task { await hydrateFromCloud() }
         // The away path follows what the user armed, BOTH ways. Enabling is
@@ -275,17 +331,22 @@ final class FleetStore: ObservableObject {
         Task { await refreshOnce() }
     }
 
-    /// The consent gate's one entry point. Granting starts the radios NOW —
-    /// so iOS's Bluetooth and Local Network prompts appear right after the
-    /// user's own yes, in context (the scan's first call is what builds
-    /// the Bluetooth manager, and so raises its prompt). Declining stops
-    /// them and clears anything they'd found.
+    /// The consent gate's one entry point. Granting starts the Bluetooth
+    /// scan NOW — so iOS's Bluetooth prompt appears right after the user's
+    /// own yes, in context (the scan's first call is what builds the
+    /// manager, and so raises the prompt) — and ONLY that scan: Bluetooth
+    /// is what finds and provisions a brand-new Canary, and two system
+    /// alerts stacked on one tap was the first thing a newcomer met. The
+    /// mDNS browse, and the Local Network prompt with it, waits for
+    /// `startLocalNetworkDiscoveryIfConsented()`. Declining stops both and
+    /// clears anything they'd found.
     func setDiscoveryConsent(_ granted: Bool) {
         Consents.setDiscovery(granted)
         discoveryConsent = granted
         if granted {
-            discovery.start()
             ble.startScan()
+            listeningSince = Date()
+            if localNetworkWanted { discovery.start() }
             startSentinel()
             Task { await refreshOnce() }
         } else {
@@ -301,31 +362,103 @@ final class FleetStore: ObservableObject {
         }
     }
 
+    /// The mDNS browse's one entry point — called by its first real
+    /// consumer, never by the consent tap: the walkthrough's "Watch it
+    /// appear" row, the Fleet tab showing a real fleet, a Canary heard
+    /// saying it just joined a network (noteDoorsHeard), or a launch with a
+    /// paired fleet (onAppear). iOS's Local Network prompt follows the
+    /// first of these, which is the first moment there is something on the
+    /// Wi-Fi to find. Once asked for, every later foreground restarts it
+    /// (startRadiosIfConsented). Without consent it does nothing.
+    func startLocalNetworkDiscoveryIfConsented() {
+        localNetworkWanted = true
+        guard discoveryConsent == true else { return }
+        let wasBrowsing = discovery.isBrowsing
+        discovery.start()
+        if !wasBrowsing { Task { await refreshOnce() } }
+    }
+
     /// Brand-new Canaries heard with their Bluetooth setup door open — the
     /// "new Canary nearby" card's rows (Shared/NearbyCanary.swift decides;
     /// the transport only hears). Empty without discovery consent: the scan
     /// behind it is the same one the Fleet tab asks consent for.
     var nearbyCanaries: [NearbyCanary] {
         guard discoveryConsent == true else { return [] }
-        let paired = witnesses.map(\.fingerprint).filter { !$0.isEmpty }
         return NearbyCanaries.candidates(from: Array(ble.heard.values),
-                                         pairedFingerprints: paired,
-                                         dismissedSuffixes: dismissedNearby,
+                                         pairedFingerprints: pairedFingerprints,
+                                         dismissedSuffixes: nearbyLedger.dismissed,
                                          now: Date())
     }
 
+    private var pairedFingerprints: [String] {
+        witnesses.map(\.fingerprint).filter { !$0.isEmpty }
+    }
+
     func dismissNearby(_ suffix: String) {
-        dismissedNearby.insert(suffix)
+        nearbyLedger.noteDismissed(suffix)
     }
 
     /// The one Canary to offer by itself, AirPods-style (the policy is
-    /// NearbyCanaries.autoOffer: exactly one close, not yet offered).
+    /// NearbyCanaries.autoOffer: exactly one close, not yet offered — and
+    /// "close" relaxes to "in the room" for a phone with no fleet yet and
+    /// one Canary in earshot, the brand-new owner's WAP across the room).
     var nearbyOffer: NearbyCanary? {
-        NearbyCanaries.autoOffer(nearbyCanaries, alreadyOffered: offeredNearby.union(dismissedNearby))
+        NearbyCanaries.autoOffer(nearbyCanaries, alreadyOffered: nearbyLedger.suppressed,
+                                 hasRealFleet: hasRealFleet)
     }
 
     func noteOffered(_ suffix: String) {
-        offeredNearby.insert(suffix)
+        nearbyLedger.noteOffered(suffix)
+    }
+
+    /// The doors on the air, folded into the offer ledger — so "already
+    /// offered" and "Not now" lapse for a Canary whose door left the air
+    /// for longer than the freshness window and came back (a replug is a
+    /// new first boot) — and the first honest reason to start the browse:
+    /// a Canary announcing in its service data that it is provisioned has
+    /// just joined a Wi-Fi, and that network is now worth looking at. Runs
+    /// on every throttled burst of door adverts and on the sentinel tick
+    /// (decay is the case that produces no advert to ride).
+    private func noteDoorsHeard(now: Date = Date()) {
+        guard discoveryConsent == true else { return }
+        let heard = Array(ble.heard.values)
+        let onAir = Set(NearbyCanaries.candidates(from: heard, pairedFingerprints: pairedFingerprints,
+                                                  dismissedSuffixes: [], now: now).map(\.suffix))
+        var ledger = nearbyLedger
+        ledger.observe(onAir: onAir, now: now)
+        // Publish only movement: this runs every few seconds.
+        if ledger != nearbyLedger { nearbyLedger = ledger }
+        let cutoff = now.addingTimeInterval(-NearbyCanaries.freshFor)
+        if !localNetworkWanted,
+           heard.contains(where: { $0.lastHeard >= cutoff && $0.improvServiceData?.state == .provisioned }) {
+            startLocalNetworkDiscoveryIfConsented()
+        }
+    }
+
+    /// A door heard while the app was in the background (BLEConsole's door
+    /// scan). If it is a new Canary this phone would offer, post the one
+    /// notification — once per suffix per session, and only when
+    /// notifications are already allowed; nothing here asks for them. The
+    /// sighting is NOT noted as offered: opening the app restarts the
+    /// presence scan, which hears the door again and the card comes up as
+    /// it would have.
+    private func considerBackgroundDoorSighting(_ heard: NearbyCanaries.Heard) {
+        guard discoveryConsent == true else { return }
+        let candidates = NearbyCanaries.candidates(from: [heard], pairedFingerprints: pairedFingerprints,
+                                                   dismissedSuffixes: nearbyLedger.dismissed, now: Date())
+        guard let canary = NearbyCanaries.backgroundNotice(for: candidates, alreadyNoticed: backgroundNoticed)
+        else { return }
+        backgroundNoticed.insert(canary.suffix)
+        Task {
+            await CourtesyNotice.postIfAlreadyAllowed(title: NearbyCanaries.noticeTitle,
+                                                      body: NearbyCanaries.noticeBody(for: canary),
+                                                      threadID: NearbyCanaries.noticeThreadID)
+        }
+    }
+
+    /// Read, never ask: what the system currently allows this app to post.
+    private func refreshNotificationStanding() async {
+        notificationsAllowed = await CourtesyNotice.allowed()
     }
 
     /// What a setup screen should say instead of "Listening…" over
@@ -348,10 +481,13 @@ final class FleetStore: ObservableObject {
         !devices.devices.isEmpty || witnesses.contains { !$0.id.hasPrefix(DemoFleet.idPrefix) }
     }
 
+    /// Every foreground: the Bluetooth scan always; the mDNS browse only
+    /// once something has asked for it (see startLocalNetworkDiscoveryIfConsented).
     private func startRadiosIfConsented() {
         guard discoveryConsent == true else { return }
-        discovery.start()
+        if localNetworkWanted { discovery.start() }
         ble.startScan()
+        listeningSince = Date()
     }
 
     /// The UI's one entry point for demo mode — persists the choice and
@@ -389,12 +525,18 @@ final class FleetStore: ObservableObject {
 
     func onScenePhase(active: Bool) {
         if active {
+            // The door scan yields to the presence scan, which hears every
+            // door too — in the order that leaves exactly one scan running.
+            ble.stopBackgroundDoorScan()
             startRadiosIfConsented()
             startSentinel()
             // Listening again — see onAppear. Backgrounded time is not
             // evidence of a silent fleet.
             heartbeat.noteListening()
-            Task { await refreshOnce() }
+            Task {
+                await refreshNotificationStanding()
+                await refreshOnce()
+            }
         } else {
             discovery.stop()
             // The beacon scan is unfiltered with duplicates on — deliberately a
@@ -402,6 +544,12 @@ final class FleetStore: ObservableObject {
             // background scans anyway). Stopping it in the background saves the
             // radio; away-from-home delivery is APNs' job, not BLE's.
             ble.stopScan()
+            // What the background keeps is the narrow door scan: the Improv
+            // service only, so a Canary powered on while the phone is in a
+            // pocket is still heard and the person told once (the
+            // bluetooth-central background mode in Info.plist is this and
+            // nothing else). Behind the same consent as the presence scan.
+            if discoveryConsent == true { ble.startBackgroundDoorScan() }
             // The sentinel is a foreground loop too — probing from the
             // background would just burn radio for a screen nobody sees.
             sentinelTask?.cancel()
@@ -504,7 +652,11 @@ final class FleetStore: ObservableObject {
         // no home Wi-Fi, no pairing. Attached last so it decorates the rows
         // above rather than competing with them.
         ble.pruneStaleSightings()
-        FleetMerge.attach(ble.freshSightings, to: &next)
+        // A row the door named keeps its title after the door shuts
+        // (FleetMerge.rememberDoorNames): "Canary Sense K7MZ" during and
+        // after, never "SCV-3F1A" the moment it joins the Wi-Fi.
+        FleetMerge.rememberDoorNames(Array(ble.heard.values), into: &doorNames)
+        FleetMerge.attach(FleetMerge.naming(ble.freshSightings, remembered: doorNames), to: &next)
         // And the chirps — the momentary broadcast alerts that replace a
         // sender's beacon on air for 2 s. Same conservative attach; a tamper
         // chirp raises the row's level through the existing alert ledger,
@@ -742,6 +894,9 @@ final class FleetStore: ObservableObject {
                 // advert arrives — a beacon that STOPS is exactly the case
                 // with no event to ride, and this loop already beats 5 s.
                 self?.updateNearness()
+                // The offer ledger's decay tick, for the same reason: a door
+                // that LEFT the air is the case with no advert to ride.
+                self?.noteDoorsHeard()
                 await self?.probeOnce()
                 try? await Task.sleep(for: .seconds(5))
             }
@@ -1822,5 +1977,39 @@ final class FleetStore: ObservableObject {
             // The user asked with a tap here; a verified path earns the chirp.
             Feedback.play(FeedbackPolicy.pathTest(verified: heartbeat.state.isHealthy))
         }
+    }
+}
+
+// MARK: - a notification that never asks
+
+/// A local notification posted only when the person has ALREADY allowed
+/// notifications — the ask belongs to the first Test Alert
+/// (AlertCenter.requestAuthorization) and to nothing else, so a courtesy
+/// ("a new Canary is nearby", "your hub is ready") can never become a
+/// permission prompt at a moment that did not explain it. Same
+/// UNUserNotificationCenter AlertCenter delegates for, so a tap lands in its
+/// didReceive and FleetStore routes it by thread (alerts.onOpen). No
+/// category: there is nothing to acknowledge or mute about a courtesy.
+enum CourtesyNotice {
+    /// Read, never ask.
+    static func allowed() async -> Bool {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
+
+    static func postIfAlreadyAllowed(title: String, body: String, threadID: String) async {
+        guard await allowed() else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.threadIdentifier = threadID
+        content.sound = .default
+        content.interruptionLevel = .active
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        // Best effort: a refused courtesy is not an error anyone needs told about.
+        try? await UNUserNotificationCenter.current().add(request)
     }
 }

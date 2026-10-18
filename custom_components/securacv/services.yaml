@@ -128,3 +128,37 @@ export_evidence:
       selector:
         config_entry:
           integration: securacv
+
+staged_update:
+  name: Staged firmware update
+  description: >-
+    Installs the fleet's pending firmware updates one Canary at a time:
+    each node must report the new version through its own update entity
+    before the next one starts, and the rollout stops at the first node
+    that fails or times out. Installs only what each node's own signed-OTA
+    engine accepts. Returns what was installed, skipped and not attempted.
+  fields:
+    entity_id:
+      name: Update entities
+      description: >-
+        The Canaries' firmware update entities to roll out to, in this
+        order. Left out, every Canary's update entity, by name.
+      required: false
+      example: "update.hallway_firmware"
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: update
+    node_timeout:
+      name: Per-node timeout
+      description: >-
+        Seconds to wait for one node to report the new version before the
+        rollout stops. 600 if left out; 60 to 3600.
+      required: false
+      example: 600
+      selector:
+        number:
+          min: 60
+          max: 3600
+          unit_of_measurement: s

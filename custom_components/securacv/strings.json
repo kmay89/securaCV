@@ -504,6 +504,15 @@
     },
     "export_write_failed": {
       "message": "The evidence pack could not be written under the configuration directory: {detail}."
+    },
+    "rollout_no_update_entities": {
+      "message": "No Canary has a firmware update entity yet. A Canary announces one over MQTT once it is on the broker; check that the fleet is online."
+    },
+    "rollout_not_update_entities": {
+      "message": "{entity_ids} are not update entities; name the Canaries' firmware update entities (the update domain) or leave entity_id out."
+    },
+    "rollout_aborted": {
+      "message": "The staged rollout stopped: {reason}. {installed} installed, {not_attempted} not attempted. Fix that node, then run it again."
     }
   },
   "services": {
@@ -564,6 +573,22 @@
         "entry_id": {
           "name": "Kernel",
           "description": "Which SecuraCV entry to export from, when more than one has a witness kernel. The only one if left out."
+        }
+      }
+    },
+    "staged_update": {
+      "name": "Staged firmware update",
+      "description": "Installs the fleet's pending firmware updates one Canary at a time: each node must report the new version through its own update entity before the next one starts, and the rollout stops at the first node that fails or times out. Installs only what each node's own signed-OTA engine accepts. Returns what was installed, skipped and not attempted.",
+      "fields": {
+        "entity_id": {
+          "name": "Update entities",
+          "description": "The Canaries' firmware update entities to roll out to, in this order. Left out, every Canary's update entity, by name.",
+          "example": "update.hallway_firmware"
+        },
+        "node_timeout": {
+          "name": "Per-node timeout",
+          "description": "Seconds to wait for one node to report the new version before the rollout stops. 600 if left out; 60 to 3600.",
+          "example": "600"
         }
       }
     }

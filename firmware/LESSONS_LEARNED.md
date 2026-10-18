@@ -7,6 +7,28 @@
 
 ---
 
+## A stacked board owns every pin it touches — read its silkscreen, not a guess
+
+### The doorbell speaker sat on the camera module's reset pin (2026-10)
+- **What happened:** the Vision Doorbell put its speaker PWM on XIAO D3,
+  documented as the stacked Grove Vision AI V2's "SPI chip select, unused by
+  this firmware". The module's silkscreen prints `RST` on that pin, and
+  Seeed's own library drives it as the reset (`AI.begin(&Wire, D3)`; SPI
+  mode is `begin(&SPI, cs = D1, sync = D0, rst = D3)`). The 78 kHz carrier
+  idles at mid-scale from boot, so the module's reset would toggle forever.
+  The pins.h comment, the wiring page, the BOM and the drawing all repeated
+  the guess; every check passed because none of them knew the module.
+- **The fix:** the speaker is on D10 (the module's SPI MOSI, an input) and
+  the driver holds D8 (its SPI clock, also an input) low first, so nothing is
+  ever clocked in. The whole socket map lives in both XIAO `pins.h` and the
+  Grove guide, with D0 (SYNC) and D9 (MISO) marked as module *outputs* and
+  D3 as its reset: never drive any of them.
+- **The rule:** before you give a "spare" pin a job on a stacked or hatted
+  board, find what the other board does with it in a source you can quote
+  (its silkscreen, its vendor's library, its schematic) and write that source
+  next to the define. "The firmware never uses it" is a statement about our
+  code, not about the wire.
+
 ## One contract, or the two ends drift until neither notices
 
 ### The phone verified a page no firmware served (2026-09, roadmap rows 5/6/13)
@@ -495,6 +517,85 @@
   the old 57-char alphabet, and any `%02X%02X` hex device_id / AP-SSID suffix in
   the firmware source trees.
 - **Date learned:** 2026-04 (v1), 2026-06 (v2)
+
+### A Wi-Fi password field that only says "Password" is read as "create one"
+- **What happened:** Three captive portals (the shared one, the display's,
+  the WAP's legacy page) labeled the field under the picked SSID just
+  "Password"; the iOS `SecureField`s carried no `.textContentType`, so the
+  OS offered to *invent* a strong password; two flashers and the hub card
+  enforced an 8-character minimum the firmware never had. People typed a
+  new password of their own, the join failed with "Wrong password", and
+  nothing on the page said which password it meant.
+- **Root cause:** every portal was written on its own, and nowhere was it
+  stated what the field *is* — the password of the network you picked, as
+  it already exists, however short, or empty for an open network. Parity by
+  convention drifted on the one word that mattered.
+- **Fix:** `firmware/common/network/wifi_credential_policy.h` (with its JS
+  and Swift twins) is the one statement: label "WiFi network password", no
+  prefill, show/hide, no minimum length or complexity, 0–63 bytes, open
+  networks allowed; every portal, flasher and the app consume it; the three
+  client-side minimums are gone; the iOS fields are annotated so the OS
+  stops offering to make one up.
+- **Regression check:** `firmware/tests_host/test_wifi_credential_policy.cpp`,
+  `canary-local/tests/onboard.test.js` and `desktop_parity.test.js` (the two
+  flashers pinned to the same words), `ios/Tests/.../SetupPortalTests.swift`;
+  `check_wifi_credential_sync.sh` holds the staged copies to the header.
+- **Date learned:** 2026-10
+
+### A boot-time decision that reads a setting init() provides must wait for init() — or both must share one pure core
+- **What happened:** The OTA engine gained a confirm dwell: a freshly
+  installed image is marked valid only after 60 s of health
+  (`securacv_ota_health_tick`). The dwell length lives in the config that
+  `securacv_ota_init()` copies in — but every board runs
+  `securacv_ota_boot_self_test()` first (the probes must run before the
+  network comes up), so the probe saw a zero dwell, took the legacy branch
+  and confirmed the image at once. Six targets, one bug, no test caught it:
+  the host test covered the manifest rules, and the dwell lived only in the
+  device-side section of the engine. Review (Codex, PR #1816) found it.
+- **Root cause:** two call sites decided the same question from one piece
+  of state that only the later one had. "It defaults to 0" read as "the
+  legacy behavior" instead of "I do not know yet".
+- **Fix:** the dwell is a pure state machine (`securacv_ota_dwell_*` in the
+  host-visible part of `securacv_ota.cpp`): the probe arms it and never
+  confirms unless init() has already run with no dwell; init() resolves a
+  deferred probe (a dwell → the ticks; none → confirm now); the tick
+  confirms after the dwell has held. An engine-less build that can still
+  install (the flagship's `secure` envs) says so explicitly with
+  `securacv_ota_confirm_now()`. The otadata read happens only while a dwell
+  is armed — a reviewer's second finding: the rewrite had put it on every
+  loop pass for the life of the device.
+- **Regression check:** `test_confirm_dwell` in
+  `firmware/common/ota/test_ota_logic.cpp` runs the core in both call
+  orders, through an interrupted dwell, with no dwell, and across the
+  millis() wrap. The rule for the next one: when a decision depends on a
+  setting another call provides, make the decision a pure function both
+  calls feed, and host-test the order they are actually called in.
+- **Date learned:** 2026-10
+
+### A new outbound destination is disclosed at its call site, not reached through a table
+- **What happened:** The shared Wi-Fi supervisor gave Sense, Vision and the
+  Sentinel a wall clock (the brief's "NTP with hub fallback") by handing
+  `configTzTime()` a `Servers` table filled in `clock_sync.h`. The phone-home
+  scan in `regression_check.sh` flagged the call — but only because the
+  literal `"UTC0"` sat inside it; move that literal out and the scan would
+  have gone silent on a brand-new compiled-in destination, while
+  `SECURITY_MODEL.md` still said SNTP was a display-line path.
+- **Root cause:** "disclosed" means the scan can *see* the destination and
+  match it to the model's list. A host reached through a variable is
+  invisible to a source scan; a literal that happens to be nearby is luck,
+  not disclosure.
+- **Fix:** the call names the destinations — `configTzTime(tz,
+  time_sync::NTP_PRIMARY, time_sync::NTP_SECONDARY,
+  time_sync::hub_server(...))` — so the scan resolves each name to its host
+  and matches the new `DISCLOSED_OUTBOUND` entry, which points at
+  `SECURITY_MODEL.md` path 3; the model, the FAQ and `FAULT_MODEL.md` now
+  say which products sync and what the clock is for (the status page, not
+  the records). A `--check` or a scan that cannot see a value must flag it,
+  not pass it.
+- **Regression check:** `regression_check.sh`'s phone-home scan (a HIT on an
+  undisclosed call, a STALE on an entry that matches nothing);
+  `firmware/tests_host/test_clock_sync.cpp` pins the two hosts by name.
+- **Date learned:** 2026-10
 
 ### The onboarding wizard must feed the TWDT — the loop()-path re-raise runs watched
 - **What happened:** A Canary 7 (nightstand7) whose saved Wi-Fi could not join
@@ -1536,6 +1637,62 @@
   the dropped link and the Wi-Fi radio's behavior under ten joins in a row
   are hardware facts.
 - **Date learned:** 2026-10-07
+
+### A receipt spelled from the boot that served it, not the boot it is used against (the setup door's http receipt)
+- **What happened:** The WAP's first-boot setup skipped TLS whole — no
+  certificate, no HTTPS server — so the captive portal renders (a
+  self-signed certificate is a blank sheet in the iOS and Android captive
+  browsers). The Bluetooth setup door's join happens INSIDE that first
+  boot, so the claim it minted said `http` with `tls_cert_fp: ""`, and the
+  receipt the phone spent the claim on said `base_url: http://<name>.local`
+  with no pin. The phone kept that. Ten seconds to two minutes later the
+  WAP rebooted into steady state, generated its certificate and became
+  HTTPS-only — port 80 redirecting to a `Location` built from the SoftAP
+  address, dead on the LAN. Every later call failed; the WAP showed Lost
+  forever; "Paired with this phone" was followed by a device the phone
+  could never reach again. Beside it: a never-provisioned unit's wizard
+  restarts it every 15 idle minutes — while the door's 30-minute window
+  was open, so a person watching the door's card saw the WAP blink out for
+  ~20 s with no explanation, and a tap found nothing.
+- **Root cause:** two facts were one variable. "The certificate is known"
+  and "the HTTPS server is up" were both `g_tls_enabled`, set only outside
+  the wizard, so the one boot that answers the door had neither — and the
+  receipt, the one document the phone keeps for the life of the pairing,
+  was spelled from the boot that served it rather than the boot it would
+  be used against. The reboot that would have made the device match its
+  receipt was timed from the join (the 120 s grace, floor-extended), not
+  from the spend. And the wizard's idle timer counted a phone AT the door
+  as life but not one LOOKING at it.
+- **Fix:** `init_tls_cert()` runs on every initialized boot (the
+  certificate is NVS-persisted — generated once, the RSA keygen's RNG now
+  feeding the 8 s task watchdog), and only the server stays gated on the
+  wizard; `tls_after_setup()` is the one named fact for "TLS will be on
+  once setup ends". The claim's `claim_url` stays the address that answers
+  NOW (http during setup — it is spent within seconds) and its
+  `tls_cert_fp` is the real pin; the receipt served via the claim spells
+  the STEADY-STATE address (`https://<name>.local`, `tls_enabled` true,
+  the fingerprint); spending the claim brings the armed reboot to a 10 s
+  runway from the spend (`provisioning_logic::claim_spent_reboot_deadline`
+  — set, not floored), so the WAP is on https ~15 s after "Paired". The
+  port-80 redirect builds its `Location` from the request's `Host` (else
+  the STA address or the `.local` name), never the SoftAP address. The
+  wizard's idle restart is not due while the door is open
+  (`wizard_restart_due`; the door's window bounds the hold). Verified, not
+  changed: a door join already leaves first-boot mode correctly — `loop()`
+  marks the wizard complete on the first pass that sees `WL_CONNECTED`,
+  whichever path joined, exactly as for the wizard's own
+  `/api/wifi/connect`.
+- **Regression check:** `tests_host/test_provisioning_logic.cpp` —
+  `wizard_restart_due` (never due with the door open; the idle rule by
+  name with it shut, across a grid) and `claim_spent_reboot_deadline`
+  (brought in from a far deadline, pushed out from a passed one, never
+  arming a disarmed one, never 0). The receipt's shape is
+  `test_identity_json.cpp`'s, unchanged. Bench: pair a fresh WAP over the
+  door and watch the app's next call land on `https://<name>.local` with
+  the pin about 15 s after the card says paired; leave a fresh WAP idle
+  with a phone's card showing and see no restart until the door's window
+  runs out.
+- **Date learned:** 2026-10-15
 
 ---
 

@@ -20,6 +20,14 @@
 #include "securacv_gps.h"
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
 #include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
+#include "network/onboarding_fsm.h"     // the setup AP's name, the fleet's hold/reset numbers
+#include "io/reset_hold.h"              // the BOOT hold's stages: warn 3 s / reset 10 s / wipe (opt-in)
+#include "reset_scope_keys.h"           // what the 10 s stage clears, what it keeps
+// The identity's SSID field holds every shape onboarding_fsm.h's builder emits
+// (securacv_crypto.cpp generate_ap_ssid writes it; a cap too small is an
+// empty name, never a truncated one).
+static_assert(sizeof(DeviceIdentity::ap_ssid) >= canary::net::onboard::SSID_CAP,
+              "DeviceIdentity::ap_ssid must hold onboarding_fsm.h's SSID_CAP");
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -851,25 +859,85 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
   snprintf(password, len, "cv-%s", encoded);
 }
 
-// Factory reset: erase NVS and reboot
-static void factory_reset() {
-  Serial.println("\n[!!] FACTORY RESET — Erasing all stored data...");
-  log_health(LOG_LEVEL_ALERT, LOG_CAT_SYSTEM, "Factory reset initiated", nullptr);
+// Factory reset by BOOT hold (common/io/reset_hold.h, the fleet's grammar):
+//   CredentialsAndSettings — released from the 10 s stage. Saved networks
+//     (the legacy pair and the wifi_nets ring), the broker config, the setup
+//     flag, the device name, the bearer token and the household zone go
+//     (reset_scope_keys.h names each key); the witness identity, the chain
+//     state and the device's history stay, so every hub and display that
+//     pinned this Canary's key still knows it (onboarding_fsm.h decision 3).
+//   Everything — held to the 30 s wipe stage. Today's whole-namespace clear,
+//     identity too, after the final chain state is written.
+// Neither returns.
+static void factory_reset(canary::io::ResetScope scope) {
+  using canary::io::ResetScope;
+  const char* scope_label = canary::io::reset_scope_label(scope);
+  Serial.printf("\n[!!] FACTORY RESET — %s\n", scope_label);
+  log_health(LOG_LEVEL_ALERT, LOG_CAT_SYSTEM, "Factory reset initiated", scope_label);
 
-  // Persist final chain state before clearing
-  witness_persist_chain_state();
-
-  // Clear NVS
   NvsManager& nvs = NvsManager::instance();
-  if (nvs.beginReadWrite()) {
-    nvs.clear();
+  if (scope == ResetScope::Everything) {
+    // Persist final chain state before clearing
+    witness_persist_chain_state();
+    if (nvs.beginReadWrite()) {
+      nvs.clear();
+      nvs.end();
+      Serial.println("[OK] NVS erased");
+    }
+  } else if (nvs.beginReadWrite()) {
+    size_t removed = 0;
+    for (size_t i = 0; i < canary::reset_scope::kCredentialsAndSettingsCount; i++) {
+      const char* key = canary::reset_scope::kCredentialsAndSettings[i];
+      if (nvs.isKey(key) && nvs.remove(key)) removed++;
+    }
     nvs.end();
-    Serial.println("[OK] NVS erased");
+    Serial.printf("[OK] Credentials and settings cleared (%u entries); identity and chain kept\n",
+                  (unsigned)removed);
   }
 
   Serial.println("[..] Rebooting in 2 seconds...");
   delay(2000);
   ESP.restart();
+}
+
+// The one BOOT-hold grammar for both sites that read the button (the boot-time
+// check in setup() and handle_boot_button() in loop()): Warn at 3 s, Reset at
+// the fleet's 10 s, and this tree's opt-in Wipe at BOOT_WIPE_HOLD_MS because
+// shedding the identity is its historical behavior — now a longer, announced
+// stage instead of the default. With a wipe stage the reset acts on the
+// RELEASE from stage 2 (reset_hold.h), so a hand that keeps holding reaches
+// the wipe instead of rebooting under it.
+static canary::io::ResetHold g_reset_hold;
+
+static void reset_hold_dispatch(canary::io::HoldEvent ev) {
+  using canary::io::HoldEvent;
+  using canary::io::ResetScope;
+  switch (ev) {
+    case HoldEvent::Warn:
+      Serial.printf("[!!] BOOT held — keep holding: %lu s resets credentials + settings, %lu s wipes the identity too\n",
+                    (unsigned long)(g_reset_hold.reset_ms / 1000),
+                    (unsigned long)(g_reset_hold.wipe_ms / 1000));
+      break;
+    case HoldEvent::Reset:
+      Serial.printf("[!!] Release now to reset %s (the witness key stays); keep holding to %lu s to wipe %s\n",
+                    canary::io::reset_scope_label(ResetScope::CredentialsAndSettings),
+                    (unsigned long)(g_reset_hold.wipe_ms / 1000),
+                    canary::io::reset_scope_label(ResetScope::Everything));
+      break;
+    case HoldEvent::Wipe:
+      factory_reset(ResetScope::Everything);  // Does not return
+      break;
+    case HoldEvent::Released:
+      if (g_reset_hold.released_stage == 2) {
+        factory_reset(ResetScope::CredentialsAndSettings);  // Does not return
+      } else if (g_reset_hold.released_stage == 1) {
+        Serial.println("[OK] BOOT released before the reset stage — nothing changed");
+      }
+      break;
+    case HoldEvent::None:
+    default:
+      break;
+  }
 }
 
 // 10-minute daily time bucket (0..143), matched across audio, sensing,
@@ -921,10 +989,18 @@ static bool     g_restart_requested = false;
 // Guard covers BOTH install channels: the engine owns rollback confirmation
 // (verifyRollbackLater), so any build that can install an image — pull OTA or
 // the dev push endpoint — must also confirm it here, or the bootloader
-// reverts it on the next boot.
+// reverts it on the next boot. The probe alone no longer confirms: with the
+// pull engine (FEATURE_OTA_PULL) the image stays pending until
+// securacv_ota_init() in setup() and then a minute of health
+// (securacv_ota_health_tick in loop(), docs/OTA.md §2) confirm it. A build
+// without the engine (secure, secure_ha: FEATURE_OTA_UPDATE alone) has no
+// init() and no tick, so it confirms at the probe as it always did.
 static void ota_confirm_and_witness() {
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   securacv_ota_boot_self_test();
+#if !FEATURE_OTA_PULL
+  securacv_ota_confirm_now();   // no engine, no dwell: the probe's verdict is final
+#endif
 
   // Witness the update outcome. The engine recorded the install target the
   // moment the boot partition flipped; running the old version again means
@@ -1219,19 +1295,22 @@ void setup() {
   }
 #endif
 
-  // Check for factory reset: hold BOOT button during startup
+  // Check for factory reset: hold BOOT button during startup. Same grammar as
+  // the loop's handler (reset_hold_dispatch): warn, reset on release from the
+  // 10 s stage, wipe at the 30 s stage — neither reset returns.
+  g_reset_hold.reset_ms = canary::net::onboard::Timing{}.factory_reset_hold_ms;
+  g_reset_hold.wipe_ms = BOOT_WIPE_HOLD_MS;
   pinMode(BOOT_BUTTON_GPIO, INPUT_PULLUP);
   delay(100); // Debounce
   if (digitalRead(BOOT_BUTTON_GPIO) == LOW) {
-    Serial.println("[!!] BOOT button held at startup — checking for factory reset...");
-    uint32_t held_start = millis();
-    while (digitalRead(BOOT_BUTTON_GPIO) == LOW) {
-      if (millis() - held_start >= BOOT_LONG_PRESS_MS) {
-        factory_reset(); // Does not return
-      }
+    Serial.println("[!!] BOOT button held at startup — keep holding to reset...");
+    for (;;) {
+      const bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
+      reset_hold_dispatch(g_reset_hold.step(pressed, millis()));
+      if (!pressed) break;
       delay(10);
     }
-    Serial.println("[OK] BOOT button released before factory reset threshold");
+    Serial.println("[OK] BOOT button released; continuing the boot");
   }
 
   // Provision device identity (keys, chain state)
@@ -1323,13 +1402,16 @@ void setup() {
   {
 #if FEATURE_SETUP_WIZARD
     const char* ap_ssid = device.ap_ssid;
-    char setup_ssid[32];
+    char setup_ssid[canary::net::onboard::SSID_CAP];
     if (setup_is_first_boot()) {
+      // The fleet's setup-AP name (onboarding_fsm.h): SecuraCV-canary-<4>,
+      // the four from the pubkey-fingerprint device id, never the MAC.
       size_t id_len = strlen(device.device_id);
       const char* suffix = (id_len >= 4) ? (device.device_id + id_len - 4) : device.device_id;
-      if (snprintf(setup_ssid, sizeof(setup_ssid), "SecuraCV-%s", suffix) >= (int)sizeof(setup_ssid)) {
-        // Defense-in-depth: a longer device_id must never yield a truncated
-        // (and therefore ambiguous) SSID. Fall back to a fixed, valid name.
+      if (canary::net::onboard::ap_ssid(setup_ssid, sizeof(setup_ssid),
+                                        canary::net::onboard::NODE_CANARY, suffix, nullptr) == 0) {
+        // Defense-in-depth: the builder refuses rather than truncates (an
+        // ambiguous SSID). Fall back to a fixed, valid name.
         strncpy(setup_ssid, "SecuraCV-Setup", sizeof(setup_ssid) - 1);
         setup_ssid[sizeof(setup_ssid) - 1] = '\0';
       }
@@ -1721,6 +1803,20 @@ void setup() {
     ota_cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
     ota_cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
     ota_cfg.on_progress      = ota_on_progress;
+    // The hardware binding a manifest_version 2 manifest is checked against
+    // (docs/OTA.md §3): the board token when the build names one, and the
+    // IDF target this image was built for.
+#ifdef CANARY_FIGURE_HARDWARE
+    ota_cfg.board            = CANARY_FIGURE_HARDWARE;
+#endif
+#ifdef CONFIG_IDF_TARGET
+    ota_cfg.chip             = CONFIG_IDF_TARGET;
+#endif
+    // Health-gated confirmation (docs/OTA.md §2): the boot probes (identity,
+    // diagnostics >= 50) leave a new image pending; loop()'s
+    // securacv_ota_health_tick() confirms it after a minute of the STA link
+    // holding, so a crash loop inside that minute rolls back.
+    ota_cfg.confirm_dwell_ms = 60000;
     ota_cfg.can_install      = ota_can_install;
     ota_cfg.on_before_reboot = ota_before_reboot;
     if (securacv_ota_init(&ota_cfg) == ESP_OK) {
@@ -2216,6 +2312,11 @@ void setup() {
 void loop() {
 #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
+#endif
+#if FEATURE_OTA_PULL
+  // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
+  // confirmed only after a minute of the home link holding.
+  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
 #endif
 
   // The healthy gate: confirm a pending OTA image and clear the crash-loop
@@ -2852,16 +2953,16 @@ static void handle_boot_button() {
 
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
 
+  // The long-hold grammar first (common/io/reset_hold.h): Warn at 3 s, the
+  // reset on release from the 10 s stage, the wipe at 30 s. A reset does not
+  // return; a release from the warn stage (3-10 s) falls through to the
+  // medium hold below, as before.
+  reset_hold_dispatch(g_reset_hold.step(pressed, millis()));
+
   if (pressed && !boot_btn_was_pressed) {
     // Button just pressed
     boot_btn_start = millis();
     boot_btn_was_pressed = true;
-  } else if (pressed && boot_btn_was_pressed) {
-    // Still held — check for factory reset threshold
-    uint32_t duration = millis() - boot_btn_start;
-    if (duration >= BOOT_LONG_PRESS_MS) {
-      factory_reset(); // Does not return
-    }
   } else if (!pressed && boot_btn_was_pressed) {
     // Button released
     uint32_t duration = millis() - boot_btn_start;

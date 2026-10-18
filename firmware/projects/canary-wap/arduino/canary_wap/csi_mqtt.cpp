@@ -565,6 +565,24 @@ bool config_save(const Config& cfg) {
   return true;
 }
 
+bool config_clear() {
+  static const char* const kKeys[] = {
+    NVS_KEY_ENABLED, NVS_KEY_HOST, NVS_KEY_PORT, NVS_KEY_USER, NVS_KEY_PASS,
+    NVS_KEY_PREFIX, NVS_KEY_TLS, NVS_KEY_TLS_MODE, NVS_KEY_DISCOVERY, NVS_KEY_CA,
+  };
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+  bool ok = true;
+  for (const char* key : kKeys) {
+    /* remove() also reports false for a key that never existed — the
+     * readback is the truth (ca_save's rule). */
+    if (prefs.isKey(key)) prefs.remove(key);
+    ok = ok && !prefs.isKey(key);
+  }
+  prefs.end();
+  return ok;
+}
+
 bool ca_save(const char* pem) {
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
