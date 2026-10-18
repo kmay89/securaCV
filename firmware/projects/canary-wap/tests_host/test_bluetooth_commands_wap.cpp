@@ -5384,6 +5384,29 @@ void test_the_bond_store_shows_beside_the_list() {
   CHECK(host_sim::bonds_deleted.empty() && host_sim::bonds.size() == 3);   // nothing deleted on its own
   for (int k = 0; k < 3; ++k) loop_pass();
   CHECK(health_says(kLockout) == 1);                            // once, not every pass
+  // One of those phones comes back: its link encrypts with the stored
+  // unauthenticated key, bonded, and that bond goes as a new one would
+  // (F191), on its own link, not on a sweep.
+  const uint8_t back_addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, 0xB0};
+  NimBLEConnInfo back;
+  back.handle = 110;
+  back.address = NimBLEAddress(back_addr, 0);
+  host_sim::server->peers = {110};
+  host_sim::server->link_up(back);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), back); });
+  back.encrypted = back.bonded = true;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(back); });
+  loop_pass();
+  CHECK(!NimBLEDevice::isBonded(back.getIdAddress()) && host_sim::bonds.size() == 2);
+  CHECK(host_sim::bonds_deleted.size() == 1 && health_says(kUnauthDeleted) == 1);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 2 && st.bonds_unlisted == 2);
+  link_ends(back);
+  // Refill the store as the older firmware left it.
+  host_sim::store_bond(NimBLEAddress(back_addr, 0), /*irk=*/false);
+  bc::g_bond_store_dirty = true;
+  loop_pass();
+  CHECK(health_says(kLockout) == 2);                            // full again: named again
   // A new phone is refused at its start (F189), and the count says why.
   CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
   NimBLEConnInfo owner = public_phone(111, 0xC1);
@@ -5412,7 +5435,7 @@ void test_the_bond_store_shows_beside_the_list() {
   bc::g_bond_store_dirty = true;                                // as a pairing's report would mark it
   loop_pass();
   bc::read_status(&st);
-  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1 && health_says(kLockout) == 2);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1 && health_says(kLockout) == 3);
   CHECK(health_detail(kLockout) == "1 of 3 bonds unlisted");
   std::printf("PASS the_bond_store_shows_beside_the_list\n");
 }
