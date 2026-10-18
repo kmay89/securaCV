@@ -460,7 +460,10 @@ class TestManifestV2:
         out = tmp_path / "manifest.json"
         fw.write_bytes(FIRMWARE)
         signer = Path(__file__).parent / "ota_release.py"
-        run = lambda *a: subprocess.run([sys.executable, str(signer), *a], capture_output=True, text=True)
+
+        def run(*a):
+            return subprocess.run([sys.executable, str(signer), *a], capture_output=True, text=True)
+
         assert run("keygen", "--private-key", str(key)).returncode == 0
         result = run("manifest", "--private-key", str(key), "--product", "securacv-canary-sense",
                      "--version", "2.5.0", "--url", "https://example.com/sense.bin",
