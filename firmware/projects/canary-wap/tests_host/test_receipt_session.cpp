@@ -16,7 +16,9 @@
 // RNG, the station link (up, or down for the SoftAP-only setup phase), the
 // landing page's HTML, the BOOT tap's gate, the receipt and QR writers (each records
 // what it was asked to answer and puts the token and the AP password in the
-// body, as the real ones do), and the rest of the sketch's world.
+// body, as the real ones do), the setup-door claim's spend stamp the loop
+// task reads (a plain global here; #1804's g_improv_claim_spent_at_ms), and
+// the rest of the sketch's world.
 //
 // Before F289 a session the landing page minted (for any caller that reached
 // the device, on the home network too) was taken as the receipt's first grant
@@ -100,6 +102,10 @@ static bool provisioning_gate_take() {
 static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+// When a served claim's receipt left (#1804): the loop task brings the reboot
+// into steady state to a short runway from it. 0 is "no spend"; the receipt
+// stamps it after a served claim and on no other grant.
+static uint32_t g_improv_claim_spent_at_ms = 0;
 
 // The receipt and the QR, as the sketch writes them (identity_json.h's
 // receipt carries "token" and "ap_password"; the QR's payload "token").
@@ -269,6 +275,7 @@ void reset_world() {
   std::memset(&g_pair_slots, 0, sizeof(g_pair_slots));
   std::memset(&g_auth, 0, sizeof(g_auth));
   canary::net::claim_ticket::wipe(g_improv_claim);
+  g_improv_claim_spent_at_ms = 0;
   g_tap_open = false;
   g_tap_takes = 0;
   g_receipts = 0;
@@ -302,6 +309,7 @@ void test_landing_session_refused() {
   CHECK(g_receipts == 0);
   CHECK(g_tap_takes == 1);
   CHECK(receipt.set_cookie.empty());
+  CHECK(g_improv_claim_spent_at_ms == 0);   // no claim was spent
 
   const Reply qr = call(handle_pairing_qr, "", landing, "");
   CHECK(qr.status == "401 Unauthorized");
@@ -340,6 +348,7 @@ void test_bearer_header_serves() {
   CHECK(g_tap_open && g_tap_takes == 0);
   CHECK(canary::net::claim_ticket::pending(g_improv_claim, millis()));
   CHECK(receipt.set_cookie.empty());
+  CHECK(g_improv_claim_spent_at_ms == 0);   // the claim is left alone, unspent
 
   const Reply qr = call(handle_pairing_qr, "", "", bearer());
   CHECK(qr.status == "200 OK");
@@ -377,12 +386,17 @@ void test_claim_serves() {
   CHECK(g_last_grant == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(g_tap_open && g_tap_takes == 0);
   CHECK(receipt.set_cookie.size() == cv_session::TOK_HEX_LEN);
+  // The spend is stamped for the loop task's reboot runway (#1804), never 0.
+  CHECK(g_improv_claim_spent_at_ms == canary::net::claim_ticket::stamp(millis()));
 
-  // That session is the owner's: it serves the receipt and the QR alone.
+  // That session is the owner's: it serves the receipt and the QR alone, as
+  // grant 1, which spends no claim and stamps nothing.
   g_tap_open = false;
+  g_improv_claim_spent_at_ms = 0;
   const Reply again = call(handle_provisioning_receipt, "", receipt.set_cookie, "");
   CHECK(again.status == "200 OK" && carries_secret(again));
   CHECK(g_last_grant == receipt_authority::Grant::BEARER);
+  CHECK(g_improv_claim_spent_at_ms == 0);
   CHECK(call(handle_pairing_qr, "", receipt.set_cookie, "").status == "200 OK");
 }
 
@@ -397,10 +411,12 @@ void test_claim_beside_landing() {
   const Reply bad = call(handle_provisioning_receipt, "claim=" + wrong, landing, "");
   CHECK(bad.status == "403 Forbidden" && !carries_secret(bad));
   CHECK(!canary::net::claim_ticket::pending(g_improv_claim, millis()));   // burned
+  CHECK(g_improv_claim_spent_at_ms == 0);   // burned, but no receipt left: no runway
   const std::string claim2 = mint_claim();
   const Reply good = call(handle_provisioning_receipt, "claim=" + claim2, landing, "");
   CHECK(good.status == "200 OK" && carries_secret(good));
   CHECK(g_last_grant == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(g_improv_claim_spent_at_ms != 0);
 }
 
 // The BOOT tap serves (grant 3), is spent, and mints an owner's session,
@@ -414,6 +430,7 @@ void test_tap_serves_and_mints_owner() {
   CHECK(g_last_grant == receipt_authority::Grant::BOOT_TAP);
   CHECK(!g_tap_open && g_tap_takes == 1);
   CHECK(receipt.set_cookie.size() == cv_session::TOK_HEX_LEN);
+  CHECK(g_improv_claim_spent_at_ms == 0);   // a tap is not a claim's spend
 
   const std::string owner = receipt.set_cookie;
   const Reply again = call(handle_provisioning_receipt, "", owner, "");
