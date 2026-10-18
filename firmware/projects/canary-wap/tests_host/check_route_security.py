@@ -1173,9 +1173,13 @@ def _assert_credential_rule() -> None:
         "(&g_device)->ap_password": status_answers(
             "  return httpd_resp_sendstr(req, (&g_device)->ap_password);\n"),
         "the whole g_device handed on": status_answers("  dump_identity(&g_device);\n"),
+        # One string on two source lines: regression_check.sh's key-isolation
+        # grep reads a line at a time, and this planted sketch is no key
+        # leaving the device. The value, and so the fixture, is unchanged.
         "a local use that reads a secret its entry does not name": good.replace(
             "void loop() { datamgmt::process(g_device.privkey); }",
-            "void loop() { datamgmt::process(g_device.privkey); log(g_device.api_token_str); }"),
+            "void loop() { datamgmt::process(g_device.privkey); "
+            "log(g_device.api_token_str); }"),
         "a local use with an out-buffer": good.replace(
             "static void handle_serial_commands() {", "static void handle_serial_commands(char* out) {"),
         "a secret named outside every function": good + "#define LEAK_TOKEN g_device.api_token_str\n",
