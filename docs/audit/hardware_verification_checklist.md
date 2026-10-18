@@ -2581,6 +2581,50 @@ to https. The rows below use https; on an http-only build (or one whose
     Before F257 the dashboard offered no kit.
   - Artifact: `docs/audit/repro/F257/dashboard-kit/`.
 
+## canary-wap: the landing page's session reaches neither the receipt nor the pairing QR (F289) — on-device verification
+
+Code: `api_auth_bearer_valid()` / `api_auth_check_bearer()` in `api_auth.h`,
+`handle_provisioning_receipt()`'s first grant and `handle_pairing_qr()`'s
+gate in `canary_wap.ino`. Host-tested (`tests_host/test_receipt_grant.cpp`:
+the REAL `api_auth.h` and both handlers cut out of the sketch; a cookie
+alone, and beside a wrong bearer, refused on both routes; a bearer, the
+BOOT tap and the setup-door claim served); the compile is CI's; not run on
+a device. Owner: U1.
+
+- [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
+  - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
+    on the home network with no session for it (a private window), `curl`,
+    the API token from a recovery kit.
+  - Repro: open `https://canary-<suffix>.local/` and follow **Open
+    dashboard** (the `?cv_pair=` link): the dashboard loads on the
+    `cv_session` cookie. From the browser's developer tools (Application,
+    Cookies) copy the cookie's value `<hex>`. Then: `curl -sk -o /dev/null
+    -w '%{http_code}\n' -H "Cookie: cv_session=<hex>"
+    https://canary-<suffix>.local/api/provisioning-receipt`; the same with
+    `.../api/pairing-qr`; the same two with `-H "Authorization: Bearer
+    <token>"` in place of the cookie; `curl -sk -H "Cookie:
+    cv_session=<hex>" https://canary-<suffix>.local/api/status`. In the
+    dashboard: **Settings**, **Device**, **Recovery kit**, **Save my recovery
+    kit**; then **Show QR** on the pairing card. Sign in again with **Use
+    BOOT Tap Once**, short-tap BOOT, choose **Save my recovery kit** on the
+    card, then **Show QR**. Last, short-tap BOOT and within 30 s `curl -sk
+    -H "Cookie: cv_session=<hex>"
+    https://canary-<suffix>.local/api/provisioning-receipt`.
+  - Expected: the cookie's receipt is `403` with
+    `physical_confirmation_required` and the cookie's QR is `401` with a
+    `WWW-Authenticate: Bearer` header, neither body naming the token or the
+    AP password (before F289 both served); the bearer's receipt is `200`
+    with `token` and `ap_password`, and the bearer's QR is the SVG;
+    `/api/status` on the cookie is `200` (the cookie still signs the
+    dashboard in). In the dashboard the Settings save and **Show QR** each
+    bring the sign-in back ("Sign in again first" under the kit card) and
+    save or show nothing; after the BOOT-tap sign-in the card offers the kit
+    and saves it, and **Show QR** shows the code (the tap's receipt gave the
+    page its token, which it sends as a bearer). The last curl, inside the
+    tap's window, is `200`: the tap serves whatever cookie rides beside it,
+    and is spent.
+  - Artifact: `docs/audit/repro/F289/receipt-grant/`.
+
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
