@@ -41,6 +41,10 @@
 // the check that refused it, read once, so a gate that opens at that moment
 // is not answered with no reason (the reviewers of F178).
 //
+// The cooldown tiers reset after 24 hours with no send, not 24 hours after
+// the first of a run, a disable and an enable keep them, and their count
+// stops at 255 (sweep F193).
+//
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
 // handler does. submit() waits in vTaskDelay, and the stub's vTaskDelay is
