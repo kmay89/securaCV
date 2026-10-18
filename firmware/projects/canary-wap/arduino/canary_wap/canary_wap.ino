@@ -12483,6 +12483,12 @@ void setup() {
     log_phase_heap("network");
   } else {
     Serial.println("[--] Bluetooth/BLE init skipped (safe mode)");
+    // No boot bring-up on this boot, so its end is never marked: a tap
+    // that needs the stack is told Bluetooth stays off in safe mode
+    // (sweep F259), not that it starts within five minutes.
+    #if FEATURE_BLUETOOTH
+    bluetooth_channel::skip_boot_bring_up_for_safe_mode();
+    #endif
   }
   #endif
 
@@ -12865,6 +12871,9 @@ static void ble_bringup_task(void*) {
                                &g_device.seq)) {
             Serial.println("[OK] BLE GATT status service registered");
             log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+            // The channel says which of the worker's services are on its
+            // server (sweep F260): a later bring-up by a tap has none.
+            bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_STATUS);
           } else {
             Serial.println("[--] BLE GATT status service init failed");
           }
@@ -12895,6 +12904,10 @@ static void ble_bringup_task(void*) {
       Serial.println("[OK] BLE Discovery initialized");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
       g_ble_mgr_result = 1;   // lifecycle emit + radio start happen on the loop
+      #if FEATURE_BLUETOOTH
+      // Opera's, Chirp's and Nearby's are on the server (sweep F260).
+      bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_DISCOVERY);
+      #endif
     } else {
       Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);

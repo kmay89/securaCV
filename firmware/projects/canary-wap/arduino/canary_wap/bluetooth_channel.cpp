@@ -238,6 +238,34 @@ static bool g_boot_bring_up_tried = false;
 // g_boot_bring_up_tried a Start Advertising or Pair tap is told Bluetooth is
 // still starting, whatever the worker's init() answered.
 static bool g_boot_bring_up_started = false;
+// Any task's (sweep F259): the sketch skips its boot bring-up on this boot
+// (safe mode), so g_boot_bring_up_tried never sets. Set once, by
+// skip_boot_bring_up_for_safe_mode() on the loop task (release);
+// boot_bring_up_skipped() reads it (acquire). Never cleared.
+static bool g_boot_bring_up_skipped = false;
+// The loop task's (sweep F260): whether the boot bring-up left the stack up,
+// read as the sketch says it is over (boot_bring_up_finished()). A stack the
+// loop task adopts after a boot bring-up that left it down is a tap's (since
+// F259 no tap brings the stack up before then), and the worker's services
+// are not on it.
+static bool g_boot_stack_up = false;
+// Any task's (sweep F260): the BootService bits the sketch's boot worker
+// registered, set on the worker's task (boot_service_registered(), release)
+// and read on the loop task (acquire) once the boot bring-up is over, which
+// the finalize stage marks after taking the worker's result.
+static uint8_t g_boot_services_registered = 0;
+// What this build's boot worker registers on the channel's server
+// (canary_wap.ino's ble_bringup_task(): ble_status under FEATURE_BLE_STATUS,
+// once the channel's init() brought the stack up; ble_manager's Opera, Chirp
+// and Nearby under FEATURE_BLE).
+static const uint8_t BOOT_SERVICES =
+#if defined(FEATURE_BLE_STATUS) && FEATURE_BLE_STATUS
+    BT_BOOT_SVC_STATUS |
+#endif
+#if defined(FEATURE_BLE) && FEATURE_BLE
+    BT_BOOT_SVC_DISCOVERY |
+#endif
+    0;
 
 // Scan results
 static ScannedDevice g_scanned_devices[MAX_SCANNED_DEVICES];
@@ -290,6 +318,7 @@ static BluetoothState rest_state();
 static bool init_running();
 static void load_saved();
 static void adopt_init_result();
+static void note_late_bring_up();
 static bool load_settings(BluetoothSettings* out);
 static void save_settings();
 static void load_paired_devices(PairedDevice* out, size_t* count, bool* by_identity);
@@ -1888,6 +1917,9 @@ static void adopt_init_result() {
   migrate_paired_devices();
   drop_entries_without_bond();
   g_bond_store_dirty = true;   // F209: the store is reachable from here on
+  // A stack a tap brought up after the boot bring-up left it down: what the
+  // worker would have added is not on it (F260).
+  note_late_bring_up();
 
   // init() already put the dispatcher on the server (attach()); this only
   // names the channel its pairing owner, an atomic store the NimBLE host
@@ -1927,6 +1959,7 @@ void bringup_worker_finished() {
 // The loop task, as the sketch's finalize stage ends (sweep F235's review):
 // see g_boot_bring_up_tried.
 void boot_bring_up_finished() {
+  g_boot_stack_up = is_initialized();   // F260: whether a later bring-up is a tap's
   __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);
 }
 
@@ -1938,6 +1971,54 @@ bool boot_bring_up_tried() {
 // Any task (wave 16's verify): see g_boot_bring_up_started.
 bool boot_bring_up_started() {
   return __atomic_load_n(&g_boot_bring_up_started, __ATOMIC_ACQUIRE);
+}
+
+// The loop task, at setup's Bluetooth gate in safe mode (sweep F259), and
+// any task's read: see g_boot_bring_up_skipped.
+void skip_boot_bring_up_for_safe_mode() {
+  __atomic_store_n(&g_boot_bring_up_skipped, true, __ATOMIC_RELEASE);
+}
+
+bool boot_bring_up_skipped() {
+  return __atomic_load_n(&g_boot_bring_up_skipped, __ATOMIC_ACQUIRE);
+}
+
+// The sketch's boot worker, on its own task, after it registered `service`
+// on the channel's server (sweep F260): see g_boot_services_registered.
+void boot_service_registered(uint8_t service) {
+  __atomic_fetch_or(&g_boot_services_registered, service, __ATOMIC_RELEASE);
+}
+
+// The loop task, with the stack adopted (sweep F260): whether it came up
+// after the boot bring-up left it down, a tap's, and which of this build's
+// worker services are not on its server. Nothing before the boot bring-up
+// is over (the worker may be registering them).
+static bool late_bring_up() {
+  return g_initialized && boot_bring_up_tried() && !g_boot_stack_up;
+}
+static uint8_t boot_services_missing() {
+  if (!g_initialized || !boot_bring_up_tried()) return 0;
+  return BOOT_SERVICES & (uint8_t)~__atomic_load_n(&g_boot_services_registered, __ATOMIC_ACQUIRE);
+}
+
+// A late bring-up says what it left out (sweep F260), once: the loop task
+// adopts a stack once per boot. It registers nothing itself (on a server
+// that already started, F167's case).
+static void note_late_bring_up() {
+  if (!late_bring_up()) return;
+  const uint8_t missing = boot_services_missing();
+  if (missing == 0) return;
+  char detail[48] = "";
+  size_t used = 0;
+  for (uint8_t bit = 1; bit != 0; bit = (uint8_t)(bit << 1)) {
+    if ((missing & bit) == 0) continue;
+    const int n = snprintf(detail + used, sizeof(detail) - used, "%s%s", used ? ", " : "",
+                           boot_service_name(bit));
+    if (n < 0 || (size_t)n >= sizeof(detail) - used) break;
+    used += (size_t)n;
+  }
+  log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+             "BLE brought up after the boot bring-up: these services are off until a reboot", detail);
 }
 
 [[maybe_unused]] static void deinit() {
@@ -2695,6 +2776,9 @@ static void publish_status_view() {
     status.bond_capacity = BOND_STORE_CAPACITY;
     status.bonds_unlisted = g_bonds_unlisted;
   }
+  // What a bring-up the boot worker did not perform left out (sweep F260).
+  status.late_bring_up = late_bring_up();
+  status.services_missing = boot_services_missing();
 
   status.tx_power = g_settings.tx_power;
   status.mtu = g_connection_mtu;

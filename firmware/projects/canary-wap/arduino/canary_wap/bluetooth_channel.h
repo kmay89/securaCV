@@ -203,6 +203,14 @@ struct BluetoothStatus {
   uint8_t bond_capacity;
   uint8_t bonds_unlisted;
 
+  // What a bring-up the boot worker did not perform left out (sweep F260),
+  // once the boot bring-up is over and the stack up: late_bring_up, the
+  // stack came up after the boot bring-up left it down; services_missing,
+  // the BootService bits this build's worker registers that are not on the
+  // server, until a reboot.
+  bool late_bring_up;
+  uint8_t services_missing;
+
   // Statistics
   uint32_t total_connections;
   uint32_t total_bytes_sent;
@@ -334,6 +342,51 @@ bool boot_bring_up_tried();
 bool boot_bring_up_started();
 inline const char* boot_bring_up_pending_error() {
   return "Bluetooth has not started yet; it starts once Wi-Fi setup is done or within five minutes (never in safe mode)";
+}
+// The sketch skips its boot bring-up (sweep F259): safe mode, at setup's
+// Bluetooth gate, on the loop task. boot_bring_up_finished() is never
+// reached on such a boot, so every tap that needs the stack waits for good
+// (since F259 Enable and the settings POST turning Bluetooth on as well),
+// and the 503 it answers says so (boot_bring_up_skipped_error()) where it
+// said Bluetooth would start within five minutes. boot_bring_up_skipped(),
+// any task: whether it was called (release, acquire); once per boot, never
+// cleared.
+void skip_boot_bring_up_for_safe_mode();
+bool boot_bring_up_skipped();
+inline const char* boot_bring_up_skipped_error() {
+  return "Bluetooth stays off in safe mode; it starts after a normal boot";
+}
+
+// What the sketch's boot worker adds to the channel's server after the
+// channel's init() (sweep F260): ble_status's GATT service
+// (FEATURE_BLE_STATUS) and ble_manager's Opera, Chirp and Nearby
+// (FEATURE_BLE, FULL). They are registered only there, in the worker, and
+// only when its init() brought the stack up. A bring-up a tap makes after
+// the boot bring-up was refused, failed or never ran its worker (which
+// since F259 is the only time a tap brings the stack up) does not run them,
+// and registering them then would put services on a server that already
+// started (the case F167's hold exists to prevent; whether NimBLE-Arduino
+// 2.x serves them is not read here). So the sketch's worker tells the
+// channel each one it registered (boot_service_registered(), on the
+// worker's task, release); the channel knows which this build's worker
+// registers (FEATURE_BLE_STATUS, FEATURE_BLE), and once the boot bring-up is
+// over and the stack up, GET /api/bluetooth carries "late_bring_up" (the
+// stack came up after the boot bring-up left it down) and
+// "services_missing" (the worker's services not on this server, until a
+// reboot: ble_status's that failed to register on a boot bring-up too), and
+// a late bring-up says the same in the health log, once.
+enum BootService : uint8_t {
+  BT_BOOT_SVC_STATUS    = 1u << 0,   // ble_status (FEATURE_BLE_STATUS)
+  BT_BOOT_SVC_DISCOVERY = 1u << 1,   // ble_manager: Opera, Chirp, Nearby (FEATURE_BLE)
+};
+void boot_service_registered(uint8_t service);
+// The name GET /api/bluetooth and the health log give one BootService bit.
+inline const char* boot_service_name(uint8_t service) {
+  switch (service) {
+    case BT_BOOT_SVC_STATUS:    return "ble_status";
+    case BT_BOOT_SVC_DISCOVERY: return "ble_discovery";
+    default:                    return "unknown";
+  }
 }
 
 // Why the last init() attempt left the radio off ("" when initialized or

@@ -385,6 +385,9 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_advertise_after_bringup = false;
   bc::g_boot_bring_up_tried = false;       // F235's review: the sketch's bring-up is not over
   bc::g_boot_bring_up_started = false;     // nor started (wave 16's verify)
+  bc::g_boot_bring_up_skipped = false;     // F259: not a safe-mode boot
+  bc::g_boot_stack_up = false;             // F260: what the boot bring-up left, unread
+  bc::g_boot_services_registered = 0;      // F260: the worker registered nothing yet
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
   bc::g_service = nullptr;
@@ -2126,6 +2129,17 @@ void saved_off_and_loaded() {
   host_sim::calls.clear();
 }
 
+// The sketch's boot bring-up, over with the stack still down: its gate
+// opened and its worker could not be created (canary_wap.ino's failed-create
+// path marks both ends at once). Since F259 every tap that needs the stack
+// waits for this, saved on or off; after it a tap brings the stack up (F235).
+void boot_bring_up_without_a_worker() {
+  bc::bringup_worker_started();
+  bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
+  CHECK(bc::boot_bring_up_tried() && !bc::is_initialized());
+}
+
 // {"enabled": true} turns Bluetooth on the way POST /api/bluetooth/enable
 // does: the same state, the same calls, the setting saved; with the stack
 // down it is refused like an enable and applies nothing, since a command
@@ -2683,10 +2697,17 @@ void test_a_tap_brings_the_stack_up_whatever_the_setting() {
     t = tap(second);
     CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
 
-    // Saved off, never up: the tap brings the stack up and its command turns
-    // Bluetooth on, as before.
+    // Saved off, never up: before the boot bring-up is over the tap waits
+    // for it (sweep F259: it brought the stack up at once, inside the join
+    // window or in safe mode); once that bring-up left the stack down (here
+    // the worker could not be created), the tap brings it up and its command
+    // turns Bluetooth on, as before.
     boot(/*bring_up=*/false);
     saved_off_and_loaded();
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(bc::boot_bring_up_pending_error()));
+    CHECK(t.inits == 0 && t.sleeps == 0 && !bc::is_initialized());
+    boot_bring_up_without_a_worker();
     t = tap(first);
     CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)));
     CHECK(t.inits == 1 && bc::is_initialized() && bc::is_enabled() && bc::read_enabled());
@@ -2751,6 +2772,7 @@ void test_a_tap_while_the_stack_comes_up_says_so() {
   // latch's, whoever holds it.
   boot(/*bring_up=*/false);
   saved_off_and_loaded();
+  boot_bring_up_without_a_worker();                // F259: no tap brings it up before
   Tap inner;
   g_inside_init = [&] { inner = tap(kPair); };
   t = tap(kAdvertise);
@@ -2913,11 +2935,36 @@ void test_a_tap_before_the_boot_bring_up_waits_for_it() {
 // (NimBLE-Arduino 2.5.0 reads isInitialized() false until its init has
 // synced). Played by opening the gate from inside any init() a tap runs: the
 // tap now runs none, so the worker's bring-up has the stack to itself and is
-// the boot's only one, and ble_manager finds the stack up.
+// the boot's only one, and ble_manager finds the stack up. Sweep F259: the
+// same for every tap that brings the stack up, Enable and a settings POST
+// turning Bluetooth on (F111, F144: they brought it up at once), and Start
+// Advertising and Pair on a device saved off (F235 left those to bring it up
+// at once, as before it): each ran init() inside the join window, in safe
+// mode, and beside the worker's.
 void test_the_worker_never_meets_a_taps_bring_up() {
-  for (const Handler h : {kAdvertise, kPair}) {
+  struct Case {
+    Handler h;
+    const char* body;
+    bool saved_off;
+    const char* after;   // what the tap answers once the boot bring-up is over
+  };
+  const Case cases[] = {
+      {kAdvertise, "", false, "Advertising started"},
+      {kPair, "", false, "Pairing mode started"},
+      {bluetooth_api::handle_bluetooth_enable, "", false, "Bluetooth enabled"},
+      {bluetooth_api::handle_bluetooth_settings_set, "{\"enabled\":true}", false, "Settings updated"},
+      {kAdvertise, "", true, "Advertising started"},
+      {kPair, "", true, "Pairing mode started"},
+      {bluetooth_api::handle_bluetooth_enable, "", true, "Bluetooth enabled"},
+      {bluetooth_api::handle_bluetooth_settings_set, "{\"enabled\":true}", true, "Settings updated"},
+  };
+  for (const Case& c : cases) {
     boot(/*bring_up=*/false);
-    loop_pass();                                     // saved on, loaded: the join window
+    if (c.saved_off) {
+      saved_off_and_loaded();                        // the join window, saved off
+    } else {
+      loop_pass();                                   // saved on, loaded: the join window
+    }
     bool gate_opened_inside_a_tap = false;
     bool worker_up = false;
     std::string worker_reason;
@@ -2930,7 +2977,7 @@ void test_the_worker_never_meets_a_taps_bring_up() {
       worker_reason = bc::init_fail_reason();
       host_sim::task = "httpd";
     };
-    const Tap t = tap(h);
+    const Tap t = tap(c.h, c.body);
     g_inside_init = nullptr;
     // Had the tap run init(), the worker's would have lost the latch: false,
     // nothing refused (on FULL, ble_manager's own NimBLE init next).
@@ -2938,6 +2985,7 @@ void test_the_worker_never_meets_a_taps_bring_up() {
     CHECK(!gate_opened_inside_a_tap);                // the tap ran no init() to open the gate beside
     CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(bc::boot_bring_up_pending_error()));
     CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
+    CHECK(bc::g_settings.enabled == !c.saved_off);   // nothing applied
     // The gate opens: the worker's init() has the stack to itself.
     bc::bringup_worker_started();
     host_sim::task = "bringup";
@@ -2952,12 +3000,102 @@ void test_the_worker_never_meets_a_taps_bring_up() {
     bc::bringup_worker_finished();
     bc::boot_bring_up_finished();
     loop_pass();
-    CHECK(bc::g_initialized && bc::is_enabled());
-    const Tap after = tap(h);
-    CHECK(after.status == "200 OK" && after.body == succeeded_with(started_message(h)) && after.inits == 0);
-    CHECK(host_sim::count("nimble_init") == 1);
+    CHECK(bc::g_initialized && bc::is_enabled() == !c.saved_off);
+    const Tap after = tap(c.h, c.body);
+    CHECK(after.status == "200 OK" && after.body == succeeded_with(c.after) && after.inits == 0);
+    CHECK(host_sim::count("nimble_init") == 1 && bc::is_enabled());
   }
   std::printf("PASS the_worker_never_meets_a_taps_bring_up\n");
+}
+
+// Sweep F259: every tap that brings the stack up waits for the sketch's boot
+// bring-up, saved on or off, in each of its windows, and in safe mode for
+// good. Enable and a settings POST naming "enabled": true answer 503 like
+// Start Advertising and Pair: "has not started yet" (and when) before the
+// gate opens, "still starting" from it until the finalize stage marks the
+// end, and in safe mode that Bluetooth stays off until a normal boot (the
+// sketch never runs the bring-up there; until F259 Start Advertising and
+// Pair were told it would start within five minutes, and Enable and the
+// settings POST brought NimBLE up). Each submits nothing and brings nothing
+// up meanwhile, and a settings POST that does not turn Bluetooth on is not
+// held (it needs no stack). After the end a tap brings a stack the boot
+// left down up, as F235 does.
+void test_every_tap_waits_for_the_boot_bring_up() {
+  const Handler enable = bluetooth_api::handle_bluetooth_enable;
+  const Handler settings = bluetooth_api::handle_bluetooth_settings_set;
+  const char* const kOn = "{\"enabled\":true}";
+  const char* const kPending = bc::boot_bring_up_pending_error();
+  const char* const kSafe = bc::boot_bring_up_skipped_error();
+  struct Tapper {
+    Handler h;
+    const char* body;
+  };
+  const Tapper taps[] = {{kAdvertise, ""}, {kPair, ""}, {enable, ""}, {settings, kOn}};
+  auto all_answer = [&](const char* why) {
+    for (const Tapper& tp : taps) {
+      const Tap t = tap(tp.h, tp.body);
+      CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(why));
+      CHECK(t.inits == 0 && t.sleeps == 0);
+    }
+  };
+  for (const bool saved_off : {false, true}) {
+    // Before the first pass, then in the join window.
+    boot(/*bring_up=*/false);
+    all_answer(kPending);
+    if (saved_off) saved_off_and_loaded(); else loop_pass();
+    all_answer(kPending);
+    host_sim::now_ms += 300000;                      // past the sketch's 5 min hold: the sketch's word decides
+    loop_pass();
+    all_answer(kPending);
+    // A settings POST that turns nothing on, or turns Bluetooth off, needs
+    // no stack: not held.
+    Tap t = tap(settings, "{\"auto_advertise\":true}");
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Settings updated") && t.inits == 0);
+    t = tap(settings, "{\"enabled\":false}");
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Settings updated") && t.inits == 0);
+    CHECK(!bc::g_settings.enabled && !nvs_bool("bt_enabled"));
+    // The gate opens; the worker's init() is refused; the finalize stage
+    // takes its result: still starting throughout.
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+    bc::bringup_worker_started();
+    all_answer(kStillStarting);
+    host_sim::task = "bringup";
+    CHECK(!bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    all_answer(kStillStarting);
+    bc::bringup_worker_finished();
+    heap_recovers();
+    all_answer(kStillStarting);
+    CHECK(host_sim::count("nimble_init") == 0 && bc::g_commands.queued() == 0);
+    // Over: Enable brings the stack up now, and turns Bluetooth on.
+    bc::boot_bring_up_finished();
+    t = tap(enable);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Bluetooth enabled") && t.inits == 1);
+    CHECK(bc::is_initialized() && bc::is_enabled() && host_sim::count("nimble_init", "httpd") == 1);
+    t = tap(settings, kOn);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Settings updated") && t.inits == 0);
+  }
+
+  // Safe mode: the sketch skips the bring-up, so its end is never marked.
+  // Every tap is told Bluetooth stays off in safe mode, however long the
+  // device runs, and nothing comes up.
+  for (const bool saved_off : {false, true}) {
+    boot(/*bring_up=*/false);
+    if (saved_off) saved_off_and_loaded(); else loop_pass();
+    bc::skip_boot_bring_up_for_safe_mode();
+    CHECK(bc::boot_bring_up_skipped() && !bc::boot_bring_up_tried());
+    for (int k = 0; k < 3; ++k) {
+      all_answer(kSafe);
+      host_sim::now_ms += 600000;
+      loop_pass();
+    }
+    CHECK(host_sim::count("nimble_init") == 0 && !bc::is_initialized() && bc::g_commands.queued() == 0);
+    const Tap status = tap(bluetooth_api::handle_bluetooth_status);
+    CHECK(status.body.find("\"late_bring_up\":false") != std::string::npos);
+  }
+  std::printf("PASS every_tap_waits_for_the_boot_bring_up\n");
 }
 
 // For real on three threads (sweep F235): the boot worker's init() (held in
@@ -4696,6 +4834,7 @@ void test_a_name_holding_a_control_byte_is_refused() {
   // handler's own init()) and turns Bluetooth on.
   boot(/*bring_up=*/false);
   saved_off_and_loaded();
+  boot_bring_up_without_a_worker();                // F259: no tap brings it up before
   const unsigned writes = host_sim::count("nvs_write");
   t = tap(bluetooth_api::handle_bluetooth_settings_set,
           ("{\"enabled\":true,\"device_name\":\"" + json_text("Shed\x01") + "\"}").c_str());
@@ -4757,6 +4896,132 @@ void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
     CHECK(host_sim::main_nvs["bt_name"] == std::vector<uint8_t>(expect.begin(), expect.end()));
   }
   std::printf("PASS a_saved_name_holding_a_control_byte_is_not_loaded\n");
+}
+
+// ── What a late bring-up left out (sweep F260) ──────────────────────────
+
+const char* const kLateLog = "BLE brought up after the boot bring-up: these services are off until a reboot";
+
+// The sketch's boot worker after the channel's init(), as canary_wap.ino's
+// ble_bringup_task() runs it on this build (FULL: ble_status, then
+// ble_manager's Opera, Chirp and Nearby): each service it registered,
+// reported to the channel.
+void worker_registers(uint8_t services) {
+  const std::string was = host_sim::task;
+  host_sim::task = "bringup";
+  for (uint8_t bit = 1; bit != 0; bit = (uint8_t)(bit << 1)) {
+    if (services & bit) bc::boot_service_registered(bit);
+  }
+  host_sim::task = was;
+}
+
+// Sweep F260: the worker's services (ble_status, and on FULL Opera, Chirp
+// and Nearby through ble_manager) are registered only in the boot worker,
+// once its init() brought the stack up. After a boot bring-up that left the
+// stack down (refused, failed, or no worker), a tap brings it up (F235,
+// since F259 only then) and nothing registers them: ble_status stayed off
+// until a reboot with nothing saying so. Now the stack a tap brings up after
+// the boot bring-up is a late bring-up: the health log says once which
+// services are off until a reboot, and GET /api/bluetooth carries
+// "late_bring_up": true and "services_missing" (the build's worker services
+// not registered). A boot bring-up that registered everything reads false
+// and [], whatever order the finalize stage and the loop task's adoption
+// ran in; one whose ble_status registration failed lists it, not late;
+// nothing is listed before the boot bring-up is over.
+void test_a_late_bring_up_says_what_it_left_out() {
+  CHECK(bc::BOOT_SERVICES == (bc::BT_BOOT_SVC_STATUS | bc::BT_BOOT_SVC_DISCOVERY));   // the host builds FULL
+  const std::string kBoth = "\"late_bring_up\":true,\"services_missing\":[\"ble_status\",\"ble_discovery\"]";
+  // The boot worker's own bring-up, its services registered.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();                                       // adopted while the worker goes on
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(!st.late_bring_up && st.services_missing == 0);   // nothing listed before the end
+  worker_registers(bc::BOOT_SERVICES);
+  bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
+  loop_pass();
+  bc::read_status(&st);
+  CHECK(!st.late_bring_up && st.services_missing == 0 && health_says(kLateLog) == 0);
+  Tap t = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(t.body.find("\"late_bring_up\":false,\"services_missing\":[]") != std::string::npos);
+
+  // The same bring-up with the finalize stage before the loop task's
+  // adoption (the worker finished between two passes; the sketch's loop()
+  // runs the finalize stage before bluetooth_channel::update()): not late.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  worker_registers(bc::BOOT_SERVICES);
+  bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
+  loop_pass();                                       // the adoption, after the end
+  bc::read_status(&st);
+  CHECK(bc::g_initialized && !st.late_bring_up && st.services_missing == 0 && health_says(kLateLog) == 0);
+
+  // ble_status failed to register on a boot bring-up: listed, not late, no line.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  worker_registers(bc::BT_BOOT_SVC_DISCOVERY);
+  bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
+  loop_pass();
+  bc::read_status(&st);
+  CHECK(!st.late_bring_up && st.services_missing == bc::BT_BOOT_SVC_STATUS && health_says(kLateLog) == 0);
+
+  // The worker's init() refused (the heap guard), and on FULL ble_manager's
+  // own NimBLE init failed too: nothing registered. A tap after the end
+  // brings the stack up: late, both missing, said once.
+  boot_bring_up_refused(/*heap_low=*/true);
+  heap_recovers();
+  t = tap(kAdvertise);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Advertising started") && t.inits == 1);
+  bc::read_status(&st);
+  CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES);
+  CHECK(health_says(kLateLog) == 1 && health_detail(kLateLog) == "ble_status, ble_discovery");
+  CHECK(health_level(kLateLog) == SCV_LOG_WARNING);
+  t = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(t.body.find(kBoth) != std::string::npos);
+  json_strict::Value parsed;
+  CHECK(json_strict::parse(t.body, &parsed));
+  for (int k = 0; k < 3; ++k) loop_pass();
+  t = tap(kPair);
+  CHECK(t.status == "200 OK" && health_says(kLateLog) == 1);   // once
+  CHECK(host_sim::server->services() > 0 && host_sim::count("svc_create", "loop") == 0);   // nothing registered late
+
+  // The worker's channel init() refused, but on FULL ble_manager brought
+  // NimBLE up on its own and registered Opera's: only ble_status is missing.
+  boot_bring_up_refused(/*heap_low=*/true);
+  // (boot_bring_up_refused() marks the end itself; the worker's report came before it on a device)
+  bc::g_boot_services_registered = bc::BT_BOOT_SVC_DISCOVERY;
+  heap_recovers();
+  t = tap(bluetooth_api::handle_bluetooth_enable);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Bluetooth enabled") && t.inits == 1);
+  bc::read_status(&st);
+  CHECK(st.late_bring_up && st.services_missing == bc::BT_BOOT_SVC_STATUS);
+  CHECK(health_says(kLateLog) == 1 && health_detail(kLateLog) == "ble_status");
+
+  // No worker at all (the failed-create path): a tap's bring-up is late.
+  boot(/*bring_up=*/false);
+  saved_off_and_loaded();
+  boot_bring_up_without_a_worker();
+  t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"enabled\":true}");
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Settings updated") && t.inits == 1);
+  bc::read_status(&st);
+  CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES && health_says(kLateLog) == 1);
+  std::printf("PASS a_late_bring_up_says_what_it_left_out\n");
 }
 
 // ── A passkey shown only in pairing mode (sweep F191) ───────────────────
@@ -5198,6 +5463,8 @@ const Test kTests[] = {
     {"a_tap_while_the_stack_comes_up_says_so", test_a_tap_while_the_stack_comes_up_says_so},
     {"a_tap_before_the_boot_bring_up_waits_for_it", test_a_tap_before_the_boot_bring_up_waits_for_it},
     {"the_worker_never_meets_a_taps_bring_up", test_the_worker_never_meets_a_taps_bring_up},
+    {"every_tap_waits_for_the_boot_bring_up", test_every_tap_waits_for_the_boot_bring_up},
+    {"a_late_bring_up_says_what_it_left_out", test_a_late_bring_up_says_what_it_left_out},
     {"threads_a_tap_meets_the_bring_up", test_threads_a_tap_meets_the_bring_up},
     {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
     {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},
