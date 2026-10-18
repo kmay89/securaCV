@@ -11169,7 +11169,8 @@
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the case has no screw holes)"
       }
      ]
     },
@@ -13388,7 +13389,8 @@
       },
       {
        "name": "vent_top_n",
-       "default": "14"
+       "default": "14",
+       "comment": "exhaust slot count through the top (+Y) wall of the two-piece build's back (part=\"back\"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted)"
       },
       {
        "name": "vent_bottom",
@@ -13525,7 +13527,8 @@
       },
       {
        "name": "frame_boss_d",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "frame boss Ø — four bosses on the board's M3 pattern hang from the back plate's inner face and spread to this + 3 through a 45° root fillet; the sleeve wall, the SD cover and tether, the radio window and the battery curbs are asserted clear of them"
       }
      ]
     },
@@ -13921,7 +13924,8 @@
      "params": [
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "deboss depth of the frame's wall labels (beside the USB and side exits), the stand's brand words and the radius gauge's numbers; the back plate's debosses use label_back_depth"
       },
       {
        "name": "label_back_depth",
@@ -13930,7 +13934,8 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates bold caps at 0.392 x size per letter whatever font is set"
       }
      ]
     },
@@ -14256,7 +14261,8 @@
       },
       {
        "name": "edge_text_size",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their width is estimated at 0.392 x this per letter and must fit between the port's flange and the wall's flat span (asserted)"
       },
       {
        "name": "edge_lbl_depth",
@@ -14491,7 +14497,8 @@
       },
       {
        "name": "stamp_size",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "build stamp text size — \"CANARY 7IN\" at this and the REV/SRC line at 0.78 of it, the block centered on stamp_dy and asserted clear of the top egg row and the plate rim"
       }
      ]
     },

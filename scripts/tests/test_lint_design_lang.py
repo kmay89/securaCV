@@ -208,6 +208,8 @@ HELP_DEBT = {
     "canary_mount_adapters.scad": 0,
     "canary_outlet_cradle.scad": 0,
     "canary_relay_solar.scad": 8,      # opt_seal, wall_t..corner_r and gasket_* (two shared lines)
+    "canary_s3_lcd147.scad": 4,        # collar_on, opt_btn, light_seam, mark_show (bool options)
+    "canary_s3_lcd7.scad": 0,
     "canary_sense_gang.scad": 0,
     "canary_sense_stand.scad": 1,      # hinge_teeth (a bool option)
     "canary_shop_tools.scad": 0,

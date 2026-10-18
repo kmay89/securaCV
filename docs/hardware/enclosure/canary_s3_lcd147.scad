@@ -429,7 +429,7 @@ rib_l = 5.0;         // rib length along the board
 /* [Tolerances] */
 tol_slide = 0.20;    // board into its cavity
 tol_press = 0.10;    // skirt into the bezel
-tol_hole = 0.30;
+tol_hole = 0.30;     // catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the case has no screw holes)
 
 /* [Colorway] — preview spools only; per-part exports carry no color */
 colorway = "midnight"; // ["graphite","canary","snow","forest","midnight"] this stick's print-validated set is midnight: near-black body, canary ink, white band (canary_color_lib)
