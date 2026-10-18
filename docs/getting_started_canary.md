@@ -87,7 +87,7 @@ for the pairing receipt over your Wi-Fi — see
 **The setup network (every phone, every firmware).** On your phone, open
 Wi-Fi settings. You'll see a new network named something like:
 
-> **SecuraCV-4dC2**
+> **SecuraCV-wap-4dC2**
 
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is

@@ -87,6 +87,43 @@
 #endif
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
+/* The lean build's second documented cut (canary-display.ini, "The lean
+ * budget"): the widget classes no face on these glasses creates. The faces
+ * use obj, label, arc, roller, slider (and its bar), switch, line and the
+ * QR code (which draws on a canvas, which is an image) — ui/*.cpp's
+ * lv_*_create() calls are the list, and the roomier builds keep LVGL's
+ * defaults. Both majors' names are spelled (v8: BTN/BTNMATRIX/IMG/IMGBTN;
+ * v9: BUTTON/BUTTONMATRIX/IMAGE/IMAGEBUTTON); each ignores the other's. */
+#ifdef CD_LEAN_BUILD
+#define LV_USE_ANIMIMG      0
+#define LV_USE_ARCLABEL     0
+#define LV_USE_BTN          0
+#define LV_USE_BUTTON       0
+#define LV_USE_BTNMATRIX    0
+#define LV_USE_BUTTONMATRIX 0
+#define LV_USE_CALENDAR     0
+#define LV_USE_CHART        0
+#define LV_USE_CHECKBOX     0
+#define LV_USE_DROPDOWN     0
+#define LV_USE_IMGBTN       0
+#define LV_USE_IMAGEBUTTON  0
+#define LV_USE_KEYBOARD     0
+#define LV_USE_LED          0
+#define LV_USE_LIST         0
+#define LV_USE_MENU         0
+#define LV_USE_METER        0
+#define LV_USE_MSGBOX       0
+#define LV_USE_SCALE        0
+#define LV_USE_SPAN         0
+#define LV_USE_SPINBOX      0
+#define LV_USE_SPINNER      0
+#define LV_USE_TABLE        0
+#define LV_USE_TABVIEW      0
+#define LV_USE_TEXTAREA     0
+#define LV_USE_TILEVIEW     0
+#define LV_USE_WIN          0
+#endif
+
 #define LV_USE_LOG 0
 
 /* Proof-on-Glass: bundled QR generator (trailblazer spec §1). */

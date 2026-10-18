@@ -302,6 +302,15 @@ final class NearbyCanaryTests: XCTestCase {
         XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-aB3k"), "aB3k")
         XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-aB3k-x9"), "aB3k",
                        "the per-session tag after a non-durable key is not identity")
+        // The typed names (onboarding_fsm.h ap_ssid): the node type in front
+        // is not identity either — the same four characters follow it.
+        XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-sense-aB3k"), "aB3k")
+        XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-sentinel-aB3k-x9"), "aB3k")
+        XCTAssertEqual(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-display-CNRY"), "CNRY", "the fallback suffix")
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-Sense-aB3k"), "a type is lowercase")
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-s3nse-aB3k"), "a type has no digits")
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-sense-aB3k-x9z"), "a tag is two characters")
+        XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-a-b-c-d"))
         XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "HomeWiFi"))
         XCTAssertNil(NearbyCanaries.suffix(ofSetupSSID: "SecuraCV-ab"))
         // And the two halves meet: the setup network's characters match the

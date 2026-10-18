@@ -175,12 +175,20 @@ DEVICE_NAME_MAX = int(grab(SETUP_WIZARD_H, r"DEVICE_NAME_MAX\s*=\s*(\d+)", "DEVI
 DNS_PORT = int(grab(SETUP_WIZARD_H, r"DNS_PORT\s*=\s*(\d+)", "DNS_PORT"))
 NVS_NS = grab(SETUP_WIZARD_H, r'prefs\.begin\("([a-z]+)"', "NVS namespace")
 NVS_KEY = grab(SETUP_WIZARD_H, r'getBool\("([a-z_]+)"', "NVS setup key")
-AP_GRACE_MS = int(grab(INO, r"AP_DROP_GRACE_MS\s*=\s*(\d+)", "AP_DROP_GRACE_MS"))
+# The AP grace is the fleet's: the .ino defines it FROM onboarding_fsm.h's
+# Timing (the staged copy beside the sketch is what it compiles;
+# firmware/scripts/check_onboarding_sync.sh holds it to firmware/common), so
+# the number is read from that header, never typed here.
+ONBOARDING_FSM_H = FW / "onboarding_fsm.h"
+must(INO, "AP_DROP_GRACE_MS = canary::net::onboard::Timing{}.ap_hold_after_join_ms;",
+     "AP grace defined from the fleet's Timing")
+AP_GRACE_MS = int(grab(ONBOARDING_FSM_H, r"ap_hold_after_join_ms\s*=\s*(\d+);", "Timing.ap_hold_after_join_ms"))
 SETUP_TIMEOUT_MS = 15 * 60 * 1000
 must(SETUP_WIZARD_H, "SETUP_TIMEOUT_MS = 15UL * 60UL * 1000UL", "setup timeout")
 
 # AP ssid/password format are the load-bearing "how do I connect" facts.
-must(INO, '"SecuraCV-%s", suffix', "AP ssid format")
+must(INO, "canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_WAP, suffix, nullptr)",
+     "AP ssid format (the fleet's SecuraCV-<type>-<4>)")
 must(INO, '"cv-%s", encoded', "AP password format")
 must(INO, "securacv:ap-password:v1", "AP password derivation domain")
 must(INO, "WiFi.softAP(ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS)", "softAP call")
@@ -209,7 +217,8 @@ EX_FP_SERIAL = EX_FP.upper()
 # Every other identity example on the page is the same key's (sweep A29), as
 # the firmware derives each one from pubkey_fp[0..1]:
 #   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
-#   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+#   SSID       generate_ap_ssid:   onboarding_fsm.h's ap_ssid — "SecuraCV-" +
+#              the node type word ("wap") + "-" + the same suffix, same case
 #   mDNS host  generate_mdns_hostname, with no friendly name set:
 #              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
 # so the page shows the device id Home Assistant's tests use (DEVICE_ID,
@@ -231,8 +240,11 @@ must(INO, "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];", "unambiguous_su
 must(INO, "v = (uint16_t)(v / UNAMBIGUOUS_LEN);", "unambiguous_suffix16 radix step")
 must(INO, 'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
      "unnamed mDNS host fallback")
-if AP_SSID_PREFIX != "SecuraCV-":
-    die(f"AP_SSID_PREFIX {AP_SSID_PREFIX!r} is not generate_ap_ssid's literal \"SecuraCV-\"")
+# The prefix and the node type word are the shared header's, read, never typed.
+SSID_PREFIX = grab(ONBOARDING_FSM_H, r'SSID_PREFIX = "([^"]+)";', "onboarding SSID_PREFIX")
+NODE_WAP = grab(ONBOARDING_FSM_H, r'NODE_WAP\s*=\s*"([a-z]+)";', "onboarding NODE_WAP")
+if AP_SSID_PREFIX != SSID_PREFIX:
+    die(f"AP_SSID_PREFIX {AP_SSID_PREFIX!r} is not onboarding_fsm.h's SSID_PREFIX {SSID_PREFIX!r}")
 
 
 def unambiguous_suffix16(v: int) -> str:
@@ -247,7 +259,7 @@ def unambiguous_suffix16(v: int) -> str:
 _FP0, _FP1 = bytes.fromhex(EX_FP)[:2]
 EX_SUFFIX = unambiguous_suffix16((_FP0 << 8) | _FP1)
 EX_ID = f"{DEVICE_ID_PREFIX}{EX_SUFFIX}"
-EX_SSID = f"{AP_SSID_PREFIX}{EX_SUFFIX}"
+EX_SSID = f"{AP_SSID_PREFIX}{NODE_WAP}-{EX_SUFFIX}"
 EX_PASS = "cv-7Q2M9XKP4RTN"
 EX_MDNS = "canary-%02x%02x.local" % (_FP0, _FP1)
 must(MQTT_IDENTITY_H, 'kLowerHex[] = "0123456789abcdef"', "envelope fp spelled in lowercase")
@@ -262,9 +274,10 @@ must(INO, 'Serial.printf("[PROV] Public key fingerprint: %s\\n", g_device.finger
 AP = {
     "ssid_example": EX_SSID,
     "ssid_prefix": AP_SSID_PREFIX,
-    "ssid_note": "the last 4 chars are the first two bytes of your device's pubkey fingerprint "
-                 "in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), the same suffix, in the same "
-                 "case, as its device id — never the MAC",
+    "ssid_note": "the fleet's shape, SecuraCV-<node type>-<4>: the middle word says which kind of "
+                 "Canary raised it (wap), and the last 4 chars are the first two bytes of your "
+                 "device's pubkey fingerprint in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), "
+                 "the same suffix, in the same case, as its device id — never the MAC",
     "password_example": EX_PASS,
     "password_scheme": 'WPA2-PSK, device-unique: HMAC-SHA256(privkey, "securacv:ap-password:v1") -> "cv-" + 12 chars',
     "password_note": "printed on the serial console at first boot and on the box card; no shared default; release builds fail closed",

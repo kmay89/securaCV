@@ -142,6 +142,29 @@ bool wifi_credentials_configured() {
   return !is_placeholder(cfg.wifi_ssid);
 }
 
+bool forget_wifi_credentials() {
+  get();  // ensure the cache exists before we patch it
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) {
+    log_line("CFG", "NVS unavailable - nothing to forget.");
+    return false;
+  }
+  prefs.remove("wifi_ssid");
+  prefs.remove("wifi_pass");
+  // Trust the readback, not the calls: remove() also returns false for a
+  // key that never existed (the display's forget_wifi_credentials rule).
+  const bool gone = !prefs.isKey("wifi_ssid") && !prefs.isKey("wifi_pass");
+  prefs.end();
+  if (!gone) {
+    log_line("CFG", "NVS would not release the credentials - still joined.");
+    return false;
+  }
+  g_cfg.wifi_ssid[0] = '\0';
+  g_cfg.wifi_pass[0] = '\0';
+  log_line("CFG", "WiFi credentials forgotten - setup opens on next boot.");
+  return true;
+}
+
 bool set_wifi_credentials(const char* ssid, const char* pass) {
   if (ssid == nullptr || ssid[0] == '\0') return false;
   get();  // ensure the cache exists before we patch it

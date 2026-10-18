@@ -461,6 +461,8 @@ section "Security: Zero phone-home"
 DISCLOSED_OUTBOUND=$(printf '%s\t%s\t%s\n' \
   'canary-display/.*(tz_auto\.cpp|main\.cpp|canary_display\.ino)$' 'configTzTime\([^)]*"pool\.ntp\.org", *"time\.nist\.gov"' \
     'docs/security/SECURITY_MODEL.md disclosed outbound path 3 (SNTP, the display line)' \
+  'common/network/wifi_supervisor\.cpp$' 'configTzTime\(tz, time_sync::NTP_PRIMARY, time_sync::NTP_SECONDARY,' \
+    'docs/security/SECURITY_MODEL.md disclosed outbound path 3 (SNTP, the headless boards through the shared Wi-Fi supervisor: clock_sync.h'"'"'s two pools by name, the hub third)' \
   'canary-display/.*tz_auto\.cpp$' '\.begin\("http://ip-api\.com/' \
     'docs/security/SECURITY_MODEL.md disclosed outbound path 4 (timezone lookup, the display line: compile-time opt-in CD_TZ_WEB_LOOKUP)' \
   'canary-display/.*wx_direct\.cpp$' 'http\.begin\(client, WX_HOST, 443,.*WX_HOST = "api\.open-meteo\.com"' \
@@ -627,7 +629,9 @@ PLAINTEXT_OK=$(printf '%s\t%s\t%s\n' \
   'canary-display/.*glass_web\.cpp$' 'new WebServer\(80\)' \
     'display glass mirror: plaintext LAN, token-gated writes (THREAT_MODEL HTTP row)' \
   '(common/network/setup_portal\.cpp|canary-display/.*provision\.cpp)$' 'WebServer server\{80\}' \
-    'first-boot setup portal: captive sheets cannot render a self-signed certificate (tls_policy.h)')
+    'first-boot setup portal: captive sheets cannot render a self-signed certificate (tls_policy.h)' \
+  'common/network/node_http\.cpp$' 'new WebServer\(80\)' \
+    'headless nodes GET /api/status + /api/fleet: coarse by construction, read cross-origin by the Witness Wall (THREAT_MODEL HTTP row)')
 HTTP_RAW=$(grep -rEn 'server_port[[:space:]]*=[[:space:]]*80\b|WebServer[^;]*[({][[:space:]]*80[[:space:]]*[)}]|HTTP_PORT[[:space:]]*=?[[:space:]]*80\b|server\.begin[[:space:]]*\([[:space:]]*80' "${SRC_DIRS[@]}" 2>/dev/null \
   | grep -v "\.md:\|/tests_host/\|/test_\|\.pio/" \
   | drop_comment_lines \

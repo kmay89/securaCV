@@ -30,9 +30,9 @@
     ]
   },
   "ap": {
-    "ssid_example": "SecuraCV-4dC2",
+    "ssid_example": "SecuraCV-wap-4dC2",
     "ssid_prefix": "SecuraCV-",
-    "ssid_note": "the last 4 chars are the first two bytes of your device's pubkey fingerprint in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), the same suffix, in the same case, as its device id \u2014 never the MAC",
+    "ssid_note": "the fleet's shape, SecuraCV-<node type>-<4>: the middle word says which kind of Canary raised it (wap), and the last 4 chars are the first two bytes of your device's pubkey fingerprint in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), the same suffix, in the same case, as its device id \u2014 never the MAC",
     "password_example": "cv-7Q2M9XKP4RTN",
     "password_scheme": "WPA2-PSK, device-unique: HMAC-SHA256(privkey, \"securacv:ap-password:v1\") -> \"cv-\" + 12 chars",
     "password_note": "printed on the serial console at first boot and on the box card; no shared default; release builds fail closed",
@@ -387,7 +387,7 @@
       },
       {
         "tag": "[WIFI]",
-        "text": "AP started: SecuraCV-4dC2 (password: cv-7Q2M9XKP4RTN)"
+        "text": "AP started: SecuraCV-wap-4dC2 (password: cv-7Q2M9XKP4RTN)"
       },
       {
         "tag": "[..]",
@@ -439,7 +439,7 @@
       "",
       "    ------------------------------------------------",
       "    Device ID   canary-s3-4dC2",
-      "    WiFi AP     SecuraCV-4dC2",
+      "    WiFi AP     SecuraCV-wap-4dC2",
       "    Password    cv-7Q2M9XKP4RTN",
       "    Dashboard   http://192.168.4.1",
       "",

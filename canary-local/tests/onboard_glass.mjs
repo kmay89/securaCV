@@ -282,16 +282,26 @@ export function haloInk(fr, halo) {
  * than the background, by more than `margin`) and nothing is inked 3 px
  * outside it. Where that outside pixel is past the glass's edge (-1 from
  * haloInk) nothing can be inked there, and the stroke is held against the
- * background alone: the landscape nightlight's halo stands 2 px from the
- * panel's right edge (F157, F204). A circle reported wider or narrower than
- * lv_arc drew, or with no stroke, reads the glass's background (or nothing)
- * where the stroke should be. ink: haloInk(); bg: the glass's background
- * brightness. Returns a failure message, or null.
+ * background alone. Where the whole stroke band is past the edge too (-1 for both)
+ * the axis is unjudged: the landscape nightlight's ring runs off the
+ * panel's right edge by onboard_layout.h's rule (land_join: the QR card
+ * stands kMinGap from the edge and the ring concentric with it, so the
+ * text column keeps the scene's lines whole once the fleet's typed setup
+ * name made the join code a version-4 one — F157, F204), and its other
+ * three sides still hold the circle to the arc LVGL drew. A circle
+ * reported wider or narrower than lv_arc drew, or with no stroke, reads
+ * the glass's background (or nothing) where the stroke should be. ink:
+ * haloInk(); bg: the glass's background brightness. Returns a failure
+ * message, or null.
  */
 export function haloInked(ink, bg = 0, margin = 6) {
   const names = ["right", "left", "bottom", "top"];
   const bad = names.filter((n, i) => {
     const out = ink.outside[i];
+    // The whole stroke band AND the pixel outside it past the glass on this
+    // side: unjudged (a reported stroke of zero width reads -1 too, but its
+    // outside pixel is on the glass, so it is still held — and fails).
+    if (ink.stroke[i] < 0 && out < 0) return false;
     return !(ink.stroke[i] > Math.max(out, bg) + margin && (out < 0 || out <= bg + margin));
   });
   if (!bad.length) return null;

@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "wifi_join_policy.h"  // JoinFailure, shared fleet-wide
+#include "onboarding_fsm.h"    // onboard::State, the word every surface reports
 
 namespace canary::net {
 
@@ -53,6 +54,23 @@ JoinFailure wifi_last_failure();
 // "never been online" half matters just as much in the other direction: a
 // Canary that has run for months and loses its AP for ten minutes must never
 // throw away a good configuration and start advertising a setup network.
+//
+// AND, since the fleet's onboarding state machine (common/network/
+// onboarding_fsm.h, decision 2): true once a unit WITH saved networks has
+// been offline ten minutes, whatever the reason — a renamed SSID, a changed
+// password, a moved house is a human problem a glass can only hand back to a
+// human. Nothing is wiped: the wizard it raises runs OVER the saved networks
+// and keeps retrying them quietly underneath (provision.cpp), so a router
+// that was merely rebooting still closes the wizard with no human involved.
+// The outage clock starts when the link drops or the boot join gives up, and
+// a glass that has been online this power cycle reaches the shared policy's
+// five-minute reboot first — the rule here is for the unit that worked
+// yesterday and booted today into a network that is gone.
 bool wifi_wants_setup();
+
+// Where this glass stands in onboarding, in the fleet's one vocabulary
+// (onboarding_fsm.h derive(): unprovisioned / provisioning / joining /
+// provisioned / recovery) — GET /api/status reports its label.
+onboard::State wifi_onboarding_state();
 
 } // namespace canary::net

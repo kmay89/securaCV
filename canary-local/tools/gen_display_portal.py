@@ -36,6 +36,7 @@ the <style> block out of the JSON this writes).
 
 Sources of truth (in-repo, deterministic, offline):
   firmware/projects/canary-display/src/net/provision.cpp   PORTAL_HTML, routes, AP
+  firmware/common/network/onboarding_fsm.h                 the setup AP's name (SSID_PREFIX + node type)
   firmware/common/network/wifi_join_policy.h               join_failure_label()
 """
 
@@ -50,6 +51,7 @@ from _tooling import die, repo_root
 REPO = repo_root()
 PROVISION = REPO / "firmware/projects/canary-display/src/net/provision.cpp"
 JOIN_POLICY = REPO / "firmware/common/network/wifi_join_policy.h"
+ONBOARDING_FSM = REPO / "firmware/common/network/onboarding_fsm.h"
 OUT_JSON = REPO / "canary-local/devices/display_portal.json"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -154,7 +156,15 @@ def build() -> dict:
     dns_port = int(grab(PROVISION, r"ctx\.dns\.begin\((\d+)\);", "DNS port"))
 
     # ── the SoftAP ──────────────────────────────────────────────────────────
-    ssid_fmt = grab(PROVISION, r'snprintf\(ap_ssid, sizeof\(ap_ssid\), "(SecuraCV-%\.4s)"', "AP SSID format")
+    # The name is onboarding_fsm.h's one builder, with the display's node type:
+    # SecuraCV-<type>-<4 of the pseudonym> (a per-session "-tt" only on the
+    # store-refused path). Read the prefix and the type word off the header
+    # the firmware compiles, and the call that hands them over off provision.cpp.
+    node_type = grab(PROVISION, r'onboard::ap_ssid\(ap_ssid, sizeof\(ap_ssid\), onboard::(NODE_[A-Z]+),',
+                     "AP SSID builder call")
+    prefix = grab(ONBOARDING_FSM, r'(?:static|inline) constexpr const char\* SSID_PREFIX\s*= "([^"]+)";', "SSID_PREFIX")
+    type_word = grab(ONBOARDING_FSM, rf'(?:static|inline) constexpr const char\* {node_type}\s*= "([a-z]+)";', node_type)
+    ssid_fmt = f"{prefix}{type_word}-%.4s"
     pass_len = int(grab(PROVISION, r"constexpr size_t AP_PASS_LEN = (\d+);", "AP_PASS_LEN"))
     max_conn = int(grab(PROVISION, r"WiFi\.softAP\(ap_ssid, ap_pass, kApChannel, /\*hidden=\*/0, /\*max_conn=\*/(\d+)\)",
                         "softAP max_conn"))

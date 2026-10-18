@@ -23,4 +23,9 @@ void ota_init(const Topics& topics);
 // Call every loop() pass.
 void ota_loop(uint32_t now_ms);
 
+// The health-gated half of the A/B confirmation (docs/OTA.md §2): call every
+// loop pass with the board's notion of healthy; a pending image is confirmed
+// once that has held for the configured dwell.
+void ota_health_tick(uint32_t now_ms, bool healthy);
+
 } // namespace canary::net

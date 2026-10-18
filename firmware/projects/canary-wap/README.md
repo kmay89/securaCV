@@ -95,7 +95,7 @@ make monitor
 
 ### 3. Connect to Your Device
 
-1. Connect to WiFi: **SecuraCV-XXXX**
+1. Connect to WiFi: **SecuraCV-wap-XXXX**
    > **Security:** The AP password is device-unique (`cv-` + 12 chars, derived
    > from the device's private key) and is printed on the serial console at
    > first boot. There is no shared default password; release builds fail

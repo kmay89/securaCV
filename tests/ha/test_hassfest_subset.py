@@ -189,12 +189,18 @@ def test_the_hassfest_rule_check_catches_what_it_is_for() -> None:
     assert hassfest_string_problems("x", "usually http://DOCKER-HOST:8799 ({url})") == []
 
 
-async def test_services_yaml_renders_the_five_actions(hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry) -> None:
+async def test_services_yaml_renders_the_six_actions(hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry) -> None:
     """async_get_all_descriptions is what the UI reads: names, fields, selectors."""
     await setup_kernel_entry()
     descriptions = await async_get_all_descriptions(hass)
     actions = descriptions[DOMAIN]
-    assert set(actions) == {"start_watch", "end_watch", "list_watches", "verify", "export_evidence"}
+    assert set(actions) == {"start_watch", "end_watch", "list_watches", "verify", "export_evidence", "staged_update"}
+    staged = actions["staged_update"]
+    assert staged["name"] == "Staged firmware update"
+    assert "entity" in staged["fields"]["entity_id"]["selector"]
+    timeout = staged["fields"]["node_timeout"]["selector"]["number"]
+    assert (timeout["min"], timeout["max"], timeout["unit_of_measurement"]) == (60, 3600, "s")
+    assert staged["response"] == {"optional": True}
     export = actions["export_evidence"]
     assert export["name"] == "Export evidence"
     number = export["fields"]["window_hours"]["selector"]["number"]

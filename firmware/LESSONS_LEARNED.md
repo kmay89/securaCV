@@ -496,6 +496,85 @@
   the firmware source trees.
 - **Date learned:** 2026-04 (v1), 2026-06 (v2)
 
+### A Wi-Fi password field that only says "Password" is read as "create one"
+- **What happened:** Three captive portals (the shared one, the display's,
+  the WAP's legacy page) labeled the field under the picked SSID just
+  "Password"; the iOS `SecureField`s carried no `.textContentType`, so the
+  OS offered to *invent* a strong password; two flashers and the hub card
+  enforced an 8-character minimum the firmware never had. People typed a
+  new password of their own, the join failed with "Wrong password", and
+  nothing on the page said which password it meant.
+- **Root cause:** every portal was written on its own, and nowhere was it
+  stated what the field *is* — the password of the network you picked, as
+  it already exists, however short, or empty for an open network. Parity by
+  convention drifted on the one word that mattered.
+- **Fix:** `firmware/common/network/wifi_credential_policy.h` (with its JS
+  and Swift twins) is the one statement: label "WiFi network password", no
+  prefill, show/hide, no minimum length or complexity, 0–63 bytes, open
+  networks allowed; every portal, flasher and the app consume it; the three
+  client-side minimums are gone; the iOS fields are annotated so the OS
+  stops offering to make one up.
+- **Regression check:** `firmware/tests_host/test_wifi_credential_policy.cpp`,
+  `canary-local/tests/onboard.test.js` and `desktop_parity.test.js` (the two
+  flashers pinned to the same words), `ios/Tests/.../SetupPortalTests.swift`;
+  `check_wifi_credential_sync.sh` holds the staged copies to the header.
+- **Date learned:** 2026-10
+
+### A boot-time decision that reads a setting init() provides must wait for init() — or both must share one pure core
+- **What happened:** The OTA engine gained a confirm dwell: a freshly
+  installed image is marked valid only after 60 s of health
+  (`securacv_ota_health_tick`). The dwell length lives in the config that
+  `securacv_ota_init()` copies in — but every board runs
+  `securacv_ota_boot_self_test()` first (the probes must run before the
+  network comes up), so the probe saw a zero dwell, took the legacy branch
+  and confirmed the image at once. Six targets, one bug, no test caught it:
+  the host test covered the manifest rules, and the dwell lived only in the
+  device-side section of the engine. Review (Codex, PR #1816) found it.
+- **Root cause:** two call sites decided the same question from one piece
+  of state that only the later one had. "It defaults to 0" read as "the
+  legacy behavior" instead of "I do not know yet".
+- **Fix:** the dwell is a pure state machine (`securacv_ota_dwell_*` in the
+  host-visible part of `securacv_ota.cpp`): the probe arms it and never
+  confirms unless init() has already run with no dwell; init() resolves a
+  deferred probe (a dwell → the ticks; none → confirm now); the tick
+  confirms after the dwell has held. An engine-less build that can still
+  install (the flagship's `secure` envs) says so explicitly with
+  `securacv_ota_confirm_now()`. The otadata read happens only while a dwell
+  is armed — a reviewer's second finding: the rewrite had put it on every
+  loop pass for the life of the device.
+- **Regression check:** `test_confirm_dwell` in
+  `firmware/common/ota/test_ota_logic.cpp` runs the core in both call
+  orders, through an interrupted dwell, with no dwell, and across the
+  millis() wrap. The rule for the next one: when a decision depends on a
+  setting another call provides, make the decision a pure function both
+  calls feed, and host-test the order they are actually called in.
+- **Date learned:** 2026-10
+
+### A new outbound destination is disclosed at its call site, not reached through a table
+- **What happened:** The shared Wi-Fi supervisor gave Sense, Vision and the
+  Sentinel a wall clock (the brief's "NTP with hub fallback") by handing
+  `configTzTime()` a `Servers` table filled in `clock_sync.h`. The phone-home
+  scan in `regression_check.sh` flagged the call — but only because the
+  literal `"UTC0"` sat inside it; move that literal out and the scan would
+  have gone silent on a brand-new compiled-in destination, while
+  `SECURITY_MODEL.md` still said SNTP was a display-line path.
+- **Root cause:** "disclosed" means the scan can *see* the destination and
+  match it to the model's list. A host reached through a variable is
+  invisible to a source scan; a literal that happens to be nearby is luck,
+  not disclosure.
+- **Fix:** the call names the destinations — `configTzTime(tz,
+  time_sync::NTP_PRIMARY, time_sync::NTP_SECONDARY,
+  time_sync::hub_server(...))` — so the scan resolves each name to its host
+  and matches the new `DISCLOSED_OUTBOUND` entry, which points at
+  `SECURITY_MODEL.md` path 3; the model, the FAQ and `FAULT_MODEL.md` now
+  say which products sync and what the clock is for (the status page, not
+  the records). A `--check` or a scan that cannot see a value must flag it,
+  not pass it.
+- **Regression check:** `regression_check.sh`'s phone-home scan (a HIT on an
+  undisclosed call, a STALE on an entry that matches nothing);
+  `firmware/tests_host/test_clock_sync.cpp` pins the two hosts by name.
+- **Date learned:** 2026-10
+
 ### The onboarding wizard must feed the TWDT — the loop()-path re-raise runs watched
 - **What happened:** A Canary 7 (nightstand7) whose saved Wi-Fi could not join
   re-raised the on-glass setup wizard from loop() (`wifi_wants_setup`) — and

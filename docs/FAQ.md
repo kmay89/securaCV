@@ -96,14 +96,16 @@ The one honest footnote on the kernel is the iPhone app — see the next
 question. The other footnote is the Canaries themselves: a networked Canary
 talks to the MQTT broker *you* point it at, fetches a small signed update
 manifest once a day (no identifier rides on the request, and nothing installs
-unless you press Install or opt into Auto Update), and a display syncs its
-clock over SNTP and — only if you switch it on at the glass, on a display
-that has never had a hub configured — fetches an anonymous weather forecast.
+unless you press Install or opt into Auto Update), a Canary without GPS (a
+display, a Sense, a Vision, a Sentinel) syncs its clock over SNTP, and a
+display — only if you switch it on at the glass, on a display that has never
+had a hub configured — fetches an anonymous weather forecast.
 A Canary WAP used as its own access point makes no outbound connection at
 all. Every one of those paths is listed in
 [the security model](security/SECURITY_MODEL.md#the-networked-products-disclosed-outbound-paths),
-with the host test that pins its request shape where one exists (SNTP has
-none); none reaches us, because there is nothing of ours to reach. The
+with the host test that pins its request shape where one exists (SNTP's
+two hosts are pinned by name); none reaches us, because there is nothing
+of ours to reach. The
 desktop Flasher and Lab fetch their own updates, and any image you choose to
 flash, from the project's public GitHub releases.
 
@@ -525,11 +527,18 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
-`SecuraCV-XXXX` network when it is off your home network) — or tell it to
+`SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
 forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
 `/api/wifi/forget` route), which clears the stored network and opens the
-door again for half an hour from that moment. There is no button gesture
-that factory-resets a WAP today. A Canary whose saved network is just
+door again for half an hour from that moment. Holding a WAP's BOOT button
+for 10 seconds (the serial console says "keep holding" at 3 s) is its
+factory reset: the saved Wi-Fi networks, the broker settings, the device
+name and the first-boot flag are cleared and the setup wizard runs again;
+the Ed25519 identity key, the witness chain and the sealed records are
+kept, so every hub and display that pinned the key still recognizes it
+(every Canary with a BOOT button has the same 10-second hold —
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). A
+Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
 instead; fix the router, or use that network's printed key.
 

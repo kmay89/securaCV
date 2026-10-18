@@ -16,8 +16,14 @@
 //   dt         canonical device type — lowercase, hyphenated
 //              ("canary-vision" / "canary-sense" / "canary-wap")
 //   role       "witness" (sensors) or "display" (glance surfaces)
+//   hw         the pins header's board token (omitted when none)
+//   caps       what this build serves: status,fleet,ota,ble,beacon,peer,mqtt
+//   coord      who coordinates the hub-less fleet (peer_link)
 //   broker     MQTT broker gossip — ground-truth-only self-heal referral
 //   bport      (empty tombstone while the broker link is down)
+//
+// The set is enumerated by common/network/mdns_txt.h, in that order, on
+// every node — one schema, one browser.
 //
 // This variant is advertise-only: it never browses. The display and the
 // companion app do the querying (and the WAP relays the fleet into the
@@ -39,6 +45,11 @@ void mdns_loop(uint32_t now_ms);
 // dead endpoint is never re-seeded onto the LAN.
 void mdns_advertise_broker(const char* host, uint16_t port);
 void mdns_clear_broker();
+
+// The hub-less fleet's coordinator, as the peer link last elected it
+// ("hub" | "self" | a peer's fingerprint hex | ""): the `coord` TXT key.
+// Cheap when unchanged; re-applies the key when it is not.
+void mdns_set_coord(const char* word);
 
 // The unique host label claimed at init ("canary-vision-001-a1b2c3");
 // empty string until mdns_init() succeeds.

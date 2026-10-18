@@ -220,7 +220,7 @@ export function buildOnboardPhone(ctx, { note = () => {} } = {}) {
       list.append(r);
     }
     const key = el("input", "wap-input pw-masked");
-    key.placeholder = "Password (it's on the glass)";
+    key.placeholder = "Setup network key (it's on the glass)";
     key.autocomplete = "off";
     key.spellcheck = false;
     const msg = el("p", "ob-msg");
@@ -335,7 +335,8 @@ export function buildOnboardPhone(ctx, { note = () => {} } = {}) {
       body.append(ssidIn);
     }
     const pw = el("input", "wap-input pw-masked");
-    pw.placeholder = "Password";
+    pw.placeholder = "Wi-Fi network password";
+    pw.maxLength = 64;
     pw.autocomplete = "off";
     pw.spellcheck = false;
     const tz = el("select", "wap-input ob-tz");

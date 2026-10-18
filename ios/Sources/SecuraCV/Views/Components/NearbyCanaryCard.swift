@@ -518,14 +518,23 @@ struct NearbySetupSheet: View {
                     .font(.footnote).foregroundStyle(Theme.color(.warn))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !chosenIsOpen {
+            if chosenIsOpen {
+                Text(SetupPortal.openNetworkNote)
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
                 HStack {
+                    // An EXISTING network's password: `.password`, never
+                    // `.newPassword`, so iOS fills a saved one and offers to
+                    // invent nothing (LESSONS_LEARNED "iOS offers to invent a
+                    // password").
                     if showPassword {
-                        TextField("Wi-Fi password", text: $password)
+                        TextField(SetupPortal.passwordFieldLabel, text: $password)
+                            .textContentType(.password)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .focused($passwordFocused)
                     } else {
-                        SecureField("Wi-Fi password", text: $password)
+                        SecureField(SetupPortal.passwordFieldLabel, text: $password)
+                            .textContentType(.password)
                             .focused($passwordFocused)
                     }
                     Button { showPassword.toggle() } label: {
@@ -533,6 +542,9 @@ struct NearbySetupSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
+                Text(SetupPortal.passwordFieldHint)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(preflightHints, id: \.self) { hint in
                 Label(hint, systemImage: "info.circle")

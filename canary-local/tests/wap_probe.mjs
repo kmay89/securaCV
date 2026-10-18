@@ -84,8 +84,14 @@ try {
   await page.click(".wap-term .primary");
   const own = await page.waitForSelector(".wap-wifi-own", { timeout: 15000 }).catch(() => null);
   if (!own) fail("phone did not surface the SoftAP after power-on");
-  const ssid = (await own.textContent()) || "";
-  if (!/SecuraCV-/.test(ssid)) fail("SoftAP SSID not SecuraCV-*: " + ssid);
+  // The row is the name plus its lock/signal glyphs; the name alone is judged,
+  // by the shared matcher's grammar (onboarding_fsm.h is_setup_ssid,
+  // flash-core.js isSetupNetworkSsid): `SecuraCV-<type>-XXXX[-tt]`, or the
+  // older `SecuraCV-XXXX[-tt]`. A bare /SecuraCV-/ passed any name with the
+  // prefix. Inline, not imported: the probe drives the page as committed.
+  const ssid = ((await page.locator(".wap-wifi-own .wap-wifi-name").textContent()) || "").trim();
+  if (!/^SecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?$/.test(ssid))
+    fail("SoftAP SSID is not a setup network name: " + ssid);
 
   // captive sheet renders the firmware's own HTML (verbatim, in an iframe)
   await own.click();

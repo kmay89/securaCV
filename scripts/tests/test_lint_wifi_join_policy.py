@@ -298,6 +298,97 @@ char g_referral_host[64] = {0};
         self.assertEqual(problems_of(src), [])
 
 
+# A headless board's shim over the shared supervisor: builds the policy by
+# name, hands it over, decides nothing.
+SHIM = """\
+#include "canary/config.h"
+#include "network/wifi_join_policy.h"
+#include "network/wifi_supervisor.h"
+
+void wifi_init_or_reboot(void (*idle_poll)()) {
+  canary::net::WifiRetryPolicy p;
+  p.base_ms          = WIFI_RETRY_BASE_MS;
+  p.max_ms           = WIFI_RETRY_MAX_MS;
+  p.outage_reboot_ms = WIFI_OUTAGE_REBOOT_MS;
+  wifi_sup::Config pc{};
+  pc.product_name = "Canary Sense";
+  pc.boot_timeout_ms = WIFI_BOOT_TIMEOUT_MS;
+  pc.retry = p;
+  wifi_sup::begin(pc, idle_poll);
+}
+"""
+
+# The shared supervisor: decides through the header, knows no board.
+CORE = """\
+#include "network/wifi_supervisor.h"
+#include "network/wifi_join_policy.h"
+
+void loop(uint32_t now_ms) {
+  WifiRetry st;
+  st.ever_online = s_ever_online;
+  switch (wifi_next_action(s_cfg.retry, st, now_ms, s_jitter)) {
+    case WifiAction::Reboot:
+      ESP.restart();
+      break;
+    case WifiAction::Retry:
+      break;
+    case WifiAction::Wait:
+      break;
+  }
+}
+"""
+
+
+class ShimsAndTheSharedCore(unittest.TestCase):
+    """The headless boards' layout: one deciding core, thin per-board shims."""
+
+    def test_a_clean_shim(self):
+        self.assertEqual(lint.check_text("shim.cpp", SHIM, "shim"), [])
+
+    def test_a_clean_core(self):
+        self.assertEqual(lint.check_text("core.cpp", CORE, "core"), [])
+
+    def test_a_shim_that_decides_is_flagged(self):
+        src = SHIM + "\nvoid loop(uint32_t now) { canary::net::WifiRetry st; (void)st; }\n"
+        found = lint.check_text("shim.cpp", src, "shim")
+        self.assertTrue(any("a shim carries WifiRetry" in p for p in found), found)
+
+    def test_a_shim_that_keeps_the_policy_is_flagged(self):
+        src = SHIM.replace("  pc.retry = p;\n", "")
+        found = lint.check_text("shim.cpp", src, "shim")
+        self.assertTrue(any("handed to the core" in p for p in found), found)
+
+    def test_a_shim_built_from_a_literal_is_flagged(self):
+        src = SHIM.replace("p.max_ms           = WIFI_RETRY_MAX_MS;", "p.max_ms           = 30000;")
+        found = lint.check_text("shim.cpp", src, "shim")
+        self.assertTrue(any("not built from the board's tunables" in p for p in found), found)
+
+    def test_a_shim_without_the_core_is_flagged(self):
+        src = SHIM.replace("  wifi_sup::begin(pc, idle_poll);\n", "")
+        found = lint.check_text("shim.cpp", src, "shim")
+        self.assertTrue(any("wifi_sup::begin()" in p for p in found), found)
+
+    def test_a_core_that_builds_its_own_policy_is_flagged(self):
+        src = CORE + "\nstatic WifiRetryPolicy own() {\n  WifiRetryPolicy p;\n  p.base_ms = 2000;\n  return p;\n}\n"
+        found = lint.check_text("core.cpp", src, "core")
+        self.assertTrue(any("builds a WifiRetryPolicy of its own" in p for p in found), found)
+
+    def test_a_core_that_includes_a_board_config_is_flagged(self):
+        src = '#include "canary/config.h"\n' + CORE
+        found = lint.check_text("core.cpp", src, "core")
+        self.assertTrue(any("must know no board" in p for p in found), found)
+
+    def test_a_core_with_an_ungated_restart_is_flagged(self):
+        src = CORE + "\nvoid boot_timeout() { ESP.restart(); }\n"
+        found = lint.check_text("core.cpp", src, "core")
+        self.assertTrue(any("no evidence it is gated" in p for p in found), found)
+
+    def test_every_headless_board_is_a_shim_today(self):
+        for proj in ("canary-sense", "canary-sentinel", "canary-vision"):
+            self.assertIn(f"firmware/projects/{proj}/src/net/wifi_mgr.cpp", lint.SUPERVISOR_SHIMS)
+        self.assertIn("firmware/common/network/wifi_supervisor.cpp", lint.SHARED_SUPERVISORS)
+
+
 class EmulatorRunsTheDisplaysPolicy(unittest.TestCase):
     """canary.local previews the display; its Wi-Fi schedule must BE the display's."""
 
@@ -319,8 +410,8 @@ class RealTreeStaysClean(unittest.TestCase):
         # If this fails, either a board regressed or the lint did. Both are
         # worth stopping for. The generated Arduino copy joins when present.
         problems: list[str] = []
-        for rel in lint.WIFI_SUPERVISORS:
-            problems.extend(lint.check_file(rel))
+        for rel, kind in lint.listed():
+            problems.extend(lint.check_file(rel, kind))
         for rel in lint.GENERATED_COPIES:
             if (REPO / rel).exists():
                 problems.extend(lint.check_file(rel))

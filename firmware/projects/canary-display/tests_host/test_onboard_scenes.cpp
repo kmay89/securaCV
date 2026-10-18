@@ -181,7 +181,7 @@ lv_obj_t* mk_qrcode(lv_obj_t* parent, int32_t size_px) {
 // ── reading the glass ─────────────────────────────────────────────────────
 namespace {
 
-const char kSsid[] = "SecuraCV-A7K2";
+const char kSsid[] = "SecuraCV-display-A7K2";  // onboarding_fsm.h's typed name
 const char kPass[] = "p7Rm2Kqf";
 
 struct Run {

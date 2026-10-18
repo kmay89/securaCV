@@ -197,6 +197,7 @@ static canary::mode::Mode s_active_mode = canary::mode::Mode::Fleet;
 #include "ambient_life.h"  // rationed organic check-ins
 #if defined(BOOT_BUTTON_PIN) && (BOOT_BUTTON_PIN >= 0)
 #include "boot_button.h"     // short / double / long classifier
+#include "reset_hold.h"             // the fleet's 10 s factory-reset hold (common/)
 #endif
 #if defined(FEATURE_AMBIENT_LED) && FEATURE_AMBIENT_LED
 #include "ambient_led.h"  // WS2812 across-room state beacon
@@ -1379,9 +1380,10 @@ void setup() {
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
   boot_kv("Button",
           "BOOT: tap = peek, double = lantern, hold = acknowledge, keep "
-          "holding 5 s = pair demo");
+          "holding 5 s = pair demo, 10 s = factory reset (identity kept)");
 #else
-  boot_kv("Button", "BOOT: tap = peek, double = lantern, hold = acknowledge");
+  boot_kv("Button", "BOOT: tap = peek, double = lantern, hold = acknowledge, "
+                    "keep holding 10 s = factory reset (identity kept)");
 #endif
 #endif
 
@@ -1944,6 +1946,7 @@ void loop() {
   if (broker) {
     canary::net::mqtt_loop();
     canary::net::ota_loop(now);
+    canary::net::ota_health_tick(now, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
     if ((int32_t)(now - g_last_heartbeat_ms) >=
         (int32_t)(HEARTBEAT_MS * canary::diag::period_scale())) {
@@ -2047,6 +2050,48 @@ void loop() {
     }
 #endif
     const bool pressed = digitalRead(BOOT_BUTTON_PIN) == BOOT_BUTTON_ACTIVE;
+
+    // The fleet's factory-reset hold (common/io/reset_hold.h; onboarding_fsm.h
+    // decision 3), BESIDE the classifier on the same raw level. Warn at 3 s is
+    // advisory — a boot-log line, nothing on the glass. Reset at 10 s, while
+    // the hand is still on the button so the feedback lands: the saved
+    // networks (the whole ring, and the setup AP's stored key) and the screen
+    // settings go; the witness identity stays — it is this unit's birth
+    // certificate, and every hub and display that pinned it would otherwise
+    // meet a stranger. The reboot into the setup wizard waits for the RELEASE
+    // edge, not because the erase does (it is done at 10 s), but because
+    // BOOT is GPIO0 on the boards that carry it — a strapping pin — and a
+    // reset with it held low is the ROM's download-mode gesture, not ours.
+    // En route, the 900 ms acknowledge and (FEATURE_PAIR_DEMO) the 5 s pair
+    // demo gate fire as they would for any hold: a hand that keeps going past
+    // them is read as the reset it became, and the demo card closes with the
+    // reboot.
+    static canary::io::ResetHold s_reset_hold;
+    static bool s_reset_armed = false;  // erased at 10 s; the reboot owed on release
+    switch (s_reset_hold.step(pressed, now)) {
+      case canary::io::HoldEvent::Warn:
+        boot_line("[input] BOOT held 3 s -> keep holding to 10 s for a factory reset");
+        break;
+      case canary::io::HoldEvent::Reset:
+        boot_line("[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)");
+        canary::cfg::forget_wifi_credentials();
+        canary::glass::settings_reset();
+        if (!canary::glass::settings_flush()) {
+          boot_line("[input] screen settings would not save - defaults are RAM-only until the next commit");
+        }
+        s_reset_armed = true;
+        boot_line("[input] release BOOT to restart into setup");
+        break;
+      case canary::io::HoldEvent::Released:
+        if (s_reset_armed && s_reset_hold.released_stage >= 2) {
+          s_reset_armed = false;
+          delay(200);
+          ESP.restart();
+        }
+        break;
+      default:
+        break;
+    }
 
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
     // The First Light open gesture rides BESIDE the classifier on the same

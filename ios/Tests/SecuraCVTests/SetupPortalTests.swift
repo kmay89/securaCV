@@ -10,11 +10,32 @@ import XCTest
 final class SetupPortalTests: XCTestCase {
 
     func testSetupNetworkNames() {
+        // The vectors of firmware/tests_host/test_onboarding_fsm.cpp
+        // the_matcher_accepts_every_shape_ever_emitted: the Swift twin of
+        // onboarding_fsm.h is_setup_ssid says exactly what the firmware says.
+        for ssid in ["SecuraCV-4dC2", "SecuraCV-4dC2-k7", "SecuraCV-sense-4dC2",
+                     "SecuraCV-sentinel-4dC2-k7", "SecuraCV-display-CNRY"] {
+            XCTAssertTrue(SetupPortal.isSetupNetwork(ssid), ssid)
+        }
+        for ssid in ["SecuraCV-4dC", "SecuraCV-4dC2x", "SecuraCV-4dC2-", "SecuraCV-4dC2-k",
+                     "SecuraCV-Sense-4dC2", "SecuraCV-s3nse-4dC2", "SecuraCV-vision-4dC2-k7x",
+                     "SecuraCV-a-b-c-d", "securacv-4dC2", "MyWiFi", "SecuraCV-", "SecuraCV-4d C2"] {
+            XCTAssertFalse(SetupPortal.isSetupNetwork(ssid), ssid)
+        }
+        // Every node type the firmware names, plain and tagged; a ninth letter is not a type.
+        for type in ["canary", "wap", "vision", "sense", "sentinel", "display"] {
+            XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-\(type)-A1B2"), type)
+            XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-\(type)-A1B2-xy"), type)
+        }
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-sentinels-A1B2"))
+        // ASCII only, as the firmware reads it: a letter outside ASCII is not alphanumeric here.
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1Bé"))
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-sensé-A1B2"))
+        // The names this test pinned before the type word existed still hold.
         XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-A1B2"))
         XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-A1B2-xy"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1B"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1B2-x"))
-        XCTAssertFalse(SetupPortal.isSetupNetwork("securacv-A1B2"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("MyHomeWiFi"))
     }
 
@@ -125,9 +146,28 @@ final class SetupPortalTests: XCTestCase {
     }
 
     func testAPasswordThatCanNeverWorkIsNamedBeforeSending() {
-        XCTAssertNotNil(SetupPortal.passwordHint("short", networkIsOpen: false))
+        // No minimum: the router sets its own rule (WEP 5/13, WPA3 any length,
+        // WPA2 8..63), and the Canary's live verdict reports a refusal. The
+        // firmware never had a floor; the app must not add one — the twin of
+        // firmware/common/network/wifi_credential_policy.h and its host test.
+        XCTAssertNil(SetupPortal.passwordHint("short", networkIsOpen: false), "a short password is the router's business")
+        XCTAssertNil(SetupPortal.passwordHint("a", networkIsOpen: false))
         XCTAssertNil(SetupPortal.passwordHint("long enough", networkIsOpen: false))
         XCTAssertNil(SetupPortal.passwordHint("", networkIsOpen: false), "nothing typed yet is not an error")
-        XCTAssertNil(SetupPortal.passwordHint("short", networkIsOpen: true), "an open network takes none")
+        XCTAssertNil(SetupPortal.passwordHint(String(repeating: "p", count: 64), networkIsOpen: false), "64 bytes is a hex key")
+        XCTAssertNotNil(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: false), "65 bytes is what the firmware refuses")
+        XCTAssertEqual(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: false),
+                       "A Wi-Fi password is at most 64 characters.")
+        XCTAssertNil(SetupPortal.passwordHint(String(repeating: "p", count: 65), networkIsOpen: true), "an open network takes none")
+        // The words beside the field name whose password it is, and never ask
+        // for a new one.
+        XCTAssertEqual(SetupPortal.passwordFieldLabel, "Wi-Fi network password")
+        XCTAssertTrue(SetupPortal.passwordFieldHint.contains("already use"))
+        XCTAssertTrue(SetupPortal.passwordFieldHint.contains("Nothing to invent"))
+        for words in [SetupPortal.passwordFieldLabel, SetupPortal.passwordFieldHint, SetupPortal.openNetworkNote] {
+            XCTAssertFalse(words.lowercased().contains("create"), words)
+            XCTAssertFalse(words.lowercased().contains("choose"), words)
+            XCTAssertFalse(words.contains("at least"), words)
+        }
     }
 }

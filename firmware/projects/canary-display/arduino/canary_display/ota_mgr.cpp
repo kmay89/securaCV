@@ -124,6 +124,20 @@ void ota_init(const Topics& topics) {
   cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
   cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
   cfg.on_progress      = on_progress;
+  // The hardware binding a manifest_version 2 manifest is checked against
+  // (docs/OTA.md §3): the pins header's board token and the IDF target this
+  // image was built for — the 7" glass serves two products, and this is what
+  // keeps a dash7 image off a nightstand7 under the right product id.
+#ifdef CANARY_FIGURE_HARDWARE
+  cfg.board            = CANARY_FIGURE_HARDWARE;
+#endif
+#ifdef CONFIG_IDF_TARGET
+  cfg.chip             = CONFIG_IDF_TARGET;
+#endif
+  // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
+  // image pending and ota_health_tick() confirms it after a minute of the
+  // link holding, so a crash loop inside that minute rolls back.
+  cfg.confirm_dwell_ms = 60000;
   if (securacv_ota_init(&cfg) == ESP_OK) {
     log_line("OTA", "Pull-OTA engine ready.");
   } else {
@@ -152,6 +166,10 @@ void ota_init(const Topics& topics) {
   // First check a couple of minutes after boot (jittered) so a fresh
   // install learns about updates right away; then daily.
   schedule_next(120000UL, 60000UL);
+}
+
+void ota_health_tick(uint32_t now_ms, bool healthy) {
+  securacv_ota_health_tick(now_ms, healthy);
 }
 
 void ota_loop(uint32_t now_ms) {
@@ -277,7 +295,21 @@ OtaWebStatus ota_web_status() {
   s.update_available = securacv_ota_update_available();
   s.auto_update = securacv_ota_get_auto_update();
   s.progress = securacv_ota_get_progress();
+  s.pending_verify = securacv_ota_pending_verify();
   return s;
+}
+
+const char* ota_web_state_word() {
+  switch (securacv_ota_get_state()) {
+    case SECURACV_OTA_IDLE:        return "idle";
+    case SECURACV_OTA_CHECKING:    return "checking";
+    case SECURACV_OTA_DOWNLOADING: return "downloading";
+    case SECURACV_OTA_VERIFYING:   return "verifying";
+    case SECURACV_OTA_FLASHING:    return "flashing";
+    case SECURACV_OTA_REBOOTING:   return "rebooting";
+    case SECURACV_OTA_ERROR:       return "error";
+  }
+  return "idle";
 }
 
 OtaKick ota_web_check() {

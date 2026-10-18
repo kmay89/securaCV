@@ -45,12 +45,23 @@ const RuntimeConfig& get();
 // of joining a network no router has ever announced ("ci-placeholder").
 bool wifi_credentials_configured();
 
+// True when a REAL broker is configured (not the CI / generic placeholder):
+// what the status surfaces call "a hub is configured" and what the clock
+// sync uses as its third SNTP server.
+bool mqtt_credentials_configured();
+
 // Persist credentials the setup portal tested successfully (and patch the
 // cached config, so a join in this same boot uses them). Empty pass = open
 // network. No-op on an empty ssid. Returns whether the store VERIFIABLY
 // holds them (readback, not the write calls) — false means this boot works
 // from the patched cache but the next boot re-opens setup.
 bool set_wifi_credentials(const char* ssid, const char* pass);
+
+// Forget the saved network (the credentials half of a factory reset, and the
+// shared supervisor's persist_current("", "")). Returns whether the store
+// VERIFIABLY let go (readback) — a remove that silently failed is exactly the
+// case where rebooting into "setup will open" would be a lie.
+bool forget_wifi_credentials();
 
 // Persist a broker handed over at runtime (the Bluetooth setup door's hub
 // hand-off) and patch the cached config, so the MQTT manager's next bind in

@@ -51,6 +51,9 @@ namespace net {
 struct SetupPortalConfig {
   /// Product name the wizard page shows, e.g. "Canary Sense".
   const char* product_name;
+  /// One of onboarding_fsm.h's NODE_* words — the setup AP's middle word
+  /// (`SecuraCV-sense-4dC2`). Null or empty = the legacy `SecuraCV-4dC2`.
+  const char* node_type;
   /// Device-unique SSID suffix (>= 4 chars used), derived from the salted
   /// pseudonym or pubkey fingerprint — never from the MAC.
   const char* id_suffix;
@@ -68,6 +71,11 @@ struct SetupPortalConfig {
   /// have_saved_credentials is false). Implemented by the board's wifi_mgr
   /// as a plain WiFi.begin(saved_ssid, saved_pass).
   void (*begin_saved)();
+  /// Optional: the wizard's "name it" field and the phone's time zone
+  /// (IANA, from the page's Intl API), handed over once the join succeeded.
+  /// Either may be empty. Null = the page still shows the field, the values
+  /// are dropped. Return = durable (logged, never fatal).
+  bool (*save_identity)(const char* name, const char* tz);
   /// The portal was raised UNDER a live STA link (a BOOT tap on a device
   /// that already has a network, for the Bluetooth door's minute): a
   /// WL_CONNECTED seen while Waiting is that link, not a join to report —
@@ -117,6 +125,13 @@ bool setup_portal_take_joined();
 
 /** @brief Tear down unconditionally (rare; teardown is normally automatic). */
 void setup_portal_stop();
+
+/** @brief A phone has handed credentials this AP session (through the page
+ *  or the Bluetooth door) — onboarding_fsm.h's "provisioning" fact. */
+bool setup_portal_credentials_submitted();
+
+/** @brief The setup AP's current name, "" while the portal is down. */
+const char* setup_portal_ap_ssid();
 
 // ── The second door: a join handed in over Improv Wi-Fi (BLE) ─────────────
 // The portal is up exactly when a phone may hand this device its Wi-Fi, so

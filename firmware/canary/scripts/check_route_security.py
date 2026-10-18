@@ -133,6 +133,12 @@ PUBLIC_ALLOWLIST = {
     # fallback (registered LAST: 302 → /setup while setup is active, else 404)
     # and, with FEATURE_HTTPS, the port-80 server's redirect to https://.
     # Neither serves content.
+    # The roll-call the Witness Wall polls (tvos/discovery/DISCOVERY.md): the
+    # same coarse body the display and the WAP serve open, read cross-origin
+    # by a television — name, product, online, chain, hub; never a key, a
+    # MAC or an address. Rate-limited like every route. docs/TRUST_MODEL.md.
+    ("GET", "/api/fleet"): "Witness Wall roll-call: coarse by construction, CORS-open (DISCOVERY.md)",
+    ("OPTIONS", "/api/fleet"): "CORS preflight for the roll-call; serves nothing",
     ("GET", "/*"): "captive wildcard fallback / port-80 https redirect; serves nothing",
     ("POST", "/*"): "FEATURE_HTTPS port-80 server: 307 to https://, serves nothing (F15)",
 }
