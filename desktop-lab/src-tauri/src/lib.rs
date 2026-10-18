@@ -256,6 +256,7 @@ pub fn run() {
             flash::fetch_manifest,
             flash::flash,
             flash::start_serial_monitor,
+            flash::serial_monitor_send,
             flash::stop_serial_monitor,
             witness_discover,
             fleet::fleet_scan,

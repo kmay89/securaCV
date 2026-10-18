@@ -227,22 +227,37 @@ a noisy period, set `default_ceiling_per_hour` defensively — the runtime
 caps the burst and the bundler still surfaces a single summary row.
 
 The ceiling counts rows, not emits. An emit that opens a bundle spends one
-slot; an emit merged into its key's open bundle spends none; and a bundle
-reopened after its 10-minute window or its 2-minute quiet gap spends one
-like any opening. Re-emitting a held state to refresh its row is therefore
-free inside the window, but a state held past the window reopens every 10
-minutes, which is 6 slots an hour. A ceiling at or under that rate is full
-after about an hour in one state, and then the module's next transition is
-refused until a slot ages out, up to about ten minutes (the ceiling is
-checked before the bundler runs, so the held state's own refreshes are
-refused too). Size the ceiling
-above the window rate plus the transitions you need to keep.
+slot. An emit that merges into its key's open bundle spends none and is
+never refused, even at a full ceiling: the chokepoint asks the bundler
+first (`csi_bundler_peek()`), on the values it has already cleaned, and by
+the bundler's own expiry, so a bundle past its 2-minute quiet gap or its
+10-minute window is not one it merges into. A bundle reopened after its
+window or its gap spends one slot like any opening. Re-emitting a held
+state to refresh its row is therefore free while its bundle is open, but a
+state held past the window reopens every 10 minutes, which is 6 slots an
+hour. So that a held state cannot shut out the change that ends it, a
+ceiling of two or more keeps its last slot for an opening whose (type,
+state) differs from the module's most recent opening (sweep F90). A state
+held on its own therefore opens at most the ceiling less one of its own
+bundles in the counter's hour; the window it cannot reopen goes without an
+open row until a slot ages out, up to about a bucket plus one refresh
+interval (about ten minutes); and the transition out of it is admitted at
+once. The rule is every capped module's, alarm rows included: a tamper or
+anomaly kind repeated in one state gets the ceiling less one an hour, the
+last slot kept for a different kind. A ceiling of 1 has no slot to
+spare: the held state's reopening takes it, and a transition waits until it
+ages out, as before. A row that commits at the emit (ambient, or no
+`state_name`) is not an opening: it takes any free slot, the last
+included, and leaves the module's most recent opening as it was. Size the
+ceiling above the window rate plus the transitions you need to keep.
 
 The ceiling's hour is six 10-minute buckets, the current one and the five
-before it, not a sliding 60 minutes. Any six consecutive buckets hold at
-most the ceiling's openings, but openings that bunch at a bucket edge can
-put up to twice the ceiling in one sliding hour, and a bundled row commits
-when its bundle closes, after the bucket that counted it (sweep F132).
+before it, not a sliding 60 minutes, and that is the decision (sweep F132;
+`csi_event_set_module_ceiling()` in `csi_event.h` says so too). Any six
+consecutive buckets hold at most the ceiling's openings, but openings that
+bunch at a bucket edge can put up to twice the ceiling in one sliding hour,
+and a bundled row commits when its bundle closes, after the bucket that
+counted it.
 
 ## Dismiss feedback
 
@@ -340,7 +355,7 @@ alongside them — the host's `register_v1_modules()` is a one-line edit.
 | `anomaly.baseline` | P0 | `unusual_motion`, `unusual_breathing` | 60-window rolling baseline of motion / breathing scalars; emits when the current sample exceeds the baseline by `spike_ratio` (default 2.5×) AND clears the absolute floor. Per-channel cooldown prevents notification floods; ranges are clamped at NVS read so a corrupt slot can't break the detector. |
 | `core.multilink_fusion` | P0 | `motion_confirmed` | Two-link motion confirmation: emits on the rising edge when the local window and at least one fresh paired peer's window (under 3 s old) both clear the motion threshold. Registered in both trees, but no production path calls `core_multilink_fusion_ingest_peer_features()` yet, so with no peer windows it never fires. Host-tested (`firmware/common/csi/test_core_multilink_fusion.cpp`). |
 | `meta.empty_room_baseline` | P0 | `baseline_status` | Empty-room calibration: while a calibration runs, accumulates each window's 32-slot vector into an in-RAM mean and emits `baseline_status` (`calibrated` / `canceled` / `failed`) with the window count. Registered in both trees; nothing in the firmware starts a calibration yet, nothing reads the mean, and the mean lives in RAM only. |
-| `wifi.channel_activity` | P0 | `channel_active` | Ambient, unattributed "the airwaves got busy" glow from the RSSI spread (`v[21]`) and the dropped-frame estimate (`v[25]`) against the room's own rolling baseline. `CSI_CATEGORY_AMBIENT`: the chokepoint never persists it (live UI only). Registered in both trees. |
+| `wifi.channel_activity` | P0 | `channel_active` | Ambient, unattributed "the airwaves got busy" glow from the RSSI spread (`v[21]`) and the dropped-frame estimate (`v[25]`) against the room's own rolling baseline. `CSI_CATEGORY_AMBIENT`: the chokepoint never persists it (live UI only). Registered in both trees. Its three knobs, `spike_ratio` (250, that is 2.5×), `min_activity` (25) and `cooldown_sec` (5 s), are compile-time defaults: neither tree's NVS key map has a row for them and the Tuning Lab lists none, so they always read their defaults (sweep F122). |
 | `meta.quiet_hours` | P0 | `held_summary` | Manifest only: the chokepoint synthesizes one `held_summary` row when a configured quiet window closes, and registering this module is what lets that emit pass the allow-list. canary-wap only. |
 | `system.integrity` | P0 | `tamper` | The device's own integrity story: `unexpected_reboot`, `watchdog`, `power_loss` from the reset reason, `sd_error` / `sd_remove` from the SD state, and `enclosure` only on a `FEATURE_TAMPER_GPIO` build that feeds a real contact. `CSI_CATEGORY_ANOMALY`; each emit is sealed at once. Registered in both trees. |
 | `ble.events` | P0 | `ble_initialized`, `ble_init_failed`, `ble_client_connected`, `ble_client_disconnected`, `chirp_sent`, `chirp_received`, `canary_discovered`, `canary_lost` | Chokepoint-routed manifest for the eight BLE Discovery semantic events declared in `spec/event_contract.md` §10. Per-event allow-lists strip MAC-precision fields (motion / breathing / RSSI proxies); peer identification uses the truncated Ed25519 pubkey hash (≤16 hex chars) carried in `note`. Helpers in `ble_events_module.h` (e.g. `ble_events_emit_chirp_sent("boot")`) are the only legitimate BLE → witness-chain path going forward — direct `create_witness_record()` calls from the BLE stack would bypass the privacy contract. |

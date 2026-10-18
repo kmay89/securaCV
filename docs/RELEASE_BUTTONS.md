@@ -34,8 +34,9 @@ dispatches only the ones that are ahead. Everything else it reports and skips.
 | firmware, but no OTA signing key | reports it gated, with the ceremony |
 
 **Use it:** whenever you want the world to be current and don't want to think
-about which targets moved. Pressing it twice costs nothing the second time —
-that's the design.
+about which targets moved (everything but the kernel, which has no row: see
+[The kernel: not released yet](#the-kernel-not-released-yet) below). Pressing
+it twice costs nothing the second time — that's the design.
 
 **Don't:** reach for a narrower button first. This one is the only thing that
 knows the whole graph.
@@ -154,6 +155,58 @@ can't be *triggered* by a CI publish — they have to be **called**. This
 workflow calls both, and calls the pointer as a reusable workflow so a broken
 updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
+
+### The kernel: not released yet
+
+The Rust kernel (the `witness-kernel` crate; `Cargo.toml` said `0.8.0` on
+2026-10-14) **has never been released**: no `v*` tag and no `v*` release
+exist, and `release.yml` has no recorded run (tags, releases and Actions API,
+2026-10-14). There is no button for it, and the master button
+does not ship it — `.github/release-targets.yml` has no kernel row, on purpose
+(its header says why), so the plan never names the kernel and `only:` has no
+kernel choice.
+
+**How one would be cut.** Only by pushing a `v*` tag: `release.yml` listens
+for that and nothing else (`contents: write`, `packages: write`). It runs the
+crate's fmt, clippy and tests, builds the x86_64 Linux binaries, publishes them
+as one tarball with `sha256sums.txt` and a provenance attestation, puts
+`releases/latest` back on the firmware, and attaches the SBOMs. The tag *is*
+the version: nothing checks it against `Cargo.toml`, and the release notes are
+`CHANGELOG.md`'s `## [<version>]` section, or just "Release <version>" when
+there is none, so add that section before you tag. The same tag also runs
+`addon-image.yml` and `docker-sidecar.yml`, which listen for `v*` tags too.
+Each rebuilds from the tagged commit and re-pushes its GHCR image as
+`:<privacy_witness_kernel/config.yaml version>` and `:latest`, so tag a
+commit that is current `main`, or both `:latest` tags move backwards and the
+app's `:<version>` (the tag the Supervisor installs) is overwritten with
+older bits.
+
+**Don't:** read a moving `Cargo.toml` version as a kernel release. The version
+is shared with the Home Assistant integration and app
+(`scripts/bump_version.sh` writes all four places), and those ship by their
+own routes: the HACS mirror, the app image (`addon-image.yml`) and the
+Frigate sidecar image (`docker-sidecar.yml`), which publish from `main` and
+again on any `v*` tag. The standalone `witnessd` image ships from `main` too
+(`container-images.yml`, `:latest` and the commit sha, never a version tag).
+Nor read `CHANGELOG.md`'s dated `## [0.1.0]` through `## [0.7.0]` headings as
+kernel releases: they record what landed under each version number, and none
+was ever tagged `v*` or published by `release.yml`.
+
+**The follow-up, when a release is wanted** (sweep CI10, option (a)): give
+`release.yml` a `workflow_dispatch` with a `version` input whose first step
+creates and pushes `v${version}`, and make every other read of the ref follow
+the input: checkout and the changelog step (today `GITHUB_REF_NAME`), the
+`softprops/action-gh-release` step (it needs `tag_name: v${{ inputs.version }}`;
+without one it uses the run's ref, a branch on a dispatch) and the `sbom`
+job's `tag:` (today `${{ github.ref_name }}`). A tag the workflow pushes with
+its own `GITHUB_TOKEN` starts no other workflow, so on that path
+`addon-image.yml` and `docker-sidecar.yml` do not run. Then add a `kernel`
+row to `release-targets.yml` (versioned; version file `Cargo.toml`; tag
+prefix `v`; watching `src`, `Cargo.toml` and `Cargo.lock`), a
+`test_release_plan.py` case, and `kernel` in `release-everything.yml`'s
+`only` choices. A row added before that dispatch exists would plan the first
+release on the next press with `publish` ticked and fail to start it:
+`release.yml` cannot be dispatched today.
 
 ---
 

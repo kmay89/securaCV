@@ -24,8 +24,9 @@
 // "loop" for update()'s passes (given on the handler's sleeps, in the stub
 // vTaskDelay), "nimble" for the NimBLE host's callbacks, "bringup" for the
 // boot worker's init(). The handlers' own source is held by
-// firmware/scripts/check_wap_loop_commands.py (ArduinoJson, which they build
-// their answers with, is not on the host).
+// firmware/scripts/check_wap_loop_commands.py; since sweep F235 the real
+// handlers are also compiled here, over stand-ins for ArduinoJson and
+// esp_http_server (stubs/bt), and the bring-up tests tap them.
 //
 // And POST /api/bluetooth/settings's "enabled" (sweep F144): set_settings()
 // decided the change after assigning the new settings, so both of its
@@ -70,6 +71,16 @@
 // events label the connection card; the inactivity timeout drops only the
 // recorded link.
 //
+// And sweep F235: Start Advertising and Pair brought the stack up only when
+// the published setting said Bluetooth was off, so on a device saved on
+// whose boot bring-up failed or the heap guard refused, every tap answered
+// a failed start and the stack stayed down. A tap that needs the stack now
+// brings it up whenever it is down, names a refusal, and answers 503 "still
+// starting" while another task's bring-up runs. F235's review: on a device
+// saved on, Start Advertising and Pair leave the stack to the sketch's boot
+// bring-up until it is over (the join window, safe mode, the worker and
+// the finalize stage's own NimBLE inits), answering 503 meanwhile.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
@@ -81,6 +92,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -176,6 +188,34 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 #pragma GCC diagnostic pop
 
 #include "http_status_line.h"   // the status line a Bluetooth not-run answer sends
+#include "json_strict.h"        // the answers parse as a browser's JSON.parse reads them (F261)
+
+// The REST handlers themselves (sweep F235): the REAL bluetooth_api.h, over
+// stand-ins for ArduinoJson (stubs/bt/ArduinoJson.h) and esp_http_server
+// (stubs/bt/esp_http_server.h), so a test taps Start Advertising, Pair,
+// Enable and the settings POST as a device's HTTP server would and reads the
+// status line and the answer they send. The auth gate and the OTA status
+// route are not these tests'.
+#include "esp_http_server.h"
+#define SECURACV_API_AUTH_H
+inline bool api_auth_check(httpd_req_t*, const char*) { return true; }
+namespace ble_ota {
+enum OtaState : uint8_t { OTA_IDLE = 0 };
+inline OtaState get_state() { return OTA_IDLE; }
+inline uint32_t get_progress_percent() { return 0; }
+inline uint32_t get_image_size() { return 0; }
+inline uint32_t get_bytes_received() { return 0; }
+inline const char* last_error() { return ""; }
+inline const char* state_name(OtaState) { return "idle"; }
+inline bool last_break_glass() { return false; }
+}  // namespace ble_ota
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++20-extensions"   // register_api_handler()'s designated initializer
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#include "bluetooth_api.h"
+#pragma GCC diagnostic pop
 
 // What the sketch links in on a device (canary_wap.ino and the BLE modules).
 // The health log keeps each line's message, detail, level and the task that
@@ -309,6 +349,7 @@ void boot(bool bring_up = true, bool wipe = true) {
   host_sim::bonds_busy.clear();
   host_sim::before_unpair = nullptr;
   host_sim::max_bonds = 3;                 // NimBLE's store (F189), as at power-up
+  host_sim::nimble_init_fails = false;     // NimBLE comes up unless a test says it fails (F235)
   host_sim::sm_procs = 0;
   host_sim::device_callbacks = &host_sim::default_device_callbacks;
   host_sim::full_events = 0;
@@ -333,6 +374,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_scanners_held = false;             // the long path's init(), scanners started
   bc::g_meta_hold_scanners = false;        // no hold pushed to the next init()
   bc::g_advertise_after_bringup = false;
+  bc::g_boot_bring_up_tried = false;       // F235's review: the sketch's bring-up is not over
+  bc::g_boot_bring_up_started = false;     // nor started (wave 16's verify)
   bc::g_init_fail_reason = "";
   bc::g_server = nullptr;                  // the stack's objects went with the stack
   bc::g_service = nullptr;
@@ -2328,7 +2371,9 @@ void test_a_refused_bring_up_publishes_its_reason_whole() {
 // after its write of the flag and before its publish: the loop task's write
 // in flight, which a handler on another task could meet), and the command's
 // value as soon as its answer is posted. The threaded test below reads it
-// under TSAN.
+// under TSAN. (Since sweep F235 no handler decides a bring-up from it: the
+// stack being down, not the setting, does. It stays any task's race-free
+// read of the setting.)
 void test_the_handlers_read_enabled_from_the_view() {
   boot(/*bring_up=*/false);
   CHECK(bc::read_enabled() == bt_defaults::ENABLED);      // before the first pass: the boot state
@@ -2443,9 +2488,10 @@ void test_threads_bring_up_loop_and_reads() {
     std::thread httpd([&] {
       host_sim::task = "httpd";
       while (!done.load()) {
-        // What the Start Advertising and Pair handlers decide bring_up() from
-        // (F210), first: no lock of the views' taken yet this round. Used, so
-        // the read is not optimized away.
+        // Whether Bluetooth is saved on, as another task reads it (F210; the
+        // Start Advertising and Pair handlers decided bring_up() from it
+        // until F235), first: no lock of the views' taken yet this round.
+        // Used, so the read is not optimized away.
         if (bc::read_enabled()) reads_on.fetch_add(1);
         const char* reason = bc::init_fail_reason();
         if (memchr(reason, '\0', 96) == nullptr) reasons_whole.store(false);
@@ -2501,6 +2547,522 @@ void test_threads_bring_up_loop_and_reads() {
     std::printf("PASS threads_bring_up_loop_and_reads (%s: %u reads, %u commands ran)\n",
                 refused ? "refused" : "up", (unsigned)reads.load(), (unsigned)commands.load());
   }
+}
+
+// ── A tap that needs the stack brings it up (sweep F235) ───────────────
+
+using Handler = esp_err_t (*)(httpd_req_t*);
+
+// What one REST call to a real bluetooth_api.h handler sent, made on the
+// HTTP server's task ("httpd") with `body`. The loop task gets an update()
+// pass on each of the handler's sleeps (a command it submitted is drained on
+// the first). A tap made inside another (the in-flight hook below) keeps the
+// outer tap's turns.
+struct Tap {
+  std::string status;
+  std::string body;
+  unsigned inits = 0;    // NimBLEDevice::init() calls the tap made
+  unsigned sleeps = 0;   // its waits for the loop task: 0 when it submitted nothing
+};
+Tap tap(Handler handler, const char* body = "") {
+  httpd_req_t req;
+  req.body = body;
+  Tap out;
+  const unsigned inits_before = host_sim::count("nimble_init");
+  const std::string was = host_sim::task;
+  const std::function<void(uint32_t)> outer = host_sim::on_task_delay;
+  host_sim::on_task_delay = [&](uint32_t ms) {
+    host_sim::now_ms += ms;
+    ++out.sleeps;
+    host_sim::task = "loop";   // the loop task's turn
+    bc::update();
+    host_sim::task = "httpd";
+  };
+  host_sim::task = "httpd";
+  CHECK(handler(&req) == ESP_OK);
+  host_sim::task = was;
+  host_sim::on_task_delay = outer;
+  CHECK(req.sends == 1);
+  out.status = req.status;
+  out.body = req.resp;
+  out.inits = host_sim::count("nimble_init") - inits_before;
+  return out;
+}
+std::string refused_with(const char* why) {
+  return std::string("{\"success\":false,\"error\":\"") + why + "\"}";
+}
+std::string succeeded_with(const char* message) {
+  return std::string("{\"success\":true,\"message\":\"") + message + "\"}";
+}
+const char* const kStillStarting = "Bluetooth is still starting; try again in a moment";
+const char* const kNimBLEFailed = "NimBLE stack init failed (controller/host bring-up)";
+const char* const kHeapRefused =
+    "Not started: internal RAM too low (largest block 20 KB/48 KB, free 30 KB/96 KB)";
+const Handler kAdvertise = bluetooth_api::handle_bluetooth_advertise_start;
+const Handler kPair = bluetooth_api::handle_bluetooth_pair_start;
+const char* started_message(Handler h) { return h == kAdvertise ? "Advertising started" : "Pairing mode started"; }
+
+// The boot worker's bring-up, on a device saved with Bluetooth on (the
+// default), as the sketch runs it, its first pass loaded first: refused by
+// the heap guard (`heap_low`) or failed in NimBLE's own init (else). Then
+// the sketch's finalize stage: the worker's result taken, and the boot
+// bring-up over (F235's review).
+void boot_bring_up_refused(bool heap_low) {
+  boot(/*bring_up=*/false);
+  loop_pass();                                     // the first pass: saved on, loaded
+  if (heap_low) {
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+  } else {
+    host_sim::nimble_init_fails = true;
+  }
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(!bc::init());
+  host_sim::task = "loop";
+  bc::bringup_worker_finished();
+  bc::boot_bring_up_finished();
+  loop_pass();
+  CHECK(bc::read_enabled() && !bc::is_initialized() && !bc::g_initialized);
+  CHECK(strcmp(bc::init_fail_reason(), heap_low ? kHeapRefused : kNimBLEFailed) == 0);
+  host_sim::calls.clear();
+}
+void heap_recovers() {
+  host_sim::internal_largest_block = 200 * 1024;
+  host_sim::internal_free = 250 * 1024;
+}
+
+// Sweep F235: Start Advertising and Pair brought the stack up only when the
+// published setting said Bluetooth was off (read_enabled(), F210). On a
+// device saved on, the default, whose boot bring-up failed or the heap
+// guard refused, each tap submitted its command to a stack that was down
+// and answered {"success":false,"error":"Failed to start advertising"} (or
+// "... pairing"), naming no refusal; none ran init() again, so the stack
+// stayed down until POST /api/bluetooth/enable. Now each tap brings the
+// stack up whenever it is down: it runs init() again (two refused taps in a
+// row run it twice), answers a refusal by name and submits nothing, and once
+// the stack comes up its command runs; a tap that finds the stack up brings
+// nothing up. Played for both handlers, each first.
+void test_a_tap_brings_the_stack_up_whatever_the_setting() {
+  for (const Handler first : {kAdvertise, kPair}) {
+    const Handler second = first == kAdvertise ? kPair : kAdvertise;
+    // NimBLE's init failed at boot, and fails twice more.
+    boot_bring_up_refused(/*heap_low=*/false);
+    for (int k = 0; k < 2; ++k) {
+      const Tap t = tap(first);
+      CHECK(t.status == "200 OK" && t.body == refused_with(kNimBLEFailed));
+      CHECK(t.inits == 1 && t.sleeps == 0);                  // init() again; nothing submitted
+    }
+    CHECK(host_sim::count("nimble_init", "httpd") == 2 && !bc::is_initialized());
+    CHECK(bc::g_commands.queued() == 0 && host_sim::count("adv_start") == 0);
+    // NimBLE comes up: the next tap brings the stack up, then its command
+    // runs. A host model: the stand-in's failure is the kind NimBLE-Arduino
+    // 2.5.0 can retry (nvs_flash_init() or esp_bt_controller_init() failing
+    // leaves nothing behind). One past the controller's init
+    // (esp_bt_controller_enable(), esp_nimble_hci_init()) leaves the
+    // controller initialized and every later init() failing until a reboot;
+    // the stand-in does not model that, and the bench row holds only the
+    // heap guard's refusal recovering.
+    host_sim::nimble_init_fails = false;
+    Tap t = tap(first);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)));
+    CHECK(t.inits == 1 && t.sleeps >= 1);
+    CHECK(bc::is_initialized() && bc::g_initialized && bc::is_enabled());
+    CHECK(host_sim::advertising.isAdvertising());
+    CHECK(host_sim::count("nimble_init", "loop") == 0);     // never on the loop task
+    // The next tap finds it up: it brings nothing up.
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)));
+    CHECK(t.inits == 0 && host_sim::count("nimble_init") == 3);
+
+    // The heap guard refused at boot, and twice more: named, and no NimBLE init.
+    boot_bring_up_refused(/*heap_low=*/true);
+    for (int k = 0; k < 2; ++k) {
+      t = tap(first);
+      CHECK(t.status == "200 OK" && t.body == refused_with(kHeapRefused));
+      CHECK(t.inits == 0 && t.sleeps == 0);
+    }
+    CHECK(bc::g_commands.queued() == 0 && !bc::is_initialized());
+    heap_recovers();
+    t = tap(first);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)));
+    CHECK(t.inits == 1 && bc::is_initialized() && bc::is_enabled());
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
+
+    // Saved off, never up: the tap brings the stack up and its command turns
+    // Bluetooth on, as before.
+    boot(/*bring_up=*/false);
+    saved_off_and_loaded();
+    t = tap(first);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)));
+    CHECK(t.inits == 1 && bc::is_initialized() && bc::is_enabled() && bc::read_enabled());
+    CHECK(nvs_bool("bt_enabled"));
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
+  }
+  std::printf("PASS a_tap_brings_the_stack_up_whatever_the_setting\n");
+}
+
+// A tap made while another task's init() holds its latch (sweep F235): the
+// boot worker's. init() turns it away at once, with nothing refused, so the
+// tap answers 503 "Bluetooth is still starting; try again in a moment" and
+// submits nothing, and GET /api/bluetooth reads "initializing" meanwhile;
+// once that bring-up is done the tap's command runs. Before, Start
+// Advertising and Pair (saved on) submitted to the stack that was not up
+// yet and answered "Failed to start ...", and Enable and a settings POST
+// turning Bluetooth on answered "Failed to enable Bluetooth" and "Bluetooth
+// init failed", all with 200: a failure, for a stack that was seconds from
+// up. (Start Advertising and Pair on a device saved on answer it through
+// send_boot_bring_up_pending() since F235's review, before any bring-up.)
+void test_a_tap_while_the_stack_comes_up_says_so() {
+  const Handler enable = bluetooth_api::handle_bluetooth_enable;
+  const Handler settings = bluetooth_api::handle_bluetooth_settings_set;
+  // Inside the boot worker's init().
+  boot(/*bring_up=*/false);
+  loop_pass();
+  bc::bringup_worker_started();
+  std::vector<Tap> inflight;
+  std::string status_meanwhile;
+  g_inside_init = [&] {
+    for (const Handler h : {kAdvertise, kPair, enable}) inflight.push_back(tap(h));
+    inflight.push_back(tap(settings, "{\"enabled\":true}"));
+    loop_pass();                                   // the loop task's pass meanwhile
+    status_meanwhile = tap(bluetooth_api::handle_bluetooth_status).body;
+  };
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  g_inside_init = nullptr;
+  CHECK(inflight.size() == 4);
+  for (const Tap& t : inflight) {
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+  }
+  CHECK(status_meanwhile.find("\"state\":\"initializing\"") != std::string::npos);
+  CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
+  CHECK(bc::g_commands.queued() == 0);
+  // The worker's bring-up is done: the next tap's command runs (its
+  // advertising held until the worker finishes, F167).
+  loop_pass();
+  Tap t = tap(kPair);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Pairing mode started") && t.inits == 0);
+  bc::bringup_worker_finished();
+  loop_pass();
+  CHECK(host_sim::advertising.isAdvertising() && bc::g_pairing.state == bc::PAIR_INITIATED);
+
+  // Inside an earlier tap's init() (saved off: Start Advertising brings the
+  // stack up on the HTTP task), a second tap. A device cannot produce this:
+  // its REST routes are served by one esp_http_server task, which the first
+  // tap's init() holds. Played here only to hold that the answer is the
+  // latch's, whoever holds it.
+  boot(/*bring_up=*/false);
+  saved_off_and_loaded();
+  Tap inner;
+  g_inside_init = [&] { inner = tap(kPair); };
+  t = tap(kAdvertise);
+  g_inside_init = nullptr;
+  CHECK(inner.status == "503 Service Unavailable" && inner.body == refused_with(kStillStarting));
+  CHECK(inner.inits == 0 && inner.sleeps == 0);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Advertising started") && t.inits == 1);
+  t = tap(kPair);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Pairing mode started") && t.inits == 0);
+
+  // What bring_up_starting() answers a tap whose bring_up() was false: true
+  // while a latch is held and once that bring-up has brought the stack up
+  // (a tap that lost the latch to it and reads after it finished); false
+  // after a refusal, which init_fail_reason() then names.
+  boot(/*bring_up=*/false);
+  loop_pass();
+  CHECK(!bc::bring_up_starting());
+  __atomic_store_n(&bc::g_init_in_progress, true, __ATOMIC_RELEASE);
+  CHECK(bc::bring_up_starting());
+  __atomic_store_n(&bc::g_init_in_progress, false, __ATOMIC_RELEASE);
+  host_sim::internal_largest_block = 20 * 1024;
+  host_sim::internal_free = 30 * 1024;
+  CHECK(!bc::init() && !bc::bring_up_starting());
+  heap_recovers();
+  CHECK(bc::init() && bc::bring_up_starting());
+  std::printf("PASS a_tap_while_the_stack_comes_up_says_so\n");
+}
+
+// A tap made before the sketch's boot bring-up is over (sweep F235's
+// review), on a device saved on: canary_wap.ino defers the whole Bluetooth
+// bring-up out of the provisioning join window (the phone's WPA2 handshake
+// to the SoftAP, the internal RAM Wi-Fi takes first) and never runs it in
+// safe mode, and the firmware's other NimBLEDevice::init() callers run
+// inside it (on FULL the worker's ble_manager::init() when the channel's
+// init() did not bring the stack up; the Scout's nimble_scan_init() in the
+// finalize stage, on the loop task). F235 had Start Advertising and Pair
+// bring the stack up whenever it was down, so a tap in the join window (or
+// in safe mode) brought NimBLE up on the HTTP task and advertised at once.
+// Now each answers 503 and brings nothing up until the sketch says its
+// bring-up is over (boot_bring_up_finished(), the finalize stage's last
+// step, whatever the outcome): "still starting" while the worker's init()
+// holds the latch, else that Bluetooth starts once setup is done. Once the
+// sketch has started that bring-up (bringup_worker_started(), as the gate
+// opens) a tap is told it is still starting, through a refused worker, its
+// result taken and the rest of the finalize stage (wave 16's verify: it was
+// told Bluetooth had not started yet, once Wi-Fi setup was done or within
+// five minutes, while init_fail_reason() already named the worker's
+// refusal; a tap a moment later, after finalize, runs init() itself and
+// names its own). After it, a tap brings a refused stack up as F235 does.
+// Saved off, a tap brings the stack up as before
+// (a_tap_brings_the_stack_up_whatever_the_setting).
+void test_a_tap_before_the_boot_bring_up_waits_for_it() {
+  const char* const kPending = bc::boot_bring_up_pending_error();
+  for (const Handler first : {kAdvertise, kPair}) {
+    const Handler second = first == kAdvertise ? kPair : kAdvertise;
+    // Before the loop task's first pass (the boot default, on), then in the
+    // join window (saved on, loaded), or for a whole safe-mode boot: no
+    // worker, however long the device runs (the channel keys on the
+    // sketch's word, not on the clock: past the sketch's 5 min hold too).
+    boot(/*bring_up=*/false);
+    Tap t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+    loop_pass();
+    for (int k = 0; k < 2; ++k) {
+      for (const Handler h : {first, second}) {
+        t = tap(h);
+        CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kPending));
+        CHECK(t.inits == 0 && t.sleeps == 0);                // nothing brought up, nothing submitted
+      }
+      host_sim::now_ms += 300000;
+      loop_pass();
+    }
+    CHECK(host_sim::count("nimble_init") == 0 && !bc::is_initialized() && !bc::g_initialized);
+    CHECK(bc::g_commands.queued() == 0 && host_sim::count("adv_start") == 0);
+    CHECK(!host_sim::advertising.isAdvertising() && !host_sim::presence_disc);
+    CHECK(!bc::boot_bring_up_tried() && !bc::boot_bring_up_started());
+
+    // The window clears: the gate starts the worker (bringup_worker_started()
+    // before the create). Before its init() takes the latch, the tap is told
+    // Bluetooth is starting, and runs no init().
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+    bc::bringup_worker_started();
+    CHECK(bc::boot_bring_up_started() && !bc::boot_bring_up_tried());
+    CHECK(!bc::init_running() && !bc::is_initialized());
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+    // The worker's init(), refused by the heap guard. Its result is not
+    // taken yet (on FULL the worker goes on to ble_manager's own NimBLE
+    // init): the tap still waits, runs no init(), and is told Bluetooth is
+    // still starting, not that it has not started.
+    host_sim::task = "bringup";
+    CHECK(!bc::init());
+    host_sim::task = "loop";
+    loop_pass();
+    CHECK(!bc::init_running() && !bc::is_initialized() && !bc::bring_up_starting());
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+    CHECK(strcmp(bc::init_fail_reason(), kHeapRefused) == 0);
+    // The sketch's finalize stage takes the worker's result
+    // (bringup_worker_finished()) and goes on to the Scout, whose
+    // nimble_scan_init() runs NimBLEDevice::init() on the loop task when the
+    // stack is down and the heap allows: a tap in between still waits.
+    bc::bringup_worker_finished();
+    heap_recovers();                                 // the heap allows now: only the wait keeps the tap out
+    t = tap(first);
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(kStillStarting));
+    CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
+    CHECK(!bc::boot_bring_up_tried());
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+    // The finalize stage's last step: the boot bring-up is over, and a tap
+    // now runs init() again (F235), named while refused...
+    bc::boot_bring_up_finished();
+    CHECK(bc::boot_bring_up_tried());
+    t = tap(first);
+    CHECK(t.status == "200 OK" && t.body == refused_with(kHeapRefused));
+    CHECK(t.inits == 0 && t.sleeps == 0);
+    // ...and up once the heap allows.
+    heap_recovers();
+    t = tap(first);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)) && t.inits == 1);
+    CHECK(host_sim::count("nimble_init", "httpd") == 1 && host_sim::count("nimble_init", "loop") == 0);
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
+
+    // The worker's own bring-up, the tap after it finds the stack up: no wait.
+    boot(/*bring_up=*/false);
+    loop_pass();
+    bc::bringup_worker_started();
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    t = tap(first);                                  // up, its result not taken yet: the tap runs
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(first)) && t.inits == 0);
+    // Answered 200, its advertising held (F167) until the finalize stage
+    // takes the worker's result: nothing on air before it (the bench row's
+    // "[OK] Bluetooth initialized" to "BLE bring-up finalized" window).
+    CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
+    t = tap(second);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with(started_message(second)) && t.inits == 0);
+    CHECK(!host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 0);
+    bc::bringup_worker_finished();
+    CHECK(host_sim::advertising.isAdvertising() && host_sim::count("adv_start") == 1);
+    bc::boot_bring_up_finished();
+    CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
+  }
+  std::printf("PASS a_tap_before_the_boot_bring_up_waits_for_it\n");
+}
+
+// The FULL race that wait keeps out (sweep F235's review): a Start
+// Advertising or Pair tap in the join window whose init() was still running
+// when the gate opened. The worker's own bluetooth_channel::init() then lost
+// the latch to it and answered false with nothing refused, so canary_wap.ino
+// printed "Bluetooth init failed" and skipped ble_status, and on FULL went on
+// to ble_manager::init(), whose NimBLEDevice::init() ran beside the tap's
+// (NimBLE-Arduino 2.5.0 reads isInitialized() false until its init has
+// synced). Played by opening the gate from inside any init() a tap runs: the
+// tap now runs none, so the worker's bring-up has the stack to itself and is
+// the boot's only one, and ble_manager finds the stack up.
+void test_the_worker_never_meets_a_taps_bring_up() {
+  for (const Handler h : {kAdvertise, kPair}) {
+    boot(/*bring_up=*/false);
+    loop_pass();                                     // saved on, loaded: the join window
+    bool gate_opened_inside_a_tap = false;
+    bool worker_up = false;
+    std::string worker_reason;
+    g_inside_init = [&] {
+      if (host_sim::task != "httpd" || gate_opened_inside_a_tap) return;
+      gate_opened_inside_a_tap = true;               // the window clears while the tap's init() runs
+      bc::bringup_worker_started();
+      host_sim::task = "bringup";
+      worker_up = bc::init();
+      worker_reason = bc::init_fail_reason();
+      host_sim::task = "httpd";
+    };
+    const Tap t = tap(h);
+    g_inside_init = nullptr;
+    // Had the tap run init(), the worker's would have lost the latch: false,
+    // nothing refused (on FULL, ble_manager's own NimBLE init next).
+    CHECK(!gate_opened_inside_a_tap || (worker_up && worker_reason.empty()));
+    CHECK(!gate_opened_inside_a_tap);                // the tap ran no init() to open the gate beside
+    CHECK(t.status == "503 Service Unavailable" && t.body == refused_with(bc::boot_bring_up_pending_error()));
+    CHECK(t.inits == 0 && t.sleeps == 0 && host_sim::count("nimble_init") == 0);
+    // The gate opens: the worker's init() has the stack to itself.
+    bc::bringup_worker_started();
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    CHECK(strcmp(bc::init_fail_reason(), "") == 0);
+    // On FULL ble_manager::init() runs next on the worker: the stack is up,
+    // so ble_manager.h's isInitialized() guard skips its own NimBLE init.
+    CHECK(NimBLEDevice::isInitialized());
+    CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
+    loop_pass();                                     // the loop task takes the bring-up
+    bc::bringup_worker_finished();
+    bc::boot_bring_up_finished();
+    loop_pass();
+    CHECK(bc::g_initialized && bc::is_enabled());
+    const Tap after = tap(h);
+    CHECK(after.status == "200 OK" && after.body == succeeded_with(started_message(h)) && after.inits == 0);
+    CHECK(host_sim::count("nimble_init") == 1);
+  }
+  std::printf("PASS the_worker_never_meets_a_taps_bring_up\n");
+}
+
+// For real on three threads (sweep F235): the boot worker's init() (held in
+// its body, as NimBLE's bring-up takes seconds on a device, until the tap
+// has been answered), the loop task's passes, and the HTTP server's task
+// tapping the real Start Advertising handler while the worker's init()
+// runs, then again once the loop task has taken the bring-up. `make
+// tsan-bt-commands` runs it under ThreadSanitizer: the tap reads the latch
+// and the stack's flag while the worker writes them.
+//
+// Deterministic whatever the scheduler does (the F235 review: it failed
+// about 1 run in 10 with eight -O2 copies on four cores, and under TSAN).
+// Only the loop thread moves the clock: the second tap's wait sleeps in real
+// time without spending the simulated one. The default vTaskDelay added its
+// poll to the clock on the HTTP thread, so a starved loop thread let
+// COMMAND_WAIT_MS pass in simulated time and the ring withdrew the command
+// (503 bluetooth_timeout); now each pass that moves the clock drains first.
+// And every wait is for its event, not for a count of yields: the worker
+// stays inside init() until the tap has been answered (a bounded spin let
+// it leave first under load, and the tap then found the stack up). The
+// real-time deadline only keeps a broken build from hanging; reaching it
+// fails the test.
+void test_threads_a_tap_meets_the_bring_up() {
+  boot(/*bring_up=*/false);
+  loop_pass();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  const auto in_time = [deadline] { return std::chrono::steady_clock::now() < deadline; };
+  std::atomic<bool> inside{false};
+  std::atomic<bool> tapped{false};
+  std::atomic<bool> adopted{false};
+  std::atomic<bool> worker_done{false};
+  std::atomic<bool> done{false};
+  std::atomic<bool> give_up{false};
+  host_sim::on_task_delay = [&give_up](uint32_t ms) {
+    if (give_up.load()) {
+      host_sim::now_ms += ms;                      // past the deadline: let a wait run out
+    } else {
+      std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
+  };
+  g_inside_init = [&] {
+    inside.store(true);
+    while (!tapped.load() && !give_up.load()) std::this_thread::yield();
+  };
+  bc::bringup_worker_started();
+  std::thread bringup([&] {
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    worker_done.store(true);
+  });
+  std::string first_status, first_body, second_status, second_body;
+  std::thread httpd([&] {
+    host_sim::task = "httpd";
+    while (!inside.load() && !give_up.load()) std::this_thread::yield();
+    if (give_up.load()) return;
+    httpd_req_t during;
+    CHECK(bluetooth_api::handle_bluetooth_advertise_start(&during) == ESP_OK);
+    first_status = during.status;
+    first_body = during.resp;
+    tapped.store(true);
+    while (!adopted.load() && !give_up.load()) std::this_thread::yield();
+    if (give_up.load()) return;
+    httpd_req_t after;
+    CHECK(bluetooth_api::handle_bluetooth_advertise_start(&after) == ESP_OK);
+    second_status = after.status;
+    second_body = after.resp;
+    done.store(true);
+  });
+  host_sim::task = "loop";
+  bool finalized = false;
+  while (!done.load() && in_time()) {
+    if (!finalized && worker_done.load()) {
+      bc::bringup_worker_finished();               // the sketch's finalize, on the loop task
+      bc::boot_bring_up_finished();
+      finalized = true;
+    }
+    bc::update();
+    if (bc::g_initialized) adopted.store(true);
+    host_sim::now_ms += 1;
+    std::this_thread::yield();
+  }
+  give_up.store(true);                             // the deadline passed: free every waiter
+  bringup.join();
+  httpd.join();
+  host_sim::on_task_delay = nullptr;
+  g_inside_init = nullptr;
+  if (!finalized) {
+    bc::bringup_worker_finished();
+    bc::boot_bring_up_finished();
+  }
+  bc::update();
+  CHECK(done.load());                              // false only at the deadline
+  CHECK(first_status == "503 Service Unavailable" && first_body == refused_with(kStillStarting));
+  CHECK(second_status == "200 OK" && second_body == succeeded_with("Advertising started"));
+  CHECK(host_sim::count("nimble_init") == 1 && host_sim::count("nimble_init", "bringup") == 1);
+  CHECK(bc::is_initialized() && host_sim::advertising.isAdvertising());
+  CHECK(host_sim::mux_depth == 0);
+  std::printf("PASS threads_a_tap_meets_the_bring_up\n");
 }
 
 // The sketch's bring-up worker goes on registering GATT services on the
@@ -4021,6 +4583,189 @@ void test_the_door_is_refused_under_any_bonded_link() {
   std::printf("PASS the_door_is_refused_under_any_bonded_link\n");
 }
 
+// ── The device's Bluetooth name holds no control byte (sweep F261) ─────
+
+// `s` as a page's JSON.stringify spells it inside a JSON string.
+std::string json_text(const std::string& s) {
+  std::string out;
+  for (unsigned char c : s) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += (char)c;
+    } else if (c < 0x20) {
+      char u[8];
+      std::snprintf(u, sizeof u, "\\u%04x", c);
+      out += u;
+    } else {
+      out += (char)c;
+    }
+  }
+  return out;
+}
+
+// GET /api/bluetooth and GET /api/bluetooth/settings, the two answers that
+// carry the name: each parses as a browser's JSON.parse reads it, and gives
+// `name` back byte for byte.
+void answers_carry_name(const std::string& name) {
+  for (const Handler h : {bluetooth_api::handle_bluetooth_status, bluetooth_api::handle_bluetooth_settings_get}) {
+    const Tap t = tap(h);
+    json_strict::Value v;
+    if (!json_strict::parse(t.body, &v)) std::fprintf(stderr, "unparseable: %s\n", t.body.c_str());
+    CHECK(json_strict::parse(t.body, &v));
+    const json_strict::Value* n = v.get("device_name");
+    CHECK(n != nullptr && n->kind == json_strict::Value::String && n->text == name);
+  }
+}
+
+// POST /api/bluetooth/name and POST /api/bluetooth/settings took any byte
+// but NUL (set_device_name() and the settings command tested the length
+// alone), and ArduinoJson 7.4.1 writes a control byte other than \b \f \n \r
+// \t raw: a name holding 0x01 made both answers above unparseable, and the
+// radio advertised it. Every such byte, at the start, the middle and the
+// end: the name route answers the rule in words, the settings POST answers
+// the same words before it brings anything up or submits anything (the
+// other field it named is not applied), the settings command refuses it on
+// the loop task whoever hands it, nothing is saved, and both answers still
+// parse with the old name. Every other byte (a space, a quote, DEL, a byte
+// past 0x7f) is kept, and both answers carry it.
+void test_a_name_holding_a_control_byte_is_refused() {
+  const std::string refused = refused_with(bc::DEVICE_NAME_REFUSAL);
+  CHECK(refused.find("1 to 32 bytes, no byte below 0x20") != std::string::npos);
+  boot();
+  Tap t = tap(bluetooth_api::handle_bluetooth_name_set, "{\"name\":\"Porch\"}");
+  CHECK(t.body == succeeded_with("Device name updated"));
+  answers_carry_name("Porch");
+  for (unsigned b = 1; b < 0x20; ++b) {
+    for (int at = 0; at < 3; ++at) {
+      std::string name = "Shed";
+      if (at == 0) name.insert(name.begin(), (char)b);
+      else if (at == 1) name.insert(2, 1, (char)b);
+      else name.push_back((char)b);
+      const std::string text = json_text(name);
+      const unsigned writes = host_sim::count("nvs_write");
+      const bool pairing = bc::g_settings.allow_pairing;
+
+      t = tap(bluetooth_api::handle_bluetooth_name_set, ("{\"name\":\"" + text + "\"}").c_str());
+      CHECK(t.status == "200 OK" && t.body == refused && t.sleeps > 0);
+
+      t = tap(bluetooth_api::handle_bluetooth_settings_set,
+              ("{\"allow_pairing\":" + std::string(pairing ? "false" : "true") + ",\"device_name\":\"" + text +
+               "\"}").c_str());
+      CHECK(t.body == refused && t.sleeps == 0 && t.inits == 0);
+
+      bc::Command s = cmd_of(bc::BT_CMD_SETTINGS);
+      s.settings.allow_pairing = !pairing;
+      std::memcpy(s.settings.device_name, name.c_str(), name.size() + 1);
+      s.set_mask = bc::BT_SET_ALLOW_PAIRING | bc::BT_SET_DEVICE_NAME;
+      const Rest r = rest(s);
+      CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == bc::BT_REFUSED_BAD_NAME);
+
+      CHECK(bc::g_settings.allow_pairing == pairing);
+      CHECK(std::strcmp(bc::g_settings.device_name, "Porch") == 0);
+      CHECK(host_sim::count("nvs_write") == writes);
+      answers_carry_name("Porch");
+    }
+  }
+  // Every other byte, through each route.
+  for (unsigned b = 0x20; b < 0x100; ++b) {
+    const std::string name = std::string("A") + (char)b + "B";
+    t = tap(bluetooth_api::handle_bluetooth_name_set, ("{\"name\":\"" + json_text(name) + "\"}").c_str());
+    CHECK(t.body == succeeded_with("Device name updated"));
+    CHECK(std::strcmp(bc::g_settings.device_name, name.c_str()) == 0);
+    answers_carry_name(name);
+    const std::string again = std::string("C") + (char)b;
+    t = tap(bluetooth_api::handle_bluetooth_settings_set,
+            ("{\"device_name\":\"" + json_text(again) + "\"}").c_str());
+    CHECK(t.body == succeeded_with("Settings updated"));
+    answers_carry_name(again);
+  }
+  // The bound both routes state: 32 bytes kept, 33 refused, an empty name
+  // and one that is not a string refused (the settings POST cut a long name
+  // to 32 and kept an empty or non-string one as "").
+  const std::string longest(bc::MAX_DEVICE_NAME_LEN, 'n');
+  for (const Handler h : {bluetooth_api::handle_bluetooth_name_set, bluetooth_api::handle_bluetooth_settings_set}) {
+    const char* key = h == bluetooth_api::handle_bluetooth_name_set ? "name" : "device_name";
+    t = tap(h, ("{\"" + std::string(key) + "\":\"" + longest + "\"}").c_str());
+    CHECK(t.body.find("\"success\":true") != std::string::npos);
+    answers_carry_name(longest);
+    for (const std::string& bad : {"\"" + longest + "x\"", std::string("\"\""), std::string("5")}) {
+      t = tap(h, ("{\"" + std::string(key) + "\":" + bad + "}").c_str());
+      CHECK(t.body == refused);
+      answers_carry_name(longest);
+    }
+  }
+  none_on_httpd();
+  // Refused before anything is brought up (the F261 review: every POST above
+  // found the stack up, so `t.inits == 0` held whatever the order). Saved
+  // off and never up, a POST that turns Bluetooth on and names a name
+  // holding a control byte brings nothing up, turns nothing on and writes
+  // nothing; the same POST with a plain name brings the stack up (the
+  // handler's own init()) and turns Bluetooth on.
+  boot(/*bring_up=*/false);
+  saved_off_and_loaded();
+  const unsigned writes = host_sim::count("nvs_write");
+  t = tap(bluetooth_api::handle_bluetooth_settings_set,
+          ("{\"enabled\":true,\"device_name\":\"" + json_text("Shed\x01") + "\"}").c_str());
+  CHECK(t.body == refused && t.inits == 0 && t.sleeps == 0);
+  CHECK(!bc::is_initialized() && !bc::is_enabled() && !bc::read_enabled() && !nvs_bool("bt_enabled"));
+  CHECK(host_sim::count("nimble_init") == 0 && host_sim::count("nvs_write") == writes);
+  t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"enabled\":true,\"device_name\":\"Shed\"}");
+  CHECK(t.body == succeeded_with("Settings updated") && t.inits == 1);
+  CHECK(bc::is_initialized() && bc::is_enabled() && std::strcmp(bc::g_settings.device_name, "Shed") == 0);
+  // The name command refuses such a name with its own refusal (the name
+  // route reads only `ok`; the settings route maps BT_REFUSED_BAD_NAME to the
+  // words, a mapping its own check above leaves unreached).
+  bc::Command n = cmd_of(bc::BT_CMD_NAME);
+  std::memcpy(n.name, "Shed\x01", 6);
+  const Rest nr = rest(n);
+  CHECK(nr.wait == lcr::Wait::kDone && !nr.r.ok && nr.r.refusal == bc::BT_REFUSED_BAD_NAME);
+  CHECK(std::strcmp(bc::g_settings.device_name, "Shed") == 0);
+  std::printf("PASS a_name_holding_a_control_byte_is_refused\n");
+}
+
+// A name saved before the rule (F261) holding a control byte is not loaded:
+// the loop task's first pass keeps the default name, init() hands the stack
+// the default to advertise, both answers parse with it, and the health log
+// says so once, on the loop task, as the paired list's repairs are logged.
+// The row keeps its bytes until a save writes the name the device holds (on
+// a device saved on, the bring-up's enable() is one). A saved name without
+// one (DEL included) loads as before.
+void test_a_saved_name_holding_a_control_byte_is_not_loaded() {
+  const std::string def = bc::kDefaultSettings.device_name;
+  const char* const kLog = "Saved Bluetooth name held a control byte: the default name is used";
+  struct Case {
+    std::string saved;
+    bool kept;
+  };
+  const Case cases[] = {{std::string("Por\x01" "ch"), false}, {std::string("\x1f"), false},
+                        {std::string("Porch\n"), false}, {std::string("Porch\x7f"), true},
+                        {std::string("Porch"), true}};
+  for (const Case& c : cases) {
+    boot(/*bring_up=*/false);
+    host_sim::main_nvs["bt_name"].assign(c.saved.begin(), c.saved.end());
+    host_sim::task = "bringup";
+    CHECK(bc::init());
+    host_sim::task = "loop";
+    bc::update();
+    CHECK(bc::g_initialized);
+    const std::string expect = c.kept ? c.saved : def;
+    CHECK(bc::g_settings.device_name == expect);
+    CHECK(host_sim::nimble_name == expect);
+    unsigned logged = 0;
+    for (const HealthLine& l : g_health_lines) {
+      if (l.message != kLog) continue;
+      ++logged;
+      CHECK(l.detail == def && l.task == "loop");
+    }
+    CHECK(logged == (c.kept ? 0u : 1u));
+    answers_carry_name(expect);
+    const Tap t = tap(bluetooth_api::handle_bluetooth_settings_set, "{\"auto_advertise\":true}");
+    CHECK(t.body == succeeded_with("Settings updated"));
+    CHECK(host_sim::main_nvs["bt_name"] == std::vector<uint8_t>(expect.begin(), expect.end()));
+  }
+  std::printf("PASS a_saved_name_holding_a_control_byte_is_not_loaded\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -4071,6 +4816,11 @@ const Test kTests[] = {
     {"a_refused_bring_up_publishes_its_reason_whole", test_a_refused_bring_up_publishes_its_reason_whole},
     {"the_handlers_read_enabled_from_the_view", test_the_handlers_read_enabled_from_the_view},
     {"threads_bring_up_loop_and_reads", test_threads_bring_up_loop_and_reads},
+    {"a_tap_brings_the_stack_up_whatever_the_setting", test_a_tap_brings_the_stack_up_whatever_the_setting},
+    {"a_tap_while_the_stack_comes_up_says_so", test_a_tap_while_the_stack_comes_up_says_so},
+    {"a_tap_before_the_boot_bring_up_waits_for_it", test_a_tap_before_the_boot_bring_up_waits_for_it},
+    {"the_worker_never_meets_a_taps_bring_up", test_the_worker_never_meets_a_taps_bring_up},
+    {"threads_a_tap_meets_the_bring_up", test_threads_a_tap_meets_the_bring_up},
     {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
     {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},
     {"remove_and_clear_wait_for_the_stack", test_remove_and_clear_wait_for_the_stack},
@@ -4106,6 +4856,9 @@ const Test kTests[] = {
     {"a_full_cccd_store_evicts_no_bond", test_a_full_cccd_store_evicts_no_bond},
     {"the_bring_up_leaves_the_state_of_what_runs", test_the_bring_up_leaves_the_state_of_what_runs},
     {"the_door_is_refused_under_any_bonded_link", test_the_door_is_refused_under_any_bonded_link},
+    {"a_name_holding_a_control_byte_is_refused", test_a_name_holding_a_control_byte_is_refused},
+    {"a_saved_name_holding_a_control_byte_is_not_loaded",
+     test_a_saved_name_holding_a_control_byte_is_not_loaded},
 };
 
 }  // namespace bt_commands

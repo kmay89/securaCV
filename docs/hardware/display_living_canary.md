@@ -53,8 +53,10 @@ startle a sleeping bird):
 | Greeting | first wake of the local day | one slow, high wing stretch |
 | Joyful | trust milestone: first clean **week** / **month** | the song — hop with a long double ruffle; deferred past midnight so it plays in the morning, and dropped outright if an alarm owns the stage |
 
-Tilt and Startle share an 8-second ration; Greeting and Joyful are rare
-by construction and skip it.
+Tilt and Startle share an 8-second ration, counted from the last one that
+played: the first after power-on plays (F279; the ration used to count from
+power-on and refused both for the first 8 s of uptime). Greeting and Joyful
+are rare by construction and skip it.
 
 ## Idle flourishes (the Flipper manifest, miniaturized)
 

@@ -21,11 +21,16 @@
  * The emitted intensity is the peak; the live UI is what fades the glow over
  * time — this module never keeps a decaying value, so it stores nothing.
  *
- * Per-coefficient settings (NVS-backed via the Tuning Lab), clamped on read so
- * a corrupted slot or an out-of-range POST can't break the detector:
+ * Per-coefficient settings, read in init() through csi_module_settings_int()
+ * and clamped on read so an out-of-range value can't break the detector:
  *   wifi.channel_activity.spike_ratio  — percent, default 250 (2.5x), 110..1000
  *   wifi.channel_activity.min_activity — 0..100 scalar, default 25, range 1..100
  *   wifi.channel_activity.cooldown_sec — seconds, default 5, range 1..3600
+ * On both devices they are compile-time defaults: neither tree's key map
+ * (csi_module_settings_nvs.h) has a row for them and the Tuning Lab lists
+ * none, so nothing stores them and they always read their defaults (backlog
+ * F122's decision; test_csi_module_boot.cpp pins it). A host whose settings
+ * source answers these keys can still set them.
  */
 
 #include "wifi_channel_activity.h"

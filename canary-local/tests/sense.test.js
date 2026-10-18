@@ -372,12 +372,11 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
   await bench(async ({ run, click, fresh, retained }) => {
     click("walk");
     await run(cfg.debounce_ms + 700);
-    // mr60_presence.cpp's count and band follow every frame while presence
-    // waits out the debounce, and drive_fsms dirties the row on the count
-    // change: so the device publishes a clear row counting one occupant first
-    const counting = JSON.stringify({ ...JSON.parse(rowOf("walk", "state")), presence: false, presence_state: "clear" });
-    assert.deepStrictEqual(fresh(), [[topic("state"), counting], [topic("events"), rowOf("walk", "events")],
-      [topic("state"), rowOf("walk", "state")]], "walk: the debounce window's row, the event, then the state row");
+    // mr60_presence.cpp's count follows the debounced state (F131): it reads
+    // 0 while presence waits out the debounce, so nothing dirties the row
+    // until Present, and no clear row counts an occupant first
+    assert.deepStrictEqual(fresh(), [[topic("events"), rowOf("walk", "events")],
+      [topic("state"), rowOf("walk", "state")]], "walk: the event, then the state row");
     assert.strictEqual(retained()[topic("chain")], rowOf("walk", "chain"));
     assert.strictEqual(retained()[topic("state")], rowOf("walk", "state"), "the retained snapshot did not land the example over it");
 
@@ -420,6 +419,26 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
     assert.deepStrictEqual(fresh(), [[topic("state"), rowOf("stall", "state")]], "health, not a witness event");
   });
 
+  // a second visit that returns to a bucket the first visit had moved to:
+  // drive_fsms signs any count move while Present, so the second visit's
+  // "2+" is witnessed again (the lab used to compare with the last count it
+  // had published in any visit, and skipped it)
+  await bench(async ({ run, click, fresh }) => {
+    const events = () => fresh().filter(([tp]) => tp === topic("events")).map(([, p]) => JSON.parse(p).event);
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    click("second");
+    await run(200);
+    click("leave");
+    await run(cfg.clear_ms + 500);
+    assert.deepStrictEqual(events(), ["presence_detected", "occupancy_changed", "presence_cleared"]);
+    click("walk");
+    await run(cfg.debounce_ms + 700);
+    click("second");
+    await run(200);
+    assert.deepStrictEqual(events(), ["presence_detected", "occupancy_changed"], "the second visit's 2+ is signed");
+  });
+
   // wellbeing: the lock confirms, then a second person suppresses it
   await bench(async ({ run, click, fresh, retained }) => {
     click("walk");
@@ -445,6 +464,7 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
 
 test("the MQTT pane's note names the non-retained topics and what the lab leaves out", async () => {
   const { withFakeDom, fakeBus } = require("./fixtures/fake_dom.js");
+  const native = require("./fixtures/mr60_presence_native.js");
   const live = data.mqtt.topics.filter((t) => !t.retained).map((t) => t.suffix);
   assert.deepStrictEqual(live, ["events", "identify"]);
   await withFakeDom(async () => {
@@ -453,7 +473,19 @@ test("the MQTT pane's note names the non-retained topics and what the lab leaves
     for (const sfx of live) assert.ok(note.includes(`securacv/${data.device.id_example}/${sfx}`), sfx);
     assert.doesNotMatch(note, /exact strings/);
     for (const k of ["sig", "public_key", "hash", "fp", "uptime_s", "ts_ms", "bucket_uptime_s"]) assert.ok(note.includes(k), k);
-    assert.match(note, /occupancy_changed to 0 occupants before presence_cleared/, "the step the lab leaves out");
+    // the count is no longer a step the lab leaves out (F131): it follows
+    // the debounced state on the device and in the lab alike
+    assert.doesNotMatch(note, /occupancy_changed to 0 occupants/, "the count is not an omission any more");
+    assert.match(note, /0 until presence is confirmed, held while the room empties, and back to 0 with presence_cleared/);
+    // the one step the lab still leaves out, named while the lab still
+    // leaves it out: drive_fsms records presence_cleared on every tick that
+    // turns Clear, Unknown -> Clear included (the boot's first empty frame, a
+    // radar back from a stall to an empty room), and the radar lab publishes
+    // it only from present. Port the device's rule and this note goes with it.
+    assert.match(note, /One step is left out: the device also records a presence_cleared when the radar's first frame finds the room empty \(at boot, and when the radar comes back from a stall\), and the lab does not\./);
+    assert.ok(mainCpp.includes(native.MAIN_GATES[0]), "drive_fsms signs presence_cleared on any tick that turns Clear");
+    assert.ok(read(join(ROOT, "assets/sense-ui.js")).includes('else if (s === "clear" && lastState === "present") publish("presence_cleared"'),
+      "the radar lab still publishes presence_cleared only from present (if it no longer does, the note's omission is gone)");
   });
   assert.doesNotMatch(read(join(ROOT, "assets/sense.js")), /exact MQTT/, "the sandbox lede");
 });
@@ -495,9 +527,47 @@ test("a stall drops the count with the link, as mr60_presence.cpp does", async (
   assert.deepStrictEqual([fsm.state, fsm.count], ["present", "2+"]);
   const ev = fsm.tick(null, t + cfg.debounce_ms + cfg.stall_ms);
   assert.deepStrictEqual([fsm.state, fsm.count, fsm.range], ["unknown", "0", "unknown"]);
-  assert.ok(ev.stalled && ev.countChanged);
+  // the stall is a state change: it carries the zero and reports no count
+  // move of its own (F131)
+  assert.ok(ev.stalled && ev.stateChanged && !ev.countChanged);
   const presence = read(join(REPO, "firmware/common/sensors/mmwave_mr60/mr60_presence.cpp"));
   assert.ok(presence.includes("        state_ = Presence::Unknown;\n        count_ = CountBucket::Zero;"));
+});
+
+// F131: the radar lab's presence FSM against the firmware's own, built from
+// mr60_presence.cpp with the host's g++ (fixtures/mr60_presence_native.js),
+// on the same frames: state, count, band and both change flags, every tick.
+// The traces walk a room the way the decoder reports it (a presence flag
+// whose count is still 0 before the radar's count frame lands). The lab's
+// tick takes { hasTarget, count, distanceCm } or null for a loop with no
+// frame.
+test("the radar lab's presence FSM ticks as mr60_presence.cpp does, frame for frame", async (t) => {
+  const native = require("./fixtures/mr60_presence_native.js");
+  for (const gate of native.MAIN_GATES) assert.ok(mainCpp.includes(gate), "main.cpp's drive_fsms gate the driver mirrors: " + gate);
+  const b = native.build();
+  if (b.skip) { t.skip(b.skip); return; }
+  const { makePresenceFSM } = await import("../assets/sense-ui.js");
+  const p = data.fsm.presence;
+  const fw = { present_debounce_ms: p.debounce_ms, clear_timeout_ms: p.clear_ms, stall_timeout_ms: p.stall_ms,
+    near_cm: p.near_cm, mid_cm: p.mid_cm };
+  for (const [name, trace] of Object.entries(native.traces(fw))) {
+    const want = native.runFirmware(fw, trace);
+    const fsm = makePresenceFSM(p);
+    const got = [];
+    for (const k of trace) {
+      if ("reset" in k) { fsm.reset(k.reset); continue; }
+      const frame = "target" in k ? { hasTarget: k.target, count: k.count, distanceCm: k.cm } : null;
+      const ev = fsm.tick(frame, k.t);
+      got.push({ state: fsm.state, count: fsm.count, range: fsm.range, state_changed: ev.stateChanged,
+        count_changed: ev.countChanged, stalled: ev.stalled });
+    }
+    assert.deepStrictEqual(got, want.map(({ events, ...row }) => row), `trace "${name}"`);
+    // and what the firmware signs on it: no occupancy_changed while the
+    // count reads 0, so an emptying room signs presence_cleared alone
+    const signed = want.flatMap((r) => r.events.map((e) => [e, r.count]));
+    assert.ok(!signed.some(([e, c]) => e === "occupancy_changed" && c === "0"), `trace "${name}" signs no occupancy_changed to 0`);
+    assert.ok(want.every((r) => r.state === "present" || r.count === "0"), `trace "${name}": no count beside a state other than present`);
+  }
 });
 
 // ── 7. serial log lines trace to firmware sources ──────────────────────────

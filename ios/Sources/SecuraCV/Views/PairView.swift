@@ -22,9 +22,10 @@
 // an action only where one exists. For a WAP that joined but never paired
 // (the one-tap claim was refused, or expired), the real paths are two: its
 // recovery kit — the receipt its own setup page saves after a short BOOT
-// tap — opened from Files or pasted, with the setup-network address the kit
-// names moved onto the address the WAP answers at now
-// (ProvisioningReceipt.rebased; the certificate pin is the kit's own); or a
+// tap — opened from Files or pasted, a kit of this device moved onto the
+// address the WAP answers at now, whatever address it named (the setup
+// network's, or a `.local` name from before the WAP was named;
+// ProvisioningReceipt.rebased; the certificate pin is the kit's own); or a
 // fresh setup from this phone, which pairs in one tap. Giving a brand-new
 // Canary its Wi-Fi in the first place is the Set up walkthrough's job
 // (SetupView → CanarySetupView), not this sheet's.
@@ -162,14 +163,14 @@ struct PairView: View {
             error = "That isn't a recovery kit or pairing receipt this app can read."
             return
         }
-        // A kit saved during setup names the WAP's setup-network address,
-        // gone since it joined your Wi-Fi: point it at where THIS device
-        // answers now — but only when the kit is this device's (an empty
-        // id falls back to the discovered one below, as it always did).
-        let sameDevice = decoded.deviceID.isEmpty || decoded.deviceID == canary.deviceID
-        let receipt = sameDevice
-            ? decoded.rebased(onto: canary.host.flatMap(DeviceAPI.url(forDiscoveredHost:)))
-            : decoded
+        // A kit names where its WAP answered when it was saved — the setup
+        // network's address, gone since it joined your Wi-Fi, or a `.local`
+        // name, gone if the WAP was named since. A kit of THIS device is
+        // pointed at where it answers now, whatever it named; another
+        // device's kit is left as it is (ProvisioningReceipt.rebased). An
+        // empty id falls back to the discovered one below, as it always did.
+        let receipt = decoded.rebased(onto: canary.host.flatMap(DeviceAPI.url(forDiscoveredHost:)),
+                                      discoveredAs: canary.deviceID)
         guard DeviceAPI.isPrivate(receipt.baseURL) else {
             error = "That receipt points off your local network, so it wasn't used."
             return

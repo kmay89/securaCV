@@ -29,6 +29,17 @@ There are two builds that reach this bench, both dash-flavor + 4.3B only
 Both share the same `canary::playground` code and the `PG1` serial protocol
 below; `FEATURE_DEVMODE` only adds the Settings doorway and the exit.
 
+Two more envs carry the same doorway: **`canary-display-dash-rs485`** and
+**`canary-display-dash-can`** add `-DFEATURE_DEVMODE=1` to the production
+fieldbus driver they compile (`FEATURE_RS485` / `FEATURE_CAN`). In those builds
+the RS485 / CAN bus station goes through that driver (`src/io/rs485.cpp`,
+`src/io/can_bus.cpp`) instead of the station's own thin transport, and prints
+the driver's one-time bring-up line (`[RS485] up on A/B ...`,
+`[CAN] up on H/L ...`, and the CAN driver's `[CAN] bus-off - initiating
+recovery` / `[CAN] recovered - restarted` around a bus-off) beside the usual
+`PG1` lines; what goes out on the wire is the same. That is how the bench checklist validates the drivers
+([`board_43b_activation_bench.md`](./board_43b_activation_bench.md) §2–§3).
+
 > The bench is the first citizen of a larger **mode system** (fleet / bench /
 > demo / debug / arcade) — see [`display_modes.md`](./display_modes.md) for
 > the registry that generalizes the `devmode` latch (the legacy bool stays
@@ -117,8 +128,8 @@ lands on **DI COM**.
 | **Light** | I2C | **VEML7700** (0x10, preferred) or BH1750 **strapped to 0x5C** | Live lux; hot-plug |
 | **ToF range** | I2C | **VL53L0X** (0x29) | Live mm + trip threshold (50/100/200/400 mm) with counter — the laser-gap prototype |
 | **Cap touch** | I2C | **MPR121** 12-pad (0x5A) | Electrode bitmap + 4 sensitivity presets for the shell-thickness test |
-| **RS485** | A/B | Modbus RTU device (energy meter, PLC, VFD, HVAC controller, alarm panel) | **PROBE** reads holding register 0 of slave 1 (9600 8N1) and shows the value — the industrial serial bus |
-| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged |
+| **RS485** | A/B | Modbus RTU device (energy meter, PLC, VFD, HVAC controller, alarm panel) | **PROBE** reads holding register 0 of slave 1 (9600 8N1) and shows the value — the industrial serial bus; a Modbus exception reply is named at once (`exception=<code>`), silence after 300 ms is `reply=none` |
+| **CAN bus** | H/L | CAN 2.0 node (OBD-II/J1939, CANopen gear, gate/barrier controller, telematics) | **SEND FRAME** transmits a test frame (500 kbit/s); received frames are counted + logged; a controller driven bus-off recovers on its own (`bus=off recovery=started`, then `bus=on recovered`), a tap while it does says `tx=fail bus=off (recovering)`, and it sends again only on the next tap |
 | **I2C census** | bus | anything | Live scan every 3 s with reserved-address warnings |
 
 ### Capacitive-touch shell-thickness test (printed coupons)
@@ -159,7 +170,7 @@ PG1 <millis> EVT <station> <key>=<value>...      # on every edge/trip/action
 PG1 <millis> SNAP <key>=<value>...               # 1 Hz full snapshot
 ```
 
-Stations: `doorbell intrusion chime strobe light tof captouch`. Snapshot
+Stations: `doorbell intrusion chime strobe light tof captouch rs485 can`. Snapshot
 keys: `di0 di1 do0 do1 lux tof_mm tof_ok pads preset i2c`. Values are
 plain `k=v`, no quoting; a line is one record — trivially parseable by a
 `grep`/`awk` bench log or a future desktop harness.

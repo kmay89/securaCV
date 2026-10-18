@@ -61,6 +61,8 @@
 #include "csi_event_egress.h"
 #include "csi_integration.h"
 #include "device_signature.h"
+#include "json_strict.h"     // GET /api/mqtt/config parses under JSON.parse's rules (sweep F227)
+#include "mqtt_transport_logic.h"  // ca_pem_looks_valid(): the shape the CA test cuts past
 
 #include <cstdio>
 #include <cstdlib>
@@ -86,6 +88,7 @@ struct esp_mqtt_client {
   void* handler_args = nullptr;
   std::string uri;
   std::string will_topic;
+  std::string certificate;     // broker.verification.certificate, as configured
   int network_timeout_ms = 0;  // as configured; 0 or less is esp_mqtt's 10 s
   bool connected = false;      // esp_mqtt's own view: CONNECTED until aborted
 };
@@ -223,6 +226,7 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->id = (int)fake::clients.size() + 1;
   c->uri = config->broker.address.uri ? config->broker.address.uri : "";
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
+  c->certificate = config->broker.verification.certificate ? config->broker.verification.certificate : "";
   c->network_timeout_ms = config->network.timeout_ms;
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
@@ -372,6 +376,56 @@ Stats stats() {
 }
 }  // namespace csi_event_egress
 
+// ── GET /api/mqtt/config's hook and heap count (sweep F227 review) ──────
+
+// wap_json_writer.h's hook in csi_mqtt.cpp's build (mqtt_test_hooks.h, the
+// Makefile's -include): each string the writing pass has measured.
+namespace mqtt_test {
+void (*after_measure)(const char* s) = nullptr;
+}  // namespace mqtt_test
+
+// The blocks csi_mqtt.cpp takes with malloc() and gives back with free(),
+// counted while `counting` is set. On Linux the Makefile links this suite
+// with GNU ld's --wrap=malloc and --wrap=free, so every malloc() and free()
+// this binary's own objects call (csi_mqtt.cpp's among them; libstdc++'s
+// are its own and are not counted) comes through here. Elsewhere nothing is
+// counted, and the test that reads the count says it did not run.
+namespace heap {
+bool counting = false;
+size_t taken = 0;              // blocks malloc'd while counting
+void* held[64] = {};           // ... and not yet freed
+size_t n_held = 0;
+bool overflowed = false;       // more than `held` holds were outstanding
+}  // namespace heap
+
+#ifdef MQTT_TEST_HEAP_WRAP
+extern "C" void* __real_malloc(size_t n);
+extern "C" void __real_free(void* p);
+extern "C" void* __wrap_malloc(size_t n) {
+  void* p = __real_malloc(n);
+  if (heap::counting && p != nullptr) {
+    ++heap::taken;
+    if (heap::n_held < sizeof heap::held / sizeof heap::held[0]) heap::held[heap::n_held++] = p;
+    else heap::overflowed = true;
+  }
+  return p;
+}
+extern "C" void __wrap_free(void* p) {
+  if (heap::counting && p != nullptr) {
+    for (size_t i = 0; i < heap::n_held; ++i) {
+      if (heap::held[i] == p) {
+        heap::held[i] = heap::held[--heap::n_held];
+        break;
+      }
+    }
+  }
+  __real_free(p);
+}
+constexpr bool kHeapCounted = true;
+#else
+constexpr bool kHeapCounted = false;
+#endif
+
 // ── The test ────────────────────────────────────────────────────────────
 
 namespace reinit {
@@ -489,10 +543,23 @@ struct Http {
   unsigned delays = 0;
   uint32_t took_ms = 0;
 };
+// How the next request's body reaches the handler (sweep F266), taken by
+// the next http() and cleared: the socket's reads (stubs/mqtt's recv_plan:
+// a cap per read, or an error code) and a Content-Length that is not the
+// body's size (a peer that closes early, or one that claims too much).
+struct Wire {
+  std::vector<int> plan;
+  bool set_len = false;
+  size_t content_len = 0;
+};
+Wire g_wire;
 Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned turn_at,
           std::function<void(unsigned)> on_delay = nullptr, bool workers = true) {
   Http h;
   h.req.body = body;
+  h.req.content_len = g_wire.set_len ? g_wire.content_len : body.size();   // IDF: Content-Length
+  h.req.recv_plan = g_wire.plan;
+  g_wire = Wire{};
   const uint32_t start = stub_mqtt::now_ms;
   stub_mqtt::on_delay = [&](uint32_t ms) {
     stub_mqtt::now_ms += ms;
@@ -1141,6 +1208,712 @@ void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
   std::printf("PASS the_settings_read_on_a_fresh_nvs_logs_nothing\n");
 }
 
+// Sweep F267: once anything has created the shared "csi" namespace (the
+// egress writes its delivery ceiling there at boot, csi_event_egress.cpp),
+// the read-only open succeeds, and config_load() read the host, user,
+// password and prefix with getString() whether or not they were there.
+// Arduino-ESP32 3.3.8's getString() logs "nvs_get_str len fail: <key>
+// NOT_FOUND" at error level for a missing key (the stub counts each), so a
+// debug build whose bridge was never configured printed four error lines at
+// every boot, re-init and config GET or POST. Each is now read behind
+// isKey(), as the time zone and the CA are: no line, and the defaults the
+// refused reads left (no host, user or password, the default prefix,
+// disabled, port 1883, discovery on). A namespace holding only some of the
+// strings reads those and logs nothing for the rest.
+void test_an_unconfigured_bridge_reads_its_settings_without_an_error_line() {
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  {
+    Preferences p;   // the egress's ceiling record, as it writes it
+    CHECK(p.begin("csi", false));
+    CHECK(p.putULong(csi_mqtt::NVS_KEY_DELIVERED, 0xC0000040u) > 0);
+    p.end();
+  }
+  CHECK(stub_nvs_has_namespace("csi"));
+  const int logs = stub_nvs_error_logs();
+  csi_mqtt::Config cfg;
+  std::memset(&cfg, 0x5A, sizeof cfg);   // config_load() owns every field
+  CHECK(csi_mqtt::config_load(&cfg));
+  if (stub_nvs_error_logs() != logs) {
+    std::printf("FAIL config_load() on an unconfigured namespace logged %d error line(s)\n",
+                stub_nvs_error_logs() - logs);
+  }
+  CHECK(stub_nvs_error_logs() == logs);
+  CHECK(!cfg.enabled && cfg.port == 1883 && cfg.discovery && !cfg.ca_set);
+  CHECK(cfg.tls_mode == 0 && !cfg.tls);
+  CHECK(cfg.host[0] == '\0' && cfg.user[0] == '\0' && cfg.pass[0] == '\0');
+  CHECK(std::string(cfg.prefix) == "securacv");
+
+  // The config GET reads the same way: no line either.
+  const int before_get = stub_nvs_error_logs();
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.status == "200 OK");
+  CHECK(stub_nvs_error_logs() == before_get);
+
+  // Some of the strings stored: those come back, the rest stay at their
+  // defaults, and nothing is logged.
+  {
+    Preferences p;
+    CHECK(p.begin("csi", false));
+    CHECK(p.putString(csi_mqtt::NVS_KEY_HOST, "10.0.0.7") > 0);
+    CHECK(p.putString(csi_mqtt::NVS_KEY_PREFIX, "attic") > 0);
+    p.end();
+  }
+  const int before_some = stub_nvs_error_logs();
+  csi_mqtt::Config some;
+  CHECK(csi_mqtt::config_load(&some));
+  CHECK(stub_nvs_error_logs() == before_some);
+  CHECK(std::string(some.host) == "10.0.0.7" && std::string(some.prefix) == "attic");
+  CHECK(some.user[0] == '\0' && some.pass[0] == '\0');
+
+  // The user without the password (config_save() writes all four, so a
+  // first save cut by a power loss between those two writes leaves this),
+  // and the password without the user: each read behind its own key.
+  for (int which = 0; which < 2; ++which) {
+    stub_nvs().clear();
+    stub_nvs_created().clear();
+    {
+      Preferences p;
+      CHECK(p.begin("csi", false));
+      CHECK(p.putString(which == 0 ? csi_mqtt::NVS_KEY_USER : csi_mqtt::NVS_KEY_PASS,
+                        which == 0 ? "ada" : "s3cret") > 0);
+      p.end();
+    }
+    const int before_one = stub_nvs_error_logs();
+    csi_mqtt::Config one;
+    CHECK(csi_mqtt::config_load(&one));
+    CHECK(stub_nvs_error_logs() == before_one);
+    if (which == 0) {
+      CHECK(std::string(one.user) == "ada" && one.pass[0] == '\0');
+    } else {
+      CHECK(std::string(one.pass) == "s3cret" && one.user[0] == '\0');
+    }
+    CHECK(one.host[0] == '\0' && std::string(one.prefix) == "securacv");
+  }
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  std::printf("PASS an_unconfigured_bridge_reads_its_settings_without_an_error_line\n");
+}
+
+// ── GET /api/mqtt/config (sweep F227) ──────────────────────────────────
+
+// The old format of GET /api/mqtt/config's answer (an unescaped %s per
+// string), filled from the config as stored and the bridge as it stands: an
+// ordinary config's answer must still be these bytes.
+std::string old_config_answer() {
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  char old[800];
+  snprintf(old, sizeof(old),
+    "{"
+      "\"enabled\":%s,"
+      "\"host\":\"%s\","
+      "\"port\":%u,"
+      "\"user\":\"%s\","
+      "\"prefix\":\"%s\","
+      "\"tls\":%s,"
+      "\"tls_mode\":%u,"
+      "\"ca_set\":%s,"
+      "\"transport\":\"%s\","
+      "\"last_error\":\"%s\","
+      "\"discovery\":%s,"
+      "\"password_set\":%s,"
+      "\"connected\":%s"
+    "}",
+    c.enabled ? "true" : "false", c.host, (unsigned)c.port, c.user, c.prefix,
+    c.tls ? "true" : "false", (unsigned)c.tls_mode, c.ca_set ? "true" : "false",
+    csi_mqtt::transport_name(), csi_mqtt::last_error(), c.discovery ? "true" : "false",
+    c.pass[0] ? "true" : "false", csi_mqtt::connected() ? "true" : "false");
+  return old;
+}
+
+// One GET /api/mqtt/config, with the blocks it took from the heap and did
+// not give back counted (Linux: the Makefile's --wrap; see `heap` above).
+struct ConfigGet {
+  Http h;
+  size_t taken = 0;
+  size_t kept = 0;
+};
+ConfigGet get_config() {
+  ConfigGet g;
+  heap::taken = 0;
+  heap::n_held = 0;
+  heap::overflowed = false;
+  heap::counting = true;
+  g.h = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  heap::counting = false;
+  CHECK(!heap::overflowed);
+  g.taken = heap::taken;
+  g.kept = heap::n_held;
+  return g;
+}
+
+// The settings page's strings come back as JSON whatever they hold. The
+// POST's json_extract_string() decodes \" \\ and the control escapes and
+// passes raw bytes, so a host or user holding a quote, a backslash or a
+// control byte was stored as such, and the GET wrote it with an unescaped
+// %s: the answer stopped parsing and the settings page could not show the
+// broker it had saved. (The prefix cannot hold one: the POST keeps it to
+// [a-zA-Z0-9_/-].) Now the answer is written by wap_json_writer.h and gives
+// every string back as stored; an ordinary config answers the bytes the old
+// format did, field for field.
+void test_the_config_answer_escapes_what_the_page_sent() {
+  boot_with_broker("10.0.0.1");
+  // An ordinary config with no field at its default: a TLS port, the CA
+  // mode (no CA saved, so the bridge refuses to open and says why in
+  // last_error), a prefix and a user of its own. The old format's bytes,
+  // verbatim, and each field read back.
+  {
+    const Http p = http(csi_mqtt::handle_config_post,
+                        "{\"port\":8883,\"tls_mode\":1,\"prefix\":\"home/wap-2\",\"user\":\"ops\","
+                        "\"discovery\":false}",
+                        /*turn_at=*/1);
+    CHECK(p.req.status == "200 OK");
+    CHECK(csi_mqtt::last_error()[0] != '\0');          // the refusal, in words
+    CHECK(std::strcmp(csi_mqtt::transport_name(), "refused") == 0);
+    const ConfigGet g = get_config();
+    CHECK(g.h.req.status == "200 OK");
+    CHECK(g.h.req.resp == old_config_answer());
+    json_strict::Value v;
+    CHECK(json_strict::parse(g.h.req.resp, &v));
+    const json_strict::Value* f;
+    CHECK((f = v.get("enabled")) != nullptr && f->kind == json_strict::Value::Bool && f->b);
+    CHECK((f = v.get("host")) != nullptr && f->text == "10.0.0.1");
+    CHECK((f = v.get("port")) != nullptr && f->kind == json_strict::Value::Number && f->text == "8883");
+    CHECK((f = v.get("user")) != nullptr && f->text == "ops");
+    CHECK((f = v.get("prefix")) != nullptr && f->text == "home/wap-2");
+    CHECK((f = v.get("tls")) != nullptr && f->kind == json_strict::Value::Bool && f->b);
+    CHECK((f = v.get("tls_mode")) != nullptr && f->kind == json_strict::Value::Number && f->text == "1");
+    CHECK((f = v.get("ca_set")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("transport")) != nullptr && f->text == "refused");
+    CHECK((f = v.get("last_error")) != nullptr && f->text == csi_mqtt::last_error());
+    CHECK((f = v.get("discovery")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("password_set")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK((f = v.get("connected")) != nullptr && f->kind == json_strict::Value::Bool && !f->b);
+    CHECK(v.keys.size() == 13);                         // nothing else, the password least of all
+  }
+  // A host and a user holding a quote, a backslash, decoded control escapes
+  // and a raw control byte, saved through the real POST.
+  std::string body = "{\"tls_mode\":0,\"port\":1883,\"host\":\"br\\\"ok\\\\er";
+  body.push_back('\x01');
+  body += ".lan\",\"user\":\"u\\nse\\tr";
+  body.push_back('\x1f');
+  body += "\",\"password\":\"pw\"}";
+  const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+  CHECK(h.req.status == "200 OK");
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  const std::string host = std::string("br\"ok\\er") + '\x01' + ".lan";
+  const std::string user = std::string("u\nse\tr") + '\x1f';
+  CHECK(host == c.host);                         // stored as decoded
+  CHECK(user == c.user);
+  const ConfigGet g = get_config();
+  CHECK(g.h.req.status == "200 OK");
+  json_strict::Value v;
+  CHECK(json_strict::parse(g.h.req.resp, &v));
+  const json_strict::Value* vh = v.get("host");
+  const json_strict::Value* vu = v.get("user");
+  const json_strict::Value* vp = v.get("password_set");
+  CHECK(vh != nullptr && vh->text == host);
+  CHECK(vu != nullptr && vu->text == user);
+  CHECK(vp != nullptr && vp->kind == json_strict::Value::Bool && vp->b);
+  CHECK(!has_key(g.h.req.resp, "pass"));         // the password stays write-only
+  // A long host and user, every byte escaping to six: an answer past 800
+  // bytes, answered whole. The old format could not reach 800 (its longest,
+  // every field at its limit, is 622 bytes), so its fixed 800-byte buffer
+  // never cut one; an escaped answer can pass it, so the answer's buffer is
+  // its measured length. (Kept under the fields' limits: what config_load()
+  // reads back at the limit is F241's.)
+  const std::string long_host(120, '\x02'), long_user(60, '\x03');
+  (void)http(csi_mqtt::handle_config_post, "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\"}",
+             /*turn_at=*/1);
+  const ConfigGet gl = get_config();
+  CHECK(gl.h.req.resp.size() > 800);
+  json_strict::Value lv;
+  CHECK(json_strict::parse(gl.h.req.resp, &lv));
+  const json_strict::Value* lh = lv.get("host");
+  const json_strict::Value* lu = lv.get("user");
+  CHECK(lh != nullptr && lh->text == long_host);
+  CHECK(lu != nullptr && lu->text == long_user);
+  std::printf("PASS the_config_answer_escapes_what_the_page_sent\n");
+}
+
+// The answer's heap buffer is given back on every path (the F227 review):
+// the answer sent, and the answer refused because a string grew between the
+// measuring pass and the writing pass. Nothing in csi_mqtt.cpp grows one
+// (both passes read the handler's own copies), so the refusal is reached
+// through wap_json_writer.h's test hook, which grows the copy of the host
+// inside the writing pass: the handler answers 500 "answer changed", sends
+// none of the half-written text, and frees the buffer.
+void test_the_config_answer_gives_its_buffer_back() {
+  if (!kHeapCounted) {
+    std::printf("SKIP the_config_answer_gives_its_buffer_back (the heap count needs GNU ld's --wrap: Linux)\n");
+    return;
+  }
+  boot_with_broker("broker.lan");
+  // Sent: one block taken (the answer), none kept.
+  const ConfigGet sent = get_config();
+  CHECK(sent.h.req.status == "200 OK");
+  CHECK(sent.taken >= 1);                        // the count is live: the answer's buffer
+  CHECK(sent.kept == 0);
+  // Refused: the host grows by a byte after the writing pass measured it.
+  static int grown = 0;
+  grown = 0;
+  mqtt_test::after_measure = [](const char* s) {
+    if (grown == 0 && s != nullptr && std::strcmp(s, "broker.lan") == 0) {
+      char* w = const_cast<char*>(s);            // the handler's own Config copy, 129 bytes
+      std::strcpy(w, "broker.lanx");
+      ++grown;
+    }
+  };
+  const ConfigGet refused = get_config();
+  mqtt_test::after_measure = nullptr;
+  CHECK(grown == 1);
+  CHECK(refused.h.req.status == "500 Internal Server Error");
+  CHECK(refused.h.req.resp == "{\"ok\":false,\"reason\":\"answer changed\"}");
+  CHECK(refused.taken >= 1);
+  CHECK(refused.kept == 0);
+  // And the stored host is what it was: the copy grew, not the config.
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  CHECK(std::strcmp(c.host, "broker.lan") == 0);
+  std::printf("PASS the_config_answer_gives_its_buffer_back\n");
+}
+
+// ── The settings' lengths (sweep F241) ──────────────────────────────────
+//
+// POST /api/mqtt/config stored up to MAX_*_LEN characters of each string
+// setting (cutting a longer user or prefix to it without a word), and
+// config_load() read each back with Preferences::getString(key, buf,
+// MAX_*_LEN). arduino-esp32 3.3.8's getString refuses a value whose length
+// with its NUL exceeds the size it is given (stubs/mqtt/Preferences.h quotes
+// it), so a setting of exactly MAX_*_LEN characters was stored and read back
+// as nothing: a 32-character prefix as "securacv", a 128-character host as no
+// host. config_load() now reads each with its member's whole size, and the
+// POST refuses a value its member cannot hold instead of cutting it.
+
+// Each string setting: its key in the POST's body, its NVS key, the most
+// characters its Config member holds, the member's size, the member.
+struct Setting {
+  const char* field;
+  const char* key;
+  size_t max;
+  size_t size;
+  char* (*member)(csi_mqtt::Config&);
+  char fill;
+};
+#define F241_SETTING(field, key, max, name, fill) \
+  {field, key, max, sizeof(csi_mqtt::Config::name), \
+   [](csi_mqtt::Config& c) -> char* { return c.name; }, fill}
+const Setting kSettings[] = {
+    F241_SETTING("host", csi_mqtt::NVS_KEY_HOST, csi_mqtt::MAX_HOST_LEN, host, 'h'),
+    F241_SETTING("user", csi_mqtt::NVS_KEY_USER, csi_mqtt::MAX_USER_LEN, user, 'u'),
+    F241_SETTING("password", csi_mqtt::NVS_KEY_PASS, csi_mqtt::MAX_PASS_LEN, pass, 'w'),
+    F241_SETTING("prefix", csi_mqtt::NVS_KEY_PREFIX, csi_mqtt::MAX_PREFIX_LEN, prefix, 'p'),
+};
+#undef F241_SETTING
+
+// A check that reports and lets the test go on, so one run names every
+// setting that fails; each test ends on CHECK(g_soft_failures == 0).
+int g_soft_failures = 0;
+#define SOFT(what, c)                                                        \
+  do {                                                                       \
+    ++g_checks;                                                              \
+    if (!(c)) {                                                              \
+      std::printf("FAIL%s %s:%d: %s\n", (what).c_str(), __FILE__, __LINE__, #c); \
+      ++g_soft_failures;                                                     \
+    }                                                                        \
+  } while (0)
+
+std::string post_one(const Setting& s, const std::string& value) {
+  return std::string("{\"") + s.field + "\":\"" + value + "\"}";
+}
+
+std::string too_long(const char* field, size_t max) {
+  return std::string("{\"ok\":false,\"reason\":\"") + field + " must be at most " + std::to_string(max) +
+         " bytes\"}";
+}
+
+// A setting of its member's whole length is stored and read back whole, with
+// no error log, through config_save() and config_load(). One byte more
+// can only come from outside this firmware (config_save() writes the member,
+// the POST refuses it): the core refuses it whole, as it refused a value at
+// the limit before, so that field reads empty, the prefix its default.
+void test_each_setting_reads_back_at_its_limit() {
+  g_soft_failures = 0;
+  for (const Setting& s : kSettings) {
+    const std::string what = std::string(" [") + s.field + "]";
+    CHECK(s.size == s.max + 1);
+    stub_nvs().clear();
+    stub_nvs_created().clear();
+    csi_mqtt::Config c;
+    CHECK(csi_mqtt::config_load(&c));
+    c.enabled = true;
+    std::snprintf(c.host, sizeof c.host, "%s", "10.0.0.9");
+    const std::string at(s.max, s.fill);
+    std::memcpy(s.member(c), at.c_str(), at.size() + 1);
+    CHECK(csi_mqtt::config_save(c));
+    const int logs = stub_nvs_error_logs();
+    csi_mqtt::Config back;
+    CHECK(csi_mqtt::config_load(&back));
+    if (std::string(s.member(back)) != at) {
+      std::printf("FAIL%s: %zu bytes stored, %zu read back\n", what.c_str(), at.size(),
+                  std::strlen(s.member(back)));
+      ++g_soft_failures;
+    }
+    SOFT(what, stub_nvs_error_logs() == logs);
+
+    Preferences p;
+    CHECK(p.begin("csi", false));
+    p.putString(s.key, std::string(s.max + 1, s.fill).c_str());
+    p.end();
+    const int before_past = stub_nvs_error_logs();
+    csi_mqtt::Config past;
+    CHECK(csi_mqtt::config_load(&past));
+    const std::string expect = std::strcmp(s.field, "prefix") == 0 ? "securacv" : "";
+    SOFT(what, std::string(s.member(past)) == expect);
+    SOFT(what, stub_nvs_error_logs() == before_past + 1);
+  }
+  stub_nvs().clear();
+  stub_nvs_created().clear();
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS each_setting_reads_back_at_its_limit\n");
+}
+
+// Through the handler: POST /api/mqtt/config takes each setting at its
+// member's whole length, which config_load() and GET /api/mqtt/config then
+// give back whole, and refuses one byte more with the limit in the reason,
+// storing nothing: not the field cut to its member (the one-past value is
+// another letter, so a cut would differ from what is stored), and not the
+// other fields of the same body. An escape the extract decodes is one byte.
+void test_the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past() {
+  g_soft_failures = 0;
+  boot_with_broker("10.0.0.1");
+  for (const Setting& s : kSettings) {
+    const std::string what = std::string(" [") + s.field + "]";
+    const std::string at(s.max, s.fill);
+    const Http ok = http(csi_mqtt::handle_config_post, post_one(s, at), /*turn_at=*/1);
+    SOFT(what, ok.req.status == "200 OK" && ok.req.resp == "{\"ok\":true}");
+    csi_mqtt::Config c;
+    CHECK(csi_mqtt::config_load(&c));
+    if (std::string(s.member(c)) != at) {
+      std::printf("FAIL%s: %zu bytes posted, %zu read back\n", what.c_str(), at.size(),
+                  std::strlen(s.member(c)));
+      ++g_soft_failures;
+    }
+
+    // One past, in another letter (upper case: the prefix's set takes it).
+    const char other = (char)(s.fill - 'a' + 'A');
+    const std::string past(s.max + 1, other);
+    const Http refused = http(csi_mqtt::handle_config_post, post_one(s, past), /*turn_at=*/1);
+    SOFT(what, refused.req.status == "400 Bad Request");
+    if (refused.req.resp != too_long(s.field, s.max)) {
+      std::printf("FAIL%s: one past the limit answered %s %s\n", what.c_str(),
+                  refused.req.status.c_str(), refused.req.resp.c_str());
+      ++g_soft_failures;
+    }
+    csi_mqtt::Config after;
+    CHECK(csi_mqtt::config_load(&after));
+    SOFT(what, std::string(s.member(after)) == at);   // nothing stored, nothing cut
+
+    // The same refusal in a body that changes three other settings: none of
+    // them is stored either.
+    const std::string body = std::string("{\"enabled\":false,\"port\":1999,\"discovery\":false,\"") +
+                             s.field + "\":\"" + past + "\"}";
+    const Http mixed = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+    SOFT(what, mixed.req.status == "400 Bad Request" && mixed.req.resp == too_long(s.field, s.max));
+    csi_mqtt::Config kept;
+    CHECK(csi_mqtt::config_load(&kept));
+    SOFT(what, kept.enabled && kept.port == after.port && kept.port != 1999 && kept.discovery);
+    SOFT(what, std::string(s.member(kept)) == at);
+  }
+
+  // 127 bytes and an escaped quote: 128 bytes stored, quote and all.
+  const std::string pw = std::string(csi_mqtt::MAX_PASS_LEN - 1, 'w');
+  const Http esc = http(csi_mqtt::handle_config_post, "{\"password\":\"" + pw + "\\\"\"}", /*turn_at=*/1);
+  CHECK(esc.req.status == "200 OK");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.pass) == pw + "\"");
+  const Http esc2 = http(csi_mqtt::handle_config_post, "{\"password\":\"" + pw + "\\\"x\"}", /*turn_at=*/1);
+  CHECK(esc2.req.status == "400 Bad Request");
+
+  // GET answers the longest host, user and prefix whole (the password is
+  // write-only), in a body that still fits its buffer.
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.resp.find("\"host\":\"" + std::string(csi_mqtt::MAX_HOST_LEN, 'h') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"user\":\"" + std::string(csi_mqtt::MAX_USER_LEN, 'u') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"prefix\":\"" + std::string(csi_mqtt::MAX_PREFIX_LEN, 'p') + "\",") !=
+        std::string::npos);
+  CHECK(get.req.resp.find("\"password_set\":true,") != std::string::npos);
+  CHECK(!get.req.resp.empty() && get.req.resp.back() == '}');
+  // The bridge took the longest host into its broker URI whole.
+  CHECK(fake::last_client()->uri ==
+        "mqtt://" + std::string(csi_mqtt::MAX_HOST_LEN, 'h') + ":1883");
+  power_cycle();
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past\n");
+}
+
+// The limits are bytes, as the member holds them: a user of 32 two-byte
+// letters (64 bytes) is taken whole, 33 of them (66 bytes, 33 characters,
+// under the page's maxlength of 64) are refused with the limit in bytes. A
+// prefix outside its character set is refused for the set, whatever its
+// length.
+void test_the_config_post_limits_are_bytes() {
+  boot_with_broker("10.0.0.1");
+  std::string e32, e33;
+  for (int i = 0; i < 32; ++i) e32 += "\xC3\xA9";   // U+00E9
+  e33 = e32 + "\xC3\xA9";
+  const Http ok = http(csi_mqtt::handle_config_post, "{\"user\":\"" + e32 + "\"}", /*turn_at=*/1);
+  CHECK(ok.req.status == "200 OK");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.user) == e32 && std::strlen(c.user) == csi_mqtt::MAX_USER_LEN);
+  const Http refused = http(csi_mqtt::handle_config_post, "{\"user\":\"" + e33 + "\"}", /*turn_at=*/1);
+  CHECK(refused.req.status == "400 Bad Request");
+  CHECK(refused.req.resp == too_long("user", csi_mqtt::MAX_USER_LEN));
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == e32);
+
+  std::string e20;
+  for (int i = 0; i < 20; ++i) e20 += "\xC3\xA9";   // 40 bytes, 20 letters
+  const Http set = http(csi_mqtt::handle_config_post, "{\"prefix\":\"" + e20 + "\"}", /*turn_at=*/1);
+  CHECK(set.req.status == "400 Bad Request");
+  CHECK(set.req.resp == "{\"ok\":false,\"reason\":\"prefix must be [a-zA-Z0-9_/-]+\"}");
+  power_cycle();
+  std::printf("PASS the_config_post_limits_are_bytes\n");
+}
+
+// A PEM of exactly `n` bytes, one certificate (the shape check wants a BEGIN
+// and an END line; the bytes between are `fill`).
+std::string pem_of(size_t n, char fill) {
+  const std::string head = "-----BEGIN CERTIFICATE-----\n";
+  const std::string tail = "\n-----END CERTIFICATE-----";
+  CHECK(n >= head.size() + tail.size());
+  return head + std::string(n - head.size() - tail.size(), fill) + tail;
+}
+
+// The PEM as a JSON string's inside: its newlines escaped.
+std::string json_inside(const std::string& v) {
+  std::string out;
+  for (char ch : v) {
+    if (ch == '\n') out += "\\n";
+    else if (ch == '\r') out += "\\r";
+    else out += ch;
+  }
+  return out;
+}
+
+std::string stored_ca() {
+  const auto it = stub_nvs().find(std::string("csi/") + csi_mqtt::NVS_KEY_CA);
+  return it == stub_nvs().end() ? std::string() : std::string(it->second.begin(), it->second.end());
+}
+
+// The TLS CA (sweep F241, the review): the handler cut a longer CA to
+// MAX_CA_LEN bytes and stored it if the cut still held a BEGIN and an END
+// line, so a two-certificate chain was saved ending mid-certificate. A CA of
+// MAX_CA_LEN bytes is taken (the /mqtt page sends it with a newline after, one
+// past: whitespace past the limit is dropped), reaches the client whole
+// through ca_load(), and one byte of certificate more is refused with the
+// limit, storing nothing of that body.
+void test_the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past() {
+  boot_with_broker("10.0.0.1");
+  const size_t max = csi_mqtt::MAX_CA_LEN;
+  const std::string at = pem_of(max, 'A');
+  const Http ok = http(csi_mqtt::handle_config_post,
+                       "{\"tls_mode\":1,\"ca\":\"" + json_inside(at + "\n") + "\"}", /*turn_at=*/1);
+  CHECK(ok.req.status == "200 OK" && ok.req.resp == "{\"ok\":true}");
+  CHECK(stored_ca() == at);
+  CHECK(fake::last_client()->certificate == at);   // ca_load() read it whole
+  CHECK(fake::last_client()->uri.rfind("mqtts://10.0.0.1:", 0) == 0);
+
+  // One shorter, the newline fits and is kept, as before.
+  const std::string shorter = pem_of(max - 1, 'C');
+  const Http ok2 = http(csi_mqtt::handle_config_post,
+                        "{\"ca\":\"" + json_inside(shorter + "\n") + "\"}", /*turn_at=*/1);
+  CHECK(ok2.req.status == "200 OK");
+  CHECK(stored_ca() == shorter + "\n");
+  // Whitespace of any kind past the limit is not the certificate.
+  const Http ok3 = http(csi_mqtt::handle_config_post,
+                        "{\"ca\":\"" + json_inside(at + "\r\n\r\n") + " \\t\"}", /*turn_at=*/1);
+  CHECK(ok3.req.status == "200 OK");
+  CHECK(stored_ca() == at);
+
+  const std::string refusal = too_long("ca", max);
+  // One byte of certificate past the limit, with other settings in the body.
+  const Http past = http(csi_mqtt::handle_config_post,
+                         "{\"port\":1999,\"host\":\"10.9.9.9\",\"ca\":\"" + json_inside(pem_of(max + 1, 'B') + "\n") +
+                             "\"}",
+                         /*turn_at=*/1);
+  CHECK(past.req.status == "400 Bad Request" && past.req.resp == refusal);
+  CHECK(stored_ca() == at);
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.host) == "10.0.0.1" && c.port != 1999);
+  // A letter after whitespace past the limit is certificate too.
+  const Http past2 = http(csi_mqtt::handle_config_post,
+                          "{\"ca\":\"" + json_inside(at + "\n") + "x\"}", /*turn_at=*/1);
+  CHECK(past2.req.status == "400 Bad Request" && past2.req.resp == refusal);
+  CHECK(stored_ca() == at);
+  // A two-certificate chain whose cut at MAX_CA_LEN still holds the first
+  // whole: the old handler stored that cut (BEGIN and END are both in it).
+  const std::string chain = pem_of(2000, 'D') + "\n" + pem_of(1510, 'E');
+  CHECK(chain.size() > max);
+  const std::string cut = chain.substr(0, max);
+  CHECK(canary::net::mqtt_tls::ca_pem_looks_valid(cut.c_str()));
+  const Http two = http(csi_mqtt::handle_config_post,
+                        "{\"ca\":\"" + json_inside(chain + "\n") + "\"}", /*turn_at=*/1);
+  CHECK(two.req.status == "400 Bad Request" && two.req.resp == refusal);
+  CHECK(stored_ca() == at);
+  power_cycle();
+  std::printf("PASS the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past\n");
+}
+
+// Sweep F266: POST /api/mqtt/config parsed what ONE httpd_req_recv()
+// returned, and IDF's recv returns what the socket holds, so a body that
+// came in more than one TCP segment was parsed cut. Here the body carries a
+// 2.4 KB CA, the way the /mqtt page sends a pasted PEM, with the host, port,
+// user and discovery after it, and the socket hands it over in three reads,
+// the CA split across all three. The handler now reads until Content-Length
+// bytes are in (http_body::read_all(), as the Beacon routes do), asks for no
+// more than is still owed, and sits out up to three socket timeouts; a peer
+// that closes early, or a fourth timeout, is refused with nothing stored.
+void test_the_config_post_reads_a_body_that_arrives_in_pieces() {
+  boot_with_broker("10.0.0.1");
+  const std::string pem = pem_of(2400, 'Q');
+  const std::string body = "{\"tls_mode\":1,\"ca\":\"" + json_inside(pem + "\n") +
+                           "\",\"host\":\"10.0.0.5\",\"port\":8884,\"user\":\"bob\",\"discovery\":false}";
+  const size_t ca_at = body.find("BEGIN");
+  const size_t ca_end = body.find("END CERTIFICATE");
+  CHECK(ca_at < 700 && ca_end > 700 + 900);   // each of the three reads holds some of the CA
+  g_wire.plan = {700, 900};                    // then the rest, in one read
+  const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+  if (h.req.status != "200 OK") {
+    std::printf("FAIL a body in three reads answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
+  }
+  CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+  CHECK(h.req.body_off == body.size() && h.req.recv_calls == 3);
+  CHECK(h.req.recv_asked_max <= body.size());   // never more than is owed
+  CHECK(stored_ca() == pem + "\n");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  CHECK(std::string(c.host) == "10.0.0.5" && c.port == 8884 && std::string(c.user) == "bob");
+  CHECK(!c.discovery && c.tls_mode == 1);
+  CHECK(fake::last_client()->certificate == pem + "\n");
+  CHECK(fake::last_client()->uri == "mqtts://10.0.0.5:8884");
+
+  // Three socket timeouts between the pieces are sat out.
+  const std::string body2 = "{\"user\":\"carol\",\"ca\":\"" + json_inside(pem_of(1800, 'R') + "\n") + "\"}";
+  g_wire.plan = {600, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, 500, HTTPD_SOCK_ERR_TIMEOUT};
+  const Http h2 = http(csi_mqtt::handle_config_post, body2, /*turn_at=*/1);
+  CHECK(h2.req.status == "200 OK" && h2.req.body_off == body2.size());
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  CHECK(stored_ca() == pem_of(1800, 'R') + "\n");
+
+  // A fourth is not, and nothing of that body is stored.
+  const std::string read_failed = "{\"ok\":false,\"reason\":\"body read failed\"}";
+  const std::string body3 = "{\"user\":\"dave\",\"ca\":\"" + json_inside(pem_of(1700, 'S') + "\n") + "\"}";
+  g_wire.plan = {600, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT,
+                 HTTPD_SOCK_ERR_TIMEOUT};
+  const Http h3 = http(csi_mqtt::handle_config_post, body3, /*turn_at=*/1);
+  CHECK(h3.req.status == "400 Bad Request" && h3.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  CHECK(stored_ca() == pem_of(1800, 'R') + "\n");
+  // A socket error, the same.
+  g_wire.plan = {600, HTTPD_SOCK_ERR_FAIL};
+  const Http h4 = http(csi_mqtt::handle_config_post, body3, /*turn_at=*/1);
+  CHECK(h4.req.status == "400 Bad Request" && h4.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+
+  // A peer that closes before its Content-Length is in: the old handler
+  // parsed what had come.
+  g_wire.set_len = true;
+  g_wire.content_len = std::string("{\"user\":\"erin\"}").size() + 10;
+  const Http h5 = http(csi_mqtt::handle_config_post, "{\"user\":\"erin\"}", /*turn_at=*/1);
+  CHECK(h5.req.status == "400 Bad Request" && h5.req.resp == read_failed);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.user) == "carol");
+  power_cycle();
+  std::printf("PASS the_config_post_reads_a_body_that_arrives_in_pieces\n");
+}
+
+// Sweep F266: a body past the handler's cap was cut at it and the cut
+// parsed, though the handler's comment said it was refused. Now a
+// Content-Length past csi_mqtt::MAX_CONFIG_BODY_LEN is refused with the
+// limit in the reason (400, as the handler's other refusals; the /mqtt page
+// and the setup wizard show it) before anything is read, and a body of
+// exactly the cap is read and taken. No Content-Length is "empty body".
+void test_the_config_post_refuses_a_body_past_its_cap() {
+  boot_with_broker("10.0.0.1");
+  const size_t max = csi_mqtt::MAX_CONFIG_BODY_LEN;
+  CHECK(max == 640 + 2 * csi_mqtt::MAX_CA_LEN + 63);
+  // A body of `n` bytes that sets the host first, padded with a key the
+  // handler does not read.
+  auto padded = [](const std::string& host, size_t n) {
+    const std::string head = "{\"host\":\"" + host + "\",\"pad\":\"";
+    const std::string tail = "\"}";
+    CHECK(n > head.size() + tail.size());
+    return head + std::string(n - head.size() - tail.size(), 'x') + tail;
+  };
+  const Http at = http(csi_mqtt::handle_config_post, padded("10.0.0.6", max), /*turn_at=*/1);
+  CHECK(at.req.status == "200 OK" && at.req.resp == "{\"ok\":true}");
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  const Http past = http(csi_mqtt::handle_config_post, padded("10.0.0.7", max + 1), /*turn_at=*/1);
+  if (past.req.status != "400 Bad Request") {
+    std::printf("FAIL a body one past the cap answered %s %s\n", past.req.status.c_str(),
+                past.req.resp.c_str());
+  }
+  CHECK(past.req.status == "400 Bad Request" && past.req.resp == too_long("body", max));
+  CHECK(past.req.recv_calls == 0);   // refused before any of it was read
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  // A Content-Length far past the cap, whatever the socket then holds.
+  g_wire.set_len = true;
+  g_wire.content_len = 1u << 20;
+  const Http huge = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.8\"}", /*turn_at=*/1);
+  CHECK(huge.req.status == "400 Bad Request" && huge.req.resp == too_long("body", max));
+  CHECK(huge.req.recv_calls == 0);
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+
+  // No Content-Length (or 0): nothing to read.
+  g_wire.set_len = true;
+  g_wire.content_len = 0;
+  const Http none = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.9\"}", /*turn_at=*/1);
+  CHECK(none.req.status == "400 Bad Request" &&
+        none.req.resp == "{\"ok\":false,\"reason\":\"empty body\"}");
+  CHECK(csi_mqtt::config_load(&c) && std::string(c.host) == "10.0.0.6");
+  power_cycle();
+  std::printf("PASS the_config_post_refuses_a_body_past_its_cap\n");
+}
+
+// The /mqtt page's inputs stop at the lengths the device takes.
+void test_the_settings_page_limits_each_field() {
+  g_soft_failures = 0;
+  const Http page = http(csi_mqtt::handle_ui, "", /*turn_at=*/0);
+  CHECK(page.req.status == "200 OK");
+  for (const Setting& s : kSettings) {
+    const std::string id = std::string("id=\"") + s.field + "\"";
+    const size_t at = page.req.resp.find(id);
+    CHECK(at != std::string::npos);
+    if (at == std::string::npos) continue;
+    const size_t open = page.req.resp.rfind("<input", at);
+    const size_t close = page.req.resp.find('>', at);
+    CHECK(open != std::string::npos && close != std::string::npos);
+    if (open == std::string::npos || close == std::string::npos) continue;
+    const std::string tag = page.req.resp.substr(open, close - open + 1);
+    const std::string limit = "maxlength=\"" + std::to_string(s.max) + "\"";
+    if (tag.find(limit) == std::string::npos) {
+      std::printf("FAIL [%s]: the page's input has no %s: %s\n", s.field, limit.c_str(), tag.c_str());
+      ++g_soft_failures;
+    }
+  }
+  CHECK(g_soft_failures == 0);
+  std::printf("PASS the_settings_page_limits_each_field\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1148,6 +1921,8 @@ struct Test {
 const Test kTests[] = {
     {"a_config_post_reinits_on_the_loop_task", test_a_config_post_reinits_on_the_loop_task},
     {"the_settings_read_on_a_fresh_nvs_logs_nothing", test_the_settings_read_on_a_fresh_nvs_logs_nothing},
+    {"an_unconfigured_bridge_reads_its_settings_without_an_error_line",
+     test_an_unconfigured_bridge_reads_its_settings_without_an_error_line},
     {"a_publish_in_flight_keeps_its_client", test_a_publish_in_flight_keeps_its_client},
     {"the_test_handler_reports_the_new_clients_connect", test_the_test_handler_reports_the_new_clients_connect},
     {"the_test_handler_is_bounded", test_the_test_handler_is_bounded},
@@ -1169,6 +1944,18 @@ const Test kTests[] = {
     {"a_connect_burst_cut_short_leaves_the_link_down", test_a_connect_burst_cut_short_leaves_the_link_down},
     {"the_health_publish_warns_before_the_id_space_runs_out", test_the_health_publish_warns_before_the_id_space_runs_out},
     {"the_egress_counters_ride_a_retained_topic_of_their_own", test_the_egress_counters_ride_a_retained_topic_of_their_own},
+    {"the_config_answer_escapes_what_the_page_sent", test_the_config_answer_escapes_what_the_page_sent},
+    {"the_config_answer_gives_its_buffer_back", test_the_config_answer_gives_its_buffer_back},
+    {"each_setting_reads_back_at_its_limit", test_each_setting_reads_back_at_its_limit},
+    {"the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past",
+     test_the_config_post_takes_each_setting_at_its_limit_and_refuses_one_past},
+    {"the_settings_page_limits_each_field", test_the_settings_page_limits_each_field},
+    {"the_config_post_limits_are_bytes", test_the_config_post_limits_are_bytes},
+    {"the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past",
+     test_the_config_post_takes_a_ca_at_its_limit_and_refuses_one_past},
+    {"the_config_post_reads_a_body_that_arrives_in_pieces",
+     test_the_config_post_reads_a_body_that_arrives_in_pieces},
+    {"the_config_post_refuses_a_body_past_its_cap", test_the_config_post_refuses_a_body_past_its_cap},
 };
 
 }  // namespace reinit

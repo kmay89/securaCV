@@ -42,6 +42,7 @@ CI:   the same command + `git diff --exit-code devices/flash.json`.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import subprocess
@@ -1983,8 +1984,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         },
         "serial_monitor": {
             "label": "Serial monitor",
-            "what": "The board's live voice over USB: watch it think, send its "
-                    "single-key commands. Nothing typed here can break it.",
+            "what": "The board's live voice over USB: watch it think, and send the "
+                    "commands its firmware answers (a display's reads none). Nothing "
+                    "typed here can break it.",
         },
         "rescue": {
             "label": "Rescue",
@@ -2504,6 +2506,252 @@ def supports_serial_receipt(project: str) -> bool:
     return has_builder and has_command
 
 
+
+# ── the post-flash monitor's command vocabulary (sweep A86) ─────────────────
+# Every bench that watches a board after a flash offers its commands as
+# one-tap chips beside a "type a command" box: the browser flasher's serial
+# monitor (flash.js), the Flasher's (desktop/src/app.js) and the Lab app's
+# receipt card (flash-native.js). They all read the product's `monitor`
+# record from this catalog, so each product shows the vocabulary ITS firmware
+# answers — not one firmware's menu labeled for all of them (the WAP sketch
+# has no `j`, the flagship answers `t`/`w`/`m` as tests, tamper log and MQTT,
+# Vision answers only `j` and `h`, Sense's tuning console reads words and the
+# display firmware reads nothing).
+#
+# The table chooses WHICH commands get a chip and the short label each shows;
+# it cannot invent one. monitor_block() refuses a chip whose command the
+# firmware's own handler does not answer unconditionally (a key behind an
+# `#if` may be compiled out of the very build being watched), and a label
+# whose words are not the firmware's own help-menu words for that command.
+# Chips change nothing the board keeps, by choice: the reboot (`x`), the
+# USB-drive mode cycle (`u`), the knob writes (`set`, `reset`) stay in the
+# typed box. Sense's `stream on` / `stream off` are the one pair that change
+# anything — the console session's radar line, which a reboot forgets.
+# desktop_parity.test.js re-derives the same facts from the firmware with a
+# second implementation of this reading (the same method, written again) and
+# holds every product's chips to them.
+MONITOR_PLACEHOLDERS = {
+    "keys": "type a command — the firmware answers single keys; h shows its menu",
+    "words": "type a command — the tuning console reads words; help lists them",
+    "none": "this firmware reads no serial commands — its console only prints",
+    # No product known (a board whose firmware was not identified, a local
+    # file, a backup): no chips at all rather than another firmware's.
+    "unknown": "type a command — this board’s firmware wasn’t identified, so no command chips are shown",
+}
+
+MONITOR_VOCAB = {
+    "firmware/canary": {
+        "kind": "keys",
+        "handler": "firmware/canary/src/main.cpp",
+        "cmds": [("h", "help"), ("j", "self-manifest"), ("i", "identity"), ("s", "status"),
+                 ("t", "all tests"), ("e", "last boot"), ("f", "provenance"), ("w", "tamper log")],
+    },
+    "firmware/projects/canary-wap": {
+        "kind": "keys",
+        "handler": "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+        "cmds": [("h", "help"), ("i", "identity"), ("s", "status"), ("t", "time"),
+                 ("w", "Wi-Fi AP"), ("m", "system"), ("b", "battery"), ("g", "GPS")],
+    },
+    "firmware/projects/canary-vision": {
+        "kind": "keys",
+        "handler": "firmware/projects/canary-vision/src/main.cpp",
+        "cmds": [("j", "install receipt"), ("h", "help")],
+    },
+    "firmware/projects/canary-sense": {
+        "kind": "words",
+        "handler": "firmware/common/console/tuning_console.h",
+        "cmds": [("help", "help"), ("cfg", "all knobs"),
+                 ("stream on", "radar line on"), ("stream off", "radar line off")],
+    },
+    "firmware/projects/canary-display": {"kind": "none", "cmds": []},
+}
+
+
+_C_NOISE = re.compile(
+    r'(?<![A-Za-z0-9_])R"(?P<delim>[^()\\\s]{0,16})\((?:.|\n)*?\)(?P=delim)"'  # raw string literal
+    r"|//[^\n]*"                                                # line comment
+    r"|/\*(?:.|\n)*?\*/"                                         # block comment
+    r'|"(?:\\.|[^"\\\n])*"'                                     # string literal
+    r"|'(?:\\.|[^'\\\n])*'"                                     # char literal
+)
+
+
+def _c_strip(text: str) -> str:
+    """`text` with every comment, string and char literal (raw strings too)
+    blanked to spaces, newlines kept, so braces, `#if` lines and calls are
+    read only where the compiler would read them."""
+    return _C_NOISE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
+def c_function_body(text: str, name: str, where: str) -> tuple[str, int]:
+    """The body of C/C++ function `name` (between its braces) and its offset.
+    Refuses a function it cannot find exactly once as a definition."""
+    stripped = _c_strip(text)
+    defs = [m for m in re.finditer(rf"\b{re.escape(name)}\s*\([^;{{)]*\)\s*(?:const\s*)?\{{", stripped)]
+    if len(defs) != 1:
+        die(f"{where}: expected one definition of {name}(), found {len(defs)}")
+    start = defs[0].end()
+    depth = 1
+    i = start
+    while i < len(stripped) and depth:
+        if stripped[i] == "{":
+            depth += 1
+        elif stripped[i] == "}":
+            depth -= 1
+        i += 1
+    if depth:
+        die(f"{where}: {name}() has no closing brace")
+    return text[start:i - 1], start
+
+
+def unconditional_lines(body: str) -> list[tuple[str, str]]:
+    """(stripped line, raw line) pairs of `body` that sit under no preprocessor
+    conditional opened inside it. A command answered only under `#if FEATURE_X`
+    may be compiled out of the very build on the bench, so it is not one this
+    catalog may offer as a chip."""
+    out = []
+    depth = 0
+    for raw, line in zip(body.splitlines(), _c_strip(body).splitlines()):
+        if re.match(r"\s*#\s*if", line):
+            depth += 1
+        elif re.match(r"\s*#\s*endif\b", line):
+            depth -= 1
+        elif depth == 0:
+            out.append((line, raw))
+    return out
+
+
+def label_words(text: str) -> set[str]:
+    """Lowercase words with hyphens joined ("Wi-Fi" and "WiFi" are one word)."""
+    return {w for w in re.split(r"[^a-z0-9]+", text.lower().replace("-", "")) if w}
+
+
+def string_literals(text: str) -> list[str]:
+    return [m.group(1) for m in re.finditer(r'"((?:[^"\\\n]|\\.)*)"', text)]
+
+
+def answered_keys(handler: Path, where: str) -> tuple[set[str], dict[str, set[str]]]:
+    """The single keys handle_serial_commands() answers with no preprocessor
+    condition around them (a `case 'x':` label, or Vision's `command == 'x'`),
+    and each key's help-menu words (its line in the handler's own help text or
+    the print_help() beside it)."""
+    text = handler.read_text(encoding="utf-8")
+    body, start = c_function_body(text, "handle_serial_commands", where)
+    depth_before = 0
+    for ln in _c_strip(text[:start]).splitlines():
+        if re.match(r"\s*#\s*if", ln):
+            depth_before += 1
+        elif re.match(r"\s*#\s*endif\b", ln):
+            depth_before -= 1
+    if depth_before:
+        die(f"{where}: handle_serial_commands() is defined inside a preprocessor conditional")
+    keys: set[str] = set()
+    for line, raw in unconditional_lines(body):
+        # The char literal is blanked in `line`, so it is read from `raw` —
+        # but only where `line` shows the same code (not inside a comment).
+        for m in re.finditer(r"\bcase\s+'(.)'\s*:|\b\w+\s*==\s*'(.)'", raw):
+            if line[m.start()] != " ":
+                keys.add(m.group(1) or m.group(2))
+    help_text = body
+    if re.search(r"\bprint_help\s*\(", body):
+        help_text += c_function_body(text, "print_help", where)[0]
+    words: dict[str, set[str]] = {}
+    for lit in string_literals(help_text):
+        m = re.match(r"^[\s│]*(\S)(?:\s*/\s*\S)?\s+[-:]\s+(.+?)[\s│]*$", lit)
+        if m:
+            words.setdefault(m.group(1), set()).update(label_words(m.group(2)))
+    return keys, words
+
+
+def answered_words(handler: Path, where: str) -> tuple[set[str], set[tuple[str, str]], dict[str, set[str]]]:
+    """The tuning console's words: execute_()'s `ieq_(cmd, "w")` tests, the
+    `ieq_(tok[1], "a")` arguments it reads, and each word's print_help() line."""
+    text = handler.read_text(encoding="utf-8")
+    body, _ = c_function_body(text, "execute_", where)
+    words: set[str] = set()
+    args: set[tuple[str, str]] = set()
+    current = None
+    def live(pat: str, line: str, raw: str) -> list[str]:
+        # group 1 of each match in the raw line whose start the blanked line keeps
+        return [m.group(1) for m in re.finditer(pat, raw) if line[m.start()] != " "]
+
+    for line, raw in unconditional_lines(body):
+        found = live(r'\bieq_\(\s*cmd\s*,\s*"([^"]+)"\s*\)', line, raw)
+        if found:
+            words.update(found)
+            current = found[0]
+        for a in live(r'\bieq_\(\s*tok\[1\]\s*,\s*"([^"]+)"\s*\)', line, raw):
+            if current:
+                args.add((current, a))
+    help_body, _ = c_function_body(text, "print_help", where)
+    help_words: dict[str, set[str]] = {}
+    for lit in string_literals(help_body):
+        m = re.match(r"^\[tune\]\s+(\w+)\b(.*)$", lit)
+        if m:
+            help_words.setdefault(m.group(1), set()).update(label_words(lit))
+    return words, args, help_words
+
+
+@functools.lru_cache(maxsize=None)
+def _monitor_block(project: str) -> str:
+    return json.dumps(_monitor_record(project))
+
+
+def monitor_block(project: str) -> dict:
+    """The product's monitor vocabulary, held to its firmware (see above) —
+    derived once per firmware project, a fresh copy per product."""
+    return json.loads(_monitor_block(project))
+
+
+def _monitor_record(project: str) -> dict:
+    spec = MONITOR_VOCAB.get(project)
+    if spec is None:
+        die(f"{project}: no MONITOR_VOCAB entry — say which commands its firmware answers "
+            f"(kind 'none' when it reads no serial commands)")
+    kind = spec["kind"]
+    cmds = [list(c) for c in spec["cmds"]]
+    where = f"MONITOR_VOCAB[{project!r}]"
+    if kind == "none":
+        if cmds:
+            die(f"{where}: kind 'none' carries no commands")
+        reads = re.search(r"\bSerial\s*\.\s*(?:read|available|peek|readString|readBytes)\s*\(",
+                          _c_strip(project_source_text(project)))
+        if reads:
+            die(f"{where}: kind 'none', but the firmware reads its serial console "
+                f"({reads.group(0)!r}) — give it its vocabulary")
+    elif kind == "keys":
+        keys, help_words = answered_keys(REPO / spec["handler"], spec["handler"])
+        if "h" not in keys or "h" not in [c[0] for c in cmds]:
+            die(f"{where}: the placeholder promises 'h shows its menu' — the firmware must "
+                f"answer h and the chips must offer it")
+        for key, label in cmds:
+            if len(key) != 1 or key not in keys:
+                die(f"{where}: chip {key!r} ({label}) — {spec['handler']} "
+                    f"handle_serial_commands() does not answer it unconditionally")
+            missing = label_words(label) - help_words.get(key, set())
+            if missing:
+                die(f"{where}: chip {key!r} is labeled {label!r}, but the firmware's own help line "
+                    f"for {key!r} does not say {sorted(missing)}")
+    elif kind == "words":
+        words, args, help_words = answered_words(REPO / spec["handler"], spec["handler"])
+        src = _c_strip(project_source_text(project))
+        if not re.search(r"\.feed\s*\(\s*\(char\)\s*Serial\s*\.\s*read\s*\(\s*\)\s*\)", src):
+            die(f"{where}: the firmware never feeds its serial console to the tuning console")
+        for cmd, label in cmds:
+            word, *rest = cmd.split()
+            if word not in words:
+                die(f"{where}: chip {cmd!r} — {spec['handler']} execute_() does not answer {word!r}")
+            for a in rest:
+                if (word, a) not in args:
+                    die(f"{where}: chip {cmd!r} — execute_() reads no {a!r} after {word!r}")
+            missing = label_words(label) - help_words.get(word, set())
+            if missing:
+                die(f"{where}: chip {cmd!r} is labeled {label!r}, but the console's help line "
+                    f"for {word!r} does not say {sorted(missing)}")
+    else:
+        die(f"{where}: unknown kind {kind!r}")
+    return {"kind": kind, "cmds": cmds, "placeholder": MONITOR_PLACEHOLDERS[kind]}
+
 def main() -> None:
     registry = json.loads(read(CANARY_LOCAL / "devices/registry.json"))
     fw_train = registry.get("fw_train")
@@ -2595,6 +2843,10 @@ def main() -> None:
             **({"broker_tls_from": broker_tls_from} if broker_tls_from else {}),
             "hatch": hatch,
             "serial_receipt": supports_serial_receipt(project),
+            # The post-flash monitor's commands, from this product's firmware
+            # (monitor_block): its chips and its box's placeholder on all
+            # three benches.
+            "monitor": monitor_block(project),
             "role": role,
             "prove": prove_block(role, p["id"], (manifest.get("lab") or {}).get("card")),
         }
@@ -2671,6 +2923,10 @@ def main() -> None:
         # no question, refuses to generate.
         "families": FAMILIES,
         "products": products_out,
+        # What a monitor shows when it cannot name the board's firmware: no
+        # command chips, and a box that says why (monitor_block()).
+        "monitor_unknown": {"kind": "unknown", "cmds": [],
+                            "placeholder": MONITOR_PLACEHOLDERS["unknown"]},
         # The boards that SHOW — known and named by the flasher, previewed by
         # the real firmware compiled to WASM, honest about not being in the
         # release train yet. See displays_block().

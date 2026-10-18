@@ -89,7 +89,7 @@ SELF_GATING_HANDLERS = {
     "handle_ui": "cookie → dashboard; else pair-landing; wizard branch Host-gated",
     "handle_legacy_ui": "serves static HTML only",
     "handle_captive_probe": "returns fixed probe responses",
-    "handle_https_redirect": "302 only",
+    "handle_https_redirect": "301 to https at receipt_authority.h's address (503 when it has none); no data",
     "handle_tune_page": "session-cookie check, 302 to / when absent",
     "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
 }

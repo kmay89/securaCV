@@ -54,10 +54,14 @@ STAGED_DIR="${REPO_ROOT}/firmware/projects/canary-wap/arduino/canary_wap"
 #   ble_scout_pairing.h + ble_scout_registry_store.h (repo sweep F27) are the
 #   pairing window and the persisted-registry blob format ble_scout.cpp
 #   compiles in both trees: one window rule and one NVS contract.
+#   ble_scout_advert_kind.h (repo sweep F36) is the classifier both scan
+#   callbacks ask before an advert may reach the pairing window: one rule for
+#   which adverts are the fleet's own.
 BYTE_FILES=(
     ble_scan.h ble_scan.cpp
     ble_scout.h
     ble_scout_pairing.h ble_scout_registry_store.h
+    ble_scout_advert_kind.h
     ble_scout_key.h ble_scout_key.cpp
     ble_scout_state.h ble_scout_state.cpp
     ble_heap_guard.h bt_defaults.h
@@ -153,10 +157,9 @@ normalize_nimble() {
     strip_comments "$1" \
     | sed \
         -e '/^#include "fleet_roster_feed.h"$/d' \
-        -e '/^#include <string>$/d' \
         -e '/^const uint32_t now = millis();$/d' \
-        -e 's/^ble_scout_on_advert(mac, rssi, now);$/ble_scout_on_advert(mac, rssi, millis());/' \
-        -e '/^if (device->haveManufacturerData()) {$/,/^}$/d' \
+        -e 's/^ble_scout_on_advert(mac, rssi, now, offerable);$/ble_scout_on_advert(mac, rssi, millis(), offerable);/' \
+        -e '/^if (!mfg.empty()) {$/,/^}$/d' \
     | collapse_init
 }
 

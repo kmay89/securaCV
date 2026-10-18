@@ -46,16 +46,12 @@
     "figure": "device.canary-vision"
    },
    {
+    "device_type": "canary-wap",
+    "figure": "device.canary-wap"
+   },
+   {
     "device_type": "canary-watch",
     "figure": "device.canary-display-watch"
-   },
-   {
-    "device_type": "canary_wap",
-    "figure": "device.canary-wap"
-   },
-   {
-    "device_type": "canary_wap_mobile",
-    "figure": "device.canary-wap"
    }
   ],
   "unmapped": [
@@ -141,15 +137,10 @@
    },
    {
     "family": "canary-wap",
-    "flavor": "default",
-    "device_type": "canary_wap",
-    "figure": "device.canary-wap"
-   },
-   {
-    "family": "canary-wap",
-    "flavor": "mobile",
-    "device_type": "canary_wap_mobile",
-    "figure": "device.canary-wap"
+    "flavor": "sketch",
+    "device_type": "canary-wap",
+    "figure": "device.canary-wap",
+    "source": "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"
    }
   ]
  },
@@ -165,7 +156,9 @@
      "canary-wap-mobile",
      "canary-wap-usbdrive"
     ],
-    "serves": [],
+    "serves": [
+     "canary-wap"
+    ],
     "shared": false
    },
    {
@@ -2111,8 +2104,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3113,8 +3105,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3190,8 +3181,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3267,8 +3257,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3344,8 +3333,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3421,8 +3409,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",
@@ -3498,8 +3485,7 @@
      }
     ],
     "firmware_configs": [
-     "default",
-     "mobile"
+     "full"
     ]
    },
    "dims_source": "stl",

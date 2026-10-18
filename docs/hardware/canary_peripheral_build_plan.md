@@ -73,7 +73,7 @@ buzzer onto a `MINIMAL` build that never calls it.
 | Tamper input | `FEATURE_TAMPER_GPIO` | — | optional | optional |
 | External RGB status LED | (replaces `LED_BUILTIN` fallback) | optional | optional | optional |
 | microSD storage | `FEATURE_SD_STORAGE` | — | ✅ | ✅ |
-| GNSS (L76K) | `FEATURE_GNSS` | ✅ | ✅ | ✅ |
+| GNSS (L76K) | none: `setup()` opens its UART in every profile | ✅ | ✅ | ✅ |
 
 `FEATURE_TAMPER_GPIO` defaults to `0` in every profile
 ([`build_config.h`](../../firmware/projects/canary-wap/arduino/canary_wap/build_config.h),
@@ -339,7 +339,7 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   presets (`battery_full`, `compact_plain`, `battery_weather`), per-printer fit
   tolerances, an opt-in **weather mode** (printed TPU gasket + drip-edge lid +
   sealed camera-disc seat, ≈ IP54 splash resistance) and opt-in **wall mounting**
-  (blind keyholes / screw tabs). The weather-kit parts are itemised in
+  (blind keyholes / screw tabs). The weather-kit parts are itemized in
   [`bom_canary_wap.csv`](./bom_canary_wap.csv) (items 21–26). Print the clip
   coupon and verify against your hardware before printing the full case; for
   harsh outdoor exposure the polycarbonate ENC1 remains the rated path.

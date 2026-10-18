@@ -242,12 +242,19 @@ natively. (Three native proofs of display sources are narrower.
 emulator's display HAL with g++, in the dash and the nightlight configs, and
 holds the turned glass pixel for pixel; `emulator/test/glass_turn_lvgl9.sh`
 builds the same port's LVGL 9 branch against the LVGL 9.5 the dash builds
-ship and holds its turned flushes the same way; neither boots firmware.
+ship, in the dash and nightstand-c6 configs, and holds its flushes the same
+way, and plays the real `splash.cpp`'s first meeting through it to read the
+speech bubble's tail off the frame; neither boots firmware.
 `emulator/test/runtime_turn.sh` boots the nightlight's whole firmware with
 g++, the TU list `build.sh` hands em++, its driver playing the page on a
-virtual clock, and holds one thing: a unit turned while it runs seats its
-companion where a boot at that rotation does (F222). It reads the bird's
-box and the glass's shape, no canvas, audio or portal, and stands in for no
+virtual clock, and holds four things: a unit turned while it runs seats
+its companion where a boot at that rotation does (F222); each turn, 7 s
+after power-on, wears the tumble's Startle hop (F242, F279); one animation
+writes the bird's y through that hop and through a Joyful hop over each
+reference boot's breath (F244); and each ask writes one `[orient]` serial
+line naming the rotation, the one before it and who asked (F285). It reads
+the bird's box, its style y, LVGL 8.4's animation list, the glass's shape
+and those serial lines, no canvas, audio or portal, and stands in for no
 bundle.) Each of
 those bundles links the display firmware, LVGL and the browser shims into
 one page under Asyncify, and the probes drive that page: its canvas, Web

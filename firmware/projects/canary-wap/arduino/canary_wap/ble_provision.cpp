@@ -12,9 +12,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>   // portMUX: the listed names (the F262 review)
 #include <string.h>
 
 #include "health_log.h"
+#include "wap_json_writer.h"   // an SSID's control bytes as U+FFFD (F262)
 
 // External-linkage bridge defined in canary_wap.ino. Validates input,
 // persists credentials to NVS, kicks the existing connect state machine.
@@ -82,6 +84,17 @@ static size_t     g_state_buf_len      = 0;
 static uint32_t   g_last_creds_write_ms = 0;
 static uint32_t   g_hourly_window_start_ms = 0;
 static uint32_t   g_hourly_writes_count    = 0;
+
+// The rows of the last list the phone was sent, by each network's own bytes
+// (the F262 review): the list shows a control byte as U+FFFD and the phone
+// sends back the text it showed, so CREDS reads it back to the network it
+// names (listed_ssid()). The loop task writes them as it publishes a list,
+// the NimBLE host task reads them in CredsCb::onWrite(), each only under
+// g_listed_mux and only to copy or compare (nothing that blocks).
+static constexpr int MAX_LISTED = 20;   // the list's rows at most (the MTU budget)
+static char         g_listed[MAX_LISTED][MAX_SSID_LEN + 1] = {};
+static int          g_listed_count = 0;
+static portMUX_TYPE g_listed_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // Diagnostics.
 static uint32_t g_scans_started = 0;
@@ -168,45 +181,86 @@ static void start_scan() {
   }
 }
 
-static void publish_scan_results(int n_found) {
-  if (!g_scan_results) return;
-
+// The scan list with its first `rows` networks, `names` their own bytes, as
+// the phone reads it. Each name is up to 32 bytes the access point chose, any
+// of them a control byte ArduinoJson would write raw (sweep F262: the phone's
+// JSON.parse refuses the list), so each is written through replaced_text().
+static String scan_list_json(int n_found, uint32_t scanned_ms,
+                             const char (*names)[MAX_SSID_LEN + 1], int rows, bool truncated) {
   JsonDocument doc;
   doc["count"] = n_found < 0 ? 0 : n_found;
-  doc["scanned_ms"] = millis() - g_scan_started_ms;
+  doc["scanned_ms"] = scanned_ms;
+  if (truncated) doc["truncated"] = true;
   JsonArray arr = doc["aps"].to<JsonArray>();
-
-  for (int i = 0; i < n_found && i < 20; i++) {  // cap at 20 to fit MTU budget
+  for (int i = 0; i < rows; i++) {
     JsonObject ap = arr.add<JsonObject>();
-    ap["ssid"] = WiFi.SSID(i).c_str();
+    char ssid[wap_json::replaced_cap(MAX_SSID_LEN)];
+    wap_json::replaced_text(ssid, sizeof(ssid), names[i]);
+    ap["ssid"] = ssid;
     ap["rssi"] = WiFi.RSSI(i);
     ap["sec"]  = security_short(WiFi.encryptionType(i));
   }
-
-  // Use a heap String to gracefully handle anywhere up to MAX_RESULTS_PAYLOAD.
   String buf;
-  buf.reserve(MAX_RESULTS_PAYLOAD);
   serializeJson(doc, buf);
-  if (buf.length() > MAX_RESULTS_PAYLOAD) {
-    // Trim aggressive: keep the top-RSSI entries only. ESP32 sorts scan
-    // results by RSSI descending by default, so a simple take-first does it.
-    JsonDocument trim;
-    trim["count"]      = doc["count"];
-    trim["scanned_ms"] = doc["scanned_ms"];
-    trim["truncated"]  = true;
-    JsonArray trim_arr = trim["aps"].to<JsonArray>();
-    for (int i = 0; i < n_found && i < 8; i++) {
-      JsonObject ap = trim_arr.add<JsonObject>();
-      ap["ssid"] = WiFi.SSID(i).c_str();
-      ap["rssi"] = WiFi.RSSI(i);
-      ap["sec"]  = security_short(WiFi.encryptionType(i));
-    }
-    buf = "";
-    serializeJson(trim, buf);
+  return buf;
+}
+
+static void publish_scan_results(int n_found) {
+  if (!g_scan_results) return;
+
+  // Each listed network's own name, read once (WiFi.SSID(i) is a String).
+  // The loop task's alone: a static, not 660 bytes of its stack.
+  static char names[MAX_LISTED][MAX_SSID_LEN + 1];
+  const int found = n_found < 0 ? 0 : n_found;
+  const int listed = found < MAX_LISTED ? found : MAX_LISTED;   // cap at 20 to fit MTU budget
+  for (int i = 0; i < listed; i++) {
+    strncpy(names[i], WiFi.SSID(i).c_str(), MAX_SSID_LEN);
+    names[i][MAX_SSID_LEN] = '\0';
   }
+  const uint32_t scanned_ms = millis() - g_scan_started_ms;
+
+  // At most MAX_RESULTS_PAYLOAD bytes: the strongest rows that fit (the core
+  // sorts a scan by RSSI, strongest first), each whole, dropped from the end
+  // and the list measured again after each (the F262 review: the old trim
+  // kept 8 rows without measuring them, 639 bytes for 8 names of 32
+  // characters and 1151 once each control byte is three bytes of U+FFFD).
+  // No rows at all is about 60 bytes, so the list always fits.
+  int rows = listed;
+  String buf = scan_list_json(n_found, scanned_ms, names, rows, false);
+  while (buf.length() > MAX_RESULTS_PAYLOAD && rows > 0) {
+    rows--;
+    buf = scan_list_json(n_found, scanned_ms, names, rows, true);
+  }
+
+  portENTER_CRITICAL(&g_listed_mux);
+  memcpy(g_listed, names, sizeof(g_listed[0]) * (size_t)rows);
+  g_listed_count = rows;
+  portEXIT_CRITICAL(&g_listed_mux);
 
   g_scan_results->setValue((uint8_t*)buf.c_str(), buf.length());
   g_scan_results->notify();
+}
+
+// The listed network a phone's CREDS names (the F262 review): when `posted`
+// is a name the last list showed as a page shows it
+// (wap_json::listed_by_shown()), that network's own bytes go to out[cap] and
+// the answer is true; a name the list did not show (typed by hand, a hidden
+// network) answers false, and the caller takes the name as posted.
+static bool listed_ssid(const char* posted, char* out, size_t cap) {
+  if (out == nullptr || cap == 0) return false;
+  bool found = false;
+  portENTER_CRITICAL(&g_listed_mux);
+  const int i = wap_json::listed_by_shown(posted, g_listed_count,
+                                          [](int k) { return (const char*)g_listed[k]; });
+  if (i >= 0) {
+    const size_t len = strlen(g_listed[i]);
+    if (len < cap) {
+      memcpy(out, g_listed[i], len + 1);
+      found = true;
+    }
+  }
+  portEXIT_CRITICAL(&g_listed_mux);
+  return found;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -275,7 +329,11 @@ class CredsCb : public NimBLECharacteristicCallbacks {
       return;
     }
 
-    const char* ssid_in = doc["ssid"] | "";
+    // A network the list showed is joined by its own bytes: the phone sends
+    // back the text it was shown, U+FFFD and all (the F262 review).
+    const char* posted_ssid = doc["ssid"] | "";
+    char listed[MAX_SSID_LEN + 1];
+    const char* ssid_in = listed_ssid(posted_ssid, listed, sizeof(listed)) ? listed : posted_ssid;
     const char* pw_in   = doc["password"] | "";
 
     // Reject (don't silently truncate) over-spec inputs. WPA2 caps SSID

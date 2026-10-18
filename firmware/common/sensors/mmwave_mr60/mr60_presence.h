@@ -3,7 +3,8 @@
  * @brief Presence / target-count FSM for the MR60BHA2 (P0, board-agnostic).
  *
  * Consumes decoded Presence frames (see mr60_uart.h) and a millisecond clock,
- * and produces a debounced presence state plus a bucketed occupant count. This
+ * and produces a debounced presence state plus a bucketed occupant count that
+ * follows that state (Zero unless Present; see PresenceEvent). This
  * is the P0 witness path that maps onto `PresenceInRestrictedZone` at the
  * privacy chokepoint; raw distance never leaves the device (coarse range band
  * only, computed here for host-side zone gating).
@@ -61,9 +62,16 @@ struct PresenceConfig {
 };
 
 // What changed on a tick — the caller decides what to publish/seal.
+//
+// The count follows the debounced state (sweep F131): it reads Zero unless
+// the state is Present, so an occupancy count never contradicts presence.
+// A tick that changes the state carries its count in `count` (the bucket
+// Present was entered with; Zero on Clear and on a stall) and reports
+// `count_changed` false, so the caller signs one record per transition;
+// `count_changed` is a bucket move while the state held (Present only).
 struct PresenceEvent {
     bool        state_changed = false;
-    bool        count_changed = false;
+    bool        count_changed = false;   // bucket moved, state unchanged
     bool        stalled       = false;   // crossed into Unknown via stall
     Presence    state         = Presence::Unknown;
     CountBucket count         = CountBucket::Zero;

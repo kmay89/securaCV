@@ -34,6 +34,13 @@ static long strtol_ilp32(const char* s, char** end, int base) {
 // csi_event_backfill.h). The functions are only declared here.
 #include "../projects/canary-wap/arduino/canary_wap/csi_event_log.h"
 #include "../canary/src/csi_event_log.h"
+// The two writers that spell a parsed record with %s (sweep F264): the
+// events body the backfill publishes, and a strict JSON reader (the
+// canary-wap host tests', JSON.parse()'s rules) to hold what they write.
+#include "csi_event_wire.h"
+#include "../projects/canary-wap/tests_host/json_strict.h"
+
+#include <string>
 
 using csi_event_log_line::kLineMax;
 using csi_event_log_line::marshal;
@@ -284,6 +291,137 @@ static int test_signed_and_overflowing_numbers_are_refused() {
   return 0;
 }
 
+// Sweep F264: a string field read back from the card kept a backslash or
+// a control byte (json_str() stopped only at a quote), and the two writers
+// that spell a parsed record with %s, marshal() (a dismissal rewrites a
+// restored row on the card) and csi_event_wire::build_event_body() (the
+// backfill's MQTT body), then wrote a line and a body a strict JSON reader
+// refuses: the item's probe, a state of `occ\` or one holding 0x01. Now
+// parse() refuses a line whose string field holds a byte no writer of the
+// format puts in a name (a backslash, or one outside printable ASCII), and
+// every line it takes writes back as JSON both ways.
+static std::string field_line(const char* key, const std::string& value) {
+  const csi_event_record_t r = presence_row();
+  char buf[kLineMax];
+  const size_t n = marshal(&r, buf, sizeof(buf));
+  std::string line(buf, n - 1);   // without its '\n', as readers hand it over
+  const std::string needle = std::string("\"") + key + "\":\"";
+  const size_t at = line.find(needle);
+  const size_t from = at + needle.size();
+  const size_t to = line.find('"', from);
+  line.replace(from, to - from, value);
+  return line;
+}
+
+// What the record writes back: the line marshal() rewrites (without its
+// '\n') and the events body the backfill sends. Both must be JSON.
+static bool writes_json(const csi_event_record_t& rec) {
+  char line[kLineMax];
+  const size_t n = marshal(&rec, line, sizeof(line));
+  if (n == 0) return false;
+  json_strict::Value v;
+  if (!json_strict::parse(std::string(line, n - 1), &v)) return false;
+  char body[768];
+  const csi_event_wire::Signer unsigned_signer = {nullptr, 1, "", ""};
+  const size_t b = csi_event_wire::build_event_body(
+      body, sizeof(body), rec.event_id, rec.module_id, rec.type_name, rec.category, rec.privacy,
+      &rec.values, rec.first_seen_ms, rec.bundled_count, /*is_replay=*/true, unsigned_signer);
+  return b > 0 && json_strict::parse(std::string(body, b), &v);
+}
+
+static int test_a_string_holding_a_byte_no_writer_puts_there_is_refused() {
+  csi_event_record_t rec;
+  // The item's probe, both shapes, in the state field.
+  CHECK(!parse(field_line("state", "occ\\").c_str(), &rec));
+  CHECK(rec.event_id == 0 && rec.values.state_name[0] == '\0');   // nothing half-read
+  CHECK(!parse(field_line("state", std::string("oc\x01" "c")).c_str(), &rec));
+  // The unedited line parses and writes back as JSON.
+  CHECK(parse(field_line("state", "active").c_str(), &rec));
+  CHECK_STR(rec.values.state_name, "active");
+  CHECK(writes_json(rec));
+
+  // Every string field the parser reads, every byte value: taken exactly
+  // when it is printable ASCII and not a backslash, and then the record
+  // writes back as JSON. (0 ends the line and '"' ends the field, so those
+  // two cannot be inside one; a '{' is a second record's start, which
+  // well_formed() refuses whatever field holds it.)
+  const char* const keys[] = {"cat", "priv", "module", "type", "state", "conf", "dom"};
+  int taken = 0, refused = 0;
+  for (const char* key : keys) {
+    for (int c = 1; c < 256; ++c) {
+      if (c == '"') continue;
+      const std::string value = std::string("a") + (char)c + "b";
+      const bool want = c >= 0x20 && c <= 0x7E && c != '\\' && c != '{';
+      const bool got = parse(field_line(key, value).c_str(), &rec);
+      // The tail scans' reading of the same line: its id, whatever the
+      // field holds, but for the '{' well_formed() refuses (the review of
+      // sweep F264: an edited last line still marks the card's end).
+      CHECK(csi_event_log_line::record_id(field_line(key, value).c_str()) ==
+            (c == '{' ? 0u : 12345u));
+      if (got != want) {
+        std::fprintf(stderr, "FAIL field %s byte 0x%02X: parse() %s\n", key, c,
+                     got ? "took it" : "refused it");
+        return 1;
+      }
+      ++g_checks;
+      if (got) {
+        ++taken;
+        CHECK(writes_json(rec));
+      } else {
+        ++refused;
+        CHECK(rec.event_id == 0);
+      }
+    }
+  }
+  CHECK(taken == 7 * 92 && refused == 7 * (254 - 92));   // 254 bytes tried per field
+
+  // The whole field is read, not just what fits its member: a backslash
+  // past the member's 23 bytes is refused too.
+  CHECK(!parse(field_line("state", std::string(30, 's') + "\\").c_str(), &rec));
+  // Printable punctuation, a space and a tilde are a writer's bytes.
+  CHECK(parse(field_line("dom", "a b~/|}").c_str(), &rec));
+  CHECK_STR(rec.values.dominant_signal, "a b~/|}");
+  CHECK(writes_json(rec));
+  // A key the parser does not read is not a field it writes back: a
+  // backslash there changes nothing that reaches a writer.
+  std::string extra = field_line("state", "active");
+  extra.insert(extra.size() - 1, ",\"note\":\"x\\\\y\"");
+  CHECK(parse(extra.c_str(), &rec));
+  CHECK(writes_json(rec));
+  return 0;
+}
+
+// record_id() (the tail scans' reader, the review of sweep F264) refuses
+// exactly what parse() refuses before it reads a string field, so the only
+// lines it takes that parse() does not are the ones json_str() refuses.
+static int test_record_id_reads_what_parse_reads_before_the_strings() {
+  using csi_event_log_line::record_id;
+  const char* const refused[] = {
+    "{\"id\":-5,\"first\":1,\"last\":1}",
+    "{\"id\":4294967296,\"first\":1,\"last\":1}",
+    "{\"id\":0,\"first\":1,\"last\":1}",
+    "{\"id\":,\"first\":1}",
+    "{\"id\":12,\"first\":-1,\"last\":1}",
+    "{\"id\":12,\"first\":1,\"last\":4294967296}",
+    "{\"id\":12,\"fir",                                  // torn
+    "{\"id\":12,\"first\":1}{\"id\":13,\"first\":1}",     // glued
+    " {\"id\":12}",                                       // not at the start
+    "",
+  };
+  csi_event_record_t rec;
+  for (const char* line : refused) {
+    CHECK(record_id(line) == 0 && !parse(line, &rec));
+  }
+  CHECK(record_id(nullptr) == 0);
+  CHECK(record_id("{\"id\":12}") == 12 && parse("{\"id\":12}", &rec));
+  CHECK(record_id("{\"id\":4294967295,\"first\":1,\"last\":2}") == 4294967295u);
+  // A string field parse() refuses: record_id() still reads the id.
+  CHECK(record_id(field_line("state", "occ\\").c_str()) == 12345);
+  CHECK(!parse(field_line("state", "occ\\").c_str(), &rec));
+  CHECK(record_id(field_line("module", std::string("a\x01" "b")).c_str()) == 12345);
+  return 0;
+}
+
 int main() {
   if (test_presence_golden()) return 1;
   if (test_integrity_golden_and_empty_strings()) return 1;
@@ -293,6 +431,8 @@ int main() {
   if (test_both_trees_write_the_same_file()) return 1;
   if (test_uint32_fields_survive_a_32_bit_long()) return 1;
   if (test_signed_and_overflowing_numbers_are_refused()) return 1;
+  if (test_a_string_holding_a_byte_no_writer_puts_there_is_refused()) return 1;
+  if (test_record_id_reads_what_parse_reads_before_the_strings()) return 1;
   std::printf("test_csi_event_log_line: %d checks passed\n", g_checks);
   return 0;
 }

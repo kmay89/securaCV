@@ -30,7 +30,15 @@ What is pinned and why:
     replay reads, and a missing upstream file stops the verifier carry before
     it writes any of its files (in a default run the builds and kernel-status
     carries ahead of it have already written theirs; the job's set -e keeps
-    that run from being committed).
+    that run from being committed);
+  • the playground carry writes the three files the website's /playground and
+    /modes pages import, at the site paths those pages name: playground.json
+    as `export const PLAYGROUND = ` + the JSON with its trailing newline
+    replaced by `;\n` (so the module evaluates to exactly the upstream object),
+    the two sims as the upstream bytes whole, each under a header that says
+    CARRIED, names its upstream file and this tool within the twelve lines the
+    website's tests/carry-claims.test.mjs reads, and never says HAND-COPIED;
+    a missing or unparsable upstream file stops it before any of its writes.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -64,6 +72,18 @@ BOARDS = json.loads(cs.BOARDS.read_text(encoding="utf-8"))
 # here, not read off the script, so a carry that lands them anywhere else fails.
 UPSTREAM_VECTORS = REPO / "tvos" / "witness-core" / "tests" / "fixtures" / "fleet_contract_vectors.json"
 SITE_VECTORS = "tests/fixtures/fleet_contract_vectors.json"
+
+# The playground carry: site path (what the website's pages import, and what
+# its update-everything.yml CARRY_PATHS and tests/carry-claims.test.mjs name)
+# -> the upstream file it carries. Stated here, not read off the script.
+PLAYGROUND_FILES = {
+    "js/playground-data.js": REPO / "canary-local" / "devices" / "playground.json",
+    "js/playground-sim.js": REPO / "canary-local" / "assets" / "playground-sim.js",
+    "js/mode-sim.js": REPO / "canary-local" / "assets" / "mode-sim.js",
+}
+# How the website's tests/carry-claims.test.mjs reads a header: the first
+# twelve lines of the file.
+WEBSITE_HEADER_LINES = 12
 
 # How the website's tests/tv-wall.test.mjs reads tv/vendor/PROVENANCE.txt: one
 # pin per line, and a pinned name resolves to tv/vendor/verify_core.js or to
@@ -265,6 +285,29 @@ class EndToEnd(unittest.TestCase):
             cs.main(["--site", str(self.tmp), *extra])
         return out.getvalue()
 
+    def assert_playground_bytes(self, snap: dict):
+        """What the weekly job commits is the written file, so hold the bytes
+        on disk to an oracle built here from the upstream files, not to
+        playground_outputs() (a writer that empties, swaps or re-ends the
+        files would still agree with that)."""
+        data_rel = "js/playground-data.js"
+        upstream_json = PLAYGROUND_FILES[data_rel].read_bytes()
+        self.assertTrue(upstream_json.endswith(b"}\n"))
+        self.assertEqual(
+            snap[data_rel],
+            cs.PLAYGROUND_DATA_HEADER.encode("utf-8")
+            + b"export const PLAYGROUND = " + upstream_json[:-1] + b";\n",
+            f"{data_rel}: not the header, the export and the upstream JSON")
+        for rel in ("js/playground-sim.js", "js/mode-sim.js"):
+            upstream = PLAYGROUND_FILES[rel].read_bytes()
+            written = snap[rel]
+            self.assertTrue(written.endswith(upstream), f"{rel}: not the upstream bytes, whole")
+            header = written[:-len(upstream)]
+            self.assertTrue(header.startswith(f"// {rel} — ".encode("utf-8")), rel)
+            self.assertIn(b"CARRIED", header, rel)
+            self.assertTrue(header.endswith(b"\n\n"), f"{rel}: a blank line closes the header")
+            self.assertNotIn(b"\r", header, f"{rel}: the header is written with LF line ends")
+
     def test_full_run_is_byte_reproducible_and_complete(self):
         first_out = self.run_carry()
         first = self.snapshot()
@@ -276,6 +319,7 @@ class EndToEnd(unittest.TestCase):
             *(f"tests/fixtures/envelope/{f}" for f in cs.ENVELOPE_FIXTURES),
             *(f"tests/fixtures/export_bundle/{f}" for f in cs.BUNDLE_FIXTURES),
             SITE_VECTORS,
+            *PLAYGROUND_FILES,
         })
         # the verifier and its fixtures are the upstream bytes, and PROVENANCE says so
         self.assertEqual(first["tv/vendor/verify_core.js"], cs.VERIFIER.read_bytes())
@@ -298,6 +342,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(spec_json["drive"]["name"], "CANARY-EVIDENCE")
         self.assertEqual(json.loads(first["kernel-status.json"]),
                          cs.kernel_status_module().site_document())
+        self.assert_playground_bytes(first)
 
     def test_only_selects_a_single_carry(self):
         self.run_carry("--only", "verifier")
@@ -370,6 +415,38 @@ class EndToEnd(unittest.TestCase):
                 if extra:
                     self.assertEqual(after, before, "--only verifier left a write behind")
 
+    def test_only_playground_writes_exactly_its_three_files(self):
+        self.run_carry("--only", "playground")
+        snap = self.snapshot()
+        self.assertEqual(set(snap), {"onboarding-spec.json", *PLAYGROUND_FILES})
+        self.assert_playground_bytes(snap)
+
+    def test_a_missing_or_broken_upstream_file_stops_the_playground_carry_before_any_write(self):
+        # Every source is checked before the first write: the website keeps
+        # its three files as they were, never a mix of old and new.
+        for rel in PLAYGROUND_FILES:
+            (self.tmp / rel).write_text(f"// the website's current {rel}\n", encoding="utf-8")
+        before = self.snapshot()
+        missing = REPO / "canary-local" / "assets" / "no_such_mode_sim.js"
+        broken = self.tmp / "broken_playground.json"
+        broken.write_text('{"board": ', encoding="utf-8")
+        not_object = self.tmp / "list_playground.json"
+        not_object.write_text("[1, 2]\n", encoding="utf-8")
+        cases = (("MODE_SIM", missing, "no_such_mode_sim.js"),
+                 ("PLAYGROUND_JSON", broken, "not JSON"),
+                 ("PLAYGROUND_JSON", not_object, "not a JSON object"))
+        for attr, path, says in cases:
+            with self.subTest(attr=attr, path=path.name):
+                with mock.patch.object(cs, attr, path):
+                    with self.assertRaises(SystemExit) as stop:
+                        self.run_carry("--only", "playground")
+                self.assertIn(says, str(stop.exception.code))
+                after = {p: b for p, b in self.snapshot().items()
+                         if not p.endswith("_playground.json")}
+                before_files = {p: b for p, b in before.items()
+                                if not p.endswith("_playground.json")}
+                self.assertEqual(after, before_files, "a stopped playground carry wrote a file")
+
     def test_refuses_a_directory_that_is_not_the_website(self):
         other = Path(tempfile.mkdtemp(prefix="not_site_"))
         try:
@@ -378,6 +455,73 @@ class EndToEnd(unittest.TestCase):
                     cs.main(["--site", str(other)])
         finally:
             shutil.rmtree(other)
+
+
+class PlaygroundCarry(unittest.TestCase):
+    """The three files the website's /playground and /modes pages import."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = cs.playground_outputs()
+
+    def test_writes_the_site_paths_the_pages_import(self):
+        self.assertEqual(set(self.out), set(PLAYGROUND_FILES))
+
+    def header(self, rel: str) -> str:
+        return "\n".join(self.out[rel].split("\n")[:WEBSITE_HEADER_LINES])
+
+    def test_every_header_says_carried_names_its_upstream_and_this_tool(self):
+        for rel, upstream in PLAYGROUND_FILES.items():
+            h = self.header(rel)
+            self.assertRegex(h, r"\bCARRIED\b", rel)
+            self.assertIn(str(upstream.relative_to(REPO)), h, rel)
+            self.assertIn("scripts/carry_to_site.py", h, rel)
+            self.assertNotIn("HAND-COPIED", self.out[rel].split("export const")[0], rel)
+            self.assertTrue(self.out[rel].startswith(f"// {rel} — "), rel)
+            self.assertIsNone(re.search(r"\b20\d\d\b", h), f"{rel}: no date in the header")
+
+    def test_data_module_is_the_upstream_json_with_its_newline_made_a_semicolon(self):
+        rel = "js/playground-data.js"
+        src = PLAYGROUND_FILES[rel].read_text(encoding="utf-8")
+        self.assertTrue(src.endswith("}\n"), "gen_playground.py writes one object and a newline")
+        head, sep, body = self.out[rel].partition("\nexport const PLAYGROUND = ")
+        self.assertTrue(sep, "the module exports PLAYGROUND")
+        self.assertEqual(body, src[:-1] + ";\n")
+        self.assertEqual(json.loads(body[:-2]), json.loads(src))
+        self.assertNotIn("export const PLAYGROUND = ", head.replace("`export const PLAYGROUND =`", ""))
+        self.assertEqual(self.out[rel], cs.PLAYGROUND_DATA_HEADER + "export const PLAYGROUND = " + body)
+
+    def test_data_module_evaluates_to_the_upstream_object(self):
+        # The page imports it as an ES module; node, when present, proves the
+        # carried text is JavaScript that evaluates to exactly the JSON.
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            mod = Path(d) / "playground-data.mjs"
+            mod.write_text(self.out["js/playground-data.js"], encoding="utf-8")
+            got = subprocess.run(
+                [node, "--input-type=module", "-e",
+                 f"import {{ PLAYGROUND }} from {json.dumps(mod.as_uri())};"
+                 "process.stdout.write(JSON.stringify(PLAYGROUND));"],
+                check=True, capture_output=True, text=True).stdout
+        self.assertEqual(json.loads(got),
+                         json.loads(PLAYGROUND_FILES["js/playground-data.js"].read_text(encoding="utf-8")))
+
+    def test_sims_are_the_upstream_bytes_whole_under_the_header(self):
+        for rel in ("js/playground-sim.js", "js/mode-sim.js"):
+            src = PLAYGROUND_FILES[rel].read_text(encoding="utf-8")
+            self.assertTrue(self.out[rel].endswith(src), rel)
+            header = self.out[rel][:-len(src)]
+            self.assertTrue(header.endswith("\n\n"), f"{rel}: a blank line closes the header")
+            self.assertEqual(header.count("\n") + 1, len(header.split("\n")))
+            self.assertLessEqual(header.count("\n"), WEBSITE_HEADER_LINES, rel)
+            # the website's carry-claims test finds the upstream file's own
+            # first line right after the header: the copy is whole
+            first = src.split("\n", 1)[0]
+            self.assertTrue(first.startswith(f"// {PLAYGROUND_FILES[rel].relative_to(REPO)} — "), rel)
+            self.assertIn("\n" + first + "\n", self.out[rel])
 
 
 class FleetVectorsShape(unittest.TestCase):

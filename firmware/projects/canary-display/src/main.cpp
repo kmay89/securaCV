@@ -520,7 +520,11 @@ static bool s_imu_ok = false;
 // panel in hardware, reshape LVGL's logical canvas, persist, rebuild the
 // face into the new shape, and let the companion tumble in from the edge
 // that was up. delta derives here so every caller's tumble is honest.
-static void nightlight_apply_orientation(uint8_t rot, uint32_t now) {
+// `who` names the asker on the serial line every commit writes, so a bench
+// (or a user's report) can read which rotation the IMU committed without
+// Wi-Fi and GET /api/settings (F285).
+static void nightlight_apply_orientation(uint8_t rot, uint32_t now,
+                                         const char* who) {
   rot &= 3;
   // Whoever asked, the model adopts what the glass will show — BEFORE the
   // no-change return, because "nothing to redraw" can still mean "the
@@ -529,7 +533,12 @@ static void nightlight_apply_orientation(uint8_t rot, uint32_t now) {
   // and never right the glass once "turn with the room" re-arms.
   s_orient.sync(static_cast<canary::io::Orient>(rot));
   const uint8_t prev = canary::ui::lvgl_port_rotation();
-  if (rot == prev) return;
+  if (rot == prev) {
+    boot_linef("[orient] %s -> rotation %u (already worn)", who, (unsigned)rot);
+    return;
+  }
+  boot_linef("[orient] %s -> rotation %u (was %u)", who, (unsigned)rot,
+             (unsigned)prev);
   const uint8_t delta = (uint8_t)((rot - prev) & 3);
   canary::hal::display_set_rotation(rot);
   canary::ui::lvgl_port_set_panel_rotation(rot);
@@ -2003,7 +2012,7 @@ void loop() {
     // drained on the first pass after it closes.
     if (!canary::ui::pair_demo_ui_active()) {
       const int req = canary::care::nightlight_take_rotation_request();
-      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now);
+      if (req >= 0) nightlight_apply_orientation((uint8_t)req, now, "app picker");
     }
   }
 #if defined(FEATURE_AUTO_ORIENT) && FEATURE_AUTO_ORIENT && \
@@ -2026,7 +2035,7 @@ void loop() {
       sx *= IMU_X_SIGN;
       sy *= IMU_Y_SIGN;
       if (s_orient.step(sx, sy, az, now)) {
-        nightlight_apply_orientation((uint8_t)s_orient.current(), now);
+        nightlight_apply_orientation((uint8_t)s_orient.current(), now, "IMU");
       }
     }
   }
@@ -2166,10 +2175,13 @@ void loop() {
         // Manual orientation: one quarter turn per triple-press, and the
         // IMU lets go — a hand on the dial parks AUTO (the app's toggle
         // brings it back), or the model would just turn it right back.
+        // The press is logged before the turn, so the serial line reads the
+        // cause and then the [orient] line the commit writes (F285).
+        boot_line("[input] triple-press -> turn the face");
         canary::care::nightlight_set_auto_rotate(false);
         nightlight_apply_orientation(
-            (uint8_t)((canary::ui::lvgl_port_rotation() + 1) & 3), now);
-        boot_line("[input] triple-press -> turn the face");
+            (uint8_t)((canary::ui::lvgl_port_rotation() + 1) & 3), now,
+            "triple-press");
 #endif
         break;
       }

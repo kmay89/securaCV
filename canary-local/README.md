@@ -147,7 +147,7 @@ What is *replaced* is exactly the silicon boundary, one shim per wire:
 |---|---|---|
 | GC9A01 / RGB panel via Arduino_GFX | RGB565 flush → RGBA framebuffer → canvas/3D texture | `src/emu_hal_display.cpp` |
 | CST816S / GT911 touch | pointer events, polled by the firmware's own gesture machine | same |
-| LEDC backlight PWM (day 8-bit, night 13-bit) | brightness of the on-page glass + 3D glow | same |
+| LEDC backlight PWM (day 8-bit, night 13-bit); the C3-LCD-1.47's expander PWM byte, clipped at `CD_BL_MAX_PCT` | brightness of the on-page glass + 3D glow, clipped where the board's HAL clips it (sweep A61) | same |
 | LEDC piezo tone | Web Audio | `shim/Arduino.h` + app |
 | NVS (Preferences) | in-memory map, mirrored to JS; preseed/wipe = provisioned vs first-boot; survives emulated reboots | `src/emu_support.cpp` |
 | millis()/time() | virtual clock — scenario can scale (×60 staleness demos) or stage the local hour | same (+ `--wrap=time`) |
@@ -186,7 +186,18 @@ Adding a future Canary = adding one registry entry + one procedural body
 in `scene3d.js` (dimensions from its enclosure `.scad` — the same
 millimeters, so the card is the printed thing). If it has a screen, add a
 `build.sh` flavor wiring its config/pins dirs; the shim layer is shared.
-A concept (`kind: "concept"`) gets no body at all: its card draws its fleet
+The live glass is sampled edge to edge across the lit face the body gives
+it, as the panel lights its whole active area, unless the canvas is the
+other way round from that face (taller than wide on a face wider than tall,
+or the reverse, after any turn the body takes with the glass): then it is
+drawn whole at its own proportions, centered on a dark ground
+(`fitTexture`, sweep A55), rather than stretched across. Today that is the
+Touch 1.69 alone, whose sketch figure draws its lit face landscape while
+the firmware draws the 240x280 panel portrait, so its card shows dark
+bands beside the glass (`tests/scene_figures.test.js` holds which figures
+are fitted and that every other one is edge to edge,
+`tests/render_probe.mjs` the touch169's glass face-on). A concept
+(`kind: "concept"`) gets no body at all: its card draws its fleet
 figure's dashed ghost, as every surface draws an idea
 (`tests/scene_figures.test.js` refuses a builder for one).
 
@@ -246,9 +257,15 @@ Three doors into the same live device, all driven by one scenario API
   lights (PWR on the rail, CHG/DONE on the charge chip, the watch's
   batteryless-CHG flicker) answer only to physics — no firmware here or
   on your desk can turn them off, and the bench says so to your face.
-  Rail transitions print the ESP32-S3 ROM's verbatim reset banners
-  (staged — the ROM is the one program we can't compile to wasm;
-  everything after the banner is the real firmware), NVS rides through
+  Rail transitions print the reset banners of the board's own chip, as
+  its bench block's `rom` names it (staged — the ROM is the one program we
+  can't compile to wasm; everything after the banner is the real
+  firmware). Each banner line is quoted from an Espressif source
+  `bench.js` cites, except the ESP32-S3's two download-mode lines, kept
+  from before and not re-sourced; where no source quotes one (the
+  ESP32-C3's software-reset and download-mode banners) the bench prints a
+  note saying so, never another chip's banner. The bench's honesty
+  ribbon says which is which on each card. NVS rides through
   every power event like the flash it is, and a live diagnostics pane
   (power source, boot stage, uptime, backlight duty, flush count, link,
   MQTT session, NVS keys) plus symptom-first debug flows ("a red light
@@ -334,7 +351,7 @@ the same generator and drift-gated in CI:
 | packages with real outer dimensions | the enclosure README's preset table |
 | each package's case parts | the variant tables (committed, print-validated STLs) |
 | option → parts links (`opt_gps` → `M1 L76K`) | `docs/hardware/bom_*.csv` rows — **verified at generation**: a renamed RefDes fails the build |
-| option → firmware links (`opt_gps` → `FEATURE_GNSS`) | `firmware/configs/*/config.h` — same verification |
+| option → firmware links (`opt_buzzer` → `FEATURE_AUDIBLE_CHIRP`) | `firmware/configs/*/config.h`, and for the WAP its sketch's `build_config.h` (the `BUILD_PROFILE_FULL` block, resolved for the XIAO ESP32-S3) — same verification |
 | reference builds with prices | the BOM's own `# … (REF+REF)` summary rows |
 | drill templates (print at 100%, 20 mm calibration square) | `template_*.svg`, rendered from `canary_templates_2d.scad` |
 
@@ -511,7 +528,7 @@ and render table-only — a flag is a claim.
 
 - **Assembly permutations** — `builds` is an array per device, not a single
   harness: field vs bedside vs battery-less loadouts are new entries, no new
-  code, and the Workshop's option flags (`FEATURE_GNSS`, battery bay…) map
+  code, and the Workshop's option flags (`FEATURE_AUDIBLE_CHIRP`, battery bay…) map
   1:1 onto which peripherals a build carries. A future Workshop hook can
   select the matching build the way it already selects the matching STL.
 - **Live pin emulation** — every firmware-facing connection carries
@@ -899,20 +916,51 @@ fails on byte drift.
 - `emulator/test/glass_turn.sh` — the turned dash glass, natively (F184):
   the real `ui/lvgl_port.cpp` and the emulator's real display HAL built with
   g++ against the pinned LVGL 8.4; at every quarter turn the framebuffer the
-  page reads equals the scene rendered unturned, pixel for pixel, and a fed
-  touch comes back out of LVGL's pointer where it went in. With no argument
+  page reads equals the scene rendered unturned, pixel for pixel, a fed
+  touch comes back out of LVGL's pointer where it went in, and the HAL tells
+  the page each turn it wears with the glass's shape (A64: 1, 3 and 2 for
+  the dash's portrait, portrait flipped and landscape flipped, 1 and 3 for
+  the nightlight's R90 and R270). Beside it,
+  `backlight_cap_test.cpp` holds the same HAL's backlight to the board's
+  (sweep A61): built in the nightlight's config, every day level is clipped
+  at the byte the C3-LCD-1.47's expander path clips it to, and every night
+  duty is the byte that path writes for it, on the 13-bit scale (A79:
+  `duty >> 5`, raised to 1 when a glow was asked for, clipped at the cap,
+  then `<< 5`): 128 steps 32 apart from dark to 4064, so a glow under 32
+  shows at 32 and a duty past the cap's byte at 4064 (the twin's own duty is
+  checked, not only the byte the board would make of it); in the dash's
+  config every one passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
   stale dist turns those red and skips every later step).
 - `emulator/test/runtime_turn.sh` — the nightlight turned while it runs,
-  natively (F222): `build.sh`'s nightlight TU list (the real `main.cpp`, the
-  emulator's sources) built with g++ and booted on a virtual clock; a boot
-  turned at 7 s from each rotation to each other through
+  natively (F222, F242, F244, F279, F285): `build.sh`'s nightlight TU list
+  (the real `main.cpp`, the emulator's sources) built with g++ and booted on
+  a virtual clock. A boot turned at 7 s (inside the first 8 s of uptime,
+  where the mark's Tilt/Startle ration used to refuse every Startle, F279)
+  from each rotation to each other through
   `nightlight_request_rotation()` must seat the companion where a boot at
-  that rotation seats it. Fetches LVGL, Crypto and ArduinoJson at
-  `build.sh`'s pins when absent, and CI runs it right after `glass_turn.sh`.
+  that rotation seats it, hop with the tumble's Startle (F242), and keep one
+  writer of the bird's y through that hop: in every frame its y offset is
+  the seat less the hop's current value, with no breath beside it (F244).
+  Each turn writes one serial line, `[orient] app picker -> rotation R (was
+  P)`, and each unturned reference boot, asked at 7 s for the rotation it
+  already wears, writes `[orient] app picker -> rotation R (already worn)`
+  and is not turned (F285). Each reference boot ends with a Joyful hop over
+  its running breath, held the same way. It reads the bird's box, its style
+  y, LVGL 8.4's animation list, the glass's shape and turn, and the
+  firmware's `[orient]` serial lines: every boot's last announcement, and
+  one made after each turn, must carry the quarter turns the glass is worn
+  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). Fetches LVGL,
+  Crypto and
+  ArduinoJson at `build.sh`'s pins when absent, and CI runs it right after
+  `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
-  what `build.sh` hands em++ for the nightlight.
+  what `build.sh` hands em++ for the nightlight, and each page call it (and
+  `glass_turn.sh`'s two tests) defines to the signature of the `EM_JS` it
+  stands in for. Both scripts build in `GLASS_TURN_OUT` /
+  `RUNTIME_TURN_OUT` when set and leave it there; otherwise in a temporary
+  directory they remove on exit, pass or fail (A82).
 
 - `emulator/test/glass_turn_lvgl9.sh` — the same turned dash glass on the
   LVGL the dash builds ship (F225): the real `ui/lvgl_port.cpp` (its LVGL 9
@@ -925,7 +973,20 @@ fails on byte drift.
   LVGL flushes only their areas, right of logical x 0 and narrower than the
   canvas); nothing falls off the panel or goes unpainted, a raw touch lands
   on the pixel drawn there, the splash's turned tail square draws, and a
-  glass with no turn buffer stays landscape. It first holds
+  glass with no turn buffer stays landscape. It builds the same test again
+  in nightstand-c6's config (F248: its lean `lv_conf`, LVGL compiled lean,
+  the C6 pin map's 172x320 and the port's static buffer, never turned) and
+  holds its whole and partial flushes against a plain 172x320 display. In
+  both configs it also builds `emulator/test/glass_splash_lvgl9_test.cpp`
+  (F246): the real `ui/splash.cpp` and `canary_mark.cpp` play the first
+  meeting on the dash's 800x480 and 480x800 and nightstand-c6's 172x320,
+  the bubble types every line of `story::kHello` whole and in order, and
+  the speech bubble's tail, read off the frame at each new line, sits on
+  the bubble, draws, and lands (read with the bubble hidden too) where its
+  box and transform styles put it. Each of F185's options, drawn on the
+  same frame, would keep those checks green; where each would land is
+  printed, the choice is not taken. Every suite runs and the script fails
+  at the end if any did. It first holds
   `tests_host/fake_lvgl9/lvgl.h`'s quotes of LVGL 9.5 to the fetched source
   (`emulator/test/check_lvgl9_quotes.py`). It reads no dist; CI runs it as
   the wasm job's last step, whether the steps before it passed or failed
@@ -970,8 +1031,21 @@ fails on byte drift.
   nightlight flavor, Try it shows the firmware's Character ring, and its
   bench is the C3-LCD-1.47's as `devices/registry.json` states it (USB-C
   the only power, so a pull drops the rail at once; no lights listed; the
-  backlight row names the 50% cap the board's HAL enforces and the twin's
-  does not). A bench block that names no `power.battery` is a board with no
+  backlight row names the 50% cap the board's HAL enforces, and on a dist
+  built since sweep A61, whose display HAL clips there too, says the twin
+  clips at it and reads no level past its byte, where an older dist's row
+  says the twin does not). Its Try it bench turns the running glass (sweep
+  A80): on a dist with the `emu_request_rotation` binding it offers
+  `io/orientation.h`'s four turns, each chip asks the firmware's rotation
+  mailbox through `emu-shell.js`'s `requestRotation()`, and the probe watches
+  the canvas take the side shape and come back upright with the lit chip the
+  turn the HAL announced (the shapes and turns read from the sources by
+  `turned_glass.mjs`), then clicks the lit chip and requires the note to say
+  the glass stays as it is; on a dist without the binding no turn is offered and
+  the step prints `BENCH_PROBE_SKIP[nightlight turn]`. The watch's Try it
+  offers no turn: its firmware has no mailbox. CI runs this probe on the
+  committed dist, before the wasm job's in-job rebuild, so the turn step
+  reads the bytes a bare checkout serves. A bench block that names no `power.battery` is a board with no
   battery path (the Nightlight, the Nightstand stick): its battery chip is
   inert and reads "none on this board", `BenchPower` refuses to fit a cell
   there, and the troubleshooter leaves out every step that stages one
@@ -1020,7 +1094,17 @@ fails on byte drift.
   is what the Lab's 3D case turns by (`assets/scene3d.js` `glassTurn`): the
   canvas alone cannot tell a glass turned clockwise from one turned
   counterclockwise, and `tests/render_probe.mjs` draws the real Dash turned
-  1, 3 and 2 and finds its cable side left, right and on top.
+  1, 3 and 2 and finds its cable side left, right and on top. It then turns
+  a running glass (F243): `nightlight@landscape`, 6.5 s in, is asked for
+  portrait through `emu_request_rotation()` (`emu-shell.js`
+  `requestRotation()`), which writes the rotation mailbox the app's picker
+  writes and `main.cpp`'s loop drains; 3 s after the portrait shape is
+  announced the glass is that shape with frames on it and its turn named
+  (`turnedAtRuntime`), and the companion is on stage, clear of every line and
+  where the unturned boot seats it (`perchAfterTurn`). A dist built before
+  the binding is skipped by name (`BOOT_PROBE_SKIP`); the binding itself is
+  built natively by `tests/onboard.test.js` (`emulator/test/request_rotation_test.cpp`,
+  against the real `emu_main.cpp` and the firmware's real mailbox).
 - `tests/csp.test.js` + `tests/csp_probe.mjs` — every page's Content-Security-
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /

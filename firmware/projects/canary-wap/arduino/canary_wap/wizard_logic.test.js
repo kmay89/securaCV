@@ -222,7 +222,7 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     // The answer is identity_json.h's (sweep F212): the host the device
     // advertises goes in as mdns_host and comes out under that key.
     assert.match(body, /in\.mdns_host\s*=\s*g_device\.mdns_hostname;/);
-    assert.match(body, /identity_json::device_info\(in, json, need\);/);
+    assert.match(body, /identity_json::device_info\(in, json, need\) >= need\)/);
     const idj = fs.readFileSync(path.join(__dirname, 'identity_json.h'), 'utf8');
     assert.match(idj, /wap_json::raw\(w, ",\\"mdns_host\\":"\);\n  wap_json::str\(w, in\.mdns_host\);/);
   });
@@ -265,5 +265,73 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
       assert.equal(link.href, 'http://canary.local/', JSON.stringify([info, opts]));
       assert.equal(link.textContent, 'Open canary.local');
     }
+  });
+});
+
+// Sweep F241: POST /api/mqtt/config refuses a host, user or password longer
+// than its csi_mqtt::Config member holds (csi_mqtt.h's MAX_*_LEN, bytes),
+// which is what config_load() reads back. The Home Assistant step's inputs
+// stop there first. A maxlength counts UTF-16 units, not bytes, so a value
+// typed outside ASCII can still pass it and be refused: the step then shows
+// the device's reason (the field and its limit), not "HTTP 400". (The /mqtt
+// page's inputs are held to the same limits through the real handler in
+// tests_host/test_mqtt_reinit.cpp, and it already shows the reason.)
+describe('the Home Assistant step stops each field at what the device takes', () => {
+  const header = fs.readFileSync(path.join(__dirname, 'csi_mqtt.h'), 'utf8');
+  const limit = (name) => {
+    const m = header.match(new RegExp('constexpr size_t ' + name + '\\s*=\\s*(\\d+);'));
+    if (!m) throw new Error(name + ' not found in csi_mqtt.h');
+    return Number(m[1]);
+  };
+  for (const [id, name] of [['wiz-ha-host', 'MAX_HOST_LEN'], ['wiz-ha-user', 'MAX_USER_LEN'],
+                            ['wiz-ha-pass', 'MAX_PASS_LEN']]) {
+    it(`#${id} has maxlength ${name}`, () => {
+      const src = fs.readFileSync(PWA, 'utf8');
+      const tags = src.match(new RegExp('<input[^>]*\\bid="' + id + '"[^>]*>', 'g')) || [];
+      assert.equal(tags.length, 1, 'one #' + id + ' input');
+      const ml = tags[0].match(/\bmaxlength="(\d+)"/);
+      assert.ok(ml, '#' + id + ' has no maxlength: ' + tags[0]);
+      assert.equal(Number(ml[1]), limit(name));
+    });
+  }
+});
+
+// The step's "Test & save" handler exactly as companion_pwa.h ships it, run
+// against a device that answers the config POST the way csi_mqtt.cpp's
+// handle_config_post() does: what the step shows is the device's reason.
+describe('the Home Assistant step shows why the device refused a setting (sweep F241)', () => {
+  function saveWith(configAnswer) {
+    const src = fs.readFileSync(PWA, 'utf8');
+    const m = src.match(/\$w\('wiz-ha-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
+    if (!m) throw new Error("the wiz-ha-save handler was not found in companion_pwa.h");
+    const els = {};
+    const $w = (id) => (els[id] = els[id] || { value: '', textContent: '', style: {}, disabled: false });
+    $w('wiz-ha-host').value = 'broker.lan';
+    $w('wiz-ha-user').value = 'é'.repeat(33);   // 33 UTF-16 units, under maxlength 64; 66 bytes
+    const asked = [];
+    const fetch = async (url) => {
+      asked.push(url);
+      if (url === '/api/mqtt/config') return configAnswer;
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    const handler = vm.runInNewContext('(' + m[1] + ')', { $w, fetch, JSON, Error, parseInt });
+    return handler().then(() => ({ err: els['wiz-ha-err'].textContent, asked }));
+  }
+  it("shows the device's reason for a 400", async () => {
+    const r = await saveWith({ ok: false, status: 400,
+                               json: async () => ({ ok: false, reason: 'user must be at most 64 bytes' }) });
+    assert.equal(r.err, 'Could not save: user must be at most 64 bytes');
+    assert.deepEqual(r.asked, ['/api/mqtt/config']);
+  });
+  it('falls back to the status when the answer has no reason', async () => {
+    const r = await saveWith({ ok: false, status: 500, json: async () => { throw new SyntaxError('not JSON'); } });
+    assert.equal(r.err, 'Could not save: HTTP 500');
+    const r2 = await saveWith({ ok: false, status: 400, json: async () => ({ ok: false, reason: 42 }) });
+    assert.equal(r2.err, 'Could not save: HTTP 400');
+  });
+  it('goes on to the connection test after a save the device took', async () => {
+    const r = await saveWith({ ok: true, status: 200, json: async () => ({ ok: true }) });
+    assert.equal(r.err, '');
+    assert.deepEqual(r.asked, ['/api/mqtt/config', '/api/mqtt/test']);
   });
 });

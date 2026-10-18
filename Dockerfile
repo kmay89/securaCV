@@ -2,7 +2,7 @@
 # debian:bookworm-slim runtime stage. The locked gstreamer/glib crates
 # declare rust-version 1.92, so keep this at or above that (pinned in
 # lockstep with docker/sidecar/Dockerfile).
-FROM rust:1.98-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730 AS build
+FROM rust:1.99-slim-bookworm@sha256:2c3a22f0a5533ea2dd5a16627bc841228151faa2d4de2644ac9987e4a2f1f2fa AS build
 
 # libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
 # against OpenSSL headers and links libcrypto dynamically.
@@ -31,7 +31,7 @@ COPY README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md ./
 ARG CARGO_FEATURES=rtsp-gstreamer
 RUN cargo build --release --features "${CARGO_FEATURES}"
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 # libssl3 provides the libcrypto.so.3 the SQLCipher-linked binary loads at
 # runtime (listed explicitly rather than relying on transitive dependencies).
@@ -55,7 +55,10 @@ WORKDIR /data
 
 COPY --from=build /app/target/release/witnessd /usr/local/bin/witnessd
 # Operator tooling: verify, export, and manage break-glass on the sealed
-# log/vault this container owns under /data, without copying the encrypted
+# log/vault this container owns under /data, and mint the Witness Wall's
+# viewer tokens (`witness_api mint-viewer-token`, run with `docker exec`:
+# it writes the token file witnessd re-reads per request and never serves
+# here — witnessd stays the entrypoint), without copying the encrypted
 # database out of the volume. Already compiled by the build above (none of
 # these are feature-gated); adds binaries only, no extra runtime deps and
 # no new listening ports. (`log_anchor` here is the offline flow plus
@@ -71,6 +74,7 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 COPY --from=build /app/target/release/log_anchor /usr/local/bin/log_anchor
 COPY --from=build /app/target/release/court_export /usr/local/bin/court_export
+COPY --from=build /app/target/release/witness_api /usr/local/bin/witness_api
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799
 # The default build of this image terminates no TLS in-process, so witnessd

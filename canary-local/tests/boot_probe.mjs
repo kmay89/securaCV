@@ -22,14 +22,29 @@
 // both side turns give the same glass, so only that check tells a HAL that
 // turns the case the right way round from one that says 1 for both.
 //
+// Then turns a running glass (sweep F243): nightlight@landscape, 6.5 s into
+// its boot, is asked for the portrait it was built as through
+// emu_request_rotation — the rotation mailbox the app's picker writes, which
+// main.cpp's loop drains into its one apply path (panel turned, face rebuilt,
+// companion tumbling in; turned_glass.mjs's runtimeTurns() reads both
+// rotations from the sources). Once the glass has announced its portrait
+// shape and 3 s more have passed (the 700 ms tumble, and any reaction the
+// face gives its first mood after the rebuild, long over), the glass is that shape with
+// frames drawn on it, its turn named once the dist announces turns
+// (turnedAtRuntime), and the companion is on stage (birdOnStage), on the
+// glass and clear of every line (birdPerch), where the unturned boot of this
+// run seats it (perchAfterTurn). A dist built before the binding says so by
+// name and skips the step (runtime_turn.sh holds the sources natively); CI's
+// boot probe on the rebuilt artifacts runs it.
+//
 // Uses playwright (or playwright-core with PW_EXECUTABLE set).
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { birdPerch, birdOnStage } from "./bird_perch.mjs";
-import { framesOnGlass } from "./onboard_glass.mjs";
-import { bootTurns, readTurnedSources } from "./turned_glass.mjs";
+import { framesOnGlass, perchAfterTurn, turnedAtRuntime } from "./onboard_glass.mjs";
+import { bootTurns, readTurnedSources, runtimeTurns } from "./turned_glass.mjs";
 import { lookup } from "./probe_server.mjs";
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), "../.."));
@@ -65,6 +80,8 @@ const RUN = ONLY ? [ONLY] : FLAVORS;
 // F206: the turned glasses, for the flavors this run boots, each turned both
 // ways round (A56: the same glass, told apart only by the announced turn).
 const TURNED = bootTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
+// F243: the glass turned while it runs, for the flavors this run boots.
+const RUNTIME = runtimeTurns(await readTurnedSources(ROOT, (file, enc) => readFile(file, enc))).filter((t) => RUN.includes(t.flavor));
 
 // Allowlist, not sanitization: the probe serves exactly the files the
 // harness needs, enumerated up front. Request paths are only ever used
@@ -114,6 +131,8 @@ const browser = await pw.chromium.launch(
 );
 const failures = [];
 const fail = (flavor, msg) => { console.error(`BOOT_PROBE_FAIL[${flavor}]:`, msg); failures.push(flavor); };
+// Where each unturned boot drew its companion (F243's perch reference).
+const nativeBird = new Map();
 
 // One boot: the harness for `flavor` (with a saved rotation when `turn` is
 // given), the face read 6.5 s on, every check held. Returns the run's name.
@@ -189,11 +208,94 @@ async function bootOnce(flavor, turn = null) {
   console.log(`BOOT_PROBE_OK[${name}] flushes=${st.flushes} mqtt=${st.mqtt.length}` +
     (turn ? ` glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length} turn=${st.shapes.at(-1)?.turn ?? "unsaid"}` +
       ` bird=${st.bird.w}x${st.bird.h}@${st.bird.x},${st.bird.y}` : ""));
+  // the unturned face's companion, the perch a runtime turn back must reach
+  if (!turn) nativeBird.set(flavor, st.bird);
+}
+
+// F243: one glass turned while it runs. The harness boots the flavor at
+// `rt.from` (its saved rotation, worn from power-on), the face is read up
+// 6.5 s on, then the probe asks the firmware for `rt.to` through the rotation
+// mailbox (emu-shell.js requestRotation) and reads the glass once the new
+// shape is announced and 3 s more have passed (the tumble takes 700 ms; a
+// reaction hop after the rebuilt face's first mood, 560 ms, starts within its
+// first render second).
+// Returns "skipped" for a dist without the binding, after saying so.
+async function turnOnce(rt) {
+  const name = `${rt.flavor}@${rt.from.name}->${rt.to.name}`;
+  const page = await browser.newPage({ viewport: { width: 1100, height: 620 } });
+  const errors = [];
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  page.on("pageerror", (e) => errors.push(String(e)));
+
+  let st = null;
+  let asked = 0;
+  try {
+    await page.goto(`http://127.0.0.1:${port}/canary-local/emulator/web/harness.html?hour=10&flavor=${rt.flavor}&rotation=${rt.from.rotation}`);
+    await page.waitForFunction(() => window.__ready === true || window.__harnessError, null, { timeout: 90000 });
+    const harnessError = await page.evaluate(() => window.__harnessError || null);
+    if (harnessError) throw new Error(`the harness did not boot: ${harnessError}`);
+    // A dist built before the binding cannot be turned at runtime: say so by
+    // name and leave the step to the rebuilt dist (the bindings are read at
+    // start(); a dist either has emu_request_rotation or it does not).
+    if (!(await page.evaluate(() => !!window.__emu.c.requestRotation))) {
+      await page.close();
+      if (errors.length) { fail(name, "page errors:\n" + errors.slice(0, 8).join("\n")); return null; }
+      console.log(`BOOT_PROBE_SKIP[${name}]: this ${rt.flavor} dist has no emu_request_rotation (built before sweep F243); ` +
+        "the runtime turn is held natively by runtime_turn.sh and here once CI's rebuilt dist carries the binding");
+      return "skipped";
+    }
+    await new Promise((res) => setTimeout(res, 6500)); // splash + face, as every boot is read
+    asked = await page.evaluate(() => window.__state.shapes.length);
+    await page.evaluate((rot) => window.__emu.requestRotation(rot), rt.to.rotation);
+    await page.waitForFunction(({ n, w, h }) => {
+      const s = window.__state.shapes;
+      return s.length > n && s[s.length - 1].w === w && s[s.length - 1].h === h;
+    }, { n: asked, w: rt.to.glass.w, h: rt.to.glass.h }, { timeout: 10000 });
+    await new Promise((res) => setTimeout(res, 3000)); // the tumble and any first-mood hop are over
+    st = await page.evaluate(async () => ({
+      flushes: window.__state.flushes,
+      shapes: window.__state.shapes,
+      serial: window.__state.serialText,
+      bird: await window.__emu.markBox(),
+      labels: await window.__emu.screenLabels(),
+      glass: { w: document.getElementById("glass").width, h: document.getElementById("glass").height },
+    }));
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/ci_face_${name.replace(/[^a-z0-9@-]/gi, "_")}.png` });
+  } catch (e) {
+    errors.push(`the runtime turn did not complete: ${e}`);
+  }
+  await page.close();
+
+  if (errors.length) { fail(name, "page errors:\n" + errors.slice(0, 8).join("\n")); return null; }
+  if (st.glass.w !== rt.to.glass.w || st.glass.h !== rt.to.glass.h) {
+    fail(name, `asked for rotation ${rt.to.rotation}, the ${rt.flavor} glass is ${st.glass.w}x${st.glass.h}, ` +
+      `not the ${rt.to.name} ${rt.to.glass.w}x${rt.to.glass.h} (F243)`);
+    return null;
+  }
+  const turned = turnedAtRuntime(st.shapes, asked, st.flushes, rt.to);
+  if (turned) { fail(name, turned); return null; }
+  const stage = birdOnStage(st, `the ${rt.flavor} face 3 s after a runtime turn to ${rt.to.name}`);
+  if (stage) { fail(name, stage); return null; }
+  const perch = birdPerch(st);
+  if (perch) { fail(name, perch); return null; }
+  const ref = nativeBird.get(rt.flavor);
+  const seated = perchAfterTurn(st.bird, ref);
+  if (seated) { fail(name, seated); return null; }
+  console.log(`BOOT_PROBE_OK[${name}] glass=${st.glass.w}x${st.glass.h} shapes=${st.shapes.length - asked} after the ask` +
+    ` turn=${st.shapes.at(-1)?.turn ?? "unsaid"} bird=${st.bird.w}x${st.bird.h}@${st.bird.x},${st.bird.y}` +
+    (ref && ref.shown ? ` (unturned boot: @${ref.x},${ref.y})` : " (no unturned boot read to hold the perch to)"));
+  return "turned";
 }
 
 const booted = [];
+const skipped = [];
 for (const flavor of RUN) { await bootOnce(flavor); booted.push(flavor); }
 for (const t of TURNED) { await bootOnce(t.flavor, t); booted.push(`${t.flavor}@${t.name}`); }
+for (const rt of RUNTIME) {
+  const name = `${rt.flavor}@${rt.from.name}->${rt.to.name}`;
+  if ((await turnOnce(rt)) === "skipped") skipped.push(name);
+  else booted.push(name);
+}
 
 await browser.close();
 server.close();
@@ -201,5 +303,6 @@ if (failures.length) {
   console.error(`BOOT_PROBE_FAIL: ${failures.length} of ${booted.length} boots failed (${failures.join(", ")})`);
   process.exit(1);
 }
-console.log(`BOOT_PROBE_OK all ${booted.length} boots: ${booted.join(", ")}`);
+console.log(`BOOT_PROBE_OK all ${booted.length} boots: ${booted.join(", ")}` +
+  (skipped.length ? `; skipped by name (a dist built before the binding): ${skipped.join(", ")}` : ""));
 process.exit(0);

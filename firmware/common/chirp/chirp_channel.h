@@ -13,8 +13,10 @@
  * - 3-hop max range (neighborhood only)
  * - No persistent history
  * - Escalating cooldowns (prevents spam/hysteria)
- * - Witness confirmation requirement (2 needed before relay)
- * - Community suppress voting (50% dismiss = suppress)
+ * - Witness confirmation requirement (2 needed before relay, 1 for an
+ *   emergency or weather template)
+ * - Community suppress voting (more than half of the nearby rows, at
+ *   least 3, within 2 minutes = suppress; spec §2.5.6)
  */
 
 /*
@@ -59,30 +61,72 @@ extern "C" {
 
 // ============================================================================
 // CONSTANTS
+//
+// The canary-wap's chirp_channel.cpp is the v0.2 reference (spec
+// spec/chirp_channel_v0.md). Each value below is the reference's, named after
+// the constant it equals in the `chirp_channel` namespace of
+// firmware/projects/canary-wap/arduino/canary_wap/mesh_network.h, and
+// canary-wap's tests_host/test_chirp_protocol_invariants.cpp holds every one
+// of them to it with a static_assert, except the relay delay, which the
+// reference does not have. This header sized the session display for three
+// emoji (20 bytes) and differed from the reference in five more values
+// (sweep F272; their old values are in the comments).
+//
+// What the port must take from the reference, not from here, because this
+// header does not carry it: the confirmations that validate a chirp (2, or 1
+// for an emergency or weather template, spec §3.4), community suppression
+// (more than half of the nearby rows and at least 3 votes within 120 s,
+// §2.5.6), the per-key witness limit (4 an hour), relays per minute (10), the
+// night hours (22:00 to 06:00), and the signed inputs (§2.5.6, §3.3, §3.4).
 // ============================================================================
 
-#define CHIRP_SESSION_ID_SIZE       8       // Session identifier size
-#define CHIRP_EMOJI_DISPLAY_SIZE    20      // Max display string for 3 multi-byte emoji characters + null terminator
-#define CHIRP_NONCE_SIZE            8       // Message nonce size
-#define CHIRP_MAX_RECENT            32      // Recent chirps to track
-#define CHIRP_MAX_NEARBY            16      // Nearby devices to track
-#define CHIRP_MAX_NONCE_CACHE       64      // Nonces to deduplicate
-#define CHIRP_MAX_HOPS              3       // Maximum relay hops
+// On the wire: a receiver depends on these.
+#define CHIRP_WIRE_VERSION          1       // PROTOCOL_VERSION: v0.2 frames (v0.1 was 0)
+#define CHIRP_WIRE_MAGIC            0xC4    // CHIRP_MAGIC (Opera's is 0x0A)
+#define CHIRP_SESSION_ID_SIZE       8       // SESSION_ID_SIZE
+#define CHIRP_SESSION_PUBKEY_SIZE   32      // SESSION_PUBKEY_SIZE: Ed25519, carried in every signed frame
+#define CHIRP_NONCE_SIZE            8       // the header's nonce
+// EMOJI_DISPLAY_SIZE: five emoji from the session id (spec §2.3), 15 to 30
+// bytes of UTF-8 and the NUL; the presence beacon carries the display in a
+// field this size. It was 20, "3 multi-byte emoji characters + null".
+#define CHIRP_EMOJI_DISPLAY_SIZE    31
+#define CHIRP_MAX_HOPS              3       // MAX_HOP_COUNT
+// A witness is fresh while its timestamp is at most this far behind the
+// receiver's wall clock (WITNESS_MAX_AGE_S) and at most this far ahead
+// (WITNESS_MAX_AHEAD_S); a receiver with no wall clock set accepts it
+// unverified. A sender refuses to originate before CHIRP_MIN_UNIX_TIME.
+#define CHIRP_WITNESS_MAX_AGE_S     300
+#define CHIRP_WITNESS_MAX_AHEAD_S   30
+#define CHIRP_MIN_UNIX_TIME         1700000000UL   // MIN_UNIX_TIME
 
-// Timing constants (milliseconds) - using calculated values for clarity
-#define CHIRP_PRESENCE_INTERVAL_MS  (15 * 1000)           // Presence beacon interval
-#define CHIRP_PRESENCE_TIMEOUT_MS   (45 * 1000)           // Nearby device timeout
-#define CHIRP_RECENT_TTL_MS         (30 * 60 * 1000)      // 30 min: chirp visibility
-#define CHIRP_RELAY_DELAY_MIN_MS    (2 * 1000)            // Min delay before relay
-#define CHIRP_RELAY_DELAY_MAX_MS    (8 * 1000)            // Max delay before relay
-#define CHIRP_PRESENCE_REQ_MS       (10 * 60 * 1000)      // 10 min: required before sending
+// Tables.
+#define CHIRP_MAX_RECENT            16      // MAX_RECENT_CHIRPS (was 32)
+#define CHIRP_MAX_NEARBY            32      // MAX_NEARBY_CACHE (was 16)
+// A witness's nonce is refused for at least this long after it is heard,
+// longer than the frame stays fresh (NONCE_FILTER_HALF_MS, spec §5.3; the
+// reference holds nonces in a Bloom filter of two 4 KB halves, the older one
+// cleared at the start of each slot of this length, so a nonce is held at
+// least this long and at most twice this). This header named a 64-entry nonce
+// cache, which 65 frames flush.
+#define CHIRP_NONCE_HOLD_MS         ((CHIRP_WITNESS_MAX_AGE_S + CHIRP_WITNESS_MAX_AHEAD_S + 1) * 1000UL)
 
-// Cooldown tiers (escalating) - using calculated values for clarity
-#define CHIRP_COOLDOWN_TIER1_MS     (30 * 1000)           // 30 sec: first chirp
-#define CHIRP_COOLDOWN_TIER2_MS     (5 * 60 * 1000)       // 5 min: 2nd chirp
-#define CHIRP_COOLDOWN_TIER3_MS     (30 * 60 * 1000)      // 30 min: 3rd chirp
-#define CHIRP_COOLDOWN_TIER4_MS     (60 * 60 * 1000)      // 60 min: 4th+ chirp
-#define CHIRP_COOLDOWN_RESET_MS     (24 * 60 * 60 * 1000) // 24 hr: reset tiers
+// Timing (milliseconds).
+#define CHIRP_PRESENCE_INTERVAL_MS  (60 * 1000UL)          // PRESENCE_INTERVAL_MS (was 15 s)
+#define CHIRP_PRESENCE_TIMEOUT_MS   (3 * 60 * 1000UL)      // NEARBY_TIMEOUT_MS (was 45 s)
+#define CHIRP_RECENT_TTL_MS         (30 * 60 * 1000UL)     // DEFAULT_DISPLAY_MS: chirp visibility
+// Not the reference's: it relays at once, at the confirmation that validates
+// the chirp. A port may wait within this range before relaying; no receiver
+// and nothing in the spec depends on it.
+#define CHIRP_RELAY_DELAY_MIN_MS    (2 * 1000UL)
+#define CHIRP_RELAY_DELAY_MAX_MS    (8 * 1000UL)
+#define CHIRP_PRESENCE_REQ_MS       (10 * 60 * 1000UL)     // PRESENCE_REQUIRED_MS: before sending
+
+// Cooldown tiers (escalating, spec §2.5.4); they were 30 s, 5, 30 and 60 min.
+#define CHIRP_COOLDOWN_TIER1_MS     (5 * 60 * 1000UL)      // COOLDOWN_TIER_1_MS: after the 1st chirp
+#define CHIRP_COOLDOWN_TIER2_MS     (15 * 60 * 1000UL)     // COOLDOWN_TIER_2_MS: after the 2nd
+#define CHIRP_COOLDOWN_TIER3_MS     (60 * 60 * 1000UL)     // COOLDOWN_TIER_3_MS: after the 3rd
+#define CHIRP_COOLDOWN_TIER4_MS     (4 * 60 * 60 * 1000UL) // COOLDOWN_TIER_4_MS: after the 4th and on
+#define CHIRP_COOLDOWN_RESET_MS     (24 * 60 * 60 * 1000UL) // COOLDOWN_RESET_MS: tiers reset
 
 // ============================================================================
 // ENUMS
@@ -90,6 +134,11 @@ extern "C" {
 
 /**
  * @brief Chirp channel state
+ *
+ * The API's own states, not the reference's: canary-wap's ChirpState
+ * (mesh_network.h) has LISTENING and ACTIVE where this has READY, and no
+ * ERROR. Nothing holds one to the other (test_chirp_protocol_invariants.cpp
+ * holds the enums that cross the wire and the mute durations).
  */
 typedef enum {
     CHIRP_STATE_DISABLED = 0,   // Feature disabled
@@ -234,7 +283,7 @@ typedef struct {
     uint8_t ttl_minutes;
     uint32_t received_ms;
     uint8_t confirm_count;
-    bool validated;             // Has 2+ confirmations
+    bool validated;             // Confirmed by enough distinct keys (2, or 1 for emergency/weather)
     bool relayed;               // Already relayed
     bool suppressed;            // Community suppressed
     bool dismissed;             // User dismissed
@@ -393,7 +442,7 @@ bool chirp_has_presence(void);
 bool chirp_can_send(void);
 
 /**
- * @brief Get current cooldown tier (1-4)
+ * @brief Get current cooldown tier (0 before the first send, then 1-4)
  * @return Cooldown tier
  */
 uint8_t chirp_get_cooldown_tier(void);

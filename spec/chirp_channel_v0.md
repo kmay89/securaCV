@@ -129,12 +129,29 @@ session_id = SHA-256("securacv:chirp:session:v0" || session_pubkey)[0:8]
 
 **Emoji Display** (for session identification):
 ```
-emoji_index = session_id[i] % 16
 emoji_set = ["🐦", "🌳", "🏠", "🌙", "⭐", "🌸", "🍃", "💧",
              "🔔", "🎵", "🌈", "☀️", "🌻", "🐝", "🦋", "🍀"]
-display = emoji_set[session_id[0]] + emoji_set[session_id[1]] + emoji_set[session_id[2]]
-// Example: "🐦🌳⭐" - easy to remember, hard to track
+display = emoji_set[session_id[0] % 16] + emoji_set[session_id[1] % 16]
+        + emoji_set[session_id[2] % 16] + emoji_set[session_id[3] % 16]
+        + emoji_set[session_id[4] % 16]
+// Example: "🐦🌳⭐🌙🍀" - five emoji, easy to remember, hard to track
 ```
+
+- Five emoji, picked by the low nibble of `session_id` bytes 0 to 4; the
+  high nibbles and bytes 5 to 7 pick nothing. v0.2 lifted the display from
+  three emoji (12 bits, 4,096 displays) to five (20 bits, about a million;
+  audit C11). It is a memory aid, not an identity: a device that wants a
+  neighbor's display on a signed frame (a witness, a confirmation, a vote,
+  whose session id must derive from the signing key) finds a session key
+  with it in about a million tries. A presence beacon is unsigned, so the
+  nearby list shows whatever display the session id it claims gives, at no
+  cost (§3.2; sweep F232).
+- In UTF-8 a display is 15 to 30 bytes: ⭐ is 3 bytes, ☀️ is 6 (U+2600 and
+  the variation selector U+FE0F), the other fourteen are 4. The canary-wap
+  keeps and sends it in a 31-byte field with its NUL (`EMOJI_DISPLAY_SIZE`),
+  and `test_chirp_commands_wap.cpp` renders all 16^5 displays and holds each
+  to five emoji inside that field (sweep F231: this section built three, and
+  §3.2 gave the field as 3 to 12 bytes).
 
 ## 2.5 Abuse Prevention Design
 
@@ -351,12 +368,61 @@ once. The receiver tracks `nearby_count = |g_nearby_devices|`.
 absolute floor to prevent suppression in very-small networks), within
 `SUPPRESS_WINDOW_MS` (default 120 s) of the chirp's `received_ms`.
 
+On the canary-wap (sweep F233):
+- The votes needed are `suppress_votes_needed(nearby_count)`: more than
+  half of the rows, never fewer than 3 (3 up to 5 rows, 4 at 6 or 7, 5 at 8
+  or 9, 9 at 16 or 17, 10 at 18, 17 at 32). It is read at each counted
+  vote, against the rows the table holds then.
+- The set holds `MAX_SUPPRESS_VOTERS` keys, the most votes any table size
+  asks for (17 at the 32-row `MAX_NEARBY_CACHE`), so a full set meets the
+  threshold at every table size.
+- A vote heard more than `SUPPRESS_WINDOW_MS` after the chirp arrived here
+  is dropped and takes no slot; so is one heard before the chirp it names
+  (nothing keeps it for later). A chirp is held once (§5.3), so its window
+  is the one its first arrival opened: the same frame heard again opens no
+  second one. (Until sweep F270 a frame heard again after the nonce
+  filter's reset took a second row, and a vote counted at the first copy
+  whose window was still open.)
+- A vote counts only when its signature verifies over the chirp's nonce and
+  the voter's key, and the frame's session id derives from that key.
+  `test_chirp_suppress_wap.cpp` sends a flipped signature, a foreign session
+  id, a vote signed for another chirp and a key its sender does not hold,
+  and none takes a slot.
+- Before F233 the set held 8 keys while the threshold was `nearby_count /
+  2` (at least 3): from 18 rows on no chirp could be suppressed, 7 rows
+  suppressed at 3 votes (43%), and no window was read.
+  `test_chirp_suppress_wap.cpp` holds the rule with real signed votes at
+  every table size from 3 to 32 rows.
+- Who may vote is open (sweep F234): a vote needs a valid signature and a
+  session id that derives from its key, not a presence row.
+
 **Behavior when suppressed**:
-- The chirp is hidden from the receiver's UI.
-- The receiver no longer relays the chirp.
+- The chirp is hidden from the receiver's UI. (The canary-wap takes it out
+  of its recent table at the vote that suppresses it, sweep F269: `GET
+  /api/chirp/recent` does not list it from the loop task's pass that
+  handled the vote, so the dashboard drops it at its next read of the list
+  (every 5 s on the Chirp tab), and a local confirm or dismiss of it,
+  including one from a list read before the vote, is refused as
+  `not_found` and sends nothing. Before F269 it
+  stayed until the next prune, up to 30 s: listed with `suppressed: true`
+  and `status: "suppressed"`, which the dashboard's chirp list read neither
+  of, still offering Confirm, and a local confirm broadcast a signed ACK. The
+  route keeps both keys; `suppressed` now always reads false.)
+- The receiver no longer relays the chirp. (On the canary-wap a
+  confirmation finds no row and neither validates nor relays it; before
+  F269 the confirmations that reached it in those 30 s validated it and
+  relayed it at hop 1. Its nonce stays in the nonce filter for longer than
+  the frame stays fresh, §5.3, so the same signed frame heard again, or a
+  neighbor's relay of it, is refused rather than stored anew with no votes,
+  sweep F270; the filter was cleared whole every `CHIRP_TTL_MS`, 5 min, as
+  long as the freshness window, and a frame heard just after a reset was
+  stored again.)
 - The receiver does not echo further suppress votes (they're not needed).
-- The suppression itself is logged to the health log but does not generate
-  further wire traffic.
+  (On the canary-wap a later vote finds no row and counts nowhere.)
+- The suppression itself is logged to the health log, once per chirp at the
+  vote that suppresses it (the canary-wap logged the line again at every
+  later vote until F233's review), but does not generate further wire
+  traffic.
 
 **Why This Works**:
 - Community self-moderates without central authority.
@@ -434,9 +500,9 @@ Periodic broadcast to discover nearby chirp-enabled devices:
 ```cddl
 chirp_presence = {
   msg_type: 0,
-  emoji: tstr .size (3..12),      ; Emoji display string
+  emoji: tstr .size (15..30),     ; the sender's five-emoji display (§2.3), NUL-padded to 31 bytes
   listening: bool,                 ; Accepting community chirps
-  last_chirp_age_min: uint / null ; Minutes since last chirp sent
+  last_chirp_age_min: uint / null ; Minutes since last chirp sent (the canary-wap: 0 to 254, 255 for null)
 }
 ```
 
@@ -485,6 +551,11 @@ canonical = "securacv:chirp:witness:v0"
          || urgency(1) || ttl_minutes(1) || timestamp(4)
          || session_pubkey(32)
 ```
+
+The timestamp is signed as four little-endian bytes, as the header carries
+it on the canary-wap (`test_chirp_protocol_invariants.cpp` verifies a frame
+the firmware sent against these 73 bytes written out from this list, and a
+big-endian timestamp does not verify).
 
 The `confirm_count` field from v0.1 is **removed from the wire**. Confirmation
 state is local-only and derived from `CHIRP_MSG_ACK` messages with unique
@@ -580,7 +651,7 @@ chirp_mute = {
 ┌─────────────────────────────────────────┐
 │         SHARE WITH COMMUNITY?           │
 │                                         │
-│  🐦🌳⭐ (your session)                   │
+│  🐦🌳⭐🌙🍀 (your session)               │
 │                                         │
 │  ┌─────────────────────────────────┐   │
 │  │ What's happening?               │   │
@@ -608,7 +679,7 @@ When chirp received, display is **calm and informative**, not alarming:
 
 ```
 ┌─────────────────────────────────────────┐
-│  🐝🌸💧 shared nearby:                   │
+│  🐝🌸💧🔔🌻 shared nearby:               │
 │                                         │
 │  📍 Activity • Caution                  │
 │  "someone checking car doors"           │
@@ -660,14 +731,54 @@ Devices do NOT relay if:
 ### 5.3 Deduplication
 
 ```
-recent_nonces = sliding_window(last_100_nonces)
-if (chirp.nonce in recent_nonces) {
+if (chirp.nonce in nonce_filter or chirp.nonce in recent_chirps) {
   drop_duplicate()
 } else {
-  recent_nonces.add(chirp.nonce)
+  nonce_filter.add(chirp.nonce)
   process_chirp()
 }
 ```
+
+A nonce is one chirp: a receiver must refuse a witness whose nonce it has
+seen for at least as long as the frame could still be accepted. A frame is
+fresh while its timestamp is at most 30 s ahead of the receiver's wall
+clock and at most 300 s behind it (`CHIRP_TTL_MS`), so one first heard at
+the earliest moment it is accepted stays acceptable for 330 s more.
+
+On the canary-wap (sweep F270) the filter is a Bloom filter in two halves of
+4 KB (32,768 bits, 4 hashes) each. Time since the channel started is cut
+into slots of `NONCE_FILTER_HALF_MS` (331 s: the 330 s and one more second
+for the whole seconds the wall clock counts in, `mesh_network.h`). A nonce
+goes into the half of the slot it is heard in; at each slot's start the
+older half is cleared and becomes current, and a lookup reads both. The
+turn is taken at the first lookup, insert or loop pass after the slot's
+start and dated at that start, so however sparse the frames, a nonce is
+found by every lookup up to 331 s after it went in and by none from 662 s
+on (before F270's review a turn was dated when it was taken, and with
+sparse frames a nonce stayed findable for up to three halves, 993 s). A
+witness whose nonce a row of the recent
+table holds is refused too: a row lives up to `DEFAULT_DISPLAY_MS` (30
+min), longer than the filter, and with no wall clock set a frame has no
+freshness window to end it. At n nonces in a half, a half's false-positive
+rate is (1 - e^(-4n/32768))^4: about 0.02 % at 1,000 and 2.4 % at 4,096 (a
+frame every 81 ms for a whole half); a lookup reads two halves, so up to
+about twice that, and a false positive drops a new witness as a repeat.
+`test_chirp_suppress_wap.cpp` holds a frame 30 s ahead, heard 1 ms before
+each whole second from 1 to 700 s after boot, to refusal at the last
+millisecond of its window; holds the 331 s and 662 s bounds under sparse
+and busy lookups and across uptime's 49.7-day wrap; and holds a flood of a
+frame every 81 ms for five halves to these false-positive rates.
+
+Before F270 the filter was one 4 KB half cleared whole every
+`CHIRP_TTL_MS`, as long as the freshness window: a frame heard just before
+a reset was stored again just after it, still fresh, as a second row of a
+chirp still held, or, for a suppressed chirp, anew with no votes.
+
+With no wall clock set, a witness is stored with an unverifiable timestamp
+and has no freshness window: once its row has left the table (dismissed,
+suppressed, displaced or past its 30 min) and the filter has forgotten it
+(more than 331 s and at most 662 s after it was heard), the same frame is
+stored again.
 
 ## 6. Privacy Guarantees
 
@@ -847,7 +958,7 @@ shows what the POST did. The answers keep their shape.
 // GET /api/chirp
 {
   "state": "ACTIVE",
-  "session_emoji": "🐦🌳⭐",
+  "session_emoji": "🐦🌳⭐🌙🍀",
   "nearby_count": 12,
   "recent_chirps": 2,
   "last_chirp_sent": null,
@@ -859,7 +970,7 @@ shows what the POST did. The answers keep their shape.
 {
   "chirps": [
     {
-      "emoji": "🐝🌸💧",
+      "emoji": "🐝🌸💧🔔🌻",
       "category": "activity",
       "urgency": "caution",
       "message": "someone checking car doors",
@@ -907,7 +1018,7 @@ The web UI MUST include a "Community" panel showing:
 
 Chirp notifications should be **informative, not alarming**:
 
-✅ Good: "🐝🌸💧 shared: activity nearby"
+✅ Good: "🐝🌸💧🔔🌻 shared: activity nearby"
 ❌ Bad: "⚠️ ALERT: SUSPICIOUS ACTIVITY DETECTED"
 
 ✅ Good: "heads up from your area"
@@ -957,15 +1068,37 @@ The Chirp Channel operates on **community trust**:
 
 ### 11.2 NVS Storage
 
+The canary-wap keeps these keys in NVS namespace `chirp` (`NVS_CHIRP_NS`,
+`nvs_store.h`):
+
 ```
-NVS Key              | Size    | Description
----------------------|---------|---------------------------
-chirp_enabled        | 1 byte  | Feature flag
-chirp_relay          | 1 byte  | Relay enabled
-chirp_notify_sound   | 1 byte  | Sound enabled
-chirp_urgency_filter | 1 byte  | Min urgency to show
-// Session identity NOT stored (regenerated each boot)
+NVS Key      | Type   | Written by                        | Description
+-------------|--------|-----------------------------------|------------------------------------------
+chirp_relay  | uint8  | save_settings() (chirp_channel)   | 1: relay others' chirps (default 1)
+chirp_filter | uint8  | save_settings() (chirp_channel)   | lowest urgency taken: 0 info, 1 caution, 2 urgent (default 0)
+st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the audible self-test tone last played
+// Session identity NOT stored (regenerated on each enable and boot)
 ```
+
+- `save_settings()` writes both settings whenever the owner changes either
+  (`POST /api/chirp/settings`); `init()` reads them at boot, and a missing
+  key keeps its default. The urgency filter drops a lower-urgency chirp on
+  receipt: it is not stored, relayed or shown.
+- `st_chirp_at` is not a Chirp channel setting. It is the 30-day cadence of
+  the speaker's NFPA-72-style self-test tone (`FEATURE_AUDIBLE_CHIRP`),
+  seeded on the first pass with a set wall clock, and it shares the
+  namespace.
+- Nothing else is stored. The channel's on state is not: it starts off at
+  every boot until the owner turns it on (`POST /api/chirp/enable`). The
+  cooldown tiers, the mute and the tables live in RAM. §11.1's notification
+  sound, presence broadcast, display time and auto-dismiss are not settings
+  on the canary-wap.
+- A read-only open of `chirp` before anything wrote it opens nothing and
+  logs nothing (sweep F220).
+- Sweep F236: this table named `chirp_enabled`, `chirp_notify_sound` and
+  `chirp_urgency_filter`, which nothing stores, and left out `chirp_filter`
+  and `st_chirp_at`. `scripts/tests/test_chirp_spec_tables.py` now holds it
+  to the keys the sketch reads and writes.
 
 ## 12. Implementation Notes
 
@@ -993,26 +1126,41 @@ void generate_chirp_session() {
   // Derive session keypair
   Ed25519::generateKeyPair(session_pubkey, session_privkey, session_seed);
 
-  // Compute session ID
+  // Compute session ID: the domain's 25 characters, no NUL (§2.3, §3.1).
+  // This line hashed 26, a NUL the canary-wap never hashes, and a session id
+  // computed that way would not match one a receiver derives (sweep F231).
   SHA256 hash;
-  hash.update("securacv:chirp:session:v0", 26);
+  hash.update("securacv:chirp:session:v0", 25);
   hash.update(session_pubkey, 32);
   hash.finalize(session_id);  // Use first 8 bytes
 
-  // Generate emoji display
+  // Generate emoji display: five emoji from session_id[0..4] (§2.3)
   generate_emoji_string(session_id, emoji_display);
 }
 ```
 
 ### 12.3 Memory Budget
 
+The canary-wap's tables, as the host measures them (its layout is the
+device's: no pointer, `size_t` or 8-byte member in any). All but the session
+are allocated once by `init()`, in PSRAM where the board has it.
+
 | Component | Max Size |
 |-----------|----------|
-| Session identity | 128 bytes |
-| Recent chirps | 16 * 128 = 2048 bytes |
-| Nonce cache | 100 * 8 = 800 bytes |
-| Presence cache | 32 * 16 = 512 bytes |
-| **Total** | ~3.5 KB |
+| Session identity | 112 bytes |
+| Recent chirps | 16 * 964 = 15,424 bytes |
+| Nonce dedup (Bloom filter, two halves) | 2 * 4,096 = 8,192 bytes |
+| Nearby (presence) table | 32 * 48 = 1,536 bytes |
+| Per-key witness rate table | 32 * 40 = 1,280 bytes |
+| Self-test seen table | 32 * 40 = 1,280 bytes |
+| Route views (two copies and a scratch) | 3,404 bytes |
+| **Total** | ~31 KB |
+
+A recent chirp holds its suppress set of 17 keys (§2.5.6); sizing that set to
+the fullest table added 288 bytes to each, 4,608 in all (sweep F233). The
+nonce filter's second half (§5.3) added 4,096 bytes (sweep F270; the total
+was ~27 KB). This table said ~3.5 KB, sized for a 128-byte chirp and a
+100-entry nonce list.
 
 ## 13. Relationship to Opera
 
@@ -1042,7 +1190,7 @@ Opera devices MUST NOT:
 
 - **Chirp**: A community alert message sent via the Chirp Channel
 - **Session**: A temporary identity that lasts until disable/reboot
-- **Emoji ID**: Human-readable 3-emoji representation of session
+- **Emoji ID**: Human-readable five-emoji representation of the session id (§2.3)
 - **Hop**: One relay transmission (max 3)
 - **Presence**: Periodic beacon showing device is chirp-enabled
 - **Relay**: Forwarding someone else's chirp to extend range

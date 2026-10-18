@@ -2025,6 +2025,46 @@ export function requiresLiveReceipt(product) {
   return !product || product.serial_receipt !== false;
 }
 
+// ── the serial monitor's commands: the product's own (sweep A86) ────────────
+// Every monitor offers the commands of the firmware on the board as one-tap
+// chips beside a "type a command" box: products[].monitor in the generated
+// catalog ({ kind, cmds: [[command, label], …], placeholder }), held to the
+// firmware's own command handler by gen_flash.py's monitor_block(). A board
+// whose product is not known (an unidentified firmware, a local file, a
+// backup) gets the catalog's monitor_unknown — no chips — never another
+// firmware's. The browser flasher's monitor and the Lab app's receipt card
+// call this; desktop/src/app.js monitorVocabulary is the same rule
+// (desktop_parity.test.js runs both over every product).
+export function monitorVocabulary(catalog, product) {
+  const own = product && product.monitor;
+  if (own && Array.isArray(own.cmds) && typeof own.placeholder === "string") return own;
+  const unknown = catalog && catalog.monitor_unknown;
+  if (unknown && Array.isArray(unknown.cmds) && typeof unknown.placeholder === "string") return unknown;
+  return { kind: "unknown", cmds: [], placeholder: "type a command" };
+}
+
+// The monitor's status line, worded for the console on the board: "h" for a
+// key console, "help" for a word console — each named only when it is one of
+// the vocabulary's own chips, so it is a command gen_flash.py held to the
+// firmware — and no command at all for a firmware that reads none or one not
+// identified. `moment` is "connected" (the port opened) or "quiet" (nothing
+// heard yet). The browser flasher's monitor shows these.
+export function monitorStatusText(vocab, moment, baud) {
+  const has = (c) => !!vocab && Array.isArray(vocab.cmds) && vocab.cmds.some(([x]) => x === c);
+  const kind = vocab && vocab.kind;
+  const menu = kind === "keys" && has("h") ? "h for its menu"
+    : kind === "words" && has("help") ? "help for its list" : null;
+  if (moment === "connected") {
+    return `Connected at ${baud} — the board is talking.` +
+      (menu ? ` Press a command, or ${menu}.` : "");
+  }
+  return "Connected, but the board hasn’t said anything yet. That usually isn’t a " +
+    "dead board: " + (menu ? `many builds only speak when asked — send ${menu}. It may also ` : "it may ") +
+    "be running firmware built without a serial console, or another program (the " +
+    "desktop Flasher app, screen, PlatformIO) may be holding the port. " +
+    "(If the board just reset, I’ll reconnect on my own.)";
+}
+
 // The catalog's post-flash "first flight" (products[].hatch, authored once in
 // gen_flash.py's HATCH_MOMENTS): kicker + title + body + ordered steps.
 // Returns null when the product carries no usable hatch data (a local file,
@@ -2377,6 +2417,27 @@ export function displayFor(catalog, projectNameOrId) {
   const all = displaysIn(catalog);
   return all.find((d) => s === d.id) ||
          all.find((d) => d.match && s.includes(d.match)) || null;
+}
+
+// The catalog product a board's app descriptor names, display-aware.
+// matchProjectToProduct is a substring match where the longest asset_stem
+// wins, so a display build whose name carries no flavor ("canary_display",
+// "canary-display" — the names looksLikeDisplayProject counts as displays)
+// matches only the flagship's stem "canary". Such a name resolves to the
+// display product it names, else the one displayFor names (the family's
+// first entry, as the role line names it), else the catalog's first display
+// product — never the flagship. Every display firmware reads the same serial
+// console (none), so the monitor's commands are right either way; the exact
+// flavor is the descriptor's to name. Mirrored by desktop/src/app.js
+// productForProject (desktop_parity.test.js runs both over the same names).
+export function productForProject(catalog, projectName) {
+  const match = matchProjectToProduct(catalog, projectName);
+  if (!looksLikeDisplayProject(projectName)) return match;
+  const isDisplay = (p) => (p.role || productRole(p.id)) === "display";
+  if (match && isDisplay(match)) return match;
+  const list = (catalog && catalog.products) || [];
+  const d = displayFor(catalog, projectName);
+  return (d && list.find((p) => p.id === d.flash_product)) || list.find(isDisplay) || null;
 }
 
 // ── the board passport: pre-flash story rows from the read-only probes ─────

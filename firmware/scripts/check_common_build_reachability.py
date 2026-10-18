@@ -126,16 +126,14 @@ WAIVERS: dict[str, str] = {}
 # Headers under common/ that no compiled source or test includes, with the
 # reason each is kept. Same rule as WAIVERS: wire it up or delete it, and drop
 # the entry in the same PR (a stale entry fails the guard).
-HEADER_WAIVERS: dict[str, str] = {
-    "chirp/chirp_channel.h": (
-        "the ratified C-ABI Chirp API (AGENTS.md's Beacon/Chirp invariants, "
-        "PARITY_PLAN.md) for the ACTIVE tree's body port, which has not "
-        "landed; no build includes it yet. firmware/tests_host's Makefile "
-        "syntax-checks it as C and C++ so the contract keeps compiling."),
-    "core/types.h": (
-        "chirp/chirp_channel.h's base types (result_t and friends); goes "
-        "with it, or into it, when the port lands."),
-}
+#
+# (chirp/chirp_channel.h, the ratified C-ABI Chirp API the ACTIVE tree's port
+# is to implement, and core/types.h with it, carried the last two entries:
+# no build includes them. Since sweep F272 canary-wap's
+# tests_host/test_chirp_protocol_invariants.cpp includes the header and holds
+# each of its values to the canary-wap reference, so both are reached by a
+# compiled test and the entries left.)
+HEADER_WAIVERS: dict[str, str] = {}
 
 SOURCE_EXTS = {".c", ".cc", ".cpp", ".ino", ".mm"}
 HEADER_EXTS = {".h", ".hpp"}

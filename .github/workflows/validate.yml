@@ -34,7 +34,7 @@ concurrency:
 jobs:
   validate-hacs:
     name: HACS Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -49,7 +49,7 @@ jobs:
 
   validate-hassfest:
     name: Hassfest Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

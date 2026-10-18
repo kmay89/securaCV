@@ -104,8 +104,9 @@ struct TrustedPeer {
   bool     in_use;
   /* Liveness (PR-8 follow-up, F70): a fully verified frame (signature +
    * opera_id + replay) has arrived from radio_mac since it was bound. Lets
-   * /api/mesh/peers join the durable membership set against the live
-   * transport table's liveness/RSSI at that address. There is no second,
+   * /api/mesh/peers join each member against the live transport table's
+   * liveness/RSSI at that address (the rows are this table's members since
+   * F199, not the stored pubkeys). There is no second,
    * frame-recorded address: until F70 the session kept one here (`mac`,
    * the source of the last verified frame), any address in the transport
    * table could become it — a pairing partner's, another member's copied
@@ -156,6 +157,13 @@ static bool    s_copies_member_set = false;
  * latest one's outcome, so a page tells its own pairing's result from an
  * earlier one's. */
 static uint32_t s_pairing_seq = 0;
+
+/* F162: the one heartbeat a boot owes its members. Set by
+ * restore_peer_macs() when the boot restore bound at least one member;
+ * the first process() pass that runs (the mesh started and enabled) sends
+ * it (send_heartbeat) and clears it, whether or not anything was sent.
+ * Wiped by deinit(). */
+static bool s_boot_heartbeat_due = false;
 
 /* Replay tombstones (review fix). A peer that leaves or is removed used to
  * take its last_counter with it; re-registering the same device into the
@@ -324,6 +332,7 @@ static inline MsgType pairing_msg_to_session(mesh_pairing::MsgType m) {
  * table below. */
 static void ensure_pair_contact(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN]);
 static bool end_pair_contact(bool paired);
+static size_t send_heartbeat(uint32_t now_ms);
 
 /* Map mesh_pairing::Action to a session-frame outgoing MsgType. Returns
  * (out_msg_type, dest_mac, payload, len) by reference; caller decides
@@ -440,6 +449,12 @@ static void dispatch_action(const mesh_pairing::Action& a) {
         memcpy(s_copies_member_fp, member_fp, sizeof(s_copies_member_fp));
         s_copies_member_set = true;
       }
+      /* F162: the new member hears this side once, now, on both sides of
+       * the pairing: the joiner's ends the initiator's COMPLETE copies, and
+       * each side's reads ACTIVE once the other's has arrived. Only to
+       * bound members (send_heartbeat), and only when this pairing's member
+       * was bound: a refused bind has no new member to tell. */
+      if (bound) send_heartbeat(s_last_process_ms);
       break;
     }
     case mesh_pairing::ActionType::NOTIFY_FAILED: {
@@ -710,6 +725,40 @@ static size_t send_to_members(const uint8_t* frame, size_t len) {
     if (mesh_transport::send_to_peer(p.radio_mac, frame, len)) ++sent;
   }
   return sent;
+}
+
+/* F162: one signed HEARTBEAT (registry 16) with an empty payload to every
+ * bound member (send_to_members, F101: never a pairing partner that is not
+ * a member), sent at the two moments a member would otherwise sit unheard:
+ * right after NOTIFY_PAIRED on each side of a pairing, and once in the
+ * first running process() pass after a boot restore that bound a member.
+ * That pass can come before the station joins its router (WiFi.begin() is
+ * asynchronous; until then the radio sits on the softAP's channel), so on
+ * a board whose router is on another channel the boot one can reach no
+ * member, and nothing sends it again (spec §7.1).
+ * A PIO receiver verifies it and drops it (dispatch_verified has no case
+ * for it), which marks the sender heard from its binding: the initiator's
+ * COMPLETE copies stop on the joiner's (F134), and each side's GET
+ * /api/mesh reads ACTIVE and its peer row CONNECTED once the other's has
+ * arrived. Never on a timer: canary-wap's 30 s cadence (F76) is its own,
+ * and this tree adds no recurring frame, so no new periodic RF pattern.
+ * The payload is empty, so the frame says nothing but "this member, this
+ * opera, this counter". It goes through the transport's storm gate like
+ * every send; this tree has no airtime governor. Nothing is signed, and
+ * no counter spent, when no member is bound. Returns how many sends the
+ * transport took. */
+static size_t send_heartbeat(uint32_t now_ms) {
+  if (!s_initialized || !s_running || !s_opera_id_set) return 0;
+  bool any_bound = false;
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS && !any_bound; ++i) {
+    any_bound = s_trusted_peers[i].in_use && s_trusted_peers[i].radio_mac_set;
+  }
+  if (!any_bound) return 0;
+  uint8_t frame[mesh_envelope::MAX_FRAME_LEN];
+  const size_t n = build_signed_frame(mesh_envelope::MsgType::HEARTBEAT, nullptr, 0,
+                                      now_ms, frame, sizeof(frame));
+  if (n == 0) return 0;
+  return send_to_members(frame, n);
 }
 
 /* Forget a trusted peer entirely: copy out its pubkey, then unregister it,
@@ -1194,6 +1243,7 @@ void deinit() {
   memset(s_pair_contact_mac, 0, sizeof(s_pair_contact_mac));
   forget_complete_copies_owner();
   s_pairing_seq = 0;
+  s_boot_heartbeat_due = false;
   secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
@@ -1435,6 +1485,12 @@ void process(uint32_t now_ms) {
   if (!s_running) {
     publish_status();   /* F161: a stopped or disabled session's view too */
     return;
+  }
+  /* F162: the boot restore's one heartbeat, on the first pass that runs
+   * (a mesh off at boot sends it on its first pass after it is enabled). */
+  if (s_boot_heartbeat_due) {
+    s_boot_heartbeat_due = false;
+    send_heartbeat(now_ms);
   }
   mesh_revocation::expire(s_revoked, now_ms);
   end_complete_copies_unless_wanted();   /* F134: before the tick sends one */
@@ -1750,6 +1806,10 @@ size_t restore_peer_macs(const uint8_t (*fps)[mesh_crypto::FINGERPRINT_LEN],
       out[i] = StoredMacVerdict::REFUSED;
     }
   }
+  /* F162: a boot restore with members owes them one heartbeat (process()
+   * sends it on its first running pass). main.cpp's setup() is the one
+   * caller. */
+  if (bound > 0) s_boot_heartbeat_due = true;
   return bound;
 }
 
@@ -2234,6 +2294,18 @@ static void execute_request(const Request& req, uint32_t now_ms, RequestResult* 
         memcpy(name, s_opera_name, sizeof(name));   /* start_* re-caches it */
         ok = start_pairing_initiator(req.opera_secret, name, now_ms);
       } else {
+        /* F136: a Canary that holds an opera leaves it first. A join here
+         * used to run beside it: the joiner's PairedCallback (main.cpp)
+         * installed the new opera's secret over the old one and kept every
+         * old member registered, bound and stored, so their frames failed
+         * the opera_id check and they sat in the new opera's slots, listed
+         * and never heard. Refused before a pairing number is taken and
+         * before any member, stored key or secret is touched; a changed-MAC
+         * re-pair is Leave, then Join (spec §8.3). */
+        if (s_opera_id_set) {
+          res->status = RequestStatus::OPERA_EXISTS;
+          break;
+        }
         ok = start_pairing_joiner(now_ms);
       }
       if (!ok) res->status = RequestStatus::REFUSED;

@@ -23,6 +23,10 @@ import { DeviceScene, BUILDERS, M4, roundedBox, cylinder } from "./scene3d.js";
 import { upgradeRealShape } from "./real-shapes.js";
 import { romBanner } from "../emulator/web/bench.js";
 
+// The WAP is an ESP32-S3 board (its flash product's chip; BOOT is GPIO0), so
+// its staged ROM banners are the S3's (bench.js ROM_VOICES, sweep A59).
+const WAP_ROM = { chip: "esp32s3", boot_strap: "GPIO0" };
+
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -191,7 +195,7 @@ export function buildSerial(data, bus) {
     put("wap-b", "");
     // the wizard's success is a real reboot — show it, ROM banner and all
     put("wap-b", "※ ── the Canary reboots itself — provisioning done ── ※");
-    for (const l of romBanner("swreset").split("\n")) if (l.trim()) put("wap-faint", l);
+    for (const l of romBanner("swreset", WAP_ROM).split("\n")) if (l.trim()) put("wap-faint", l);
     put("wap-faint", "(the boot banner scrolls by again; this time it joins your WiFi as a client)");
     put("wap-faint", "");
     put("wap-tbl", data.serial.runtime_header);
@@ -862,7 +866,7 @@ function buildStrapTrainer() {
   const sample = (how) => {
     // the mask ROM samples GPIO0 once, at reset — this line IS the lesson
     mode = held ? "download" : "run";
-    for (const l of romBanner(mode === "download" ? "download" : how).split("\n")) if (l.trim()) say(l);
+    for (const l of romBanner(mode === "download" ? "download" : how, WAP_ROM).split("\n")) if (l.trim()) say(l);
     say(mode === "download"
       ? "✓ download mode — the ROM waits. Click Upload in your IDE now."
       : "…app boots (the big banner above scrolls by).");

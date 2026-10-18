@@ -562,15 +562,17 @@
                    fix — filled by maybeDiagnose() from the live serial stream. -->
               <div id="boot-diagnosis" class="boot-diagnosis hidden"></div>
               <pre id="serial-console" class="console" aria-live="polite"></pre>
-              <!-- The firmware's single-key commands, labeled. They were
-                   reachable only by typing a letter you had to already know —
-                   the browser flasher has offered all eight as buttons since
-                   its monitor shipped. Built by renderMonitorCmds() from the
-                   MONITOR_CMDS table copied from canary-local/assets/flash.js. -->
+              <!-- The commands of the firmware on the bench, labeled, so none
+                   has to be typed blind. Built by renderMonitorCmds() from the
+                   product's `monitor` record in the embedded flash.json — the
+                   record the browser flasher's monitor and the Lab app's
+                   receipt card read (sweep A86) — which also sets the box's
+                   placeholder; the one below is the catalog's monitor_unknown,
+                   for a board whose product is not known. -->
               <div id="monitor-cmds" class="monitor-cmds"></div>
               <form id="monitor-cmd-form" class="row monitor-cmd" autocomplete="off">
                 <input id="monitor-cmd" class="input" type="text"
-                  placeholder="type a command — the firmware answers single keys; h shows its menu"
+                  placeholder="type a command — this board’s firmware wasn’t identified, so no command chips are shown"
                   aria-label="Serial command" maxlength="128" disabled />
                 <label class="monitor-lineend muted">
                   <select id="monitor-lineend" class="input" aria-label="Line ending" disabled>

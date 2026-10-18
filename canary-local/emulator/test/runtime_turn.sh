@@ -6,8 +6,11 @@
 # ArduinoJson at build.sh's pins, then runs it: a provisioned nightlight
 # booted at each rotation, and turned at 7 s from each rotation to each other
 # one through nightlight_request_rotation(), must seat its companion where a
-# boot at that rotation seats it. No emsdk: this proves the sources the dist
-# is built from, not the dist's bytes.
+# boot at that rotation seats it, hop with the tumble's Startle (F242; inside
+# the first 8 s of uptime, F279), keep one owner of the bird's y through that
+# hop (F244) and write one "[orient] app picker -> rotation R (was P)" line
+# (F285). No emsdk: this proves the sources the dist is built from, not the
+# dist's bytes.
 #
 #   bash canary-local/emulator/test/runtime_turn.sh [LVGL_DIR [ARDUINOJSON_DIR [ARDUINOLIBS_DIR]]]
 #
@@ -18,7 +21,10 @@
 # it and skips its own clone — what lets CI (canary-local.yml) run this beside
 # glass_turn.sh, before any step that reads the committed dist. An explicit
 # directory is never fetched into. RUNTIME_TURN_OUT keeps the objects between
-# runs (default: a fresh temporary directory).
+# runs and is left as it is; without it the objects go to a fresh temporary
+# directory that is removed on exit, pass or fail, once the compiles still
+# running in the background have ended (sweep A82, as glass_turn_lvgl9.sh
+# removes its own).
 set -euo pipefail
 export LC_ALL=C
 
@@ -75,7 +81,17 @@ if [[ -z "$AL" || ! -f "$CRYPTO/Ed25519.cpp" ]]; then
   exit 2
 fi
 
-OUT="${RUNTIME_TURN_OUT:-$(mktemp -d)}"
+if [[ -n "${RUNTIME_TURN_OUT:-}" ]]; then
+  OUT="$RUNTIME_TURN_OUT"
+else
+  OUT="$(mktemp -d)"
+  # The compiles below run in the background, and a red one ends the script
+  # while others are still writing objects: wait them out, then remove. (No
+  # test holds the wait: onboard.test.js's A82 stand-ins fail the first
+  # compile it waits on, and whether a sibling is still writing then is a
+  # race. It keeps rm -rf from racing a compiler that writes into fw/.)
+  trap 'wait; [[ -n "$OUT" && -d "$OUT" ]] && rm -rf -- "$OUT"' EXIT
+fi
 mkdir -p "$OUT/lvgl" "$OUT/fw"
 
 # The nightlight flavor's wiring, as build.sh hands it to em++ (its pin map,
@@ -88,7 +104,7 @@ mkdir -p "$OUT/lvgl" "$OUT/fw"
 # with bash and holds them equal.
 CFG="$FW/configs/canary-display/nightlight"
 PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"
-DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE -DCONFIG_CANARY_DISPLAY
+DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE
       '-DEMU_BUILD_FLAVOR="nightlight"' -DFEATURE_CHIME=1
       -DARDUINOJSON_ENABLE_ARDUINO_STRING=0 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0
       -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0

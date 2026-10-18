@@ -7,15 +7,18 @@
 // and an on-board 120 Ohm terminator is jumper-selectable (OFF by default).
 //
 // Gated by FEATURE_CAN (default 0). Compiled only in the canary-display-dash-can
-// env; the default and emulator builds see an empty translation unit, so the
-// wasm stays byte-for-byte identical. Bench-pending: TX/RX orientation, bit
-// timing, and the terminator jumper are VERIFY-tagged in pins.h until validated
-// on hardware.
-//
-// NO CALLER YET (audit, 2026-10-09): the dash-can env compiles this driver, but
-// nothing calls can_begin(), can_transmit(), can_receive() or can_loop(). The
-// playground (src/playground/playground.cpp) installs its own TWAI transport
-// on the same bus. Wiring one transport through here is planned work.
+// env; the default builds see an empty translation unit and the emulator does
+// not compile it. Its caller is the playground's CAN station
+// (src/playground/playground.cpp: action_can_send and the loop's drain), which
+// that env compiles through FEATURE_DEVMODE: under FEATURE_CAN the station
+// sends and receives through here, and no other code touches the TWAI
+// controller. A controller that has gone bus-off is brought back by
+// can_recover(), one non-blocking step per call from the station's 100 ms
+// drain (F290); it never transmits. Host-tested against a stand-in TWAI
+// driver by tests_host/test_fieldbus_glue.cpp. Bench-pending: TX/RX
+// orientation, bit timing and the terminator jumper are VERIFY-tagged in
+// pins.h until validated on hardware, and bus-off recovery has not yet run
+// on a real bus.
 
 #pragma once
 
@@ -52,11 +55,36 @@ int can_transmit(const can::Frame& f, uint32_t timeout_ms);
 // fills *out), CAN_ERR_TIMEOUT if the bus was quiet, or another negative code.
 int can_receive(can::Frame* out, uint32_t timeout_ms);
 
-// Optional bench heartbeat: drains any received frames and logs them via
-// can::format_frame. Provided for a future setup()/loop() wiring once the bus is
-// bench-validated (kept out of the shipping loop for now). No-op until
-// can_begin() runs. `now` is millis(); safe to call every loop.
-void can_loop(uint32_t now);
+// can_recover() steps that are not failures (CAN_OK is "running").
+enum : int {
+  CAN_RECOVERY_STARTED = 1,  // was bus-off: recovery initiated by this call
+  CAN_RECOVERING = 2,        // recovery under way: waiting for the bus to free
+  CAN_RESTARTED = 3,         // recovery done: restarted by this call, running
+};
+
+// One non-blocking step of the controller's standard bus-off recovery
+// (ISO 11898: after enough transmit errors the controller goes bus-off and
+// neither sends nor receives until it has seen the bus free 128 times):
+//   RUNNING     -> CAN_OK
+//   BUS_OFF     -> twai_initiate_recovery(), once per bus-off ->
+//                  CAN_RECOVERY_STARTED (CAN_RECOVERING after that)
+//   RECOVERING  -> CAN_RECOVERING (wait)
+//   STOPPED     -> after a recovery this driver started, twai_start() ->
+//                  CAN_RESTARTED; a refused restart is CAN_ERR_BUS and is tried
+//                  again on the next call
+// Returns CAN_ERR_NOT_READY before can_begin(), and CAN_ERR_BUS when the status
+// cannot be read, a refused initiate (tried again on the next call), or a stop
+// it did not cause. It never transmits and never waits. The driver logs
+// "[CAN] bus-off - initiating recovery" and "[CAN] recovered - restarted".
+int can_recover();
+
+// True while the controller is out of service because of a bus-off: it reads
+// BUS_OFF or RECOVERING, or STOPPED after a recovery this driver started and
+// has not restarted yet. False when it is running, before can_begin(), and
+// when the status cannot be read. It only reads the status: no recovery step,
+// no log line. The station asks it after a refused send, to tell a bus-off
+// apart from a bus with no other node to acknowledge.
+bool can_bus_off();
 
 }  // namespace io
 }  // namespace canary

@@ -1,6 +1,8 @@
 // The route tables two firmware trees register, in the order httpd sees
-// them, and the requests two dashboards make, for the host tests that hold
-// each request to the route it means (repo sweep F214):
+// them, and the requests every page they serve from a raw string makes (the
+// two dashboards since repo sweep F214; the setup page, the companion PWA,
+// the Tuning Lab and the MQTT and Sense pages since F238), for the host tests
+// that hold each request to the route it means:
 // test_dashboard_route_match.test.js and test_canary_dashboard_routes.test.js.
 //
 // Routing is not modeled here. Every question about which registration
@@ -24,7 +26,13 @@
 //
 // Every #if branch is read (the worst case, as both route budget checks
 // count): a build has a subsequence of the table, in the same order, so a
-// shadowing in any build is a shadowing here. And the walk fails closed:
+// shadowing in any build is a shadowing here. Each registration also carries
+// the #if conditions it is registered under (`conds`: every enclosing
+// condition in its file, and for a registrar inlined from another file, the
+// conditions around its call too; #elif and #else as the negations of the
+// branches before them; include guards dropped), so a test can tell a route
+// every build serves from one only some builds do (sweep F238). And the walk
+// fails closed:
 // every registration call in the tree is either one it visited or one in
 // the short list of places that register on another server, so a route
 // added somewhere the walk does not reach fails the test instead of
@@ -130,6 +138,107 @@ function source(path) {
 }
 const lineAt = (text, at) => text.slice(0, at).split("\n").length;
 
+// ── Preprocessor conditions ──────────────────────────────────────────────
+
+// The comment-stripped text with every string, character and raw string
+// literal blanked (newlines kept), so a directive scan cannot read a page's
+// CSS (`#if-x {`) or a string as a directive.
+function blankLiterals(text) {
+  let out = "";
+  let i = 0;
+  const n = text.length;
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  while (i < n) {
+    const c = text[i];
+    if (c === '"' && text[i - 1] === "R" && !/\w/.test(text[i - 2] || "")) {
+      const open = text.indexOf("(", i);
+      const delim = text.slice(i + 1, open);
+      const close = text.indexOf(")" + delim + '"', open);
+      assert.ok(open > i && close > open, "unterminated raw string literal");
+      const end = close + delim.length + 2;
+      out += blank(text.slice(i, end));
+      i = end;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && text[j] !== c && text[j] !== "\n") j += text[j] === "\\" ? 2 : 1;
+      out += blank(text.slice(i, j + 1));
+      i = j + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+const negate = (atom) => {
+  const d = atom.match(/^(!?)defined\((\w+)\)$/);
+  if (d) return `${d[1] ? "" : "!"}defined(${d[2]})`;
+  return `!(${atom})`;
+};
+
+// The #if conditions in force from each directive on: [{ at, conds }], `at`
+// the offset of the line after the directive, `conds` the conjunction (one
+// string per condition, whitespace collapsed) of every open branch.
+function ppChanges(src) {
+  if (src.pp) return src.pp;
+  const lines = blankLiterals(src.text).split("\n");
+  const stack = [];
+  const changes = [{ at: 0, conds: [] }];
+  let off = 0;
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    off += lines[i].length + 1;
+    while (/\\\s*$/.test(line) && i + 1 < lines.length) {
+      i++;
+      line = line.replace(/\\\s*$/, " ") + lines[i];
+      off += lines[i].length + 1;
+    }
+    const m = line.match(/^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$/);
+    if (!m) continue;
+    const expr = m[2].replace(/\s+/g, " ").trim();
+    const where = `${src.path}:${lineAt(src.text, off - 1)}`;
+    if (m[1] === "if" || m[1] === "ifdef" || m[1] === "ifndef") {
+      assert.ok(expr, `${where}: #${m[1]} without a condition`);
+      const atom = m[1] === "if" ? expr : m[1] === "ifdef" ? `defined(${expr})` : `!defined(${expr})`;
+      // An include guard (`#ifndef X` then `#define X`) is no condition.
+      let next = i + 1;
+      while (next < lines.length && lines[next].trim() === "") next++;
+      const guard = m[1] === "ifndef" && next < lines.length &&
+        new RegExp(`^\\s*#\\s*define\\s+${expr}\\b`).test(lines[next]);
+      stack.push(guard ? { guard, seen: [], cur: [] } : { guard, seen: [atom], cur: [atom] });
+    } else if (m[1] === "elif") {
+      const f = stack[stack.length - 1];
+      assert.ok(f && !f.guard, `${where}: #elif outside an #if`);
+      f.cur = [...f.seen.map(negate), expr];
+      f.seen.push(expr);
+    } else if (m[1] === "else") {
+      const f = stack[stack.length - 1];
+      assert.ok(f, `${where}: #else outside an #if`);
+      f.cur = f.seen.map(negate);
+    } else {
+      assert.ok(stack.length, `${where}: #endif outside an #if`);
+      stack.pop();
+    }
+    changes.push({ at: off, conds: stack.flatMap((f) => f.cur) });
+  }
+  assert.strictEqual(stack.length, 0, `${src.path}: an #if is never closed`);
+  src.pp = changes;
+  return changes;
+}
+
+// The conditions in force at an offset of a source.
+function condsAt(src, at) {
+  let conds = [];
+  for (const c of ppChanges(src)) {
+    if (c.at > at) break;
+    conds = c.conds;
+  }
+  return conds;
+}
+
+const union = (...lists) => [...new Set(lists.flat())];
+
 // ── Registration walks ───────────────────────────────────────────────────
 
 // The registration forms both trees use. A declaration
@@ -166,7 +275,7 @@ function stringArray(src, name) {
 // the span a called registrar stands for (or null: not a registrar).
 // Visited call sites are recorded in `visited` as "path:offset".
 function walk(src, span, opts, out, bindings = {}) {
-  const { servers, inline, visited } = opts;
+  const { servers, inline, visited, base = [] } = opts;
   const text = src.text;
   const body = text.slice(span.start, span.end);
   // The declaration a call names: the last one of that name above the call
@@ -203,17 +312,19 @@ function walk(src, span, opts, out, bindings = {}) {
       continue;
     }
     if (e.kind === "inline") {
-      walk(e.target.src, e.target.span, { ...opts, servers: e.target.servers }, out, {});
+      walk(e.target.src, e.target.span,
+        { ...opts, servers: e.target.servers, base: union(base, condsAt(src, abs)) }, out, {});
       continue;
     }
     const m = e.m;
     visited.add(`${src.path}:${abs}`);
+    const conds = union(base, condsAt(src, abs));
     if (m[1]) {
       assert.ok(servers.includes(m[2]), `${where}: registers on ${m[2]}, not the primary server (${servers})`);
-      out.push({ ...declFor(m[3], e.at, where), where });
+      out.push({ ...declFor(m[3], e.at, where), where, conds });
     } else {
       assert.ok(servers.includes(m[4]), `${where}: registers on ${m[4]}, not the primary server (${servers})`);
-      out.push({ uri: m[5], method: m[6], handler: m[7].trim(), where });
+      out.push({ uri: m[5], method: m[6], handler: m[7].trim(), where, conds });
     }
   }
   return out;
@@ -420,14 +531,81 @@ function logAckParse(targets) {
   });
 }
 
-// ── The dashboards' requests ─────────────────────────────────────────────
+// ── The pages' requests ──────────────────────────────────────────────────
 
-// The page served by `path`: the one raw string the file holds.
-function pageText(path) {
-  const src = source(path).raw;
-  const a = src.indexOf('R"rawliteral(');
-  const b = src.indexOf(')rawliteral"', a);
-  assert.ok(a >= 0 && b > a, `${path}: the page's raw string is in the file`);
+// Every page each tree serves from a raw string, with the handler(s) whose
+// registrations serve it (as the table names them) and the file defining
+// each handler (sweep F238 added all but the two dashboards). canary-wap's
+// "/" is the Sensing dashboard, and "/sense" is a redirect to it
+// (handle_sense_page), so that page is csi_integration.cpp's Sense page too.
+// A page sent from its gzip copy (web_assets_gz.h) is read from the source
+// string gen_web_assets_gz.py compresses, which its --check holds.
+const PIO_SETUP = join(FW, "canary", "lib", "securacv_webui", "src", "securacv_setup_page.cpp");
+const WAP_CSI = join(WAP_DIR, "csi_integration.cpp");
+const WAP_MQTT = join(WAP_DIR, "csi_mqtt.cpp");
+const PAGES = {
+  pio: [
+    { name: "dashboard", path: PIO_PAGE, symbol: "CANARY_UI_HTML",
+      servedBy: [{ handler: "handle_ui", file: PIO_NET }] },
+    { name: "setup page", path: PIO_SETUP, symbol: "CANARY_SETUP_HTML",
+      servedBy: [{ handler: "handle_setup_page", file: PIO_NET }, { handler: "handle_captive_probe", file: PIO_NET }] },
+  ],
+  wap: [
+    { name: "admin dashboard", path: WAP_PAGE, symbol: "CANARY_UI_HTML",
+      servedBy: [{ handler: "handle_legacy_ui", file: WAP_INO }] },
+    { name: "Sensing dashboard", path: join(WAP_DIR, "csi_dashboard_html.h"), symbol: "CSI_DASHBOARD_HTML",
+      servedBy: [{ handler: "handle_ui", file: WAP_INO }] },
+    { name: "companion PWA", path: join(WAP_DIR, "companion_pwa.h"), symbol: "COMPANION_HTML",
+      servedBy: [{ handler: "handle_companion_html", file: WAP_INO }] },
+    { name: "Tuning Lab", path: join(WAP_DIR, "tune_ui.h"), symbol: "TUNE_UI_HTML",
+      servedBy: [{ handler: "handle_tune_page", file: WAP_CSI }] },
+    { name: "MQTT page", path: WAP_MQTT, symbol: "MQTT_UI_HTML",
+      servedBy: [{ handler: "csi_mqtt::handle_ui", file: WAP_MQTT }] },
+    { name: "captive page", path: join(WAP_DIR, "setup_page_html.h"), symbol: "CAPTIVE_PORTAL_HTML",
+      servedBy: [{ handler: "handle_ui", file: WAP_INO }, { handler: "handle_captive_probe", file: WAP_INO }] },
+  ],
+};
+
+// Every raw string literal in a source: [{ name, delim, at }], `name` the
+// array it initializes (`NAME[] [PROGMEM] = R"delim(`), or null.
+function rawStrings(path) {
+  const text = source(path).text;
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' && text[i - 1] === "R" && !/\w/.test(text[i - 2] || "")) {
+      const open = text.indexOf("(", i);
+      const delim = text.slice(i + 1, open);
+      const close = text.indexOf(")" + delim + '"', open);
+      assert.ok(open > i && close > open, `${path}: unterminated raw string literal`);
+      const head = text.slice(Math.max(0, i - 160), i - 1).match(/(\w+)\s*\[\s*\]\s*(?:PROGMEM\s*)?=\s*$/);
+      out.push({ name: head ? head[1] : null, delim, at: i });
+      i = close + delim.length + 1;
+    } else if (c === '"' || c === "'") {
+      for (i++; i < text.length && text[i] !== c && text[i] !== "\n"; i++) if (text[i] === "\\") i++;
+    }
+  }
+  return out;
+}
+
+// The body of the handler a page names, from the file that defines it.
+function handlerBody(h) {
+  const name = h.handler.split("::").pop();
+  const src = source(h.file);
+  const span = functionBody(src.text,
+    new RegExp(`\\b(?:static\\s+)?esp_err_t\\s+${name}\\s*\\(\\s*httpd_req_t\\s*\\*\\s*\\w+\\s*\\)\\s*\\{`), h.file);
+  return src.text.slice(span.start, span.end);
+}
+
+// The page's text: the raw string `SYMBOL[] PROGMEM = R"delim( ... )delim"`,
+// whatever its delimiter, defined once in its file.
+function pageText(page) {
+  const src = source(page.path).raw;
+  const heads = [...src.matchAll(new RegExp(`\\b${page.symbol}\\s*\\[\\s*\\]\\s*PROGMEM\\s*=\\s*R"([^(\\s]*)\\(`, "g"))];
+  assert.strictEqual(heads.length, 1, `${page.path}: ${page.symbol}'s raw string is defined once`);
+  const a = heads[0].index + heads[0][0].length;
+  const b = src.indexOf(`)${heads[0][1]}"`, a);
+  assert.ok(b > a, `${page.path}: ${page.symbol}'s raw string is closed`);
   return src.slice(a, b);
 }
 
@@ -463,38 +641,45 @@ function callArgs(text, open) {
 }
 
 // The method a request call names: api(url[, 'METHOD']) and
-// secureFetch(url[, { method: 'METHOD' }]) / fetch(url[, {...}]); none named
-// is GET, and a method the call computes is null (unknown).
+// secureFetch(url[, { method: 'METHOD' }]) / fetch(url[, {...}]) /
+// cvFetch(url[, {...}]) (the Sensing dashboard's, the Tuning Lab's and the
+// MQTT page's fetch() with the session cookie); the method a string literal
+// in any quotes ('POST', "POST", `POST`); none named is GET, and a method
+// the call computes is null (unknown).
+const METHOD_LITERAL = /^(['"`])([A-Z]+)\1$/;
 function callMethod(fn, args) {
   if (args.length < 2) return "GET";
   const second = args[1].text;
   if (fn === "api") {
-    const named = second.match(/^'([A-Z]+)'$/);
-    return named ? named[1] : null;
+    const named = second.match(METHOD_LITERAL);
+    return named ? named[2] : null;
   }
   if (!second.startsWith("{")) return null;
   const named = second.match(/\bmethod\s*:\s*([^,}]+)/);
   if (!named) return "GET";
-  const literal = named[1].trim().match(/^'([A-Z]+)'$/);
-  return literal ? literal[1] : null;
+  const literal = named[1].trim().match(METHOD_LITERAL);
+  return literal ? literal[2] : null;
 }
 
-// Every /api/... string or template literal in a page's script, with the
-// request it makes where the page says so: the path (a template's ${...}
-// read as one segment, `1`; a query is not part of it) and the method, when
-// the literal sits in the first argument of an api(), secureFetch() or
-// fetch() call (a ternary's arms included) that names it or none (GET).
-// Elsewhere (a constant, a URL held for later) the method is null.
-function pageRequests(path) {
-  const text = pageText(path);
+// Every /api/... string or template literal in a page (single, double or
+// back quotes), with the request it makes where the page says so: the path
+// (a template's ${...} read as one segment, `1`; a query is not part of it)
+// and the method, when the literal sits in the first argument of an api(),
+// secureFetch(), fetch() or cvFetch() call (a ternary's arms included) that
+// names it or none (GET). Elsewhere (a constant, a URL held for later, an
+// href) the method is null. Only URLs written in the page are read: a URL
+// the page takes from a response is not (Export's answer, the one the
+// dashboards followed, is held by test_dashboard_route_match.test.js, F278).
+function pageRequests(page) {
+  const text = pageText(page);
   const calls = [];
-  for (const c of text.matchAll(/\b(api|secureFetch|fetch)\(/g)) {
+  for (const c of text.matchAll(/\b(api|secureFetch|fetch|cvFetch)\(/g)) {
     const open = c.index + c[0].length - 1;
     const args = callArgs(text, open);
     if (args.length) calls.push({ fn: c[1], first: args[0], method: callMethod(c[1], args) });
   }
   const out = [];
-  for (const m of text.matchAll(/(['`])(\/api\/[^'`?]*)/g)) {
+  for (const m of text.matchAll(/(['"`])(\/api\/[^'"`?#]*)/g)) {
     const raw = m[2];
     const route = raw.replace(/\$\{[^}]*\}/g, "1");
     let method = null;
@@ -509,6 +694,7 @@ function pageRequests(path) {
 }
 
 module.exports = {
-  PIO_NET, PIO_PAGE, WAP_INO, WAP_PAGE,
-  pioTable, wapTable, route, match, logAckParse, pageRequests, pageText, stripComments,
+  PIO_NET, PIO_PAGE, WAP_INO, WAP_PAGE, PAGES,
+  pioTable, wapTable, route, match, logAckParse, pageRequests, pageText, handlerBody, rawStrings, filesUnder,
+  stripComments, blankLiterals, ppChanges, condsAt, source, FW, WAP_DIR,
 };

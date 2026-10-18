@@ -146,7 +146,7 @@ struct Frame {
 // and queued as they finish, and drained one at a time with poll(). No
 // allocation, no blocking, no Arduino dependency — unit-testable on the host.
 //
-// Resynchronisation: on ANY validation failure (bad header checksum, bad data
+// Resynchronization: on ANY validation failure (bad header checksum, bad data
 // checksum, oversized length) the parser drops the single byte it had latched
 // as the start-of-frame and re-hunts from the next byte — it never discards
 // already-buffered bytes that might begin a real frame.

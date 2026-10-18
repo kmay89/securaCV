@@ -189,7 +189,11 @@ inline Restored restore(uint32_t nvs_ceiling, uint32_t id_floor) {
 /* The id of the last whole, well-formed line in buf[0..n) — a read of the
  * log's tail — or 0 when there is none. Only '\n'-terminated lines count: a
  * torn fragment after the last newline is ignored, and so is a partial line
- * at the start of the buffer (it does not start a record). */
+ * at the start of the buffer (it does not start a record). A record whose
+ * string field parse() refuses counts (csi_event_log_line::record_id(),
+ * sweep F264): the walk must reach it to skip and count it, and the rows
+ * before it must not read as delivered because only edited lines fit the
+ * read. */
 inline uint32_t last_line_id(const char* buf, size_t n) {
   if (!buf) return 0;
   size_t end = n;
@@ -203,8 +207,8 @@ inline uint32_t last_line_id(const char* buf, size_t n) {
       char line[csi_event_log_line::kLineMax];
       memcpy(line, buf + start, len);
       line[len] = '\0';
-      csi_event_record_t rec;
-      if (csi_event_log_line::parse(line, &rec)) return rec.event_id;
+      const uint32_t id = csi_event_log_line::record_id(line);
+      if (id != 0) return id;
     }
     end = start;
   }

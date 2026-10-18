@@ -150,7 +150,7 @@ pub fn derive_db_encryption_key(signing_key: &SigningKey) -> Zeroizing<String> {
 
 /// Resolve the SQLCipher key for opening a database: derive from the independent
 /// `db_key_seed` when one is supplied (non-empty), otherwise fall back to the
-/// signing-key derivation. Centralising this keeps the kernel and the verifier
+/// signing-key derivation. Centralizing this keeps the kernel and the verifier
 /// CLIs consistent about how the DB key is chosen.
 pub fn resolve_db_encryption_key(
     signing_key: &SigningKey,

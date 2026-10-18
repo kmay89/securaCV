@@ -749,8 +749,9 @@ static const uint8_t CHIRP_CHANNEL = 0;            // 0 = follow current radio c
 static const size_t MAX_MESSAGE_LEN = 64;          // Max chirp message length (legacy field; v0.2 uses structured fields)
 static const size_t MAX_RECENT_CHIRPS = 16;        // Stored chirps (priority heap by urgency)
 // Deduplication: v0.3 switched to a 4 KB / 4-hash Bloom filter (audit C9
-// closure). The historical fixed-array constant is retained as a hint to
-// any external tool that snapshots header constants.
+// closure), held in two such halves since sweep F270 (NONCE_FILTER_HALF_MS).
+// The historical fixed-array constant is retained as a hint to any external
+// tool that snapshots header constants.
 static const size_t MAX_NONCE_CACHE = 1024;        // Deprecated since v0.3 — Bloom filter used instead
 static const size_t MAX_NEARBY_CACHE = 32;         // Nearby device cache
 static const size_t SESSION_ID_SIZE = 8;           // Ephemeral session ID
@@ -767,6 +768,25 @@ static const uint32_t CHIRP_TTL_MS = 300000;           // Messages valid for 5 m
 static const uint32_t NEARBY_TIMEOUT_MS = 180000;      // Nearby stale after 3 min
 static const uint32_t DEFAULT_DISPLAY_MS = 1800000;    // Display chirps for 30 min
 static const uint32_t PRESENCE_REQUIRED_MS = 600000;   // 10 min presence before can send
+
+// A witness's freshness window on a set wall clock (handle_witness()): its
+// timestamp at most WITNESS_MAX_AHEAD_S ahead of this device's clock and at
+// most WITNESS_MAX_AGE_S behind it. So a frame first heard at the earliest
+// it is accepted (its timestamp 30 s ahead) is accepted again for 330 s.
+static const uint32_t WITNESS_MAX_AGE_S = CHIRP_TTL_MS / 1000;   // 300 s
+static const uint32_t WITNESS_MAX_AHEAD_S = 30;
+// The nonce filter's half (sweep F270): a nonce is held from the moment it
+// goes in until the half it went into is cleared, at the start of the slot
+// after next (slots of this length since init(), chirp_channel.cpp), so at
+// least this long and at most twice this long. The window above, one second
+// more for the whole seconds the wall clock counts in: 331 s on the uptime
+// clock. A filter cleared whole every CHIRP_TTL_MS forgot a nonce at the
+// next reset, however recent, so a frame heard again just after one was
+// stored again, still fresh, and a suppressed chirp came back with no votes.
+static const uint32_t NONCE_FILTER_HALF_MS =
+    (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S + 1) * 1000;
+static_assert(NONCE_FILTER_HALF_MS > (WITNESS_MAX_AGE_S + WITNESS_MAX_AHEAD_S) * 1000,
+              "a nonce must outlive the freshness window of the frame that carried it");
 
 // Escalating cooldowns (abuse prevention)
 static const uint32_t COOLDOWN_TIER_1_MS = 300000;     // 5 min after 1st chirp
@@ -785,9 +805,26 @@ static const uint8_t CONFIRMATIONS_SAFETY = 1;         // Safety templates need 
 static const uint8_t NIGHT_START_HOUR = 22;            // 10 PM
 static const uint8_t NIGHT_END_HOUR = 6;               // 6 AM
 
-// Community mute threshold
-static const uint8_t SUPPRESS_THRESHOLD_PERCENT = 50;  // >50% dismiss = suppress
-static const uint32_t SUPPRESS_WINDOW_MS = 120000;     // Within 2 minutes
+// Community mute threshold (spec §2.5.6)
+static const uint8_t SUPPRESS_THRESHOLD_PERCENT = 50;  // more than 50% of the nearby rows vote
+static const uint8_t SUPPRESS_MIN_VOTES = 3;           // and never fewer than 3 voters
+static const uint32_t SUPPRESS_WINDOW_MS = 120000;     // a vote counts within 2 minutes of the chirp's arrival
+
+// The distinct voters that suppress a chirp with `nearby_count` rows in the
+// nearby table (spec §2.5.6): more than SUPPRESS_THRESHOLD_PERCENT of the
+// rows, and at least SUPPRESS_MIN_VOTES. The receiver took at least half,
+// rounded down (7 rows suppressed at 3 votes, 43%) (sweep F233).
+constexpr size_t suppress_votes_needed(size_t nearby_count) {
+  return (nearby_count * SUPPRESS_THRESHOLD_PERCENT / 100 + 1 > SUPPRESS_MIN_VOTES)
+             ? nearby_count * SUPPRESS_THRESHOLD_PERCENT / 100 + 1
+             : SUPPRESS_MIN_VOTES;
+}
+// The voters a chirp's suppress set holds: the most any table size asks for
+// (17, with MAX_NEARBY_CACHE rows), so a full set meets the threshold at
+// every table size. It held MAX_CONFIRMERS_PER_CHIRP (8), and the threshold
+// passed 8 from 18 rows on, so no chirp could be suppressed there (F233).
+static const size_t MAX_SUPPRESS_VOTERS = suppress_votes_needed(MAX_NEARBY_CACHE);
+static_assert(MAX_SUPPRESS_VOTERS <= 255, "suppress_count is a uint8_t");
 
 // ────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -970,11 +1007,13 @@ struct ReceivedChirp {
   uint8_t  confirmed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
   uint8_t  confirm_count;                       // = number of valid entries in confirmed_by[]
   // Suppress vote set: distinct session_pubkeys that have signed a
-  // CHIRP_MSG_SUPPRESS_VOTE for this nonce.
-  uint8_t  suppressed_by[MAX_CONFIRMERS_PER_CHIRP][SESSION_PUBKEY_SIZE];
+  // CHIRP_MSG_SUPPRESS_VOTE for this nonce within SUPPRESS_WINDOW_MS of
+  // received_ms. Sized to the largest threshold (MAX_SUPPRESS_VOTERS).
+  uint8_t  suppressed_by[MAX_SUPPRESS_VOTERS][SESSION_PUBKEY_SIZE];
   uint8_t  suppress_count;
   bool     validated;                           // ≥ threshold confirmations (from pubkeys ≠ originator) received
-  bool     suppressed;                          // Community voted to suppress
+  bool     suppressed;                          // Never true in the table: the vote that suppresses a
+                                                // chirp takes its row out (sweep F269); the route keeps the key
   bool     relayed;                             // Did we relay this
   bool     dismissed;                           // User dismissed locally
   bool     unverifiable_timestamp;              // Time was unsynced on receipt; display with warning badge
@@ -985,6 +1024,10 @@ struct ReceivedChirp {
   uint8_t  origin_signature[64];
   bool     has_origin_signature;
 };
+// A full suppress set meets the threshold whatever the table holds (F233).
+static_assert(sizeof(ReceivedChirp::suppressed_by) / sizeof(ReceivedChirp::suppressed_by[0]) >=
+                  suppress_votes_needed(MAX_NEARBY_CACHE),
+              "the suppress set must hold the votes the fullest nearby table asks for");
 
 // Outgoing chirp (for send queue)
 struct OutgoingChirp {

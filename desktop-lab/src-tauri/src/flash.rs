@@ -246,6 +246,14 @@ pub fn start_serial_monitor(
 }
 
 #[tauri::command]
+pub fn serial_monitor_send(
+    state: State<'_, SerialMonitorState>,
+    command: String,
+) -> Result<(), String> {
+    state.send(command)
+}
+
+#[tauri::command]
 pub fn stop_serial_monitor(state: State<'_, SerialMonitorState>) -> Result<(), String> {
     state.stop()
 }

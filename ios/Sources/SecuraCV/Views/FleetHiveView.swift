@@ -212,6 +212,11 @@ struct AddCanarySheet: View {
             .sheet(isPresented: $showingSetup) { SetupView(initial: .canary) }
         }
         .presentationDetents([.medium, .large])
+        // This sheet lists the nearby Canaries itself, and at .medium the
+        // root's card that slides up would show dimmed behind it: the card
+        // stands down while this sheet is up (NearbyOfferLatch).
+        .onAppear { store.nearbyOfferStandsDown = true }
+        .onDisappear { store.nearbyOfferStandsDown = false }
     }
 }
 

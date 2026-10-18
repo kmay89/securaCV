@@ -283,6 +283,62 @@ final class NearbyCanaryTests: XCTestCase {
                                                  alreadyOffered: []), "the band edge counts as close")
     }
 
+    // MARK: - the card's latch (NearbyOfferOverlay draws NearbyOfferLatch)
+
+    func testTheCardLatchesOnceAndCountsItOfferedThen() {
+        let one = candidate("K7MZ", rssi: -50)
+        var card = NearbyOfferLatch()
+        XCTAssertEqual(card.latch(one, setupOpen: false, standingDown: false), "K7MZ",
+                       "the suffix to count as offered, the moment the card appears")
+        XCTAssertEqual(card.visible(standingDown: false), one)
+        XCTAssertNil(card.latch(candidate("Q2WX", rssi: -50), setupOpen: false, standingDown: false),
+                     "a latched card holds its Canary; a second offer waits")
+        XCTAssertEqual(card.latched, one)
+        XCTAssertNil(card.latch(nil, setupOpen: false, standingDown: false))
+    }
+
+    func testNothingLatchesWhileASetupSheetIsOpen() {
+        var card = NearbyOfferLatch()
+        XCTAssertNil(card.latch(candidate("K7MZ", rssi: -50), setupOpen: true, standingDown: false))
+        XCTAssertNil(card.visible(standingDown: false))
+    }
+
+    func testTheCardStandsDownWhileThePlusSheetIsUp() {
+        // The "+" sheet lists the same Canaries inline; at its .medium detent
+        // the card would show dimmed behind it (sweep A75).
+        let one = candidate("K7MZ", rssi: -50)
+        var card = NearbyOfferLatch()
+        XCTAssertNil(card.latch(one, setupOpen: false, standingDown: true),
+                     "nothing latches behind the sheet, so nothing is counted as offered there")
+        XCTAssertNil(card.visible(standingDown: true))
+        XCTAssertNil(card.latched)
+        // The sheet closed: the same offer latches now.
+        XCTAssertEqual(card.latch(one, setupOpen: false, standingDown: false), "K7MZ")
+        XCTAssertEqual(card.visible(standingDown: false), one)
+    }
+
+    func testACardAlreadyUpHidesBehindThePlusSheetAndComesBack() {
+        let one = candidate("K7MZ", rssi: -50)
+        var card = NearbyOfferLatch()
+        _ = card.latch(one, setupOpen: false, standingDown: false)
+        XCTAssertNil(card.visible(standingDown: true), "not drawn while the sheet is up")
+        XCTAssertEqual(card.latched, one, "but still held, unanswered")
+        XCTAssertEqual(card.visible(standingDown: false), one, "and back when the sheet goes")
+    }
+
+    func testAnAnswerOrLeavingEarshotLetsGo() {
+        let one = candidate("K7MZ", rssi: -50)
+        var card = NearbyOfferLatch()
+        _ = card.latch(one, setupOpen: false, standingDown: false)
+        card.heard(["K7MZ", "Q2WX"])
+        XCTAssertEqual(card.latched, one, "still heard: still held")
+        card.heard(["Q2WX"])
+        XCTAssertNil(card.latched, "out of earshot entirely: let go")
+        _ = card.latch(one, setupOpen: false, standingDown: false)
+        card.answer()
+        XCTAssertNil(card.visible(standingDown: false), "Continue or Not now: let go")
+    }
+
     // MARK: - is that THIS Canary?
 
     func testTheJoinedDeviceIsMatchedByItsPseudonymNotItsKind() {

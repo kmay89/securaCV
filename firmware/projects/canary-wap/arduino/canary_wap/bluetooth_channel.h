@@ -25,6 +25,7 @@
 #include <Arduino.h>
 #include <string.h>
 
+#include "device_name_rule.h"   // F261: the name holds no control byte (F226's test)
 #include "loop_command_ring.h"  // F111: the owner's commands handed to the loop task
 
 namespace bluetooth_channel {
@@ -40,6 +41,27 @@ static const size_t MAX_PAIRED_DEVICES = 8;
 static const size_t MAX_SCANNED_DEVICES = 16;
 static const size_t MAX_DEVICE_NAME_LEN = 32;
 static const size_t MAX_SERVICE_DATA_LEN = 20;
+
+// What the device's own Bluetooth name may hold (sweep F261): 1 to
+// MAX_DEVICE_NAME_LEN bytes, none of them a control byte. GET
+// /api/bluetooth and GET /api/bluetooth/settings write the name through
+// ArduinoJson 7.4.1, which writes a control byte other than \b \f \n \r \t
+// raw, and a browser's JSON.parse refuses the answer; the radio advertises
+// the same name. device_name_rule.h's test (F226, the friendly name's), at
+// this name's bound: set_device_name(), a settings command naming the name,
+// and POST /api/bluetooth/settings before it brings anything up all apply
+// it; a stored name that fails it is not loaded (the default is). The
+// scanned devices' names (ScannedDevice) are other devices' and not held to
+// it.
+inline bool name_storable(const char* name) {
+  return device_name_rule::storable(name, MAX_DEVICE_NAME_LEN);
+}
+// What a refused name is answered with: the rule name_storable() applies,
+// in words, its bound held to MAX_DEVICE_NAME_LEN below.
+static constexpr char DEVICE_NAME_REFUSAL[] =
+    "Invalid Bluetooth name: 1 to 32 bytes, no byte below 0x20";
+static_assert(device_name_rule::states_bound(DEVICE_NAME_REFUSAL, MAX_DEVICE_NAME_LEN),
+              "DEVICE_NAME_REFUSAL states MAX_DEVICE_NAME_LEN");
 
 // Timing (milliseconds)
 static const uint32_t ADVERTISING_INTERVAL_MS = 500;
@@ -219,8 +241,10 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // Initialization. init() brings the NimBLE stack up, which can block its
 // caller past the loop task's 8 s watchdog (canary_wap.ino's BLE bring-up
 // note), so it never runs on the loop task: the bring-up worker calls it,
-// and a REST handler (bluetooth_api.h) calls it, on esp_http_server's task,
-// when the owner turns Bluetooth on before it is up. Nothing else here may
+// and a REST handler (bluetooth_api.h's bring_up()) calls it, on
+// esp_http_server's task, whenever a tap that needs the stack (Enable,
+// Start Advertising, Pair, a settings POST turning Bluetooth on) finds it
+// down, whatever the saved setting says (sweep F235). Nothing else here may
 // run off the loop task but the readers below and submit().
 //
 // init() writes none of the loop task's state (sweep F167): it brings the
@@ -265,12 +289,64 @@ bool scanners_held();
 void bringup_worker_started();
 void bringup_worker_finished();
 
+// The sketch's whole boot bring-up is over (sweep F235's review), on the
+// loop task: the last step of its finalize stage, after the worker's result
+// was taken (bringup_worker_finished()) and the finalize stage's own NimBLE
+// users ran (the Scout's nimble_scan_init(), which calls
+// NimBLEDevice::init() when the stack is down), or right after
+// bringup_worker_finished() when no worker could be created. Once per boot.
+// boot_bring_up_tried(), any task: whether it has been called (release,
+// acquire), whatever the bring-up's outcome. The sketch defers that
+// bring-up out of the provisioning join window (BLE duty starves a phone's
+// WPA2 handshake to the SoftAP; the stack's internal RAM goes to Wi-Fi
+// first) and never runs it in safe mode, so false through the join window
+// (at most BLE_DISCOVERY_MAX_HOLD_MS, five minutes; a fresh unit with nobody
+// on its SoftAP brings it up within seconds, the setup door, scanners held),
+// while the worker and the finalize stage run, and for the whole of a
+// safe-mode boot. The Start Advertising and Pair handlers bring nothing up
+// before it on a device saved on (bluetooth_api.h's
+// waits_for_boot_bring_up()): that bring-up will, and every other
+// NimBLEDevice::init() caller runs inside it (the worker's channel init()
+// and, on FULL, ble_manager::init() when the channel's did not bring the
+// stack up; the Scout's at finalize), so a tap's init() would run beside
+// them, and init()'s latch holds only the channel's callers.
+// boot_bring_up_started(), any task: whether the sketch has started that
+// bring-up, bringup_worker_started() above having run (release, acquire;
+// once per boot, never cleared). From there until boot_bring_up_tried()
+// those two handlers answer that Bluetooth is still starting
+// (bring_up_starting_error()), whatever the worker's init() answered: a
+// refusal it met is not the last word (on FULL ble_manager's NimBLE init
+// and the Scout's follow it, and a tap after the finalize stage runs init()
+// again and names its own), and the stack is moments from its answer.
+// Before it, boot_bring_up_pending_error(): nothing has started yet.
+void boot_bring_up_finished();
+bool boot_bring_up_tried();
+bool boot_bring_up_started();
+inline const char* boot_bring_up_pending_error() {
+  return "Bluetooth has not started yet; it starts once Wi-Fi setup is done or within five minutes (never in safe mode)";
+}
+
 // Why the last init() attempt left the radio off ("" when initialized or
 // never attempted). Any task. Each refusal is written whole before its
 // address is published (sweep F167), and a text a caller holds is not
 // written again until several later refusals have gone by: safe to hold
 // for an answer's length.
 const char* init_fail_reason();
+
+// Any task, after a tap's bring_up() answered false (sweep F235): whether
+// that was another task's bring-up, not a refusal. init() admits one caller
+// at a time and turns the others away at once, so a tap made while the boot
+// worker's init() runs gets false with nothing refused; true then, and also
+// when that bring-up has finished with the stack up since. These routes are
+// served by one esp_http_server task, so no other tap is inside init() then.
+// False means init() refused, and init_fail_reason() names
+// why (the heap guard, NimBLE's init, the server). The tap answers
+// bring_up_starting_error() with a 503 for the first and the refusal for
+// the second; it submits nothing either way.
+bool bring_up_starting();
+inline const char* bring_up_starting_error() {
+  return "Bluetooth is still starting; try again in a moment";
+}
 
 // Push device metadata into the BLE Device Information Service. Optional;
 // must be called BEFORE init() to take effect (init reads the cached
@@ -388,8 +464,8 @@ struct Command {
 };
 
 // Why ENABLE, ADVERTISE_START, PAIR_START or a SETTINGS that turns
-// Bluetooth on did not run, or why PAIRED_REMOVE / PAIRED_CLEAR left a
-// phone's bond.
+// Bluetooth on did not run, why PAIRED_REMOVE / PAIRED_CLEAR left a
+// phone's bond, or why a name was refused (F261).
 enum Refusal : uint8_t {
   BT_REFUSED_NONE = 0,     // it ran (ok says how it went)
   BT_REFUSED_NOT_ENABLED,  // Bluetooth off and not brought up (init() has not run);
@@ -399,6 +475,8 @@ enum Refusal : uint8_t {
                            // (ble_gap_unpair() busy); its entry stays listed
   BT_REFUSED_NOT_UP,       // PAIRED_REMOVE / PAIRED_CLEAR: the stack is not up, so
                            // its bond store cannot be reached; nothing changed
+  BT_REFUSED_BAD_NAME,     // NAME, or a SETTINGS naming the name: not name_storable()
+                           // (sweep F261); a refused SETTINGS applied none of its fields
 };
 
 // What a command did, as the loop task saw it right after the command ran.
@@ -467,12 +545,18 @@ struct PairedView {
 void read_status(BluetoothStatus* out);
 // Any task. The settings the last pass published.
 BluetoothSettings read_settings();
-// Any task. Whether the settings the last pass published say on: the Start
-// Advertising and Pair handlers decide from it whether to bring the stack up
-// before they submit (F111). They read the loop task's flag in place before
-// (sweep F210), a data race with its commands and its first pass's load of
-// the saved settings; a read a pass stale costs what a stale one always
-// did, a bring_up() that finds the stack up or a refusal the owner retries.
+// Any task. Whether the settings the last pass published say on (sweep
+// F210: the setting is the loop task's flag, which its commands and its
+// first pass's load of the saved settings write, so another task reads it
+// here, never in place). The Start Advertising and Pair handlers decided
+// from it whether to bring the stack up before they submit, which left a
+// device saved on whose boot bring-up failed or was refused with the stack
+// down for good; whether Bluetooth is saved on says nothing about whether
+// the stack is up, and since sweep F235 bring_up() asks is_initialized().
+// They read it only to leave the stack to the sketch's boot bring-up before
+// it is over, on a device saved on (bluetooth_api.h's
+// waits_for_boot_bring_up(), F235's review); before the first pass it
+// answers the boot default, on.
 bool read_enabled();
 // Any task. The scan list and the paired devices the last pass published.
 void read_scan(ScanView* out);

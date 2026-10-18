@@ -58,7 +58,7 @@ jobs:
     # is the CALLER's, so matching on it would pass only by coincidence.
     # `inputs` is empty for a `release` trigger, which falls through to the tag.
     if: inputs.tag != '' || startsWith(github.event.release.tag_name, 'app-v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

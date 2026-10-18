@@ -29,6 +29,7 @@ from pathlib import Path
 
 from _devices import load_manifests
 from _tooling import repo_root
+from _wap_profile import WapProfileError, apply_workshop_notes, read_full_profile_file
 
 REPO = repo_root()
 ENC = REPO / "docs/hardware/enclosure"
@@ -342,6 +343,18 @@ def parse_tables(md: str):
 
 
 # ── .scad customizer annotations ─────────────────────────────────────────
+# The group header is the web builder's own pattern (its parse_scad's
+# GROUP_RE): a `/* [Name]` opener, the comment free to run on for lines.
+# This parser used to match only a header closed on its own line, so the 52
+# multi-line headers in 10 case files (the WAP's "Print tolerances", the
+# Vision's "USB-C ports", ...) were invisible and their knobs sat in whatever
+# group came before: the WAP's tol_slide showed under "Shell" here and under
+# "Print tolerances" in the builder (C10). scripts/tests/test_enclosure_parsers.py
+# holds the two parsers to one group for every knob.
+sys.path.insert(0, str(ENC))
+from gen_builder_manifest import GROUP_RE  # noqa: E402
+
+
 def parse_scad(path: Path):
     text = path.read_text(errors="replace")
     lines = text.splitlines()
@@ -359,12 +372,25 @@ def parse_scad(path: Path):
 
     groups = []
     cur = None
+    in_header = False
     for ln in lines:
-        g = re.match(r"^/\*\s*\[(.+?)\]\s*(?:—|-)?\s*(.*?)\s*\*/", ln)
+        if in_header:
+            # A multi-line group header runs on until its `*/`; its lines
+            # finish the group's note, and none of them is a knob. Only the
+            # comment gutter (spaces, a leading ` * `) is stripped here: a
+            # line may end mid-sentence on a dash that the next line answers,
+            # and the opener's separator strip below would eat it.
+            body, closed, _ = ln.partition("*/")
+            cur["note"] = " ".join(filter(None, (cur["note"], body.strip(" *"))))
+            in_header = not closed
+            continue
+        g = GROUP_RE.search(ln)
         if g:
-            cur = {"name": g.group(1).strip(), "note": g.group(2).strip(" -—*/"),
+            rest, closed, _ = ln[g.end():].partition("*/")
+            cur = {"name": g.group(1).strip(), "note": rest.strip(" -—*/"),
                    "params": []}
             groups.append(cur)
+            in_header = not closed
             continue
         p = re.match(
             r"^(\w+)\s*=\s*([^;]+);\s*(?://\s*(.*))?$", ln)
@@ -405,8 +431,8 @@ def parse_scad(path: Path):
 # ── preview mesh rendering (openscad; coarse curves, binary STL) ─────────
 # The render goes through docs/hardware/enclosure/scad_probe.py — the same
 # clean-render rule (ERROR/WARNING in the log = nothing was rendered) and the
-# same STL reader gen_assembled_dims.py measures with.
-sys.path.insert(0, str(ENC))
+# same STL reader gen_assembled_dims.py measures with (ENC is on sys.path
+# since the group header's import above).
 import scad_probe  # noqa: E402
 
 # bbox agreement --check-previews requires, mm (gen_assembled_dims.py's TOL)
@@ -809,6 +835,8 @@ build_main()
 #   · docs/hardware/bom_*.csv        → option ↔ RefDes links + build recipes
 #     (the CSV's own `# ... build (REF+REF+…)` comment rows)
 #   · firmware/configs/*/config.h    → FEATURE_* flags per flavor
+#   · the WAP sketch's build_config.h → its one "full" flavor (the
+#     BUILD_PROFILE_FULL block for the default XIAO ESP32-S3, _wap_profile.py)
 #   · template_*.svg                 → 1:1 paper drill templates
 #
 # OPTION_LINKS is the one curated mapping (which RefDes serves which
@@ -820,9 +848,51 @@ build_main()
 WORKSHOP_JSON = REPO / "canary-local/devices/workshop.json"
 FWCONF = REPO / "firmware/configs"
 
+# The WAP's flags are its sketch's, not a configs/ directory's: the sketch
+# includes no config.h, and build_config.h's BUILD_PROFILE_* blocks set its
+# profile flags (a few module flags default in their own headers, e.g.
+# FEATURE_BEACON_CHANNEL in beacon_channel.h, and are not the profile's). The
+# Workshop publishes the one combination a stock WAP compiles —
+# the in-file defaults, XIAO ESP32-S3 + BUILD_PROFILE_FULL (what
+# [env:canary-wap-default] passes too) — as a single "full" flavor, resolved
+# by _wap_profile.py, which refuses a header shape it cannot read.
+WAP_BUILD_CONFIG = "firmware/projects/canary-wap/arduino/canary_wap/build_config.h"
+WAP_FLAVOR = "full"
+WAP_FLAVOR_NOTE = ("the sketch's BUILD_PROFILE_FULL block, resolved for the XIAO "
+                   "ESP32-S3 (its in-file default, and what canary-wap-default builds)")
+
+# The Workshop shows each WAP flag's note to a builder, but a FULL-block line's
+# own comment is written for the firmware's developers, and some of them say
+# the wrong thing on this page: the tamper input's line says who overrides it
+# (CI's compile-only gate), not that it is off until its pin is bench-
+# validated (the header's tamper section says that), and a note that names
+# the ESP32-C3 describes another target than the S3 this flavor is resolved
+# for. So a flag listed here gets this note instead (None: no note), and only
+# while every pattern beside it still matches the header, so the page cannot
+# keep a caveat the header has dropped; any other note that names the C3 is
+# refused, so a new one is decided here rather than shown.
+WAP_NOTES = {
+    "FEATURE_TAMPER_GPIO": (
+        "Enclosure tamper contact (reed/hall switch on D3); off in every "
+        "shipped profile until the pin is bench-validated",
+        [r"OFF in every shipped profile until the pin is\s*(?://\s*)?bench-validated",
+         r"#define TAMPER_PIN_DEFAULT\s+4\s+//\s*D3\b"]),
+    # on through HW_HAS_CAMERA, which the flag list shows; the C3 has none
+    "FEATURE_CAMERA_PEEK": (None, [r"#define FEATURE_CAMERA_PEEK\s+HW_HAS_CAMERA\b"]),
+    "FEATURE_BLE": (
+        "BLE Discovery (Opera/Chirp/Nearby)",
+        [r"#define FEATURE_BLE\s+1\s+//\s*BLE Discovery \(Opera/Chirp/Nearby\)"]),
+}
+
+
+def wap_workshop_flags(path: Path) -> dict:
+    """build_config.h's FULL profile with the Workshop's notes (WAP_NOTES)."""
+    text = path.read_text(encoding="utf-8")
+    return apply_workshop_notes(read_full_profile_file(path), text, WAP_NOTES)
+
+
 # device id → (configs project dir, flavors to publish)
 FW_FLAVORS = {
-    "canary-wap": ("canary-wap", ["default", "mobile"]),
     "canary-vision": ("canary-vision", ["default"]),
     "canary-sense": ("canary-sense", ["default", "wellbeing"]),
     "canary-display-watch": ("canary-display", ["watch"]),
@@ -835,14 +905,18 @@ FW_FLAVORS = {
 OPTION_LINKS = {
     ("canary_wap_enclosure.scad", "opt_camera"): {
         "bom": ["CW1", "ADH1"], "fw": ["FEATURE_CAMERA_PEEK"]},
+    # the piezo on CHIRP_GPIO is driven by audible_chirp.h, which compiles
+    # only under FEATURE_AUDIBLE_CHIRP (Chirp the network is not a sketch flag)
     ("canary_wap_enclosure.scad", "opt_buzzer"): {
-        "bom": ["BZ1", "R1", "Q1", "Dfb1"], "fw": ["FEATURE_CHIRP"]},
+        "bom": ["BZ1", "R1", "Q1", "Dfb1"], "fw": ["FEATURE_AUDIBLE_CHIRP"]},
     ("canary_wap_enclosure.scad", "opt_led"): {
         "bom": ["DLED1", "R2", "C1", "LP1"], "fw": []},
     ("canary_wap_enclosure.scad", "opt_battery"): {
         "bom": ["BT1", "BT1-ALT1", "BT1-ALT2"], "fw": []},
+    # no flag: the sketch brings the GNSS UART up unconditionally (setup()'s
+    # PHASE 4, outside every #if) and probes for the receiver at boot
     ("canary_wap_enclosure.scad", "opt_gps"): {
-        "bom": ["M1"], "fw": ["FEATURE_GNSS"]},
+        "bom": ["M1"], "fw": []},
     ("canary_wap_enclosure.scad", "opt_tamper"): {
         "bom": ["SW2", "SW2-ALT", "MAG1"], "fw": ["FEATURE_TAMPER_GPIO"]},
     ("canary_wap_enclosure.scad", "opt_touch"): {
@@ -1006,7 +1080,7 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
                 if f not in flags:
                     raise SystemExit(
                         f"workshop: {scad}:{p['name']} names {f} absent "
-                        f"from {dev}'s parsed config.h flags")
+                        f"from {dev}'s parsed firmware flags")
             out.append({
                 "id": p["name"],
                 "group": g["name"].split("—")[0].split(" you have")[0].strip(),
@@ -1105,6 +1179,10 @@ def workshop_main():
         bom_rows[dev_id] = parse_bom(name, prefix)["rows"]
 
     features = {}
+    try:
+        features["canary-wap"] = {WAP_FLAVOR: wap_workshop_flags(REPO / WAP_BUILD_CONFIG)}
+    except WapProfileError as e:
+        raise SystemExit(f"workshop: the WAP's flags: {e}")
     for dev, (project, flavors) in FW_FLAVORS.items():
         features[dev] = {fl: parse_features(project, fl) for fl in flavors}
 
@@ -1172,6 +1250,14 @@ def workshop_main():
         },
     }
     for dev in devices:
+        if dev == "canary-wap":
+            devices[dev]["firmware"] = {
+                "project": "canary-wap",
+                "source": WAP_BUILD_CONFIG,
+                "note": WAP_FLAVOR_NOTE,
+                "flavors": features[dev],
+            }
+            continue
         devices[dev]["firmware"] = {
             "project": FW_FLAVORS[dev][0],
             "source": f"firmware/configs/{FW_FLAVORS[dev][0]}",
@@ -1185,6 +1271,7 @@ def workshop_main():
             "docs/hardware/enclosure/*.scad (customizer annotations)",
             "docs/hardware/bom_*.csv (rows + build-recipe comments)",
             "firmware/configs/*/config.h (FEATURE_* flags)",
+            f"{WAP_BUILD_CONFIG} (the WAP's BUILD_PROFILE_FULL FEATURE_* flags)",
         ],
         "calibration_note": "print templates at 100% / \"actual size\" — the "
                             "20 mm calibration square must measure exactly 20 mm",

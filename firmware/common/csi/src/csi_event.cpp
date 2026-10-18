@@ -183,17 +183,24 @@ uint32_t            g_next_event_id = csi_event_id_floor::kIdSpaceBase;
 csi_privacy_class_t g_privacy_ceiling = CSI_PRIVACY_P0;
 
 /* Per-module hourly counters: six 10-minute buckets, the current one
- * (buckets[5]) and the five before it. An emit is suppressed (counted as
- * dropped, not buffered) when the six already hold the ceiling. So any six
- * consecutive buckets hold at most the ceiling's openings, but the hour is
- * the buckets', not a sliding 60 minutes: one sliding hour can hold up to
- * twice the ceiling, and a bundled row commits when its bundle closes, after
- * the bucket that counted it (backlog F132). */
+ * (buckets[5]) and the five before it. An emit that needs a slot (a new
+ * row) is suppressed (counted as dropped, not buffered) when the six
+ * already hold the ceiling; an emit that merges into an open bundle needs
+ * none (backlog F90). So any six consecutive buckets hold at most the
+ * ceiling's openings, but the hour is the buckets', not a sliding 60
+ * minutes: one sliding hour can hold up to twice the ceiling, and a bundled
+ * row commits when its bundle closes, after the bucket that counted it
+ * (backlog F132, which keeps the six buckets as the decision). */
 struct ModuleCounter {
   char     id[CSI_EVENT_NAME_MAX];
   uint8_t  ceiling_override;     /* 0 = use manifest default */
   uint16_t buckets[6];           /* counts per 10-minute slot */
   uint32_t bucket_anchor_ms;     /* start time of buckets[5], the current slot */
+  /* The (type, state) of the module's most recent bundle opening, for the
+   * last-slot rule (ceiling_admits(), backlog F90): its type's manifest
+   * entry (nullptr before the first) and its state name. */
+  const csi_event_decl_t* last_open_decl;
+  char     last_open_state[CSI_EVENT_NAME_MAX];
 };
 ModuleCounter g_counters[CSI_EVENT_MODULE_CEILING_CAP] = {};
 size_t        g_counter_count = 0;
@@ -209,6 +216,8 @@ ModuleCounter* find_or_create_counter(const char* module_id) {
   c->ceiling_override = 0;
   memset(c->buckets, 0, sizeof(c->buckets));
   c->bucket_anchor_ms = csi_event_now_ms();
+  c->last_open_decl = nullptr;
+  c->last_open_state[0] = '\0';
   return c;
 }
 
@@ -225,6 +234,36 @@ uint16_t counter_window_total(const ModuleCounter* c) {
   uint16_t total = 0;
   for (int i = 0; i < 6; ++i) total += c->buckets[i];
   return total;
+}
+
+/* May an emit that needs a slot (a new row) take one (backlog F90)? Never
+ * once the six buckets hold the ceiling (0 = no cap). With a ceiling of two
+ * or more, the LAST slot goes only to a bundle opening (`opening`: the emit
+ * opens a bundle keyed by its type and state) whose (type, state) differs
+ * from the module's most recent opening: a state held past its 10-minute
+ * window reopens a bundle every window, and without this its own reopenings
+ * filled the ceiling and the next change of state waited up to about ten
+ * minutes for a slot to age out. A ceiling of 1 has no slot to spare and
+ * behaves as before. A row that commits directly (ambient, or no state
+ * name) is not an opening: it takes any free slot and is not remembered. */
+bool ceiling_admits(const ModuleCounter* c, uint8_t ceiling,
+                    const csi_event_decl_t* decl, const csi_event_values_t* v,
+                    bool opening) {
+  if (ceiling == 0) return true;
+  const uint16_t held = counter_window_total(c);
+  if (held >= ceiling) return false;
+  if (opening && ceiling >= 2 && held + 1u == ceiling &&
+      c->last_open_decl == decl && strcmp(c->last_open_state, v->state_name) == 0) {
+    return false;
+  }
+  return true;
+}
+
+void remember_opening(ModuleCounter* c, const csi_event_decl_t* decl,
+                      const csi_event_values_t* v) {
+  c->last_open_decl = decl;
+  strncpy(c->last_open_state, v->state_name, sizeof(c->last_open_state) - 1);
+  c->last_open_state[sizeof(c->last_open_state) - 1] = '\0';
 }
 
 const csi_module_t* lookup_module(const char* id) {
@@ -538,7 +577,7 @@ uint32_t csi_event_emit(const char*               module_id,
   /* 2. Privacy ceiling enforcement. */
   if (decl->privacy > g_privacy_ceiling) return 0;
 
-  /* 3. Per-module hourly ceiling. */
+  /* 3. Per-module hourly counter (the ceiling is decided in 4a). */
   ModuleCounter* counter = find_or_create_counter(module_id);
   if (!counter) return 0;
   const uint32_t now_ms = csi_event_now_ms();
@@ -546,17 +585,28 @@ uint32_t csi_event_emit(const char*               module_id,
   const uint8_t ceiling = counter->ceiling_override
                           ? counter->ceiling_override
                           : decl->default_ceiling_per_hour;
-  if (ceiling > 0 && counter_window_total(counter) >= ceiling) {
-    /* Ceiling exceeded — caller's emit is dropped. The bundler is the
-     * primary anti-noise mechanism; the ceiling is a secondary guard. */
-    return 0;
-  }
 
   /* 4. Copy and clean values. */
   csi_event_values_t v = *in_values;
   sanitize_strings(&v);
   apply_allow_list(&v, decl->allowed_fields);
   coarsen_time_fields(&v);
+
+  /* 4a. The hourly ceiling, decided on the values admit will see (the
+   *     allow-list can strip the state name). A REFRESH, an emit that would
+   *     merge into its key's bundle already open, adds no row: it is never
+   *     refused and spends no slot (backlog F90). core.presence re-emits its
+   *     held state to refresh duration and confidence; checking the ceiling
+   *     before the bundler refused those refreshes once the ceiling was
+   *     full. Every other emit needs a slot (ceiling_admits(), with its
+   *     last-slot rule). The bundler is the primary anti-noise mechanism;
+   *     the ceiling is a secondary guard. */
+  const csi_bundler_outcome_t expect = csi_bundler_peek(module_id, type_name, &v);
+  const bool refresh = (expect == CSI_BUNDLER_MERGED);
+  if (!refresh &&
+      !ceiling_admits(counter, ceiling, decl, &v, expect == CSI_BUNDLER_BUFFERED)) {
+    return 0;
+  }
 
   /* 4b. Quiet-hours hold. While the configured window is active, every
    *     non-anomaly event from a non-meta module is suppressed and a
@@ -571,28 +621,34 @@ uint32_t csi_event_emit(const char*               module_id,
     return 0;
   }
 
-  /* 5. Pre-account the emit against the per-module hourly ceiling. We
+  /* 5. A refresh merges and is done: no row, no slot. The peek's answer
+   *    can go stale before the merge (the clock moves on, or another task's
+   *    admit closes or evicts the bundle), so the merge is csi_bundler_
+   *    refresh(), which merges or does nothing, and an emit whose bundle
+   *    closed in between is an opening after all, decided like one. */
+  uint32_t handle = 0;
+  if (refresh) {
+    if (csi_bundler_refresh(module_id, type_name, &v, &handle)) return handle;
+    if (!ceiling_admits(counter, ceiling, decl, &v, /*opening=*/true)) return 0;
+  }
+
+  /* 6. Pre-account the emit against the per-module hourly ceiling. We
    *    increment first and roll back on rejection so that buffered emits
    *    (which only commit later via the bundler) still count toward the
-   *    same cap as direct commits. A same-key REFRESH of a bundle that is
-   *    already open is the one exception (see the MERGED branch). */
+   *    same cap as direct commits. */
   counter->buckets[5] += 1;
 
-  /* 6. Bundling. The bundler buffers same-state events into a single open
+  /* 7. Bundling. The bundler buffers same-state events into a single open
    *    bundle, ambient events bypass it, and stateless events fall through. */
-  uint32_t handle = 0;
   csi_bundler_outcome_t outcome = csi_bundler_admit(
       module_id, type_name, decl->privacy, &v, &handle);
 
   if (outcome == CSI_BUNDLER_BUFFERED || outcome == CSI_BUNDLER_MERGED) {
     /* Opened a new bundle, or rolled into an open one. An OPENING is a
-     * future committed row and keeps its ceiling slot. A REFRESH of a
-     * bundle that was already open produces no new row and must not
-     * consume one: core.presence re-emits its open state at 5 / 20 / every
-     * 60 windows to refresh duration and confidence, and with a 6/hour
-     * ceiling those refreshes exhausted the cap in ~3 minutes of sustained
-     * presence, after which the REAL state transitions were silently
-     * dropped.
+     * future committed row and keeps its ceiling slot, and is the module's
+     * most recent opening for the last-slot rule. A MERGE here (another
+     * task opened this key after the peek) produces no new row and gives
+     * its slot back.
      *
      * Which one it was is admit's answer, decided after its own expiry —
      * never a has_open() asked before it. A key whose bundle admit just
@@ -603,7 +659,11 @@ uint32_t csi_event_emit(const char*               module_id,
      * The bundle has no event id yet: it takes one when it commits
      * (commit_row), and its dismiss route is recorded then. What returns
      * is the open bundle's handle, in [kHandleBase, kIdSpaceBase). */
-    if (outcome == CSI_BUNDLER_MERGED) counter->buckets[5] -= 1;
+    if (outcome == CSI_BUNDLER_MERGED) {
+      counter->buckets[5] -= 1;
+    } else {
+      remember_opening(counter, decl, &v);
+    }
     return handle;
   }
 

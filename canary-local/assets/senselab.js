@@ -353,7 +353,7 @@ async function main() {
     glass.onEvent(name);
   }
 
-  function refreshChokepoint(gen) {
+  function refreshChokepoint() {
     const agg = pipeline.parser.agg;
     const snap = pipeline.snapshot;
     const raw = [

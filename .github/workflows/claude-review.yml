@@ -38,7 +38,7 @@ concurrency:
 jobs:
   review:
     name: Advisory Claude review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     # Fork PRs cannot see ANTHROPIC_API_KEY; don't fail them, just skip.
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}

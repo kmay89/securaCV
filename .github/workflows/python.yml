@@ -30,6 +30,11 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # test_chirp_active.py holds the Chirp Active sensor's word table to
+      # the words chirp_channel::state_name() returns, the body to
+      # publish_chirp_state() (csi_mqtt.cpp) and the argument to its one
+      # caller (canary_wap.ino), so a new Chirp state runs it too.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp'
       # test_key_source_copy.py holds the options-flow copy to the flavor
       # registry, to the boot key line the two witness.cpp files print and
       # to the `Device ID` boot line the two main.cpp files print.
@@ -85,6 +90,11 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # test_chirp_active.py holds the Chirp Active sensor's word table to
+      # the words chirp_channel::state_name() returns, the body to
+      # publish_chirp_state() (csi_mqtt.cpp) and the argument to its one
+      # caller (canary_wap.ino), so a new Chirp state runs it too.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp'
       # test_key_source_copy.py holds the options-flow copy to the flavor
       # registry, to the boot key line the two witness.cpp files print and
       # to the `Device ID` boot line the two main.cpp files print.
@@ -127,7 +137,7 @@ concurrency:
 jobs:
   lint-type-test:
     name: ruff + mypy + pytest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -171,7 +181,7 @@ jobs:
     # and `aioclient_mock` fixtures, the registries, the HTTP views, the
     # repairs API and the blueprint helpers.
     name: real Home Assistant (${{ matrix.cell }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 25
     strategy:
       fail-fast: false

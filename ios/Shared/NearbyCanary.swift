@@ -344,3 +344,50 @@ struct NearbyOfferLedger: Equatable, Sendable {
         }
     }
 }
+
+/// The card that slides up by itself, as a value: which Canary it holds and
+/// whether it is drawn right now. `NearbyOfferOverlay` is a view over this,
+/// so every rule it keeps is a line in `NearbyCanaryTests`.
+///
+/// The card latches a Canary when it first appears and counts it as offered
+/// right then (the caller passes the suffix `latch` returns to the store), so
+/// a card that is ignored, or whose signal wobbles across "close enough",
+/// neither flickers nor slides up a second time this session. It holds that
+/// Canary until it is answered or the Canary drops out of earshot entirely.
+///
+/// It stands down while a sheet that lists the same Canaries inline is up —
+/// the Fleet tab's "+" sheet, whose `.medium` detent would otherwise leave
+/// the card showing dimmed behind it, offering what the sheet already lists
+/// (sweep A75): nothing is drawn and nothing new latches (so nothing is
+/// counted as offered behind a sheet). A card already latched comes back
+/// when the sheet closes, if its Canary is still in earshot and unanswered.
+struct NearbyOfferLatch: Equatable, Sendable {
+    private(set) var latched: NearbyCanary?
+
+    init() {}
+
+    /// What the card draws: the latched Canary, or nothing while it stands down.
+    func visible(standingDown: Bool) -> NearbyCanary? {
+        standingDown ? nil : latched
+    }
+
+    /// Latch the policy's offer (`NearbyCanaries.autoOffer`) when nothing is
+    /// latched, no setup sheet is open and the card is not standing down.
+    /// Returns the suffix to count as offered, or nil when nothing latched.
+    mutating func latch(_ offer: NearbyCanary?, setupOpen: Bool, standingDown: Bool) -> String? {
+        guard latched == nil, !setupOpen, !standingDown, let offer else { return nil }
+        latched = offer
+        return offer.suffix
+    }
+
+    /// Continue or Not now: the card lets go (its suffix stays offered).
+    mutating func answer() {
+        latched = nil
+    }
+
+    /// The suffixes still heard: a latched Canary missing from them left
+    /// earshot, and the card lets go of it.
+    mutating func heard(_ suffixes: [String]) {
+        if let c = latched, !suffixes.contains(c.suffix) { latched = nil }
+    }
+}

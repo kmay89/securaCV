@@ -19,7 +19,11 @@
  *   - a live row already in the ring (a late card): nothing is read;
  *   - every line csi_event_inject refuses (an id at or above the floor, an
  *     unregistered type, a type above the ceiling, a duplicate, a torn or
- *     glued line, an over-long line) is refused; the rest land newest-first;
+ *     glued line, an over-long line) is refused, and every line parse()
+ *     refuses for a string holding a byte no writer puts in a name (a state
+ *     of `occ\`, one holding 0x01: sweep F264, which inject's sanitizer
+ *     would have let into the ring as `occ\` and `oc?c`); the rest land
+ *     newest-first;
  *   - a last line without its '\n' still loads when whole;
  *   - the load writes nothing to the card and fires no commit hook;
  *   - it runs once per boot.
@@ -95,6 +99,14 @@ static std::string line_for(uint32_t id, const char* type) {
   return std::string(buf, n);
 }
 
+/* A line as a computer edits it on the card: the state's bytes replaced. */
+static std::string line_with_state(uint32_t id, const std::string& state) {
+  std::string l = line_for(id, "presence_changed");
+  const std::string key = "\"state\":\"active\"";
+  l.replace(l.find(key), key.size(), "\"state\":\"" + state + "\"");
+  return l;
+}
+
 /* Ids this firmware hands out start at kIdSpaceBase (backlog F46: the one
  * event-id space). The main log below is this firmware's; the boundary
  * case near the end uses an older firmware's ids, which sit below it. */
@@ -129,6 +141,8 @@ int main() {
     bad.push_back(torn + line_for(B + 101503, "presence_changed"));  // ... glued to the next
   }
   bad.push_back(std::string(700, 'x') + "\n");           // longer than any record
+  bad.push_back(line_with_state(B + 101504, "occ\\"));      // a backslash (F264)
+  bad.push_back(line_with_state(B + 101505, std::string("oc\x01" "c")));  // a control byte
   for (const std::string& b : bad) {
     starts.push_back({log.size(), false});
     log += b;
@@ -212,6 +226,8 @@ int main() {
   CHECK(!csi_event_find(B + 101501, &probe), "a type above the ceiling is not in the ring");
   CHECK(!csi_event_find(B + 101502, &probe) && !csi_event_find(B + 101503, &probe),
         "a torn line glued to the next is not in the ring");
+  CHECK(!csi_event_find(B + 101504, &probe) && !csi_event_find(B + 101505, &probe),
+        "a line whose state holds a backslash or a control byte is not in the ring (F264)");
   CHECK(!csi_event_find(B + 100000, &probe), "a line before the tail window is not read");
   CHECK(csi_event_find(B + 100999, &probe) && strcmp(probe.values.state_name, "active") == 0
         && probe.values.motion_score == 50 && probe.first_seen_ms == 0,

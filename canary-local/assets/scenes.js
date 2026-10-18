@@ -30,7 +30,7 @@
       W.pubHex = hex(new Uint8Array(await crypto.subtle.exportKey("raw", W.key.publicKey)));
       W.fp = (await sha256Hex(W.pubHex)).slice(0, 16);
       cryptoOK = true;
-    } catch (e) { cryptoOK = false; }
+    } catch { cryptoOK = false; }
     return cryptoOK;
   }
   // securacv-canary-sig|v1|sense|<id>|<seq>|<event>|<presence>|<occupants>|<band>|<uptime>

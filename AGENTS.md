@@ -150,11 +150,13 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   time to serve stale CAD)
 - Changed `firmware/build_matrix.json`, a kernel-status tile in
   `tools/gen_kernel_status.py`, `viewer/verify_core.js`, an envelope
-  fixture or `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`
-  (the Wall's parseFleet replays it)? Same idea, other tool:
+  fixture, `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`
+  (the Wall's parseFleet replays it), `canary-local/devices/playground.json`
+  or `canary-local/assets/{playground,mode}-sim.js`? Same idea, other tool:
   `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
-  /checkup build matrix, the landing page's kernel-status grid and the
-  Witness Wall's vendored verifier (the same weekly job runs it)
+  /checkup build matrix, the landing page's kernel-status grid, the
+  Witness Wall's vendored verifier and the Test bench's and Modes page's
+  playground files (the same weekly job runs it)
 - Touched an input of the firmware SBOM — `firmware/flavors.json`, a
   `platformio.ini` (or a file its `extra_configs` reads), a
   `library.json` / `library.properties`, a sketch's `sketch.yaml` profile
@@ -550,8 +552,11 @@ The Beacon channel (`spec/beacon_channel_v0.md`) is the project's
 harm-reduction broadcast layer. It carries life-safety advisories with
 smoke-detector-grade reliability requirements. Any agent modifying Beacon
 firmware (`firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.{h,cpp}`)
-or the Chirp v0.2 channel (`chirp_channel.cpp` there, with its header at
-`firmware/common/chirp/chirp_channel.h`) MUST observe:
+or the Chirp v0.2 channel (`chirp_channel.cpp` there, declared in that
+folder's `mesh_network.h`; `firmware/common/chirp/chirp_channel.h` is the
+C-ABI API the PlatformIO port is to implement, its values held to this
+reference by canary-wap's `tests_host/test_chirp_protocol_invariants.cpp`)
+MUST observe:
 
 1. **No automatic origination.** Beacons are originated only on explicit
    user action. Sensors (CSI, motion, audio) may prompt a human; sensors

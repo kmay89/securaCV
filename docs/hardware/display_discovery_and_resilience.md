@@ -148,7 +148,7 @@ the broker gossip). Gated by `FEATURE_MDNS_DISCOVERY`.
 
 mDNS enumeration answers *who exists*. It does not carry **what a Canary is
 seeing right now**: that lives in the fleet-link presence beacon (§3.1), and
-until now the beacon only travelled as far as a radio could carry it. A Vision
+until now the beacon only traveled as far as a radio could carry it. A Vision
 in the driveway and a Display upstairs are both on the home WiFi and still
 could not hear each other without a broker in the middle.
 

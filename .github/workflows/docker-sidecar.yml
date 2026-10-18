@@ -54,7 +54,7 @@ concurrency:
 jobs:
   lint:
     name: Lint scripts, fixtures and compose files
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -116,7 +116,7 @@ jobs:
   e2e:
     name: Build and e2e test
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -133,7 +133,7 @@ jobs:
     name: Publish to GHCR
     needs: e2e
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
@@ -180,7 +180,7 @@ jobs:
     name: Verify publicly installable
     needs: publish
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

@@ -174,9 +174,12 @@ spends on the home LAN for the one-shot `{device_id, base_url, token,
 tls_cert_fp}` receipt — the same receipt the Trust-on-Pair BOOT-tap gate
 serves, which the app also accepts as a WAP's saved recovery kit. (An
 earlier draft had the app itself say "short-tap the BOOT button" and poll
-for the receipt; that receipt names the setup network's address, gone once
+for the receipt; that receipt named the setup network's address, gone once
 the device joins, so the app never shipped that flow and no screen promises
-it.) No account, no scan of a cloud registry — the device hands you its own
+it. Since #1802 a receipt fetched over the home network names the device's
+`.local` name instead (sweep F255), but the flow is still not offered: an
+installed WAP speaks https with no pin the phone could hold it to before
+the first dial, sweep F256.) No account, no scan of a cloud registry — the device hands you its own
 key because you were standing next to it. `tls_cert_fp` is the
 SHA-256 of the Canary's self-signed TLS certificate; when `base_url` is https
 the app keeps it with the pairing and pins every connection to it

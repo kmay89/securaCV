@@ -42,9 +42,11 @@ Arduino mirrors (projects/*/arduino/, copies of the trees read here), and
 common/core/feature_sanity.h, except for a project that includes it: its
 FEATURE_* vs HAS_* #errors give a flag a compile-time meaning there.
 
-SKIPPED, with the reason: firmware/configs/canary-wap/, which no build
-compiles (its README says why it still exists; the WAP's flags are its
-sketch's build_config.h).
+SKIPPED: a configs/ project no build compiles, each listed in
+SKIPPED_PROJECTS with the reason. None today: firmware/configs/canary-wap/
+was the one, and it is gone (sweep F258) — the WAP's flags are its sketch's
+build_config.h, which the Lab reads directly. An entry naming a directory
+that no longer exists fails the check, like a stale DESCRIPTORS entry.
 
 A DESCRIPTORS entry that no longer applies (the flag is read now, or no config
 sets it) fails the check, so the list cannot outlive what it excuses.
@@ -69,11 +71,7 @@ NEVER_READERS = {
     FW / "canary" / "include" / "canary_config.h",
 }
 
-SKIPPED_PROJECTS = {
-    "canary-wap": "compiled by no build: no env puts firmware/configs/canary-wap/ "
-                  "on an include path and the sketch includes no config.h (see "
-                  "firmware/configs/canary-wap/default/README.md)",
-}
+SKIPPED_PROJECTS: dict[str, str] = {}
 
 # Flags a config sets that no #if reads, kept on purpose: each is a
 # descriptor (what this product has or lacks) that the Lab's generators or a

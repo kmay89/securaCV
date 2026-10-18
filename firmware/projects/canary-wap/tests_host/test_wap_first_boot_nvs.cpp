@@ -55,6 +55,7 @@
 #include "Arduino.h"
 #include "Preferences.h"
 #include "csi_module_settings_nvs.h"
+#include "device_name_rule.h"   // init() reads a stored name through it (sweep F226)
 #include "nvs_store.h"
 
 #ifndef WAP_SKETCH_DIR

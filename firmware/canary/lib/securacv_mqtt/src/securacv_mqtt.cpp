@@ -1179,7 +1179,7 @@ bool mqtt_send_ha_discovery(const char* device_id, const char* firmware_version)
    * forces a clean retry on the next connect.
    *
    * Each entity block is wrapped in `if (all_ok)` so a mid-cycle
-   * failure also skips the JsonDocument construction and serialisation
+   * failure also skips the JsonDocument construction and serialization
    * for the remaining entities — saves ~half a kilobyte of stack +
    * heap churn per skipped block when the broker drops out partway
    * through. (The `&&` short-circuit alone wasn't enough; it only

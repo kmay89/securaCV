@@ -320,7 +320,7 @@ mark_show = true;
 // mark's height.
 // ⚠️  THE BIRD IS NOT ON THIS PART, and it is not an omission.
 // The house mark was redrawn to the brand's monoline art — a bird with a C
-// spiralled into its wing and a V nested in its tail, carrying a notepad. That
+// spiraled into its wing and a V nested in its tail, carrying a notepad. That
 // drawing has INTERIOR detail, and interior detail has a minimum size:
 // mark_min_h(0.9) is 20.1 mm, against a back plate 20.3 mm ACROSS. The bird
 // would be wider than the plate before it was legible on it.

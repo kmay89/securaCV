@@ -46,7 +46,7 @@ operator can verify by eye.
 The **randomart** is the load-bearing part. It's the OpenSSH "drunken bishop"
 walk (`ssh-keygen -lv`, `sshkey.c fingerprint_randomart`) run over the device's
 public key: 32 unmemorable bytes become one small, stable picture. A human
-memorises the shape once; a swapped board or a tampered key draws a visibly
+memorizes the shape once; a swapped board or a tampered key draws a visibly
 different picture. Verifiable identity you can check with your eyes, needing no
 tool — exactly the property a witness device should make effortless. On a color
 terminal the same card lights up (brand-blue frame, moss/amber health), but the

@@ -11,7 +11,7 @@
  * decision with a 0..100 confidence and a coarse, privacy-preserving vocabulary.
  *
  * ── Why fusion, and why THIS fusion ──────────────────────────────────────────
- * OR-ing sensors maximises false alarms; AND-ing them hands an intruder a
+ * OR-ing sensors maximizes false alarms; AND-ing them hands an intruder a
  * single channel to defeat. Sentinel does neither. It scores EVIDENCE, and it
  * rewards agreement across *independent physical modalities*. To be invisible
  * to a fully-populated Sentinel a person would have to, at the same instant,

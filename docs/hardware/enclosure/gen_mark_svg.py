@@ -195,7 +195,7 @@ def build() -> str:
         f'"{f(DOC_MM * vb[3] / vb[2])}mm">',
         "  <title>SecuraCV Bird Glyph</title>",
         "  <desc>The Canary house mark: a monoline bird carrying a notepad, "
-        "with a C spiralled into its wing and a V nested in its tail. GENERATED "
+        "with a C spiraled into its wing and a V nested in its tail. GENERATED "
         "from canary_mark_lib.scad by gen_mark_svg.py — edit the paths there, "
         "not here. One stroke weight throughout, taken from the 7\" case, for "
         "embossing, engraving, inlay, stamping or laser cutting.</desc>",

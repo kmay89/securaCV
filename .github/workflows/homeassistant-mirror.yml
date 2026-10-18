@@ -59,7 +59,7 @@ env:
 jobs:
   sync:
     name: custom_components/securacv → kmay89/securacv-homeassistant
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

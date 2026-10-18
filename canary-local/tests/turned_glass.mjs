@@ -99,6 +99,26 @@ export function bootTurns(src) {
   return [...cw, ...other];
 }
 
+/**
+ * The runtime turn boot_probe.mjs makes (sweep F243): the landscape
+ * nightlight turnedGlasses() names (io/orientation.h's Orient::R90, its
+ * 180x320 panel stood on its edge as the 320x180 glass) turned while it runs
+ * back to the portrait it was built as, Orient::R0, the panel's own shape —
+ * through the rotation mailbox the app's picker writes, which main.cpp's loop
+ * drains into its one apply path (emu_request_rotation in the dist). Only the
+ * nightlight's firmware turns at runtime that way. Takes the same sources;
+ * returns [{flavor, from, to}] with `from` the turnedGlasses() entry and `to`
+ * {rotation, name, glass}; throws naming the first fact it cannot read.
+ */
+export function runtimeTurns(src) {
+  const from = turnedGlasses(src).find((t) => t.flavor === "nightlight");
+  if (!from) throw new Error("turnedGlasses names no landscape nightlight");
+  const portrait = Number(/\bR0\s*=\s*(\d+)/.exec(src.orientation)?.[1]);
+  if (!(portrait >= 0)) throw new Error("io/orientation.h names no Orient::R0");
+  const glass = portrait % 2 ? { w: from.panel.h, h: from.panel.w } : { ...from.panel };
+  return [{ flavor: "nightlight", from, to: { rotation: portrait, name: "portrait", glass } }];
+}
+
 /** Read the sources turnedGlasses() takes, from a checkout at `root`. */
 export async function readTurnedSources(root, readFile) {
   const read = (rel) => readFile(`${root}/${rel}`, "utf8");

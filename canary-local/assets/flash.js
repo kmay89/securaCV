@@ -132,7 +132,7 @@ async function boot() {
     const resp = await fetch("devices/flash.json");
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     state.catalog = await resp.json();
-  } catch (e) {
+  } catch {
     mount.append(errorBox("Couldn’t load the flasher catalog",
       "Reload the page. If it keeps happening, the guided path still works.", true));
     return;
@@ -158,7 +158,9 @@ async function boot() {
   }
 
   if (nativeSerial) {
-    // The native bench, with the browser's own Wi-Fi / broker form.
+    // The native bench, with the browser's own Wi-Fi / broker form. Its
+    // monitor's command chips come from the catalog it is handed — each
+    // product's own (products[].monitor), as here.
     await mountNativeBench(mount, { catalog: state.catalog, renderWifiFields });
     mount.append(renderReassurance({ nativeShell: true }));
     return;
@@ -1156,7 +1158,7 @@ async function onConnect() {
   let port;
   try {
     port = await navigator.serial.requestPort();
-  } catch (e) {
+  } catch {
     // User dismissed the chooser — not an error, just nudge.
     state.connecting = false;
     return;
@@ -1446,7 +1448,7 @@ async function readCurrentFirmware() {
       built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
       idf: d.idfVer || null,
     };
-  } catch (e) {
+  } catch {
     state.current = { unknown: true };
   }
 }
@@ -1958,7 +1960,7 @@ function renderRoleLine() {
     }
     return p;
   }
-  const prod = core.matchProjectToProduct(state.catalog, cur.projectName);
+  const prod = core.productForProject(state.catalog, cur.projectName);
   if (!prod) return null;
   const role = prod.role || core.productRole(prod.id);
   const verb = {
@@ -4929,8 +4931,12 @@ function phaseDone(opts) {
     // Carry the flashed product so a receipt-gated hatch (serial_receipt not
     // false) can pop its "first flight" card when the self-manifest arrives —
     // the desktop's maybeHatch fires on exactly that receipt.
+    // The same product names the monitor's command chips: the firmware just
+    // written. A backup or a local file is no catalog product, so its monitor
+    // offers no chips rather than whatever the board ran before.
+    const flashed = (opts.product && !opts.isBackup && !opts.isLocal) ? opts.product : null;
     return openMonitor({ celebrate: true, skipReset: true, proveIdentity: true,
-      hatchProduct: (opts.product && !opts.isBackup && !opts.isLocal) ? opts.product : null });
+      hatchProduct: flashed, product: flashed });
   };
 
   const row = el("div", "flash-row");
@@ -5539,7 +5545,7 @@ function renderReport(r) {
           body.append(line);
         });
         peek.append(el("p", "fineprint", "What this looks like: " + core.sniffRegion(bytes) + "."));
-      } catch (e) {
+      } catch {
         body.textContent = "couldn’t read that region right now — reconnect and try again";
       }
     };
@@ -5635,13 +5641,30 @@ function renderReport(r) {
 }
 
 // ── the serial monitor (talk to the firmware's own console) ─────────────────
-// The firmware answers single-key commands on its USB console ('h' prints the
-// full menu). We reboot the board out of download mode, reopen the port at
-// console baud, and give the user a live console with a send box.
-const MONITOR_CMDS = [
-  ["h", "help"], ["j", "self-manifest"], ["i", "identity"], ["s", "status"],
-  ["t", "time"], ["w", "wifi"], ["m", "system"], ["b", "battery"],
-];
+// We reboot the board out of download mode, reopen the port at console baud,
+// and give the user a live console with a send box. The command chips beside
+// it are the commands of the firmware on the board (sweep A86): the
+// product's `monitor` record in the catalog, which gen_flash.py holds to that
+// firmware's own command handler (single keys for the Canary, the WAP and
+// Vision; words for Sense's tuning console; none for a display). The same
+// record feeds the Lab app's receipt card and the Flasher's monitor.
+
+// The product whose firmware this connected board runs, read from its app
+// descriptor at connect (readCurrentFirmware), or null when that read did
+// not name one of the catalog's products. Display-aware: a display build
+// whose name carries no flavor ("canary_display") is a display, never the
+// flagship its "canary" stem would match (core.productForProject).
+function boardProduct() {
+  if (!state.current || state.current.unknown) return null;
+  return core.productForProject(state.catalog, state.current.projectName);
+}
+
+// The product whose commands a monitor offers: the flashed product when it
+// follows a flash (phaseDone hands it over — null for a backup or a local
+// file, which name no catalog product), else the board's own.
+function monitorProduct(opts) {
+  return "product" in opts ? opts.product : boardProduct();
+}
 
 async function openMonitor(opts = {}) {
   if (state.busy || state.opening) return;
@@ -5667,7 +5690,8 @@ function phaseMonitor(port, opts = {}) {
   box.append(modeBadge("running"));
   box.append(el("p", "muted",
     "This is the board’s own voice: a live text feed the firmware prints over " +
-    "the USB cable, plus single-key commands you can send back. It’s how you " +
+    "the USB cable, plus the commands that firmware answers, a tap away (a " +
+    "display’s firmware reads none). It’s how you " +
     "check on a Canary without touching anything — and nothing you type here " +
     "can break the board."));
   const status = el("p", "muted flash-mon-status", "Opening the console…");
@@ -5774,18 +5798,26 @@ function phaseMonitor(port, opts = {}) {
     }
   }
 
+  // The firmware's own commands (sweep A86): the flashed product's when this
+  // monitor follows a flash, else the product this board's descriptor named
+  // at connect; with neither, no chips and a box that says why. Each chip
+  // sends its command and the newline the firmware's parser reads.
+  const monProduct = monitorProduct(opts);
+  const vocab = core.monitorVocabulary(state.catalog, monProduct);
   const chips = el("div", "flash-mon-chips");
-  MONITOR_CMDS.forEach(([ch, label]) => {
-    const b = el("button", "ghost small", `${label} (${ch})`);
-    b.addEventListener("click", () => send(ch));
+  for (const [cmd, label] of vocab.cmds) {
+    const b = el("button", "ghost small", `${label} (${cmd})`);
+    b.dataset.cmd = cmd;
+    b.addEventListener("click", () => send(cmd + "\n"));
     chips.append(b);
-  });
+  }
   box.append(chips);
 
   const inRow = el("div", "flash-mon-input");
   const input = el("input");
   input.type = "text";
-  input.placeholder = "type a command — the firmware answers single keys; h shows its menu";
+  input.placeholder = vocab.placeholder;
+  input.setAttribute("aria-label", "Serial command");
   input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") { send(input.value + "\n"); input.value = ""; }
   });
@@ -5944,10 +5976,13 @@ function phaseMonitor(port, opts = {}) {
     try { mon.writer = p.writable.getWriter(); } catch {}
     mon.reader = p.readable.getReader();
     reconnectBtn.classList.add("flash-hidden");
-    setStatus(`Connected at ${baud} — the board is talking. Press a command, or h for its menu.`);
+    setStatus(core.monitorStatusText(vocab, "connected", baud));
     // Post-flash proof: ask the firmware to prove its signed identity (`j`).
     // Read-only and harmless; sent twice in case the first lands mid-boot.
-    if (opts.proveIdentity && !mon.askedManifest) {
+    // Only to a firmware that answers j (the catalog's serial_receipt, which
+    // core.requiresLiveReceipt reads): the WAP sketch, Sense's tuning console
+    // and a display have none, and would answer "unknown command" twice.
+    if (opts.proveIdentity && !mon.askedManifest && core.requiresLiveReceipt(monProduct)) {
       mon.askedManifest = true;
       const ask = () => { if (mon.alive && !identityShown) send("j\n"); };
       setTimeout(ask, 600);
@@ -5965,11 +6000,7 @@ function phaseMonitor(port, opts = {}) {
     // happen here and isn't offered.
     if (!mon.everByted) quietTimer = setTimeout(() => {
       if (!mon.everByted && mon.alive)
-        setStatus("Connected, but the board hasn’t said anything yet. That usually isn’t a " +
-          "dead board: many builds only speak when asked — press h for its menu. It may also " +
-          "be running firmware built without a serial console, or another program (the " +
-          "desktop Flasher app, screen, PlatformIO) may be holding the port. " +
-          "(If the board just reset, I’ll reconnect on my own.)");
+        setStatus(core.monitorStatusText(vocab, "quiet", baud));
     }, 4000);
     const dec = new TextDecoder();
     let buf = con.textContent || "", sample = "", judged = false;
