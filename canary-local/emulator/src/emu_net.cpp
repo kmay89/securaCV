@@ -275,6 +275,10 @@ void ota_loop(uint32_t) {
   (void)take_pending_auto();
 }
 
+// The health dwell confirms a pending-verify slot after a healthy minute
+// (ota_mgr.h). No slot is ever pending here, so there is nothing to confirm.
+void ota_health_tick(uint32_t, bool) {}
+
 // On-glass settings facade — the Settings "firmware" page reads these. With
 // no flash slots the emulator reports the installed version, shows "up to
 // date", and declines an install the same way ota_loop does.

@@ -114,4 +114,28 @@ final class HubOnboardingTests: XCTestCase {
         out.remaining = ["integration"]
         XCTAssertFalse(out.ok)
     }
+
+    // MARK: - the walkthrough finishes by itself
+
+    func testThePhoneFinishesTheHubByItselfOnlyOnACompleteForm() {
+        // The 10–20 minute boot ends with the hub answering; nobody should
+        // have to be watching for the moment. A complete, valid form lets the
+        // phone go; anything less keeps the button as the fallback.
+        XCTAssertTrue(HubWalkthrough.finishesByItself(ready: true, loginProblem: nil, passwordsMatch: true))
+        XCTAssertFalse(HubWalkthrough.finishesByItself(ready: false, loginProblem: nil, passwordsMatch: true),
+                       "not before the onboarding API answers")
+        XCTAssertFalse(HubWalkthrough.finishesByItself(ready: true, loginProblem: "Pick a username.", passwordsMatch: true))
+        XCTAssertFalse(HubWalkthrough.finishesByItself(ready: true, loginProblem: nil, passwordsMatch: false),
+                       "a half-typed confirm is not a form")
+        let complete = HubOwnerLogin(name: "A", username: "a", password: "12345678")
+        XCTAssertTrue(HubWalkthrough.finishesByItself(ready: true, loginProblem: complete.problem(), passwordsMatch: true))
+    }
+
+    func testTheReadyNoticeTellsTheTruthAboutWhoFinishes() {
+        XCTAssertEqual(HubWalkthrough.readyNoticeTitle, "Your hub is ready")
+        XCTAssertEqual(HubWalkthrough.readyNoticeBody(finishing: true), "This phone is finishing it.")
+        XCTAssertEqual(HubWalkthrough.readyNoticeBody(finishing: false),
+                       "Fill in your account in SecuraCV and this phone finishes it.")
+        XCTAssertFalse(HubWalkthrough.readyNoticeThreadID.isEmpty, "the tap routes to the walkthrough by thread")
+    }
 }

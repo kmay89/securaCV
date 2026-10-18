@@ -177,6 +177,16 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
 
+# The hub hand-off (common/network/hub_handoff.h): the JSON a phone writes to
+# the companion service's HUB characteristic right after the Improv join — the
+# broker it found over Bonjour and the login it minted — read strictly (exactly
+# five keys, each once; a DNS name or IPv4 literal; a plain integer port; user
+# and pass together, 64 bytes each; the three escapes a password can need and
+# no other; 240 bytes at most), every refusal wiping the record, and the one
+# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's.
+HUBHO_HDR = ../common/network/hub_handoff.h
+HUBHO_BIN = $(BUILD_DIR)/test_hub_handoff
+
 # The BOOT short tap (common/io/short_tap.h) that opens the setup door for a
 # minute on a device that already has an owner: debounce, one report per
 # release, a hold past the bound is somebody else's gesture, wrap-safe.
@@ -200,6 +210,75 @@ TLSPOL_BIN = $(BUILD_DIR)/test_tls_policy
 # (check_ap_security_sync.sh), by the canary-wap sketch.
 APSEC_HDR = ../common/network/ap_security_policy.h
 APSEC_BIN = $(BUILD_DIR)/test_ap_security_policy
+
+# The home Wi-Fi credential rule (common/network/wifi_credential_policy.h): SSID
+# 1..32 bytes, password 0..64 bytes, NO minimum (the router's business), and
+# the one set of words every setup surface shows beside the field. The
+# JavaScript, Rust and Swift twins pin the same vectors.
+WIFICRED_HDR = ../common/network/wifi_credential_policy.h
+WIFICRED_BIN = $(BUILD_DIR)/test_wifi_credential_policy
+
+# The fleet's one onboarding state machine (common/network/onboarding_fsm.h):
+# the five state words GET /api/status reports, the 2-minute AP hold after a
+# join (1.6 s once the phone confirmed), the 10-minute recovery re-raise
+# without a wipe, the 10 s factory-reset hold, the setup AP's
+# SecuraCV-<type>-<XXXX> name and the serial label lines the flashers parse.
+ONBOARD_HDR = ../common/network/onboarding_fsm.h ../common/network/provision_core.h
+ONBOARD_BIN = $(BUILD_DIR)/test_onboarding_fsm
+
+# Saved Wi-Fi networks (common/network/wifi_store.h): the four-slot ring,
+# dedupe / evict / remove, the pick rule (strongest visible saved network,
+# else round-robin) and the CRC-checked NVS blob that parses as "no store"
+# when torn.
+WIFISTORE_HDR = ../common/network/wifi_store.h ../common/network/wifi_credential_policy.h
+WIFISTORE_BIN = $(BUILD_DIR)/test_wifi_store
+
+# The factory-reset hold on the BOOT button (common/io/reset_hold.h): warn at
+# 3 s, reset (credentials + settings) at 10 s, the opt-in wipe stage, each
+# once per press, and a release that names the stage it came from.
+RESETHOLD_HDR = ../common/io/reset_hold.h
+RESETHOLD_BIN = $(BUILD_DIR)/test_reset_hold
+
+# The PIO canary's glue onto those shared headers (canary/lib/securacv_network/
+# src/wifi_join_reason.h, canary/include/reset_scope_keys.h): wl_status_t +
+# the raw disconnect reason -> JoinFailure (core 2.0.17 files a wrong password
+# under WL_CONNECTION_LOST), the saved-network rotation rule, and the 10 s
+# reset's key list held apart from the identity and to the sources that own
+# each spelling (paths passed in, so the read fails closed).
+CANGLUE_HDRS  = ../canary/lib/securacv_network/src/wifi_join_reason.h \
+                ../canary/include/reset_scope_keys.h ../canary/include/canary_config.h \
+                ../common/network/wifi_join_policy.h ../common/network/wifi_store.h
+CANGLUE_READS = ../canary/include/canary_config.h ../common/network/wifi_store.h \
+                ../canary/lib/securacv_mqtt/src/securacv_mqtt.cpp \
+                ../common/network/mqtt_transport.h ../canary/lib/securacv_setup/src/securacv_setup.cpp
+CANGLUE_BIN   = $(BUILD_DIR)/test_canary_onboarding_glue
+
+# The GET /api/status body (common/network/node_status.h): exact bytes, the
+# omit-when-unknown rule, escaping, and the worst case fitting the cap.
+NODESTATUS_HDR = ../common/network/node_status.h
+NODESTATUS_BIN = $(BUILD_DIR)/test_node_status
+
+# When a Canary may believe its clock and whom it asks (common/time/clock_sync.h):
+# pool, nist, then the hub; believable = after 2024; the 30 s grace.
+CLOCKSYNC_HDR = ../common/time/clock_sync.h
+CLOCKSYNC_BIN = $(BUILD_DIR)/test_clock_sync
+
+# The one _securacv._tcp TXT schema (common/network/mdns_txt.h): canonical
+# key order, the omit rules, the caps words, RFC 1123 host labels.
+MDNSTXT_HDR = ../common/network/mdns_txt.h
+MDNSTXT_BIN = $(BUILD_DIR)/test_mdns_txt
+
+# The household fleet key (common/network/fleet_key.h): HMAC-SHA256 and HKDF
+# against the RFC 4231 / 5869 vectors, the Wi-Fi-derived key (an open network
+# refuses), the truncated tag. Links OpenSSL on the host, mbedTLS on device.
+FLEETKEY_HDR = ../common/network/fleet_key.h
+FLEETKEY_BIN = $(BUILD_DIR)/test_fleet_key
+
+# The authenticated peer protocol (common/network/peer_protocol.h): the frame
+# bytes and tag, the replay window, the 16-slot table, oldest-uptime-wins with
+# a hub anywhere winning outright.
+PEERPROTO_HDR = ../common/network/peer_protocol.h ../common/network/fleet_key.h
+PEERPROTO_BIN = $(BUILD_DIR)/test_peer_protocol
 
 # MQTT broker transport decision (common/network/mqtt_transport_logic.h): the
 # ONE place the fleet decides whether the broker socket is plain, TLS with a
@@ -835,6 +914,9 @@ $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
 
+$(HUBHO_BIN): test_hub_handoff.cpp $(HUBHO_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_hub_handoff.cpp
+
 $(SHORTTAP_BIN): test_short_tap.cpp $(SHORTTAP_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_short_tap.cpp
 
@@ -843,6 +925,37 @@ $(TLSPOL_BIN): test_tls_policy.cpp $(TLSPOL_HDR) Makefile | $(BUILD_DIR)
 
 $(APSEC_BIN): test_ap_security_policy.cpp $(APSEC_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_ap_security_policy.cpp
+
+$(WIFICRED_BIN): test_wifi_credential_policy.cpp $(WIFICRED_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_wifi_credential_policy.cpp
+
+$(ONBOARD_BIN): test_onboarding_fsm.cpp $(ONBOARD_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_onboarding_fsm.cpp
+
+$(WIFISTORE_BIN): test_wifi_store.cpp $(WIFISTORE_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_wifi_store.cpp
+
+$(RESETHOLD_BIN): test_reset_hold.cpp $(RESETHOLD_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_reset_hold.cpp
+
+$(CANGLUE_BIN): test_canary_onboarding_glue.cpp $(CANGLUE_HDRS) $(CANGLUE_READS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../common -I ../canary/include -I ../canary/lib/securacv_network/src \
+	    test_canary_onboarding_glue.cpp -o $@
+
+$(NODESTATUS_BIN): test_node_status.cpp $(NODESTATUS_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_node_status.cpp
+
+$(CLOCKSYNC_BIN): test_clock_sync.cpp $(CLOCKSYNC_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_clock_sync.cpp
+
+$(MDNSTXT_BIN): test_mdns_txt.cpp $(MDNSTXT_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_mdns_txt.cpp
+
+$(FLEETKEY_BIN): test_fleet_key.cpp $(FLEETKEY_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_fleet_key.cpp -lcrypto
+
+$(PEERPROTO_BIN): test_peer_protocol.cpp $(PEERPROTO_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_peer_protocol.cpp -lcrypto
 
 $(MQTTTLS_BIN): test_mqtt_transport_logic.cpp $(MQTTTLS_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_mqtt_transport_logic.cpp -o $@
@@ -1083,7 +1196,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1101,10 +1214,21 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WIFIJOIN_BIN)
 	./$(PROVGATE_BIN)
 	./$(IMPROV_BIN)
+	./$(HUBHO_BIN)
 	./$(CLAIM_BIN)
 	./$(SHORTTAP_BIN)
 	./$(TLSPOL_BIN)
 	./$(APSEC_BIN)
+	./$(WIFICRED_BIN)
+	./$(ONBOARD_BIN)
+	./$(WIFISTORE_BIN)
+	./$(RESETHOLD_BIN)
+	./$(CANGLUE_BIN) $(CANGLUE_READS)
+	./$(NODESTATUS_BIN)
+	./$(CLOCKSYNC_BIN)
+	./$(MDNSTXT_BIN)
+	./$(FLEETKEY_BIN)
+	./$(PEERPROTO_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
 	./$(HOSTGUARD_BIN)

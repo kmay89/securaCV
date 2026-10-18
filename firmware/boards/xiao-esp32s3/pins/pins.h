@@ -125,22 +125,41 @@
 #define EXT_LED_PIN_DEFAULT     3     // D2
 #define EXT_LED_ACTIVE          HIGH
 
-// Vision Doorbell (canary_vision_doorbell.scad): the illuminated button's
-// switch and its LED. D1 and D2, because with the XIAO stacked on the Grove
-// Vision AI V2 the module's socket owns D4/D5 (I2C), D6/D7 (UART) and the
-// SPI group (D8-D10, chip select D3) — D1/D2 are the pair it leaves alone.
-// The switch closes D1 to GND (internal pull-up); D2 drives the gate of the
-// LED's low-side MOSFET (never the LED directly). Wiring and parts:
-// docs/hardware/canary_vision_doorbell_wiring.md.
+// Vision Doorbell (canary_vision_doorbell.scad): the illuminated button, its
+// LED ring and the speaker. Stacked on the Grove Vision AI V2, every header
+// pin also lands on the module. Its socket, as Seeed prints it on the board
+// and as Seeed_Arduino_SSCMA drives it (begin(&Wire, D3); SPI mode is
+// begin(&SPI, cs=D1, sync=D0, rst=D3)) and Himax's SWD guide names it:
+//   D0  SYNC  - the module's data-ready OUTPUT in SPI mode: never drive it
+//   D1  SPI chip select (module input)       -> doorbell button
+//   D2  SWDIO, the WE2's debug data (input)  -> doorbell glow ring
+//   D3  RST, the WE2's reset (active low)    -> NEVER drive it: a PWM here
+//                                               holds the camera in reset
+//   D4/D5 I2C (this firmware's link)  D6 -> module RXD  D7 <- module TXD
+//   D8  SPI clock (module input)             -> held LOW by the speaker driver
+//   D9  SPI MISO (module OUTPUT): never drive it
+//   D10 SPI MOSI (module input)              -> speaker PWM
+// The firmware talks I2C only and never clocks SPI, so a module input that
+// moves while the clock (D8) stays low shifts no bit into the module: the
+// button may pull its chip select low, the speaker may toggle its MOSI.
+// The switch closes D1 to GND (internal pull-up); D2 drives, through 1 k,
+// the base of the ring's low-side transistor (Q1, 2N3904), never the LED.
+// Wiring and parts: docs/hardware/canary_vision_doorbell_wiring.md.
+// The stacked module's own lines, declared so nothing else claims them:
+// its reset (silkscreen RST) and its SPI-mode SYNC output. Inputs on
+// this side only; canary-vision leaves both alone (AI.begin() with no
+// reset pin).
+#define VISION_AI_RST_PIN       4    // D3 — module reset, active LOW: never drive
+#define VISION_AI_SYNC_PIN      1    // D0 — module output: never drive
 #define DOORBELL_BUTTON_PIN     2    // D1 — switch to GND, active LOW
-#define DOORBELL_GLOW_PIN       3    // D2 — MOSFET gate, PWM, active HIGH
-// The doorbell's speaker: one PWM pin (10-bit at 78 kHz) through an RC
-// filter into a class-D amplifier (PAM8302A class) and a sealed driver.
-// D3 is the module socket's SPI chip-select line, which this firmware never
-// drives as SPI: the Vision talks to the Grove Vision AI V2 over I2C, and a
-// chip select that wiggles with SCK and MOSI idle clocks no byte into the
-// module's SPI slave. Wiring and parts: canary_vision_doorbell_wiring.md.
-#define DOORBELL_AUDIO_PIN      4    // D3 — PWM audio to the amplifier
+#define DOORBELL_GLOW_PIN       3    // D2 — transistor base, PWM, active HIGH
+// The speaker: one PWM pin (10-bit at 78 kHz) through an RC filter into a
+// class-D amplifier (PAM8302A class) and a sealed driver.
+#define DOORBELL_AUDIO_PIN      9    // D10 — PWM audio to the amplifier
+#define DOORBELL_AUDIO_PIN_NAME "D10"
+// The module's SPI clock, driven low for as long as the speaker runs so the
+// carrier on MOSI can never clock a byte into the module's SPI slave.
+#define DOORBELL_AUDIO_SPI_CLK_HOLD_PIN 7    // D8 — held LOW
 
 // ============================================================================
 // PIN VALIDATION

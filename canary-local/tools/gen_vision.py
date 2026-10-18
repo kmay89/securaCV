@@ -63,7 +63,9 @@ DETECTION_PIPELINE_H = FW / "include/canary/vision/detection_pipeline.h"
 PRESENCE_FSM_CPP = FW / "src/state/presence_fsm.cpp"
 VOXEL_TRACKER_CPP = FW / "src/state/voxel_tracker.cpp"
 HA_DISCOVERY_CPP = FW / "src/ha/ha_discovery.cpp"
-WIFI_MGR_CPP = FW / "src/net/wifi_mgr.cpp"
+# The join itself is the shared supervisor's (wifi_mgr.cpp is the board's
+# shim around it); its serial lines are anchored where they are printed.
+WIFI_SUP_CPP = REPO / "firmware/common/network/wifi_supervisor.cpp"
 MQTT_MGR_CPP = FW / "src/net/mqtt_mgr.cpp"
 WITNESS_CPP = FW / "src/witness.cpp"
 FW_README = FW / "README.md"
@@ -467,8 +469,8 @@ must(MAIN_CPP, 'boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)")', "sensor kv")
 must(MAIN_CPP, 'boot_kvf("Profile", "%s  (watching for a %s)"', "profile kv")
 must(VISION_MGR_CPP, 'Grove Vision AI ID=%d', "i2c id line")
 must(VISION_MGR_CPP, "ERROR: Grove Vision AI V2 not responding", "i2c error line")
-must(WIFI_MGR_CPP, "Connecting to the provisioned WiFi network ...", "wifi connecting line")
-must(WIFI_MGR_CPP, "Connected IP=%s RSSI=%ddBm", "wifi connected line")
+must(WIFI_SUP_CPP, 'Connecting SSID=\\"%s\\" ...', "wifi connecting line")
+must(WIFI_SUP_CPP, "Connected IP=%s RSSI=%ddBm", "wifi connected line")
 must(MQTT_MGR_CPP, "Connecting %s:%u as %s ...", "mqtt connecting line")
 must(MQTT_MGR_CPP, 'log_line("MQTT", "Connected.")', "mqtt connected line")
 must(HA_DISCOVERY_CPP, "Home Assistant discovery published (retained).", "discovery done line")
@@ -512,7 +514,7 @@ SERIAL = {
         {"tag": "[--]", "text": f"Dwell  {DWELL_START_MS} ms  (lingering detection)"},
         {"tag": "[--]", "text": f"Voxel  {VOXEL_COLS}x{VOXEL_ROWS} grid ({FRAME_W}x{FRAME_H} frame)"},
         {"tag": "[--]", "text": f"Rate   every {INVOKE_PERIOD_MS} ms"},
-        {"tag": "[WIFI]", "text": "Connecting to the provisioned WiFi network ..."},
+        {"tag": "[WIFI]", "text": 'Connecting SSID="Loft 2.4G" ...'},
         {"tag": "[WIFI]", "text": f"Connected IP={EX_IP} RSSI=-52dBm"},
         {"tag": "[I2C]", "text": "Grove Vision AI ID=2"},
         {"tag": "", "text": "              ,_,  ))"},

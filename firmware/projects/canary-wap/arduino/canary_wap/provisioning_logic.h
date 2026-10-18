@@ -25,6 +25,23 @@ inline bool setup_timeout_due(bool active, uint32_t now_ms,
   return active && (uint32_t)(now_ms - last_activity_ms) >= window_ms;
 }
 
+// The wizard's idle restart, with the Bluetooth setup door in view. A phone
+// working the door is a sign of life for the timer above (the sketch's
+// ble_improv_note_activity), but a person watching the door's card on their
+// phone, about to tap, has touched nothing — and the restart landed under
+// them: the WAP gone for ~20 s with no explanation, the tap finding nothing.
+// So while the door is open (its own first-boot window has not run out) the
+// restart is not due, whatever the idle time; the window bounds the hold.
+// When the door shuts, the rule above applies again, its last-activity stamp
+// as it was — a unit idle through the whole window restarts as the door
+// shuts, which is the restart the window delayed, not a new one.
+inline bool wizard_restart_due(bool active, uint32_t now_ms,
+                               uint32_t last_activity_ms, uint32_t window_ms,
+                               bool setup_door_open) {
+  return !setup_door_open &&
+         setup_timeout_due(active, now_ms, last_activity_ms, window_ms);
+}
+
 // A cached WiFi scan is served instead of kicking a fresh radio sweep —
 // scanning hops the single radio across channels and knocks the provisioning
 // phone off the SoftAP mid-fetch. Fresh = scanned within ttl and non-empty.
@@ -210,6 +227,23 @@ inline uint32_t reboot_deadline_extend(uint32_t deadline_ms, uint32_t now_ms,
   const uint32_t floor = now_ms + min_remaining_ms;
   // Push out only if the current deadline is sooner than the floor.
   return ((int32_t)(deadline_ms - floor) < 0) ? floor : deadline_ms;
+}
+
+// A setup-door claim was SPENT: the receipt it bought left on the HTTP task,
+// and it names the steady-state https address — which the boot answering
+// it, HTTP-only in setup mode, does not serve. So the armed reboot comes to
+// `runway_ms` from now, whether that is sooner or later than it stood (the
+// floor-only extend above would leave a deadline 100 s out where it is, and
+// the phone told "paired" would wait that long for an address that works);
+// the runway lets the receipt leave whole. Never arms a disarmed (0) one — a
+// spend with no reboot pending (a door opened by Forget Wi-Fi on a unit
+// already in steady state) has nothing to hurry — and never returns 0 for
+// an armed one (0 reads as disarmed). Wrap-safe.
+inline uint32_t claim_spent_reboot_deadline(uint32_t deadline_ms, uint32_t now_ms,
+                                            uint32_t runway_ms) {
+  if (deadline_ms == 0) return 0;
+  const uint32_t at = now_ms + runway_ms;
+  return at == 0 ? 1u : at;
 }
 
 }  // namespace provisioning_logic

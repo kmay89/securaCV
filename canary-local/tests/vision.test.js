@@ -427,7 +427,8 @@ test("the pane's clocks and coarse features follow the sandbox (sweep A37)", asy
 
 // ── 5. serial boot lines trace to firmware sources ─────────────────────────
 test("boot anchors exist in the firmware's serial output", () => {
-  const wifiCpp = read(join(FW, "src/net/wifi_mgr.cpp"));
+  // The join is the shared supervisor's; src/net/wifi_mgr.cpp is the shim.
+  const wifiCpp = read(join(REPO, "firmware/common/network/wifi_supervisor.cpp"));
   const mqttCpp = read(join(FW, "src/net/mqtt_mgr.cpp"));
   const banner = read(join(REPO, "firmware/common/boot/boot_banner.cpp"));
   assert.ok(banner.includes("Waking up..."));

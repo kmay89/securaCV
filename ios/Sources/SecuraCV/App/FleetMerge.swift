@@ -123,6 +123,39 @@ enum FleetMerge {
         //     a padded one would fake an identity we don't have.
     }
 
+    // MARK: - the name a door leaves behind
+
+    /// Remember what each heard peripheral called itself while its setup
+    /// door was open. A Sense or Vision puts "Sense-K7MZ" in its scan
+    /// response only while the door is open; once it has Wi-Fi the name
+    /// goes with it and the beacon alone is left, whose fingerprint suffix
+    /// is a different four characters — so the row that read "Sense-K7MZ"
+    /// a minute ago would read "SCV-3F1A" now, as if a second Canary had
+    /// turned up. Keyed by the peripheral handle (a static MAC on these
+    /// boards, so stable for the session), valued as the title every other
+    /// surface uses (NearbyCanaries.title). Only a name the strict grammar
+    /// accepts is kept: a row is never titled off a stray local name.
+    static func rememberDoorNames(_ heard: [NearbyCanaries.Heard], into names: inout [UUID: String]) {
+        for h in heard {
+            guard let name = h.localName, let parsed = NearbyCanaries.parseName(name) else { continue }
+            names[h.peripheralID] = NearbyCanaries.title(family: parsed.family, suffix: parsed.suffix)
+        }
+    }
+
+    /// Give each sighting the remembered title where the door left it
+    /// nameless — and where the advert still carries the raw door name, so
+    /// the row reads the same during and after the door. A sighting of a
+    /// peripheral no door ever named is returned as it came: the beacon's
+    /// "SCV-XXXX" stays the honest name for a Canary heard only that way.
+    static func naming(_ sightings: [BeaconSighting], remembered names: [UUID: String]) -> [BeaconSighting] {
+        sightings.map { sighting in
+            guard let title = names[sighting.peripheralID] else { return sighting }
+            var named = sighting
+            named.localName = title
+            return named
+        }
+    }
+
     /// Attach beacons to the fleet: fold each sighting into the Witness it
     /// plausibly belongs to, and surface the rest as provisional entries.
     ///
@@ -242,9 +275,10 @@ enum FleetMerge {
     /// the app name one device differently: the published `device_id`
     /// (paired and polled rows), the host a `lan:<host>#<i>` self-report
     /// row was read from, and — for a Sense or Vision that is ALSO heard
-    /// over Bluetooth — a beacon row whose advertised name carries the
-    /// same pseudonym as the host (NearbyCanaries.isSameDevice), so one
-    /// Canary does not show twice right after it joins.
+    /// over Bluetooth — a beacon row whose name carries the same pseudonym
+    /// as the host (NearbyCanaries.isSameDevice; the name is the advert's
+    /// own or the title `naming` kept from the door), so one Canary does
+    /// not show twice right after it joins.
     static func discoveredRows(found: [DiscoveredCanary],
                                fleet: [Witness],
                                pairedIDs: Set<String>) -> (pairable: [DiscoveredCanary], onNetwork: [DiscoveredCanary]) {
@@ -255,7 +289,7 @@ enum FleetMerge {
         })
         let heardSuffixes = fleet.compactMap { w -> String? in
             guard w.id.hasPrefix("ble:") else { return nil }
-            return NearbyCanaries.parseName(w.name)?.suffix
+            return NearbyCanaries.parseDoorName(w.name)?.suffix
         }
         var pairable: [DiscoveredCanary] = []
         var onNetwork: [DiscoveredCanary] = []

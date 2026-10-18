@@ -239,10 +239,106 @@ final class ImprovWireTests: XCTestCase {
     func testTheCompanionServiceIsSecuraCVsOutsideTheImprovService() {
         XCTAssertEqual(ImprovWire.companionServiceUUID, "8fc1cf00-b162-4401-9607-c8ac21383e90")
         XCTAssertEqual(ImprovWire.claimUUID, "8fc1cf01-b162-4401-9607-c8ac21383e90")
+        XCTAssertEqual(ImprovWire.hubUUID, "8fc1cf02-b162-4401-9607-c8ac21383e90")
         XCTAssertFalse(ImprovWire.companionServiceUUID.hasPrefix("00467768"),
                        "a separate service beside the Improv one, not a sixth characteristic in it")
-        XCTAssertEqual(String(ImprovWire.claimUUID.dropFirst(8)), String(ImprovWire.companionServiceUUID.dropFirst(8)),
-                       "one base UUID")
+        for u in [ImprovWire.claimUUID, ImprovWire.hubUUID] {
+            XCTAssertEqual(String(u.dropFirst(8)), String(ImprovWire.companionServiceUUID.dropFirst(8)),
+                           "one base UUID")
+        }
+        XCTAssertNotEqual(ImprovWire.hubUUID, ImprovWire.claimUUID)
+    }
+
+    // ── the hub hand-off (SecuraCV's companion service, a Sense or Vision) ──
+    // The JSON the phone writes to HUB after the join, and the one byte it
+    // reads back. The firmware is built to exactly this frame.
+
+    func testTheHubHandoffFrameIsTheFirmwaresJSONKeyForKey() throws {
+        let frame = try XCTUnwrap(ImprovWire.hubHandoff(host: "homeassistant.local", port: 1883,
+                                                        user: "canary", pass: "<secret>", tls: false))
+        XCTAssertEqual(String(decoding: frame, as: UTF8.self),
+                       #"{"host":"homeassistant.local","port":1883,"user":"canary","pass":"<secret>","tls":false}"#,
+                       "keys in the header's order, no spaces — the firmware's parser is small")
+        // Everything but the host is optional, and absent means absent (the
+        // firmware's defaults: port 1883, no login, no TLS).
+        XCTAssertEqual(ImprovWire.hubHandoff(host: "192.168.1.5").map { String(decoding: $0, as: UTF8.self) },
+                       #"{"host":"192.168.1.5"}"#)
+        XCTAssertEqual(ImprovWire.hubHandoff(host: "hub", tls: true).map { String(decoding: $0, as: UTF8.self) },
+                       #"{"host":"hub","tls":true}"#)
+        XCTAssertEqual(ImprovWire.hubHandoff(host: " hub.local ").map { String(decoding: $0, as: UTF8.self) },
+                       #"{"host":"hub.local"}"#, "a pasted host is trimmed")
+        XCTAssertEqual(ImprovWire.hubDefaultPort, 1883)
+        // And it is JSON a general parser agrees with.
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: frame) as? [String: Any])
+        XCTAssertEqual(obj["host"] as? String, "homeassistant.local")
+        XCTAssertEqual(obj["port"] as? Int, 1883)
+        XCTAssertEqual(obj["user"] as? String, "canary")
+        XCTAssertEqual(obj["pass"] as? String, "<secret>")
+        XCTAssertEqual(obj["tls"] as? Bool, false)
+    }
+
+    func testTheHubHandoffEscapesWhatJSONMust() throws {
+        let frame = try XCTUnwrap(ImprovWire.hubHandoff(host: "hub", user: "ca\"na\\ry", pass: "p\nw\t\u{1}é"))
+        let text = String(decoding: frame, as: UTF8.self)
+        XCTAssertEqual(text, #"{"host":"hub","user":"ca\"na\\ry","pass":"p\nw\t\u0001é"}"#)
+        // Round-trips to the same secret: what the Canary reads is what the phone holds.
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: frame) as? [String: Any])
+        XCTAssertEqual(obj["user"] as? String, "ca\"na\\ry")
+        XCTAssertEqual(obj["pass"] as? String, "p\nw\t\u{1}é")
+        XCTAssertEqual(ImprovWire.jsonString(""), "\"\"")
+        XCTAssertEqual(ImprovWire.jsonString("a/b"), "\"a/b\"", "a slash needs no escape")
+    }
+
+    func testTheHubHandoffIsBoundedAt240Bytes() throws {
+        XCTAssertEqual(ImprovWire.hubHandoffMaxBytes, 240)
+        // Measure, never hand-count: the longest password that still fits.
+        let fixed = try XCTUnwrap(ImprovWire.hubHandoff(host: "h", user: "u", pass: "x")).count - 1
+        let room = ImprovWire.hubHandoffMaxBytes - fixed
+        let fits = try XCTUnwrap(ImprovWire.hubHandoff(host: "h", user: "u", pass: String(repeating: "p", count: room)))
+        XCTAssertEqual(fits.count, ImprovWire.hubHandoffMaxBytes, "exactly the bound is sent")
+        XCTAssertNil(ImprovWire.hubHandoff(host: "h", user: "u", pass: String(repeating: "p", count: room + 1)),
+                     "one byte over is refused here, not cut on the device")
+        // Bytes, not characters: a two-byte glyph counts twice.
+        XCTAssertNil(ImprovWire.hubHandoff(host: "h", user: "u", pass: String(repeating: "é", count: room)))
+        // A host alone can overrun it: four 60-character labels is a legal
+        // name (253 is DNS's bound) and more than the frame holds.
+        let long = [String](repeating: String(repeating: "a", count: 60), count: 4).joined(separator: ".")
+        XCTAssertTrue(ImprovWire.isHubHost(long))
+        XCTAssertNil(ImprovWire.hubHandoff(host: long))
+    }
+
+    func testTheHubHandoffRefusesWhatTheFirmwareCannotTake() {
+        // A login is two halves or none; an empty half is not a login.
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", user: "canary"))
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", pass: "pw"))
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", user: "", pass: "pw"))
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", user: "canary", pass: ""))
+        // A host is a name or a dotted address — not a URL, not a sentence.
+        for bad in ["", "   ", "home assistant.local", "http://hub.local", "hub.local/", "hub.local:1883",
+                    "a..b", ".hub", "hub.", "-hub.local", "hub-.local", "hub_1.local", "héb.local",
+                    String(repeating: "a", count: 64) + ".local"] {
+            XCTAssertNil(ImprovWire.hubHandoff(host: bad), "not a host: \(bad)")
+            XCTAssertFalse(ImprovWire.isHubHost(bad))
+        }
+        for good in ["homeassistant.local", "192.168.1.5", "hub", "my-hub.lan", "a.b.c.d.e"] {
+            XCTAssertTrue(ImprovWire.isHubHost(good), good)
+        }
+        // A port is one the socket can open.
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", port: 0))
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", port: 65536))
+        XCTAssertNil(ImprovWire.hubHandoff(host: "hub", port: -1))
+        XCTAssertNotNil(ImprovWire.hubHandoff(host: "hub", port: 65535))
+        XCTAssertNotNil(ImprovWire.hubHandoff(host: "hub", port: 8883))
+    }
+
+    func testTheHubStatusByteIsTheCanarysWord() {
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([0])), .none)
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([1])), .stored)
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([2])), .rejected)
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([3])), .loginRefused)
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([9])), .unknown, "a byte outside the vocabulary is not a guess")
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data()), .unknown, "no byte, no word")
+        XCTAssertEqual(ImprovWire.parseHubStatus(Data([1, 0, 0])), .stored, "the first byte is the status")
     }
 
     func testTheDoorRulesHaveWordsForThePerson() {

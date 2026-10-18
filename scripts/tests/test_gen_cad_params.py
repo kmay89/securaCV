@@ -835,7 +835,9 @@ class DisplayCasesJoinTheSameChain(unittest.TestCase):
         self.assertEqual(c6["cad"]["params"], {"board_l": {"brd": "ws147", "dim": "l"},
                                                "board_w": {"brd": "ws147", "dim": "w"},
                                                "pcb_t": {"brd": "ws147", "dim": "t"}})
-        self.assertNotIn("figure", c6)                    # owned, not carried to cad-dims
+        # and it names its own figure (the pocket case, drawn for its Lab
+        # card), so the trio rides to cad-dims on it like any sibling's
+        self.assertEqual(c6["figure"], "device.canary-display-nightstand-c6")
         params = gcp.eligible(ENC / C6)
         for knob, value in (("aa_l", 32.35), ("aa_w", 17.39), ("lcm_l", 36.28),
                             ("lcm_w", 19.39)):

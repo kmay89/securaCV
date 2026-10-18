@@ -201,6 +201,153 @@ static int test_manifest_message_cross_language_fixture()
     return 0;
 }
 
+static int test_manifest_v2_message_and_rules()
+{
+    // manifest_version 2 appends the board and chip under its own prefix —
+    // byte-identical to ota_release.py's manifest_signed_message(...,
+    // manifest_version=2); the Python test pins the same shape.
+    securacv_ota_manifest_t m;
+    memset(&m, 0, sizeof(m));
+    m.manifest_version = 2;
+    strcpy(m.product, "securacv-canary-sense");
+    strcpy(m.version, "2.5.0");
+    strcpy(m.min_version, "2.4.0");
+    strcpy(m.url, "https://example.com/sense.bin");
+    strcpy(m.sha256, "AABB");
+    for (int i = 4; i < 64; i++) m.sha256[i] = '0';
+    m.sha256[64] = '\0';
+    m.size = 123456;
+    strcpy(m.board, "xiao-esp32c6-mr60");
+    strcpy(m.chip, "esp32c6");
+
+    static const char expected_hex[] = "7363762d6d616e69666573742d76320073656375726163762d63616e6172792d73656e736500322e352e3000322e342e300068747470733a2f2f6578616d706c652e636f6d2f73656e73652e62696e0061616262303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030003132333435360000007869616f2d657370333263362d6d723630006573703332633600";
+    uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+    size_t msg_len = 0;
+    CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    CHECK(msg_len == strlen(expected_hex) / 2);
+    uint8_t expected[sizeof(msg)];
+    CHECK(securacv_ota_hex_to_bytes(expected_hex, expected, msg_len));
+    CHECK(memcmp(msg, expected, msg_len) == 0);
+
+    // A v1 manifest (manifest_version 0 = absent, or 1) keeps the v1 prefix.
+    m.manifest_version = 1;
+    CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    CHECK(memcmp(msg, "scv-manifest-v1", 15) == 0);
+    m.manifest_version = 3;
+    CHECK(!securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &msg_len));
+    m.manifest_version = 2;
+
+    // The board rule: each named field must equal the build's; an empty
+    // manifest field binds nothing; a build that cannot name its own passes.
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32c6-mr60", "esp32c6"));
+    CHECK(!securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32c6"));
+    CHECK(!securacv_ota_board_ok(&m, "xiao-esp32c6-mr60", "esp32s3"));
+    CHECK(securacv_ota_board_ok(&m, NULL, NULL));
+    CHECK(securacv_ota_board_ok(&m, "", ""));
+    m.board[0] = '\0';
+    CHECK(securacv_ota_board_ok(&m, "anything", "esp32c6"));
+    m.manifest_version = 1;
+    strcpy(m.board, "xiao-esp32c6-mr60");
+    CHECK(securacv_ota_board_ok(&m, "xiao-esp32s3-sense", "esp32s3"));  // v1: no binding
+    CHECK(!securacv_ota_board_ok(NULL, "x", "y"));
+
+    // The floor rule, enforced: below min_version refuses; no floor is no floor.
+    CHECK(securacv_ota_min_version_ok("2.4.0", "2.4.0"));
+    CHECK(securacv_ota_min_version_ok("2.4.1", "2.4.0"));
+    CHECK(!securacv_ota_min_version_ok("2.3.9", "2.4.0"));
+    CHECK(securacv_ota_min_version_ok("1.0.0", ""));
+    CHECK(securacv_ota_min_version_ok("1.0.0", NULL));
+    CHECK(!securacv_ota_min_version_ok(NULL, "2.4.0"));
+    CHECK(!securacv_ota_min_version_ok("", "2.4.0"));
+
+    // The lowercase state words every node's status body speaks.
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_IDLE), "idle") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_CHECKING), "checking") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_DOWNLOADING), "downloading") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_VERIFYING), "verifying") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_FLASHING), "flashing") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_REBOOTING), "rebooting") == 0);
+    CHECK(strcmp(securacv_ota_state_word(SECURACV_OTA_ERROR), "error") == 0);
+    CHECK(strcmp(securacv_ota_state_word((securacv_ota_state_t)99), "unknown") == 0);
+    return 0;
+}
+
+
+// The confirm dwell as the pure core sees it: the order a board calls
+// boot_self_test() and init() in must not change when the image is confirmed.
+static int test_confirm_dwell()
+{
+    int fails = 0;
+    const uint32_t DWELL = 60000;
+
+    // Every board's order: probes first, init later, with a dwell.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, /*initialized=*/false, 0) == SECURACV_OTA_DWELL_WAIT);  // probes before init: never confirm at the probe (the dwell is unknown)
+        CHECK(d.probes_passed);  // probes before init: armed
+        CHECK(securacv_ota_dwell_tick(&d, 1000, true, 0, true) == SECURACV_OTA_DWELL_IDLE);  // a tick before init (dwell still 0) decides nothing
+        CHECK(d.probes_passed);  // ...and does not disarm
+        CHECK(securacv_ota_dwell_init(&d, DWELL) == SECURACV_OTA_DWELL_WAIT);  // init with a dwell: wait for the ticks
+        CHECK(securacv_ota_dwell_tick(&d, 2000, false, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // unhealthy: wait
+        CHECK(!d.dwell_started);  // unhealthy: the dwell has not started
+        CHECK(securacv_ota_dwell_tick(&d, 3000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // first healthy pass starts the dwell
+        CHECK(d.dwell_started && d.healthy_since_ms == 3000);  // started at the first healthy pass
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL - 1, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // one ms short: wait
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // the dwell held: confirm
+        CHECK(d.probes_passed);  // CONFIRM leaves the state armed until the mark lands
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL + 1, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // a failed mark is retried
+        securacv_ota_dwell_clear(&d);
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL + 2, true, DWELL, true) == SECURACV_OTA_DWELL_IDLE);  // cleared: idle
+    }
+    // An unhealthy pass inside the dwell restarts it.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        securacv_ota_dwell_tick(&d, 0, true, DWELL, true);
+        CHECK(securacv_ota_dwell_tick(&d, 30000, false, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // link lost at 30 s
+        CHECK(securacv_ota_dwell_tick(&d, 31000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // link back at 31 s: the dwell restarts
+        CHECK(securacv_ota_dwell_tick(&d, 60000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // 60 s after boot is not 60 s of health
+        CHECK(securacv_ota_dwell_tick(&d, 31000 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // 60 s after the link came back: confirm
+    }
+    // Probes before init, no dwell configured: init confirms at once (legacy).
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, false, 0) == SECURACV_OTA_DWELL_WAIT);  // probes before init wait
+        CHECK(securacv_ota_dwell_init(&d, 0) == SECURACV_OTA_DWELL_CONFIRM);  // init with dwell 0 confirms the deferred image
+        securacv_ota_dwell_clear(&d);
+        CHECK(securacv_ota_dwell_init(&d, 0) == SECURACV_OTA_DWELL_IDLE);  // nothing pending: init has nothing to confirm
+    }
+    // Init first (the old canary order): a zero dwell confirms at the probe, a dwell waits.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, true, 0) == SECURACV_OTA_DWELL_CONFIRM);  // init first, dwell 0: confirm at the probe
+        CHECK(!d.probes_passed);  // ...and nothing stays armed
+        CHECK(securacv_ota_dwell_probes_passed(&d, true, DWELL) == SECURACV_OTA_DWELL_WAIT);  // init first, a dwell: wait
+        CHECK(securacv_ota_dwell_tick(&d, 10, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // starts
+        CHECK(securacv_ota_dwell_tick(&d, 10 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // confirms after the dwell
+    }
+    // The image stopped being pending underneath (confirmed elsewhere): disarm.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        CHECK(securacv_ota_dwell_tick(&d, 5, true, DWELL, /*still_pending=*/false) == SECURACV_OTA_DWELL_IDLE);  // not pending: idle
+        CHECK(!d.probes_passed);  // not pending: disarmed
+    }
+    // millis() wrap inside the dwell.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        const uint32_t t0 = 0xFFFFFF00u;
+        securacv_ota_dwell_tick(&d, t0, true, DWELL, true);
+        CHECK(securacv_ota_dwell_tick(&d, t0 + DWELL - 1, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // across the wrap, one ms short
+        CHECK(securacv_ota_dwell_tick(&d, t0 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // across the wrap, the dwell held
+    }
+    return fails;
+}
+
 static int test_friendly_strings()
 {
     // Every error code needs a usable primary-UI sentence; raw enum names
@@ -279,6 +426,8 @@ int main()
     if (test_signed_message_layout()) return 1;
     if (test_hex_to_bytes()) return 1;
     if (test_manifest_message_cross_language_fixture()) return 1;
+    if (test_manifest_v2_message_and_rules()) return 1;
+    if (test_confirm_dwell()) return 1;
     if (test_friendly_strings()) return 1;
     if (test_channel_manifest_url()) return 1;
 

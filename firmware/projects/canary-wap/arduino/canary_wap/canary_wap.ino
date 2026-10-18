@@ -178,6 +178,14 @@
 #include "setup_page_html.h"     // Static captive-portal "open canary.local" page
 #include "captive_probe.h"       // Pure per-platform connectivity-probe response policy
 #include "ap_security_policy.h"  // F16: SoftAP WPA2/WPA3 + PMF request (staged copy of firmware/common/network/, check_ap_security_sync.sh)
+#include "wifi_credential_policy.h"  // the one home-Wi-Fi credential rule + the words beside the field (staged copy of firmware/common/network/, check_wifi_credential_sync.sh)
+// The fleet's onboarding parity family — staged copies of firmware/common/
+// (network/ and io/), byte-identical, check_onboarding_sync.sh:
+#include "onboarding_fsm.h"      // the ONE onboarding state machine: the setup AP's name, the AP hold after a join, the factory-reset hold, the serial QR line (includes provision_core.h, staged beside it)
+#include "wifi_join_policy.h"    // JoinFailure + the words every setup surface shows for a failed join
+#include "wifi_store.h"          // the saved-networks ring beside the legacy wifi_ssid/wifi_pass pair
+#include "reset_hold.h"          // the BOOT long-hold classifier: Warn at 3 s, Reset at 10 s
+#include "node_status.h"         // the GET /api/status body every node serves, folded into this sketch's richer one
 #include <esp_wifi.h>             // F16: esp_wifi_get/set_config for the SoftAP security request
 #include <sdkconfig.h>            // F16: CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT (is SoftAP SAE in this core?)
 extern "C" {
@@ -436,7 +444,11 @@ static const int   AP_MAX_CLIENTS      = 1;  // Hardened: max 1 client for secur
 // old 8 s grace lost that race almost every time, so a *successful* join
 // looked like "Couldn't connect" on the phone. Two minutes of the C1 combo
 // during provisioning only is an acceptable trade for a truthful wizard.
-static const uint32_t AP_DROP_GRACE_MS = 120000;
+//
+// The two minutes are the fleet's: onboarding_fsm.h's Timing is the one set
+// of onboarding numbers every Canary keeps, and this is its
+// ap_hold_after_join_ms — defined FROM it so the two cannot drift.
+static const uint32_t AP_DROP_GRACE_MS = canary::net::onboard::Timing{}.ap_hold_after_join_ms;
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAMERA CONFIG (XIAO ESP32-S3 Sense only — ESP32-C3 has no camera interface)
@@ -496,10 +508,14 @@ static const uint32_t SD_PERSIST_INTERVAL  = 10;      // Persist every N records
 
 static const uint32_t SERIAL_CDC_WAIT_MS   = 2500;
 // BOOT button gesture thresholds. The short-press window opens the
-// provisioning gate; the medium-hold prints a serial diagnostic; the
-// long-hold is RESERVED — no factory-reset path exists in this sketch today
-// (docs/FAQ.md says so; Forget Wi-Fi on the dashboard is the owner's reset
-// of the network). The short-press lower bound (50 ms)
+// provisioning gate; the medium-hold prints a serial diagnostic; a hold
+// of BOOT_LONG_PRESS_MS or more released before the reset fires is
+// advisory only (the serial line says to keep holding); a hold of
+// factory_reset_hold_ms (10 s, onboarding_fsm.h's Timing, stepped by
+// reset_hold.h's ResetHold in loop()) is the FACTORY RESET: saved networks,
+// the MQTT bridge's broker row, the device name and the first-boot flag go,
+// the Ed25519 identity, the witness chain and the sealed records stay
+// (factory_reset_by_hold). The short-press lower bound (50 ms)
 // is the debounce floor — anything quicker is mechanical bounce, not a
 // human tap. The upper bound (2000 ms) matches the "< 2 seconds" hint
 // already shown in the wizard, so a slightly slow tap still counts.
@@ -507,6 +523,8 @@ static const uint32_t BOOT_BUTTON_HOLD_MS  = 2000;
 static const int      BOOT_BUTTON_GPIO     = 0;
 static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
 static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
+static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,
+              "the 3 s diagnostic hold and ResetHold's Warn stage share one threshold");
 // Provisioning gate stays open for this long after a BOOT press, so a
 // browser tab that polls every 2 s reliably catches it and a captive
 // portal interstitial can't time the user out. The gate is still
@@ -706,7 +724,7 @@ struct DeviceIdentity {
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
-  char     ap_ssid[32];
+  char     ap_ssid[canary::net::onboard::SSID_CAP];  // "SecuraCV-wap-XXXX" (onboarding_fsm.h ap_ssid; a WPA2 SSID is at most 32 bytes)
   char     mdns_hostname[40];    // unique mDNS host label, e.g. "canary-kitchen" / "canary-aabb"
   // API security fields (added for SAP integration)
   char     api_token_str[36];    // "cv_" + 32 base62 chars + null
@@ -846,6 +864,13 @@ static httpd_handle_t g_http_server = nullptr;
 // HTTPS server (TLS)
 static httpd_handle_t g_https_server = nullptr;
 static bool g_tls_enabled = false;
+// The certificate the next boot will RELOAD: loaded from NVS, or generated
+// and stored with the store confirmed. A cert generated this boot whose
+// store failed is this boot's alone — its fingerprint must never be handed
+// out as a pin (the setup door's receipt is kept for the life of the
+// pairing, and the next boot would mint a different cert; see
+// tls_after_setup()).
+static bool g_tls_cert_persisted = false;
 
 // TLS certificate (DER-encoded, stored in NVS)
 static uint8_t* g_tls_cert_der = nullptr;
@@ -853,6 +878,31 @@ static size_t   g_tls_cert_der_len = 0;
 static uint8_t* g_tls_key_der = nullptr;
 static size_t   g_tls_key_der_len = 0;
 static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
+
+// TLS will be on once first-boot setup is over. Two facts, kept apart:
+// g_tls_enabled is "the HTTPS server is up NOW" (held off while the wizard
+// is active, so captive sheets render over plain HTTP); the certificate is
+// known on every initialized boot regardless (init_tls_cert() in setup():
+// loaded from NVS, or generated once and stored), so its fingerprint is
+// known on the first boot too. The Bluetooth setup door's join happens
+// INSIDE that first boot, and the receipt it hands the phone is kept for
+// the life of the pairing — so where an address is spelled for AFTER the
+// reboot that ends setup (the claim's pin, the receipt the claim buys),
+// this is the scheme's fact. False when an HTTPS start failed in steady
+// state (that unit is not TLS later either), in a build with no HTTPS
+// server at all, and when the certificate did NOT persist to NVS
+// (g_tls_cert_persisted): a cert generated this boot whose store failed
+// is replaced on the next boot, so a pin on it would reject the WAP for
+// the life of the pairing — better an unpinned address than a wrong pin.
+static inline bool tls_after_setup() {
+#if SECURACV_HAS_HTTPS_SERVER
+  if (!g_tls_cert_persisted || g_tls_cert_fp_hex[0] == '\0') return false;
+  if (g_tls_enabled) return true;
+  return setup_wizard::is_active();
+#else
+  return false;
+#endif
+}
 
 // Provisioning gate (physical BOOT button). Stores the millis() at which
 // the press landed; 0 means closed. provisioning_gate_is_open() applies
@@ -962,7 +1012,33 @@ static bool g_wifi_scan_in_progress = false;
 // users at the edge of range saw spurious "Wrong password" wizard
 // failures even with correct credentials.
 static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
+// The WAP's STA retry stays a flat 30 s: its management AP is always up (or
+// re-raised the moment the link drops), so the recovery every other board
+// reaches through wifi_join_policy.h's backoff + re-raise is permanent here
+// by construction, and this sketch is not one of
+// scripts/lint_wifi_join_policy.py's supervisors.
 static const uint32_t WIFI_RECONNECT_INTERVAL_MS = 30000;
+
+// ── The saved-networks ring (wifi_store.h) ──────────────────────────────────
+// Kept beside the legacy wifi_ssid / wifi_pass pair, which stays the CURRENT
+// pick every reader of those keys (the flashers' NVS seed included) keeps
+// reading. Loaded with the credentials (the pair folded in on first load),
+// WRITTEN ONLY on a join that worked (the portal rule), cleared by Forget.
+// On the loop task but for the count GET /api/status reads.
+static canary::net::wifi_store::Store g_wifi_store;
+static bool    g_wifi_store_dirty = false;      // the ring in RAM is ahead of NVS (a legacy import, an add)
+static uint8_t g_wifi_notfound_streak = 0;      // consecutive "Network not found" verdicts on the current pick
+static bool    g_wifi_pick_rotated = false;     // g_wifi_creds came from the ring, not from NVS's pair, unproven yet
+
+// ── Onboarding facts GET /api/status derives its one word from ─────────────
+// (onboarding_fsm.h derive(Facts)). A phone handed credentials over the
+// wizard or the setup door during THIS AP session; cleared when the AP is
+// (re)raised. Written on the httpd / BLE tasks, read on the httpd task.
+static bool g_onboard_creds_submitted = false;
+// millis() of the last GET /api/fleet (0 = never): a Witness Wall that polls
+// this device directly within WALL_DIRECT_WINDOW_MS is `wall: "direct"`.
+static uint32_t g_fleet_polled_at_ms = 0;
+static const uint32_t WALL_DIRECT_WINDOW_MS = 60000;
 
 // Set true once the BLE/Bluetooth init has been ATTEMPTED (regardless of
 // outcome), so the self-test can tell "not up yet / skipped in safe mode"
@@ -1415,12 +1491,16 @@ static void generate_device_id(char* out, size_t cap) {
 
 static void generate_ap_ssid(char* out, size_t cap) {
   // Suffix from the pubkey fingerprint, never the MAC (event_contract §10),
-  // in the same no-confusion alphabet as the device_id.
+  // in the same no-confusion alphabet as the device_id. The shape is the
+  // fleet's (onboarding_fsm.h): SecuraCV-wap-<4>, the node type between
+  // the prefix and the suffix so a household unboxing a WAP and a Sense
+  // together can tell the two setup networks apart. The builder empties
+  // `out` on a cap too small — never a truncated (ambiguous) name.
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);
   if (cap == 0) return;
-  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
+  canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_WAP, suffix, nullptr);
 }
 
 // mDNS hostname rules (RFC 6762 §16 / RFC 1123): a single DNS label may only
@@ -1916,6 +1996,21 @@ static void tls_compute_cert_fingerprint() {
 }
 
 #if SECURACV_HAS_TLS_CERTGEN
+// The RNG mbedtls_rsa_gen_key draws from throughout its prime search (a
+// witness per Miller-Rabin round) — the one hook inside a computation that
+// runs for seconds, with a long tail, on the setup task, whose 8 s task
+// watchdog is armed by then (PHASE 2, before the network phase). Fed there,
+// a slow search cannot panic the boot; the key is stored only after the
+// whole certificate is written, so a panic here would have been the same
+// keygen on every boot. The generation runs on the FIRST boot now
+// (init_tls_cert() on every initialized boot — see setup()).
+static int tls_keygen_rng(void* ctx, unsigned char* out, size_t len) {
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+  return mbedtls_ctr_drbg_random(ctx, out, len);
+}
+
 static bool tls_generate_self_signed_cert() {
   Serial.println("[TLS] Generating self-signed certificate (RSA-2048)...");
   Serial.println("[TLS] This takes 30-60 seconds on first boot only.");
@@ -1948,7 +2043,7 @@ static bool tls_generate_self_signed_cert() {
     goto cleanup;
   }
 
-  ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key), mbedtls_ctr_drbg_random,
+  ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key), tls_keygen_rng,
                              &ctr_drbg, 2048, 65537);
   if (ret != 0) {
     Serial.printf("[TLS] RSA keygen failed: -0x%04X\n", (unsigned)-ret);
@@ -2033,6 +2128,7 @@ cleanup:
 static bool init_tls_cert() {
   // Try loading from NVS first
   if (tls_load_from_nvs()) {
+    g_tls_cert_persisted = true;
     tls_compute_cert_fingerprint();
     Serial.println("[TLS] Loaded certificate from NVS");
     Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
@@ -2046,9 +2142,14 @@ static bool init_tls_cert() {
     return false;
   }
 
-  // Store in NVS for reuse across reboots
-  if (!tls_store_to_nvs()) {
-    Serial.println("[TLS] WARNING: Failed to store cert in NVS");
+  // Store in NVS for reuse across reboots. Only a confirmed store makes
+  // this cert the one the next boot reloads; a failed store leaves it this
+  // boot's alone (g_tls_cert_persisted false), so nothing pins it.
+  if (tls_store_to_nvs()) {
+    g_tls_cert_persisted = true;
+  } else {
+    g_tls_cert_persisted = false;
+    Serial.println("[TLS] WARNING: Failed to store cert in NVS — this boot's cert only; no pin will be handed out");
   }
 
   tls_compute_cert_fingerprint();
@@ -3670,6 +3771,84 @@ static esp_err_t handle_status(httpd_req_t* req) {
     const status_tier_logic::Verdict tv = status_tier_logic::evaluate(tin);
     doc["status_tier"]   = tv.tier_code;
     doc["status_reason"] = tv.reason_code;
+  }
+
+  // The fleet's shared status body (node_status.h): the keys every node
+  // serves at GET /api/status, same spelling, folded in as ONE sub-object by
+  // the ONE writer, so a reader built against any Canary reads this one too.
+  // An absent key means "cannot tell you" (fleet_selfreport.h's born_day
+  // rule), never a stand-in value. The WAP's richer keys above stay as they
+  // were. Coarse on purpose: nothing here is a secret or a stable identifier
+  // beyond what mDNS already says.
+  {
+    wifi_update_status();
+    canary::net::onboard::Facts facts;
+    facts.have_credentials      = g_wifi_creds.configured || g_wifi_store.count > 0;
+    facts.ap_up                 = (WiFi.getMode() & WIFI_MODE_AP) != 0;
+    facts.join_in_flight        = g_wifi_status.state == WIFI_PROV_CONNECTING;
+    facts.sta_online            = g_wifi_status.sta_connected;
+    facts.credentials_submitted = __atomic_load_n(&g_onboard_creds_submitted, __ATOMIC_RELAXED);
+
+    NodeStatus ns{};
+    ns.node           = "canary-wap";   // the dt word mDNS and /api/fleet already speak
+    ns.product        = OTA_PRODUCT;
+    ns.fw             = FIRMWARE_VERSION;
+    ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)
+    ns.name           = setup_wizard::get_device_name();
+    ns.uptime_s       = uptime_seconds();
+    ns.ip             = g_wifi_status.sta_connected ? g_wifi_status.sta_ip : nullptr;
+    ns.rssi           = g_wifi_status.sta_connected ? g_wifi_status.rssi : 0;
+    ns.onboarding     = canary::net::onboard::state_label(canary::net::onboard::derive(facts));
+    ns.setup_ap       = facts.ap_up ? 1 : 0;
+#if FEATURE_IMPROV
+    ns.ble_door       = ble_improv::setup_open() ? 1 : 0;
+#else
+    ns.ble_door       = -1;             // no setup door in this build: omitted, not "closed"
+#endif
+    ns.saved_networks = g_wifi_store.count;
+    // Where this device stands with its hub — handle_fleet's derivation.
+    {
+      csi_mqtt::Config mcfg;
+      if (csi_mqtt::config_load(&mcfg) && mcfg.enabled && mcfg.host[0] != '\0') {
+        ns.hub = csi_mqtt::connected() ? NS_HUB_OK : NS_HUB_DOWN;
+      } else {
+        ns.hub = NS_HUB_NONE;
+      }
+    }
+    ns.peers_seen     = -1;             // the WAP keeps no roster of its own: omitted
+    // The Witness Wall: "direct" while a Wall is polling our /api/fleet,
+    // else "hub" when the hub carries us, else "none".
+    {
+      const uint32_t polled_at = __atomic_load_n(&g_fleet_polled_at_ms, __ATOMIC_RELAXED);
+      const uint32_t ago_ms = (uint32_t)(millis() - polled_at);
+      ns.wall_polled_s_ago = polled_at != 0 ? (int)(ago_ms / 1000u) : -1;
+      ns.wall = (polled_at != 0 && ago_ms <= WALL_DIRECT_WINDOW_MS) ? "direct"
+              : (ns.hub == NS_HUB_OK ? "hub" : "none");
+    }
+    // The pull-OTA engine's word (docs/OTA.md), the version it is offering,
+    // and whether this boot is the unconfirmed new image.
+    {
+      const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
+      ns.ota_state          = securacv_ota_state_word(securacv_ota_get_state());  // the one lowercase word every node speaks
+      ns.ota_target         = (m != NULL && securacv_ota_update_available()) ? m->version : nullptr;
+      ns.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed
+    }
+    // Where the credentials sleep (docs/FIRMWARE_MAP.md §3: plaintext NVS on
+    // every shipped build), said plainly.
+    ns.creds_at_rest  = "plaintext-nvs";
+    // The clock: GPS is this board's setter (sync_clock_from_gps), so a
+    // believable clock is "set" in clock_sync.h's vocabulary; before one,
+    // "none". The household zone is written by csi_integration and has no
+    // reader here: omitted.
+    ns.clock          = (time(nullptr) >= GPS_CLOCK_FLOOR) ? "set" : "none";
+    ns.tz             = nullptr;
+
+    char* ns_body = (char*)malloc(NODE_STATUS_BODY_CAP);
+    if (ns_body) {
+      node_status_build(ns_body, NODE_STATUS_BODY_CAP, &ns);
+      doc["node_status"] = serialized((const char*)ns_body);   // copied into the document
+      free(ns_body);
+    }
   }
 
   // GPS position data (safe even if GPS absent - returns zeros/false).
@@ -6310,12 +6489,23 @@ static uint32_t g_setup_grace_reboot_at_ms = 0;
 // outstanding (claim_ticket::pending(g_improv_claim)): the claim promised
 // the phone expires_in_s = 180, and the deadline is 120 s after the join,
 // so without the hold the WAP rebooted under a phone still resolving
-// <host>.local to spend it. The claim's own TTL bounds the hold; once it is
-// spent or expired the reboot gets a short runway (CLAIM_SETTLED_REBOOT_
-// RUNWAY_MS) so the receipt the claim bought leaves the HTTP task whole
-// before the restart. Loop task only.
+// <host>.local to spend it. The claim's own TTL bounds the hold; once it
+// has expired the reboot gets a short runway (CLAIM_SETTLED_REBOOT_
+// RUNWAY_MS). A claim that is SPENT sets the deadline to that same runway
+// from the spend, wherever it stood (g_improv_claim_spent_at_ms below): the
+// receipt it bought names the steady-state https address, which this boot
+// — HTTP-only, in setup mode — does not answer, so the reboot that makes
+// the receipt true follows within seconds of "Paired", the runway letting
+// that receipt leave the HTTP task whole first. Loop task only.
 static bool g_setup_reboot_held_for_claim = false;
 static const uint32_t CLAIM_SETTLED_REBOOT_RUNWAY_MS = 10000;
+// When a setup-door claim was SPENT — the receipt it bought left on the HTTP
+// task (handle_provisioning_receipt) — as a millis() stamp, never 0
+// (claim_ticket::stamp). The loop task takes it and brings the armed reboot
+// to CLAIM_SETTLED_REBOOT_RUNWAY_MS from then (provisioning_logic::
+// claim_spent_reboot_deadline). Written on the HTTP task, taken on the loop
+// task: atomic, like g_setup_grace_reboot_at_ms.
+static uint32_t g_improv_claim_spent_at_ms = 0;
 
 // Minimum runway to keep after a step-5 self-test poll: enough for the user
 // to read every row and tap "Run again" once before the steady-state reboot.
@@ -6646,22 +6836,31 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
   const char* ssid = body["ssid"] | "";
   const char* password = body["password"] | "";
 
-  if (strlen(ssid) == 0 || strlen(ssid) > 32) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Invalid SSID (1-32 chars required)";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
-  }
-
-  if (strlen(password) > 64) {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = "Password too long (max 64 chars)";
-    String response;
-    serializeJson(doc, response);
-    return http_send_json(req, response.c_str());
+  // The ONE credential rule (wifi_credential_policy.h, staged from
+  // firmware/common/network): SSID 1..32 bytes, password 0..64 bytes, no
+  // minimum — an open network has none and a secured network's floor is its
+  // router's business. The error strings are kept; `code` is the fleet word.
+  {
+    using canary::net::wifi_credential::Verdict;
+    const Verdict cred = canary::net::wifi_credential::check(ssid, password);
+    if (cred == Verdict::SsidEmpty || cred == Verdict::SsidTooLong) {
+      JsonDocument doc;
+      doc["ok"] = false;
+      doc["error"] = "Invalid SSID (1-32 chars required)";
+      doc["code"] = canary::net::wifi_credential::verdict_code(cred);
+      String response;
+      serializeJson(doc, response);
+      return http_send_json(req, response.c_str());
+    }
+    if (cred == Verdict::PasswordTooLong) {
+      JsonDocument doc;
+      doc["ok"] = false;
+      doc["error"] = "Password too long (max 64 chars)";
+      doc["code"] = canary::net::wifi_credential::verdict_code(cred);
+      String response;
+      serializeJson(doc, response);
+      return http_send_json(req, response.c_str());
+    }
   }
 
   // Optional friendly device name (e.g. "kitchen"). When present it both
@@ -6729,6 +6928,7 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
 
   // Clear stale failure context from any previous attempt before retrying.
   g_wifi_status.last_fail_reason[0] = '\0';
+  __atomic_store_n(&g_onboard_creds_submitted, true, __ATOMIC_RELAXED);  // "provisioning", until the join says
 
   // Attempt connection
   wifi_connect_to_home();
@@ -6889,6 +7089,7 @@ bool ble_request_wifi_provisioning(const char* ssid, const char* password) {
 
   wifi_save_credentials();
   g_wifi_status.last_fail_reason[0] = '\0';
+  __atomic_store_n(&g_onboard_creds_submitted, true, __ATOMIC_RELAXED);
   wifi_connect_to_home();
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
@@ -6943,6 +7144,7 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
   g_improv_join_pending   = true;
 
   g_wifi_status.last_fail_reason[0] = '\0';
+  __atomic_store_n(&g_onboard_creds_submitted, true, __ATOMIC_RELAXED);
   wifi_connect_to_home();
 
   log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
@@ -6965,6 +7167,14 @@ bool ble_improv_submit_join(const char* ssid, const char* password) {
 // the flag is cleared BEFORE the save (the save clears it too), and only a
 // non-empty SSID is saved: an attempt some other path forgot meanwhile
 // (wifi_clear_credentials) has nothing to persist.
+//
+// Leaving first-boot mode is not this function's: neither this path nor the
+// wizard's own /api/wifi/connect calls setup_wizard::mark_complete() —
+// loop() does, on the first pass that sees WL_CONNECTED while the wizard is
+// active, whichever path brought the join, and arms the reboot into steady
+// state there (where init_tls_cert() loads the certificate this boot
+// already knows and the HTTPS server comes up). A door-provisioned WAP
+// leaves first-boot mode exactly as a wizard-provisioned one does.
 bool ble_improv_join_verdict(bool joined) {
   if (!g_improv_join_pending) return false;   // not the door's join: another path owns the credentials
   g_improv_join_pending = false;
@@ -7013,10 +7223,16 @@ size_t ble_improv_reach_url(char* out, size_t cap) {
 //   {"device_id","claim","claim_url","tls_cert_fp","sta_ip","mdns_host",
 //    "expires_in_s"}
 // in that order, nothing omitted, an empty string where a value is not
-// known yet. claim_url is where the phone spends it: the device's .local
-// name (the SoftAP address is gone once the AP drops), https when TLS is
-// up. The bearer token is NOT here; the receipt that carries it is what the
-// claim buys on the LAN. Every value is the sketch's own ASCII (device_id
+// known yet. claim_url is where the phone spends it, within seconds, so it
+// is the address that answers NOW: the device's .local name (the SoftAP
+// address is gone once the AP drops), https only when the HTTPS server is
+// up — during first-boot setup, which is where the door's join happens, the
+// server is held off and claim_url is http. tls_cert_fp is a fact about
+// AFTER setup: the fingerprint of the certificate the WAP serves once it
+// reboots into steady state (tls_after_setup()), so the phone has the pin
+// the receipt's https base_url needs. The bearer token is NOT here; the
+// receipt that carries it is what the claim buys on the LAN. Every value is
+// the sketch's own ASCII (device_id
 // and the mDNS label are sanitized at birth; the fingerprint and the claim
 // are hex; the address is dotted) — wap_json escaping kept all the same.
 // Returns the length written, 0 when `cap` cannot hold the whole document
@@ -7043,7 +7259,7 @@ size_t ble_improv_mint_claim(char* out, size_t cap, uint32_t now_ms) {
   wap_json::raw(w, "{\"device_id\":");    wap_json::str(w, g_device.device_id);
   wap_json::raw(w, ",\"claim\":");        wap_json::str(w, g_improv_claim.hex);
   wap_json::raw(w, ",\"claim_url\":");    wap_json::str(w, claim_url);
-  wap_json::raw(w, ",\"tls_cert_fp\":");  wap_json::str(w, g_tls_enabled ? g_tls_cert_fp_hex : "");
+  wap_json::raw(w, ",\"tls_cert_fp\":");  wap_json::str(w, tls_after_setup() ? g_tls_cert_fp_hex : "");
   wap_json::raw(w, ",\"sta_ip\":");       wap_json::str(w, sta_ip);
   wap_json::raw(w, ",\"mdns_host\":");    wap_json::str(w, host);
   wap_json::raw(w, ",\"expires_in_s\":"); wap_json::number(w, canary::net::claim_ticket::TTL_MS / 1000u);
@@ -7598,6 +7814,13 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
  */
 static esp_err_t handle_fleet(httpd_req_t* req) {
   g_health.http_requests++;
+  // A Wall is reading this device directly: GET /api/status says so
+  // (`wall: "direct"`) for WALL_DIRECT_WINDOW_MS. 0 means never, so a poll
+  // at millis() == 0 is stamped 1 (the provisioning gate's sentinel rule).
+  {
+    const uint32_t now_ms = millis();
+    __atomic_store_n(&g_fleet_polled_at_ms, now_ms == 0 ? 1u : now_ms, __ATOMIC_RELAXED);
+  }
   FleetSelfDevice self{};
   const char* nm = setup_wizard::get_device_name();
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
@@ -8268,21 +8491,30 @@ static esp_err_t handle_device_info(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // `via_claim`: the caller spent a setup-door claim, so it is on the home LAN
-// by construction (claim_ticket.h) — its base_url is the device's .local
-// name while the STA holds one, since the SoftAP address the other two
-// grants answer with is gone once the AP drops. The bearer and BOOT-tap
-// answers are unchanged.
+// by construction (claim_ticket.h), and this receipt is the one the phone
+// KEEPS for the life of the pairing — so it spells the STEADY-STATE address,
+// not this boot's: base_url at the device's .local name (the SoftAP address
+// the other two grants answer with is gone once the AP drops), https with
+// the certificate's fingerprint when TLS will be on after setup
+// (tls_after_setup()). The door joins inside the first-boot wizard, where
+// the HTTPS server is held off; the WAP reboots into https a short runway
+// after this answer leaves (loop(), g_improv_claim_spent_at_ms). A phone
+// that stored this boot's http base_url, as it did, could never reach the
+// device again. The bearer and BOOT-tap answers are unchanged: the servers
+// up now, the SoftAP address (the app rebases it onto the address it
+// discovered).
 static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = false) {
   // Privacy (Invariant III): salted pseudonym, never the raw MAC.
   char hw_token[device_pseudonym::HEX_LEN + 1];
   if (!device_pseudonym::device_id_hex(hw_token, sizeof(hw_token))) hw_token[0] = '\0';
   String authority = WiFi.softAPIP().toString();
-  if (via_claim && WiFi.isConnected() && g_device.mdns_hostname[0] != '\0') {
+  if (via_claim && g_device.mdns_hostname[0] != '\0') {
     authority = String(g_device.mdns_hostname) + ".local";
   }
+  const bool tls = via_claim ? tls_after_setup() : g_tls_enabled;
   identity_json::Receipt in = {};
   in.device_id   = g_device.device_id;
-  in.tls_enabled = g_tls_enabled;
+  in.tls_enabled = tls;
   in.ap_ip       = authority.c_str();
   in.token       = g_device.api_token_str;
   in.pubkey_fp   = g_device.fingerprint_hex;
@@ -8290,7 +8522,10 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req, bool via_claim = fa
   in.hw_token    = hw_token;
   in.ap_ssid     = g_device.ap_ssid;
   in.ap_password = g_device.ap_password;
-  in.tls_cert_fp = g_tls_cert_fp_hex;
+  // The pin rides with an https base_url ("" is "no pin": an http device —
+  // the iPhone app refuses an https base without one and ignores a pin on
+  // an http one).
+  in.tls_cert_fp = tls ? g_tls_cert_fp_hex : "";
   in.boot_count  = (unsigned long)g_device.boot_count;
 
   // Measured, then written into exactly that much heap (sweep F212). The
@@ -8393,6 +8628,11 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   }
   esp_err_t result = send_provisioning_receipt(req, claim_served);
   if (claim_served) {
+    // The phone holds the steady-state address now; the loop task brings
+    // the reboot that answers it to a short runway from here (HTTP task →
+    // loop task, atomic; never 0 — 0 is "no spend").
+    __atomic_store_n(&g_improv_claim_spent_at_ms,
+                     canary::net::claim_ticket::stamp(millis()), __ATOMIC_RELEASE);
     Serial.println("[AUTH] Provisioning receipt served on a setup-door claim.");
     log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning receipt served on a setup-door claim", nullptr);
   } else {
@@ -8407,11 +8647,49 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
+// Port 80 → https, at the address the client used. The Location used to
+// name WiFi.softAPIP(): right for a phone on the SoftAP, dead for one on
+// the LAN — where every client is once the AP drops after setup, and where
+// a paired phone that kept an http base_url landed. So the Host the request
+// carried, when it is one (letters, digits, dots, dashes; an IPv6 literal's
+// brackets and colons; a port is dropped — the HTTPS server is on 443);
+// without one (HTTP/1.0), or with anything else, the STA address when the
+// STA holds one, else the .local name (the captive DNS answers it on the
+// AP). A Host header is attacker-chosen text headed into a response header,
+// so anything outside that alphabet is refused, not forwarded.
+static bool redirect_host_ok(const char* host) {
+  if (host[0] == '\0') return false;
+  for (const char* p = host; *p; ++p) {
+    const unsigned char c = (unsigned char)*p;
+    if (!(isalnum(c) || c == '.' || c == '-' || c == ':' || c == '[' || c == ']')) return false;
+  }
+  return true;
+}
+
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char location[128];
-  snprintf(location, sizeof(location), "https://%s%s",
-           WiFi.softAPIP().toString().c_str(),
-           req->uri);
+  char host[96] = {0};
+  bool have = httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
+              redirect_host_ok(host);
+  if (have) {
+    // Drop a ":port" — not the colons of a bare IPv6 literal, whose port
+    // follows its closing bracket.
+    char* colon = strrchr(host, ':');
+    if (colon && strchr(colon, ']') == nullptr) *colon = '\0';
+    have = host[0] != '\0';
+  }
+  if (!have) {
+    if (WiFi.isConnected()) {
+      snprintf(host, sizeof(host), "%s", WiFi.localIP().toString().c_str());
+    } else {
+      snprintf(host, sizeof(host), "%s.local", g_device.mdns_hostname);
+    }
+  }
+  char location[256];
+  const int n = snprintf(location, sizeof(location), "https://%s%s", host, req->uri);
+  if (n < 0 || (size_t)n >= sizeof(location)) {
+    // A cut URI would redirect to the wrong page: the root instead.
+    snprintf(location, sizeof(location), "https://%s/", host);
+  }
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
@@ -9810,8 +10088,85 @@ static const char* wifi_state_name(WiFiProvState s) {
   }
 }
 
+// This radio's status -> the fleet's shared vocabulary (wifi_join_policy.h):
+// the same four lines the headless supervisor and the display spell. A
+// uint8_t on purpose — see wifi_check_connection on narrowing to wl_status_t.
+static canary::net::JoinFailure wifi_classify_failure(uint8_t wl) {
+  switch (wl) {
+    case WL_NO_SSID_AVAIL:  return canary::net::JoinFailure::NotFound;
+    case WL_CONNECT_FAILED: return canary::net::JoinFailure::BadPassword;
+    case WL_IDLE_STATUS:    return canary::net::JoinFailure::NoAddress;   // associated, no address
+    default:                return canary::net::JoinFailure::Unknown;
+  }
+}
+
+// ── The saved-networks ring's glue (wifi_store.h owns the rules) ───────────
+
+// Write the ring as one blob under its key. False when NVS refused.
+static bool wifi_store_persist() {
+  uint8_t blob[canary::net::wifi_store::BLOB_BYTES];
+  const size_t n = canary::net::wifi_store::serialize(g_wifi_store, blob, sizeof(blob));
+  if (n == 0) return false;
+  NvsMainSession nvs(false);
+  if (!nvs.isOpen()) return false;
+  return nvs->putBytes(canary::net::wifi_store::NVS_KEY, blob, n) == n;
+}
+
+// A join WORKED: the network goes into the ring (an existing entry has its
+// password refreshed and its failure count cleared, either way it is
+// last_good) and the ring is written — only when something changed, or when
+// a legacy import is still waiting for a proven join to be written out.
+static void wifi_store_note_joined(const char* ssid, const char* pass) {
+  uint8_t before[canary::net::wifi_store::BLOB_BYTES];
+  uint8_t after[canary::net::wifi_store::BLOB_BYTES];
+  const size_t nb = canary::net::wifi_store::serialize(g_wifi_store, before, sizeof(before));
+  if (!canary::net::wifi_store::add(g_wifi_store, ssid, pass)) return;  // out-of-bounds credentials: nothing to keep
+  const size_t na = canary::net::wifi_store::serialize(g_wifi_store, after, sizeof(after));
+  const bool changed = (nb != na) || memcmp(before, after, na) != 0;
+  if (!changed && !g_wifi_store_dirty) return;
+  if (wifi_store_persist()) {
+    g_wifi_store_dirty = false;
+  } else {
+    g_wifi_store_dirty = true;
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "Saved-networks ring NOT written (NVS)", ssid);
+  }
+}
+
+// Copy one saved network into the current pick, RAM only: it is written
+// out as the legacy pair by the CONNECTED transition, once it has worked.
+static void wifi_store_adopt(int idx) {
+  const canary::net::wifi_store::Network& n = g_wifi_store.nets[idx];
+  strncpy(g_wifi_creds.ssid, n.ssid, sizeof(g_wifi_creds.ssid) - 1);
+  g_wifi_creds.ssid[sizeof(g_wifi_creds.ssid) - 1] = '\0';
+  strncpy(g_wifi_creds.password, n.pass, sizeof(g_wifi_creds.password) - 1);
+  g_wifi_creds.password[sizeof(g_wifi_creds.password) - 1] = '\0';
+  g_wifi_creds.enabled    = true;
+  g_wifi_creds.configured = true;
+  g_wifi_notfound_streak  = 0;
+  g_wifi_pick_rotated     = true;
+}
+
+// Before a periodic retry: "Network not found" twice running on the current
+// pick, with another saved network to try, moves on to the next slot
+// (wifi_store::pick's round-robin — no scan is in hand on this radio
+// between retries) instead of probing an absent SSID forever. Never under
+// a setup-door join: its credentials are nobody else's to swap.
+static void wifi_store_rotate_if_due() {
+  if (g_improv_join_pending || g_wifi_notfound_streak < 2 || g_wifi_store.count < 2) return;
+  const int cur  = canary::net::wifi_store::find(g_wifi_store, g_wifi_creds.ssid);
+  const int next = canary::net::wifi_store::pick(g_wifi_store, nullptr, nullptr, 0, cur);
+  if (next < 0 || next == cur) return;
+  wifi_store_adopt(next);
+  log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+             "Network not found twice - trying the next saved network", g_wifi_creds.ssid);
+}
+
 static bool wifi_load_credentials() {
   memset(&g_wifi_creds, 0, sizeof(g_wifi_creds));
+  canary::net::wifi_store::init(g_wifi_store);
+  g_wifi_store_dirty = false;
+  g_wifi_notfound_streak = 0;
+  g_wifi_pick_rotated = false;
 
   NvsMainSession nvs(true);
   if (!nvs.isOpen()) return false;
@@ -9841,6 +10196,29 @@ static bool wifi_load_credentials() {
       nvs->getString(NVS_KEY_WIFI_PASS, g_wifi_creds.password, sizeof(g_wifi_creds.password));
       g_wifi_creds.enabled = nvs->getBool(NVS_KEY_WIFI_EN, true);
       g_wifi_creds.configured = true;
+    }
+  }
+
+  // The saved-networks ring (wifi_store.h). A torn, foreign or absent blob
+  // parses as "no store". The legacy pair above is folded in (RAM; written
+  // out on the next join that works, the store's rule) so an older image's
+  // one network counts. A ring with networks and no pair — nothing this
+  // sketch writes, but a seed could — adopts the ring's last good network
+  // as the pick to try, written as the pair once it has worked.
+  {
+    uint8_t blob[canary::net::wifi_store::BLOB_BYTES];
+    bool parsed = false;
+    if (nvs->getBytesLength(canary::net::wifi_store::NVS_KEY) == sizeof(blob) &&
+        nvs->getBytes(canary::net::wifi_store::NVS_KEY, blob, sizeof(blob)) == sizeof(blob)) {
+      parsed = canary::net::wifi_store::parse(blob, sizeof(blob), g_wifi_store);
+    }
+    if (!parsed) canary::net::wifi_store::init(g_wifi_store);
+    if (g_wifi_creds.configured) {
+      if (canary::net::wifi_store::import_legacy(g_wifi_store, g_wifi_creds.ssid, g_wifi_creds.password)) {
+        g_wifi_store_dirty = true;
+      }
+    } else if (g_wifi_store.count > 0 && !g_wifi_ap_only) {
+      wifi_store_adopt(g_wifi_store.last_good < g_wifi_store.count ? g_wifi_store.last_good : 0);
     }
   }
 
@@ -9895,7 +10273,14 @@ static bool wifi_clear_credentials() {
     nvs->remove(NVS_KEY_WIFI_SSID);
     nvs->remove(NVS_KEY_WIFI_PASS);
     nvs->remove(NVS_KEY_WIFI_EN);
+    // Forget means every saved network: a ring left behind would make the
+    // next boot "recovery" of networks the owner just said to forget.
+    nvs->remove(canary::net::wifi_store::NVS_KEY);
   }
+  canary::net::wifi_store::init(g_wifi_store);
+  g_wifi_store_dirty = false;
+  g_wifi_notfound_streak = 0;
+  g_wifi_pick_rotated = false;
 
   // What the setup door counted as stored credentials, before the wipe: a
   // unit with credentials (and no door join still pending over them).
@@ -10095,6 +10480,7 @@ static void wifi_raise_ap() {
   wifi_apply_ap_security();  // F16: WPA2/WPA3 transition + PMF when the core allows
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
+  __atomic_store_n(&g_onboard_creds_submitted, false, __ATOMIC_RELAXED);  // a new AP session
   IPAddress ip = WiFi.softAPIP();
   snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
            "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
@@ -10115,6 +10501,15 @@ static void wifi_check_connection() {
         g_wifi_status.state = WIFI_PROV_CONNECTED;
         g_wifi_status.connected_since_ms = now;
         g_wifi_status.last_fail_reason[0] = '\0';
+        g_wifi_notfound_streak = 0;
+        // A join that WORKED is the one time the ring is written
+        // (wifi_store.h's rule), and the one time a pick the ring rotated
+        // in becomes the legacy pair's current pick.
+        wifi_store_note_joined(g_wifi_creds.ssid, g_wifi_creds.password);
+        if (g_wifi_pick_rotated) {
+          g_wifi_pick_rotated = false;
+          wifi_save_credentials();
+        }
 
         char msg[80];
         snprintf(msg, sizeof(msg), "Connected to %s", g_wifi_creds.ssid);
@@ -10123,28 +10518,38 @@ static void wifi_check_connection() {
       }
 
       // Detect specific failure modes early so the UI can show a useful
-      // reason instead of waiting for the full timeout. WiFi.status() returns
-      // a uint8_t; compare directly against the well-known constants rather
+      // reason instead of waiting for the full timeout — in the fleet's
+      // words (wifi_join_policy.h join_failure_label: the label every setup
+      // surface shows for the same failure). WiFi.status() returns a
+      // uint8_t; compare directly against the well-known constants rather
       // than narrowing to wl_status_t (which would invoke implementation-
       // defined behavior for any future status value the enum doesn't list).
+      // A verdict the radio has reached (no such SSID; the handshake
+      // refused) fails the attempt at once; anything else waits for the
+      // clock, and the status AT the deadline is classified the same way —
+      // WL_IDLE_STATUS there is "associated, no address" (DHCP silent),
+      // still-disconnected is Unknown, "Couldn't connect".
       const uint8_t wl = WiFi.status();
-      const char* fail_reason = nullptr;
-      if (wl == WL_NO_SSID_AVAIL) {
-        fail_reason = "Network not found";
-      } else if (wl == WL_CONNECT_FAILED) {
-        fail_reason = "Wrong password or auth rejected";
-      }
+      const bool verdict_now = (wl == WL_NO_SSID_AVAIL || wl == WL_CONNECT_FAILED);
+      const bool timed_out = now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS;
 
-      if (fail_reason) {
+      if (verdict_now || timed_out) {
+        const canary::net::JoinFailure why = wifi_classify_failure(wl);
+        const char* label = canary::net::join_failure_label(why);
         snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
-                 "%s", fail_reason);
+                 "%s", label);
         g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, fail_reason, g_wifi_creds.ssid);
-      } else if (now - g_wifi_status.last_connect_ms > WIFI_CONNECT_TIMEOUT_MS) {
-        snprintf(g_wifi_status.last_fail_reason, sizeof(g_wifi_status.last_fail_reason),
-                 "%s", "Connection timeout");
-        g_wifi_status.state = WIFI_PROV_FAILED;
-        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "WiFi connection timeout", g_wifi_creds.ssid);
+        log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, label, g_wifi_creds.ssid);
+        // The ring's tally (RAM; written with the next proven join): a
+        // NotFound twice running on this pick is what lets the FAILED
+        // retry below move on to the next saved network.
+        canary::net::wifi_store::note_result(
+            g_wifi_store, canary::net::wifi_store::find(g_wifi_store, g_wifi_creds.ssid), false);
+        if (why == canary::net::JoinFailure::NotFound) {
+          if (g_wifi_notfound_streak < 255) g_wifi_notfound_streak++;
+        } else {
+          g_wifi_notfound_streak = 0;
+        }
       }
       break;
     }
@@ -10172,9 +10577,11 @@ static void wifi_check_connection() {
       break;
 
     case WIFI_PROV_FAILED:
-      // Attempt reconnection periodically
+      // Attempt reconnection periodically — on the next saved network when
+      // this one has not been seen twice running (wifi_store_rotate_if_due).
       if (g_wifi_creds.configured && g_wifi_creds.enabled &&
           now - g_wifi_status.last_connect_ms > WIFI_RECONNECT_INTERVAL_MS) {
+        wifi_store_rotate_if_due();
         wifi_connect_to_home();
       }
       break;
@@ -10504,6 +10911,7 @@ static void wifi_init_provisioning() {
 
   g_wifi_status.ap_active = true;
   g_health.wifi_active = true;
+  __atomic_store_n(&g_onboard_creds_submitted, false, __ATOMIC_RELAXED);  // a new AP session
 
   IPAddress ip = WiFi.softAPIP();
   snprintf(g_wifi_status.ap_ip, sizeof(g_wifi_status.ap_ip),
@@ -11704,23 +12112,43 @@ void setup() {
   #endif
 
   // ── TLS Certificate Initialization ──
-  // Skip TLS during first-boot setup: the captive-portal flow runs over plain
-  // HTTP on the AP, and a self-signed cert makes captive-portal mini-browsers
-  // (iOS CNA, Android) render a blank white screen. There's no sensitive data
-  // before WiFi is configured and the AP is the security boundary, so HTTP-only
-  // is safe here. Setup completes → reboot → this runs with setup inactive and
-  // HTTPS comes up normally for the dashboard and WiFi provisioning.
+  // Two facts, kept apart. THE CERTIFICATE IS KNOWN on every initialized
+  // boot: init_tls_cert() loads it from NVS, or generates it once and stores
+  // it, so g_tls_cert_fp_hex is populated on the first boot too. THE HTTPS
+  // SERVER IS UP (g_tls_enabled: the port-443 server and the port-80
+  // redirect, init_http_server) only outside first-boot setup: the
+  // captive-portal flow runs over plain HTTP on the AP, and a self-signed
+  // cert makes captive-portal mini-browsers (iOS CNA, Android) render a
+  // blank white screen. There's no sensitive data before WiFi is configured
+  // and the AP is the security boundary, so HTTP-only is safe here. Setup
+  // completes → reboot → this runs with setup inactive and HTTPS comes up
+  // for the dashboard and WiFi provisioning.
+  //
+  // The two used to be one: the certificate was skipped with the server, so
+  // the Bluetooth setup door — whose join happens INSIDE the wizard — handed
+  // the phone a receipt with an http base_url and no fingerprint, and the
+  // reboot that followed made the WAP https-only: every later call failed,
+  // "Lost" forever. Now the door spells the steady-state address and its
+  // pin (tls_after_setup()) while the servers are still HTTP. The one-time
+  // keygen moves to the first boot with this (tls_keygen_rng feeds the
+  // watchdog through it).
   #if FEATURE_WIFI_AP && FEATURE_HTTP_SERVER
-  if (g_device.initialized && !setup_wizard::is_active()) {
-    if (init_tls_cert()) {
-      g_tls_enabled = true;
+  if (g_device.initialized) {
+    const bool cert_known = init_tls_cert();
+    if (!setup_wizard::is_active()) {
+      if (cert_known) {
+        g_tls_enabled = true;
+      } else {
+        Serial.println("[WARN] TLS unavailable — running in HTTP-ONLY mode");
+        Serial.println("[WARN] API traffic is NOT encrypted.");
+        g_tls_enabled = false;
+      }
     } else {
-      Serial.println("[WARN] TLS unavailable — running in HTTP-ONLY mode");
-      Serial.println("[WARN] API traffic is NOT encrypted.");
-      g_tls_enabled = false;
+      Serial.println("[..] SETUP MODE: HTTP-only so the captive portal renders");
+      Serial.println(cert_known
+                         ? "[..] SETUP MODE: certificate known — the setup door's receipt names the https address"
+                         : "[..] SETUP MODE: no certificate — the setup door's receipt stays http");
     }
-  } else if (setup_wizard::is_active()) {
-    Serial.println("[..] SETUP MODE: HTTP-only so the captive portal renders");
   }
   #endif
 
@@ -11740,6 +12168,16 @@ void setup() {
   Serial.println("[..] Starting WiFi Access Point...");
   if (start_wifi_ap()) {
     Serial.printf("[WIFI] AP started: %s (password: %s)\n", g_device.ap_ssid, g_device.ap_password);
+    {
+      // The same network as a scannable code, the fleet's one line
+      // (onboarding_fsm.h qr_line: `[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;`,
+      // the format phones' camera apps parse). The line above stays as it is:
+      // both flashers parse it (flash-core.js SETUP_NETWORK_LINE_RES).
+      char qr[160];
+      if (canary::net::onboard::qr_line(qr, sizeof(qr), g_device.ap_ssid, g_device.ap_password) > 0) {
+        Serial.println(qr);
+      }
+    }
 
     #if FEATURE_HTTP_SERVER
     boot_stage("api-start");
@@ -12061,6 +12499,17 @@ void setup() {
     ota_cfg.on_progress      = ota_on_progress;
     ota_cfg.can_install      = ota_can_install;
     ota_cfg.on_before_reboot = ota_before_reboot;
+    // The hardware binding a manifest_version 2 manifest is checked against
+    // (docs/OTA.md §3): the IDF target this image was built for. This sketch
+    // has no pins-header board token, so only the chip binds.
+#ifdef CONFIG_IDF_TARGET
+    ota_cfg.chip             = CONFIG_IDF_TARGET;
+#endif
+    // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
+    // image pending; loop()'s securacv_ota_health_tick() confirms it after a
+    // minute of the STA link holding, so a crash loop inside that minute
+    // rolls back by the bootloader's own rule.
+    ota_cfg.confirm_dwell_ms = 60000;
     if (securacv_ota_init(&ota_cfg) == ESP_OK) {
       Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
                     OTA_PRODUCT, FIRMWARE_VERSION);
@@ -12139,6 +12588,7 @@ void setup() {
   boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
   boot_line("    Token + WiFi credentials are printed above on every boot");
   boot_line("    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity");
+  boot_line("    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)");
   boot_separator();
   Serial.println();
   print_table_header();
@@ -12431,17 +12881,92 @@ static void ble_scanners_release_if_due() {
 // LOOP
 // ════════════════════════════════════════════════════════════════════════════
 
+// BOOT held factory_reset_hold_ms (10 s, onboarding_fsm.h): the node goes
+// back to the box ON THE NETWORK and keeps its witness key — reset_hold.h's
+// default scope, ResetScope::CredentialsAndSettings. The key is the device's
+// birth certificate; every hub and display that pinned it (the HA / cvtrust /
+// fleet_peers TOFU pins, docs/TRUST_MODEL.md) would otherwise see a stranger.
+//
+// Cleared: the saved Wi-Fi networks (what POST /api/wifi/forget clears, the
+// ring included — and it re-arms the setup door's first-boot window), the
+// standalone choice, the MQTT bridge's broker row and CA (csi_mqtt's own
+// keys only), the device name and the first-boot flag (the wizard runs again).
+// Kept: the Ed25519 identity key, the chain state and its NVS records, the
+// witness records and health log on SD, the API token (derived from the
+// key), the OTA settings, the CSI module's tuning. Runs on the loop task
+// (the BOOT poll) and RETURNS: the restart is the release edge's
+// (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
+static void factory_reset_by_hold() {
+  Serial.println("[RESET] BOOT held 10 s -> factory reset (credentials + settings, identity kept)");
+  log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "Factory reset by BOOT hold",
+             canary::io::reset_scope_label(canary::io::ResetScope::CredentialsAndSettings));
+  WiFi.disconnect(true);
+  wifi_clear_credentials();   // wifi_ssid / wifi_pass / wifi_en / wifi_nets, as Forget Wi-Fi does
+  {
+    NvsMainSession nvs(false);
+    if (nvs.isOpen()) nvs->remove(NVS_KEY_WIFI_AP_ONLY);
+  }
+  g_wifi_ap_only = false;
+  if (!csi_mqtt::config_clear()) {
+    Serial.println("[RESET] MQTT settings: NVS refused the clear (kept)");
+  }
+  if (!setup_wizard::reset_to_first_boot()) {
+    Serial.println("[RESET] Setup flag / device name: NVS refused the clear (kept)");
+  }
+  // No restart here: GPIO0 is the BOOT strapping pin and the hand is still on
+  // it, so a restart now would boot the ROM download loader, not the first-boot
+  // setup. The release edge (HoldEvent::Released, stage >= 2) restarts.
+  Serial.println("[RESET] Done - release BOOT to restart into first-boot setup");
+  Serial.flush();
+}
+
 void loop() {
   #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
   #endif
 
+  // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
+  // confirmed only after a minute of the home link holding.
+  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+
   // Service the captive DNS redirector whenever it's up (it self-guards on
   // s_dns_running), so it answers AP clients in steady state too — not only
   // while the first-boot wizard is active.
   setup_wizard::dns_process();
+  if (!setup_wizard::is_active()) {
+    // A setup-door claim spent (the receipt served on the HTTP task names
+    // the steady-state https address, which this HTTP-only boot does not
+    // answer): the armed reboot comes to a short runway from the spend —
+    // set, not merely floored, so a deadline still 100 s out is brought in.
+    // Taken once the wizard is complete (the WL_CONNECTED branch below arms
+    // the deadline on the pass that completes it; a stamp set before that
+    // pass waits here for it); a spend with no reboot armed (a door opened
+    // by Forget Wi-Fi on a unit already in steady state, already on https)
+    // has nothing to hurry and the stamp is dropped.
+    const uint32_t spent_at =
+        __atomic_exchange_n(&g_improv_claim_spent_at_ms, 0u, __ATOMIC_ACQ_REL);
+    if (spent_at != 0) {
+      const uint32_t brought = provisioning_logic::claim_spent_reboot_deadline(
+          __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE),
+          millis(), CLAIM_SETTLED_REBOOT_RUNWAY_MS);
+      if (brought != 0) {
+        __atomic_store_n(&g_setup_grace_reboot_at_ms, brought, __ATOMIC_RELEASE);
+        g_setup_reboot_held_for_claim = false;
+        Serial.println("[OK] Setup-door claim spent — rebooting into HTTPS after a short runway...");
+        log_health(SCV_LOG_INFO, SCV_CAT_NETWORK,
+                   "Setup-door claim spent: rebooting into steady state after a short runway", nullptr);
+      }
+    }
+  }
   if (setup_wizard::is_active()) {
-    setup_wizard::check_timeout();
+    // The wizard's idle restart (15 min after the last sign of life), held
+    // while the Bluetooth setup door is open: a phone working the door is a
+    // sign of life (ble_improv_note_activity), but a person watching the
+    // door's card on their phone, about to tap, has touched nothing — and
+    // the restart landed under them (the WAP gone for ~20 s, the tap finding
+    // nothing). The door's own window bounds the hold; when it shuts, the
+    // idle rule applies again (provisioning_logic::wizard_restart_due).
+    setup_wizard::check_timeout(ble_improv::setup_open());
     if (WiFi.status() == WL_CONNECTED &&
         __atomic_load_n(&g_setup_grace_reboot_at_ms, __ATOMIC_ACQUIRE) == 0) {
       // The join succeeded, but the provisioning phone is mid-handoff: the
@@ -12598,12 +13123,42 @@ void loop() {
   usb_evidence_drive::poll();
 
   // Check boot button:
-  //   Short press (<2s) = open provisioning gate
+  //   Short press (<2s)  = open provisioning gate
   //   Medium hold (2-3s) = print device info
-  //   Long hold (>3s)  = reserved (no factory-reset path exists today)
+  //   Hold 3 s           = "keep holding" on serial (reset_hold.h Warn; a release here does nothing)
+  //   Hold 10 s          = factory reset: credentials + settings, identity kept (reset_hold.h Reset)
   static uint32_t boot_btn_start = 0;
   static bool boot_btn_was_pressed = false;
+  // The long hold, classified once for every board (reset_hold.h): Warn at
+  // 3 s, Reset at the fleet's factory_reset_hold_ms, no Wipe stage — the
+  // identity is kept. Reset ERASES while the hand is still on the button, so
+  // the feedback lands first; the RESTART waits for the release edge, because
+  // GPIO0 is the strapping pin and a restart under a held BOOT lands in the
+  // ROM download loader (the headless boards do the same). Released from the
+  // Warn stage or earlier, the short/medium gestures below keep their meaning.
+  static canary::io::ResetHold s_reset_hold;
+  static_assert(canary::io::ResetHold{}.reset_ms == canary::net::onboard::Timing{}.factory_reset_hold_ms,
+                "ResetHold's Reset stage is the onboarding Timing's factory_reset_hold_ms");
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
+
+  switch (s_reset_hold.step(pressed, millis())) {
+    case canary::io::HoldEvent::Warn:
+      Serial.println("[BOOT] Keep holding: 10 s = factory reset (credentials + settings; identity kept)");
+      break;
+    case canary::io::HoldEvent::Reset:
+      factory_reset_by_hold();   // erases; the restart is the release edge's
+      break;
+    case canary::io::HoldEvent::Released:
+      if (s_reset_hold.released_stage >= 2) {
+        Serial.println("[RESET] BOOT released - restarting into first-boot setup");
+        Serial.flush();
+        delay(50);
+        ESP.restart();   // does not return
+      }
+      break;
+    default:
+      break;
+  }
 
   if (pressed && !boot_btn_was_pressed) {
     boot_btn_start = millis();
@@ -12616,11 +13171,12 @@ void loop() {
     boot_btn_start = 0;
 
     if (duration >= BOOT_LONG_PRESS_MS) {
-      // Reserved. There is NO factory-reset path in this sketch today — the
-      // banner and docs/FAQ.md say so; the owner's reset of the network is
-      // Forget Wi-Fi on the dashboard (wifi_clear_credentials), which also
+      // Released between the 3 s warning and the 10 s reset: nothing
+      // happened. The reset fires at 10 s while the button is still held
+      // (ResetHold above); Forget Wi-Fi on the dashboard
+      // (wifi_clear_credentials) stays the network-only reset, and still
       // re-arms the Bluetooth setup door's first-boot window.
-      Serial.println("[BOOT] Long hold: reserved (no factory reset on this build; use Forget Wi-Fi on the dashboard)");
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard resets the network only)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {

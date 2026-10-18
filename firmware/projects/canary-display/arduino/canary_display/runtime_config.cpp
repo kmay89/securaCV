@@ -8,6 +8,7 @@
 #include "config.h"
 #include "log.h"
 #include "device_pseudonym.h"  // the per-unit suffix (MAC-free, Invariant III)
+#include "wifi_store.h"         // the fleet's saved-network ring (common/)
 
 // Prefer local dev secrets if present; otherwise use the CI stub. Two
 // spellings because the secrets dir may reach the compiler either as an
@@ -27,6 +28,11 @@ namespace {
 
 RuntimeConfig g_cfg{};
 bool g_loaded = false;
+
+// The saved-network ring (wifi_store.h): data logic in common/, the bytes
+// here — one NVS blob beside the legacy pair, in the same namespace.
+namespace wifi_store = canary::net::wifi_store;
+wifi_store::Store g_ring;
 
 void copy_str(char* dst, size_t cap, const char* src) {
   if (dst == nullptr || cap == 0) return;
@@ -117,6 +123,37 @@ CredSource load_credential(Preferences& prefs, const char* key,
   }
   copy_str(dst, cap, compiled);
   return CredSource::Fallback;
+}
+
+// Write the ring and trust the readback, not the call (the forget rule
+// below, for the same reason: a write that reported success and did not
+// stick fails exactly the same way for the user). False = not durable.
+bool save_ring(Preferences& prefs) {
+  uint8_t blob[wifi_store::BLOB_BYTES];
+  if (wifi_store::serialize(g_ring, blob, sizeof(blob)) == 0) return false;
+  prefs.putBytes(wifi_store::NVS_KEY, blob, sizeof(blob));
+  uint8_t back[wifi_store::BLOB_BYTES];
+  const size_t n = prefs.getBytes(wifi_store::NVS_KEY, back, sizeof(back));
+  return n == sizeof(blob) && memcmp(blob, back, sizeof(blob)) == 0;
+}
+
+// Load the ring, then fold the legacy pair in (first load after this
+// firmware lands, or a flasher's / a compiled secret's fresh seed). A torn
+// blob parses as "no store" and the pair rebuilds it — never as a network
+// nobody typed. A placeholder pair is NOT a network: importing "ci" would
+// hand the supervisor an SSID no router has ever announced, forever.
+void load_ring(Preferences& prefs) {
+  wifi_store::init(g_ring);
+  uint8_t blob[wifi_store::BLOB_BYTES];
+  const size_t n = prefs.getBytes(wifi_store::NVS_KEY, blob, sizeof(blob));
+  if (n == sizeof(blob) && !wifi_store::parse(blob, n, g_ring)) {
+    log_line("CFG", "Saved-network store unreadable - starting a fresh ring.");
+  }
+  if (!is_placeholder(g_cfg.wifi_ssid) &&
+      wifi_store::import_legacy(g_ring, g_cfg.wifi_ssid, g_cfg.wifi_pass) &&
+      !save_ring(prefs)) {
+    log_line("CFG", "Store would not hold the saved-network ring - this boot only.");
+  }
 }
 
 }  // namespace
@@ -216,6 +253,8 @@ const RuntimeConfig& get() {
     }
   }
 
+  load_ring(prefs);
+
   prefs.end();
   g_loaded = true;
   return g_cfg;
@@ -233,11 +272,21 @@ bool forget_wifi_credentials() {
   }
   prefs.remove("wifi_ssid");
   prefs.remove("wifi_pass");
+  // The ring and the setup AP's stored key go with the pair: the fleet's
+  // reset scope (reset_hold.h) is "credentials and settings, identity kept",
+  // and the headless supervisor's forget_all() clears the same three keys.
+  // The next wizard mints a fresh key — a phone that remembers this glass's
+  // setup network from before will refuse it silently (the lockout the
+  // stuck-phone hint names at 45 s); a factory reset is the one time that
+  // trade is the owner's own decision.
+  prefs.remove(wifi_store::NVS_KEY);
+  prefs.remove("ap_pass");
   // Trust the readback, not the calls: remove() also returns false for a
   // key that never existed, and a remove that silently failed is exactly
   // the case where rebooting into "setup will open" would be a lie — the
   // old SSID would load right back (review catch).
-  const bool gone = !prefs.isKey("wifi_ssid") && !prefs.isKey("wifi_pass");
+  const bool gone = !prefs.isKey("wifi_ssid") && !prefs.isKey("wifi_pass") &&
+                    !prefs.isKey(wifi_store::NVS_KEY) && !prefs.isKey("ap_pass");
   prefs.end();
   if (!gone) {
     log_line("CFG", "NVS would not release the credentials - still joined.");
@@ -248,6 +297,7 @@ bool forget_wifi_credentials() {
   get();
   g_cfg.wifi_ssid[0] = '\0';
   g_cfg.wifi_pass[0] = '\0';
+  wifi_store::init(g_ring);
   log_line("CFG", "WiFi credentials forgotten - setup opens on next boot.");
   return true;
 }
@@ -257,17 +307,64 @@ void set_wifi_credentials(const char* ssid, const char* pass) {
   get();  // ensure the cache exists before we patch it
   copy_str(g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), ssid);
   copy_str(g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), pass ? pass : "");
+  // Into the ring as the network that just WORKED (callers persist only on
+  // success — the portal rule), beside the legacy pair.
+  const bool ringed = wifi_store::add(g_ring, g_cfg.wifi_ssid, g_cfg.wifi_pass);
   Preferences prefs;
   if (prefs.begin("securacv", /*readOnly=*/false)) {
     prefs.putString("wifi_ssid", g_cfg.wifi_ssid);
     prefs.putString("wifi_pass", g_cfg.wifi_pass);
+    const bool durable = ringed && save_ring(prefs);
     prefs.end();
-    log_line("CFG", "WiFi credentials provisioned to NVS.");
+    log_line("CFG", durable ? "WiFi credentials provisioned to NVS."
+                            : "WiFi credentials provisioned to NVS; the saved-network "
+                              "ring would not take them (legacy pair only).");
   } else {
     // NVS down: the session still works (cache is patched); the wizard will
     // simply run again next boot. Honest failure, not a dead end.
     log_line("CFG", "NVS unavailable - credentials held for this boot only.");
   }
+}
+
+int wifi_saved_networks() {
+  get();
+  return (int)g_ring.count;
+}
+
+int wifi_saved_pick(int previous) {
+  get();
+  return wifi_store::pick(g_ring, nullptr, nullptr, 0, previous);
+}
+
+const char* wifi_saved_ssid(int idx) {
+  get();
+  return (idx >= 0 && idx < (int)g_ring.count) ? g_ring.nets[idx].ssid : "";
+}
+
+const char* wifi_saved_pass(int idx) {
+  get();
+  return (idx >= 0 && idx < (int)g_ring.count) ? g_ring.nets[idx].pass : "";
+}
+
+void wifi_saved_note_result(int idx, bool ok) {
+  get();
+  if (idx < 0 || idx >= (int)g_ring.count) return;
+  const uint8_t was_good = g_ring.last_good;
+  wifi_store::note_result(g_ring, idx, ok);
+  if (!ok || was_good == g_ring.last_good) return;
+  // A different network is on the air now: persist the ring and keep the
+  // legacy pair equal to it, so every reader of wifi_ssid (the settings page,
+  // the commission QR, the boot join) names the network actually in use.
+  copy_str(g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), g_ring.nets[idx].ssid);
+  copy_str(g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), g_ring.nets[idx].pass);
+  Preferences prefs;
+  if (!prefs.begin("securacv", /*readOnly=*/false)) return;
+  prefs.putString("wifi_ssid", g_cfg.wifi_ssid);
+  prefs.putString("wifi_pass", g_cfg.wifi_pass);
+  if (!save_ring(prefs)) {
+    log_line("CFG", "Store would not hold the saved-network ring - this boot only.");
+  }
+  prefs.end();
 }
 
 } // namespace canary::cfg

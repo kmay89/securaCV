@@ -1934,6 +1934,7 @@ public struct FleetFigure: Sendable {
     "board:seeed_xiao_esp32s3": "device.canary-wap",
     "esp32-c3": "device.canary-vision-devkit",
     "waveshare-esp32c3-lcd147": "device.canary-nightlight",
+    "waveshare-esp32c6-lcd147": "device.canary-display-nightstand-c6",
     "waveshare-esp32s3-amoled241": "device.canary-display-amoled241",
     "waveshare-esp32s3-lcd147": "device.canary-display-nightstand",
     "waveshare-esp32s3-lcd43": "device.canary-display-dash",

@@ -446,7 +446,12 @@
 #define SERIAL_CDC_WAIT_MS       2500
 #define BOOT_BUTTON_HOLD_MS      2000
 #define BOOT_SHORT_PRESS_MS      50      // Debounce floor for short press
-#define BOOT_LONG_PRESS_MS       5000    // Hold for factory reset
+// The factory-reset hold's warn (3 s) and reset (10 s) stages are the fleet's
+// (common/io/reset_hold.h, onboarding_fsm.h Timing::factory_reset_hold_ms);
+// this is the one number that is this tree's own: the opt-in third stage that
+// wipes the identity too, which only the PIO canary offers (its historical
+// reset did it at 5 s by default). main.cpp sets it on the hold.
+#define BOOT_WIPE_HOLD_MS        30000   // Hold for the full wipe (identity too)
 #define BOOT_MEDIUM_PRESS_MS     2000    // Medium hold for info print
 // A short BOOT tap opens the provisioning gate for this long (WAP parity):
 // a browser polling GET /api/provisioning-receipt every 2 s reliably catches

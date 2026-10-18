@@ -22,6 +22,7 @@
 // main.cpp's 'f' card so a toolchain without a header still builds — an absent
 // fact reads as "off", which is the safe direction for every rule.
 #include "identity/key_at_rest.h"
+#include "network/onboarding_fsm.h"  // ap_ssid(): the fleet's SecuraCV-<type>-<4> setup-AP name
 #if __has_include(<esp_flash_encrypt.h>)
 #include <esp_flash_encrypt.h>
 #define CRYPTO_HAVE_FLASH_ENCRYPT 1
@@ -671,5 +672,8 @@ void generate_ap_ssid(char* out, size_t cap, const uint8_t fp[2]) {
   if (fp == nullptr) { out[0] = '\0'; return; }
   char suffix[5];
   unambiguous_suffix16(fingerprint16(fp), suffix);
-  if (snprintf(out, cap, "SecuraCV-%s", suffix) >= (int)cap) out[0] = '\0';
+  // SecuraCV-canary-<4> (onboarding_fsm.h): the node type so a household
+  // unboxing two kinds of Canary can tell the two setup networks apart. The
+  // builder writes nothing on a cap it cannot fill — never a truncated name.
+  canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_CANARY, suffix, nullptr);
 }

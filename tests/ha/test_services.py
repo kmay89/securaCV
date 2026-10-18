@@ -322,10 +322,10 @@ async def test_the_buttons_run_the_actions(
 
 
 async def test_the_watch_actions_still_register_beside_the_kernel_ones(hass: HomeAssistant, kernel: KernelMock) -> None:
-    """Five actions exist whether or not an entry is loaded (action-setup)."""
+    """Six actions exist whether or not an entry is loaded (action-setup)."""
     entry = make_mqtt_only_entry()
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    for service in ("start_watch", "end_watch", "list_watches", "verify", "export_evidence"):
+    for service in ("start_watch", "end_watch", "list_watches", "verify", "export_evidence", "staged_update"):
         assert hass.services.has_service(DOMAIN, service), service

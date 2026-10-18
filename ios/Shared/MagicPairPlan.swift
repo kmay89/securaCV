@@ -23,10 +23,18 @@
 //   * "Nothing answered" is NOT final while the claim lives: the claim was
 //     never spent, so the sheet offers Try again until it expires — the
 //     common case is a phone that was off Wi-Fi, or a `.local` name that
-//     had not settled yet, and both fix themselves in seconds.
+//     had not settled yet, and both fix themselves in seconds. A third
+//     cause is named first when it applies: Local Network switched off for
+//     this app, which makes every dial on the LAN fail the same way and
+//     does not fix itself — its note carries the Settings button.
 //   * Two refusals before anything is dialed, the same two PairView
 //     applies to a pasted receipt: a claim URL off the local network, and
 //     an https URL with no certificate fingerprint to pin.
+//
+// The hub hand-off a Sense or Vision takes after its join is a different
+// thing — a write on the same Bluetooth link, with the Canary's one-byte
+// answer (ImprovWire.hubHandoff / HubHandoffStatus); the sheet's words for
+// each answer live beside the sheet (NearbySetupLogic.hubEnding).
 
 import Foundation
 
@@ -86,6 +94,11 @@ enum MagicPairPlan {
         /// Wi-Fi — the cause named, and the one thing to do about it.
         static let phoneOffWiFi =
             "This phone is off Wi-Fi, so it couldn't collect the Canary's pairing key — the key is only handed over on your home network, never over Bluetooth. Join your Wi-Fi, then tap Try again; its key waits three minutes."
+        /// The same "nothing answered", when iOS's Local Network switch is
+        /// off for this app: every dial on the LAN fails the same way, and
+        /// it looked like the Canary's silence. The fix lives in Settings.
+        static let localNetworkOff =
+            "Local Network is off for SecuraCV, so this phone can't reach the Canary on your Wi-Fi to collect its pairing key — the key is only handed over on your home network, never over Bluetooth. Turn it on in Settings, then tap Try again; its key waits three minutes."
         /// The retry window closed with nothing reached.
         static let claimExpired =
             "The Canary is on your Wi-Fi, but its one-time pairing key expired before this phone could reach it. " + pairLater
@@ -102,8 +115,8 @@ enum MagicPairPlan {
 
         /// Every sentence, for the sweeps.
         static var all: [String] {
-            [pairLater, noClaim, notPrivate, tlsNoPin, unreachable, phoneOffWiFi, claimExpired,
-             refused, other("x"), receiptNotPrivate, receiptTLSNoPin]
+            [pairLater, noClaim, notPrivate, tlsNoPin, unreachable, phoneOffWiFi, localNetworkOff,
+             claimExpired, refused, other("x"), receiptNotPrivate, receiptTLSNoPin]
         }
     }
 
@@ -178,11 +191,15 @@ enum MagicPairPlan {
         return now < readAt.addingTimeInterval(lifetime - 5)
     }
 
-    /// The note for a dial that reached nobody: the phone being off Wi-Fi
-    /// is the cause worth naming (NetworkVantage knows it without any
-    /// permission); otherwise the Canary may still be settling in.
-    static func unreachableNote(phoneOnWiFi: Bool) -> String {
-        phoneOnWiFi ? Copy.unreachable : Copy.phoneOffWiFi
+    /// The note for a dial that reached nobody, by the cause worth naming,
+    /// in the order they are worth fixing: Local Network off for this app
+    /// first (Discovery's browse reports the denial; it stays off until
+    /// Settings says otherwise, whatever the Wi-Fi does), then the phone
+    /// being off Wi-Fi (NetworkVantage knows it without any permission);
+    /// otherwise the Canary may still be settling in.
+    static func unreachableNote(phoneOnWiFi: Bool, localNetworkBlocked: Bool = false) -> String {
+        if localNetworkBlocked { return Copy.localNetworkOff }
+        return phoneOnWiFi ? Copy.unreachable : Copy.phoneOffWiFi
     }
 
     private static func dial(_ url: URL, claim: ImprovWire.Claim, isPrivateHost: (URL) -> Bool) -> Step {

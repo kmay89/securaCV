@@ -96,14 +96,16 @@ The one honest footnote on the kernel is the iPhone app — see the next
 question. The other footnote is the Canaries themselves: a networked Canary
 talks to the MQTT broker *you* point it at, fetches a small signed update
 manifest once a day (no identifier rides on the request, and nothing installs
-unless you press Install or opt into Auto Update), and a display syncs its
-clock over SNTP and — only if you switch it on at the glass, on a display
-that has never had a hub configured — fetches an anonymous weather forecast.
+unless you press Install or opt into Auto Update), a Canary without GPS (a
+display, a Sense, a Vision, a Sentinel) syncs its clock over SNTP, and a
+display — only if you switch it on at the glass, on a display that has never
+had a hub configured — fetches an anonymous weather forecast.
 A Canary WAP used as its own access point makes no outbound connection at
 all. Every one of those paths is listed in
 [the security model](security/SECURITY_MODEL.md#the-networked-products-disclosed-outbound-paths),
-with the host test that pins its request shape where one exists (SNTP has
-none); none reaches us, because there is nothing of ours to reach. The
+with the host test that pins its request shape where one exists (SNTP's
+two hosts are pinned by name); none reaches us, because there is nothing
+of ours to reach. The
 desktop Flasher and Lab fetch their own updates, and any image you choose to
 flash, from the project's public GitHub releases.
 
@@ -343,11 +345,13 @@ pages, checks the login works, and then asks Home Assistant for the same
 things its Settings page would — the Mosquitto broker, a login for your
 Canaries (minted on the phone, kept in its Keychain), the broker connection,
 Frigate and the witness kernel — narrating each step and naming what stays
-yours. The one thing no second device can do today is install the SecuraCV
-*integration's* files; that is the one-line installer from the hub's
-terminal, and [the investigation](hub_headless_install.md) says what would
-close it. Honest status: host-tested; the first validated run on a real
-first boot is still owed, and the by-hand path in the guide always works.
+yours. The one thing no second device does for you is install the SecuraCV
+*integration's* files — that is one click of your own: open the SecuraCV
+panel in the hub's sidebar and press **Install the integration and restart
+Home Assistant** (the terminal one-liner in the guide remains the fallback;
+[the investigation](hub_headless_install.md) has the history). Honest
+status: host-tested; the first validated run on a real first boot is still
+owed, and the by-hand path in the guide always works.
 → [a truly headless hub install](hub_headless_install.md),
 [the full stack](full_stack_setup.md)
 
@@ -457,19 +461,30 @@ half-written hub card is simply written again.
 
 ### How do I give a new Canary my Wi-Fi? Do I have to type a setup key?
 
-Not any more, for a Sense, a Vision or a WAP. Out of the box those three
-open a small **Bluetooth setup door** — the open [Improv Wi-Fi](https://www.improv-wifi.com/)
-standard, the same one Home Assistant's own app speaks — and say so on the
-air. Open the SecuraCV iPhone app near the Canary within half an hour of
-plugging it in: a card appears within seconds ("A new Canary is nearby").
-Tap it, pick your Wi-Fi from the networks the Canary itself can see, type
-the password once, tap Pair when iOS asks, and the Canary answers with its
-own verdict. The credentials cross an encrypted Bluetooth link (LE Secure
-Connections — a passive listener learns nothing); the phone can remember
-your Wi-Fi in its Keychain, on that phone only, so the second Canary is two
-taps. For a WAP the same tap ends with the phone *paired*: the WAP hands it
-a one-time **claim ticket** over that link, and the phone trades it, on your
-Wi-Fi, for the receipt — the device's key itself never crosses Bluetooth.
+First, the honest line: the SecuraCV iPhone app is on **TestFlight by
+invite** today; its App Store release is pending ([the apps page says the
+same](https://securacv.com/download)). With it, a **Sense, Vision or WAP**
+needs no key typed. Out of the box those three open a small **Bluetooth
+setup door** for their first half hour after power-on. Open the app near
+the Canary: a card appears within seconds ("A new Canary is nearby"). Tap
+**Continue**, tap **Pair** when iOS asks, pick your Wi-Fi from the networks
+the Canary itself can see and type the password once; the phone then says
+*<name> is on <your Wi-Fi>*. The phone can remember your Wi-Fi, on that
+phone only, so the second Canary is two taps. For a Sense or Vision the
+same card hands it your hub as well — the broker's address and login ride
+over with the Wi-Fi, so it shows up in Home Assistant without a visit to
+the Flasher. The all-rounder **Canary** build has no door and always uses
+the setup network below.
+
+Without the app — or for the all-rounder Canary — the **setup network**:
+the Canary raises `SecuraCV-XXXX`; join it from any phone with the key it
+printed on its serial console at boot (the Flasher's done card shows the
+same key for a Sense, Vision or WAP it just flashed) and the setup page
+opens on its own. For makers: the door is the open
+[Improv Wi-Fi](https://www.improv-wifi.com/) standard over an encrypted
+Bluetooth link, and on a WAP the same tap trades a one-time claim ticket for
+the pairing receipt over your Wi-Fi — see
+[magic pairing (design)](design/magic_pairing.md).
 
 **When the door is open** — the rule, in the firmware's own words: *for a
 device nobody owns yet, and for an owner's own tap — never for a device that
@@ -484,8 +499,8 @@ good day or a bad one.
 
 The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
 its printed key, a display's glass QR (a display shows a QR instead of
-opening a door — a screen beats a radio), and the WAP's bonded Bluetooth
-service once it is paired.
+opening a door — a screen beats a radio), and the WAP's own setup page once
+it is paired.
 
 Honest status: the bytes and the rules are host-tested on both ends; the
 radio, the iOS pairing sheet and the BOOT button on each board have not yet
@@ -512,11 +527,18 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
-`SecuraCV-XXXX` network when it is off your home network) — or tell it to
+`SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
 forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
 `/api/wifi/forget` route), which clears the stored network and opens the
-door again for half an hour from that moment. There is no button gesture
-that factory-resets a WAP today. A Canary whose saved network is just
+door again for half an hour from that moment. Holding a WAP's BOOT button
+for 10 seconds (the serial console says "keep holding" at 3 s) is its
+factory reset: the saved Wi-Fi networks, the broker settings, the device
+name and the first-boot flag are cleared and the setup wizard runs again;
+the Ed25519 identity key, the witness chain and the sealed records are
+kept, so every hub and display that pinned the key still recognizes it
+(every Canary with a BOOT button has the same 10-second hold —
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). A
+Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
 instead; fix the router, or use that network's printed key.
 

@@ -36,6 +36,15 @@
 #define BOARD_WAVESHARE_ESP32C6_LCD147 1
 #endif
 
+// Which physical board this is, in the fleet-figure vocabulary (same
+// declaration, same reason, as the S3 stick's pins.h): the display publishes
+// it on /api/fleet and as the mDNS TXT `hw` key, so the apps draw this board
+// rather than a generic marker. It was missing here, so every C6 nightstand
+// showed up nameless in the Witness Wall, the iPhone and the Mac.
+#ifndef CANARY_FIGURE_HARDWARE
+#define CANARY_FIGURE_HARDWARE "waveshare-esp32c6-lcd147"
+#endif
+
 // ============================================================================
 // BOARD IDENTIFICATION
 // ============================================================================

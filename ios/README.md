@@ -325,14 +325,45 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
 - **A Canary — as easy as AirPods.** The target is one card, one tap, the
   household Wi-Fi asked for at most once, and a success card that names
   *this* Canary. How each piece is held to it:
-  - **No prompt before its reason.** `BLEConsole` builds no
-    `CBCentralManager` until the first scan or setup tap (creating one *is*
-    iOS's Bluetooth alert); the scan starts only after the discovery
-    consent, so Bluetooth and Local Network are asked right after the
-    person's own "Find my Canary" — on **Today itself** on a fresh install
-    (`FirstRunCard`, `TodayView`), not only on the Fleet tab
-    (`AddCanaryFlowTests` pins both: no manager at launch, one
-    construction site).
+  - **No prompt before its reason — and one at a time.** `BLEConsole`
+    builds no `CBCentralManager` until the first scan or setup tap
+    (creating one *is* iOS's Bluetooth alert); the scan starts only after
+    the discovery consent, so Bluetooth is asked right after the person's
+    own "Find my Canary" — on **Today itself** on a fresh install
+    (`FirstRunCard`, `TodayView`), not only on the Fleet tab. That tap
+    starts the Bluetooth scan **only**: it is the radio that finds and
+    provisions a brand-new Canary, and two system alerts stacked on one tap
+    was the first thing a newcomer met. The mDNS browse — and the Local
+    Network prompt with it — waits for its first real consumer
+    (`FleetStore.startLocalNetworkDiscoveryIfConsented`): the walkthrough's
+    "Watch it appear" row (which says why: "iOS asks for Local Network so
+    this phone can see it on your Wi-Fi"), the Fleet tab with a real fleet,
+    a Canary heard announcing it has just joined a network, or a launch
+    with a paired fleet; once asked for, every foreground restarts it.
+    (`AddCanaryFlowTests` pins all of it: no manager at launch, one
+    construction site, no browse in the consent tap, the copy.)
+  - **The phone keeps listening in your pocket — slowly, and for the door's
+    half hour.** With discovery consent on, backgrounding the app swaps the
+    fleet's presence scan (unfiltered, duplicates on — a shape iOS runs
+    only in the foreground) for a narrow **door scan**
+    (`BLEConsole.startBackgroundDoorScan`: the Improv Wi-Fi service a
+    brand-new Canary advertises, duplicates off, under the
+    `bluetooth-central` background mode). A door it hears goes to
+    `FleetStore`, which posts **one local notification per Canary per
+    session** ("A new Canary is nearby" — `NearbyCanaries.noticeBody`) and
+    only if notifications are already allowed (`CourtesyNotice`; the ask
+    stays with the first Test Alert, so no prompt lands at consent time).
+    The sighting is never counted as offered: the tap opens the app on
+    Today, the presence scan restarts and the card comes up as it would
+    have. Honest limits: iOS reports background discoveries on its own
+    schedule — tens of seconds, sometimes minutes, not the foreground's
+    seconds — and only while the app has been launched since the phone
+    restarted and not swiped away; the Canary's door is open for **30
+    minutes** after power-on, so a phone that hears nothing in that window
+    says what to try instead (`SetupGuide.nothingYetLine`, under every
+    "Listening…" after 20 s of silence: unplug and replug, or a BOOT tap
+    on a Sense or Vision). The listening card promises the notification
+    only while it can keep that promise (`FirstRunCard.listeningLine`).
   - **The card comes to you.** A Sense, Vision or WAP with no Wi-Fi saved
     opens its Bluetooth setup door (Improv Wi-Fi, the open standard;
     `Shared/ImprovWire.swift` is the pure twin of the firmware's
@@ -344,10 +375,20 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     device pseudonym upper-cased, not hex — and when exactly one is close
     and not yet offered (`NearbyCanaries.autoOffer`), **one card slides up
     over whatever screen is showing** (`NearbyOfferOverlay`, mounted at the
-    root): its figure, its name, Continue, Not now. Two on the table stay a
-    choice in the inline card (Today, Fleet, the "+" sheet and the first
-    section of the walkthrough — which listens before it asks "which
-    Canary is it?", because the advert already says).
+    root): its figure, its name ("Canary Sense K7MZ" — the family word,
+    `NearbyCanaries.title`, which its Fleet row keeps after the door shuts;
+    `FleetMerge.rememberDoorNames`), Continue, Not now. "Close" is −70 dBm,
+    relaxed to "in the room" (−85 dBm) for a phone with no fleet yet and
+    exactly one Canary in earshot — the brand-new owner's WAP powered on in
+    its final spot across the room has no ambiguity to protect
+    (`NearbyCanaries.offerThreshold`). Two on the table stay a choice in
+    the inline card (Today, Fleet, the "+" sheet and the first section of
+    the walkthrough — which listens before it asks "which Canary is it?",
+    because the advert already says). "Already offered" and "Not now" hold
+    while the door stays on the air and lapse once it has been off the air
+    for longer than the 15 s freshness window and come back
+    (`NearbyOfferLedger`): a replug is a new first boot, which is exactly
+    what the FAQ tells people to do.
   - **One tap, then the Canary's own word.** Continue →
     `Transport/ImprovClient.swift` connects; the first encrypted write (the
     network scan) raises **the iOS Pair sheet**, and the screen says to tap
@@ -411,11 +452,17 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   `Transport/SetupPortalClient.swift`). A brand-new WAP's fallback is its
   own setup page, which the walkthrough explains and the person drives (the
   bonded Bluetooth step it used to show could never list a device: a new
-  WAP does not advertise that console). What still needs the Flasher is
-  said where it matters: a Sense or Vision's hub login goes into the
-  Flasher's MQTT fields, and the walkthrough copies the password to the
-  clipboard (two-minute expiry; Universal Clipboard carries it to the Mac
-  the Flasher runs on) instead of printing it.
+  WAP does not advertise that console). A Sense or Vision's hub link rides
+  the same door as its Wi-Fi: the tap that provisions it hands over the
+  broker address and the Canary login this phone minted, once the hub
+  exists — set the hub up first, or tap BOOT once afterwards and the
+  Canary takes the hub from the phone (the firmware/app hand-off is being
+  built alongside; `docs/design/magic_pairing.md` §3.6 is its contract).
+  The walkthrough still copies the minted password to the clipboard
+  (two-minute expiry; Universal Clipboard carries it to a Mac) for a
+  Canary flashed with MQTT fields by hand, and its setup-network key is
+  read from the Flasher's serial console — the `[SETUP]` line at boot —
+  because the Flasher itself prints nothing.
 
 Honest status: the pure halves are host-tested (`ImprovWireTests`,
 `MagicPairPlanTests`, `NearbyCanaryTests`, `SetupGuideTests`,

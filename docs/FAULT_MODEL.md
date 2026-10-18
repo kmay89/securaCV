@@ -26,7 +26,7 @@ where that design is written down.
 | Canary power loss mid-record | yes | §2.2 | at most the in-flight line is lost; the chain resumes from the last complete record (card) or the last cached head (no card) |
 | Canary brownout / crash loop | yes | §2.6 | bounded: a crash-loop counter and a safe mode on the WAP and on the PlatformIO `canary`; a task watchdog on every product that has one; A/B rollback of an unconfirmed OTA image on every product (compile-checked and source-verified, not yet bench-verified) |
 | Host clock step (forward or back) | yes | §2.4 | the chain is not ordered by the wall clock; a step is sealed as `ClockSkew`; retention is bounded against both directions |
-| Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP), SNTP (display) or nothing (Sense, Vision) |
+| Device clock absent | yes | §2.4 | device buckets are uptime-based and say so; wall time comes from GPS (WAP, flagship) or SNTP (display, Sense, Vision, Sentinel); the records of the headless boards stay uptime-stamped |
 | Message loss, duplication, reordering (MQTT) | yes | §2.3 | at-most-once from a device; duplicates and losses are bounded and described, not prevented |
 | Broker outage, network partition | yes | §2.3 | devices keep sealing locally; the hub keeps sealing its own sources; nothing replays across a partition except the PlatformIO tree's bounded RAM queue and, when that product owns a card, its SD event backfill |
 | Sensor silent, corrupt, stuck | yes | §2.7 | silent and corrupt are detected and reported; stuck is not |
@@ -220,8 +220,9 @@ Retention is the one place the wall clock had teeth; see §2.1.
 `millis()`-derived, reset every boot, wrapping at 49.7 days, inside the
 hash as data (`witness_chain.h`). The WAP and the PlatformIO tree set the
 wall clock from GPS when a fix exists and attest the source per record;
-the display uses SNTP; Sense and Vision have no wall-clock source and their
-`ts_ms` is uptime. Cross-device time comparison is therefore not something
+the display, Sense, Vision and the Sentinel use SNTP (the headless three
+through the shared Wi-Fi supervisor), but the headless boards' `ts_ms` is
+still uptime: the clock dates their status page, not their records. Cross-device time comparison is therefore not something
 the chains support, and the threat model lists "no cross-device
 comparability" as a goal, not a gap.
 

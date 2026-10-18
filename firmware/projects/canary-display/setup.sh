@@ -72,6 +72,10 @@ flatten_includes() {
   sed -i -E 's|#include "story/|#include "|g' "$f"
   sed -i -E 's|#include "fleet_link/|#include "|g' "$f"
   sed -i -E 's|#include "time/|#include "|g' "$f"
+  # common/io (the BOOT button's reset hold). The display's own canary/io/
+  # headers were flattened by the canary/ rule above, so this only ever sees
+  # the shared ones.
+  sed -i -E 's|#include "io/|#include "|g' "$f"
   # <config.h> is the FLAVOR config (angle brackets skip this dir on purpose);
   # in the flat sketch it lives as flavor_config.h to avoid colliding with the
   # composition header canary/config.h (-> config.h).
@@ -134,6 +138,21 @@ generate_shared() {
     "${FIRMWARE_ROOT}/common/provision_qr/provision_qr.h"
     "${FIRMWARE_ROOT}/common/fleet_selfreport/fleet_selfreport.h"
     "${FIRMWARE_ROOT}/common/network/wifi_join_policy.h"
+    "${FIRMWARE_ROOT}/common/network/wifi_credential_policy.h"
+    # The fleet's onboarding state machine (the setup AP's name, the AP hold,
+    # the recovery re-raise — provision.cpp, wifi_mgr.cpp), its saved-network
+    # ring (runtime_config.cpp), the recovery portal's quiet-retry cadence
+    # (provision.cpp), the GET /api/status body and the clock policy it
+    # reports (glass_web.cpp), and the BOOT button's factory-reset hold
+    # (main.cpp). setup_portal_logic.h includes onboarding_fsm.h bare and
+    # wifi_store.h includes wifi_credential_policy.h bare — same directory
+    # in common/, same directory flat.
+    "${FIRMWARE_ROOT}/common/network/onboarding_fsm.h"
+    "${FIRMWARE_ROOT}/common/network/setup_portal_logic.h"
+    "${FIRMWARE_ROOT}/common/network/wifi_store.h"
+    "${FIRMWARE_ROOT}/common/network/node_status.h"
+    "${FIRMWARE_ROOT}/common/time/clock_sync.h"
+    "${FIRMWARE_ROOT}/common/io/reset_hold.h"
     # The Host-header guard glass_web.cpp gates writes and the CSRF token
     # with (shared with the canary tree's securacv_network; host-tested once
     # in firmware/tests_host).

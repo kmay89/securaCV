@@ -43,21 +43,47 @@ struct OpenSettingsButton: View {
 }
 
 /// "Listening…" where the radio can hear; the reason and the way out where
-/// it cannot.
+/// it cannot. Given when the listening began (`since`), a second footnote
+/// appears after SetupGuide.nothingYetAfter of silence — what to try when
+/// no card has come (the door's rules, from SetupGuide.nothingYetLine) —
+/// so the spinner never outlives its reason. Without `since` the row stays
+/// as it was (a network watch has its own words for a timeout).
 struct ListeningRow: View {
     let text: String
     let advice: RadioAdvice?
+    var since: Date? = nil
+    @State private var nothingYet = false
 
     var body: some View {
         if let advice {
             RadioAdviceRow(advice: advice)
         } else {
-            HStack(spacing: Theme.s) {
-                ProgressView()
-                Text(text)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: Theme.xs) {
+                HStack(spacing: Theme.s) {
+                    ProgressView()
+                    Text(text)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if nothingYet {
+                    Text(SetupGuide.nothingYetLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            // Restarts whenever the listening clock does (a new consent, a
+            // foreground), and is canceled with the row.
+            .task(id: since) {
+                nothingYet = false
+                guard let since else { return }
+                let wait = SetupGuide.nothingYetAfter - Date().timeIntervalSince(since)
+                if wait > 0 {
+                    try? await Task.sleep(for: .seconds(wait))
+                }
+                guard !Task.isCancelled else { return }
+                nothingYet = true
             }
         }
     }

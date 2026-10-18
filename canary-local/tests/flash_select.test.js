@@ -287,3 +287,35 @@ test("every why is a sentence, and no branch borrows another's evidence",
     assert.deepStrictEqual(picks.map((p) => p.kind),
       ["chip", "board", "current", "picked"]);
   });
+
+test("one chip, two boards: an ESP32-C6 shows the Sense AND the 1.47\" display",
+  async () => {
+    // The XIAO C6 Sense node and the Waveshare ESP32-C6-LCD-1.47 display are
+    // the same chip with the same 4 MB, so nothing the flasher reads tells
+    // them apart. Leading with the Sense and folding the display behind a
+    // "developer" button handed every display owner the wrong image — that
+    // is the regression this pins, on both flashers (desktop_parity).
+    const c = await core();
+    for (const flashBytes of [4 * MB, 8 * MB, null]) {
+      const pick = c.smartPick(catalog, {
+        chip: "ESP32-C6", chipLabel: "ESP32-C6", flashBytes,
+      });
+      const ids = pick.shortlist.map((p) => p.id);
+      assert.ok(ids.includes("securacv-canary-sense"), "Sense card shown");
+      assert.ok(ids.includes("securacv-canary-display-nightstand-c6"),
+        "the 1.47\" display card is shown, not folded");
+      assert.ok(!ids.includes("securacv-canary-sense-wellbeing"),
+        "same-board flavors stay in the browse — one card per board");
+      assert.match(pick.why, /more than one board/i);
+      assert.match(pick.why, /ESP32-C6-LCD-1\.47/);
+      assert.doesNotMatch(pick.why, /^Recommended/);
+    }
+  });
+
+test("a chip whose products share one board still gets one card", async () => {
+  const c = await core();
+  const only = { products: catalog.products.filter((p) => p.family === "sense") };
+  const pick = c.smartPick(only, { chip: "ESP32-C6" });
+  assert.deepStrictEqual(pick.shortlist.map((p) => p.id), [pick.product.id]);
+  assert.match(pick.why, /^Recommended for your/);
+});

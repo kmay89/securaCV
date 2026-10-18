@@ -17,6 +17,24 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.1 — 2026-10-16
+
+**A 1.47" C6 display is offered as a display, and every Canary on your
+network reaches the Witness Wall.**
+
+- **The ESP32-C6 display is no longer hidden behind the Sense.** The
+  Waveshare ESP32-C6-LCD-1.47 and the XIAO C6 Sense have the same chip and
+  the same flash, so the Flasher used to recommend the Sense and fold the
+  display under "show all (developer)". When the chip can't tell two boards
+  apart, the Flasher now says so and shows a card for each, with its
+  picture. The same goes for the ESP32-C3 boards.
+- **The Witness Wall shows every display, not just the first.** In a home
+  without a hub, the Wall stopped at the first Canary that answered. It now
+  asks each one it finds and shows them all, once each, using each device's
+  own report of itself.
+- **Your C6 nightstands get their own picture** in the Fleet book instead
+  of a generic marker.
+
 ## 0.12.0 — 2026-10-10
 
 **Your Pi hub finishes setting itself up, and every board says what it is

@@ -40,6 +40,21 @@
  * The beacon carrier calls advertise() with its bytes instead of touching
  * NimBLE itself.
  *
+ * The hub hand-off: beside the Improv service, the SecuraCV companion
+ * service (hub_handoff.h; the same UUID the WAP registers for its claim)
+ * carries one characteristic, HUB, through which the phone that just handed
+ * the device its Wi-Fi hands it the broker too — the hub it found over
+ * Bonjour and the login it minted — over the same encrypted link, right
+ * after the join. The write is taken only on an encrypted link (property
+ * AND handler, as the RPC write is) and only while the session is
+ * Provisioned or Provisioning; anything else reads back as rejected and
+ * stores nothing. The host task only copies the document into a mailbox;
+ * the loop task parses it (hub_handoff.h, host-tested) and hands the result
+ * to the board through Identity::store_hub, which persists it and points
+ * the MQTT manager at it. A READ answers one status byte, never the
+ * document. Not in the advert: the scan response is full, and the phone
+ * that needs it is already connected.
+ *
  * Cross-core: NimBLE-Arduino 2.x (core 3.x: Sense) and 1.4.x (core 2.x:
  * Vision) differ in callback and advertising signatures; the
  * ESP_ARDUINO_VERSION_MAJOR split mirrors fleet_beacon_adv.cpp.
@@ -57,6 +72,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "network/hub_handoff.h"
 #include "network/improv_core.h"
 
 namespace canary {
@@ -85,8 +101,16 @@ struct Identity {
   void (*identify)();
   /// Require an encrypted link for the credentials write (LE Secure
   /// Connections, Just Works — iOS shows its one-tap pairing sheet the first
-  /// time). The credentials then never cross the air in the clear.
+  /// time). The credentials then never cross the air in the clear. The
+  /// HUB characteristic asks for the same.
   bool require_encryption;
+  /// The hub hand-off: persist the broker the phone wrote (host, port,
+  /// optional login, tls) and make the board's MQTT manager pick it up.
+  /// Called on the loop task, once per accepted write, with a record the
+  /// glue wipes right after; return whether the store VERIFIABLY holds it
+  /// (readback), which is what the phone reads as "stored". Null = the
+  /// board takes no hand-off and every write reads back rejected.
+  bool (*store_hub)(const hub_handoff::HubHandoff& hub);
 };
 
 /**
@@ -126,6 +150,12 @@ improv::State state();
 /// True while the door is open: the beacon carrier sets
 /// FLEET_BEACON_FLAG_SETUP_OPEN from this.
 bool setup_open();
+
+/// The HUB characteristic's status byte as the phone reads it: None until a
+/// hand-off is written this join, then Stored or Rejected. (LoginRefused is
+/// never emitted by this glue: nothing in the families' MQTT managers
+/// reports the broker's CONNACK reason cheaply.) None before begin().
+hub_handoff::Status hub_status();
 
 /**
  * @brief Put the right advert set on air for the current state.

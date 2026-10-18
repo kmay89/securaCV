@@ -884,8 +884,12 @@ export function buildNvsSeedImage(opts, partitionSize) {
     passB = enc.encode(String(wifi.pass || ""));
     if (ssidB.length < 1 || ssidB.length > 32)
       throw new Error("WiFi name must be 1-32 bytes");
-    if (passB.length !== 0 && (passB.length < 8 || passB.length > 63))
-      throw new Error("WiFi password must be 8-63 characters (or empty for an open network)");
+    // The firmware's bound and nothing stricter (firmware/common/network/
+    // wifi_credential_policy.h: 0..64 bytes, no minimum — the router sets its
+    // own floor and the Canary's join verdict reports). An earlier 8..63 here
+    // refused real WEP / WPA3 / short-key networks on the router's behalf.
+    if (passB.length > WIFI_CREDENTIAL.passwordMaxBytes)
+      throw new Error(WIFI_CREDENTIAL.tooLong);
   }
   for (const [k, v] of [...Object.entries(u8s), ...Object.entries(u16s), ...Object.entries(u32s)]) {
     if (!k || k.length > 15) throw new Error(`NVS key "${k}" must be 1-15 chars`);
@@ -1376,14 +1380,14 @@ export function smartPick(catalog, opts = {}) {
   if (preferredId) {
     const p = byChip.find((x) => x.id === preferredId);
     if (p) {
-      return { product: p, kind: "picked",
+      return { product: p, kind: "picked", shortlist: [p],
         why: `Showing ${p.name} — the firmware you picked.` };
     }
   }
   if (currentProject) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
-      return { product: cur, kind: "current",
+      return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name} — installing keeps it, ` +
              `updated in place.` };
     }
@@ -1416,11 +1420,51 @@ export function smartPick(catalog, opts = {}) {
         `the others if yours is a different board.`
       : `Your board reads as an ${label} with ${mb} MB flash — that ` +
         `looks like a ${p.board_label}. Recommended: ${p.name}.`;
-    return { product: p, kind: "board", why };
+    return { product: p, kind: "board", why,
+      shortlist: families.size > 1 ? boardShortlist(sized) : [p] };
   }
+  // Nothing narrowed the field. That is only a recommendation when every
+  // product for this chip is cut for the same board; when they span
+  // different boards (an ESP32-C6 is a XIAO Sense node OR a Waveshare 1.47"
+  // display — same chip, same 4 MB), leading with the authored default and
+  // folding the rest would put the wrong image in front of half the owners
+  // and hide theirs behind a "developer" button. Say so and show each board.
   const p = recommendedProduct(catalog, chip);
-  return p ? { product: p, kind: "chip",
-    why: `Recommended for your ${label}: ${p.name}.` } : null;
+  if (!p) return null;
+  const shortlist = boardShortlist(sized);
+  if (shortlist.length > 1) {
+    const size = mb ? ` with ${mb} MB flash` : "";
+    return { product: p, kind: "chip", shortlist,
+      why: `Your board reads as an ${label}${size}. More than one board ` +
+        `uses that chip, so this is a starting point, not an ` +
+        `identification — pick yours by name and picture: ` +
+        `${orList(shortlist.map((x) => x.board_label))}.` };
+  }
+  return { product: p, kind: "chip", shortlist: [p],
+    why: `Recommended for your ${label}: ${p.name}.` };
+}
+
+// "A or B", "A, B, or C" — the shortlist sentence reads as English.
+function orList(items) {
+  if (items.length < 3) return items.join(" or ");
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+// One product per distinct physical board, in catalog (authored) order. What
+// the picker shows unfolded when the silicon could not name the board: the
+// products on one board differ in flavor (a family question the browse
+// answers), but products on different boards differ in PINS, and a board the
+// evidence cannot rule out must never sit behind a click.
+export function boardShortlist(products) {
+  const seen = new Set();
+  const out = [];
+  for (const p of products || []) {
+    const key = (p.tier && p.tier.board_id) || p.board_label || p.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 // ── catalog shape guard ─────────────────────────────────────────────────────
@@ -1635,6 +1679,114 @@ export function parseSelfManifest(text) {
     }
   } catch { /* partial line — wait for more bytes */ }
   return null;
+}
+
+// ── the setup network's key, off the board's own first-boot line ────────────
+// A Sense or Vision prints its setup network and its eight-character key
+// exactly once, when the portal comes up (firmware/common/network/
+// onboarding_fsm.h announce_line, printed by setup_portal.cpp: `[SETUP] Setup
+// network up: "SecuraCV-sense-4dC2"  password <key>  (channel N)`); a WAP
+// prints its cv-… key when its AP starts (canary_wap.ino: `[WIFI] AP started:
+// SecuraCV-wap-4dC2 (password: cv-…)`). Nothing else ever shows that key —
+// not the Flasher, not a sticker — so the one honest place to hand it to the
+// owner is the done card, read off this line. One parser for both flashers:
+// the desktop inlines the SAME two patterns (desktop/src/app.js, pinned equal
+// by tests/desktop_parity.test.js, which also holds them to the firmware's
+// own format strings).
+export const SETUP_NETWORK_LINE_RES = [
+  /\[SETUP\] Setup network up: "([^"\n]+)"\s+password (\S+)/g,
+  /\[WIFI\] AP started: (\S+) \(password: ([^)\n]+)\)/g,
+];
+export function parseSetupNetwork(text) {
+  const t = String(text || "");
+  let last = null;
+  for (const re of SETUP_NETWORK_LINE_RES) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t))) last = { ssid: m[1], key: m[2], at: m.index };
+  }
+  return last ? { ssid: last.ssid, key: last.key } : null;
+}
+// The one line both done cards print once the key is heard.
+export function setupNetworkLine(net) {
+  return `Its setup network: ${net.ssid} · key ${net.key}`;
+}
+// The same network as a scannable code, printed right after the line above
+// (onboarding_fsm.h qr_line): `[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;` —
+// `T:nopass` and no `P:` for an open network. The payload is the phone-
+// universal Wi-Fi QR grammar wifiQrString builds, so a surface that draws it
+// hands it to the QR encoder as is. The key it carries is the one line [0]
+// already gives, so parseSetupNetwork stays as it is; this reads the payload
+// only. The firmware prints with println, so the match stops before the CR.
+export const SETUP_QR_LINE_RE = /\[SETUP\] QR (WIFI:[^\r\n]+)/;
+export function parseSetupQr(text) {
+  const m = SETUP_QR_LINE_RE.exec(String(text || ""));
+  return m ? m[1] : null;
+}
+
+// ── is that network one of ours? ────────────────────────────────────────────
+// The JavaScript twin of onboarding_fsm.h is_setup_ssid (the Swift twin is
+// SetupPortal.isSetupNetwork): every shape ap_ssid() ever emitted, and
+// nothing else. `SecuraCV-<type>-XXXX`, optionally `-tt` when the AP key
+// could not be persisted; the older `SecuraCV-XXXX` and `SecuraCV-XXXX-tt`
+// stay valid (firmware in the field still raises them). The type is 1..8
+// lowercase ASCII letters (canary, wap, vision, sense, sentinel, display),
+// the suffix four ASCII alphanumerics, the tag two — ASCII only, as the
+// firmware reads it. tests/flash.test.js pins the host test's vectors
+// (firmware/tests_host/test_onboarding_fsm.cpp); the desktop inlines the
+// same regex and tests/desktop_parity.test.js holds the two equal.
+export const SETUP_SSID_RE = /^SecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?$/;
+export function isSetupNetworkSsid(ssid) {
+  return typeof ssid === "string" && SETUP_SSID_RE.test(ssid);
+}
+
+// ── the Bluetooth setup door: when to say "leave the WiFi blank" ───────────
+// `setup_door` is a catalog fact gen_flash.py derives from what each build
+// compiles (improv_ble.cpp; the WAP's FULL profile), never a role guess: a
+// product that wrongly said true would send an owner to wait for a card
+// that never comes. Both flashers show the note only for these products.
+export function hasSetupDoor(product) {
+  return !!(product && product.setup_door === true);
+}
+export const SETUP_DOOR_NOTE =
+  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+
+// ── a network name with no password is a question, not an answer ────────────
+// An SSID typed with the password left empty used to seed an OPEN join: the
+// builder accepts an empty key for genuinely open networks, so a forgotten
+// password became a board that boots, fails to join, and raises its setup
+// network — with no word about why. Both flashers now refuse that unless the
+// owner ticked the explicit open-network choice. Same words in both.
+export const WIFI_PASS_REQUIRED =
+  "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+
+// The fleet's ONE credential rule and the words beside the field — the twin
+// of firmware/common/network/wifi_credential_policy.h (host-tested there;
+// tests/flash.test.js pins these values to the header's). SSID 1..32 bytes,
+// password 0..64 bytes, NO minimum: the router decides, and the Canary's live
+// join verdict ("Wrong password") reports a refusal.
+export const WIFI_CREDENTIAL = Object.freeze({
+  ssidMaxBytes: 32,
+  passwordMaxBytes: 64,
+  passwordMinBytes: 0,
+  fieldLabel: "Wi-Fi network password",
+  fieldHint: "The password you already use for this network, exactly as your router has it. Nothing to invent.",
+  openNetworkNote: "Open network — no password needed.",
+  tooLong: "A Wi-Fi password is at most 64 characters.",
+});
+export function wifiCredentialVerdict(ssid, pass) {
+  const enc = new TextEncoder();
+  const sl = enc.encode(String(ssid ?? "")).length;
+  const pl = enc.encode(String(pass ?? "")).length;
+  if (sl === 0) return "ssid_empty";
+  if (sl > WIFI_CREDENTIAL.ssidMaxBytes) return "ssid_too_long";
+  if (pl > WIFI_CREDENTIAL.passwordMaxBytes) return "password_too_long";
+  return "ok";
+}
+export function wifiFieldsVerdict(ssid, pass, openNetwork) {
+  if (!ssid) return { ok: true, skipped: true };
+  if (!pass && !openNetwork) return { ok: false, error: WIFI_PASS_REQUIRED };
+  return { ok: true, skipped: false };
 }
 
 // Group a hex fingerprint into readable byte pairs (aa:bb:cc…), capped.

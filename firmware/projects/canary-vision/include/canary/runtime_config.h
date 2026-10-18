@@ -13,6 +13,13 @@
 //   - WiFi / MQTT credentials: real compiled values win and are persisted
 //     (flashing a new secrets build over USB updates the unit); placeholder
 //     values (CI stubs / generic release builds) defer to NVS.
+//   - The broker can also arrive at runtime, over the Bluetooth setup door's
+//     hub hand-off (common/network/hub_handoff.h): the phone that handed the
+//     unit its Wi-Fi hands it the hub it found and the login it minted, and
+//     set_mqtt_credentials() below writes them to the same NVS keys the
+//     flashers seed. On a generic build that is then what every later boot
+//     reads; on a build compiled with a real MQTT_HOST the compiled value
+//     wins again at the next boot, by the rule above.
 //
 // First provisioning is a user-compiled USB flash (real secrets), which
 // seeds NVS; every OTA release build afterwards inherits the unit's setup.
@@ -25,7 +32,7 @@ struct RuntimeConfig {
   char wifi_pass[65];
   char mqtt_host[64];
   uint16_t mqtt_port;
-  char mqtt_user[33];
+  char mqtt_user[65];   // the hub hand-off's bound (64 bytes) plus the NUL, like mqtt_pass
   char mqtt_pass[65];
 };
 
@@ -44,5 +51,26 @@ bool mqtt_credentials_configured();
 // holds them (readback, not the write calls) — false means this boot works
 // from the patched cache but the next boot re-opens setup.
 bool set_wifi_credentials(const char* ssid, const char* pass);
+
+// Forget the saved network (the credentials half of a factory reset, and the
+// shared supervisor's persist_current("", "")). Returns whether the store
+// VERIFIABLY let go (readback) — a remove that silently failed is exactly the
+// case where rebooting into "setup will open" would be a lie.
+bool forget_wifi_credentials();
+
+// Persist a broker handed over at runtime (the Bluetooth setup door's hub
+// hand-off) and patch the cached config, so the MQTT manager's next bind in
+// this same boot dials it. `user` / `pass` null or empty = no login (the
+// manager then connects anonymously). `tls` false writes the broker socket
+// mode back to plain (a CA-verified mode from an earlier flash would try TLS
+// against the plaintext listener the phone named); `tls` true leaves the
+// stored mode as it is — the hand-off carries no certificate, so a unit with
+// a provisioned CA or pin keeps verifying and a unit without one stays
+// plain. No-op (false) on an empty host or a zero port. Returns whether the
+// store VERIFIABLY holds it (readback, as set_wifi_credentials) — false
+// means this boot works from the patched cache and the next boot reads
+// whatever NVS held before.
+bool set_mqtt_credentials(const char* host, uint16_t port,
+                          const char* user, const char* pass, bool tls);
 
 } // namespace canary::cfg

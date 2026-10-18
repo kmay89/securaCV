@@ -28,17 +28,21 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "onboarding_fsm.h"
+
 namespace canary {
 namespace net {
 
 /** Portal timing constants — shared by every adopter so the choreography
- *  cannot drift per board. Values match the display portal's bench-tuned
+ *  cannot drift per board. The AP hold after a join is the onboarding state
+ *  machine's (onboarding_fsm.h: two minutes, or the 1.6 s beat once the
+ *  phone has confirmed); the rest are the display portal's bench-tuned
  *  numbers (provision.cpp), which inherited them from the WAP. */
 struct SetupPortalTiming {
-  /// Success: wait up to this long for the phone's /status poll to ack…
-  uint32_t ap_linger_max_ms = 25000;
+  /// Success: hold the AP up to this long for the phone's /status poll to ack…
+  uint32_t ap_linger_max_ms = onboard::Timing{}.ap_hold_after_join_ms;
   /// …then this beat after the ack, then teardown.
-  uint32_t ap_linger_ack_ms = 1600;
+  uint32_t ap_linger_ack_ms = onboard::Timing{}.ap_hold_after_ack_ms;
   /// A wizard join attempt reads as failed after this long. 30 s, not 15:
   /// at range edge a slow association is indistinguishable from a wrong
   /// password until well past 15 s (WAP lesson).
@@ -66,11 +70,10 @@ inline bool portal_teardown_due(uint32_t now_ms,
                                 bool phone_acked,
                                 uint32_t acked_at_ms,
                                 const SetupPortalTiming& t) {
-  if (phone_acked &&
-      (int32_t)(now_ms - acked_at_ms) > (int32_t)t.ap_linger_ack_ms) {
-    return true;
-  }
-  return (int32_t)(now_ms - success_at_ms) > (int32_t)t.ap_linger_max_ms;
+  onboard::Timing ot;
+  ot.ap_hold_after_join_ms = t.ap_linger_max_ms;
+  ot.ap_hold_after_ack_ms = t.ap_linger_ack_ms;
+  return onboard::ap_teardown_due(now_ms, success_at_ms, phone_acked, acked_at_ms, ot);
 }
 
 /**
