@@ -317,9 +317,26 @@ Muting, unmuting and a mute that runs out leave it running, and it is over
 the moment it runs out, not when the device next gets round to it. Before
 F178 it was the `CHIRP_COOLDOWN` state, which a mute replaced: a send right
 after muting went out a tier up. The state still reads `cooldown` while the
-timer runs (§7.1). Note: the canary-wap resets the tiers 24 hours after the
-first chirp of the run of sends, not after 24 hours of no chirps, and
-re-enabling the channel or a reboot resets them too (filed with F178).
+timer runs (§7.1).
+
+**The reset, and what keeps the tiers** (canary-wap, sweep F193): the tiers
+reset after 24 hours with no send, counted from the last send, so a reset
+never ends a running cooldown (the longest is 4 hours) and steady sends stay
+at the top tier: a device sending as fast as its tiers let it sends 9 chirps
+in its first 24 hours and then one every 4 hours, 6 a day, not the 4 or 5 the
+list above says. Before F193 the tiers reset 24 hours after the first send of
+a run, whatever went out since, and the reset ended a running cooldown: a
+4-hour one started 22 hours into the run was over 2 hours later. The tiers
+are the device's, not a session's. A disable and an enable keep them: the new
+session (a new identity on the wire) waits out the presence requirement
+(§2.5.5), then whatever is left of the cooldown, and its next send is a tier
+up. Before F193 an enable zeroed them, so a disable and an enable cost the
+10-minute presence requirement instead of the tier's 15 minutes, 1 hour or 4
+hours. The 24 hours count while the channel is off too. The tiers live in RAM
+only, so a reboot still clears them, and a reboot costs the presence
+requirement, not the tier. That is deliberate: keeping them in NVS would
+store when the owner chirped (§11.2), and the cooldown binds only a device
+running this firmware anyway.
 
 ### 2.5.5 Defense: Presence Requirement (Anti-Drive-By)
 
@@ -1078,6 +1095,7 @@ chirp_relay  | uint8  | save_settings() (chirp_channel)   | 1: relay others' chi
 chirp_filter | uint8  | save_settings() (chirp_channel)   | lowest urgency taken: 0 info, 1 caution, 2 urgent (default 0)
 st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the audible self-test tone last played
 // Session identity NOT stored (regenerated on each enable and boot)
+// Cooldown tiers NOT stored (RAM only: an enable keeps them, a reboot clears them)
 ```
 
 - `save_settings()` writes both settings whenever the owner changes either
@@ -1090,7 +1108,9 @@ st_chirp_at  | uint32 | the loop's self-test (canary_wap) | UNIX seconds the aud
   namespace.
 - Nothing else is stored. The channel's on state is not: it starts off at
   every boot until the owner turns it on (`POST /api/chirp/enable`). The
-  cooldown tiers, the mute and the tables live in RAM. §11.1's notification
+  cooldown tiers, the mute and the tables live in RAM. The tiers outlive a
+  disable but not a reboot (§2.5.4, sweep F193): storing them would put a
+  record of when the owner chirped in flash. §11.1's notification
   sound, presence broadcast, display time and auto-dismiss are not settings
   on the canary-wap.
 - A read-only open of `chirp` before anything wrote it opens nothing and
