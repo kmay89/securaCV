@@ -41,7 +41,15 @@
 //     by its dash_is_portrait()) follows the turn the port wore. A glass that
 //     saved a portrait rotation but could not allocate its turn buffer stays
 //     landscape, and so does its face: the landscape poster on the 800x480
-//     canvas, not the 480-wide portrait column.
+//     canvas, not the 480-wide portrait column;
+//  6. the Orientation page (F245): settings_ui.cpp's build_display() and
+//     root row read canary/ui/orientation_page.h with the saved rotation and
+//     lvgl_port_rotation(), the same expression this test hands it after
+//     main.cpp's boot call. On that refusing glass the page checks
+//     Landscape, never the saved portrait, the root row says Landscape, and
+//     the footer says the glass could not turn and names the choice kept;
+//     on a glass that turns, the page checks the saved turn and keeps its
+//     own footer.
 //
 // Prints "ALL LVGL PORT TURN TESTS PASSED" on success.
 #include <Arduino.h>
@@ -59,6 +67,7 @@
 #include "canary/log.h"
 #include "canary/ui/dash_face.h"
 #include "canary/ui/lvgl_port.h"
+#include "canary/ui/orientation_page.h"
 
 FakeSerial Serial;
 namespace canary {
@@ -426,6 +435,44 @@ static void test_no_turn_buffer() {
   check_refuses_turns("no turn buffer");
 }
 
+// ── The Orientation page shows the turn the port wore (F245) ─────────────
+// What settings_ui.cpp's build_display() and root row draw, read from
+// orientation_page.h exactly as they read it: the saved rotation and
+// lvgl_port_rotation(). `worn` is the turn this glass must be wearing.
+static void check_orientation_page(const char* tag, uint8_t saved, uint8_t worn) {
+  using namespace canary::ui;
+  const OrientationState os =
+      orientation_state(canary::glass::settings().rotation, lvgl_port_rotation());
+  CHECK(os.saved == saved && os.worn == worn,
+        "%s: saved %s: the page reads saved %s, worn %s (want worn %s)", tag,
+        rotation_name(saved), rotation_name(os.saved), rotation_name(os.worn),
+        rotation_name(worn));
+  for (uint8_t row : kOrientationRows) {
+    CHECK(orientation_row_checked(os, row) == (row == worn),
+          "%s: saved %s: the %s row is %s, want %s", tag, rotation_name(saved),
+          orientation_label(row), orientation_row_checked(os, row) ? "checked" : "unchecked",
+          row == worn ? "checked" : "unchecked");
+  }
+  char rv[24];
+  std::string want_rv = rotation_name(worn);
+  want_rv[0] = (char)(want_rv[0] - 'a' + 'A');
+  CHECK(want_rv == orientation_row_value(os, rv, sizeof(rv)),
+        "%s: saved %s: the root row says %s, want %s", tag, rotation_name(saved), rv,
+        want_rv.c_str());
+  char foot[kOrientationFooterCap];
+  const std::string f = orientation_footer(os, foot, sizeof(foot));
+  const bool says_refused = f.find("Not enough memory to turn this glass") != std::string::npos;
+  CHECK(says_refused == (saved != worn),
+        "%s: saved %s, worn %s: the footer %s the refusal: \"%s\"", tag, rotation_name(saved),
+        rotation_name(worn), says_refused ? "names" : "does not name", f.c_str());
+  if (saved != worn) {
+    CHECK(f.find(std::string(orientation_label(saved)) + " is saved") != std::string::npos &&
+              f.find(std::string("stays ") + orientation_label(worn)) != std::string::npos,
+          "%s: saved %s: the footer names the choice kept and the turn worn: \"%s\"", tag,
+          rotation_name(saved), f.c_str());
+  }
+}
+
 // ── The face main.cpp builds follows the turn the port wore (F223) ───────
 // For every saved rotation, main.cpp's boot call wears it and its face choice
 // (dash_face_portrait(), which dash_is_portrait() returns) is read: the
@@ -444,6 +491,7 @@ static void check_face(const char* tag, bool turns) {
           "%s: saved %s: the %s face on a %dx%d canvas", tag, rotation_name(rot),
           portrait ? "portrait" : "landscape", canary::ui::lvgl_port_width(),
           canary::ui::lvgl_port_height());
+    check_orientation_page(tag, rot, turns ? rot : (uint8_t)ROT_LANDSCAPE);
   }
 }
 

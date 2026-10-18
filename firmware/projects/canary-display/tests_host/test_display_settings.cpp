@@ -2,7 +2,10 @@
 // (include/canary/glass_settings.h): orientation dims, the touch un-rotation
 // (round-tripped against the turn LVGL draws, on both majors), the rendered
 // brightness scrim, and the standalone-weather location wheels (wheel
-// positions <-> stored tenths, and the cell caption). No Arduino, no LVGL,
+// positions <-> stored tenths, and the cell caption). Also the Orientation
+// page's saved/worn rule (include/canary/ui/orientation_page.h, F245): the
+// check, the root row and the footer follow the turn the glass wears, and
+// the footer says when a saved turn could not be worn. No Arduino, no LVGL,
 // no board.
 //
 // Prints "ALL DISPLAY SETTINGS TESTS PASSED" on success (a CI grep makes a
@@ -12,8 +15,10 @@
 //     firmware/projects/canary-display/tests_host/test_display_settings.cpp -o t && ./t
 
 #include "canary/glass_settings.h"
+#include "canary/ui/orientation_page.h"
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 using namespace canary::glass;
@@ -209,6 +214,122 @@ static void test_names() {
         "180 name");
   CHECK(std::string(rotation_name(ROT_PORTRAIT_INV)) == "portrait flipped",
         "270 name");
+}
+
+// ── The Orientation page follows the turn worn (F245) ────────────────────
+// The saved choice (Settings.rotation) and the turn the port wore
+// (lvgl_port_rotation()) differ when a glass with no turn buffer refuses a
+// turn. The page checks the turn worn, the root row names it, and the footer
+// names both; the saved choice is never shown as the glass's turn.
+static void test_orientation_page() {
+  using canary::ui::OrientationState;
+  using canary::ui::kOrientationFooterCap;
+  using canary::ui::kOrientationRows;
+  using canary::ui::orientation_footer;
+  using canary::ui::orientation_label;
+  using canary::ui::orientation_row_checked;
+  using canary::ui::orientation_row_value;
+  using canary::ui::orientation_state;
+  const char* const kDefault =
+      "Portrait suits a wall column or a tall bedside face. "
+      "The layout follows the turn.";
+
+  // The rows, top to bottom, as the page drew them before (F245 moved the
+  // labels into the header, not the words).
+  const char* const labels[4] = {"Landscape", "Portrait", "Landscape, Flipped",
+                                 "Portrait, Flipped"};
+  const uint8_t order[4] = {ROT_LANDSCAPE, ROT_PORTRAIT, ROT_LANDSCAPE_INV,
+                            ROT_PORTRAIT_INV};
+  for (int i = 0; i < 4; i++) {
+    CHECK(kOrientationRows[i] == order[i], "the rows run Landscape, Portrait, the two Flipped");
+    CHECK(std::string(orientation_label(kOrientationRows[i])) == labels[i],
+          "each row keeps its label");
+  }
+
+  // The state is the two turns, masked to a quarter turn each.
+  {
+    const OrientationState s = orientation_state(5, 6);
+    CHECK(s.saved == ROT_PORTRAIT && s.worn == ROT_LANDSCAPE_INV,
+          "orientation_state masks both turns to 0..3");
+  }
+
+  // Every saved turn against every worn turn.
+  for (uint8_t saved = 0; saved < 4; saved++) {
+    for (uint8_t worn = 0; worn < 4; worn++) {
+      const OrientationState s = orientation_state(saved, worn);
+      CHECK(s.refused() == (saved != worn), "refused exactly when saved and worn differ");
+      int checked = 0;
+      for (uint8_t rot : kOrientationRows) {
+        if (orientation_row_checked(s, rot)) {
+          checked++;
+          CHECK(rot == worn, "the check sits on the turn worn");
+        }
+      }
+      CHECK(checked == 1, "exactly one row is checked");
+      CHECK(!orientation_row_checked(s, saved) || saved == worn,
+            "a saved turn the glass could not wear is never checked");
+
+      char rv[24];
+      std::string want = rotation_name(worn);
+      want[0] = (char)(want[0] - 'a' + 'A');
+      CHECK(std::string(orientation_row_value(s, rv, sizeof(rv))) == want,
+            "the root row names the turn worn, as it always named a turn");
+
+      char foot[kOrientationFooterCap];
+      const std::string f = orientation_footer(s, foot, sizeof(foot));
+      CHECK(std::strlen(foot) + 1 < sizeof(foot),
+            "the footer fits its buffer with room to spare");
+      if (saved == worn) {
+        CHECK(f == kDefault, "a turn worn as saved keeps the page's own footer");
+      } else {
+        const std::string want_f =
+            std::string("Not enough memory to turn this glass, so it stays ") +
+            orientation_label(worn) + ". " + orientation_label(saved) +
+            " is saved, and a restart tries the turn again.";
+        CHECK(f == want_f, "a refused turn's footer names the turn worn and the choice kept");
+        CHECK(f.find(kDefault) == std::string::npos,
+              "a refused turn does not claim the layout follows the turn");
+      }
+    }
+  }
+
+  // The case F245 names: Portrait saved, the turn buffer refused, the glass
+  // landscape. Landscape is checked, the root row says Landscape, and the
+  // footer says why.
+  {
+    const OrientationState s = orientation_state(ROT_PORTRAIT, ROT_LANDSCAPE);
+    CHECK(s.refused(), "Portrait saved, Landscape worn: refused");
+    CHECK(orientation_row_checked(s, ROT_LANDSCAPE) &&
+              !orientation_row_checked(s, ROT_PORTRAIT),
+          "Landscape is checked, not the saved Portrait");
+    char rv[24];
+    CHECK(std::string(orientation_row_value(s, rv, sizeof(rv))) == "Landscape",
+          "the root row says Landscape");
+    char foot[kOrientationFooterCap];
+    CHECK(std::string(orientation_footer(s, foot, sizeof(foot))) ==
+              "Not enough memory to turn this glass, so it stays Landscape. "
+              "Portrait is saved, and a restart tries the turn again.",
+          "the footer says the glass could not turn and keeps Portrait");
+  }
+
+  // A short buffer truncates and terminates inside its cap; no buffer is
+  // answered with an empty string, never a write.
+  {
+    // The caps go through a volatile so the compiler cannot see them and
+    // warn about the truncation this block asks for.
+    const OrientationState s = orientation_state(ROT_PORTRAIT_INV, ROT_LANDSCAPE);
+    volatile size_t foot_cap = 11, value_cap = 3;
+    char b[12];
+    b[11] = 'X';
+    orientation_footer(s, b, foot_cap);
+    CHECK(b[10] == '\0' && b[11] == 'X', "the footer stops inside a small cap");
+    char r[4];
+    r[3] = 'X';
+    orientation_row_value(s, r, value_cap);
+    CHECK(r[2] == '\0' && r[3] == 'X' && r[0] == 'L', "the root value stops inside a small cap");
+    CHECK(std::string(orientation_footer(s, nullptr, 0)) == "", "no buffer: an empty footer");
+    CHECK(std::string(orientation_row_value(s, b, 0)) == "", "a zero cap: an empty value");
+  }
 }
 
 // ── The LVGL 9 pointer feed inverts LVGL's own indev rotation ────────────
@@ -418,6 +539,7 @@ int main() {
   test_touch_corners();
   test_brightness();
   test_names();
+  test_orientation_page();
   test_wx_wheels_examples();
   test_wx_wheels_grid();
   test_wx_cell_text();
