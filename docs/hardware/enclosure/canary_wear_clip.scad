@@ -42,7 +42,9 @@ belt_gap  = 4.5;     // leaf-to-plate clearance (belt/waistband thickness)
 nub_h     = 1.2;     // grip nub at the leaf tip
 
 /* [MOLLE plate] */
-mp_w = 55.0;  mp_l = 90.0;  mp_t = 3.0;
+mp_w = 55.0;         // MOLLE plate width (X) — the three slot_w webbing slots run across it
+mp_l = 90.0;         // MOLLE plate length (Y) — the slots sit on slot_pitch along it and the stud pair on its center line; it must carry stud_gap + stud_head + 4 (asserted)
+mp_t = 3.0;          // MOLLE plate thickness — the webbing slots go through it and the studs stand on its face
 slot_w = 27.0;       // webbing slot long side — clears 1" (25.4 mm) PALS webbing
 slot_h = 3.5;        // webbing slot short side
 slot_pitch = 38.1;   // PALS grid: 1" webbing rows spaced 1" apart = 38.1 mm

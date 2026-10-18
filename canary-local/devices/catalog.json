@@ -223,7 +223,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 176,
+   "engineering_param_count": 182,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -315,7 +315,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 88,
+   "engineering_param_count": 92,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -756,7 +756,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 31,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -1127,7 +1127,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 100,
+   "engineering_param_count": 107,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1733,7 +1733,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 94,
+   "engineering_param_count": 98,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -2249,7 +2249,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 19,
+   "engineering_param_count": 26,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3331,7 +3331,7 @@
     "molle"
    ],
    "options": [],
-   "engineering_param_count": 15,
+   "engineering_param_count": 18,
    "alternatives": [],
    "remix_of": null,
    "counts": {

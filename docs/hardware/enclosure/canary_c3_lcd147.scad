@@ -838,7 +838,9 @@ hole_iy_far = 1.97;  //           inset from the far (+Y) edge
 brass_d = 3.5;       // pillar body Ø (round brass M2 standoff) — MEASURE
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
+tol_slide = 0.20;    // sliding fit per side: the board's cavity is the board plus 2 x this each way, so the board floats this far in X — the button pads, the USB reach and the locating ribs budget for it — core_tol_slide()
+tol_press = 0.10;    // press fit per side: the lid's pillar bosses are trimmed to the cavity less 2 x this — core_tol_press()
+tol_hole = 0.30;     // printed-hole clearance per side: the egg hanger's base is kh_head_d + 2 x this and its crown kh_shank_d + 2 x this — core_tol_hole()
 
 /* [Shell] */
 wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it
@@ -876,7 +878,9 @@ ear_skin = 1.4;  // wall skin left outside a button/USB clearance channel.
    positive click, firm retention), engagement is deeper (snap_proud 0.7),
    and the skirt runs at its own snug clearance (skirt_clear) instead of
    the general press tolerance. */
-snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+snap_h = 1.6;        // snap window height in the bezel's side walls; each nub's ridge is this - 0.4 tall, and the lid's skirt runs snap_depth + this/2 + 0.4 deep
+snap_depth = 1.4;    // how far in from the bezel's rear rim the windows (and the nubs on the skirt) are centered — the wall vents stop 0.8 short of the windows, and the windows must clear the light band (asserted)
+snap_proud = 0.7;    // each nub's tip stands this far out from the skirt face, low on the nub where the near-square catch faces the plate — the engagement
 // ⚠️ THE WINDOW IS DERIVED FROM THE RIDGE, and it was not before — that is
 // the lid-slide print 3 found (kmay89: "the clips slide a little once
 // connected"). `snap_w` was ONE number used for two different things: it

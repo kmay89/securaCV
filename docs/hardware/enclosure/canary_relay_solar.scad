@@ -164,7 +164,10 @@ strap_w = 9.0;       // strap width
 strap_t = 2.0;       // channel depth (the plate thickens by it behind the floor)
 
 /* [Shell / tolerances / fasteners] */
-wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  corner_r = 3.0;
+wall_t = 2.0;        // shell wall thickness, a floor: the walls grow to the plate's ledge + core_min_wall() when that is more, 5.8 sealed and 3.0 unsealed at the defaults (the render echoes it) — core_wall()
+floor_t = 2.0;       // the plate's front face height: the rails, clips and battery bay stand on it, the ledge it seats on (and the gasket groove cut into that) sits at it, and the plate is at least this + strap_t thick
+lid_t = 2.0;         // face thickness of the shell — the vent, the panel gland and the wordmark are cut through or into it, and the roof screws' length counts it
+corner_r = 3.0;      // outer corner radius of the shell — core_corner_r(); the cavity's corners are this less the wall (core_cav_r), and the plate's bore follows them
 tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
 tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
 tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
@@ -174,7 +177,9 @@ screw_head = "pan";   // ["pan","flat"] pan = flat-floored seat (what the O-ring
 screw_d      = 1.6;   // (m2 only) self-tap pilot Ø — the print-validated number this pod was drawn on; other sizes read scr_pilot()
 screw_head_d = 4.0;   // (m2 pan only) head Ø — the validated seat; other sizes read scr_pan_d()/scr_flat_d()
 screw_head_h = 2.0;   // (m2 pan only) head seat depth — the validated seat; other sizes read scr_pan_h()/scr_flat_h()
-gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;
+gasket_w = 1.6;      // gasket groove width in the ledge (opt_seal): the printed TPU ring is this - 0.5 wide, the ledge this + 2 x core_min_wall() + tol_slide + 0.4, and the ring's fill of its groove is asserted under 95 %
+gasket_groove = 1.2;  // gasket groove depth up from the ledge (opt_seal): the ring is this + gasket_proud tall; the SMA land and the USB opening keep a web over it (asserted), and the weeps are placed a web above it
+gasket_proud = 0.3;  // how far the TPU ring stands above its groove, the squeeze the plate gives it: the ring is gasket_groove + this tall (the fill is asserted)
 usb_w = 12.0;  // service USB opening width, bottom wall (plug when deployed); 12 clears a boot
 usb_h = 6.5;   // service USB opening height — boot clearance
 clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default, canary_snap_lib

@@ -45,15 +45,19 @@ stud_head_t = 0.8;   // head thickness — canary_mount_lib mount_stud_cap()
 stud_stem_h = 1.4;   // stem height — canary_mount_lib mount_stud_stem()
 
 /* [Print tolerances] */
-tol_slide = 0.20;  tol_press = 0.10;
+tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it
+tol_press = 0.10;    // catalog default — core_tol_press(), canary_core_lib; no geometry in this file reads it
 
 /* [Dash plate] */
-dash_l = 110.0;  dash_w = 70.0;  dash_t = 4.0;
+dash_l = 110.0;      // dash plate length (X) — the riser wedge sits on its rear 50, 6 in from the end, and the VHB registers and the tether slot near its front
+dash_w = 70.0;       // dash plate width (Y) — three VHB registers across it (on the center line and 16 in from each edge); the riser, which grows with stud_gap, must stay 2 inside it each side (asserted)
+dash_t = 4.0;        // dash plate thickness — the riser wedge and the studs stand on it, the VHB registers are recessed vhb_rec into its underside and the tether slot goes through
 dash_tilt = 10;      // riser angle (case leans back toward the cabin)
 vhb_w = 20.0;        // 3M VHB strip register width
 vhb_l = 60.0;        // 3M VHB strip register length
 vhb_rec = 0.6;       // 3M VHB strip register recess depth
-tether_w = 8.0;  tether_l = 4.0;
+tether_w = 8.0;      // tether slot width (Y) through the dash plate, 10 in from its front end: lanyard the case through it (header)
+tether_l = 4.0;      // tether slot length (X) through the dash plate
 
 /* [Vent clip] */
 vent_w   = 32.0;     // clip width (extrusion length)

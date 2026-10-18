@@ -64,7 +64,11 @@ xiao_w = 17.8;       // the measured XIAO (brd_xiao_w_measured) — sets the vis
 xiao_below = 5.5;    // air under a stacked XIAO's USB face (shell + half a plug overmold + clearance)
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;        // board-clip tab width along the board edge; the rails are notched clip_w + 2 round each clip
+clip_t = 1.0;        // clip beam thickness — 1.0/0.5 is the catalog standard (canary_snap_lib); snap_boardclip asserts the insertion strain on a beam from the plate to the board top
+clip_hook = 0.5;     // clip lip overhang onto the board top (the engagement); for the wap stack the strain check adds the measured XIAO's extra width each side
+clip_hook_h = 1.2;   // clip lip and lead-in height above the board top
+clip_clear = 0.25;   // beam face to board edge gap, a fit: tune it on the coupon
 
 /* [Extras] */
 rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, between the vent columns and

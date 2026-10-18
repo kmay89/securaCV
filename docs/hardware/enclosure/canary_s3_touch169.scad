@@ -168,7 +168,10 @@ skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed back_stack (see a
 
 /* [Stand] */
 opt_stand = true;
-stand_ang = 22;  stand_w = 70.0;  stand_d = 52.0;  stand_t = 4.0;
+stand_ang = 22;      // the stand's recline from vertical, in degrees — the slab leans back this far on the seat and the plug leaves its bottom edge this far forward of straight down; the seat height, the boot clearance and the cable channel are derived from it
+stand_w = 70.0;      // stand base width (X); the pedestal, the front lip and the fin run stand_w - 16 wide
+stand_d = 52.0;      // stand base depth, front to back — the tip-over margin is this/2 either way (asserted against a push at the slab's top edge), and the front lip and the fin's top must stay on it (asserted)
+stand_t = 4.0;       // stand base plate thickness; the pedestal under the seat makes up the rest of the seat height
 // The seat's height is DERIVED from the plug: the USB-C leaves the bottom
 // edge pointing stand_ang forward of straight down, so the seat has to stand
 // far enough up a pedestal that a spec-max boot AND the lead behind it clear

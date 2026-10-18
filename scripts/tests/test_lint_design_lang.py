@@ -191,32 +191,36 @@ def knobs_without_help(path: Path) -> list[str]:
 # (gen_enclosures.py reads one assignment per line), which moves the catalog's
 # engineering_param_count; field_case's bez_on is a catalog option whose help
 # would become its label.
-# C10c-2 did the same for the next monorepo-only cases, the four carried ones
-# (combo, fit_coupon, dash_display, watch_station) and the released four left
-# out: every numeric or text knob alone on its line has help read off the
-# geometry that uses it. What is left in those files is the same two kinds,
-# shared lines and boolean catalog options.
+# C10c-2 took the next monorepo-only cases (not the four carried ones, combo,
+# fit_coupon, dash_display and watch_station, nor the released four): every
+# numeric or text knob has help read off the geometry that uses it,
+# and their shared lines are split one knob per line, each with its own help
+# (that split moved catalog.json's engineering_param_count for seven products,
+# +36 in all). What is left in those files is boolean catalog options, whose
+# help would become their catalog label.
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
-    "canary_c3_lcd147.scad": 12,       # six bool options, tol_* and snap_* (two shared lines)
+    "canary_c3_lcd147.scad": 6,        # opt_btn, light_seam, pry_notch, loc_rib, egg_ring, opt_vent
+    "canary_c6_display.scad": 2,       # opt_btn, opt_vent
     "canary_dock.scad": 0,
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
-    "canary_hammond_chassis.scad": 5,  # clip_w..clip_clear (one shared line)
+    "canary_hammond_chassis.scad": 0,
     "canary_hub_din.scad": 1,          # din (a bool option)
     "canary_inserts.scad": 0,
     "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
     "canary_mount_adapters.scad": 0,
     "canary_outlet_cradle.scad": 0,
-    "canary_relay_solar.scad": 8,      # opt_seal, wall_t..corner_r and gasket_* (two shared lines)
+    "canary_relay_solar.scad": 1,      # opt_seal
     "canary_s3_lcd147.scad": 4,        # collar_on, opt_btn, light_seam, mark_show (bool options)
     "canary_s3_lcd7.scad": 0,
+    "canary_s3_touch169.scad": 5,      # opt_usb, opt_btn, opt_side, opt_vent, opt_stand
     "canary_sense_gang.scad": 0,
     "canary_sense_stand.scad": 1,      # hinge_teeth (a bool option)
     "canary_shop_tools.scad": 0,
     "canary_sign.scad": 1,             # screws (a bool option)
-    "canary_vehicle_mount.scad": 7,    # tol_*, dash_l/w/t, tether_w/l (three shared lines)
+    "canary_vehicle_mount.scad": 0,
     "canary_vision_pro_mount.scad": 0,
-    "canary_wear_clip.scad": 3,        # mp_w/mp_l/mp_t (one shared line)
+    "canary_wear_clip.scad": 0,
 }
 
 
