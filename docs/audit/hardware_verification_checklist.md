@@ -582,6 +582,55 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
     still does.
   - Artifact: `docs/audit/repro/F104/no-card/`.
 
+## Ambient rows, closed bundles and planned restarts (F105, F77, F92) — on-device verification
+
+Code: both events egresses' commit hooks (`firmware/canary/src/csi_event_egress.cpp`
+`csi_event_on_committed()`, the canary-wap's `csi_event_egress::on_committed()`),
+which drop ambient rows before the queue (F105); `csi_event.cpp`'s
+`csi_event_commit_bundle_()`, which puts a closed bundle in the ring (F77);
+`csi_event_egress_flush_for_restart()` / `csi_event_egress::flush_for_restart()`,
+which `main.cpp`'s `flush_events_before_restart()` and `canary_wap.ino`'s run
+before a planned restart, the canary-wap's `POST /api/reboot` now served on
+the loop task (F92). Host-tested (`test_canary_event_egress.cpp`,
+`test_wap_event_egress.cpp`, `test_csi_modules_integration.cpp`, both
+daily-summary suites); the restart call sites are held by
+`check_event_egress_order.py` rule 10 and `check_wap_event_egress.py` rule
+13. The ESP32 compiles are CI's; none of this is bench-tested yet. Owner: U1.
+
+- [ ] **No ambient row reaches the card or the broker**
+  - Setup: either device with a card in, paired to Home Assistant;
+    `mosquitto_sub -v -t 'securacv/+/events'`.
+  - Repro: make the room's Wi-Fi busy (a large download near the device)
+    for a few minutes, so `wifi.channel_activity` commits `channel_active`
+    rows; on the canary-wap watch `/api/events/today`. Then read
+    `/EVENTS/today.ndjson` off the card.
+  - Expected: no `events` publish and no card line names
+    `wifi.channel_activity` or `channel_active`; the canary-wap's Today sheet
+    and its live stream still show them; the egress counters'
+    `ambient_dropped` grows with them.
+  - Artifact: `docs/audit/repro/F105/ambient/`.
+- [ ] **A closed presence bundle is on the card and in Today after a reboot**
+  - Setup: a canary-wap with a card in.
+  - Repro: walk in, wait for the `active` row to close (two minutes after
+    the motion stops, or ten after it began), check `/api/events/today`,
+    then power-cycle and check it again.
+  - Expected: the closed row is listed (not `open`) with a dismiss button
+    that works, it is a line of `/EVENTS/today.ndjson`, and after the
+    power cycle the Today sheet lists it again. Its `events` publish (if a
+    broker is set) carries the close as its `timestamp`.
+  - Artifact: `docs/audit/repro/F77/closed-bundle/`.
+- [ ] **A planned restart delivers the open bundle**
+  - Setup: either device paired to Home Assistant, broker up;
+    `mosquitto_sub -v -t 'securacv/+/events'`.
+  - Repro: walk in so a presence bundle opens (the canary-wap's Today sheet
+    shows it `open`), then within a minute send `POST /api/reboot` (or the
+    canary's serial `x`).
+  - Expected: the `events` row for that state arrives before the device
+    goes offline, and the device restarts within about 3 s of the request.
+    With the broker stopped, the row is on the card after the restart and
+    the backfill sends it when the broker returns.
+  - Artifact: `docs/audit/repro/F92/planned-restart/`.
+
 ## The egress's counters and the event-id warning (F109, F82) — on-device verification
 
 Code: `firmware/canary/src/csi_event_egress.cpp` (`csi_event_egress_stats()`,
