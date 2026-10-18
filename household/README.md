@@ -174,7 +174,8 @@ challenge is unknown, used, expired, or bound to another session, door or
 epoch counts, and so does every refusal after that. A missing or wrong bearer
 token, or a body that does not parse, never counts toward a cooldown, so a
 client with no token cannot start one. Refusals caused by a cooldown or a
-stale roster are not counted either, and an ended cooldown is forgotten: the
+stale roster are not counted either, nor is a storage failure after a
+credential was accepted, and an ended cooldown is forgotten: the
 count starts over. On the signature lane a cooldown refuses only `home`, at
 the challenge and at the command: `away` and `night` still go through, so a
 denial of service cannot hold a house in `home` through a cooldown. The card

@@ -153,10 +153,11 @@ pub struct Checker {
     /// When the current `home` lapses on the monotonic clock, so it lapses
     /// on time even if the wall clock is held back.
     home_deadline_ms: Option<u64>,
-    /// End a current `home` at the next tick: a member was revoked, or the
-    /// roster on disk stopped verifying. Cleared only once no `home` is
-    /// current (the `away` that ends it was published, or none was in
-    /// force), or a new `home` is authorized under the roster now held.
+    /// End a current `home` at the next tick: a member was revoked, the
+    /// roster on disk stopped verifying, or the `home` lapsed and the `away`
+    /// that ends it has not published yet. Cleared only once no `home` is
+    /// current (that `away` was published, or none was in force), or a new
+    /// `home` is authorized under the roster now held.
     end_home: bool,
 }
 
@@ -266,7 +267,9 @@ impl Checker {
     /// A roster that drops any member also ends a current `home` at the next
     /// [`Checker::tick`]: nothing records who set it, so a revoked member's
     /// `home` cannot be told from anyone else's, and ending it is the
-    /// fail-safe. Members still enrolled set it again.
+    /// fail-safe. Members still enrolled set it again. A held handle whose
+    /// entry differs counts as dropped: entries are never edited in place,
+    /// so it was revoked and added again in epochs this checker skipped.
     pub fn set_roster(&mut self, roster: Roster) -> Result<()> {
         roster.validate()?;
         if roster.household != self.household {
@@ -279,7 +282,7 @@ impl Checker {
             .roster
             .members
             .iter()
-            .any(|m| roster.member(&m.handle).is_none());
+            .any(|m| roster.member(&m.handle) != Some(m));
         self.book.set_epoch(roster.epoch);
         self.roster = roster;
         self.roster_stale = false;
@@ -366,9 +369,11 @@ impl Checker {
                 || !cur.is_current(now_unix)
                 || self.home_deadline_ms.is_some_and(|d| now_ms >= d))
         {
-            // If this publish fails, `end_home` stays set, so the next tick
-            // tries the `away` again rather than republishing the `home`
-            // from the dirty seam below.
+            // Latch the end: if this publish fails, the next tick tries the
+            // `away` again rather than republishing the `home` from the
+            // dirty seam below, even if the wall clock steps back into the
+            // `home`'s window.
+            self.end_home = true;
             self.issue(HouseholdPosture::Away, now_unix, None)?;
             self.end_home = false;
             return Ok(());
@@ -493,21 +498,24 @@ impl Checker {
             }
         }
         let member = self.roster.member(&req.handle).cloned();
-        let r = if self.check_response(member.as_ref(), &ch.msg(), req, now_unix) {
+        let refusal = if self.check_response(member.as_ref(), &ch.msg(), req, now_unix) {
             match member {
                 Some(m) if ch.purpose == Purpose::Home && m.class != CredentialClass::Intent => {
-                    Err(Error::Rejected("a possession credential cannot set home"))
+                    Some(Error::Rejected("a possession credential cannot set home"))
                 }
-                Some(_) => self.apply(ch.purpose, now_unix, now_ms),
-                None => Err(Error::Rejected("credential refused")),
+                Some(_) => None,
+                None => Some(Error::Rejected("credential refused")),
             }
         } else {
-            Err(Error::Rejected("credential refused"))
+            Some(Error::Rejected("credential refused"))
         };
-        if r.is_err() {
+        if let Some(e) = refusal {
             self.limiter.record_rejection(door, Lane::Signature, now_ms);
+            return Err(e);
         }
-        r
+        // Accepted: a storage error from here on says nothing about the
+        // credential, so it is not counted toward a cooldown.
+        self.apply(ch.purpose, now_unix, now_ms)
     }
 
     /// Carry out an accepted purpose: reissue `home` (renewing its lapse);
@@ -579,9 +587,13 @@ impl Checker {
         now_ms: u64,
         now_unix: u64,
     ) -> Result<CardProgress> {
+        enum Next {
+            Send(Vec<u8>),
+            Apply(Purpose),
+        }
         let door = s.challenge.door_id;
         let r = (|| match s.auth.on_response(resp) {
-            Ev2Step::Send(apdu) => Ok(CardProgress::Send(apdu)),
+            Ev2Step::Send(apdu) => Ok(Next::Send(apdu)),
             Ev2Step::Failed => Err(Error::Rejected("card refused")),
             Ev2Step::Authenticated(ok) => {
                 let ch = &s.challenge;
@@ -595,14 +607,21 @@ impl Checker {
                     Some(m) if m.kind == MemberKind::Card && m.is_current(now_unix) => {}
                     _ => return Err(Error::Rejected("card is no longer enrolled")),
                 }
-                let purpose = ch.purpose;
-                Ok(CardProgress::Done(self.apply(purpose, now_unix, now_ms)?))
+                Ok(Next::Apply(ch.purpose))
             }
         })();
-        if r.is_err() {
-            self.limiter.record_rejection(&door, Lane::Card, now_ms);
+        match r {
+            Err(e) => {
+                self.limiter.record_rejection(&door, Lane::Card, now_ms);
+                Err(e)
+            }
+            Ok(Next::Send(apdu)) => Ok(CardProgress::Send(apdu)),
+            // Accepted: a storage error from here on says nothing about the
+            // card, so it is not counted toward a cooldown.
+            Ok(Next::Apply(purpose)) => {
+                Ok(CardProgress::Done(self.apply(purpose, now_unix, now_ms)?))
+            }
         }
-        r
     }
 }
 
@@ -1138,10 +1157,15 @@ pub(crate) mod tests {
         seq_writes: usize,
         publishes: usize,
         fail_next_publish: bool,
+        fail_save_seq: bool,
     }
     impl Persist for Probe {
         fn save_seq(&mut self, _: u64) -> Result<()> {
-            self.0.lock().unwrap().seq_writes += 1;
+            let mut st = self.0.lock().unwrap();
+            if st.fail_save_seq {
+                return Err(Error::Invalid("the disk is full"));
+            }
+            st.seq_writes += 1;
             Ok(())
         }
         fn publish(&mut self, b: &[u8; STATEMENT_LEN]) -> Result<()> {
@@ -1302,6 +1326,76 @@ pub(crate) mod tests {
             c.tick(T0, 4).unwrap();
             assert_eq!(seam(&p), HouseholdPosture::Away);
         }
+    }
+
+    #[test]
+    fn a_lapsed_home_stays_ended_when_the_away_fails_to_publish() {
+        let seam = |p: &Probe| {
+            posture::decode_structure(&p.0.lock().unwrap().seam.unwrap())
+                .unwrap()
+                .posture
+        };
+        let ttl = posture::DEFAULT_HOME_TTL_SECS;
+        // The wall clock runs past the lapse, then is set back into the
+        // home's window; or it steps back so far that the home is from the
+        // future. Either way the failed away is tried again, and the home
+        // is never republished.
+        for lapse_at in [T0 + ttl + 600, T0 - 3600] {
+            let (mut c, p) = probed();
+            let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+            c.command(&req, &S, &LAN_DOOR_ID, 1_000, T0).unwrap();
+            p.0.lock().unwrap().fail_next_publish = true;
+            assert!(c.tick(lapse_at, 2_000).is_err());
+            c.tick(T0 + 60, 3_000).unwrap();
+            assert_eq!(c.current().posture, HouseholdPosture::Away);
+            assert_eq!(
+                seam(&p),
+                HouseholdPosture::Away,
+                "the lapsed home came back"
+            );
+        }
+    }
+
+    #[test]
+    fn a_storage_error_after_an_accepted_credential_is_not_counted() {
+        let (mut c, p) = probed();
+        p.0.lock().unwrap().fail_save_seq = true;
+        for i in 0..6 {
+            let req = es256_req(&mut c, Purpose::Night, INTENT, 0x31, i);
+            assert!(c.command(&req, &S, &LAN_DOOR_ID, i, T0).is_err());
+        }
+        p.0.lock().unwrap().fail_save_seq = false;
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 9);
+        c.command(&req, &S, &LAN_DOOR_ID, 9, T0).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Home);
+        // The card lane too.
+        let (mut c, p) = probed();
+        let mut good = CardSimulator::new([0xC0; 16]);
+        for _ in 0..6 {
+            p.0.lock().unwrap().fail_next_publish = true;
+            assert!(run_card(&mut c, Purpose::Night, &mut good).is_err());
+        }
+        run_card(&mut c, Purpose::Night, &mut good).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Night);
+    }
+
+    #[test]
+    fn a_handle_revoked_and_added_again_in_skipped_epochs_ends_home() {
+        let mut c = checker();
+        let req = es256_req(&mut c, Purpose::Home, INTENT, 0x31, 0);
+        c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap();
+        let mut revoked = c.roster.successor().unwrap();
+        revoked.members.retain(|m| m.handle != [INTENT; 16]);
+        let mut readded = revoked.successor().unwrap();
+        readded
+            .members
+            .push(phone(INTENT, 0x44, CredentialClass::Intent));
+        readded.sort();
+        // The checker sees only the newest roster: the handle is held, its
+        // entry is not.
+        c.set_roster(readded).unwrap();
+        c.tick(T0, 2).unwrap();
+        assert_eq!(c.current().posture, HouseholdPosture::Away);
     }
 
     #[test]

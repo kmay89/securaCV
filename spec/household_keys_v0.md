@@ -184,10 +184,12 @@ The hub checks once a second. A current `home` becomes `away` when:
 - `home_ttl` has passed on the hub's monotonic clock since the command that
   set it, so a wall clock held back (by a spoofed time source, say) cannot
   keep it alive;
-- a roster change dropped any member (§5.3). Nothing records who set
-  `home`, so a revoked member's `home` cannot be told from anyone else's:
-  ending it is the fail-safe, and members still enrolled set it again. A
-  change that only adds members does not end it; or
+- a roster change dropped any member (§5.3), or the new roster holds a
+  different entry under a handle the hub held (a revoke and a re-add in
+  epochs it never loaded: entries are never edited in place). Nothing
+  records who set `home`, so a revoked member's `home` cannot be told from
+  anyone else's: ending it is the fail-safe, and members still enrolled set
+  it again. A change that only adds members does not end it; or
 - the roster went stale (§6.1).
 
 If the `away` that ends a `home` fails to publish, the hub tries it again
@@ -285,7 +287,9 @@ The LAN API is one door (`door_id` = 16 zero bytes).
   after it. Asking for a challenge is never counted. A request without a
   paired token, or whose body does not parse, never reaches the limiter
   (§6.1), so a client with no token cannot start a cooldown. A refusal
-  caused by a cooldown, or by a stale roster (§6.1), is not counted either.
+  caused by a cooldown, or by a stale roster (§6.1), is not counted either,
+  nor is a failure to save or publish after a credential was accepted: it
+  says nothing about the credential.
 - On the signature lane, a cooldown refuses only `home`, both the challenge
   and the command. `away` and `night` still go through, so a denial of
   service cannot hold a house in `home` through the cooldown.
