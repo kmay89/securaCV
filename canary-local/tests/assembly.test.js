@@ -169,6 +169,7 @@ for (const [dev, d] of Object.entries(asm.devices)) {
     const gaps = [];
     const drawn = new Map();
     for (const p of d.parts.filter((q) => q.part === "screw")) {
+      assert.ok(Number.isInteger(p.qty) && p.qty > 0, `${p.id}: a fastener part states no count`);
       // the builder draws an M2, `len` long (8 unless said), a flat head iff csk
       const key = `M2 ${p.params?.csk === true ? "flat" : "pan"} x ${p.params?.len ?? 8}`;
       const was = drawn.get(key) ?? { qty: 0, ids: [] };
