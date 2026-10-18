@@ -332,7 +332,10 @@ Chromium, by the probes (`boot_probe.mjs`, `bench_probe.mjs`,
 natively. (Three native proofs of display sources are narrower.
 `emulator/test/glass_turn.sh` builds the real `lvgl_port.cpp` and the
 emulator's display HAL with g++, in the dash and the nightlight configs, and
-holds the turned glass pixel for pixel; `emulator/test/glass_turn_lvgl9.sh`
+holds the turned glass pixel for pixel, then plays the real `splash.cpp`'s
+first meeting through that port's LVGL 8.4 branch in the config of every
+display env that builds LVGL 8.4, reading the speech bubble's tail and the
+bird's seat over it off the frame; `emulator/test/glass_turn_lvgl9.sh`
 builds the same port's LVGL 9 branch against the LVGL 9.5 the dash builds
 ship, in the dash and nightstand-c6 configs, and holds its flushes the same
 way, and plays the real `splash.cpp`'s first meeting through it to read the

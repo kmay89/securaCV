@@ -1004,7 +1004,7 @@ test("nightlight flavor (F204): build.sh builds it, the HAL turns its panel, the
   const gtSh = read(join(ROOT, "emulator/test/glass_turn.sh"));
   assert.ok(gtSh.includes('NL_CFG="$FW/configs/canary-display/nightlight"') &&
     gtSh.includes('NL_PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    /\n"\$OUT\/nl_glass_turn_test"\n?$/.test(gtSh), "glass_turn.sh builds and runs the nightlight's hardware turn");
+    /\n"\$OUT\/nl_glass_turn_test"\n/.test(gtSh), "glass_turn.sh builds and runs the nightlight's hardware turn");
   const gtTest = read(join(ROOT, "emulator/test/glass_turn_test.cpp"));
   assert.ok(gtTest.includes("canary::hal::display_set_rotation(rot);\n    canary::ui::lvgl_port_set_panel_rotation(rot);") &&
     gtTest.includes("for (uint8_t rot : {1, 3, 2, 0, 1}) check_panel_glass(rot, true);"),
@@ -1117,6 +1117,48 @@ test("splash and turned boots (F206): birdOnStage fails a read with no bird on s
     assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), why);
     assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), /^the portrait dash face 6\.5 s on: no bird on stage/);
   }
+});
+
+test("the splash's tail on LVGL 8.4 (F185, F159): glass_turn.sh plays the REAL splash.cpp in every LVGL 8.4 env's config and fails at its end on any red", () => {
+  const sh = read(join(ROOT, "emulator/test/glass_turn.sh"));
+  assert.ok(sh.includes("SPLASH_SRC=(lvgl_port splash canary_mark theme character)") &&
+    sh.includes('"${cxx[@]}" -c "$PROJ/src/ui/$f.cpp" -o "$OUT/splash_${name}_$f.o"') &&
+    sh.includes('"${cxx[@]}" -c "$HERE/glass_splash_test.cpp" -o "$OUT/splash_${name}_test.o"'),
+  "the real splash.cpp, canary_mark.cpp and lvgl_port.cpp, with the theme and Character they read, linked into the test");
+  assert.ok(sh.includes('-I "$HERE/native9" -I "$PROJ/include"') && sh.includes('"$OUT"/lvgl/*.o -lm'),
+    "the board's stand-ins (native9), over the same LVGL 8.4 objects as the turn tests");
+  // Every display env that builds LVGL 8.4, in its own config and pin map
+  // (the ini's), the nightlight with its lean budget.
+  const ini = read(join(REPO, "firmware/envs/platformio/canary-display.ini"));
+  const suites = [...sh.matchAll(/^splash_suite (\S+) (\S+) (\S+)(.*)$/gm)].map((m) => [m[2], m[3], m[4].trim()]);
+  const envs = { watch: "canary-display-watch", nightstand: "canary-display-nightstand-s3", touch169: "canary-display-touch169",
+    amoled241: "canary-display-amoled241", nightlight: "canary-display-nightlight-c3" };
+  assert.deepStrictEqual(suites.map((s) => s[0]), Object.keys(envs), `the splash suites: ${JSON.stringify(suites)}`);
+  for (const [cfg, board, defs] of suites) {
+    // (the nightlight's is the ini's last section)
+    const block = new RegExp(`\\n\\[env:${envs[cfg]}\\]\\n([\\s\\S]*?)(?=\\n\\[|$)`).exec(ini)?.[1] || "";
+    assert.ok(block.includes(`-I\${PROJECT_DIR}/../../boards/${board}/pins`), `${envs[cfg]} builds on ${board}'s pins`);
+    assert.ok(block.includes(`-I\${PROJECT_DIR}/../../configs/canary-display/${cfg}`),
+      `${envs[cfg]} builds the ${cfg} config`);
+    assert.strictEqual(defs === "-DCD_LEAN_BUILD=1", block.includes("-DCD_LEAN_BUILD=1"), `${envs[cfg]}'s lean budget`);
+  }
+  assert.ok(sh.includes('"$OUT/splash_${name}_test" || splash_failed+=("$name")') &&
+    /if \(\(\$\{#splash_failed\[@\]\}\)\); then\n[^\n]*\n\s+exit 1\nfi\n?$/.test(sh),
+  "every splash suite runs, and a red one fails the script at its end");
+  assert.ok(sh.includes('PSEUDO="$FW/common/identity/device_pseudonym.h"'), "the pseudonym stand-in is held to the real header");
+  // The test reads the tail off the frame: drawn, whole, on the bubble's
+  // center line, no higher than kTailRise; the bird on seat()'s seat and
+  // clear of the tail where seat() says so; both Characters, two pseudonyms.
+  const t = read(join(ROOT, "emulator/test/glass_splash_test.cpp"));
+  assert.ok(t.includes("#if LVGL_VERSION_MAJOR != 8") && t.includes("canary::ui::splash_play(1700);") &&
+    t.includes("const Ink own = tail_ink(tail, bub);") && t.includes("own.n >= kWholeInk"), "drawn and whole");
+  assert.ok(t.includes("HOLD(fabs(off) <= 1.0, W.center_fails,") && t.includes("HOLD(rise <= sl::kTailRise, W.rise_fails,"),
+    "centered, and no higher than kTailRise");
+  assert.ok(t.includes("const sl::Seat s = sl::seat(g_lh, sl::kSmallGlass, true, W.tallest);") &&
+    t.includes("CHECK(W.tail_gap >= sl::kGap,"), "the bird on seat()'s seat, clear of the tail where seat() says so");
+  assert.ok(t.includes("{canary::ui::Character::QuietGlass, canary::ui::Character::Heirloom}") &&
+    t.includes("for (char letter : {'2', 'W'})") && t.includes("canary::ui::lvgl_port_set_panel_rotation(1);"),
+  "both Characters, a plain and a wide-lettered pseudonym, and the nightlight turned");
 });
 
 test("dist drift (F204): the drift check fails on a bundle this tree builds that the committed dist lacks", () => {
