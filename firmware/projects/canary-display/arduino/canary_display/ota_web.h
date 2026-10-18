@@ -38,6 +38,7 @@ struct OtaWebStatus {
   bool update_available;    // a newer, verified image is offered
   bool auto_update;         // nightly auto-install is on
   uint8_t progress;         // 0..100 during download, 0 otherwise
+  bool pending_verify;      // this boot's image is still unconfirmed (the health dwell is running)
 };
 
 // Snapshot the engine for GET /api/ota/status. Cheap; call per request.

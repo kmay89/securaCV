@@ -520,6 +520,36 @@
   `check_wifi_credential_sync.sh` holds the staged copies to the header.
 - **Date learned:** 2026-10
 
+### A boot-time decision that reads a setting init() provides must wait for init() — or both must share one pure core
+- **What happened:** The OTA engine gained a confirm dwell: a freshly
+  installed image is marked valid only after 60 s of health
+  (`securacv_ota_health_tick`). The dwell length lives in the config that
+  `securacv_ota_init()` copies in — but every board runs
+  `securacv_ota_boot_self_test()` first (the probes must run before the
+  network comes up), so the probe saw a zero dwell, took the legacy branch
+  and confirmed the image at once. Six targets, one bug, no test caught it:
+  the host test covered the manifest rules, and the dwell lived only in the
+  device-side section of the engine. Review (Codex, PR #1816) found it.
+- **Root cause:** two call sites decided the same question from one piece
+  of state that only the later one had. "It defaults to 0" read as "the
+  legacy behavior" instead of "I do not know yet".
+- **Fix:** the dwell is a pure state machine (`securacv_ota_dwell_*` in the
+  host-visible part of `securacv_ota.cpp`): the probe arms it and never
+  confirms unless init() has already run with no dwell; init() resolves a
+  deferred probe (a dwell → the ticks; none → confirm now); the tick
+  confirms after the dwell has held. An engine-less build that can still
+  install (the flagship's `secure` envs) says so explicitly with
+  `securacv_ota_confirm_now()`. The otadata read happens only while a dwell
+  is armed — a reviewer's second finding: the rewrite had put it on every
+  loop pass for the life of the device.
+- **Regression check:** `test_confirm_dwell` in
+  `firmware/common/ota/test_ota_logic.cpp` runs the core in both call
+  orders, through an interrupted dwell, with no dwell, and across the
+  millis() wrap. The rule for the next one: when a decision depends on a
+  setting another call provides, make the decision a pure function both
+  calls feed, and host-test the order they are actually called in.
+- **Date learned:** 2026-10
+
 ### A new outbound destination is disclosed at its call site, not reached through a table
 - **What happened:** The shared Wi-Fi supervisor gave Sense, Vision and the
   Sentinel a wall clock (the brief's "NTP with hub fallback") by handing

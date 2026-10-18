@@ -295,6 +295,7 @@ OtaWebStatus ota_web_status() {
   s.update_available = securacv_ota_update_available();
   s.auto_update = securacv_ota_get_auto_update();
   s.progress = securacv_ota_get_progress();
+  s.pending_verify = securacv_ota_pending_verify();
   return s;
 }
 

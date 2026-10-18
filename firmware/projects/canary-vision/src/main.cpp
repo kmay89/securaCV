@@ -679,6 +679,7 @@ static void fill_node_status(NodeStatus& st) {
   st.ota_state = securacv_ota_state_word(securacv_ota_get_state());
   const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
   if (m != nullptr && m->version[0] && securacv_ota_update_available()) st.ota_target = m->version;
+  st.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed (the dwell is running)
   // Honest posture: every shipped build keeps its secrets in plaintext NVS
   // (common/identity/key_at_rest.h Tier 0); the secure kit is the path up.
   st.creds_at_rest = key_at_rest::wire_label(key_at_rest::Tier::PlaintextNvs);

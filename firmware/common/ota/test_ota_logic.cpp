@@ -272,6 +272,82 @@ static int test_manifest_v2_message_and_rules()
     return 0;
 }
 
+
+// The confirm dwell as the pure core sees it: the order a board calls
+// boot_self_test() and init() in must not change when the image is confirmed.
+static int test_confirm_dwell()
+{
+    int fails = 0;
+    const uint32_t DWELL = 60000;
+
+    // Every board's order: probes first, init later, with a dwell.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, /*initialized=*/false, 0) == SECURACV_OTA_DWELL_WAIT);  // probes before init: never confirm at the probe (the dwell is unknown)
+        CHECK(d.probes_passed);  // probes before init: armed
+        CHECK(securacv_ota_dwell_tick(&d, 1000, true, 0, true) == SECURACV_OTA_DWELL_IDLE);  // a tick before init (dwell still 0) decides nothing
+        CHECK(d.probes_passed);  // ...and does not disarm
+        CHECK(securacv_ota_dwell_init(&d, DWELL) == SECURACV_OTA_DWELL_WAIT);  // init with a dwell: wait for the ticks
+        CHECK(securacv_ota_dwell_tick(&d, 2000, false, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // unhealthy: wait
+        CHECK(!d.dwell_started);  // unhealthy: the dwell has not started
+        CHECK(securacv_ota_dwell_tick(&d, 3000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // first healthy pass starts the dwell
+        CHECK(d.dwell_started && d.healthy_since_ms == 3000);  // started at the first healthy pass
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL - 1, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // one ms short: wait
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // the dwell held: confirm
+        CHECK(d.probes_passed);  // CONFIRM leaves the state armed until the mark lands
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL + 1, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // a failed mark is retried
+        securacv_ota_dwell_clear(&d);
+        CHECK(securacv_ota_dwell_tick(&d, 3000 + DWELL + 2, true, DWELL, true) == SECURACV_OTA_DWELL_IDLE);  // cleared: idle
+    }
+    // An unhealthy pass inside the dwell restarts it.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        securacv_ota_dwell_tick(&d, 0, true, DWELL, true);
+        CHECK(securacv_ota_dwell_tick(&d, 30000, false, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // link lost at 30 s
+        CHECK(securacv_ota_dwell_tick(&d, 31000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // link back at 31 s: the dwell restarts
+        CHECK(securacv_ota_dwell_tick(&d, 60000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // 60 s after boot is not 60 s of health
+        CHECK(securacv_ota_dwell_tick(&d, 31000 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // 60 s after the link came back: confirm
+    }
+    // Probes before init, no dwell configured: init confirms at once (legacy).
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, false, 0) == SECURACV_OTA_DWELL_WAIT);  // probes before init wait
+        CHECK(securacv_ota_dwell_init(&d, 0) == SECURACV_OTA_DWELL_CONFIRM);  // init with dwell 0 confirms the deferred image
+        securacv_ota_dwell_clear(&d);
+        CHECK(securacv_ota_dwell_init(&d, 0) == SECURACV_OTA_DWELL_IDLE);  // nothing pending: init has nothing to confirm
+    }
+    // Init first (the old canary order): a zero dwell confirms at the probe, a dwell waits.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, true, 0) == SECURACV_OTA_DWELL_CONFIRM);  // init first, dwell 0: confirm at the probe
+        CHECK(!d.probes_passed);  // ...and nothing stays armed
+        CHECK(securacv_ota_dwell_probes_passed(&d, true, DWELL) == SECURACV_OTA_DWELL_WAIT);  // init first, a dwell: wait
+        CHECK(securacv_ota_dwell_tick(&d, 10, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // starts
+        CHECK(securacv_ota_dwell_tick(&d, 10 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // confirms after the dwell
+    }
+    // The image stopped being pending underneath (confirmed elsewhere): disarm.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        CHECK(securacv_ota_dwell_tick(&d, 5, true, DWELL, /*still_pending=*/false) == SECURACV_OTA_DWELL_IDLE);  // not pending: idle
+        CHECK(!d.probes_passed);  // not pending: disarmed
+    }
+    // millis() wrap inside the dwell.
+    {
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        const uint32_t t0 = 0xFFFFFF00u;
+        securacv_ota_dwell_tick(&d, t0, true, DWELL, true);
+        CHECK(securacv_ota_dwell_tick(&d, t0 + DWELL - 1, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);  // across the wrap, one ms short
+        CHECK(securacv_ota_dwell_tick(&d, t0 + DWELL, true, DWELL, true) == SECURACV_OTA_DWELL_CONFIRM);  // across the wrap, the dwell held
+    }
+    return fails;
+}
+
 static int test_friendly_strings()
 {
     // Every error code needs a usable primary-UI sentence; raw enum names
@@ -351,6 +427,7 @@ int main()
     if (test_hex_to_bytes()) return 1;
     if (test_manifest_message_cross_language_fixture()) return 1;
     if (test_manifest_v2_message_and_rules()) return 1;
+    if (test_confirm_dwell()) return 1;
     if (test_friendly_strings()) return 1;
     if (test_channel_manifest_url()) return 1;
 

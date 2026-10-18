@@ -3831,7 +3831,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
       const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
       ns.ota_state          = securacv_ota_state_word(securacv_ota_get_state());  // the one lowercase word every node speaks
       ns.ota_target         = (m != NULL && securacv_ota_update_available()) ? m->version : nullptr;
-      ns.ota_pending_verify = securacv_ota_just_updated() ? 1 : 0;
+      ns.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed
     }
     // Where the credentials sleep (docs/FIRMWARE_MAP.md §3: plaintext NVS on
     // every shipped build), said plainly.
@@ -12894,7 +12894,8 @@ static void ble_scanners_release_if_due() {
 // Kept: the Ed25519 identity key, the chain state and its NVS records, the
 // witness records and health log on SD, the API token (derived from the
 // key), the OTA settings, the CSI module's tuning. Runs on the loop task
-// (the BOOT poll) and does not return.
+// (the BOOT poll) and RETURNS: the restart is the release edge's
+// (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
 static void factory_reset_by_hold() {
   Serial.println("[RESET] BOOT held 10 s -> factory reset (credentials + settings, identity kept)");
   log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM, "Factory reset by BOOT hold",
@@ -12912,10 +12913,11 @@ static void factory_reset_by_hold() {
   if (!setup_wizard::reset_to_first_boot()) {
     Serial.println("[RESET] Setup flag / device name: NVS refused the clear (kept)");
   }
-  Serial.println("[RESET] Done - restarting into first-boot setup");
+  // No restart here: GPIO0 is the BOOT strapping pin and the hand is still on
+  // it, so a restart now would boot the ROM download loader, not the first-boot
+  // setup. The release edge (HoldEvent::Released, stage >= 2) restarts.
+  Serial.println("[RESET] Done - release BOOT to restart into first-boot setup");
   Serial.flush();
-  delay(250);
-  ESP.restart();
 }
 
 void loop() {
@@ -13129,9 +13131,11 @@ void loop() {
   static bool boot_btn_was_pressed = false;
   // The long hold, classified once for every board (reset_hold.h): Warn at
   // 3 s, Reset at the fleet's factory_reset_hold_ms, no Wipe stage — the
-  // identity is kept. Reset fires while the hand is still on the button, so
-  // the feedback lands before the restart; the release edge below stays the
-  // short/medium gestures'.
+  // identity is kept. Reset ERASES while the hand is still on the button, so
+  // the feedback lands first; the RESTART waits for the release edge, because
+  // GPIO0 is the strapping pin and a restart under a held BOOT lands in the
+  // ROM download loader (the headless boards do the same). Released from the
+  // Warn stage or earlier, the short/medium gestures below keep their meaning.
   static canary::io::ResetHold s_reset_hold;
   static_assert(canary::io::ResetHold{}.reset_ms == canary::net::onboard::Timing{}.factory_reset_hold_ms,
                 "ResetHold's Reset stage is the onboarding Timing's factory_reset_hold_ms");
@@ -13142,7 +13146,15 @@ void loop() {
       Serial.println("[BOOT] Keep holding: 10 s = factory reset (credentials + settings; identity kept)");
       break;
     case canary::io::HoldEvent::Reset:
-      factory_reset_by_hold();   // does not return
+      factory_reset_by_hold();   // erases; the restart is the release edge's
+      break;
+    case canary::io::HoldEvent::Released:
+      if (s_reset_hold.released_stage >= 2) {
+        Serial.println("[RESET] BOOT released - restarting into first-boot setup");
+        Serial.flush();
+        delay(50);
+        ESP.restart();   // does not return
+      }
       break;
     default:
       break;

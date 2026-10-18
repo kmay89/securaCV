@@ -419,6 +419,17 @@ bool securacv_ota_just_updated(void);
 bool securacv_ota_pending_verify(void);
 
 /**
+ * For a build that runs NO engine (securacv_ota_init() is never called, so
+ * neither is the health tick) but can still install an image some other
+ * way — the flagship's `secure` / `secure_ha` envs with the dev push
+ * endpoint: confirm the running image now if the boot probes passed and it
+ * is still pending. This is the legacy confirm-at-the-probe, chosen by the
+ * caller that knows no dwell will ever run. A build with the engine never
+ * needs it; calling it there would skip the dwell.
+ */
+void securacv_ota_confirm_now(void);
+
+/**
  * @brief The health-gated half of the A/B confirmation (docs/OTA.md §2).
  *
  * Call every loop pass with the board's own notion of healthy (the Wi-Fi
@@ -448,6 +459,48 @@ const char *securacv_ota_state_word(securacv_ota_state_t state);
  * is told to install the intermediate release first.
  */
 bool securacv_ota_min_version_ok(const char *running, const char *min_version);
+
+/**
+ * The confirm dwell as a pure state machine (host-tested in
+ * test_ota_logic.cpp). The engine owns one of these; every decision about
+ * when a PENDING_VERIFY image is confirmed goes through it, so the order the
+ * board calls securacv_ota_boot_self_test() and securacv_ota_init() in
+ * cannot change the answer:
+ *
+ *   boot probes pass → securacv_ota_dwell_probes_passed(): CONFIRM only when
+ *     init() already ran AND config.confirm_dwell_ms is 0 (the legacy
+ *     confirm-at-boot); otherwise WAIT — the dwell, or init(), decides.
+ *   init() → securacv_ota_dwell_init(): the probes passed earlier and the
+ *     dwell is 0 → CONFIRM now; a dwell → WAIT for the ticks; no probes yet
+ *     → IDLE.
+ *   each loop pass → securacv_ota_dwell_tick(): WAIT while unhealthy (an
+ *     unhealthy pass restarts the dwell) or inside the dwell, CONFIRM once
+ *     `healthy` has held for dwell_ms, IDLE when nothing is pending.
+ *
+ * CONFIRM leaves the state armed so a failed esp_ota_mark_app_valid_cancel_rollback()
+ * is retried on the next pass; the caller clears it with
+ * securacv_ota_dwell_clear() once the mark landed.
+ */
+typedef struct {
+    bool probes_passed;        /**< the boot probes passed on an image still pending */
+    bool dwell_started;        /**< `healthy` has been true since healthy_since_ms */
+    uint32_t healthy_since_ms; /**< start of the current healthy run */
+} securacv_ota_dwell_t;
+
+typedef enum {
+    SECURACV_OTA_DWELL_IDLE = 0,   /**< nothing pending — nothing to do */
+    SECURACV_OTA_DWELL_WAIT = 1,   /**< pending; not yet */
+    SECURACV_OTA_DWELL_CONFIRM = 2 /**< confirm the running image now */
+} securacv_ota_dwell_verdict_t;
+
+securacv_ota_dwell_verdict_t securacv_ota_dwell_probes_passed(securacv_ota_dwell_t *d,
+                                                              bool initialized,
+                                                              uint32_t dwell_ms);
+securacv_ota_dwell_verdict_t securacv_ota_dwell_init(securacv_ota_dwell_t *d, uint32_t dwell_ms);
+securacv_ota_dwell_verdict_t securacv_ota_dwell_tick(securacv_ota_dwell_t *d, uint32_t now_ms,
+                                                     bool healthy, uint32_t dwell_ms,
+                                                     bool still_pending);
+void securacv_ota_dwell_clear(securacv_ota_dwell_t *d);
 
 /**
  * @brief The board / chip rule, pure: a manifest binding (v2) matches when

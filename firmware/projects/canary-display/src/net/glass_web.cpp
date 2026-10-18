@@ -1079,13 +1079,13 @@ void handle_status() {
   s.wall = polled_lately ? "direct" : (s.hub == NS_HUB_OK ? "hub" : "none");
   s.wall_polled_s_ago =
       s_fleet_polled ? (int)((uint32_t)(now - s_fleet_polled_ms) / 1000u) : -1;
-  // Updates: the engine's state word, and the manifest version while one is
-  // held (nullptr until a check ran — omitted). Whether THIS boot is the
-  // unconfirmed new image has no getter yet; omitted rather than guessed.
+  // Updates: the engine's state word, the manifest version while one is
+  // held (nullptr until a check ran — omitted), and whether THIS boot is the
+  // unconfirmed new image still inside its health dwell.
   const OtaWebStatus ota = ota_web_status();
   s.ota_state = ota_web_state_word();
   s.ota_target = ota.latest;
-  s.ota_pending_verify = -1;
+  s.ota_pending_verify = ota.pending_verify ? 1 : 0;
   // Where the credentials sleep. Every shipped display build is Tier 0
   // (common/identity/key_at_rest.h's "plaintext-nvs"): the Arduino core's
   // sdkconfig has no NVS encryption, so the honest word is the weakest one.

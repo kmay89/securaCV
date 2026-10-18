@@ -291,6 +291,47 @@ bool securacv_ota_min_version_ok(const char *running, const char *min_version)
     return securacv_version_compare(running, min_version) >= 0;
 }
 
+// ── Confirm dwell: the pure core (host-tested) ────────────────────────────────
+securacv_ota_dwell_verdict_t securacv_ota_dwell_probes_passed(securacv_ota_dwell_t *d,
+                                                              bool initialized,
+                                                              uint32_t dwell_ms)
+{
+    if (initialized && dwell_ms == 0) return SECURACV_OTA_DWELL_CONFIRM;  /* legacy: confirm at the boot probe */
+    d->probes_passed = true;   /* init() or the ticks decide */
+    d->dwell_started = false;
+    return SECURACV_OTA_DWELL_WAIT;
+}
+
+securacv_ota_dwell_verdict_t securacv_ota_dwell_init(securacv_ota_dwell_t *d, uint32_t dwell_ms)
+{
+    if (!d->probes_passed) return SECURACV_OTA_DWELL_IDLE;
+    if (dwell_ms == 0) return SECURACV_OTA_DWELL_CONFIRM;  /* the probes passed before init(); no dwell wanted */
+    return SECURACV_OTA_DWELL_WAIT;
+}
+
+securacv_ota_dwell_verdict_t securacv_ota_dwell_tick(securacv_ota_dwell_t *d, uint32_t now_ms,
+                                                     bool healthy, uint32_t dwell_ms,
+                                                     bool still_pending)
+{
+    if (!d->probes_passed || dwell_ms == 0) return SECURACV_OTA_DWELL_IDLE;
+    if (!still_pending) { securacv_ota_dwell_clear(d); return SECURACV_OTA_DWELL_IDLE; }
+    if (!healthy) { d->dwell_started = false; return SECURACV_OTA_DWELL_WAIT; }
+    if (!d->dwell_started) {
+        d->dwell_started = true;
+        d->healthy_since_ms = now_ms;
+        return SECURACV_OTA_DWELL_WAIT;
+    }
+    if ((int32_t)(now_ms - d->healthy_since_ms) < (int32_t)dwell_ms) return SECURACV_OTA_DWELL_WAIT;
+    return SECURACV_OTA_DWELL_CONFIRM;
+}
+
+void securacv_ota_dwell_clear(securacv_ota_dwell_t *d)
+{
+    d->probes_passed = false;
+    d->dwell_started = false;
+    d->healthy_since_ms = 0;
+}
+
 bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
                            const char *build_board, const char *build_chip)
 {
@@ -621,11 +662,10 @@ typedef struct {
 
 static ota_context_t s_ctx = {};
 static bool s_just_updated = false;
-// The confirm dwell (securacv_ota_health_tick): probes passed at boot, the
-// image is still pending, healthy has held since s_healthy_since_ms.
-static bool s_probes_passed = false;
-static bool s_dwell_started = false;
-static uint32_t s_healthy_since_ms = 0;
+// The confirm dwell (securacv_ota_dwell_*, the pure core above): armed by the
+// boot probes, resolved by init() or the health ticks. One state, whatever
+// order the board calls securacv_ota_boot_self_test() and securacv_ota_init().
+static securacv_ota_dwell_t s_dwell = {false, false, 0};
 
 // ============================================================================
 // NVS PERSISTED SETTINGS
@@ -948,6 +988,32 @@ esp_err_t securacv_ota_init(const securacv_ota_config_t *config)
         ota_raise_floor_to(s_ctx.config.current_version);
     }
 
+    // The boot probes ran before us and left the image pending: now that the
+    // dwell is known, a zero dwell confirms at once (legacy); a dwell hands
+    // the decision to securacv_ota_health_tick().
+    switch (securacv_ota_dwell_init(&s_dwell, s_ctx.config.confirm_dwell_ms)) {
+    case SECURACV_OTA_DWELL_CONFIRM:
+        if (running_image_pending_verify()) {
+            const esp_err_t mark = esp_ota_mark_app_valid_cancel_rollback();
+            if (mark != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(mark));
+                break;  // s_dwell stays armed; the ticks are idle with dwell 0, so the next boot's probes retry
+            }
+            s_just_updated = true;
+            ota_raise_floor_to(s_ctx.config.current_version);
+            ESP_LOGI(TAG, "Boot probes had passed - firmware confirmed at init (no dwell configured)");
+        }
+        securacv_ota_dwell_clear(&s_dwell);
+        break;
+    case SECURACV_OTA_DWELL_WAIT:
+        ESP_LOGI(TAG, "Boot probes had passed - confirming after %lu ms of health",
+                 (unsigned long)s_ctx.config.confirm_dwell_ms);
+        break;
+    case SECURACV_OTA_DWELL_IDLE:
+    default:
+        break;
+    }
+
     if (!pubkey_provisioned(s_ctx.config.release_pubkey)) {
         ESP_LOGW(TAG, "Release public key is all zeros — OTA installs are disabled (fail-closed)");
     }
@@ -1151,14 +1217,21 @@ esp_err_t securacv_ota_boot_self_test(void)
             ESP_LOGW(TAG, "Some optional self-tests failed, but continuing");
         }
 
-        if (s_ctx.config.confirm_dwell_ms > 0) {
-            // The probes passed; the dwell decides (securacv_ota_health_tick).
-            // A crash loop or a wedged radio inside it reboots into the
-            // previous image by the bootloader's own pending-verify rule.
-            s_probes_passed = true;
-            s_dwell_started = false;
-            ESP_LOGI(TAG, "Self-tests passed - confirming after %lu ms of health",
-                     (unsigned long)s_ctx.config.confirm_dwell_ms);
+        // The probes passed. Whether that confirms the image NOW or starts
+        // the dwell is the pure core's call — and it knows whether init() has
+        // run yet. Every board calls this before securacv_ota_init() (the
+        // probes must run before the network comes up), so the dwell setting
+        // is not known here: the image stays pending and init() picks it up.
+        // A crash loop or a wedged radio inside the dwell reboots into the
+        // previous image by the bootloader's own pending-verify rule.
+        if (securacv_ota_dwell_probes_passed(&s_dwell, s_ctx.initialized,
+                                             s_ctx.config.confirm_dwell_ms) != SECURACV_OTA_DWELL_CONFIRM) {
+            if (s_ctx.initialized) {
+                ESP_LOGI(TAG, "Self-tests passed - confirming after %lu ms of health",
+                         (unsigned long)s_ctx.config.confirm_dwell_ms);
+            } else {
+                ESP_LOGI(TAG, "Self-tests passed - confirmation waits for securacv_ota_init() and its dwell");
+            }
             return ESP_OK;
         }
 
@@ -1190,25 +1263,44 @@ bool securacv_ota_pending_verify(void)
     return running_image_pending_verify();
 }
 
+void securacv_ota_confirm_now(void)
+{
+    // The pure core's "init with no dwell": CONFIRM when the probes passed on
+    // an image still pending, IDLE otherwise.
+    if (securacv_ota_dwell_init(&s_dwell, 0) != SECURACV_OTA_DWELL_CONFIRM) return;
+    if (running_image_pending_verify()) {
+        const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
+            return;  // armed; the next boot's probes retry
+        }
+        s_just_updated = true;
+        ota_raise_floor_to(s_ctx.config.current_version);  // NULL before init: the floor waits for init (if any)
+        ESP_LOGI(TAG, "Boot probes passed - firmware confirmed now (no engine in this build runs a dwell)");
+    }
+    securacv_ota_dwell_clear(&s_dwell);
+}
+
 bool securacv_ota_health_tick(uint32_t now_ms, bool healthy)
 {
-    if (!s_probes_passed || s_ctx.config.confirm_dwell_ms == 0) return false;
-    if (!running_image_pending_verify()) { s_probes_passed = false; return false; }
-    if (!healthy) { s_dwell_started = false; return false; }
-    if (!s_dwell_started) {
-        s_dwell_started = true;
-        s_healthy_since_ms = now_ms;
+    // Not initialized yet: the dwell is unknown, nothing can be decided. Not
+    // armed, or no dwell configured: nothing to do — and no otadata read.
+    // running_image_pending_verify() maps the otadata partition on every call,
+    // so it is asked only while a dwell is actually running (the 60 s window),
+    // never on every loop pass for the life of the device.
+    if (!s_ctx.initialized || !s_dwell.probes_passed || s_ctx.config.confirm_dwell_ms == 0) return false;
+    if (securacv_ota_dwell_tick(&s_dwell, now_ms, healthy, s_ctx.config.confirm_dwell_ms,
+                                running_image_pending_verify()) != SECURACV_OTA_DWELL_CONFIRM) {
         return false;
     }
-    if ((int32_t)(now_ms - s_healthy_since_ms) < (int32_t)s_ctx.config.confirm_dwell_ms) return false;
 
     ESP_LOGI(TAG, "Healthy for the confirm dwell - marking firmware as valid");
     const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to mark app valid: %s", esp_err_to_name(err));
-        return false;
+        return false;  // s_dwell stays armed: the next tick retries the mark
     }
-    s_probes_passed = false;
+    securacv_ota_dwell_clear(&s_dwell);
     s_just_updated = true;
     ota_raise_floor_to(s_ctx.config.current_version);
     ESP_LOGI(TAG, "OTA validation complete - firmware confirmed");

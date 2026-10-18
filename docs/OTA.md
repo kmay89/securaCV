@@ -53,6 +53,18 @@ engine confirms it (`esp_ota_mark_app_valid_cancel_rollback`) only when:
    dwell reboots into the previous image instead of confirming the new one.
    A board that sets no dwell confirms at the probe, as before.
 
+The order of the two calls cannot change the answer. Every board runs the
+probe (`securacv_ota_boot_self_test`) before `securacv_ota_init`, because the
+probes must run before the network comes up — so at probe time the dwell is
+not known yet. The probe therefore never confirms on its own: it arms a pure
+dwell state machine (`securacv_ota_dwell_*`, host-tested in
+`test_ota_logic.cpp` in both call orders), `init()` resolves it once the
+dwell is known (a dwell → the ticks decide; none → confirm now), and the
+ticks confirm after the dwell has held. The otadata partition is read only
+while a dwell is armed. A build that can install an image but runs no
+engine (the flagship's `secure` envs) says so with
+`securacv_ota_confirm_now()` and confirms at the probe as it always did.
+
 A failed required probe calls `esp_ota_mark_app_invalid_rollback_and_reboot`
 on the spot. The anti-rollback floor in NVS rises **only after** confirmation,
 so a rolled-back version can be offered again.

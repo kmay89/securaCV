@@ -989,10 +989,18 @@ static bool     g_restart_requested = false;
 // Guard covers BOTH install channels: the engine owns rollback confirmation
 // (verifyRollbackLater), so any build that can install an image — pull OTA or
 // the dev push endpoint — must also confirm it here, or the bootloader
-// reverts it on the next boot.
+// reverts it on the next boot. The probe alone no longer confirms: with the
+// pull engine (FEATURE_OTA_PULL) the image stays pending until
+// securacv_ota_init() in setup() and then a minute of health
+// (securacv_ota_health_tick in loop(), docs/OTA.md §2) confirm it. A build
+// without the engine (secure, secure_ha: FEATURE_OTA_UPDATE alone) has no
+// init() and no tick, so it confirms at the probe as it always did.
 static void ota_confirm_and_witness() {
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   securacv_ota_boot_self_test();
+#if !FEATURE_OTA_PULL
+  securacv_ota_confirm_now();   // no engine, no dwell: the probe's verdict is final
+#endif
 
   // Witness the update outcome. The engine recorded the install target the
   // moment the boot partition flipped; running the old version again means

@@ -2709,8 +2709,9 @@ static size_t build_node_status(char* out, size_t cap) {
     ns.wall = (polled && ago < 60000) ? "direct" : (ns.hub == NS_HUB_OK) ? "hub" : "none";
     ns.wall_polled_s_ago = polled ? (ago < 0 ? 0 : ago / 1000) : -1;
   }
-  ns.ota_pending_verify = -1;  // no accessor says "unconfirmed image" (just_updated stays true after confirmation)
+  ns.ota_pending_verify = -1;  // no OTA engine in this build: omitted
 #if FEATURE_OTA_PULL
+  ns.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed
   ns.ota_state = securacv_ota_state_word(securacv_ota_get_state());
   const securacv_ota_manifest_t* m = securacv_ota_get_manifest();
   ns.ota_target = (m != NULL && m->version[0] != '\0') ? m->version : nullptr;
