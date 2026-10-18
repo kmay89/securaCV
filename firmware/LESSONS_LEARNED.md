@@ -3267,6 +3267,27 @@
   start walks them); `check_wap_loop_commands.py` rules BV4 and BV7.
 - **Date learned:** 2026-10
 
+### A guard's proof that it bites belongs beside the guard, not inside the ten-minute regression budget
+- **What happened:** `firmware/scripts/regression_check.sh` ran the two
+  canary-wap source guards (`check_wap_loop_commands.py`,
+  `check_wap_json_answers.py`) with their mutation self-tests, 436 and 136
+  in-memory edits of a 5 MB sketch, each a full re-check. On a runner that is
+  about five minutes per guard, which put the Regression Guards job past its
+  ten minutes and the Rust build job (whose `tests/regression_script.rs` runs
+  the same script) past its forty, as two canceled jobs on the same push.
+- **Root cause:** the proof that a guard bites grew with the guard, and it
+  sat on the same path as the check it proves, inside a budget sized for
+  checks that take seconds.
+- **Fix:** both guards take `--no-self-test`, and `regression_check.sh`
+  passes it: the check alone, in seconds. A job of its own in `firmware.yml`
+  ("WAP guard self-tests", one matrix leg per guard, twenty minutes) runs
+  each guard with its proof on every PR, in parallel with everything else.
+  Each guard's last line says which it ran.
+- **Regression check:** `regression_check.sh` finishes inside its job's
+  budget (CI's Regression Guards, ten minutes); the self-tests are the two
+  legs of "WAP guard self-tests".
+- **Date learned:** 2026-10
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
