@@ -1374,12 +1374,25 @@ LESSONS = [
 # own drift-gated vision.json), never typed here and hoped true.
 
 def read_const(path: Path, name: str) -> int:
-    """Read `#define NAME value` or `constexpr T NAME = value;` as an int."""
+    """Read `#define NAME value` or `constexpr T NAME = value;` as an int.
+
+    The value must be a plain decimal literal (a U/L suffix allowed) that ends
+    the #define's line or the constexpr's statement, a comment after it
+    allowed. Anything else is refused rather than read: the first number of
+    an expression such as `30u * 1000u` is not the value, and reading it would
+    put a wrong default in the catalog with --check green."""
     text = read(path)
-    m = re.search(rf"(?:#define\s+{name}\s+|constexpr\s+\w+\s+{name}\s*=\s*)(\d+)", text)
+    m = re.search(rf"#define[ \t]+{name}[ \t]+(?P<define>[^\n]*)"
+                  rf"|constexpr\s+\w+\s+{name}\s*=\s*(?P<constexpr>[^;]*);", text)
     if not m:
         die(f"constant {name} not found in {path.relative_to(REPO)}")
-    return int(m.group(1))
+    raw = m.group("define") if m.group("define") is not None else m.group("constexpr")
+    value = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S).strip()
+    literal = re.fullmatch(r"(\d+)[uUlL]*", value)
+    if not literal:
+        die(f"constant {name} in {path.relative_to(REPO)} is `{value}`, not a plain integer "
+            "literal; refusing to read a number out of it")
+    return int(literal.group(1))
 
 
 def product_role(pid: str) -> str:
