@@ -3,9 +3,11 @@
 // A Canary's own first-boot setup network, as a contract the phone can
 // speak — pure, so every judgment here is host-tested.
 //
-// Every Canary that has no Wi-Fi yet raises a SoftAP named `SecuraCV-XXXX`
-// (four characters of its salted pseudonym; a `-xx` suffix when the key
-// could not be made durable) with a captive page at 192.168.4.1. The
+// Every Canary that has no Wi-Fi yet raises a SoftAP named
+// `SecuraCV-<node type>-XXXX` (the type word — sense, vision, display… —
+// then four characters of its salted pseudonym; a `-xx` suffix when the key
+// could not be made durable; older firmware leaves the type out and raises
+// `SecuraCV-XXXX`) with a captive page at 192.168.4.1. The
 // display line and the shared portal the camera and radar Canaries use
 // (firmware/common/network/setup_portal.cpp, canary-display's
 // provision.cpp) serve the same three routes:
@@ -32,17 +34,17 @@ enum SetupPortal {
     static let host = "192.168.4.1"
     static let baseURL = URL(string: "http://192.168.4.1")!
 
-    /// Is this a Canary's setup network? `SecuraCV-A1B2` or `SecuraCV-A1B2-xy`
-    /// — four characters after the prefix, an optional two-character suffix.
+    /// Is this a Canary's setup network? The Swift twin of the firmware's
+    /// `onboard::is_setup_ssid` (firmware/common/network/onboarding_fsm.h):
+    /// every shape `ap_ssid()` ever emitted — `SecuraCV-sense-A1B2` and
+    /// `SecuraCV-sentinel-A1B2-xy`, and older firmware's `SecuraCV-A1B2` and
+    /// `SecuraCV-A1B2-xy`. The type is 1...8 lowercase ASCII letters, the
+    /// suffix four ASCII alphanumerics, the tag two; nothing else is ours.
+    /// One grammar for the app: `NearbyCanaries.suffix(ofSetupSSID:)` reads
+    /// it (the Shared target cannot see this file), and a name is a setup
+    /// network exactly when it has identity characters to give.
     static func isSetupNetwork(_ ssid: String) -> Bool {
-        guard ssid.hasPrefix(ssidPrefix) else { return false }
-        let rest = ssid.dropFirst(ssidPrefix.count)
-        let parts = rest.split(separator: "-", omittingEmptySubsequences: false)
-        guard let first = parts.first, first.count == 4,
-              first.allSatisfy({ $0.isLetter || $0.isNumber }) else { return false }
-        if parts.count == 1 { return true }
-        return parts.count == 2 && parts[1].count == 2
-            && parts[1].allSatisfy({ $0.isLetter || $0.isNumber })
+        NearbyCanaries.suffix(ofSetupSSID: ssid) != nil
     }
 
     /// The `POST /join` body. The portal's page posts form fields, not

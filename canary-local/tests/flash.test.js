@@ -1358,6 +1358,62 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   assert.ok(!sanitizeLogTail("psk=hunter2").includes("hunter2"));
 });
 
+// ── the setup network: its name's grammar, and the two lines a boot prints ──
+test("isSetupNetworkSsid: the twin of onboarding_fsm.h is_setup_ssid, on the host test's vectors", async () => {
+  const { isSetupNetworkSsid, SETUP_SSID_RE } = await core();
+  // firmware/tests_host/test_onboarding_fsm.cpp the_matcher_accepts_every_shape_ever_emitted
+  const ours = ["SecuraCV-4dC2", "SecuraCV-4dC2-k7", "SecuraCV-sense-4dC2",
+    "SecuraCV-sentinel-4dC2-k7", "SecuraCV-display-CNRY"];
+  const notOurs = ["SecuraCV-4dC", "SecuraCV-4dC2x", "SecuraCV-4dC2-", "SecuraCV-4dC2-k",
+    "SecuraCV-Sense-4dC2", "SecuraCV-s3nse-4dC2", "SecuraCV-vision-4dC2-k7x", "SecuraCV-a-b-c-d",
+    "securacv-4dC2", "MyWiFi", "SecuraCV-", "SecuraCV-4d C2"];
+  for (const s of ours) assert.ok(isSetupNetworkSsid(s), `${s} is ours`);
+  for (const s of notOurs) assert.ok(!isSetupNetworkSsid(s), `${s} is not ours`);
+  // The C++ takes a C string (null is false); the twin takes whatever a scan list hands it.
+  for (const v of [null, undefined, 42, {}, ["SecuraCV-4dC2"]]) assert.ok(!isSetupNetworkSsid(v));
+  // A line ending is not part of a name — anchored to the whole input, case-sensitive.
+  assert.ok(!isSetupNetworkSsid("SecuraCV-4dC2\n"));
+  assert.ok(!SETUP_SSID_RE.flags.includes("m") && !SETUP_SSID_RE.flags.includes("i"));
+  // Every node type the firmware names fits the 1..8 lowercase rule; a ninth letter does not,
+  // and a letter outside ASCII is not alphanumeric here any more than in the C++.
+  for (const t of ["canary", "wap", "vision", "sense", "sentinel", "display"]) {
+    assert.ok(isSetupNetworkSsid(`SecuraCV-${t}-4dC2`), t);
+    assert.ok(isSetupNetworkSsid(`SecuraCV-${t}-4dC2-k7`), `${t}, tagged`);
+  }
+  assert.ok(!isSetupNetworkSsid("SecuraCV-sentinels-4dC2"), "a type is at most eight letters");
+  assert.ok(!isSetupNetworkSsid("SecuraCV-4dCé"));
+});
+
+test("parseSetupNetwork reads the typed names off both boot lines; parseSetupQr the code beside them", async () => {
+  const { parseSetupNetwork, parseSetupQr, setupNetworkLine, isSetupNetworkSsid, wifiQrString } = await core();
+  // onboarding_fsm.h announce_line / qr_line, printed with println (CR LF) by setup_portal.cpp.
+  const sense = 'boot\r\n[SETUP] Setup network up: "SecuraCV-sense-4dC2"  password a7Kq2pMx  (channel 1)\r\n' +
+    "[SETUP] QR WIFI:T:WPA;S:SecuraCV-sense-4dC2;P:a7Kq2pMx;;\r\n[SETUP] Join it from a phone\r\n";
+  assert.deepStrictEqual(parseSetupNetwork(sense), { ssid: "SecuraCV-sense-4dC2", key: "a7Kq2pMx" });
+  assert.ok(isSetupNetworkSsid(parseSetupNetwork(sense).ssid));
+  assert.strictEqual(parseSetupQr(sense), "WIFI:T:WPA;S:SecuraCV-sense-4dC2;P:a7Kq2pMx;;",
+    "the payload, without the CR println adds");
+  // The QR line says what the network line says, in the grammar wifiQrString builds.
+  assert.strictEqual(parseSetupQr(sense), wifiQrString("SecuraCV-sense-4dC2", "a7Kq2pMx"));
+  // canary_wap.ino's own line, with the typed name.
+  const wap = "[WIFI] AP started: SecuraCV-wap-4dC2 (password: cv-7hJ2kQ9mN4pR)\n[OK] WiFi AP active\n";
+  assert.deepStrictEqual(parseSetupNetwork(wap), { ssid: "SecuraCV-wap-4dC2", key: "cv-7hJ2kQ9mN4pR" });
+  assert.strictEqual(setupNetworkLine(parseSetupNetwork(wap)),
+    "Its setup network: SecuraCV-wap-4dC2 · key cv-7hJ2kQ9mN4pR");
+  // Older firmware's names still parse — the field is full of them.
+  assert.deepStrictEqual(parseSetupNetwork('[SETUP] Setup network up: "SecuraCV-4dC2-k7"  password a7Kq2pMx  (channel 6)'),
+    { ssid: "SecuraCV-4dC2-k7", key: "a7Kq2pMx" });
+  // An open network's code: T:nopass and no P: field (provision_core.h wifi_qr_payload).
+  assert.strictEqual(parseSetupQr("[SETUP] QR WIFI:T:nopass;S:Open Cafe;;\r\n"), "WIFI:T:nopass;S:Open Cafe;;");
+  // Escapes ride through untouched — the payload is handed to a QR encoder as is.
+  assert.strictEqual(parseSetupQr("[SETUP] QR WIFI:T:WPA;S:Bob's\\;Cafe;P:p\\:w;;"), "WIFI:T:WPA;S:Bob's\\;Cafe;P:p\\:w;;");
+  assert.strictEqual(parseSetupQr('[SETUP] Join requested: "Home"'), null, "a different [SETUP] line is not the code");
+  assert.strictEqual(parseSetupQr(""), null);
+  assert.strictEqual(parseSetupQr(null), null);
+  // The QR line never stands in for the network line: it carries nothing the done card needs beyond [0].
+  assert.strictEqual(parseSetupNetwork("[SETUP] QR WIFI:T:WPA;S:SecuraCV-sense-4dC2;P:a7Kq2pMx;;"), null);
+});
+
 // ── post-flash proof: self-manifest read-back ───────────────────────────────
 test("parseSelfManifest: extracts the signed manifest from a noisy boot log", async () => {
   const { parseSelfManifest, formatFingerprint } = await core();

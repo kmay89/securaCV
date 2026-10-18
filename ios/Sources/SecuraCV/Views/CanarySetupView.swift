@@ -158,7 +158,7 @@ struct CanaryFamilySetupView: View {
                             scanNote = "That QR names \(qr.ssid), which isn't a Canary's setup network — it can still be tried."
                         }
                     } else {
-                        scanNote = "That code isn't a Wi-Fi QR. The glass shows one named SecuraCV-XXXX."
+                        scanNote = "That code isn't a Wi-Fi QR. The one on the glass names a network starting SecuraCV-."
                     }
                 }
             }
@@ -208,7 +208,7 @@ struct CanaryFamilySetupView: View {
                 RadioAdviceRow(advice: RadioAdvice(text: CameraGate.deniedNote, opensSettings: true))
             }
         }
-        TextField("Setup network (SecuraCV-XXXX)", text: $setupSSID)
+        TextField("Setup network (SecuraCV-…)", text: $setupSSID)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
         TextField("Its key", text: $setupKey)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -217,7 +217,7 @@ struct CanaryFamilySetupView: View {
             Text(scanNote).font(.caption).foregroundStyle(.secondary)
         }
         if !setupSSID.isEmpty && !SetupPortal.isSetupNetwork(setupSSID) {
-            Text("A Canary's setup network is named SecuraCV- plus four characters.")
+            Text("A Canary's setup network is named SecuraCV-, its device type, then four characters — older Canaries show SecuraCV- and four characters.")
                 .font(.caption).foregroundStyle(Theme.color(.warn))
         }
     }

@@ -10,11 +10,32 @@ import XCTest
 final class SetupPortalTests: XCTestCase {
 
     func testSetupNetworkNames() {
+        // The vectors of firmware/tests_host/test_onboarding_fsm.cpp
+        // the_matcher_accepts_every_shape_ever_emitted: the Swift twin of
+        // onboarding_fsm.h is_setup_ssid says exactly what the firmware says.
+        for ssid in ["SecuraCV-4dC2", "SecuraCV-4dC2-k7", "SecuraCV-sense-4dC2",
+                     "SecuraCV-sentinel-4dC2-k7", "SecuraCV-display-CNRY"] {
+            XCTAssertTrue(SetupPortal.isSetupNetwork(ssid), ssid)
+        }
+        for ssid in ["SecuraCV-4dC", "SecuraCV-4dC2x", "SecuraCV-4dC2-", "SecuraCV-4dC2-k",
+                     "SecuraCV-Sense-4dC2", "SecuraCV-s3nse-4dC2", "SecuraCV-vision-4dC2-k7x",
+                     "SecuraCV-a-b-c-d", "securacv-4dC2", "MyWiFi", "SecuraCV-", "SecuraCV-4d C2"] {
+            XCTAssertFalse(SetupPortal.isSetupNetwork(ssid), ssid)
+        }
+        // Every node type the firmware names, plain and tagged; a ninth letter is not a type.
+        for type in ["canary", "wap", "vision", "sense", "sentinel", "display"] {
+            XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-\(type)-A1B2"), type)
+            XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-\(type)-A1B2-xy"), type)
+        }
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-sentinels-A1B2"))
+        // ASCII only, as the firmware reads it: a letter outside ASCII is not alphanumeric here.
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1Bé"))
+        XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-sensé-A1B2"))
+        // The names this test pinned before the type word existed still hold.
         XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-A1B2"))
         XCTAssertTrue(SetupPortal.isSetupNetwork("SecuraCV-A1B2-xy"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1B"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("SecuraCV-A1B2-x"))
-        XCTAssertFalse(SetupPortal.isSetupNetwork("securacv-A1B2"))
         XCTAssertFalse(SetupPortal.isSetupNetwork("MyHomeWiFi"))
     }
 

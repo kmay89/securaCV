@@ -309,7 +309,8 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
 // canary_wap.ino derives three names from pubkey_fp[0..1], and none of them
 // from the MAC:
 //   device id  generate_device_id: DEVICE_ID_PREFIX + unambiguous_suffix16
-//   SSID       generate_ap_ssid:   "SecuraCV-" + the same suffix, same case
+//   SSID       generate_ap_ssid:   onboarding_fsm.h's ap_ssid — "SecuraCV-" +
+//              the node type word ("wap") + "-" + the same suffix, same case
 //   mDNS host  generate_mdns_hostname with no friendly name set:
 //              "canary-%02x%02x", four lowercase hex digits, no "-s3-"
 // The page used to show a device id and an SSID that spelled one suffix in
@@ -322,13 +323,20 @@ test("the WAP page's fingerprint is the repo test key's, as the firmware test an
 const INO = read(`${WAP}/canary_wap.ino`);
 const WAP_NAME_PINS = [
   'snprintf(out, cap, "%s%s", DEVICE_ID_PREFIX, suffix)',
-  'snprintf(out, cap, "SecuraCV-%s", suffix)',
+  "canary::net::onboard::ap_ssid(out, cap, canary::net::onboard::NODE_WAP, suffix, nullptr)",
   "out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];",
   "v = (uint16_t)(v / UNAMBIGUOUS_LEN);",
   'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[0], g_device.pubkey_fp[1]);',
 ];
 const FP_SUFFIX_CALL = "unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),\n" +
   "                       suffix);";
+
+// The SSID's prefix and node type word are onboarding_fsm.h's (the staged
+// copy beside the sketch is what it compiles; check_onboarding_sync.sh holds
+// it to firmware/common), read, never typed.
+const ONBOARDING_FSM_H = read(`${WAP}/onboarding_fsm.h`);
+const SSID_PREFIX = ONBOARDING_FSM_H.match(/SSID_PREFIX = "([^"]+)";/)[1];
+const NODE_WAP = ONBOARDING_FSM_H.match(/NODE_WAP\s*=\s*"([a-z]+)";/)[1];
 
 function wapNames(fp) {
   const alphabet = INO.match(/UNAMBIGUOUS_ALPHABET\[\] =\s*"([^"]+)";/)[1];
@@ -340,7 +348,7 @@ function wapNames(fp) {
     v = Math.floor(v / alphabet.length);
   }
   const hex2 = (b) => b.toString(16).padStart(2, "0");
-  return { id: prefix + suffix, ssid: "SecuraCV-" + suffix, host: `canary-${hex2(fp[0])}${hex2(fp[1])}.local` };
+  return { id: prefix + suffix, ssid: `${SSID_PREFIX}${NODE_WAP}-${suffix}`, host: `canary-${hex2(fp[0])}${hex2(fp[1])}.local` };
 }
 const WAP_NAMES = wapNames(KEY.fp);
 
@@ -359,7 +367,7 @@ test("the WAP's names derive from the test key the way canary_wap.ino derives th
   // the derivation itself, on values a reader can check by hand: 0x7916 is
   // 30998 = 2 + 34*54 + 10*54^2 -> digits 2, 34, 10, 0 -> "4dC2"
   assert.deepStrictEqual(wapNames(Buffer.from([0x79, 0x16])),
-    { id: "canary-s3-4dC2", ssid: "SecuraCV-4dC2", host: "canary-7916.local" });
+    { id: "canary-s3-4dC2", ssid: "SecuraCV-wap-4dC2", host: "canary-7916.local" });
   assert.strictEqual(KEY.fpHex.slice(0, 4), "7916", "the seed's fingerprint moved");
 });
 
@@ -368,7 +376,11 @@ test("every WAP device id, SSID and unnamed host a generated page shows is the t
   const problems = [];
   for (const { page, path, s } of allStrings()) {
     for (const m of s.matchAll(/\bcanary-[cs]3-[A-Za-z0-9]+/g)) found.id.push({ page, path, v: m[0] });
-    for (const m of s.matchAll(/\bSecuraCV-[A-Za-z0-9]+/g))
+    // Every shape ap_ssid() ever emitted: SecuraCV-XXXX and SecuraCV-<type>-XXXX.
+    // A page's format string ("SecuraCV-display-%.4s", the suffix still a
+    // printf conversion) is the shape, not a name: the lookahead refuses a
+    // match that runs into another "-" or a "%".
+    for (const m of s.matchAll(/\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]+(?![-A-Za-z0-9%])/g))
       if (m[0] !== SSID_PLACEHOLDER) found.ssid.push({ page, path, v: m[0] });
     for (const m of s.matchAll(/\bcanary-[0-9A-Fa-f]{4}\.local\b/g)) found.host.push({ page, path, v: m[0] });
   }

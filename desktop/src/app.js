@@ -575,7 +575,8 @@ const HELP_DESKTOP_OVERRIDES = {
 };
 // Inlined from canary-local/assets/flash-core.js (SETUP_DOOR_NOTE,
 // WIFI_PASS_REQUIRED, SETUP_NETWORK_LINE_RES, parseSetupNetwork,
-// setupNetworkLine) — this bundle cannot import canary-local, and
+// setupNetworkLine, SETUP_QR_LINE_RE, parseSetupQr, SETUP_SSID_RE,
+// isSetupNetworkSsid) — this bundle cannot import canary-local, and
 // tests/desktop_parity.test.js fails the build if any of them drift.
 const SETUP_DOOR_NOTE =
   "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
@@ -598,9 +599,28 @@ function parseSetupNetwork(text) {
 function setupNetworkLine(net) {
   return `Its setup network: ${net.ssid} · key ${net.key}`;
 }
+// The same network as a scannable code, printed right after the announce line
+// (onboarding_fsm.h qr_line): `[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;`,
+// `T:nopass` and no `P:` for an open network. The payload only — the key is
+// what the line above already gives. println ends the line, so stop at the CR.
+const SETUP_QR_LINE_RE = /\[SETUP\] QR (WIFI:[^\r\n]+)/;
+function parseSetupQr(text) {
+  const m = SETUP_QR_LINE_RE.exec(String(text || ""));
+  return m ? m[1] : null;
+}
+// Is that network one of ours? The twin of onboarding_fsm.h is_setup_ssid:
+// `SecuraCV-<type>-XXXX[-tt]` (type 1..8 lowercase ASCII letters, four
+// alphanumerics, a two-character tag), and the older `SecuraCV-XXXX[-tt]`
+// firmware in the field still raises. tests/desktop_parity.test.js drives
+// this copy and the browser's on the firmware host test's vectors.
+const SETUP_SSID_RE = /^SecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?$/;
+function isSetupNetworkSsid(ssid) {
+  return typeof ssid === "string" && SETUP_SSID_RE.test(ssid);
+}
 // The setup network's key, off the board's own first-boot line. A Sense or
-// Vision prints it ONCE, when its portal comes up (setup_portal.cpp: `[SETUP]
-// Setup network up: "SecuraCV-XXXX"  password <key>`); a WAP when its AP
+// Vision prints it ONCE, when its portal comes up (onboarding_fsm.h
+// announce_line via setup_portal.cpp: `[SETUP] Setup network up:
+// "SecuraCV-sense-4dC2"  password <key>`); a WAP when its AP
 // starts (`[WIFI] AP started: … (password: cv-…)`). Nothing else ever shows
 // that key, so the monitor that is already watching the post-flash boot
 // hands it to the hatch card and the install result the moment it lands.
@@ -6399,7 +6419,7 @@ function hatchMoment(product) {
       body: "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
       steps: [
         "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
-        "No card? Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
+        "No card? Join the Wi-Fi network it creates, named SecuraCV-, its device type, then four characters (older Canaries: SecuraCV- and four characters), using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
         "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
         "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
       ]
@@ -6410,7 +6430,7 @@ function hatchMoment(product) {
     title: "Your Canary is on its perch.",
     body: "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
     steps: [
-      "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+      "Join the Wi-Fi network it creates, named SecuraCV-, its device type, then four characters (older Canaries: SecuraCV- and four characters), using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
       "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
       "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
     ]

@@ -4654,7 +4654,8 @@ function phaseDone(opts) {
 
   const product = opts.product;
   // Where the key for the setup network gets printed. A Canary with no
-  // network baked in raises SecuraCV-XXXX on this first boot and prints the
+  // network baked in raises its setup network on this first boot
+  // (SecuraCV-<type>-XXXX; SecuraCV-XXXX on older firmware) and prints the
   // network's key on its serial console — the only place it ever appears.
   // The port is still ours, so listen: the voice (startVoice) reopens it at
   // console speed across the reset and hands the line over the moment it
