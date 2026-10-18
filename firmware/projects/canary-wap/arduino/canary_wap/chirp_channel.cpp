@@ -492,12 +492,20 @@ static ChirpState shown_state(ChirpState stored, uint32_t cooldown_left) {
   return (stored == CHIRP_ACTIVE && cooldown_left > 0) ? CHIRP_COOLDOWN : stored;
 }
 
-static void reset_cooldown_if_stale() {
-  uint32_t now = millis();
-  if (g_cooldown.first_chirp_today_ms > 0 &&
-      now - g_cooldown.first_chirp_today_ms > COOLDOWN_RESET_MS) {
+// The tiers reset after 24 hours with no send (spec 2.5.4, "Reset: 24 hours
+// of no chirps"), counted from the last send. They were reset 24 hours after
+// the FIRST send of the run, whatever went out since, and that also ended a
+// running cooldown: a 4-hour one started 22 hours into the run was over 2
+// hours later (sweep F193). Counted from the last send, a reset can never
+// end a cooldown, since the longest is 4 hours. update() runs this on every
+// pass, on or off, so a tier never outlives 24 quiet hours by more than a
+// pass and the timer's `now - last_chirp_ms` never wraps (49.7 days) while
+// a tier is set; send_chirp() runs it too, so a send drained in the pass
+// that ends a quiet day counts from the first tier.
+static void expire_stale_tiers(uint32_t now) {
+  if (g_cooldown.chirps_sent_today > 0 &&
+      now - g_cooldown.last_chirp_ms > COOLDOWN_RESET_MS) {
     g_cooldown.chirps_sent_today = 0;
-    g_cooldown.first_chirp_today_ms = 0;
     g_cooldown.last_chirp_ms = 0;
   }
 }
@@ -1430,7 +1438,12 @@ static bool enable() {
   set_state(CHIRP_INITIALIZING);
   generate_session_identity();
   if (esp_now_init() != ESP_OK) { /* may be already initialized by mesh_network */ }
-  memset(&g_cooldown, 0, sizeof(g_cooldown));
+  // The cooldown tiers are this device's, not the session's: they outlive a
+  // disable, and only 24 quiet hours reset them (expire_stale_tiers()). An
+  // enable zeroed them, so a disable and an enable cost the 10-minute
+  // presence requirement below instead of the tier's 15 minutes, 1 hour or
+  // 4 hours (sweep F193). They live in RAM, so a reboot still clears them:
+  // keeping them in NVS would store a record of when the owner chirped.
   g_session_start_ms = millis();
   set_state(CHIRP_ACTIVE);
   send_presence();
@@ -1538,13 +1551,15 @@ void update() {
   // The nonce filter turns at every pass, on or off, so a quiet channel's
   // due turn never waits for uptime to wrap (sweep F270's review).
   bloom_turn_if_due();
+  // The tiers reset after 24 quiet hours on or off, since a disable keeps
+  // them (sweep F193).
+  expire_stale_tiers(millis());
 
   if (g_state == CHIRP_DISABLED) {
     publish_view();
     return;
   }
   uint32_t now = millis();
-  reset_cooldown_if_stale();
   if (g_muted && now >= g_mute_until_ms) {
     g_muted = false;
     if (g_state == CHIRP_MUTED) set_state(CHIRP_ACTIVE);
@@ -1697,6 +1712,9 @@ const char* get_validation_status(const RecentView* chirp) {
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
                        ChirpDetailSlot detail, uint8_t ttl_minutes,
                        SendRefusal* why, uint32_t* cooldown_left) {
+  // A send drained in the pass that ends 24 quiet hours, before update()'s
+  // own expire_stale_tiers(), counts from the first tier (sweep F193).
+  expire_stale_tiers(millis());
   uint32_t left = 0;
   const SendRefusal gate = send_gate(&left);
   if (gate != SEND_REFUSED_NONE) {
@@ -1745,8 +1763,11 @@ static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   broadcast_message(buf, sizeof(buf));
 
   uint32_t now = millis();
-  if (g_cooldown.chirps_sent_today == 0) g_cooldown.first_chirp_today_ms = now;
-  g_cooldown.chirps_sent_today++;
+  // The count stops at 255, past the last tier (4). With the tiers reset
+  // only after 24 quiet hours, a send every 4 hours reaches a 256th in 43
+  // days, and a uint8_t that wrapped there read tier 0: no cooldown at all
+  // for the next send (sweep F193).
+  if (g_cooldown.chirps_sent_today < UINT8_MAX) g_cooldown.chirps_sent_today++;
   g_cooldown.last_chirp_ms = now;
   g_last_chirp_sent_ms = now;
   cache_nonce(hdr->nonce);
@@ -1754,8 +1775,10 @@ static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
   // state stays as it was, so a mute cannot overwrite it (sweep F178).
 
   char log_detail[96];
+  // The tier, not the count: the log said "tier 9" for a day's ninth send,
+  // and a count kept across days runs to 255 (sweep F193).
   snprintf(log_detail, sizeof(log_detail), "chirp sent: %s (%s, tier %u)",
-           entry->text, urgency_name(urgency), (unsigned)g_cooldown.chirps_sent_today);
+           entry->text, urgency_name(urgency), (unsigned)get_cooldown_tier());
   health_log(SCV_LOG_INFO, SCV_CAT_NETWORK, log_detail);
   return true;
 }

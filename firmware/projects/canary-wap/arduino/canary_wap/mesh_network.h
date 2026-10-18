@@ -1038,10 +1038,12 @@ struct OutgoingChirp {
 };
 
 // Cooldown tracking (escalating)
+// The tiers are the device's, not a session's: an enable keeps them, and
+// they reset only after COOLDOWN_RESET_MS with no send, counted from
+// last_chirp_ms (sweep F193). RAM only, so a reboot clears them.
 struct CooldownState {
-  uint8_t chirps_sent_today;                    // Resets after 24h
-  uint32_t last_chirp_ms;                       // For tier calculation
-  uint32_t first_chirp_today_ms;                // For 24h reset
+  uint8_t chirps_sent_today;                    // sends since the last 24 quiet hours; stops at 255
+  uint32_t last_chirp_ms;                       // the cooldown's timer and the 24h reset count from it
 };
 
 // ────────────────────────────────────────────────────────────────────────────
