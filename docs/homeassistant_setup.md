@@ -983,7 +983,10 @@ shows (`mosquitto_sub -t 'securacv/+/health' -t 'securacv/+/egress'`):
   what its committed-event egress did since boot — `dropped` (commits its
   egress queue had no room for),
   `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
-  `ambient_dropped` (`wifi.channel_activity` rows that had to wait),
+  `ambient_dropped` (`wifi.channel_activity` rows the egress dropped: every
+  one, since ambient rows reach neither the card nor the broker, so it grows
+  by up to one per 5 s and is not a loss; until sweep F105 it counted only
+  those that had to wait),
   `unsent_dropped` (rows no card kept that the MQTT layer refused, lost)
   and `planner`, the SD backfill's counters (`live`, `held`, `queued`,
   `replayed`, `skipped`, `untrusted`, `unsendable`, `truncated_unsent`,

@@ -49,6 +49,10 @@
  * held row writes no ceiling over the card rows after it; ambient rows are
  * never held; a broker change before the card opens drops what it holds.
  *
+ * F105, failing on the egress before its fix (the same proof): an ambient
+ * row is neither appended to the card nor published, with the link up or
+ * through an outage's backfill, and every one is counted; the ring keeps it.
+ *
  * F103's review added a line that lands without its newline: its append
  * fails, so the row waits in the hold, and the next append seals the line,
  * which the walk then sends. It reaches HA once, not from the card and again
@@ -790,11 +794,60 @@ static void test_ambient_rows_are_not_held() {
   drain();
   CHECK(exactly(W.ha.accepted, {real}), "the real row arrives; no ambient row was held");
   CHECK(csi_event_egress_stats().ambient_dropped == 9,
-        "each ambient row that had to wait is counted (F109): health's ambient_dropped");
-  const uint32_t live = emit_ambient();
-  loop_pass();
-  CHECK(live != 0 && !W.ha.accepted.empty() && W.ha.accepted.back() == live, "after the wait an ambient row goes live");
-  CHECK(csi_event_egress_stats().ambient_dropped == 9, "one that went live is not counted");
+        "each ambient row is counted (F109): health's ambient_dropped");
+  CHECK(csi_event_egress_stats().held_dropped == 0, "and the hold dropped nothing");
+}
+
+/* The card's lines that carry `id` (csi_event_log_line.h's `"id":N,`). */
+static size_t card_lines_for(uint32_t id) {
+  const std::string& log = SD.files["/EVENTS/today.ndjson"];
+  const std::string key = "{\"id\":" + std::to_string(id) + ",";
+  size_t n = 0;
+  for (size_t at = log.find(key); at != std::string::npos; at = log.find(key, at + 1)) n++;
+  return n;
+}
+
+/* Sweep F105: csi_event.h says CSI_CATEGORY_AMBIENT is "never persisted,
+ * drives live UI only", and the egress appended every ambient row it drained
+ * to the card and published it whenever it could go at once (with the link
+ * up, and through an outage's backfill from the card). Now the commit hook
+ * drops each one after its privacy gate, before the queue, counted; the ring
+ * keeps it. Each check below but the ring's fails on the egress before F105. */
+static void test_ambient_rows_stay_off_the_card_and_the_broker() {
+  std::printf("-- F105: an ambient row reaches neither the card nor the broker; the ring keeps it\n");
+  fresh_device();
+  connect();
+  drain(4);                             // the card is open, the link up, nothing waits
+  const uint32_t a = emit_ambient();
+  drain(4);
+  CHECK(a != 0, "an ambient row commits");
+  CHECK(!has(W.wire, a), "with the link up it is not published");
+  CHECK(card_lines_for(a) == 0, "and no line of it is on the card");
+  csi_event_record_t r;
+  CHECK(csi_event_find(a, &r) && r.category == CSI_CATEGORY_AMBIENT, "the ring keeps it");
+  CHECK(csi_event_egress_stats().ambient_dropped == 1, "the hook's drop is counted");
+  const uint32_t p = emit_ping();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {p}) && W.ha.refused.empty(), "the next real row goes live, alone");
+
+  /* An outage with the card in: nothing ambient is logged, so nothing
+   * ambient is replayed when the broker comes back. */
+  W.connected = false;
+  std::vector<uint32_t> ids;
+  std::vector<uint32_t> ambient;
+  for (int i = 0; i < 3; ++i) {
+    ids.push_back(emit_ping()); loop_pass();
+    ambient.push_back(emit_ambient()); loop_pass();
+  }
+  CHECK(std::count(ambient.begin(), ambient.end(), 0u) == 0, "three ambient rows commit in the outage");
+  size_t on_card = 0;
+  for (uint32_t id : ambient) on_card += card_lines_for(id);
+  CHECK(on_card == 0, "none of them is on the card");
+  connect();
+  drain(40);
+  CHECK(exactly(W.ha.accepted, std::vector<uint32_t>{p, ids[0], ids[1], ids[2]}) && W.ha.refused.empty(),
+        "the backfill sends the three real rows, in order, and no ambient row");
+  CHECK(csi_event_egress_stats().ambient_dropped == 4, "each of the four is counted");
 }
 
 static void test_broker_change_before_the_card_opens() {
@@ -1363,6 +1416,7 @@ int main() {
   test_held_row_goes_before_a_newer_card_row();
   test_held_rows_cover_no_card_rows_after_them();
   test_ambient_rows_are_not_held();
+  test_ambient_rows_stay_off_the_card_and_the_broker();
   test_broker_change_before_the_card_opens();
   test_card_closes_long_after_boot();
   test_card_out_for_a_remount();

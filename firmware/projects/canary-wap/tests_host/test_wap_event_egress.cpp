@@ -52,7 +52,8 @@
  * waiting in RAM writes no ceiling past the card rows after it, rows the
  * card does not keep wait in RAM in order (also while the card is not open
  * yet or briefly closed, for at most kCardWaitMs), ambient rows are never
- * held, the hook never blocks, and the card adapter (torn tails, short
+ * held and reach neither the card nor the broker (sweep F105), the hook
+ * never blocks, and the card adapter (torn tails, short
  * writes, dismissal lines at the tail, a failed rewrite) keeps every row.
  * A line that lands without its newline reaches HA once, not from the card
  * and again from RAM (sweep F103's review; the two scenarios fail on the
@@ -1287,10 +1288,62 @@ static void test_ambient_rows_are_not_held() {
 #ifndef EGRESS_BEFORE_REVIEW
   CHECK(csi_event_egress::stats().ambient_dropped == 8, "the ambient rows were dropped, counted");
 #endif
-  const uint32_t live = emit_ambient();
-  drain(4);
-  CHECK(live != 0 && W.ha.accepted.back() == live, "with the link up an ambient row goes live");
 }
+
+#ifndef EGRESS_BEFORE_REVIEW
+/* Sweep F105: csi_event.h says CSI_CATEGORY_AMBIENT is "never persisted,
+ * drives live UI only", and the egress logged every ambient ring row on the
+ * card and published it on `events` whenever it could go at once (with the
+ * link up, and with a card in through an outage's backfill). Now the commit
+ * hook drops each one before the queue, counted; the ring keeps it. Each
+ * check below but the ring's fails on the egress before F105. */
+static size_t card_lines_for(uint32_t id) { return card_flags_for(id).size(); }
+
+static void test_ambient_rows_stay_off_the_card_and_the_broker() {
+  printf("-- an ambient row reaches neither the card nor the broker; the ring keeps it (F105)\n");
+  fresh_device();
+  connect();
+  loop_pass();                      // the card is open, the link up, nothing waits
+  const uint32_t a = emit_ambient();
+  drain(4);
+  CHECK(a != 0, "an ambient row commits");
+  CHECK(!has(W.wire, a), "with the link up it is not published");
+  CHECK(card_lines_for(a) == 0, "and no line of it is on the card");
+  csi_event_record_t r;
+  CHECK(csi_event_find(a, &r) && r.category == CSI_CATEGORY_AMBIENT,
+        "the ring keeps it, for the Today sheet and the live UI");
+  CHECK(csi_event_egress::stats().ambient_dropped == 1, "the hook's drop is counted");
+  const uint32_t p = emit_ping();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {p}) && W.ha.refused.empty(), "the next real row goes live, alone");
+
+  /* An outage with the card in: nothing ambient is logged, so nothing
+   * ambient is replayed when the broker comes back. */
+  W.connected = false;
+  std::vector<uint32_t> ids;
+  std::vector<uint32_t> ambient;
+  for (int i = 0; i < 3; ++i) {
+    ids.push_back(emit_ping()); loop_pass();
+    ambient.push_back(emit_ambient());
+    for (int k = 0; k < 100; ++k) loop_pass();   // one spike per cooldown
+  }
+  CHECK(std::count(ambient.begin(), ambient.end(), 0u) == 0, "three ambient rows commit in the outage");
+  size_t on_card = 0;
+  for (uint32_t id : ambient) on_card += card_lines_for(id);
+  CHECK(on_card == 0, "none of them is on the card");
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, std::vector<uint32_t>{p, ids[0], ids[1], ids[2]}) && W.ha.refused.empty(),
+        "the backfill sends the three real rows, in order, and no ambient row");
+  CHECK(csi_event_egress::stats().ambient_dropped == 4, "each of the four is counted");
+
+  /* A reboot: the card reload restores the real rows, and no ambient one. */
+  boot();
+  CHECK(csi_event_log::load_into_ring() == 4, "the reload restores the four real rows");
+  for (uint32_t id : ambient) CHECK(!csi_event_find(id, &r), "no ambient row comes back from the card");
+  CHECK(csi_event_egress::stats().ambient_dropped == 0, "and the count starts over with the boot");
+}
+#endif
 
 /* ── The counters, for other tasks and the wire (sweep F149) ──────────── */
 /* Not in the older sources the two proofs above build against. */
@@ -1612,6 +1665,7 @@ int main() {
 #endif
   test_ambient_rows_are_not_held();
 #ifndef EGRESS_BEFORE_REVIEW
+  test_ambient_rows_stay_off_the_card_and_the_broker();
   test_other_tasks_read_what_the_pump_published();
   test_the_counters_spell_the_canarys_names();
 #endif

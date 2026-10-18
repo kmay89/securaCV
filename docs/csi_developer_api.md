@@ -301,8 +301,12 @@ those bodies `"replay":true`. On the canary base
   on its account. Past the 45 s the card is given up: the waiting rows go,
   and rows on a card that comes back later are never sent (the backfill
   starts past them, and no counter shows them). An ambient row
-  (`wifi.channel_activity`, "live UI only") is never held: one that cannot
-  go at once is dropped and counted. RAM does not survive a reboot, and a
+  (`wifi.channel_activity`'s `channel_active`, "live UI only") never gets
+  this far: the commit hook drops every one after its privacy gate,
+  counted, so it reaches neither the card nor the `events` topic, and so
+  never the hold (sweep F105; before it, ambient rows were logged and
+  published like any other, and only one that had to wait was dropped).
+  The in-memory ring keeps it. RAM does not survive a reboot, and a
   broker change drops what waits (owed to neither broker, as the offline
   queue's flush).
   So on a canary with an SD slot but no usable card (none in, another
@@ -344,7 +348,11 @@ those bodies `"replay":true`. On the canary base
     stuck). The row is on neither the card nor the wire.
   - `held_dropped`: rows the RAM hold dropped to make room, oldest first,
     and, on the canary, rows that had to wait while the hold had no memory.
-  - `ambient_dropped`: ambient rows that had to wait (they are never held).
+  - `ambient_dropped`: ambient rows the commit hook dropped: every one,
+    since none goes to the card or the broker (sweep F105; until then it
+    counted only those that would have had to wait, which were never held).
+    It grows by up to one per `wifi.channel_activity` cooldown (5 s), and is
+    not a loss.
   - `unsent_dropped`: rows no card kept that were lost at the hand-over to
     the MQTT layer: it refused them (an offline queue with no memory, or one
     full of tamper alerts while the broker is unreachable) and nothing kept
@@ -411,9 +419,11 @@ differs from the canary base in five ways:
   its log first opens (a slow card mounts after boot), and after it closes
   with rows still waiting (an SD error's remount), for at most 45 s; past
   that the RAM rows go, and rows on a card that comes back later are never
-  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") is never
-  held: one that cannot go out at once is dropped and counted. RAM does not
-  survive a reboot. The canary base holds the same rows the same way (its
+  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") never
+  reaches the queue, so never the card, the broker or the hold: the commit
+  hook drops every one, counted (sweep F105); the ring, the
+  `/api/csi/stream` snapshot and the Today sheet still show it. RAM does
+  not survive a reboot. The canary base holds the same rows the same way (its
   card keeps closed bundles, so those are not among them), but once nothing
   older waits and no card is open its offline queue takes them while the
   broker is unreachable;

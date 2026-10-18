@@ -606,9 +606,11 @@ does, is in `docs/csi_developer_api.md`.
     then wait for the next health publish (once a minute).
   - Expected: the health body holds a `csi_event_egress` object whose
     `planner.live` counts the first rows, `planner.held` and
-    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`,
-    `ambient_dropped` and `unsent_dropped` match any drop lines the serial
-    log printed (0 when none), and an `offline_queue` object of zeros. The
+    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`
+    and `unsent_dropped` match any drop lines the serial log printed (0
+    when none), whose `ambient_dropped` counts the `wifi.channel_activity`
+    rows since boot (no line; since sweep F105 every one is dropped, up to
+    one per 5 s), and an `offline_queue` object of zeros. The
     publish arrives whole (no missing health while it is the largest yet).
   - Then take the card out, reboot, wait past the 45 s card wait, stop the
     broker, commit fourteen events, start the broker again and wait for the

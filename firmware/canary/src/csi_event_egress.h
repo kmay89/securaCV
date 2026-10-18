@@ -17,6 +17,12 @@
  * the committed row into a bounded FreeRTOS queue (never blocks, counts
  * what it drops); csi_event_egress_pump() drains it on the loop task.
  *
+ * Ambient rows (wifi.channel_activity's channel_active) never reach that
+ * queue (sweep F105): csi_event.h's contract for CSI_CATEGORY_AMBIENT is
+ * "never persisted, drives live UI only", so the override drops each one
+ * after its privacy gate, counted (ambient_dropped below). They go to
+ * neither the card nor the `events` topic; the in-memory ring keeps them.
+ *
  * Persistence (backlog F37): with a card in, every row the pump drains is
  * appended to the SD event log (/EVENTS/today.ndjson, the canary-wap's line
  * format — src/csi_event_log.cpp, loop task only under this tree's
@@ -46,8 +52,7 @@
  * whose card append fails waits in the same hold while older rows wait on
  * the card or in the hold, or while the link is down (backlog F103): it
  * used to go live or into the offline queue at once, past the card's rows.
- * An ambient row that would wait is dropped, counted (csi_event_egress_stats
- * below). A row in the hold writes no NVS delivery ceiling until it goes
+ * A row in the hold writes no NVS delivery ceiling until it goes
  * (the planner writes it then), so a reboot
  * never reads the card's rows as delivered on its account, and with a card
  * open it waits for the link (the ceiling it would write could cover the
@@ -114,7 +119,10 @@ void csi_event_egress_test_reset(void);
  *   held_dropped     rows the RAM hold dropped, the oldest first (kHeldMax),
  *                    or every row that had to wait when the hold has no
  *                    memory;
- *   ambient_dropped  ambient rows that had to wait (they are never held);
+ *   ambient_dropped  ambient rows the commit hook dropped: every one, since
+ *                    none goes to the card or the broker (sweep F105; until
+ *                    then, only those that would have had to wait in the
+ *                    hold, which never kept one);
  *   unsent_dropped   rows no card kept that were lost unsent where they
  *                    left for the MQTT layer: it refused them (its offline
  *                    queue has no memory, or is full of tamper alerts while

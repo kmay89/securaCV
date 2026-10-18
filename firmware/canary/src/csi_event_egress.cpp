@@ -96,6 +96,9 @@ constexpr int         kPumpBudget = 4;   // rows per loop pass
 QueueHandle_t         s_queue = nullptr;
 uint32_t              s_dropped = 0;     // queue full; atomic add
 uint32_t              s_dropped_said = 0;  // what the log last reported
+/* Ambient rows the commit hook dropped (sweep F105): every one, since none
+ * goes to the card or the broker. Bumped on the committing task; atomic add. */
+uint32_t              s_ambient_dropped = 0;
 /* Rows no card kept that were lost unsent at the hand-over to the MQTT
  * layer, refused with nothing to keep them (route(); csi_event_egress_stats(),
  * backlog F109). Loop task only. */
@@ -174,10 +177,10 @@ uint32_t                    s_replay_run = 0;  // rows replayed in the current b
  * written then, by the planner, never while it waits. The wait for the card
  * is bounded (csi_event_backfill::kCardWaitMs, the canary-wap's): past it the
  * held rows go, and rows still on a card that comes back later are below the
- * watermark (HA would refuse them). An ambient row is never held (csi_event.h:
- * "never persisted, drives live UI only"): one that cannot go at once is
- * dropped (counted, backlog F109), so a burst of them never evicts a real
- * event. Held rows do not survive a reboot or a broker change, as the
+ * watermark (HA would refuse them). No ambient row reaches the hold: the
+ * commit hook drops every one (csi_event.h: "never persisted, drives live UI
+ * only"; sweep F105), so a burst of them never evicts a real event either.
+ * Held rows do not survive a reboot or a broker change, as the
  * offline queue's do not: with a card slot and no usable card, the rows of
  * the first kCardWaitMs after boot are lost to a reboot that comes sooner.
  * The canary-wap's egress keeps the same hold (its csi_event_egress.cpp);
@@ -197,7 +200,6 @@ struct Hold {
   size_t   count = 0;
   uint32_t dropped = 0;          // the oldest, dropped to make room (or no hold)
   uint32_t dropped_said = 0;     // what the log last reported
-  uint32_t ambient_dropped = 0;  // ambient rows that had to wait (never held)
 
   const Held& front() const { return slots[head]; }
   void pop() {
@@ -207,10 +209,6 @@ struct Hold {
   /* Rows arrive in id order (the commit lock orders the egress queue), so
    * the hold stays in id order. */
   void push(const csi_event_record_t& rec, bool fresh) {
-    if (rec.category == CSI_CATEGORY_AMBIENT) {  // dropped, counted (backlog F109)
-      ++ambient_dropped;
-      return;
-    }
     if (!slots) {  // no memory for a hold: the row is lost, counted
       ++dropped;
       return;
@@ -499,6 +497,14 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
   /* The chokepoint already refuses rows above the ceiling; this keeps the
    * wire surface's rule visible here too, as the canary-wap does. */
   if (privacy > csi_event_get_privacy_ceiling()) return;
+  /* An ambient row (wifi.channel_activity's channel_active) goes to neither
+   * the card nor the broker (sweep F105): csi_event.h's contract for
+   * CSI_CATEGORY_AMBIENT is "never persisted, drives live UI only". Dropped
+   * here, before the queue, and counted; the ring keeps it, as before. */
+  if (category == CSI_CATEGORY_AMBIENT) {
+    __atomic_add_fetch(&s_ambient_dropped, 1u, __ATOMIC_RELAXED);
+    return;
+  }
   CommittedEvent rec;
   rec.event_id     = event_id;
   rec.committed_ms = millis();
@@ -683,7 +689,7 @@ CsiEventEgressStats csi_event_egress_stats() {
 #if FEATURE_HA_MQTT
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
   s.held_dropped = s_hold.dropped;
-  s.ambient_dropped = s_hold.ambient_dropped;
+  s.ambient_dropped = __atomic_load_n(&s_ambient_dropped, __ATOMIC_RELAXED);
   s.unsent_dropped = s_unsent_dropped;
   s.planner = s_backfill.stats();
 #endif
@@ -728,6 +734,7 @@ extern "C" void csi_event_egress_test_reset(void) {
   }
   s_dropped = 0;
   s_dropped_said = 0;
+  s_ambient_dropped = 0;
   s_unsent_dropped = 0;
   s_backfill.reset();
   s_dest_epoch = 0;
@@ -736,7 +743,6 @@ extern "C" void csi_event_egress_test_reset(void) {
   s_hold.clear();
   s_hold.dropped = 0;
   s_hold.dropped_said = 0;
-  s_hold.ambient_dropped = 0;
   s_card_wait = false;
   s_card_wait_since = 0;
   s_not_owed_at_open = false;

@@ -21,10 +21,17 @@
  * the card on whichever task committed, while the backfill ran on the loop
  * task, and both wrote the watermark with no lock between them.
  *
+ * Ambient rows (wifi.channel_activity's channel_active) never reach the
+ * queue (sweep F105): csi_event.h's contract for CSI_CATEGORY_AMBIENT is
+ * "never persisted, drives live UI only", so on_committed() drops each one,
+ * counted (Stats::ambient_dropped). They go to neither the card nor the
+ * `events` topic; the in-memory ring, the stream snapshot and the Today
+ * sheet keep them, as before.
+ *
  * Order. Home Assistant's replay gate refuses an event_id below the last
  * one it verified, so a row that overtakes an older one gets the older one
  * refused. A row goes out live only when nothing older waits:
- *   - a row the SD log keeps (a ring row: stateless and ambient commits) is
+ *   - a row the SD log keeps (a ring row: a stateless commit) is
  *     appended to the card; if anything older is still waiting, on the card
  *     or in RAM, it waits on the card and the backfill sends it in turn;
  *   - a row the card does not keep (a closed bundle, which never enters the
@@ -37,10 +44,6 @@
  *     it until it opens again (an SD error's remount). That wait is bounded
  *     by kCardWaitMs; past it the RAM rows go, and rows still on a card that
  *     comes back later are skipped (HA would refuse them).
- *   - an ambient row (csi_event.h: "never persisted, drives live UI only")
- *     is never held in RAM: one that cannot go out now is dropped, counted.
- *     With a card in, ambient rows are still logged and replayed like any
- *     ring row (open question, filed with the sweep).
  * On reconnect the backfill walks the card from the watermark, a bounded
  * amount per loop pass, and, while the card stays open or comes back within
  * kCardWaitMs, nothing committed meanwhile overtakes it. With no broker
@@ -122,7 +125,7 @@ uint32_t watermark();
 struct Stats {
   uint32_t dropped;          /* commits the full queue refused */
   uint32_t held_dropped;     /* rows the RAM hold dropped, oldest first */
-  uint32_t ambient_dropped;  /* ambient rows that could not go out at once (never held) */
+  uint32_t ambient_dropped;  /* ambient rows on_committed() dropped: every one (sweep F105) */
   uint32_t unsent_dropped;   /* rows not on the card lost unsent: a body that would not
                                 build (a row the MQTT layer refuses waits in the RAM hold;
                                 on the canary its offline queue can refuse one outright) */

@@ -42,9 +42,9 @@ using csi_mqtt::EventSend;
 constexpr const char* SETTINGS_NS = "csi";
 
 /* Sixteen rows: one bundler tick can close all eight bundle slots at once,
- * and an ambient module commits up to once per cooldown (wifi.channel_activity:
- * 5 s by default, 1 s at its minimum), so the queue holds a full close plus a
- * stalled pass or two. A full queue means the loop task is stuck, and then
+ * so the queue holds a full close plus a stalled pass or two (ambient rows,
+ * up to one per wifi.channel_activity cooldown, no longer reach it: sweep
+ * F105). A full queue means the loop task is stuck, and then
  * dropping (counted) beats blocking the committing task, which may be the
  * NimBLE host task. */
 constexpr UBaseType_t kQueueDepth = 16;
@@ -128,7 +128,6 @@ struct State {
   size_t   held_count = 0;
   uint32_t held_dropped = 0;
   uint32_t held_dropped_said = 0;
-  uint32_t ambient_dropped = 0;
   uint32_t unsent_dropped = 0;   /* not on the card, body never built: gone (stats()) */
   uint32_t dropped_said = 0;
   uint32_t replay_run = 0;   /* rows replayed in the current backlog */
@@ -164,15 +163,10 @@ struct State {
    * delivery record in NVS is taken as delivered up to its tail. */
   bool front_delivered() const { return front().rec.event_id <= planner.watermark(); }
   /* Rows arrive in id order (the commit lock orders the queue), so the
-   * hold stays in id order; past kHeldMax the oldest goes. An ambient row is
-   * never held: csi_event.h's contract for CSI_CATEGORY_AMBIENT is "never
-   * persisted, drives live UI only", so one that cannot go out now is
-   * dropped (counted), and a run of them can never evict a real event. */
+   * hold stays in id order; past kHeldMax the oldest goes. No ambient row
+   * reaches it: on_committed() drops every one (sweep F105), so a run of
+   * them can never evict a real event. */
   void push(const csi_event_record_t& rec, bool fresh) {
-    if (rec.category == CSI_CATEGORY_AMBIENT) {
-      ++ambient_dropped;
-      return;
-    }
     if (held_count == kHeldMax) {
       pop();
       ++held_dropped;
@@ -193,6 +187,9 @@ State*        g_state = nullptr;
  * task: published with release/acquire. */
 QueueHandle_t s_queue = nullptr;
 uint32_t      s_dropped = 0;   /* atomic add from the committing task */
+/* Ambient rows on_committed() dropped (sweep F105): every one, since none
+ * goes to the card or the broker. Atomic add from the committing task. */
+uint32_t      s_ambient_dropped = 0;
 /* The counters as the last pump left them, for other tasks (read_stats(),
  * sweep F149): pump() publishes, the loop task being the one writer. */
 loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock> s_stats_view;
@@ -387,10 +384,19 @@ void on_committed(uint32_t                  event_id,
                   const csi_event_values_t* values) {
   QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
   if (!values || !q) return;
+  /* An ambient row (wifi.channel_activity's channel_active) goes to neither
+   * the card nor the broker (sweep F105): csi_event.h's contract for
+   * CSI_CATEGORY_AMBIENT is "never persisted, drives live UI only". Dropped
+   * here, before the queue, and counted. The privacy gate ran first, in
+   * csi_integration.cpp's hook, which still hands it to the stream snapshot;
+   * the ring keeps it for the Today sheet. */
+  if (category == CSI_CATEGORY_AMBIENT) {
+    __atomic_add_fetch(&s_ambient_dropped, 1u, __ATOMIC_RELAXED);
+    return;
+  }
   Committed c;
   memset(&c, 0, sizeof(c));
-  /* A ring row (stateless and ambient commits) is the record the SD log
-   * keeps: the ring's copy, so the line matches what csi_event_recent
+  /* A ring row (a stateless commit) is the record the SD log keeps: the ring's copy, so the line matches what csi_event_recent
    * returns (first/last seen, bundled count). csi_event_find takes the ring
    * lock, which the chokepoint's lock order allows under the commit lock.
    * Logged as the original: a dismissal that reached the ring row first is
@@ -516,9 +522,9 @@ uint32_t watermark() { return g_state ? g_state->planner.watermark() : 0; }
 Stats stats() {
   Stats s = {};
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
+  s.ambient_dropped = __atomic_load_n(&s_ambient_dropped, __ATOMIC_RELAXED);
   if (g_state) {
     s.held_dropped = g_state->held_dropped;
-    s.ambient_dropped = g_state->ambient_dropped;
     s.unsent_dropped = g_state->unsent_dropped;
     s.planner = g_state->planner.stats();
   }
@@ -542,6 +548,7 @@ void test_reset() {
     s_queue = nullptr;
   }
   s_dropped = 0;
+  s_ambient_dropped = 0;
   /* A reboot clears RAM: nothing to read until the first pump. */
   s_stats_view = loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock>();
 }
