@@ -630,8 +630,9 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // one Preferences handle, so it runs on the loop task only (the periodic
 // save). Before a reboot, call save_replay_counters_before_reboot() from any
 // task: on the loop task (init()'s, which is setup()'s and loop()'s) it saves
-// in place; from another (POST /api/reboot and the safe-mode retry run on
-// esp_http_server's task) it hands MESH_CMD_SAVE_REPLAY to submit() and
+// in place, as for POST /api/reboot, which restarts on the loop task since
+// sweep F92; from another (the safe-mode retry runs on esp_http_server's
+// task) it hands MESH_CMD_SAVE_REPLAY to submit() and
 // waits up to COMMAND_WAIT_MS. True when the blob was written; false when
 // the save failed or did not run (the 5-minute save is the one before it).
 // ════════════════════════════════════════════════════════════════════════════

@@ -70,8 +70,9 @@ Mesh (F96):
    409 `mesh_busy` and a 503 `mesh_timeout` go out with their own lines.
    `mesh_network::save_replay_counters(` (the peer table and the one
    `g_prefs` handle) is called only from the sketch's `loop()`; the
-   pre-reboot hook, which POST /api/reboot and the safe-mode retry run on
-   the httpd task, calls `mesh_network::save_replay_counters_before_reboot(`,
+   pre-reboot hook, which the safe-mode retry runs on the httpd task (and
+   POST /api/reboot on the loop task, since sweep F92), calls
+   `mesh_network::save_replay_counters_before_reboot(`,
    which saves in place only on the loop task (`xTaskGetCurrentTaskHandle()`
    against the one `init()` recorded) and otherwise hands
    `MESH_CMD_SAVE_REPLAY` to `submit(`.

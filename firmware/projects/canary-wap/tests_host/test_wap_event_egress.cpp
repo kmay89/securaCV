@@ -66,10 +66,19 @@
  * still timestamped at the close. Those scenarios fail on the library and
  * egress before F77. A row the card does not keep while it is open is now
  * one whose append fails (commit_off_card() below), and the RAM-hold
- * scenarios that used a closed bundle for it use that instead. A card row
- * that commits while rows wait in RAM writes no ceiling (the closed-bundle
- * and direct-row variants of the failed-flush scenario fail on the egress
- * before F77's route() change).
+ * scenarios that used a closed bundle for it use that instead. The
+ * failed-flush scenario's closed bundle, a card row now, is held to F47's
+ * stride bound rather than to "no ceiling" (the walk writes its ceiling
+ * before it sends it, as for any card row).
+ *
+ * Sweep F92: a planned restart (csi_event_egress::flush_for_restart(), which
+ * canary_wap.ino's POST /api/reboot runs on the loop task now) commits the
+ * open bundle and drains it, behind the row queued before it, to the broker
+ * and the card; in an outage it leaves it on the card for the next boot's
+ * backfill; with no card it sends it from RAM; and a row that cannot go
+ * costs it the budget and no more. Each fails with the helper's body a bare
+ * `return true;` (the restart as it was), and the first three with only one
+ * of its halves (the flush, the drain).
  * Built with -DEGRESS_BEFORE_REVIEW against the egress and card sources the
  * review fixes replaced, the late-card, closed-card, broker-change, ambient
  * and dismissal-wait scenarios fail.
@@ -1456,6 +1465,103 @@ static void test_closed_bundles_survive_an_outage_and_a_reboot() {
         "marked as replays");
 }
 
+/* ── A planned restart flushes open bundles, then drains (sweep F92) ──── */
+
+/* A state-bearing emit: it opens a bundle (the return is its handle, not an
+ * event id) and commits nothing until the bundle closes. */
+static uint32_t open_bundle(const char* state = "active") {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  strncpy(v.state_name, state, sizeof(v.state_name) - 1);
+  return csi_event_emit("test.egress", "state", &v);
+}
+
+/* canary_wap.ino's planned restart (POST /api/reboot, served on the loop
+ * task), as far as the egress sees it: csi_event_egress::flush_for_restart()
+ * with the restart budget, then the reboot. check_wap_event_egress.py rule
+ * 13 holds the sketch to that call, on the loop task, before the chain
+ * persist. */
+static bool planned_restart() {
+  const bool drained = csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);
+  boot();
+  return drained;
+}
+
+/* Sweep F92: a bundle lives in RAM until it closes, up to ten minutes, and
+ * POST /api/reboot restarted on the HTTP task with nothing flushed, so every
+ * open row died, and the rows waiting in the egress's queue and hold with
+ * it. Each scenario fails with the helper's body a bare `return true;` (the
+ * restart as it was), and the first three with either half of it alone. */
+static void test_a_planned_restart_delivers_the_open_bundle() {
+  printf("-- a planned restart commits the open bundle and drains it to the card and the broker (F92)\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  const uint32_t before = emit_ping();   // committed, still in the egress queue
+  const uint32_t handle = open_bundle();
+  CHECK(handle != 0 && handle < csi_event_id_floor::kIdSpaceBase, "a bundle is open (a handle, no event id)");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains: nothing is left in the queue or the hold");
+  CHECK(exactly(W.ha.accepted, {before, next}) && W.ha.refused.empty(),
+        "the queued row, then the bundle, reach HA before the restart, in id order");
+  CHECK(card_lines_for(next) == 1, "and the bundle is on the card");
+  connect();
+  drain();
+  CHECK(W.wire.size() == 2, "after the restart nothing is sent twice");
+}
+
+static void test_a_planned_restart_in_an_outage_keeps_the_bundle_owed() {
+  printf("-- in an outage the flushed bundle goes onto the card, and after the restart it is replayed (F92)\n");
+  fresh_device();
+  drain(4);                              // the card is open; the link is down
+  (void)open_bundle("empty");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains onto the card");
+  CHECK(card_lines_for(next) == 1, "the bundle is on the card");
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, {next}) && W.ha.replay.back() == true,
+        "after the restart the backfill sends it, as a replay");
+}
+
+static void test_a_planned_restart_with_no_card_sends_it_live() {
+  printf("-- no card: a planned restart sends the flushed bundle from RAM, live (F92)\n");
+  fresh_device(/*card=*/false);
+  drain();                               // past the wait for a card that is not there
+  connect();
+  loop_pass();
+  (void)open_bundle();
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains");
+  CHECK(exactly(W.ha.accepted, {next}) && W.ha.replay.back() == false,
+        "the bundle reaches HA before the restart, not as a replay");
+}
+
+/* The drain is bounded: a row that cannot go (here, one held for a card
+ * that may still mount, the first 45 s after boot) costs the budget, about
+ * a second, and the restart goes on. */
+static void test_a_planned_restart_is_bounded() {
+  printf("-- a row that cannot go costs the restart its budget and no more (F92)\n");
+  fresh_device();
+  SD.present = false;                    // power cycle; the card has not mounted yet
+  boot();
+  connect();
+  loop_pass();
+  (void)open_bundle();
+  const uint32_t t0 = stub_millis();
+  const unsigned delays0 = stub_delays();
+  CHECK(!csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs),
+        "the held bundle is still waiting for the card: not drained");
+  const uint32_t took = stub_millis() - t0;
+  CHECK(took >= csi_event_egress::kRestartBudgetMs && took < csi_event_egress::kRestartBudgetMs + 50,
+        "it gave up after the budget");
+  CHECK(stub_delays() - delays0 <= csi_event_egress::kRestartBudgetMs / 10 + 1,
+        "pumping at most once per 10 ms between passes");
+  CHECK(W.ha.accepted.empty(), "and nothing overtook the card it waits for");
+}
+
 /* ── The counters, for other tasks and the wire (sweep F149) ──────────── */
 /* Not in the older sources the two proofs above build against. */
 #ifndef EGRESS_BEFORE_REVIEW
@@ -1777,6 +1883,10 @@ int main() {
   test_ambient_rows_are_not_held();
   test_closed_bundle_reaches_the_ring_and_the_card();
   test_closed_bundles_survive_an_outage_and_a_reboot();
+  test_a_planned_restart_delivers_the_open_bundle();
+  test_a_planned_restart_in_an_outage_keeps_the_bundle_owed();
+  test_a_planned_restart_with_no_card_sends_it_live();
+  test_a_planned_restart_is_bounded();
 #ifndef EGRESS_BEFORE_REVIEW
   test_ambient_rows_stay_off_the_card_and_the_broker();
   test_other_tasks_read_what_the_pump_published();

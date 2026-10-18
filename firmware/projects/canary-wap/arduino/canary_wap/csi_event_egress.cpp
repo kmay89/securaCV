@@ -52,6 +52,8 @@ constexpr const char* SETTINGS_NS = "csi";
  * NimBLE host task. */
 constexpr UBaseType_t kQueueDepth = 16;
 constexpr int         kPumpBudget = 8;   /* rows per loop pass */
+/* Between two pumps of flush_for_restart() (sweep F92). */
+constexpr uint32_t    kRestartPassMs = 10;
 /* Rows the card does not keep, waiting their turn in RAM. */
 constexpr size_t      kHeldMax    = 8;
 
@@ -526,6 +528,26 @@ void pump() {
 
   /* Last: what this pass did, for the tasks that may not read State. */
   s_stats_view.publish(stats());
+}
+
+bool flush_for_restart(uint32_t budget_ms) {
+  /* Every open bundle closes and commits now, on this task: each takes its
+   * event id, and on_committed() queues it for the pump. */
+  csi_event_flush_bundles();
+  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
+  if (!g_state || !q) return true;
+  /* Then the pump, pass after pass, until nothing waits in the queue or the
+   * RAM hold, or the budget is spent: a row the card keeps goes onto it
+   * (owed across the restart) and out when the link is up; a held row goes
+   * when nothing older waits. The delay lets esp_mqtt and the network stack
+   * move the bytes and bounds the pass count by the budget. */
+  const uint32_t start = (uint32_t)millis();
+  for (;;) {
+    pump();
+    if (uxQueueMessagesWaiting(q) == 0 && g_state->held_count == 0) return true;
+    if ((uint32_t)((uint32_t)millis() - start) >= budget_ms) return false;
+    delay(kRestartPassMs);
+  }
 }
 
 uint32_t watermark() { return g_state ? g_state->planner.watermark() : 0; }

@@ -196,9 +196,21 @@ to a state within two minutes joins the bundle still open for it, so a
 row's span can take in a brief other state. The row carries every
 observation it collapsed (`bundled`, the same count live, from the offline
 queue and in a replay, at least 1 for a row committed directly) and the
-span from the first to the last (`duration_sec`). A bundle still open at a
-reboot or a power cut is never committed; `system.integrity` closes its own
-key the moment it emits for that reason, so a tamper commits at once. Both
+span from the first to the last (`duration_sec`). Since sweep F77 a closed
+bundle enters the in-memory event ring like any committed row (so
+`/api/events/today`, the daily summary and the canary-wap's card see it),
+its ring row ending at the close and starting `duration_sec` before it; the
+events body's `timestamp` stays the close. A planned restart commits every
+open bundle first and drains the events egress, for up to a second (sweep
+F92): on the canary `POST /api/reboot`, the serial `x` and setup's restart
+once Wi-Fi joins; on the canary-wap `POST /api/reboot`, which now restarts
+on the main loop's task as the canary's does, and the provisioning grace
+reboot. A row that cannot go within that second (no link and no card, or a
+card that has not mounted yet) is lost as before. A factory reset, the
+setup wizard's idle restart, the safe-mode paths and the OTA, BLE OTA and
+USB-drive restarts do not flush, and a power cut or a crash still loses
+every open bundle; `system.integrity` closes its own key the moment it
+emits for that reason, so a tamper commits at once. Both
 trees close bundles the same way, once per main loop (`csi_bundler_tick`);
 until sweep F81 the canary base closed every bundle after each CSI window,
 so each of its observations was a row of its own, committed within a

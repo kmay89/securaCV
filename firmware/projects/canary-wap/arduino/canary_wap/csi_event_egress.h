@@ -111,6 +111,28 @@ void on_committed(uint32_t                  event_id,
  * card. */
 void pump();
 
+/* csi_event_egress::flush_for_restart()'s budget at every planned restart
+ * (sweep F92): one second, well inside the loop task's 8 s watchdog
+ * (WATCHDOG_TIMEOUT_SEC in canary_wap.ino), so a stalled broker delays a
+ * restart by about a second. The canary's kCsiEventEgressRestartBudgetMs. */
+constexpr uint32_t kRestartBudgetMs = 1000;
+
+/* Loop task, right before a planned restart (sweep F92): canary_wap.ino's
+ * flush_events_before_restart(), which POST /api/reboot (deferred to the
+ * loop) and the provisioning grace reboot run, ahead of the chain persist.
+ * Commits every open CSI bundle now (csi_event_flush_bundles(): each takes
+ * its event id and queues here, its witness record written on this task),
+ * then runs pump() until the queue is empty and the RAM hold has gone, or
+ * budget_ms has passed, whichever is first, with a short delay between
+ * passes. Bounded: a broker that does not answer, a hold waiting for a card
+ * or behind a backlog the backfill is still walking costs the budget and no
+ * more (each pass is the loop's own pump, as bounded as on any pass; the
+ * caller resets the watchdog first). What is still in the queue or the hold
+ * then is lost to the restart, as before; rows on the card stay owed.
+ * Returns true when the queue and the hold were empty. Before begin(), it
+ * only commits the bundles. */
+bool flush_for_restart(uint32_t budget_ms);
+
 /* The delivery watermark: the highest event id handed to the MQTT layer
  * or given up (csi_event_backfill.h), restored at boot to just under the
  * NVS ceiling (see above), so after a reboot it can stand up to kStride

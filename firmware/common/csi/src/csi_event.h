@@ -119,11 +119,14 @@ uint32_t csi_event_emit(const char*               module_id,
 
 /**
  * Force-close every open bundle now; each commits through the chokepoint
- * and takes its event id then. No firmware calls it today: both trees close
- * bundles with csi_bundler_tick() once per main loop, which closes only the
- * ones past their 10-minute window or quiet gap. (The canary called this
- * after every CSI window until sweep F81, so no bundle there ever merged a
- * refresh.) Tests use it to commit whatever is open.
+ * and takes its event id then. Both trees call it before a planned restart
+ * only (sweep F92: the events egress's flush_for_restart, the canary's
+ * csi_event_egress_flush_for_restart()), so an open row is committed rather
+ * than lost; otherwise they close bundles with csi_bundler_tick() once per
+ * main loop, which closes only the ones past their 10-minute window or quiet
+ * gap. (The canary called this after every CSI window until sweep F81, so no
+ * bundle there ever merged a refresh.) Tests use it to commit whatever is
+ * open.
  */
 void csi_event_flush_bundles(void);
 

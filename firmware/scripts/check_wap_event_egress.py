@@ -127,11 +127,37 @@ the egress's own rules the test reaches only through behavior.
     diagnostics body fits kJsonMax are host-tested (test_wap_event_egress.cpp,
     test_mqtt_reinit.cpp, test_wap_diagnostics.cpp).
 
+13. The planned restart (sweep F92). A CSI bundle lives in RAM until it
+    closes, up to ten minutes, and the egress commits through a queue and a
+    RAM hold a restart wipes, so `csi_event_egress::flush_for_restart()`
+    commits every open bundle and pumps the egress dry, bounded by a budget
+    (host-tested in test_wap_event_egress.cpp). In `canary_wap.ino`:
+    `flush_events_before_restart()` is, comments and whitespace aside,
+    exactly `#if FEATURE_WATCHDOG` / `esp_task_wdt_reset();` / `#endif` /
+    `[(void)]csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);`,
+    and that is the sketch's one `csi_event_egress::flush_for_restart(`.
+    `planned_restart_now()` calls `flush_events_before_restart();` as a
+    statement of its own body, once, before `persist_chain_state();`, the
+    pre-reboot hook (`hook();`) and `ESP.restart();`, so the rows the flush
+    commits are witnessed and persisted, and reach the card and the broker.
+    `handle_reboot` (POST /api/reboot, the httpd task) restarts nothing and
+    flushes nothing (no `ESP.restart(`, `planned_restart_now(`,
+    `flush_events_before_restart(`, `persist_chain_state(` or `hook(`): it
+    raises `__atomic_store_n(&g_reboot_requested, true, ...)`, and the
+    sketch's `loop()` calls `planned_restart_now();`, the sketch's one call
+    of it, inside an `if` on `__atomic_load_n(&g_reboot_requested, ...)`.
+    Every `ESP.restart(` in `canary_wap.ino` is in `planned_restart_now()`,
+    or has `flush_events_before_restart();` before it at the top of its own
+    innermost block, or is the factory reset's (the block of `if
+    (s_reset_hold.released_stage >= 2)`: a reset erases the broker settings
+    first, so nothing is owed): a restart added to the loop later must take
+    one or the other.
+
 ## It proves it bites
 
-Each run applies mutations to the three sources (and, for rule 12, to the
-sketch's other files) in memory and requires the check to fail on every
-one. A mutation whose anchor moved fails the run.
+Each run applies mutations to the three sources (and, for rules 12 and 13,
+to the sketch's other files) in memory and requires the check to fail on
+every one. A mutation whose anchor moved fails the run.
 
 Run locally:  python3 firmware/scripts/check_wap_event_egress.py   (repo root)
 CI:           firmware.yml "CSI Sketch Copy Sync", via check_csi_sync.sh
@@ -691,6 +717,120 @@ def check_egress_cadence(ino: str, errors: list[str]) -> None:
         errors.append(what)
 
 
+SIG_FLUSH_HELPER = r"\bstatic\s+void\s+flush_events_before_restart\s*\(\s*(?:void)?\s*\)"
+SIG_PLANNED_RESTART = r"\bstatic\s+void\s+planned_restart_now\s*\(\s*(?:void)?\s*\)"
+SIG_HANDLE_REBOOT = r"\bstatic\s+esp_err_t\s+handle_reboot\s*\(\s*httpd_req_t\s*\*\s*\w+\s*\)"
+FLUSH_STMT = "flush_events_before_restart();"
+EGRESS_FLUSH = "csi_event_egress::flush_for_restart("
+# Rule 13: the helper's whole body, comments blanked and whitespace removed.
+FLUSH_HELPER_BODIES = tuple(
+    "#ifFEATURE_WATCHDOGesp_task_wdt_reset();#endif" + cast
+    + "csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);"
+    for cast in ("(void)", ""))
+REBOOT_FLAG_STORE = "__atomic_store_n(&g_reboot_requested,true,"
+REBOOT_FLAG_LOAD = "__atomic_load_n(&g_reboot_requested,"
+FACTORY_RESET_RELEASE = "s_reset_hold.released_stage>=2"
+HTTPD_REBOOT_FORBIDDEN = ("ESP.restart(", "planned_restart_now(", "flush_events_before_restart(",
+                          "persist_chain_state(", "hook(")
+
+
+def innermost_block_start(code: str, pos: int) -> int:
+    """Index just past the `{` of the innermost brace block holding `pos`."""
+    depth = 0
+    for j in range(pos - 1, -1, -1):
+        if code[j] == "}":
+            depth += 1
+        elif code[j] == "{":
+            if depth == 0:
+                return j + 1
+            depth -= 1
+    return 0
+
+
+def check_planned_restart(integ: str, egress: str, mqtt: str, others: dict[str, str],
+                          errors: list[str]) -> None:
+    """Rule 13, F92: every planned restart flushes the open CSI bundles and
+    drains the egress first, on the loop task."""
+    if INO not in others:
+        errors.append(f"{INO}: not read — rule 13 holds its restarts")
+        return
+    code = blank_cached(others[INO])
+    span = the_body(code, SIG_FLUSH_HELPER, f"{INO}: flush_events_before_restart()", errors)
+    if span is not None and squash(code[span[0]:span[1]]) not in FLUSH_HELPER_BODIES:
+        errors.append(f"{INO}: flush_events_before_restart() must be exactly the watchdog reset "
+                      f"(under FEATURE_WATCHDOG) then `{EGRESS_FLUSH}"
+                      "csi_event_egress::kRestartBudgetMs);`, and nothing else — no gate, the "
+                      "one-second budget (F92)")
+    files = dict(others)
+    files[INTEG_CPP] = integ
+    files[MQTT_CPP] = mqtt
+    files[EGRESS_CPP] = egress
+    sites = [name for name, src in files.items() for _ in range(squash(blank_cached(src)).count(EGRESS_FLUSH))]
+    if sites != [INO]:
+        errors.append(f"{SKETCH}: `{EGRESS_FLUSH}` must be called exactly once in the sketch, in "
+                      f"{INO}'s flush_events_before_restart() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) — it pumps the egress, which "
+                      "only the loop task may (F92)")
+    span = the_body(code, SIG_PLANNED_RESTART, f"{INO}: planned_restart_now()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        at = body.find(FLUSH_STMT)
+        if body.count(FLUSH_STMT) != 1 or not top_level_statement(body, at):
+            errors.append(f"{INO}: planned_restart_now() must call `{FLUSH_STMT}` once, as a "
+                          "statement of its own body — POST /api/reboot commits the open bundles "
+                          "and drains the egress first (F92)")
+        else:
+            for later in ("persist_chain_state();", "hook();", "ESP.restart();"):
+                pos = body.find(later)
+                if pos < 0:
+                    errors.append(f"{INO}: planned_restart_now() no longer calls `{later}` — the "
+                                  "rule's anchor moved; update check_wap_event_egress.py rule 13")
+                elif pos < at:
+                    errors.append(f"{INO}: planned_restart_now() must call `{FLUSH_STMT}` before "
+                                  f"`{later}` — the rows it commits are witnessed, persisted and "
+                                  "sent before the restart (F92)")
+    span = the_body(code, SIG_HANDLE_REBOOT, f"{INO}: handle_reboot()", errors)
+    if span is not None:
+        flat = squash(code[span[0]:span[1]])
+        for tok in HTTPD_REBOOT_FORBIDDEN:
+            if tok in flat:
+                errors.append(f"{INO}: handle_reboot() (the httpd task) names `{tok}` — the restart "
+                              "is the loop task's: it raises g_reboot_requested and returns (F92)")
+        if REBOOT_FLAG_STORE not in flat:
+            errors.append(f"{INO}: handle_reboot() must raise the request with "
+                          "`__atomic_store_n(&g_reboot_requested, true, ...)` (F92)")
+    span = the_body(code, SIG_SKETCH_LOOP, f"{INO}: loop()", errors)
+    calls = squash(code).count("planned_restart_now();")
+    in_loop = 0
+    if span is not None:
+        loop = code[span[0]:span[1]]
+        for m in re.finditer(r"\bplanned_restart_now\s*\(\s*\)\s*;", loop):
+            gate = enclosing_if(loop, m.start())
+            if gate is not None and REBOOT_FLAG_LOAD in squash(gate[1]):
+                in_loop += 1
+    if calls != 1 or in_loop != 1:
+        errors.append(f"{INO}: `planned_restart_now();` must be called exactly once in the sketch, "
+                      "in loop(), inside an `if` on `__atomic_load_n(&g_reboot_requested, ...)` "
+                      f"(found {calls} call(s), {in_loop} so gated in loop()) — POST /api/reboot "
+                      "restarts on the loop task (F92)")
+    exempt = [s for s in bodies(code, SIG_PLANNED_RESTART) if code[s[0]:s[1]].strip()]
+    for m in re.finditer(r"\bESP\s*\.\s*restart\s*\(", code):
+        if any(a <= m.start() < b for a, b in exempt):
+            continue
+        start = innermost_block_start(code, m.start())
+        gate = enclosing_if(code, m.start())
+        if gate is not None and squash(gate[1]) == FACTORY_RESET_RELEASE and gate[2] <= start:
+            continue
+        block = code[start:m.start()]
+        flush = block.rfind(FLUSH_STMT)
+        line = code.count("\n", 0, m.start()) + 1
+        if flush < 0 or not top_level_statement(block, flush):
+            errors.append(f"{INO}:{line}: `ESP.restart()` with no `{FLUSH_STMT}` before it in its "
+                          "own block — every planned restart on the loop task commits the open "
+                          "CSI bundles and drains the egress first; only the factory reset's "
+                          "release (`if (s_reset_hold.released_stage >= 2)`) skips it (F92)")
+
+
 def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = None) -> list[str]:
     errors: list[str] = []
     check_hook(integ, errors)
@@ -706,6 +846,7 @@ def check(integ: str, egress: str, mqtt: str, others: dict[str, str] | None = No
     check_hand_over(egress, errors)
     check_destination_epoch(mqtt, errors)
     check_stats_off_the_loop(integ, egress, mqtt, others or {}, errors)
+    check_planned_restart(integ, egress, mqtt, others or {}, errors)
     return errors
 
 
@@ -995,9 +1136,60 @@ OTHERS_MUTATIONS: list[tuple[str, OthersMutation]] = [
 ]
 
 
+FLUSH_LINE = r"\n[ \t]*flush_events_before_restart\(\);"
+RESTART_MUTATIONS: list[tuple[str, OthersMutation]] = [
+    ("POST /api/reboot restarts on the httpd task again",
+     on_o(INO, SIG_HANDLE_REBOOT, r"(__atomic_store_n\(&g_reboot_requested,[^;]*;)",
+          r"\1 delay(500); ESP.restart();")),
+    ("POST /api/reboot runs the planned restart on the httpd task",
+     on_o(INO, SIG_HANDLE_REBOOT, r"__atomic_store_n\(&g_reboot_requested,[^;]*;", "planned_restart_now();")),
+    ("POST /api/reboot persists the chain on the httpd task again",
+     on_o(INO, SIG_HANDLE_REBOOT, r"(__atomic_store_n\(&g_reboot_requested,[^;]*;)",
+          r"persist_chain_state(); \1")),
+    ("POST /api/reboot raises no request",
+     on_o(INO, SIG_HANDLE_REBOOT, r"\n[ \t]*__atomic_store_n\(&g_reboot_requested,[^;]*;", "")),
+    ("the loop never serves the request",
+     on_o(INO, SIG_SKETCH_LOOP, r"\n[ \t]*planned_restart_now\(\);", "")),
+    ("the loop restarts whatever the request",
+     on_o(INO, SIG_SKETCH_LOOP, r"__atomic_load_n\(&g_reboot_requested,\s*__ATOMIC_ACQUIRE\)",
+          "millis() > 0")),
+    ("the planned restart flushes nothing",
+     on_o(INO, SIG_PLANNED_RESTART, FLUSH_LINE, "")),
+    ("the planned restart flushes after the chain persist",
+     lambda i, e, m, o: on_o(INO, SIG_PLANNED_RESTART, r"(persist_chain_state\(\);)",
+                             r"\1 flush_events_before_restart();")(
+         *on_o(INO, SIG_PLANNED_RESTART, FLUSH_LINE, "")(i, e, m, o))),
+    ("the planned restart flushes after the pre-reboot hook",
+     lambda i, e, m, o: on_o(INO, SIG_PLANNED_RESTART, r"(if\s*\(hook\)\s*hook\(\);)",
+                             r"\1 flush_events_before_restart();")(
+         *on_o(INO, SIG_PLANNED_RESTART, FLUSH_LINE, "")(i, e, m, o))),
+    ("the planned restart flushes only with a link",
+     on_o(INO, SIG_PLANNED_RESTART, r"(flush_events_before_restart\(\);)", r"if (csi_mqtt::connected()) \1")),
+    ("the provisioning reboot flushes nothing",
+     on_o(INO, SIG_SKETCH_LOOP, r"\n[ \t]*flush_events_before_restart\(\);(\s*delay\(500\);)", r"\1")),
+    ("a new restart in the loop flushes nothing",
+     on_o(INO, SIG_SKETCH_LOOP, r"(csi_mqtt::loop\(\);)", r"\1 if (millis() > 86400000UL) ESP.restart();")),
+    ("a restart borrows the factory reset's gate in another block",
+     on_o(INO, SIG_SKETCH_LOOP, r"(csi_mqtt::loop\(\);)",
+          r"\1 if (s_reset_hold.released_stage >= 2) { } { ESP.restart(); }")),
+    ("the helper drains nothing",
+     on_o(INO, SIG_FLUSH_HELPER, r"\(void\)csi_event_egress::flush_for_restart\([^;]*;", "")),
+    ("the helper's budget is zero",
+     on_o(INO, SIG_FLUSH_HELPER, r"csi_event_egress::kRestartBudgetMs", "0")),
+    ("the helper skips the watchdog reset",
+     on_o(INO, SIG_FLUSH_HELPER, r"esp_task_wdt_reset\(\);", "")),
+    ("the helper drains only while the link is up",
+     on_o(INO, SIG_FLUSH_HELPER, r"(\(void\)csi_event_egress::flush_for_restart\([^;]*;)",
+          r"if (csi_mqtt::connected()) \1")),
+    ("the MQTT loop drains the egress for a restart",
+     on_3(on_m(SIG_LOOP, r"(csi_event_egress::pump\(\);)",
+               r"\1 (void)csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);"))),
+]
+
+
 def self_test(integ: str, egress: str, mqtt: str, others: dict[str, str]) -> list[str]:
     problems = []
-    for name, mutate4 in OTHERS_MUTATIONS:
+    for name, mutate4 in OTHERS_MUTATIONS + RESTART_MUTATIONS:
         try:
             i, e, m, o = mutate4(integ, egress, mqtt, others)
         except AnchorMissing as missing:
@@ -1052,8 +1244,9 @@ def main() -> int:
           f"register; the modules' boot init runs once, after they register and before the "
           f"first tick; live rows wait behind the "
           f"card and RAM backlog; the tamper bridge goes first; a changed broker bumps the epoch; "
-          f"only the loop task reads the egress's own counters "
-          f"({len(MUTATIONS) + len(OTHERS_MUTATIONS)} mutations refused).")
+          f"only the loop task reads the egress's own counters; every planned restart commits "
+          f"the open bundles and drains the egress first, on the loop task "
+          f"({len(MUTATIONS) + len(OTHERS_MUTATIONS) + len(RESTART_MUTATIONS)} mutations refused).")
     return 0
 
 

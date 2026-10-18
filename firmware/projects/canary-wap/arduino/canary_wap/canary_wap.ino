@@ -4812,15 +4812,45 @@ static esp_err_t handle_export(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// Raised by handle_reboot on the HTTP task, read by loop(), which restarts
+// (sweep F92). The only cross-task state of the planned restart.
+static bool g_reboot_requested = false;
+
+// Every planned restart the loop task takes, first (sweep F92): a CSI
+// bundle lives in RAM until it closes, up to ten minutes, and the events
+// egress commits through a queue and a RAM hold the restart would wipe. So
+// every open bundle commits now (its witness record with it, on this task)
+// and the egress drains to the card and the broker, bounded by
+// csi_event_egress::kRestartBudgetMs (about a second) inside the loop task's
+// 8 s watchdog, reset first. Not on a factory reset (it erases the broker
+// settings first, so nothing is owed); the setup wizard's idle restart, the
+// safe-mode paths and the OTA, BLE OTA and USB-drive restarts are not the
+// loop's or run no CSI (check_wap_event_egress.py rule 13 holds every
+// ESP.restart() in this file to one or the other).
+static void flush_events_before_restart() {
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+  (void)csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);
+}
+
+// The planned restart, loop task only: the open CSI rows, then the chain
+// head (the same single-entry blob as every other persist, after the rows
+// the flush witnessed) and the mesh replay counters, then the restart.
+// POST /api/reboot ends here, through g_reboot_requested.
+static void planned_restart_now() {
+  flush_events_before_restart();
+  persist_chain_state();
+  pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
+  if (hook) hook();
+  delay(500);
+  ESP.restart();
+}
+
 static esp_err_t handle_reboot(httpd_req_t* req) {
   g_health.http_requests++;
   
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Reboot requested", nullptr);
-  
-  // Persist state — the same single-entry blob as every other persist. The
-  // old inline seq/chain pair here ran on the httpd task and could
-  // interleave with the loop's persist between its two entries.
-  persist_chain_state();
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -4830,10 +4860,12 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
-  pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
-  if (hook) hook();
-  delay(500);
-  ESP.restart();
+  // The restart is the loop task's (sweep F92), as on the canary: it commits
+  // the open CSI bundles and drains the events egress (the egress's pump and
+  // the bundler run on that task), then persists the chain, runs the
+  // pre-reboot hook and restarts. This task only raises the request, after
+  // the reply has gone. It used to persist, run the hook and restart here.
+  __atomic_store_n(&g_reboot_requested, true, __ATOMIC_RELEASE);
   return ESP_OK;
 }
 
@@ -13186,6 +13218,7 @@ void loop() {
     } else {
       __atomic_store_n(&g_setup_grace_reboot_at_ms, 0u, __ATOMIC_RELEASE);
       Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
+      flush_events_before_restart();
       delay(500);
       ESP.restart();
     }
@@ -13784,6 +13817,12 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+  // POST /api/reboot, deferred here from the HTTP task (handle_reboot):
+  // the open CSI rows, the chain and the restart run on this task (F92).
+  if (__atomic_load_n(&g_reboot_requested, __ATOMIC_ACQUIRE)) {
+    Serial.println("[OK] Rebooting (POST /api/reboot)...");
+    planned_restart_now();
+  }
 #if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP
   // Keep the fleet's broker referral honest: re-sync the _securacv._tcp
   // broker/bport TXT on every MQTT link transition — connect advertises the
