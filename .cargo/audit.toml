@@ -28,4 +28,21 @@ ignore = [
     # non-default `c2pa-export` feature. Full analysis: SECURITY.md,
     # "Group 3".
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369 — `zip` before
+    # 9.0.0 extracts symlinks outside the destination, applies permissions
+    # through them, and keeps SUID/SGID bits.
+    #
+    # The kernel's Cargo.lock is fixed (c2pa 0.91.3 takes zip 9.0.5). The two
+    # desktop lockfiles (desktop/src-tauri, desktop-lab/src-tauri) get zip
+    # 4.6.1 from tauri-plugin-updater alone: a Windows-only optional
+    # dependency whose one use extracts an update archive after
+    # Update::download() has verified its minisign signature against the key
+    # each app pins. An attacker would need our release signing key, which
+    # already ships anything. tauri-plugin-updater 2.14.0 still requires
+    # zip ^4 and no 4.x release is fixed. Drop these three when a 2.x updater
+    # takes zip 9. Full analysis: SECURITY.md, "Group 4".
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]

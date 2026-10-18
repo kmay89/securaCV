@@ -190,13 +190,51 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   **delete it the moment `c2pa` ships a release that resolves `rsa` past the
   advisory.** Everything else `cargo audit` reports stays fatal.
 
+### Group 4 — `zip` extraction (RUSTSEC-2026-0367, -0368, -0369) — root FIXED; desktop apps NOT REACHABLE, IGNORED
+
+- **Bug:** three advisories published 2026-10 against every `zip` release
+  before 9.0.0, all in extraction: `ZipArchive::extract` creates symbolic
+  links whose targets lie outside the destination (0368), `extract()` applies
+  Unix permissions through symlinks without confining the target (0369), and
+  extraction keeps SUID/SGID bits (0367). Each needs an attacker-made archive
+  that the program then extracts.
+- **The kernel's `Cargo.lock`: fixed.** `zip` came from `c2pa` (the optional
+  `c2pa-export` feature) at 8.6.0. `c2pa` 0.91.3 requires `zip ^9.0.4`, so
+  the lockfile takes `c2pa` 0.91.3 and `zip` 9.0.5 (#1802). `c2pa` 0.91.3
+  declares Rust 1.96; CI builds on current stable.
+- **The Flasher's and the Lab's `Cargo.lock`
+  (`desktop/src-tauri`, `desktop-lab/src-tauri`): not reachable.** `zip`
+  4.6.1 comes from exactly one crate, `tauri-plugin-updater`, as an optional,
+  **Windows-only** dependency of its `zip` feature. Its one use is
+  `extract_zip()`, which unpacks a Windows update archive into a fresh
+  temporary directory to find the `.exe` or `.msi` inside. Both apps reach it
+  only through `Update::download()` followed by `Update::install()` on the
+  bytes `download()` returned (`desktop/src-tauri/src/lib.rs`
+  `install_update`, `desktop-lab/src-tauri/src/self_update.rs`), and
+  `download()` refuses any archive whose minisign signature does not verify
+  against the public key pinned in each app's `tauri.conf.json` before it
+  returns a byte. No webview grant reaches the updater (both capability files
+  say so). So the archive `zip` opens is one we signed: an attacker who could
+  make it would hold the release signing key, and with that key could ship any
+  installer at all, which the extraction flaws add nothing to. On macOS and
+  Linux the crate is not compiled in.
+- **Fix not yet possible for the desktop apps:** `tauri-plugin-updater`
+  2.14.0, the newest 2.x on 2026-10-18, still requires `zip ^4`, and there is
+  no fixed 4.x release; only the 3.0 alphas move.
+- **What we did instead:** the three IDs are ignored in
+  [`.cargo/audit.toml`](.cargo/audit.toml), which every lockfile's audit
+  reads. The kernel's lockfile no longer carries an affected `zip`, so the
+  ignore covers only the two desktop lockfiles. **Delete the three entries
+  the moment a `tauri-plugin-updater` 2.x release takes `zip` 9**, and take
+  that bump.
+
 ### Status
 
 The five alerts in Groups 1 and 2 are resolved by dependency migrations (no
 securaCV code was ever on a reachable path). Both vulnerable crate versions —
 `rustls-webpki 0.102.8` and `time 0.3.41` — are absent from `Cargo.lock`.
 Group 3 has no reachable fix and is ignored under the reasoning recorded
-above. This section is retained as an audit record; remove entries once the
+above, as is Group 4's desktop half; Group 4's kernel half is fixed by a bump. This section is retained as an audit record; remove entries once the
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
 
