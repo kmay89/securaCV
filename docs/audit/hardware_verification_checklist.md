@@ -1574,7 +1574,7 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
-## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up (F190, F167, F189, F196 Bluetooth half, F235) — on-device verification
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up, no pairing without the owner (F190, F167, F189, F196 Bluetooth half, F235, F191, F209) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
@@ -1592,8 +1592,14 @@ sketch's bring-up worker still registers services
 published; `StoreCallbacks::onStoreStatus()` refuses a new phone's pairing
 that finds NimBLE's bond store full, and a bond or CCCD record with no
 room, and never deletes a bond to make room;
-`apply_auth_complete()` lists a phone only when the store kept its bond;
-the first loop pass drops listed entries without a bond),
+`apply_auth_complete()` lists a phone only when the store kept its bond,
+and deletes a bond that is not authenticated (a Just Works pairing no owner
+asked for) with the radio quiet and drops its link, F191; a passkey for the
+phone to type is shown only inside the owner's pairing mode, and outside it
+NimBLE is handed one above 999999, which it refuses, F191; no pairing digits
+reach the health log; GET /api/bluetooth counts the bond store beside the
+list, `bond_store`, and the health log names a store full of unlisted bonds,
+F209; the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
 (`send_doc()`: every answer serialized at its own measured length;
@@ -1614,7 +1620,9 @@ store, its full-store event at a Pairing Request, its default evictions
 advertising start that walks the server's services; the bring-up worker,
 the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
 held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6,
-BV7 and C3; a phone's real pairing, NimBLE's real stores, the real
+BV7, BV9 and C3; a phone's real pairing, NimBLE's real stores and security
+manager (that it refuses a passkey above 999999 and times that pairing out
+is read from NimBLE-Arduino 2.3.8 and 2.5.0's `ble_sm.c`, not run), the real
 bring-up worker and the real join window are not something a host test can
 run (the stand-in's NimBLE init failure is the retryable kind; one past the
 controller's init stays failed on a device until a reboot). Compile is CI's.
@@ -1693,6 +1701,40 @@ Owner: U1.
     stay listed and reconnect encrypted (before the F189 review NimBLE's
     default unpaired the oldest other phone to make room).
   - Artifact: `docs/audit/repro/F189/cccd-store/`.
+- [ ] **A pairing no owner asked for keeps no bond, and a passkey shows only in pairing mode (F191, F209)**
+  - Setup: the FULL build after `DELETE /api/bluetooth/paired/all`;
+    Bluetooth on, pairing mode not started; nRF Connect on a phone, its
+    pairing IO capability settable (Settings: "No Input No Output",
+    "Display Only", "Keyboard Only"), or a second ESP32 running a NimBLE
+    client with that IO capability and bonding on; the web UI's Bluetooth
+    tab and the health log open; for the last part, a device updated from a
+    build before F191 that holds Just Works bonds, if one can be arranged.
+  - Repro: (a) as "No Input No Output" (then "Display Only"), connect and
+    bond; read `GET /api/bluetooth` and `GET /api/bluetooth/paired`; repeat
+    three times, then pair a phone the normal way (Pair, confirm the six
+    digits). (b) As "Keyboard Only", connect and bond with pairing mode off;
+    then start pairing mode and bond again; read `GET /api/bluetooth` while
+    the phone asks for the digits, and `GET /api/logs`. (c) On the updated
+    device, read `GET /api/bluetooth` after boot, then Clear all.
+  - Expected: (a) each Just Works link drops within a second of its bond
+    (the phone's pairing fails or the link ends), the health log has `BLE
+    pairing refused: an unauthenticated bond was deleted and its link
+    dropped`, nothing is listed, `bond_store` reads `held` 0 and `unlisted`
+    0, and the normal pairing after the three succeeds and is listed (before
+    F191 the three bonds stayed, unlisted, and the fourth pairing was
+    refused with `BLE pairing refused: the bond store is full`). (b) with
+    pairing mode off the phone asks for digits the WAP shows nowhere (no PIN
+    box, no `pin` in `GET /api/bluetooth`), the pairing fails on the phone
+    within about 30 s whatever is typed, and the health log has `BLE pairing
+    passkey not shown: no pairing mode (Pair in the web UI first)`; in
+    pairing mode the PIN box shows six digits, typing them bonds and lists
+    the phone, and the health log's `Pairing PIN displayed` line carries no
+    digits (before F191 the digits showed and were logged in or out of
+    pairing mode). (c) `bond_store` counts the old bonds as `unlisted` and,
+    when they fill the store, the health log has `BLE bond store full with
+    bonds the paired list does not show: new pairings are refused until Clear
+    all`; nothing is deleted until Clear all, which empties the store.
+  - Artifact: `docs/audit/repro/F191/no-owner-no-bond/`.
 - [ ] **The REST answers are whole**
   - Setup: the FULL build; a device name of 32 characters with quotes and
     backslashes (`POST /api/bluetooth/settings`); a scan in a room with

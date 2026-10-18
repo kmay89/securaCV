@@ -81,7 +81,15 @@ While the door is **shut** (the steady state of every owned Canary):
 - They see the fleet presence beacon — the same bytes the device has always
   put on air. On a Sense or a Vision the device is **not connectable**; on a
   WAP the pairing channel answers as before (its Opera scan response, its
-  bonded services, which refuse an unauthenticated key).
+  bonded services, which refuse an unauthenticated key). A phone that pairs
+  with that channel anyway by Just Works (one with no display or no yes/no,
+  which NimBLE's tables pair with no owner to ask) **keeps no bond**: the WAP
+  deletes it as it is made and drops the link (F191), so such bonds can no
+  longer fill the 3-bond store against the owner (F209). A keyboard-only
+  phone, which pairs by Passkey Entry, is shown no passkey outside the
+  owner's pairing mode (Pair in the web UI), and NimBLE is handed one it
+  refuses, so that pairing cannot complete; the digits never reach the
+  health log.
 - A standard Improv client that reaches the service reads **awaiting
   authorization** (`0x01`) on the state characteristic. A `WIFI_SETTINGS`
   write earns `NotAuthorized` (`0x04`) and starts nothing.
@@ -264,6 +272,9 @@ The byte vectors are pinned on both ends by
   link is up**, and restored when the door shuts. The key such a pairing
   yields is unauthenticated, and the console, OTA, witness-export and bonded
   provisioning characteristics (`READ_AUTHEN` / `WRITE_AUTHEN`) refuse it.
+  The door's profile keeps no bond; outside it, a Just Works pairing that
+  bonds anyway has its bond deleted and its link dropped by the pairing
+  channel (`apply_auth_complete()`, F191).
 
 ### 3.5 The claim ticket (WAP)
 
