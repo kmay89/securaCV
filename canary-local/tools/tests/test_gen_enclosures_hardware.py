@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parents[3]
 REL_HW = Path("docs/hardware/enclosure/hardware.json")
 REL_BUILD = Path("canary-local/devices/build.json")
 # The meshes and images are never read by the build stage; leaving them out
-# keeps the copy a few MB.
+# keeps the copy small.
 HEAVY = shutil.ignore_patterns("*.stl", "*.png", "*.glb", "*.3mf", "*.step", "*.stp",
                                "__pycache__")
 
@@ -50,7 +50,12 @@ class HardwareCarry(unittest.TestCase):
             shutil.copy2(p, root / "canary-local/tools" / p.name)
         shutil.copy2(REPO / "scripts/bom_pricing.py", root / "scripts/bom_pricing.py")
         shutil.copytree(REPO / "devices", root / "devices", ignore=HEAVY)
-        shutil.copytree(REPO / "docs/hardware", root / "docs/hardware", ignore=HEAVY)
+        # only what the build stage reads, so the copy reads nothing outside
+        # canary-local.yml's path filter (scripts/check_path_filter_reads.py)
+        shutil.copytree(REPO / "docs/hardware/enclosure", root / "docs/hardware/enclosure",
+                        ignore=HEAVY)
+        for p in (*(REPO / "docs/hardware").glob("bom_*.csv"), REPO / "docs/hardware/pricing.json"):
+            shutil.copy2(p, root / "docs/hardware" / p.name)
         cls.hw = json.loads((REPO / REL_HW).read_text(encoding="utf-8"))
 
     @classmethod
