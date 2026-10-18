@@ -39,7 +39,7 @@ concurrency:
 jobs:
   test:
     name: test (household-keys)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 20
     defaults:
       run:
@@ -74,7 +74,7 @@ jobs:
   # what makes the claim true rather than a comment.
   msrv:
     name: msrv 1.89 (household-keys)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 20
     defaults:
       run:
