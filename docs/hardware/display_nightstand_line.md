@@ -388,6 +388,9 @@ everything else on these boards):
   `clock_style` and `orientation` (with the Character and clock catalogs BY NAME), and
   `/api/set` accepts them — applied on the loop task through the same paths an on-glass tap
   uses. The iPhone/iPad settings sheet renders the device's own catalog (GlassSettings).
+  `orientation` is the saved choice; `orientation_worn` beside it is the turn the glass
+  wears, which differs when a glass without its turn buffer refused the turn and stayed
+  landscape (F245, `display_settings.md` § The dash rows).
 - **Figures on the glass** (FLEET_FIGURES.md §10, closed): the fleet strip, the portrait
   witness list and the wall dashboard's roll call draw each witness's own generated figure
   (`ui/fleet_figure.cpp` over `common/core/fleet_figures_art.h`) beside its severity dot and
