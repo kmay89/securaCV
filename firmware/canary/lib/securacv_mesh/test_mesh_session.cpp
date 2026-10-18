@@ -3594,6 +3594,76 @@ void test_pairing_over_the_air_as_initiator() {
   std::printf("PASS test_pairing_over_the_air_as_initiator  (code=%06u)\n", code_j);
 }
 
+/* F94, through the session as the INITIATOR: its own CONFIRM, sent back to
+ * it from the joiner's address, ends the pairing (bad_confirm in GET
+ * /api/mesh), and nothing is sealed, sent, registered or bound: the partner's
+ * address leaves the transport table and the joiner's genuine CONFIRM,
+ * after it, gets no COMPLETE. Until F94 the session sent the COMPLETE,
+ * reported PAIRED and registered a member whose owner never confirmed. */
+void test_a_reflected_confirm_fails_the_pairing_through_the_session() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x94 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  assert(mesh_session::set_opera_secret(S));
+  g_paired_mac.clear();
+
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x94, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x00, 0x94, 0x02};
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  mesh_pairing::context_init(cj);
+  const std::vector<uint8_t> disc = wire(mesh_pairing::start_joiner(cj, j_pub, j_priv, 10));
+
+  assert(mesh_session::start_pairing_initiator(S, "Home", 20));
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_j, disc.data(), disc.size(), -40);
+  mesh_transport::process();
+  mesh_pairing::Action a;
+  feed_pure(cj, me, last_to(mac_j), 30, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_ACCEPT);
+  const std::vector<uint8_t> accept = wire(a);
+  mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
+  mesh_transport::process();
+  assert(g_code_ready != 0 || mesh_session::pairing_confirmation_code() == g_code_ready);
+
+  assert(mesh_session::confirm_pairing_code(40));
+  const std::vector<uint8_t> conf_i = last_to(mac_j);
+  assert(!conf_i.empty() &&
+         conf_i[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_j, conf_i.data(), conf_i.size(), -40);
+  mesh_transport::process();
+  mesh_session::process(50);
+  assert(g_failed_fired && g_failed_count == 1);
+  assert(g_failed_why == mesh_pairing::FailReason::BAD_CONFIRM);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+  assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::BAD_CONFIRM);
+  assert(mesh_session::pairing_outcome() == mesh_pairing::Outcome::FAILED);
+  assert(!g_paired_fired && g_paired_mac.empty());
+  assert(mesh_session::trusted_peer_count() == 0);
+  assert(!transport_has(mac_j));
+  for (const OutFrame& f : g_outs) {
+    assert(f.bytes.empty() ||
+           f.bytes[0] != static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
+  }
+
+  /* The joiner's owner confirms after it: its CONFIRM finds no pairing. */
+  a = mesh_pairing::confirm_code(cj, 60);
+  const std::vector<uint8_t> conf_j = wire(a);
+  mesh_transport::test::inject_recv(mac_j, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  for (uint32_t t = 70; t < 70 + 3 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 500) {
+    mesh_session::process(t);
+  }
+  assert(g_outs.empty());
+  assert(!g_paired_fired && mesh_session::trusted_peer_count() == 0);
+  assert(g_failed_count == 1);
+  std::printf("PASS test_a_reflected_confirm_fails_the_pairing_through_the_session\n");
+}
+
 /* The same as the JOINER: the initiator's OFFER comes from an unknown MAC;
  * on PAIRED the initiator is bound. */
 void test_pairing_over_the_air_as_joiner() {
@@ -3698,7 +3768,10 @@ void test_pairing_over_the_air_joiner_confirms_first() {
   assert(std::memcmp(g_outs[0].mac, mac_j, 6) == 0);
   assert(std::memcmp(g_outs[1].mac, mac_j, 6) == 0);
   assert(std::memcmp(g_outs[2].mac, mac_j, 6) == 0);
-  assert(g_outs[0].bytes == conf_j);                  /* the hash is the same both ways */
+  /* The initiator's own CONFIRM, not the joiner's bytes back: since F94
+   * each names its sender's role. */
+  assert(g_outs[0].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
+  assert(g_outs[0].bytes.size() == conf_j.size() && g_outs[0].bytes != conf_j);
   assert(g_outs[1].bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE));
   assert(is_heartbeat(g_outs[2].bytes));
   assert(g_paired_fired);
@@ -5795,10 +5868,11 @@ void test_a_lost_complete_is_sent_again_through_the_session() {
   assert(std::memcmp(got, S, sizeof(S)) == 0);
 
   /* Frames that reach a completed initiator move nothing and bring no
-   * copy early: its own CONFIRM reflected (the joiner's is the same bytes:
-   * one hash both ways) and its COMPLETE replayed, from the joiner's
-   * address; the same and a joiner's DISCOVER from a third radio (dropped
-   * at the transport: no pairing runs). */
+   * copy early: its own CONFIRM reflected (since F94 not the joiner's
+   * bytes, and a completed pairing reads no CONFIRM anyway) and its
+   * COMPLETE replayed, from the joiner's address; the same and a joiner's
+   * DISCOVER from a third radio (dropped at the transport: no pairing
+   * runs). */
   g_outs.clear();
   const uint8_t mac_x[6] = {0x24, 0x0A, 0xC4, 0x13, 0x40, 0x0F};
   mesh_pairing::PairingContext cx;
@@ -8267,6 +8341,7 @@ int main() {
   test_unheard_broadcast_replayed_from_a_new_address_moves_nothing();
   test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing();
   test_pairing_over_the_air_as_initiator();
+  test_a_reflected_confirm_fails_the_pairing_through_the_session();
   test_pairing_over_the_air_as_joiner();
   test_pairing_over_the_air_joiner_confirms_first();
   test_pairing_over_the_air_initiator_confirms_first();

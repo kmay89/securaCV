@@ -27,6 +27,10 @@
  *
  *   A pinned test vector asserts that a 32-byte zero session key
  *   produces code 884555 (computed independently via openssl).
+ *
+ *   The CONFIRM hash (F94) is bound to its sender's role, with the same
+ *   two domain strings as canary-wap's mesh_pair_crypto.h, and pinned to
+ *   the same vectors there (compute_confirmation_hash, below).
  */
 
 #ifndef SECURACV_MESH_PAIRING_H
@@ -44,9 +48,18 @@ namespace mesh_pairing {
  * CONSTANTS
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* Domain-separation string for confirmation-code hashing. Wire-compat
- * with canary-wap (mesh_network.cpp:46). */
+/* Domain-separation string for the 6-digit code (compute_confirmation_code).
+ * Wire-compat with canary-wap (mesh_pair_crypto.h). Until F94 the CONFIRM
+ * hash used it too, in both directions. */
 constexpr const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
+
+/* The CONFIRM hash's two domains, one per sender role (F94; canary-wap's
+ * mesh_pair_crypto.h has the same strings). None of the three pairing
+ * domains is a prefix of another, so no input under one hashes the same
+ * bytes as an input under another (sha256_domain is SHA-256(domain ||
+ * data), no length prefix); test_mesh_pairing holds that. */
+constexpr const char* DOMAIN_PAIR_CONFIRM_INIT = "securacv:pair:confirm:init:v1";
+constexpr const char* DOMAIN_PAIR_CONFIRM_JOIN = "securacv:pair:confirm:join:v1";
 
 /* Session key length. Equal to the X25519 shared-secret width because
  * the canary-wap pairing flow uses the DH output directly as the
@@ -80,27 +93,58 @@ constexpr uint32_t CONFIRMATION_CODE_MODULUS = 1000000;
 
 uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]);
 
+/* A pairing side's role, on the wire as uint8_t (PairDiscoverPayload::role;
+ * matches canary-wap's PairingRole enum), and the CONFIRM hash's sender. */
+enum Role : uint8_t {
+  ROLE_NONE      = 0,
+  ROLE_INITIATOR = 1,   /* existing opera member */
+  ROLE_JOINER    = 2,   /* new device joining */
+};
+
 /* ──────────────────────────────────────────────────────────────────────────
  * CONFIRMATION HASH
  *
- * SHA-256(DOMAIN_PAIR_CONFIRM || session_key || code_u32_le), where
- * code_u32_le is the little-endian byte order of compute_confirmation_code
- * for the same session_key. Wire-compat with canary-wap mesh_network.cpp
- * lines 856-860 (verify path) and 1448-1450 (send path).
+ * SHA-256(domain(sender) || session_key || code_u32_le), where
+ * domain(ROLE_INITIATOR) is DOMAIN_PAIR_CONFIRM_INIT, domain(ROLE_JOINER)
+ * is DOMAIN_PAIR_CONFIRM_JOIN, and code_u32_le is the little-endian byte
+ * order of compute_confirmation_code for the same session_key. The same
+ * bytes as canary-wap's mesh_pair_crypto::confirm_hash (the two trees pin
+ * the same vectors).
  *
- * Purpose: the joiner sends this 32-byte hash inside PairConfirmPayload
- * after the user confirms the 6-digit code matches on both screens. The
- * initiator recomputes and compares; if any byte differs, a MITM has
- * mutated the exchange and pairing aborts.
+ * Purpose: each side sends this 32-byte hash inside PairConfirmPayload,
+ * for its own role, once its owner confirms that the 6-digit code matches
+ * on both screens. The other side recomputes it for the sender's role
+ * (its partner's) and compares; if any byte differs, the exchange was
+ * tampered with or the CONFIRM is not the partner's, and the pairing ends
+ * (FailReason::BAD_CONFIRM).
+ *
+ * The role (F94): until F94 the hash was SHA-256(DOMAIN_PAIR_CONFIRM ||
+ * session_key || code) in both directions, so the two sides' CONFIRMs were
+ * the same 32 bytes. ESP-NOW does not authenticate a source address, so a
+ * radio that sent the initiator's own CONFIRM back to it from the joiner's
+ * address passed it off as the joiner's: the initiator sealed the
+ * opera_secret, reported PAIRED and held a member whose owner never
+ * confirmed (host-probed, the same before and after F97). Now a reflected
+ * CONFIRM is a wrong hash like any other and ends the pairing, which a
+ * radio sending any wrong hash from the partner's address could already
+ * do. A device on firmware before F94 sends and expects the role-free
+ * hash, so it and an updated device each refuse the other's CONFIRM
+ * (BAD_CONFIRM), in either order, and neither completes: a wire change
+ * that fails closed.
  *
  * `code` is included in the hash (rather than just the session_key) so
  * an attacker who knows the session_key alone — e.g. an honest middlebox
  * that proxies the X25519 exchange — still cannot forge a matching hash
  * without also seeing both peers' randomly-chosen ephemeral keys (which
  * is what determines the 6-digit code).
+ *
+ * Returns false, with `out` zeroed, for a null argument or a sender that
+ * is neither role; a caller that verifies must treat that as a mismatch
+ * (an all-zero hash is not a CONFIRM).
  * ────────────────────────────────────────────────────────────────────────── */
 
-void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
+bool compute_confirmation_hash(Role          sender,
+                               const uint8_t session_key[SESSION_KEY_LEN],
                                uint32_t      code,
                                uint8_t       out[mesh_crypto::SHA256_OUT_LEN]);
 
@@ -113,14 +157,8 @@ void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
  * across endianness; the receiver casts the raw bytes back to the
  * struct.
  *
- * Roles encoded as uint8_t (matches canary-wap PairingRole enum).
+ * Roles encoded as uint8_t (the Role enum above).
  * ────────────────────────────────────────────────────────────────────────── */
-
-enum Role : uint8_t {
-  ROLE_NONE      = 0,
-  ROLE_INITIATOR = 1,   /* existing opera member */
-  ROLE_JOINER    = 2,   /* new device joining */
-};
 
 struct __attribute__((packed)) PairDiscoverPayload {
   uint8_t pubkey[mesh_crypto::PUBKEY_LEN];     /* device long-term Ed25519 pub */
@@ -141,10 +179,11 @@ struct __attribute__((packed)) PairOfferPayload {
 using PairAcceptPayload = PairOfferPayload;
 
 struct __attribute__((packed)) PairConfirmPayload {
-  /* SHA-256(DOMAIN_PAIR_CONFIRM || session_key || code_u32_le).
-   * See compute_confirmation_hash() above. Sent by the joiner once the
-   * user has visually verified the 6-digit code matches on both screens;
-   * receiver recomputes and rejects on any byte difference. */
+  /* SHA-256(domain(sender role) || session_key || code_u32_le).
+   * See compute_confirmation_hash() above. Sent by each side once its
+   * owner has visually verified the 6-digit code matches on both screens;
+   * the receiver recomputes it for its partner's role and rejects on any
+   * byte difference. */
   uint8_t confirmation_hash[mesh_crypto::SHA256_OUT_LEN];
 };
 
@@ -229,11 +268,11 @@ static_assert(sizeof(PairCompletePayload) ==
  *   An updated joiner takes the COMPLETE without the CONFIRM in front of
  *   it. That CONFIRM is for a joiner on firmware before F97, which reads a
  *   CONFIRM only after its own owner confirmed and takes a COMPLETE only
- *   after such a CONFIRM: with it, an updated initiator pairs such a joiner
+ *   after such a CONFIRM: with it, an updated initiator paired such a joiner
  *   in either order; without it, the initiator would report PAIRED and the
- *   joiner drop the COMPLETE. canary-wap (F75) sends the COMPLETE alone,
- *   because its receive buffer holds one frame; this tree's transport ring
- *   holds eight.
+ *   joiner drop the COMPLETE. (Until F94: see "Firmware before F94" below.)
+ *   canary-wap (F75) sends the COMPLETE alone, because its receive buffer
+ *   holds one frame; this tree's transport ring holds eight.
  *
  *   The other mix (F117): an initiator on firmware before F97 drops a
  *   CONFIRM that arrives before its own owner confirms, and answers only a
@@ -261,6 +300,21 @@ static_assert(sizeof(PairCompletePayload) ==
  *   handle (CONFIRM) ◄──────────────────────  → SEND_CONFIRM (hash) again
  *     → SEND_COMPLETE (alone) ───────────►   handle (COMPLETE) → NOTIFY_PAIRED
  *
+ *   Firmware before F94: every CONFIRM names its sender's role
+ *   (compute_confirmation_hash), and each side checks its partner's role.
+ *   A device on firmware before F94 sends and expects the role-free hash,
+ *   so between it and an updated device each CONFIRM is a wrong hash, from
+ *   the partner's address: the side that reads one fails (an updated one
+ *   with BAD_CONFIRM), in either order and whichever side is older, and
+ *   neither initiator seals the opera_secret, since each needs a CONFIRM
+ *   the other never sends. (An initiator on firmware before F94 still takes
+ *   its own CONFIRM reflected to it; only updating it closes that.) Firmware
+ *   before F97 is firmware before F94, so the two mixes above no longer
+ *   pair at all: they fail closed instead. The leading CONFIRM and the
+ *   joiner's re-send stay, and the tests that model those older ordering
+ *   rules on today's hash stay green, but no device on the firmware they
+ *   were written for completes a pairing with this one.
+ *
  *   A lost COMPLETE (F134, canary-wap's F100 shape): nothing on the wire
  *   acknowledges a COMPLETE, and the initiator reports PAIRED once it sent
  *   one. So it keeps the frames it sent — its leading CONFIRM and the
@@ -274,8 +328,9 @@ static_assert(sizeof(PairCompletePayload) ==
  *   AWAITING_CONFIRM_PEER or AWAITING_COMPLETE, takes the next one. A
  *   joiner's CONFIRM reaching a PAIRED initiator is still dropped and
  *   prompts no copy: the next timed copy is at most 2 s away, and the
- *   CONFIRM authenticates nothing a radio in range could not replay or
- *   reflect (F94). Until F134 the COMPLETE went once; one lost on the air
+ *   CONFIRM authenticates nothing a radio in range could not replay (a
+ *   PAIRED context reads no CONFIRM, so F94's role check does not run
+ *   there). Until F134 the COMPLETE went once; one lost on the air
  *   left the initiator holding a member that never joined, while the
  *   joiner re-sent its CONFIRM (F117) to an initiator that dropped it and
  *   timed out.
