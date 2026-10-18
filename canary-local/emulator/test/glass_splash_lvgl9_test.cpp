@@ -9,11 +9,12 @@
 // test_splash_scenes (tests_host, fake LVGL) holds where splash.cpp puts the
 // tail OBJECT: a 12 px square aligned on the bubble's top edge, kTailInset
 // px into it, re-aligned whenever the typed line changes (F158). Nothing
-// there is drawn. LVGL 8.4 draws no tail on this lv_conf (F185); LVGL 9.5
-// turns the square through a transform layer, and the library's half of
-// that was rendered by glass_turn_lvgl9_test (a 145 px diamond hung from
-// the box's top-left corner, F225). This test renders splash.cpp's own
-// tail: it links the REAL ui/splash.cpp, canary_mark.cpp, theme.cpp,
+// there is drawn. LVGL 9.5 turns the square through a transform layer, and
+// the library's half of that was rendered by glass_turn_lvgl9_test (a 145
+// px diamond hung from the box's top-left corner, F225); since F185 the
+// square has no radius and turns about its center, which LVGL 8.4 draws too
+// (glass_splash_test.cpp, through glass_turn.sh). This test renders
+// splash.cpp's own tail: it links the REAL ui/splash.cpp, canary_mark.cpp, theme.cpp,
 // character.cpp and lvgl_port.cpp (and the story engine's headers) over a
 // recording Arduino_GFX of the panel's native size, with an Arduino clock
 // the splash's own pump drives (delay() advances millis()), a Preferences
@@ -36,8 +37,8 @@
 //     with the bubble hidden as well (so the part of a tail that has the
 //     bubble's color over the bubble is read too), its bounding box is the
 //     box's 12 px square turned by its transform_rotation (450, 45 degrees)
-//     about its transform_pivot (unset, so the box's top-left corner), to
-//     within 2 px a side (the radius-2 corners round the diamond's tips);
+//     about its transform_pivot (kTailPivot, the square's center, F185), to
+//     within 2 px a side;
 //  5. at every read, each of F185's options, rendered on the same frame (the
 //     tail's styles changed for that render alone and put back), keeps 3 and
 //     4: radius 0, a centered pivot, both, and a triangle drawn in the
@@ -48,7 +49,17 @@
 //     (a tail made of another widget would also have to change find_parts);
 //  6. the bubble typed every line story::kHello has, whole and in the
 //     script's order (each line counted at its first letter, the pseudonym
-//     in place of its %s), and the meeting was remembered.
+//     in place of its %s), and the meeting was remembered;
+//  7. at every read, the tail's own ink stands on the bubble's center line
+//     (its center within 1 px of it, F185: about the old top-left pivot it
+//     stood 5.5 px left) and reaches no higher than kTailRise above the
+//     bubble's top edge;
+//  8. over the meeting, the bird breathes down to the seat seat() names for
+//     the tallest bubble the meeting drew (splash.cpp measures it itself
+//     before it seats the bird, F159) and hops no higher than kHopReach
+//     above it, on the glass; and wherever seat() says the bird is clear of
+//     the tail, the tail's ink starts at least kGap below the bird's box at
+//     every read.
 //
 // Printed, not held: where the diamond stands against the bubble (its center
 // against the bubble's center line, how far it pokes above the top edge and
@@ -369,6 +380,10 @@ struct Watch {
   int mismatched = 0;     // ...where the tail and the bubble disagreed
   int captures = 0;
   int seat_fails = 0, ink_fails = 0, land_fails = 0, option_fails = 0;
+  int center_fails = 0, rise_fails = 0;
+  int tallest = 0;  // the tallest bubble drawn
+  int bird_lo = 1 << 30, bird_hi = -(1 << 30);  // the bird's box top, drawn
+  int tail_gap = 1 << 30;  // the tail's own ink top less the bird's box bottom
   long ink_lo = 1 << 30, ink_hi = 0;
   bool reported = false;
   std::string last_text;   // the bubble's text at the last tick it was up
@@ -434,6 +449,24 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
        W.tag, r.own.b.x0, r.own.b.x1, r.own.b.y0, r.own.b.y1, (int)t.x1, (int)t.y1,
        (int)lv_obj_get_style_transform_rotation(tail, LV_PART_MAIN), r.want.x0, r.want.x1,
        r.want.y0, r.want.y1, text);
+  // 7: on the bubble's center line, no higher than kTailRise over its top.
+  if (r.own.n > 0) {
+    const double off = ((r.own.b.x0 + r.own.b.x1 + 1) - (b.x1 + b.x2 + 1)) / 2.0;
+    HOLD(fabs(off) <= 1.0, W.center_fails,
+         "%s: the tail's own ink (x %d..%d) stands %+.1f px off the bubble's center line (x "
+         "%d..%d, \"%s\")", W.tag, r.own.b.x0, r.own.b.x1, off, (int)b.x1, (int)b.x2, text);
+    HOLD((int)b.y1 - r.own.b.y0 <= sl::kTailRise, W.rise_fails,
+         "%s: the tail's own ink starts %d rows above the bubble's top edge (y %d); kTailRise "
+         "is %d (\"%s\")", W.tag, (int)b.y1 - r.own.b.y0, (int)b.y1, sl::kTailRise, text);
+    // 8's read: how far the tail's ink starts below the bird's box.
+    lv_obj_t* bird = canary::ui::canary_mark_obj();
+    if (bird != nullptr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN)) {
+      lv_area_t m;
+      lv_obj_get_coords(bird, &m);
+      const int gap = r.own.b.y0 - ((int)m.y2 + 1);
+      if (gap < W.tail_gap) W.tail_gap = gap;
+    }
+  }
   // 5: each of F185's options, on this frame, keeps 3 and 4.
   const bool report = !W.reported && text[0] != '\0';
   if (report) {
@@ -442,7 +475,13 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
     printf("    the tail's box %dx%d at (%d,%d) on a %dx%d bubble at (%d,%d), \"%.32s\":\n",
            (int)lv_area_get_width(&t), (int)lv_area_get_height(&t), (int)t.x1, (int)t.y1,
            (int)lv_area_get_width(&b), (int)lv_area_get_height(&b), (int)b.x1, (int)b.y1, text);
-    say_landing("today (radius 2, turned 45 about (0,0))", ink, b);
+    char styled[64];
+    snprintf(styled, sizeof(styled), "as styled (radius %d, turned %d about (%d,%d))",
+             (int)lv_obj_get_style_radius(tail, LV_PART_MAIN),
+             (int)lv_obj_get_style_transform_rotation(tail, LV_PART_MAIN) / 10,
+             (int)lv_obj_get_style_transform_pivot_x(tail, LV_PART_MAIN),
+             (int)lv_obj_get_style_transform_pivot_y(tail, LV_PART_MAIN));
+    say_landing(styled, ink, b);
   }
   for (Option o : {Option::Radius0, Option::CenteredPivot, Option::Both, Option::Triangle}) {
     const Read alt = option_read(tail, bub, o);
@@ -464,6 +503,13 @@ void observe() {
   if (scr == nullptr || scr == W.home) return;
   W.ticks++;
   lv_obj_update_layout(scr);
+  lv_obj_t* bird = canary::ui::canary_mark_obj();
+  if (bird != nullptr && lv_obj_get_parent(bird) == scr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN)) {
+    lv_area_t m;
+    lv_obj_get_coords(bird, &m);
+    if (m.y1 < W.bird_lo) W.bird_lo = m.y1;
+    if (m.y1 > W.bird_hi) W.bird_hi = m.y1;
+  }
   lv_obj_t* tail = nullptr;
   lv_obj_t* bub = nullptr;
   find_parts(scr, &tail, &bub);
@@ -479,6 +525,7 @@ void observe() {
   lv_area_t t, b;
   lv_obj_get_coords(tail, &t);
   lv_obj_get_coords(bub, &b);
+  if (lv_area_get_height(&b) > W.tallest) W.tallest = lv_area_get_height(&b);
   const std::string text = lv_label_get_text(lv_obj_get_child(bub, 0));
   // 6: the lines typed, each counted at its first letter.
   if (text.empty()) {
@@ -553,12 +600,32 @@ void play(const char* tag) {
         tag, W.typed.size(), want.size(), same + 1,
         same < W.typed.size() ? W.typed[same].c_str() : "(nothing)",
         same < want.size() ? want[same].c_str() : "(nothing)");
+  // 8: the bird on seat()'s seat for the tallest bubble drawn, clear of
+  // the tail wherever seat() says so.
+#if GLASS_TURNS
+  const sl::Family& fam = sl::kWideGlass;
+#else
+  const sl::Family& fam = sl::kSmallGlass;
+#endif
+  const sl::Seat s = sl::seat(g_lh, fam, true, W.tallest);
+  const int seat_top = sl::bird_top(g_lh, fam.bird, s.bird_off);
+  CHECK(W.bird_hi >= seat_top + sl::kBreath - 1 && W.bird_hi <= seat_top + sl::kBreath &&
+            W.bird_lo >= seat_top - sl::kHopReach && W.bird_lo >= 0 &&
+            W.bird_lo < seat_top - sl::kBreath,
+        "%s: the bird's top is drawn at y %d..%d; seat() seats it at y %d for the %d px tallest "
+        "bubble (breathing %d px, hopping %d at most, a hop seen)", tag, W.bird_lo, W.bird_hi,
+        seat_top, W.tallest, sl::kBreath, sl::kHopReach);
+  if (s.clear)
+    CHECK(W.tail_gap >= sl::kGap, "%s: the tail's ink starts %d px from the bird's box (below "
+          "it; negative, into it); seat() keeps it kGap (%d) clear", tag, W.tail_gap, sl::kGap);
   printf("    %d ticks (%.1f s), %d with the bubble up, %zu of the script's %zu lines typed "
-         "whole, the tail read off the frame %d times, %ld..%ld px of ink, %d checks "
+         "whole, the tail read off the frame %d times, %ld..%ld px of ink; the bird seated at "
+         "y %d%s for the %d px tallest bubble, the tail's ink %d px below its box; %d checks "
          "failed\n",
          W.ticks, (g_now - t0) / 1000.0, W.bubble_ticks, same, want.size(), W.captures,
-         W.ink_lo, W.ink_hi,
-         W.seat_fails + W.ink_fails + W.land_fails + W.option_fails + W.mismatched);
+         W.ink_lo, W.ink_hi, seat_top, s.raised ? " (raised)" : "", W.tallest, W.tail_gap,
+         W.seat_fails + W.ink_fails + W.land_fails + W.option_fails + W.mismatched +
+             W.center_fails + W.rise_fails);
 }
 
 }  // namespace

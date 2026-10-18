@@ -51,8 +51,10 @@
 //
 // Printed, not held: the tail's ink, its offset from the bubble's center
 // line and its reach, and, where seat() leaves the bird within the tail's
-// reach (the round watch, the landscape nightlight), how far into the bird's
-// box it reaches.
+// reach (the round watch, the landscape nightlight, pinned), how far into
+// the bird's box it reaches and how many of the bird's drawn pixels it hides
+// at the reads that see it there (the bird drawn with the bubble and the
+// tail hidden, against the same frame with the tail shown).
 //
 // Prints "ALL LVGL 8 SPLASH TAIL TESTS PASSED" on success.
 #include <Arduino.h>
@@ -250,6 +252,33 @@ Box styled_extent(const lv_obj_t* tail) {
   return b;
 }
 
+// The bird's drawn pixels the tail hides: those the bird inks (the frame
+// with the bird against the frame without it, the tail and the bubble
+// hidden) that the tail's own ink then covers (the tail shown over the
+// bird, the bubble still hidden). The glass is left as the splash drew it.
+long bird_hidden(lv_obj_t* tail, lv_obj_t* bub, lv_obj_t* bird) {
+  lv_area_t c;
+  lv_obj_get_coords(bird, &c);
+  Box w;
+  lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
+  render_whole();
+  const std::vector<uint16_t> bird_only = read_window(c, &w);
+  lv_obj_add_flag(bird, LV_OBJ_FLAG_HIDDEN);
+  render_whole();
+  const std::vector<uint16_t> bare = read_window(c, &w);
+  lv_obj_clear_flag(bird, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
+  render_whole();
+  const std::vector<uint16_t> with_tail = read_window(c, &w);
+  lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
+  render_whole();
+  long n = 0;
+  for (size_t i = 0; i < bare.size(); i++)
+    if (bird_only[i] != bare[i] && with_tail[i] != bird_only[i]) n++;
+  return n;
+}
+
 // ── Watching the splash ─────────────────────────────────────────────────
 struct Watch {
   std::string tag;
@@ -267,6 +296,7 @@ struct Watch {
   int tallest = 0;          // the tallest bubble drawn
   int bird_lo = 1 << 30, bird_hi = -(1 << 30);  // the bird's box top, drawn
   int tail_gap = 1 << 30;   // the tail's ink top less the bird's box bottom
+  long hidden = 0;          // the most of the bird's drawn pixels the tail hid
   std::string last_text;
   std::vector<std::string> typed;
   bool emptied = false;
@@ -281,7 +311,7 @@ bool same_area(const lv_area_t& a, const lv_area_t& b) {
 // The splash's tail (the plain kTailSide square with no children, as
 // test_splash_scenes finds it) and bubble (the one child holding a single
 // label). The screen is laid out first.
-void find_parts(lv_obj_t* scr, lv_obj_t** tail, lv_obj_t** bub) {
+void find_parts(const lv_obj_t* scr, lv_obj_t** tail, lv_obj_t** bub) {
   *tail = *bub = nullptr;
   const uint32_t n = lv_obj_get_child_cnt(scr);
   for (uint32_t i = 0; i < n; i++) {
@@ -354,6 +384,10 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
     lv_obj_get_coords(bird, &m);
     const int gap = own.b.y0 - ((int)m.y2 + 1);
     if (gap < W.tail_gap) W.tail_gap = gap;
+    if (gap < 0) {
+      const long h = bird_hidden(tail, bub, bird);
+      if (h > W.hidden) W.hidden = h;
+    }
   }
 }
 
@@ -486,7 +520,8 @@ void play(const char* canvas, canary::ui::Character ch, char letter) {
   else if (W.tail_gap >= 0)
     snprintf(where, sizeof(where), "%d px below the bird's box", W.tail_gap);
   else
-    snprintf(where, sizeof(where), "%d px into the bird's box", -W.tail_gap);
+    snprintf(where, sizeof(where), "%d px into the bird's box, hiding %ld of its drawn pixels",
+             -W.tail_gap, W.hidden);
   printf("    bird seated at y %d%s, tallest bubble %d px; the tail read %d times: %ld..%ld px "
          "on the glass, %ld+ of its own, at worst %+.1f px off the bubble's center line, %d rows "
          "above its top edge at most, %s; %d checks failed\n",

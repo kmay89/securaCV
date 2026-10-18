@@ -385,7 +385,7 @@ int main() {
     for (size_t i = 0; i < v.size(); ++i) {
       std::string one = v[i];
       const size_t at = one.find(cut);
-      if (at != std::string::npos) one = one.substr(0, at);
+      if (at != std::string::npos) one.resize(at);
       out += (out.empty() ? "" : ", ") + one;
     }
     return out;
