@@ -779,10 +779,10 @@ HARDWARE_ITEM_KEYS = ("qty", "kind", "spec", "text")
 def carry_hardware(devices: dict) -> dict:
     """hardware.json's per-set hardware -> {device: {"source", "sets"}}, in
     hardware.json's own set order. Refuses what it cannot carry whole: a set
-    for a device build.json has no BOM for (the Lab would have no card to show
-    it on), a set or item missing a field, a count that is not a whole
-    positive number — a carry that dropped one silently would show a builder
-    fewer screws than the CAD cuts holes for."""
+    for a device build.json has no entry for (no BOM_MAP row and no README
+    §Assembly block: no card to show it on), a set or item missing a field, a
+    count that is not a whole positive number — a carry that dropped one
+    silently would show a builder fewer screws than the CAD cuts holes for."""
     src = HARDWARE_JSON.relative_to(REPO).as_posix()
     try:
         hw = json.loads(HARDWARE_JSON.read_text(encoding="utf-8"))
@@ -797,7 +797,8 @@ def carry_hardware(devices: dict) -> dict:
         dev = s.get("device")
         if dev not in devices:
             raise SystemExit(f"build.json: {src} set {set_id!r} names device {dev!r}, "
-                             "which has no BOM in BOM_MAP — no card to carry it to")
+                             "which build.json has no entry for (no BOM_MAP row, no "
+                             "README §Assembly block) — no card to carry it to")
         missing = [k for k in HARDWARE_SET_KEYS if k not in s]
         if missing or not isinstance(s["items"], list) or not s["items"]:
             raise SystemExit(f"build.json: {src} set {set_id!r} lacks "
