@@ -7,6 +7,28 @@
 
 ---
 
+## A stacked board owns every pin it touches — read its silkscreen, not a guess
+
+### The doorbell speaker sat on the camera module's reset pin (2026-10)
+- **What happened:** the Vision Doorbell put its speaker PWM on XIAO D3,
+  documented as the stacked Grove Vision AI V2's "SPI chip select, unused by
+  this firmware". The module's silkscreen prints `RST` on that pin, and
+  Seeed's own library drives it as the reset (`AI.begin(&Wire, D3)`; SPI
+  mode is `begin(&SPI, cs = D1, sync = D0, rst = D3)`). The 78 kHz carrier
+  idles at mid-scale from boot, so the module's reset would toggle forever.
+  The pins.h comment, the wiring page, the BOM and the drawing all repeated
+  the guess; every check passed because none of them knew the module.
+- **The fix:** the speaker is on D10 (the module's SPI MOSI, an input) and
+  the driver holds D8 (its SPI clock, also an input) low first, so nothing is
+  ever clocked in. The whole socket map lives in both XIAO `pins.h` and the
+  Grove guide, with D0 (SYNC) and D9 (MISO) marked as module *outputs* and
+  D3 as its reset: never drive any of them.
+- **The rule:** before you give a "spare" pin a job on a stacked or hatted
+  board, find what the other board does with it in a source you can quote
+  (its silkscreen, its vendor's library, its schematic) and write that source
+  next to the define. "The firmware never uses it" is a statement about our
+  code, not about the wire.
+
 ## One contract, or the two ends drift until neither notices
 
 ### The phone verified a page no firmware served (2026-09, roadmap rows 5/6/13)
