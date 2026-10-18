@@ -90,6 +90,14 @@
 // is handed one above 999999), no pairing digits reach the log, and GET
 // /api/bluetooth counts the bond store beside the list.
 //
+// And sweep F259 and F260: Enable, a settings POST turning Bluetooth on and
+// a tap on a device saved off brought NimBLE up at once, inside the join
+// window, in safe mode and beside the boot worker's init(). Every tap that
+// brings the stack up now waits for the boot bring-up (safe mode says so),
+// and a bring-up a tap makes after the boot bring-up left the stack down
+// says which of the worker's services it left out, in the health log once
+// and in GET /api/bluetooth.
+//
 // Host-tested only: the stand-in is not NimBLE, and nothing here runs a
 // radio; the Arduino compile is CI's (firmware.yml's canary-wap legs).
 //
