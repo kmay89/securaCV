@@ -79,10 +79,10 @@ dist.
 To compare the committed dist with this tree, run
 `LAB_CORES=native node --test canary-local/tests/native_cores.test.js`. It
 drives each native core next to its committed bundle, call for call, on
-fixed scenarios: 3000 Vision ticks of random boxes in and around the
-frame, with out-of-range tuning; about 5000 Vision frames of boxes whose
-position and size sit at the ends of the int range; and the audio cadences
-plus noise. A difference means the dist is
+fixed scenarios ([`scenarios.js`](scenarios.js)): 3000 Vision ticks of
+random boxes in and around the frame, with out-of-range tuning; about 5000
+Vision frames of boxes whose position and size sit at the ends of the int
+range; and the audio cadences plus noise. A difference means the dist is
 stale, or that the native build and the wasm one disagree on that input.
 They can: `long` is 64 bits on a 64-bit host and 32 in wasm, and a signed overflow
 (undefined in C++) can come out one way from g++ and another from
@@ -98,10 +98,9 @@ build shows it. `vision.test.js`'s A42 test holds such boxes to exact
 arithmetic on the committed dist, which CI runs, so from the dist rebuild
 that carries A42 on it is the CI gate for that half in the bytes the Lab
 serves; `vision_wasm32.test.js` shows the same half from the sources, before
-any rebuild (below). No CI job runs
-`native_cores.test.js` under the variable: its parity scenarios are run by
-hand, after a rebuilt dist is pulled. So agreement covers the calls those
-scenarios make, not every input. `CXX=clang++` is the closer compiler, but
+any rebuild (below). CI runs `native_cores.test.js` under the variable as
+well, in a step of its own (sweep A50, below). Agreement covers the calls
+those scenarios make, not every input. `CXX=clang++` is the closer compiler, but
 the ABI is still 64-bit. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how
 `build.sh` is read, that it finds every export and runtime method the dist
@@ -116,6 +115,16 @@ and needs no emsdk. The native step runs whenever the dist step ran, even
 when the dist step failed (its `if:`), so after a core change you see both
 answers: native green and dist red means the sources are right and the dist
 is stale.
+
+The job also runs `native_cores.test.js` twice: in the dist step, where it
+compiles nothing and its parity scenarios skip, and under `LAB_CORES=native`
+in a step of its own, straight after the native step and with the same
+`if:` (sweep A50). That step's red names the first call where the native
+build and the committed dist answer otherwise. After a core change it means
+the dist is stale, so a core change goes red there as well as in the dist
+step until CI's rebuild lands; with no core change it means the two
+toolchains disagree on that input. It is a separate step so that the native
+step keeps its own answer (the sources pass the page tests).
 
 ## The Vision pipeline as wasm32, from the sources (`vision_wasm32.test.js`)
 

@@ -496,7 +496,7 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # five test steps below records the repo paths it reads (node: opens,
+      # six test steps below records the repo paths it reads (node: opens,
       # stats, listings, existence checks; python3: opens and listings only,
       # CPython audits no stat or exists call; shell tools such as the Witness
       # Wall step's cmp are not recorded), and the step after the last of them
@@ -587,6 +587,30 @@ jobs:
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
+      - name: Native cores vs the committed dist, call for call (LAB_CORES=native; red = the dist is stale, or a build disagrees)
+        # Sweep A50. The dist step runs native_cores.test.js too, where it
+        # compiles nothing and its parity scenarios skip. Here it builds the
+        # Vision and WAP audio cores with g++, as the step above does, and
+        # drives each next to its committed dist bundle, call for call, on
+        # the scenarios in tests/native/scenarios.js (3000 Vision ticks, about
+        # 5000 frames of boxes at the int range's ends, the audio cadences),
+        # and the browser probes' stand-in against the same builds. It is its
+        # own step so each red keeps its meaning: red here names the first
+        # call where this tree's sources and the committed dist answer
+        # otherwise. After a core change that means the dist is stale
+        # (Actions -> "Rebuild emulator dist (pinned emsdk)"), so a core
+        # change goes red here as well as above until the rebuild lands; with
+        # no core change it means the two toolchains disagree on that input
+        # (tests/native/README.md). Green in the step above still means the
+        # sources pass the page tests. Same `if:`: it runs whenever the dist
+        # step ran, red or green.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: node --test canary-local/tests/native_cores.test.js
       - name: Vision pipeline as wasm32 from this tree's sources (the runner's clang + wasm-ld, not emscripten)
         # Sweep A49. The dist is wasm32, whose long is 32 bits (the ESP32's
         # too); the step above and every firmware host suite build with the
@@ -738,7 +762,7 @@ jobs:
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Every file the logic tests read is inside this workflow's path filter
-        # Reads the recordings the five test steps above left (the suites are
+        # Reads the recordings the six test steps above left (the suites are
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test
