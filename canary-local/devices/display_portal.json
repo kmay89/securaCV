@@ -33,7 +33,7 @@
     "not_found_redirect": "http://192.168.4.1/"
   },
   "ap": {
-    "ssid_format": "SecuraCV-%.4s",
+    "ssid_format": "SecuraCV-display-%.4s",
     "password_length": 8,
     "channel": 1,
     "max_stations": 1,

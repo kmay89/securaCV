@@ -8,7 +8,8 @@
 // passes:
 //
 //  1. The harness, per committed display flavor (?meet=1): the firmware says
-//     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
+//     its first-boot line on serial and raises "SecuraCV-display-XXXX" (the
+//     fleet's typed setup name, onboarding_fsm.h) with the key it
 //     printed; the Hello scene before it (read on a clock slowed tenfold, as
 //     it stands for 2.6 s) and the PhoneJoined scene after it show the bird
 //     on the glass, clear of every line, and breathing exactly about the
@@ -641,7 +642,9 @@ async function walkHarness(flavor, turn = null) {
     }
     const ap = await until(() => E(() => window.__emu.softAp()), "the SoftAP to come up");
     const s0 = await serial();
-    check(/^SecuraCV-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-XXXX`);
+    // onboarding_fsm.h's typed name for a display (the node type word tells a
+    // glass's setup network from a Sense's unboxed beside it).
+    check(/^SecuraCV-display-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-display-XXXX`);
     check(ap.pass.length === PORTAL.ap.password_length, `SoftAP key length ${ap.pass.length}`);
     check(s0.includes(`First boot - onboarding AP "${ap.ssid}"  password ${ap.pass}`),
       "the serial line and the radio disagree on the setup network");

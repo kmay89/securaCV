@@ -15,6 +15,10 @@
 #include "tz_auto.h"
 #include "mqtt_mgr.h"   // hub state for the /api/fleet self-report
 #include "ota_web.h"    // the /api/ota routes' facade (ota_mgr)
+#include "provision.h"  // is the setup AP up? (/api/status; FEATURE_ONBOARDING builds define it)
+#include "node_status.h"   // the GET /api/status body every node serves (common/, host-tested)
+#include "clock_sync.h"       // when a clock reading is believable (common/)
+#include <time.h>
 #include "mirror_html.h"
 #include "tv_html.h"
 #include "character.h"
@@ -870,7 +874,14 @@ void handle_log() {
 // identically — across BOTH server styles (this Arduino WebServer and
 // canary-wap's esp_http_server). A display keeps no witness chain of its own
 // (it renders the fleet's), so it honestly reports chain "unknown".
+// When /api/fleet was last read: the Witness Wall polling us directly is what
+// GET /api/status reports as `wall: "direct"` (within the last minute).
+uint32_t s_fleet_polled_ms = 0;
+bool s_fleet_polled = false;
+
 void handle_fleet() {
+  s_fleet_polled_ms = millis();
+  s_fleet_polled = true;
   const auto& cfg = canary::cfg::get();
   FleetSelfDevice self{};
   self.name         = (cfg.device_id[0]) ? cfg.device_id : "Canary";
@@ -1004,6 +1015,106 @@ void handle_fleet_options() {
   s_server->send(204, "text/plain", "");
 }
 
+// GET /api/status — the coarse node status every networked Canary answers
+// (common/network/node_status.h, the one builder): what this glass is, which
+// firmware, how long up, where on the network, where in onboarding, how it
+// stands with its hub, its peers, the Witness Wall and its updates. LAN-open
+// and cross-origin readable exactly like /api/fleet, and coarse for the same
+// reason: nothing here is a secret or a stable identifier beyond what mDNS
+// already says (no MAC, no key, no broker address). Every key the glass
+// cannot answer is omitted — absent means "cannot tell you", never a value.
+void handle_status() {
+  const auto& cfg = canary::cfg::get();
+  NodeStatus s{};
+  s.node = DEVICE_TYPE;  // the same `dt` the mDNS TXT and /api/fleet carry
+#ifdef SECURACV_OTA_PRODUCT
+  s.product = SECURACV_OTA_PRODUCT;
+#endif
+  s.fw = CANARY_FW_VERSION;
+#ifdef CANARY_FIGURE_HARDWARE
+  s.hardware = CANARY_FIGURE_HARDWARE;
+#endif
+  s.name = cfg.device_id;
+  const uint32_t now = millis();
+  s.uptime_s = now / 1000;
+  // The String a localIP() yields dies with its expression; hold the bytes.
+  char ip[NODE_STATUS_IP_MAX] = {0};
+  const bool online = wifi_connected();
+  if (online) snprintf(ip, sizeof(ip), "%s", WiFi.localIP().toString().c_str());
+  s.ip = online ? ip : nullptr;
+  s.rssi = online ? (int)WiFi.RSSI() : 0;  // 0 omits, by the builder's rule
+  s.onboarding = canary::net::onboard::state_label(wifi_onboarding_state());
+  // The portal blocks the loop while its AP is up, so this is answered as
+  // false by construction — stated rather than omitted, because "down" is
+  // the truth whenever anything can ask.
+#if defined(FEATURE_ONBOARDING) && FEATURE_ONBOARDING
+  s.setup_ap = provision_active() ? 1 : 0;
+#else
+  s.setup_ap = 0;
+#endif
+  s.ble_door = -1;  // no Improv door on the glass: omit, not "closed"
+  s.saved_networks = canary::cfg::wifi_saved_networks();
+  // The same tri-state the /api/fleet self row speaks: a placeholder broker
+  // is a glass nobody has pointed at a hub yet, not a hub that is down.
+  s.hub = canary::net::mqtt_broker_is_placeholder() ? NS_HUB_NONE
+          : canary::net::mqtt_connected()           ? NS_HUB_OK
+                                                    : NS_HUB_DOWN;
+  // Peers: every witness the fleet model has heard from (any link), self
+  // excluded — the rows /api/fleet would append.
+  {
+    const auto& fleet = canary::fleet::the_fleet();
+    int peers = 0;
+    for (int i = 0; i < fleet.count(); ++i) {
+      const auto* w = fleet.at(i);
+      if (!w || w->link == canary::fleet::Link::Unknown) continue;
+      if (cfg.device_id[0] && strcmp(w->id, cfg.device_id) == 0) continue;
+      ++peers;
+    }
+    s.peers_seen = peers;
+  }
+  // The Wall reaches us one of two ways: polling /api/fleet itself ("direct",
+  // within the last minute) or through the hub that carries our MQTT state.
+  const bool polled_lately =
+      s_fleet_polled && (uint32_t)(now - s_fleet_polled_ms) < 60000u;
+  s.wall = polled_lately ? "direct" : (s.hub == NS_HUB_OK ? "hub" : "none");
+  s.wall_polled_s_ago =
+      s_fleet_polled ? (int)((uint32_t)(now - s_fleet_polled_ms) / 1000u) : -1;
+  // Updates: the engine's state word, and the manifest version while one is
+  // held (nullptr until a check ran — omitted). Whether THIS boot is the
+  // unconfirmed new image has no getter yet; omitted rather than guessed.
+  const OtaWebStatus ota = ota_web_status();
+  s.ota_state = ota_web_state_word();
+  s.ota_target = ota.latest;
+  s.ota_pending_verify = -1;
+  // Where the credentials sleep. Every shipped display build is Tier 0
+  // (common/identity/key_at_rest.h's "plaintext-nvs"): the Arduino core's
+  // sdkconfig has no NVS encryption, so the honest word is the weakest one.
+  s.creds_at_rest = "plaintext-nvs";
+  // The clock: believable (past 2024) means SNTP — or the RTC it seeded —
+  // has set it; before that it is the chip's reset value, not the time.
+  const time_t epoch = time(nullptr);
+  s.clock = canary::time_sync::source_label(
+      canary::time_sync::believable((int64_t)epoch) ? canary::time_sync::Source::Ntp
+                                                    : canary::time_sync::Source::None);
+  char tz[48];
+  canary::net::tz_current(tz, sizeof(tz));
+  s.tz = tz;
+  // Sized by the shared macro for the all-escaping worst case: truncation is
+  // impossible by construction (the host test proves it). Static: BSS, not
+  // the handler's stack.
+  static char body[NODE_STATUS_BODY_CAP];
+  node_status_build(body, sizeof(body), &s);
+  s_server->sendHeader("Access-Control-Allow-Origin", "*");
+  s_server->sendHeader("Cache-Control", "no-store");
+  s_server->send(200, "application/json", body);
+}
+
+void handle_status_options() {
+  s_server->sendHeader("Access-Control-Allow-Origin", "*");
+  s_server->sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  s_server->send(204, "text/plain", "");
+}
+
 void glass_web_init() {
   if (s_server) return;
   canary::g_log_sink = log_capture;  // browser serial monitor from here on
@@ -1019,6 +1130,8 @@ void glass_web_init() {
   s_server->on("/api/glass", HTTP_GET, handle_glass);
   s_server->on("/api/fleet", HTTP_GET, handle_fleet);
   s_server->on("/api/fleet", HTTP_OPTIONS, handle_fleet_options);
+  s_server->on("/api/status", HTTP_GET, handle_status);
+  s_server->on("/api/status", HTTP_OPTIONS, handle_status_options);
   s_server->on("/api/device", HTTP_GET, handle_device);
   s_server->on("/api/log", HTTP_GET, handle_log);
   s_server->on("/api/settings", HTTP_GET, handle_settings_get);

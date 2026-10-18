@@ -60,11 +60,15 @@ constexpr int kMinGap = 2;
 constexpr int kRoundLowRowW = 142;
 
 // The join code's module count. provision_core.h's payload for the
-// display's AP ("WIFI:T:WPA;S:SecuraCV-XXXX;P:<8>;;", 39 bytes; 42 with the
-// rare per-session SSID tag) is a version-3 code at lv_qrcode's ECC M, and
-// the widget only ever grows the version into spare pixels — so 29 modules
-// is the floor a canvas is sized against (the host test pins the payload).
-constexpr int kJoinQrModules = 29;
+// display's AP ("WIFI:T:WPA;S:SecuraCV-display-XXXX;P:<8>;;", 47 bytes; 50
+// with the rare per-session SSID tag) is a version-4 code at lv_qrcode's
+// ECC M (version 3 holds 42 — the old typeless "SecuraCV-XXXX" name fit it,
+// the fleet's typed name from onboarding_fsm.h does not), and the widget
+// only ever grows the version into spare pixels — so 33 modules is the floor
+// a canvas is sized against (the host test pins the payload). At the small
+// card's 3 px pitch that is 99 px of the 112; the module stays the same size
+// it was, the code just carries eight more characters.
+constexpr int kJoinQrModules = 33;
 
 // The card a glass family asks for: the QR canvas and the white pad around
 // it (the card is qr + 2 * pad). Small glass is the watch branch of
@@ -198,7 +202,8 @@ constexpr int kWideBirdOff = -104;
 //
 // Round glass has always split the credentials: the network name on the
 // credentials row, "pass  <key>" on the row under it — no latitude that low
-// holds "SecuraCV-XXXX  •  <key>". Rectangular small glass kept the joined
+// holds "SecuraCV-display-XXXX  •  <key>" (nor held the typeless
+// "SecuraCV-XXXX" form before it). Rectangular small glass kept the joined
 // line, and on the 172 px nightstand (the 180 px nightlight too) that line
 // is ~174 px of text in a 156 px row: LVGL's LONG_DOT cut the key to an
 // ellipsis, and so did the stuck-phone hint (205 px). When the QR does not
@@ -224,7 +229,18 @@ constexpr int kWideBirdOff = -104;
 //    only when none fits steps down to the floor face (the default
 //    Character's caption: the smallest type this glass sets) and tries them
 //    again. `fits` is false only when even that fails; the host test proves
-//    it never does for any key or network name the unit can mint.
+//    it never does for any key or network name the unit can mint — with one
+//    rung under it for the name alone: the fleet's typed setup name
+//    (onboarding_fsm.h: "SecuraCV-display-XXXX", "-tt" on the store-refused
+//    path) is 21 to 24 characters, and its widest minting (198 px of W's at
+//    12 px) is wider than the 156 px portrait rows and the round watch's
+//    174. There the name takes name_line's rule, the one for a network name
+//    no face can hold whole: its head and its tail around "...", in the
+//    floor face — "SecuraC...WWWW-WW" — so the unit's four characters (and
+//    the tag) a phone's list shows stay on the glass. Every name a unit
+//    mints that fits whole is shown whole (the realistic ones do on every
+//    small glass: 141 px at 12 px); the cut is the worst case's rung, and
+//    `cut` says it was taken. The key never needs one.
 //
 // Widths are measured the way LVGL lays out one line (lv_txt_get_width at
 // letter_space 0: each glyph's advance given the letter after it, kerning
@@ -339,6 +355,12 @@ inline void fit_line(Line& out, const char* const* forms, int n, int row_w,
   set_line(out, last, true, last[0] == '\0');
 }
 
+// Defined below, with the Connecting scene (F65): a network name whole in
+// the row's face, else the floor face, else its head and tail around "...".
+template <class Measure>
+inline void name_line(Line& out, const char* name, int row_w,
+                      Measure measure);
+
 // The Join scene's text rows on small glass (see the rule above).
 // creds_w / low_w / note_w are the widths the three rows are fitted to
 // (rf_row_width at creds_top, hint_top, note_top); hint is the live coach
@@ -355,8 +377,9 @@ inline JoinLines join_lines(bool round, int creds_w, int low_w, int note_w,
   const bool hinted = hint != nullptr && hint[0] != '\0';
   const char* hints[2] = {hint, hint_narrow};
   if (j.split) {
-    const char* name[1] = {ssid};
-    fit_line(j.creds, name, 1, creds_w, measure);
+    // The setup name whole where a face holds it, else name_line's cut (the
+    // rule above): the typed name's widest minting outruns the narrow rows.
+    name_line(j.creds, ssid, creds_w, measure);
     char labeled[kLineCap];
     snprintf(labeled, sizeof(labeled), kPassFmt, pass);
     const char* key[2] = {labeled, pass};
@@ -992,13 +1015,22 @@ inline Seat bird_seat(const Glass& g, bool wide, const Stack& s,
 // bird's box to y -7, the top edge through its head.
 //
 // The rule: the scene turns sideways.
-//  * The halo stands at the panel's right, kMinGap from its edge and
-//    centered down it, the smallest ring (even, so the centers agree) that
-//    holds the QR card at its floor canvas — the family's canvas trimmed two
+//  * The QR card stands at the panel's right, kMinGap from its edge and
+//    centered down it, at its floor canvas — the family's canvas trimmed two
 //    px at a time, never below qr_floor(), so the join code keeps its module
-//    pitch — with the card's rounded corners kMinGap inside its stroke,
-//    concentric. The bird sits at the card's seat, the halo's center, in
-//    every scene: inside the stroke over its breath and its hop.
+//    pitch. The halo is the smallest ring (even, so the centers agree) that
+//    holds the card with its rounded corners kMinGap inside the stroke,
+//    concentric — and it runs off the panel's right edge, the way the ring
+//    runs off the narrow portrait glass's sides (the rule above). It used to
+//    stand whole on the glass, kMinGap from the edge, with the card inside
+//    it: that cost the text column the ring's whole overhang, and once the
+//    fleet's typed setup name made the join code a version-4 one (99 px at
+//    this pitch, kJoinQrModules), the column it left (142 px) held none of
+//    the five floor-face scene lines between 145 and 154 px whole. The card
+//    is what the phone scans and the words are the way in when it does not;
+//    the halo's far side is the one thing here with nothing to say. The bird
+//    sits at the card's seat, the halo's center, in every scene: inside the
+//    stroke over its breath and its hop, on the glass.
 //  * The text takes the rest of the panel as one column, from the panel's
 //    side pad to kMinGap short of the halo. Every centered scene line is
 //    fitted to the column's width (fit_line, name_line) and keeps its
@@ -1025,7 +1057,10 @@ inline SmallJoin land_join(const Glass& g, const Rows& r) {
     if (card_inside_ring(g, ring, s)) break;
     ring.d += 2;
   }
-  const int x1 = g.w - kMinGap - ring.d;  // the halo's left edge
+  // The card kMinGap from the panel's right edge; the ring concentric with
+  // it (same parity, so the centers agree) and past the edge by its overhang.
+  const int card_left = g.w - kMinGap - s.card;
+  const int x1 = card_left - (ring.d - s.card) / 2;  // the halo's left edge
   ring.x = x1 - (g.w / 2 - ring.d / 2);
   Column col;
   col.side = true;
@@ -1045,7 +1080,10 @@ inline SmallJoin land_join(const Glass& g, const Rows& r) {
   s.creds_top = creds + col.dy;
   s.hint_top = s.creds_top + r.creds_h;
   s.note_top = s.hint_top + r.hint_h;
+  // The block, the column and the card on the glass (the ring may run off
+  // the right edge by design, never the top or the bottom).
   s.fits = top + col.dy >= 0 && bottom + col.dy <= g.h && col.w > 0 &&
+           card_left >= left + kMinGap &&
            ring.top >= kMinGap && ring.top + ring.d + kMinGap <= g.h;
   j.stack = s;
   j.halo = ring;

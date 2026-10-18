@@ -39,6 +39,8 @@
 #include "canary/runtime_config.h"
 #include "network/wifi_join_policy.h"  // shared join-failure vocabulary (common/)
 #include "network/wifi_credential_policy.h"  // the one credential rule + the words beside the field (common/)
+#include "network/onboarding_fsm.h"  // the fleet's one setup-AP name, hold timing and serial label (common/)
+#include "network/setup_portal_logic.h"  // the recovery portal's quiet-retry cadence, host-tested (common/)
 #if defined(FEATURE_ESPNOW) && FEATURE_ESPNOW
 #include "fleet_link/fleet_beacon_espnow.h"  // portal channel = fleet fallback
 #endif
@@ -77,8 +79,11 @@ constexpr uint32_t SCAN_SETTLE_MAX_MS = 6000;  // cap on waiting out the pre-AP
 constexpr uint32_t HINT_AFTER_MS     = 4000;   // phone joined, portal never hit
 constexpr uint32_t STA_TIMEOUT_MS    = 30000;  // WAP lesson: 15 s reads as
                                                // "wrong password" at range edge
-constexpr uint32_t AP_LINGER_MAX_MS  = 25000;  // success: wait for phone's ack…
-constexpr uint32_t AP_LINGER_ACK_MS  = 1600;   // …then this beat, then teardown
+// The AP hold after a successful join is NOT a local number any more: it is
+// onboarding_fsm.h's `Timing` (two minutes for the phone to confirm, then the
+// 1.6 s beat once it has), decided once for the whole fleet and read through
+// onboard::ap_teardown_due() below. This portal used to hold 25 s here while
+// the WAP held 120 s — the same phone met two different choreographies.
 constexpr uint32_t IDLE_DIM_MS       = 480000; // 8 min unattended -> dim glass
 constexpr uint32_t SCAN_TTL_MS       = 300000; // scan cache freshness (5 min)
 constexpr uint32_t STUCK_HINT_MS     = 45000;  // AP up this long, nobody ever
@@ -139,6 +144,19 @@ struct Ctx {
   bool dimmed = false;
   bool saw_station = false;      // any phone has EVER associated this session
   bool stuck_hinted = false;     // the "forget the network" line is up
+  // A phone handed credentials this session — onboarding_fsm.h's
+  // "provisioning" state, reported by GET /api/status. Stays true through a
+  // failed test (the phone is still mid-setup) and clears only with the portal.
+  bool creds_submitted = false;
+  // Recovery (onboarding_fsm.h): this portal was raised OVER saved credentials
+  // that stopped working, so the saved network is retried quietly underneath
+  // the empty Join scene — a router that was merely rebooting comes back with
+  // no human involved. bg_join marks the Testing pass that is such a retry:
+  // the glass keeps its QR, a failure is silent, and a success pre-acks so only
+  // the short beat runs before teardown (there is no phone to confirm).
+  bool have_saved = false;
+  bool bg_join = false;
+  uint32_t bg_last_try = 0;
 };
 Ctx* g = nullptr;                // scoped to provision_run(); never steady-state
 
@@ -474,6 +492,25 @@ void handle_scan() {
   send_scan_json();
 }
 
+// Start testing a candidate network under the live AP. WAP lessons, in
+// order: clear ANY scan handle — running OR completed-but-unharvested
+// (leftover results alive at begin() cause silent association failures;
+// review catch) — clear stale STA state, then a non-blocking begin.
+// Harvesting a completed sweep keeps the cache fresh for free. The AP stays
+// up (AP_STA) so the phone keeps its connection and can poll /status for the
+// verdict. One path for the phone's join and the recovery retry, so the two
+// cannot drift on the radio sequence that was paid for on the bench.
+void radio_begin(const char* ssid, const char* pass) {
+  {
+    const int rc = WiFi.scanComplete();
+    if (rc >= 0) harvest_scan(rc);        // caches + scanDelete()s
+    else if (rc == WIFI_SCAN_RUNNING) WiFi.scanDelete();
+  }
+  WiFi.persistent(false);
+  WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
+  WiFi.begin(ssid, pass);
+}
+
 // A POSIX TZ rule is printable ASCII and nothing else. Same rule as
 // glass_web.cpp's /api/tz, and for the same reason: this value is persisted
 // to NVS and read back on every boot, so a smuggled control byte would be a
@@ -505,6 +542,7 @@ void handle_join() {
   }
   snprintf(g->join_ssid, sizeof(g->join_ssid), "%s", ssid.c_str());
   snprintf(g->join_pass, sizeof(g->join_pass), "%s", pass.c_str());
+  g->creds_submitted = true;
   // The zone rides along with the network, but it is NOT a precondition for
   // joining: an older cached portal page, or a browser with no Intl, simply
   // sends no tz and the compiled seed stands. A malformed one is dropped the
@@ -520,22 +558,12 @@ void handle_join() {
   }
   g->fail_reason[0] = '\0';
 
-  // WAP lessons, in order: clear ANY scan handle — running OR completed-but-
-  // unharvested (leftover results alive at begin() cause silent association
-  // failures; review catch) — clear stale STA state, then a non-blocking
-  // begin. Harvesting a completed sweep keeps the cache fresh for free.
-  // The AP stays up (AP_STA) so the phone keeps its connection and can poll
-  // /status for the verdict.
-  {
-    const int rc = WiFi.scanComplete();
-    if (rc >= 0) harvest_scan(rc);        // caches + scanDelete()s
-    else if (rc == WIFI_SCAN_RUNNING) WiFi.scanDelete();
-  }
-  WiFi.persistent(false);
-  WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
-  WiFi.begin(g->join_ssid, g->join_pass);
+  // A phone's join preempts any quiet background retry of the saved network
+  // (the Testing pass is now the phone's, verdict and all).
+  radio_begin(g->join_ssid, g->join_pass);
   canary::dbg_serial().printf("Join requested: \"%s\"\n", g->join_ssid);
 
+  g->bg_join = false;
   enter(St::Testing, millis());
   ui_stage(canary::ui::ObStage::Connecting, g->join_ssid);
   g->server.send(200, "application/json", "{\"ok\":true}");
@@ -732,17 +760,27 @@ bool provision_join_in_flight() {
   return g && g->st == St::Testing;
 }
 
+bool provision_active() { return g != nullptr; }
+
+bool provision_credentials_submitted() { return g && g->creds_submitted; }
+
 void provision_run(bool glass_ok) {
   Ctx ctx;
   g = &ctx;
   s_glass = glass_ok;
+  // Raised over saved credentials (the loop()-path re-raise: a join that
+  // keeps failing, or ten minutes offline) rather than on a fresh unit: the
+  // saved network is retried quietly underneath, see Ctx::have_saved.
+  ctx.have_saved = !canary::cfg::wifi_is_placeholder();
 
   // Device-unique setup identity: SSID suffix from the salted, MAC-free
-  // pseudonym (stable, matches the fleet's SecuraCV-XXXX convention); the
-  // password minted once and kept (see load_or_mint_ap_password). Nothing
-  // derivable from published identifiers ever gates the AP — which is also why
-  // the password cannot simply be re-derived from the pseudonym when the store
-  // refuses it: the pseudonym is printed in the SSID.
+  // pseudonym (stable; the fleet's SecuraCV-<type>-XXXX convention from
+  // onboarding_fsm.h, so a household unboxing a glass and a Sense together
+  // can tell the two setup networks apart); the password minted once and
+  // kept (see load_or_mint_ap_password). Nothing derivable from published
+  // identifiers ever gates the AP — which is also why the password cannot
+  // simply be re-derived from the pseudonym when the store refuses it: the
+  // pseudonym is printed in the SSID.
   char token[device_pseudonym::HEX_LEN + 1] = {0};
   device_pseudonym::device_id_hex(token, sizeof(token));
   char ap_pass[AP_PASS_LEN + 1];
@@ -753,19 +791,26 @@ void provision_run(bool glass_ok) {
   // familiar name behind a key that changed is precisely what a phone cannot
   // recover from, while a name it has never seen just prompts normally. So the
   // rare unwritable-store path costs a per-session suffix and nothing else.
-  char ap_ssid[24];
-  if (pass_durable) {
-    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
-  } else {
+  char tag[3] = {0};
+  if (!pass_durable) {
     uint8_t tag_rnd[8];
     esp_fill_random(tag_rnd, sizeof(tag_rnd));
-    char tag[3];
     render_password(tag_rnd, sizeof(tag_rnd), tag, sizeof(tag));
-    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s-%s",
-             token[0] ? token : "GLAS", tag);
+  }
+  char ap_ssid[onboard::SSID_CAP];
+  if (onboard::ap_ssid(ap_ssid, sizeof(ap_ssid), onboard::NODE_DISPLAY,
+                       token[0] ? token : "GLAS",
+                       pass_durable ? nullptr : tag) == 0) {
+    // Unreachable with these arguments (the builder's own cap); the typeless
+    // legacy name is still ours and still a setup network to every reader.
+    snprintf(ap_ssid, sizeof(ap_ssid), "SecuraCV-%.4s", token[0] ? token : "GLAS");
   }
 
   log_header("SETUP");
+  // This line stays as it is: the Lab's onboarding probe and the display's
+  // own tests read it off the wire. The two [SETUP] lines after it are the
+  // fleet's — onboarding_fsm.h's label every flasher parses
+  // (flash-core.js SETUP_NETWORK_LINE_RES) and the same network as a code.
   canary::dbg_serial().printf("First boot - onboarding AP \"%s\"  password %s\n",
                               ap_ssid, ap_pass);
   canary::dbg_serial().println("Portal at http://192.168.4.1/ once joined.");
@@ -842,6 +887,22 @@ void provision_run(bool glass_ok) {
   if (s_glass) canary::hal::backlight_set(CD_BRIGHT_DAY);
   canary::dbg_serial().printf("AP up: \"%s\" on channel %d - portal live\n",
                               ap_ssid, kApChannel);
+  {
+    // The label a flasher reads off the wire, then the same network as a
+    // scannable code — both onboarding_fsm.h's, so every board prints the
+    // lines the flashers parse. Printed HERE, once softAP() has returned,
+    // because the line says "up": the first-boot line above runs before the
+    // Hello beat and the pre-AP sweep, and a reader that joined on its word
+    // would have found no network for several seconds.
+    char line[200];
+    if (onboard::announce_line(line, sizeof(line), ap_ssid, ap_pass,
+                               (unsigned)kApChannel) > 0) {
+      canary::dbg_serial().println(line);
+    }
+    if (onboard::qr_line(line, sizeof(line), ap_ssid, ap_pass) > 0) {
+      canary::dbg_serial().println(line);
+    }
+  }
   ctx.dns.begin(53);
 
   ctx.server.on("/", HTTP_GET, send_portal);
@@ -858,6 +919,7 @@ void provision_run(bool glass_ok) {
 #endif
 
   enter(St::Waiting, millis());
+  ctx.bg_last_try = ctx.st_since;  // a full cadence before the first quiet retry
   ui_stage(canary::ui::ObStage::Join, nullptr);
 
   for (;;) {
@@ -964,6 +1026,21 @@ void provision_run(bool glass_ok) {
           canary::hal::backlight_set(CD_BRIGHT_DAY);
           ctx.dimmed = false;
         }
+        if (canary::net::portal_background_retry_due(
+                now, ctx.have_saved, stations, /*join_in_flight=*/false,
+                ctx.bg_last_try, canary::net::SetupPortalTiming{})) {
+          // Recovery (onboarding_fsm.h): the saved network may simply be back
+          // (a router reboot). Retry it quietly under the empty Join scene —
+          // the glass keeps its QR, nothing is said — and a success closes
+          // the portal with no human involved. Never with a phone on the AP:
+          // a background begin() would yank the radio out from under the
+          // person mid-setup (setup_portal_logic.h holds the cadence).
+          const auto& cfg = canary::cfg::get();
+          ctx.bg_last_try = now;
+          ctx.bg_join = true;
+          radio_begin(cfg.wifi_ssid, cfg.wifi_pass);
+          enter(St::Testing, now);
+        }
         break;
 
       case St::PhoneHere:
@@ -993,7 +1070,19 @@ void provision_run(bool glass_ok) {
 
       case St::Testing: {
         const wl_status_t ws = WiFi.status();
-        if (ws == WL_CONNECTED) {
+        if (ws == WL_CONNECTED && ctx.bg_join) {
+          // The saved network came back under the empty portal. Nothing to
+          // persist (it is the network already saved) and no phone to
+          // confirm: pre-ack, so only the short beat runs before teardown.
+          ctx.success_at = now;
+          ctx.phone_acked = true;
+          ctx.acked_at = now;
+          enter(St::Success, now);
+          ui_stage(canary::ui::ObStage::Success, nullptr);
+          log_header("SETUP");
+          canary::dbg_serial().printf("Saved network is back  IP=%s\n",
+                                      WiFi.localIP().toString().c_str());
+        } else if (ws == WL_CONNECTED) {
           // Persist ONLY on success — a failed attempt must never leave
           // broken credentials in NVS (power-cycle restarts clean).
           canary::cfg::set_wifi_credentials(ctx.join_ssid, ctx.join_pass);
@@ -1022,9 +1111,16 @@ void provision_run(bool glass_ok) {
         } else if (ws == WL_NO_SSID_AVAIL || ws == WL_CONNECT_FAILED ||
                    (int32_t)(now - ctx.st_since) > (int32_t)STA_TIMEOUT_MS) {
           const canary::net::JoinFailure why = classify_status(ws);
+          WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
+          if (ctx.bg_join) {
+            // The quiet retry stays quiet: back to the Join scene as it was,
+            // cadence intact — the phone's QR never moved.
+            ctx.bg_join = false;
+            enter(St::Waiting, now);
+            break;
+          }
           snprintf(ctx.fail_reason, sizeof(ctx.fail_reason), "%s",
                    sta_failure_reason(ws));
-          WiFi.disconnect(/*wifioff=*/false, /*eraseap=*/false);
           enter(St::Fail, now);
           // The reason titles the scene, with the same label in fewer words
           // for a title too narrow for it ("No address", F65).
@@ -1058,13 +1154,13 @@ void provision_run(bool glass_ok) {
         // Hold the AP so the phone's /status poll can win the STA channel-
         // change race and render its own "done" (WAP lesson: tearing down
         // instantly makes every SUCCESSFUL join look failed on the phone).
-        // The glass is the primary channel; the linger is for the phone's.
-        const bool acked_beat =
-            ctx.phone_acked &&
-            (int32_t)(now - ctx.acked_at) > (int32_t)AP_LINGER_ACK_MS;
-        const bool cap =
-            (int32_t)(now - ctx.success_at) > (int32_t)AP_LINGER_MAX_MS;
-        if (acked_beat || cap) {
+        // The glass is the primary channel; the linger is for the phone's —
+        // and the Success scene keeps animating through it (onboard_ui_tick
+        // + ui_pump below run every pass), so the two-minute cap for a phone
+        // that never polls again is a glass saying "You're in", not a glass
+        // frozen. The numbers are the fleet's (onboarding_fsm.h Timing).
+        if (onboard::ap_teardown_due(now, ctx.success_at, ctx.phone_acked,
+                                     ctx.acked_at, onboard::Timing{})) {
           ctx.server.stop();
           ctx.dns.stop();
 #if CD_PORTAL_PAIR_DEMO

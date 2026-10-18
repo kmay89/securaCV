@@ -16,6 +16,7 @@
 #include "canary/ui/onboard_layout.h"
 #include "montserrat_metrics.h"
 #include "network/provision_core.h"
+#include "network/onboarding_fsm.h"  // the setup AP's name, as the firmware builds it
 
 #include <cstdio>
 #include <cstdlib>
@@ -327,6 +328,16 @@ static const char kSlot = '\x01';
 
 inline std::string slots(int n) { return std::string((size_t)n, kSlot); }
 
+// A template with every slot byte replaced by `c`: one real name of that
+// shape, for a check that needs bytes rather than a width.
+inline std::string fill_slots(const std::string& tmpl, char c) {
+  std::string out = tmpl;
+  for (size_t i = 0; i < out.size(); i++) {
+    if (out[i] == kSlot) out[i] = c;
+  }
+  return out;
+}
+
 // ── what provision.cpp mints and says ────────────────────────────────────
 struct Minted {
   std::string alpha;         // the minting alphabet (key, tag, pseudonym)
@@ -421,13 +432,27 @@ inline void load_minted_core() {
   CHECK(ssid_chars == key_chars && !key_chars.empty(),
         "the key and the network name no longer share one alphabet");
 
-  // The network name's two shapes (the tag is render_password's 2 chars).
-  CHECK(prov.find("\"SecuraCV-%.4s\"") != std::string::npos &&
-            prov.find("\"SecuraCV-%.4s-%s\"") != std::string::npos &&
-            prov.find("char tag[3];") != std::string::npos,
-        "provision.cpp's network name is no longer SecuraCV-XXXX[-YY]");
-  g_minted.ssid_plain = "SecuraCV-" + slots(4);
-  g_minted.ssid_tagged = "SecuraCV-" + slots(4) + "-" + slots(2);
+  // The network name's two shapes: onboarding_fsm.h's one builder, with the
+  // display's node type — "SecuraCV-display-XXXX", "-tt" appended on the
+  // unwritable-store path (the tag is render_password's 2 chars). Built by
+  // the builder itself over the slot byte, so these templates cannot say a
+  // shape the firmware does not.
+  CHECK(prov.find("onboard::ap_ssid(ap_ssid, sizeof(ap_ssid), onboard::NODE_DISPLAY,") !=
+                std::string::npos &&
+            prov.find("char tag[3] = {0};") != std::string::npos,
+        "provision.cpp's network name is no longer onboarding_fsm.h's "
+        "SecuraCV-display-XXXX[-tt]");
+  {
+    const std::string four = slots(4), two = slots(2);
+    char plain[canary::net::onboard::SSID_CAP], tagged[canary::net::onboard::SSID_CAP];
+    const size_t np = canary::net::onboard::ap_ssid(
+        plain, sizeof(plain), canary::net::onboard::NODE_DISPLAY, four.c_str(), nullptr);
+    const size_t nt = canary::net::onboard::ap_ssid(
+        tagged, sizeof(tagged), canary::net::onboard::NODE_DISPLAY, four.c_str(), two.c_str());
+    CHECK(np > 0 && nt > np, "onboarding_fsm.h's ap_ssid would not name the display's AP");
+    g_minted.ssid_plain = plain;
+    g_minted.ssid_tagged = tagged;
+  }
 
   // The stuck-phone hint, per glass, from the branch that sets it.
   std::string body[3];

@@ -43,6 +43,13 @@ struct OtaWebStatus {
 // Snapshot the engine for GET /api/ota/status. Cheap; call per request.
 OtaWebStatus ota_web_status();
 
+// The engine's state as the ONE word GET /api/status carries under
+// `ota.state` on every node (docs/OTA.md: idle / checking / downloading /
+// verifying / flashing / rebooting / error) — mapped from the engine's enum
+// here, not lowercased from its display string, so a renamed label cannot
+// change a wire field.
+const char* ota_web_state_word();
+
 // POST /api/ota/check — fetch the manifest and compare versions, without
 // installing. Non-blocking; the result lands in ota_web_status().
 OtaKick ota_web_check();
