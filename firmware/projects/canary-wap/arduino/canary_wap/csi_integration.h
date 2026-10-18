@@ -123,6 +123,15 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
  * SameSite=Strict, so JS can't read them and cross-origin requests
  * can't forge them.
+ *
+ * A session signs a browser into the dashboard and nothing more (sweep
+ * F289): the landing page mints one for whoever loads / on the home
+ * network, so it proves presence on the LAN, not possession of the token.
+ * The two routes whose answer carries a credential — GET
+ * /api/provisioning-receipt (the token, the SoftAP password, the TLS pin)
+ * and GET /api/pairing-qr (the token and the pin) — never take it; their
+ * bearer grant is the Authorization header alone (api_auth.h's
+ * api_auth_bearer_valid / api_auth_check_bearer).
  */
 bool session_validate_cookie(httpd_req_t* req);
 

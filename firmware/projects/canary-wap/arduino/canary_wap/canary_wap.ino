@@ -7919,7 +7919,13 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  * The payload carries the API token, so this endpoint demands the same
  * auth as the receipt's Bearer path — the QR is something an already-
  * authenticated operator deliberately shows to their own phone, never an
- * anonymous read. Only the fields the app's scanner consumes are encoded:
+ * anonymous read. "The same auth" is the bearer alone (api_auth_check_bearer,
+ * sweep F289): a cv_session cookie signs a browser into the dashboard, but
+ * the landing page mints one for any host on the home network, so it is no
+ * proof of holding the token this answer hands out. A cookie-only browser
+ * gets the 401 any credential-less caller gets and secureFetch brings the
+ * sign-in back; the lockout and its 429 are the same as every admin route's.
+ * Only the fields the app's scanner consumes are encoded:
  * {device_id, base_url, token}, plus tls_cert_fp on a TLS-enabled device —
  * the certificate pin the app requires before it will speak to an https
  * Canary at all (ios DeviceAPI.swift; PairView refuses an https receipt
@@ -7929,7 +7935,7 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  */
 static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   g_health.http_requests++;
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
 
   // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
   // to the AP address while the device is still in setup mode.
@@ -8657,8 +8663,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The grants, in order — the contract is provisioning_gate.h's four-grant
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
   // (firmware/common/network; the sketch keeps the inline copy by
-  // convention). The WAP's actual order here: a valid bearer serves (the
-  // claim and the tap left alone); else a claim the request presented is
+  // convention). The WAP's actual order here: a valid bearer (the header,
+  // never the session cookie) serves (the claim and the tap left alone);
+  // else a claim the request presented is
   // SPENT, match or not (a guesser gets one guess per join), and serves on
   // a match, the tap left unspent for the owner's own page load; else the
   // BOOT tap, exactly as before. The contract's first question, a foreign
@@ -8666,8 +8673,19 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // front of this route there); the WAP sketch has no Host guard on this
   // route and does not ask it.
 
-  // 1. A valid Bearer token always serves (for SAP re-sync).
-  if (api_auth_check_optional(req, g_device.api_token_str)) {
+  // 1. A valid Bearer token always serves (for SAP re-sync). The bearer and
+  //    ONLY the bearer: a real `Authorization: Bearer <token>` header,
+  //    constant-time compared (api_auth_bearer_valid), never the cv_session
+  //    cookie (sweep F289). The landing page at / mints that cookie's
+  //    session for whoever loads it on the home network — deliberate LAN
+  //    posture for the dashboard — so with api_auth_check_optional here any
+  //    host on the LAN could turn a page load into this answer: the token,
+  //    the SoftAP password and the TLS pin, with no tap. A browser signed in
+  //    only through that cookie is refused below like any caller without a
+  //    credential (403 physical_confirmation_required; the dashboard's
+  //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
+  //    one that typed the token sends it as a bearer and is served here.
+  if (api_auth_bearer_valid(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 

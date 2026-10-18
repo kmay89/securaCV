@@ -2108,10 +2108,11 @@ def check_identity_answers(files: dict[str, str], idx: Index) -> list[str]:
 # with none to record fail. The lengths are not computed here: where a cut
 # matters the reason says what the builder does with one.
 RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
-    ("api_auth.h", "api_auth_check"): (
+    ("api_auth.h", "api_auth_check_bearer"): (
         ("retry_str",),
-        "the 429 answer: retry_str is snprintf(\"%lu\") of the lockout's seconds, a number outside a "
-        "string; body[128] holds the longest answer (63 bytes)"),
+        "the 429 answer (the bearer-only body api_auth_check() wraps since sweep F289): retry_str is "
+        "snprintf(\"%lu\") of the lockout's seconds, a number outside a string; body[128] holds the "
+        "longest answer (63 bytes)"),
     ("beacon_channel.cpp", "sd_append_audit_entry"): (
         ("cfp_hex", "head_hex", "ofp_hex", "prev_hex", "ref_hex", "sigc_hex", "sigo_hex"),
         "the audit line on the card: every value is audit_hex() of fixed-size binary (hex digits); a cut "

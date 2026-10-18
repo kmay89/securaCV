@@ -20,8 +20,11 @@
 //   * a tap that never served a receipt (403 every poll, an answer that is
 //     not a receipt) offers nothing;
 //   * Settings → Device → Recovery kit saves it again for a page that is
-//     already signed in (a session cookie or a token): one GET, the same
-//     builder; a refused session brings the sign-in back and saves nothing;
+//     already signed in: one GET, the same builder, the token as a Bearer
+//     header when the page holds one and no header on a cookie session (the
+//     device refuses that one since sweep F289 — the receipt's bearer grant
+//     takes the header alone — which is the refused case below); a refused
+//     session brings the sign-in back and saves nothing;
 //   * the wizard's close-out saves through the same builder, and its saved
 //     line names that Settings path, which exists.
 //
@@ -381,8 +384,11 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
 });
 
 describe('Settings → Device → Recovery kit saves it again for a signed-in page (sweep F257)', () => {
-  it('on the session cookie: one GET, no token sent, the receipt saved as served', async () => {
-    const d = dashboard([{ status: 200, body: RECEIPT }]);   // a resumed session: no token in the page
+  it('on a cookie session: one GET with no token (what the page holds); a receipt served is saved as served', async () => {
+    // A resumed session: no token in the page, so the request carries none.
+    // Since sweep F289 the device answers this request 403 (the case two
+    // below); this holds the page's side, whatever a device answers.
+    const d = dashboard([{ status: 200, body: RECEIPT }]);
     await d.api.saveRecoveryKitFromSettings();
     assert.deepEqual(d.asked.map((q) => q.url), ['/api/provisioning-receipt']);
     const q = d.asked[0];

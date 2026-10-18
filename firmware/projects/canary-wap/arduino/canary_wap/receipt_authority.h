@@ -70,10 +70,11 @@
 
 namespace receipt_authority {
 
-/* The grant that admitted the request (handle_provisioning_receipt's order),
- * or HTTPS_REDIRECT: no grant at all, port 80's redirect to https
- * (handle_https_redirect()), whose Location follows the caller exactly as a
- * bearer or BOOT-tap receipt does. */
+/* The grant that admitted the request (handle_provisioning_receipt's order:
+ * BEARER is a real `Authorization: Bearer` header, never the cv_session
+ * cookie, sweep F289), or HTTPS_REDIRECT: no grant at all, port 80's redirect
+ * to https (handle_https_redirect()), whose Location follows the caller
+ * exactly as a bearer or BOOT-tap receipt does. */
 enum class Grant : uint8_t { BEARER, BOOT_TAP, SETUP_DOOR_CLAIM, HTTPS_REDIRECT };
 
 /* NONE: no name and no address to give (no mDNS name, the STA down and the
