@@ -1010,7 +1010,7 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
-      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184, F204)
+      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL, and the splash's tail on 8.4 (native g++, F184, F204, F185)
         # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
         # framebuffer with it (src/emu_hal_display.cpp) — and, built a second
         # time with the nightlight's config, its hardware turn
@@ -1019,8 +1019,14 @@ jobs:
         # build.sh's LVGL_TAG on a cold cache, which the dist build then
         # reuses): at every quarter turn the glass the page reads equals the
         # scene rendered unturned at the logical size, pixel for pixel, and a
-        # fed touch comes back out of LVGL's pointer where it went in. Proves
-        # the sources, not the dist's bytes (the onboard probe reads those).
+        # fed touch comes back out of LVGL's pointer where it went in. Then the
+        # REAL splash.cpp plays the first meeting through the port's LVGL 8.4
+        # branch in the config of every display env that builds 8.4 (F185,
+        # F159): the speech bubble's tail is drawn, whole, on the bubble's
+        # center line, and the bird sits on seat()'s seat, clear of it where
+        # seat() says so; every one of those suites runs, and the step fails
+        # at its end if any did. Proves the sources, not the dist's bytes (the
+        # onboard probe reads those).
         # Runs BEFORE every step that reads the committed dist: a stale dist
         # turns the probes below red and skips every later step, and this is
         # the one proof of these sources that does not need the dist.
@@ -1234,7 +1240,8 @@ jobs:
         # 480x800 and nightstand-c6's 172x320, typing every line of the
         # script, and the tail, read off the frame at each new line, is
         # drawn where its box and styles put it (as each of F185's options
-        # would be; the choice is not taken here).
+        # would be), on the bubble's center line (F185: square, turned about
+        # its center), with the bird on seat()'s seat, clear of it (F159).
         # Every suite runs; the step fails at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift
