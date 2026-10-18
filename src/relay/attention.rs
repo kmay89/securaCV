@@ -1254,17 +1254,18 @@ pub enum EpisodeVerdict {
 
 /// One episode's memory. RAM only; never emitted.
 ///
-/// Both seconds only ever move forward: a stamp earlier than `last_seen_at`
-/// is recorded as `last_seen_at`, so `last_notified_at <= last_seen_at`
-/// always holds.
+/// The newest stamp wins: a stamp earlier than `last_seen_at` moves the
+/// memory back to it before anything is decided (see
+/// [`EpisodeGovernor::consider`]), so `last_notified_at <= last_seen_at`
+/// always holds, and neither is later than the stamp being decided.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct EpisodeMemory {
-    /// When the episode last notified (at the latest second seen so far).
+    /// When the episode last notified, on the clock of the newest stamp.
     last_notified_at: u64,
-    /// The latest second any repeat was considered, notified or collapsed.
-    /// The calm gap is measured from here, so a family that never stops
-    /// churning can never age into a fake calm (the hole RepeatGovernor.swift
-    /// fixed) — and a stray early stamp cannot move it back to fake one.
+    /// The stamp the last repeat was considered at, notified or collapsed —
+    /// the newest to arrive, whatever its value. The calm gap is measured
+    /// from here, so a family that never stops churning can never age into
+    /// a fake calm (the hole RepeatGovernor.swift fixed).
     last_seen_at: u64,
     worst_notified: Tier,
     notifications: u32,
@@ -1277,8 +1278,15 @@ struct EpisodeMemory {
 /// The numbers and the shape are the Apple apps' `RepeatGovernor` (120 s
 /// doubling to a 1800 s ceiling, an 1800 s calm gap, escalation always
 /// notifies, the critical tier is never governed), so hub and phone rest a
-/// burst the same way. Memory is bounded by its key: 13 families times 256
-/// zone slots.
+/// burst the same way. Where the two differ (both recorded in the
+/// dictionary's `attention` comment, for the Apple apps to reconcile when
+/// they replay the vectors): `RepeatGovernor` keys a burst per witness; and
+/// it records the wall-clock now in every branch without moving its last
+/// buzz back when the clock steps back, so after one late stray stamp it
+/// rests a continuous flap until the clock passes the stray by an earned
+/// rest, where this governor moves the episode back to the newest stamp
+/// ([`EpisodeGovernor::consider`]). Memory is bounded by its key: 13
+/// families times 256 zone slots.
 #[derive(Debug, Default)]
 pub struct EpisodeGovernor {
     episodes: HashMap<EpisodeKey, EpisodeMemory>,
@@ -1295,32 +1303,63 @@ impl EpisodeGovernor {
     }
 
     /// Should this decision notify, given its episode so far? Records what it
-    /// saw. Seconds must be monotonic; a clock that steps back can only make
-    /// a repeat rest longer, never notify more.
+    /// saw.
     ///
-    /// That holds because the memory never moves back. A stamp earlier than
-    /// the latest second the episode has seen is recorded as that latest
-    /// second, in every branch, so it decides exactly as if it had arrived
-    /// then — the earliest it can really have happened — except that its
-    /// rest is measured from the earlier stamp, which only reads longer. It
-    /// cannot start a fresh episode (its calm-gap distance saturates to 0),
-    /// cannot pass a rest (every collapsed stamp is inside the current rest,
-    /// so an earlier one is too), and a critical or a higher tier, which
-    /// notify whatever the clock says, stamp the notification at the latest
-    /// second, so they cannot shorten the next rest either.
+    /// Seconds should come from a monotonic clock. Out-of-order seconds are
+    /// taken at face value — the newest stamp wins. A stamp earlier than the
+    /// last one the episode saw means the clock stepped back or one of the
+    /// two is a stray, and the governor cannot tell which; so the memory
+    /// first moves back to this stamp (its last-seen second becomes this
+    /// stamp and its last notification no later than it; the worst tier
+    /// notified and the count of notifications stay), and the decision is
+    /// then exactly the in-order one: the critical tier is never governed, a
+    /// calm gap opens a fresh episode, a higher tier escalates, a passed rest
+    /// notifies, anything else collapses. Every branch records this stamp as
+    /// the last-seen second, and as the last notification when it notifies.
+    ///
+    /// So it fails toward noise, never toward silence:
+    ///
+    /// - a stray early stamp earlier than the last notification shortens the
+    ///   rest in progress (it is measured from the stray instead), and the
+    ///   next real stamp a calm gap past the stray opens a fresh episode: the
+    ///   episode can end up to a calm gap early;
+    /// - a stray late stamp a calm gap past the episode opens a fresh one,
+    ///   and the next real stamp moves the memory back, so the rest after it
+    ///   is measured from that stamp, never from the stray;
+    /// - either way one stray costs at most one restart of its episode — an
+    ///   extra fresh-episode notification, after which the rests climb again
+    ///   from the first, as after any real calm gap — and never mutes the
+    ///   episode beyond one earned rest from the next real stamp. A stamp
+    ///   far in the future (up to `u64::MAX`) cannot pin the episode there,
+    ///   and the critical tier and a higher tier notify whatever the clock
+    ///   says.
+    ///
+    /// A real step back (the clock jumps back and stays there) never makes a
+    /// rest or the calm gap shorter in real time: moved back, the memory
+    /// places what it remembers no earlier than it really happened.
     pub fn consider(&mut self, key: EpisodeKey, tier: Tier, now_secs: u64) -> EpisodeVerdict {
         if tier == Tier::None {
             return EpisodeVerdict::NotSurfaced;
         }
-        let prior = self.episodes.get(&key).copied();
-        // The latest second this episode has seen, this one included.
-        let latest = prior.map_or(now_secs, |m| m.last_seen_at.max(now_secs));
+        // The newest stamp wins: a clock that stepped back moves the memory
+        // back to it first, keeping what the episode has notified so far.
+        let prior = self.episodes.get(&key).copied().map(|m| {
+            if now_secs < m.last_seen_at {
+                EpisodeMemory {
+                    last_seen_at: now_secs,
+                    last_notified_at: m.last_notified_at.min(now_secs),
+                    ..m
+                }
+            } else {
+                m
+            }
+        });
 
         // The critical tier is never governed.
         if tier == Tier::Critical {
             let memory = EpisodeMemory {
-                last_notified_at: latest,
-                last_seen_at: latest,
+                last_notified_at: now_secs,
+                last_seen_at: now_secs,
                 worst_notified: prior.map_or(tier, |m| m.worst_notified.max(tier)),
                 notifications: prior.map_or(0, |m| m.notifications).saturating_add(1),
             };
@@ -1333,8 +1372,8 @@ impl EpisodeGovernor {
             Some(m) if now_secs.saturating_sub(m.last_seen_at) < EPISODE_CALM_GAP_SECS => m,
             _ => {
                 let fresh = EpisodeMemory {
-                    last_notified_at: latest,
-                    last_seen_at: latest,
+                    last_notified_at: now_secs,
+                    last_seen_at: now_secs,
                     worst_notified: tier,
                     notifications: 1,
                 };
@@ -1346,8 +1385,8 @@ impl EpisodeGovernor {
         // A higher tier always gets through.
         if tier > memory.worst_notified {
             let escalated = EpisodeMemory {
-                last_notified_at: latest,
-                last_seen_at: latest,
+                last_notified_at: now_secs,
+                last_seen_at: now_secs,
                 worst_notified: tier,
                 notifications: memory.notifications.saturating_add(1),
             };
@@ -1360,8 +1399,8 @@ impl EpisodeGovernor {
         let elapsed = now_secs.saturating_sub(memory.last_notified_at);
         if elapsed >= rest {
             let repeated = EpisodeMemory {
-                last_notified_at: latest,
-                last_seen_at: latest,
+                last_notified_at: now_secs,
+                last_seen_at: now_secs,
                 worst_notified: memory.worst_notified.max(tier),
                 notifications: memory.notifications.saturating_add(1),
             };
@@ -1369,10 +1408,9 @@ impl EpisodeGovernor {
             return EpisodeVerdict::Notify(NotifyCause::RestElapsed);
         }
 
-        // Collapsed, but seen: the calm gap keeps measuring from the latest
-        // second, never from an earlier one.
+        // Collapsed, but seen: the calm gap keeps measuring from this stamp.
         let seen = EpisodeMemory {
-            last_seen_at: latest,
+            last_seen_at: now_secs,
             ..memory
         };
         self.episodes.insert(key, seen);
@@ -1393,6 +1431,15 @@ impl EpisodeGovernor {
     /// Drop every episode that has been calm for the calm gap. Such an
     /// episode is already over, and what its memory still holds is when a
     /// zone last saw activity — which the hub has no reason to keep.
+    ///
+    /// An episode last seen at a stray late stamp is kept while `now_secs` is
+    /// short of that stamp plus the calm gap. The next stamp for its key
+    /// moves it back to that stamp's clock first
+    /// ([`EpisodeGovernor::consider`]), and from then on it is dropped a calm
+    /// gap after its last stamp like any other; if no stamp comes, it stays
+    /// until `now_secs` passes the stray by the calm gap. Either way it holds
+    /// no more than any other entry, and it mutes nothing: whatever stamp
+    /// comes next is decided after the move back.
     pub fn forget_calm(&mut self, now_secs: u64) {
         self.episodes
             .retain(|_, m| now_secs.saturating_sub(m.last_seen_at) < EPISODE_CALM_GAP_SECS);
@@ -1842,12 +1889,22 @@ mod tests {
 
     #[test]
     fn phrases_have_one_blank_and_no_identity_words() {
+        // The same list as scripts/lint_dictionary_sync.py's
+        // _ATTENTION_FORBIDDEN_WORDS; the linter fails if the two differ.
+        // Each word is looked up as written, without a negating `un`, and
+        // either without a plural `s` (the linter's _identity_word_forms),
+        // so `unrecognized` and `households` are refused like the words
+        // listed; and a text is plain printable ASCII, so no invisible or
+        // look-alike character can split or disguise one.
         const FORBIDDEN: &[&str] = &[
             "name",
+            "names",
             "known",
             "unknown",
             "stranger",
+            "strangers",
             "intruder",
+            "intruders",
             "recognized",
             "verified",
             "familiar",
@@ -1861,6 +1918,10 @@ mod tests {
             .map(|p| p.text())
             .chain(ReasonCode::ALL.iter().map(|r| r.text()));
         for text in texts {
+            assert!(
+                text.bytes().all(|b| (b' '..=b'~').contains(&b)),
+                "{text:?} is not plain printable ASCII"
+            );
             let without_blank = text.replace("{zone}", "");
             assert!(
                 !without_blank.contains('{') && !without_blank.contains('}'),
@@ -1870,10 +1931,15 @@ mod tests {
                 .split(|c: char| !c.is_ascii_alphabetic())
                 .filter(|w| !w.is_empty())
             {
-                assert!(
-                    !FORBIDDEN.contains(&word.to_ascii_lowercase().as_str()),
-                    "{text:?} says {word:?}"
-                );
+                let lower = word.to_ascii_lowercase();
+                let stem = lower.strip_prefix("un").unwrap_or(&lower);
+                for form in [lower.as_str(), stem] {
+                    let singular = form.strip_suffix('s').unwrap_or(form);
+                    assert!(
+                        !FORBIDDEN.contains(&form) && !FORBIDDEN.contains(&singular),
+                        "{text:?} says {word:?}"
+                    );
+                }
             }
         }
     }
@@ -1945,6 +2011,54 @@ mod tests {
         g.forget_calm(1800);
         assert_eq!(g.len(), 1, "a has been calm 1800 s; b only 800 s");
         g.forget_calm(2800);
+        assert!(g.is_empty());
+    }
+
+    #[test]
+    fn a_stray_at_u64_max_never_pins_an_episode() {
+        // The vectors stop at 2^53 - 1, the largest second JSON carries
+        // exactly everywhere; this is the same story at the real extreme.
+        let mut g = EpisodeGovernor::default();
+        let a = EpisodeKey {
+            family: EpisodeFamily::Someone,
+            zone: ZoneSlot(1),
+        };
+        let first = EpisodeVerdict::Notify(NotifyCause::FirstOfEpisode);
+        let rested = EpisodeVerdict::Notify(NotifyCause::RestElapsed);
+        assert_eq!(g.consider(a, Tier::Important, 0), first);
+        // A calm gap past the episode, as far as the clock can say.
+        assert_eq!(g.consider(a, Tier::Important, u64::MAX), first);
+        // With no stamp since, the entry outlives the calm gap — it holds
+        // nothing that can mute.
+        g.forget_calm(5000);
+        assert_eq!(g.len(), 1);
+        // The next real stamp moves the episode back to its own clock: one
+        // earned rest from it, never a rest from the stray.
+        assert_eq!(
+            g.consider(a, Tier::Important, 200),
+            EpisodeVerdict::Collapsed {
+                resting_for_secs: 120
+            }
+        );
+        assert_eq!(g.consider(a, Tier::Important, 320), rested);
+        // A critical stray at the extreme notifies (critical is never
+        // governed), and the next real stamp rests one earned rest from
+        // itself, not from the stray.
+        assert_eq!(
+            g.consider(a, Tier::Critical, u64::MAX),
+            EpisodeVerdict::Notify(NotifyCause::Critical)
+        );
+        assert_eq!(
+            g.consider(a, Tier::Important, 400),
+            EpisodeVerdict::Collapsed {
+                resting_for_secs: 480
+            }
+        );
+        assert_eq!(g.consider(a, Tier::Important, 880), rested);
+        // And from then on it is forgotten a calm gap after its last stamp.
+        g.forget_calm(880 + EPISODE_CALM_GAP_SECS - 1);
+        assert_eq!(g.len(), 1);
+        g.forget_calm(880 + EPISODE_CALM_GAP_SECS);
         assert!(g.is_empty());
     }
 

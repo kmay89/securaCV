@@ -4,7 +4,7 @@
     "HAND-AUTHORED. Every expectation was decided from the dictionary's rules, not computed by an engine; never regenerate this file from code. Change the dictionary first, then this file, then the code.",
     "vectors: {name, input, expect}. Every input spells all eleven fields; `corroboration` is the list of channel ids that agreed (the reporting channel's own included), and a replay counts the DISTINCT modality classes among them (wifi_rf and ble are one class; unknown counts for nothing). `expect` is the whole decision: tier, phrase, reason, held_for_morning (quiet hours holding a digest) and the episode key {family, zone}.",
     "words: each device_word (exact, case-sensitive; anything unlisted is `other`) or kernel_event_type (the kernel's PascalCase wire form) and its class.",
-    "episodes: timed sequences for the repeat governor, on monotonic seconds. Each step is {at, tier, episode, expect}; expect is notify {cause}, collapsed {resting_for_secs} or not_surfaced. The numbers are the Apple apps' RepeatGovernor: 120 s doubling to 1800 s, an 1800 s calm gap measured from the latest second any repeat was considered (a stamp earlier than that is recorded as that latest second, so a stray early one can neither fake a calm nor shorten a rest), a higher tier always notifies, critical is never governed; tier none is never considered.",
+    "episodes: timed sequences for the repeat governor. Each step is {at, tier, episode, expect}; expect is notify {cause}, collapsed {resting_for_secs} or not_surfaced. The numbers are the Apple apps' RepeatGovernor: 120 s doubling to 1800 s, an 1800 s calm gap measured from the last second any repeat was considered, a higher tier always notifies, critical is never governed; tier none is never considered. Seconds should come from a monotonic clock, and out-of-order seconds are taken at face value (the newest stamp wins): a step whose `at` is earlier than its episode's last-seen second first moves that memory back to it (last seen becomes `at`, last notified becomes no later than `at`, the worst tier notified and the count of notifications stay), then decides exactly as in order. So it fails toward noise: an early stray earlier than the last notification shortens the rest in progress (measured from the stray instead), and a stray stamp in either direction costs at most one restart of its episode and never mutes it beyond one earned rest from the next real stamp; the a_stray_* sequences and a_clock_step_back_only_rests_longer pin both directions. Every `at` is an integer from 0 to 9007199254740991 (2^53 - 1), the largest a JSON number carries exactly on every surface that replays this file (a JavaScript or double-based parser rounds anything above it).",
     "Replayed by: src/relay/attention.rs (Rust, run by rust.yml's `cargo test --features alert-relay relay::`). Any other surface that decides tiers (the Apple apps, the display, the Home Assistant integration) must replay this file before it ships its own copy of the rules."
   ],
   "vectors": [
@@ -2843,7 +2843,7 @@
       ]
     },
     {
-      "name": "a_stray_early_timestamp_never_resets_the_calm_gap",
+      "name": "a_stray_early_stamp_moves_the_episode_back_and_restarts_it_once",
       "steps": [
         {
           "at": 0,
@@ -2937,8 +2937,8 @@
             "zone": 1
           },
           "expect": {
-            "verdict": "collapsed",
-            "resting_for_secs": 1500
+            "verdict": "notify",
+            "cause": "first_of_episode"
           }
         },
         {
@@ -2949,14 +2949,14 @@
             "zone": 1
           },
           "expect": {
-            "verdict": "collapsed",
-            "resting_for_secs": 1300
+            "verdict": "notify",
+            "cause": "rest_elapsed"
           }
         }
       ]
     },
     {
-      "name": "a_stray_early_escalation_never_shortens_the_next_rest",
+      "name": "a_stray_early_escalation_measures_the_next_rest_from_its_own_stamp",
       "steps": [
         {
           "at": 0,
@@ -3002,8 +3002,8 @@
             "zone": 1
           },
           "expect": {
-            "verdict": "collapsed",
-            "resting_for_secs": 30
+            "verdict": "notify",
+            "cause": "rest_elapsed"
           }
         },
         {
@@ -3014,14 +3014,14 @@
             "zone": 1
           },
           "expect": {
-            "verdict": "notify",
-            "cause": "rest_elapsed"
+            "verdict": "collapsed",
+            "resting_for_secs": 450
           }
         }
       ]
     },
     {
-      "name": "a_stray_early_critical_never_shortens_the_next_rest",
+      "name": "a_stray_early_critical_measures_the_next_rest_from_its_own_stamp",
       "steps": [
         {
           "at": 1000,
@@ -3055,8 +3055,8 @@
             "zone": 1
           },
           "expect": {
-            "verdict": "collapsed",
-            "resting_for_secs": 140
+            "verdict": "notify",
+            "cause": "rest_elapsed"
           }
         },
         {
@@ -3067,8 +3067,592 @@
             "zone": 1
           },
           "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 340
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_early_stamp_before_the_last_notification_measures_the_rest_from_itself",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
             "verdict": "notify",
             "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 180,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 180
+          }
+        },
+        {
+          "at": 60,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 240
+          }
+        },
+        {
+          "at": 240,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 360,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 420
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_early_stamp_after_the_last_notification_leaves_the_rest_alone",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 60,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 100,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 20
+          }
+        },
+        {
+          "at": 30,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 90
+          }
+        },
+        {
+          "at": 120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_late_stamp_never_mutes_a_flap_beyond_one_earned_rest",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 100000,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 200,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 260,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 320,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 380,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 180
+          }
+        },
+        {
+          "at": 440,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 500,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 560,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 620,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 420
+          }
+        },
+        {
+          "at": 680,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 360
+          }
+        },
+        {
+          "at": 740,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 300
+          }
+        },
+        {
+          "at": 800,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 240
+          }
+        },
+        {
+          "at": 860,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 180
+          }
+        },
+        {
+          "at": 920,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 980,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 1040,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a_stray_late_stamp_at_the_largest_exact_second_restarts_once_and_never_pins_the_episode",
+      "steps": [
+        {
+          "at": 0,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 360,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 840,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 1800,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 1900,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 1700
+          }
+        },
+        {
+          "at": 9007199254740991,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "first_of_episode"
+          }
+        },
+        {
+          "at": 2000,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 2060,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 2120,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 2180,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 180
+          }
+        },
+        {
+          "at": 2240,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 120
+          }
+        },
+        {
+          "at": 2300,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 60
+          }
+        },
+        {
+          "at": 2360,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "notify",
+            "cause": "rest_elapsed"
+          }
+        },
+        {
+          "at": 2420,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 420
+          }
+        },
+        {
+          "at": 2480,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 360
+          }
+        },
+        {
+          "at": 2540,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 300
+          }
+        },
+        {
+          "at": 2600,
+          "tier": "important",
+          "episode": {
+            "family": "someone",
+            "zone": 1
+          },
+          "expect": {
+            "verdict": "collapsed",
+            "resting_for_secs": 240
           }
         }
       ]

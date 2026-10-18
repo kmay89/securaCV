@@ -758,13 +758,30 @@ Then:
 - **One episode, one notification.** The first decision of an episode
   notifies. A repeat at the same or a lower tier notifies again only after its
   earned rest: 120 s, doubling per notification to a cap of 1800 s, with an
-  1800 s calm gap starting a new episode. A higher tier always gets through,
-  and `critical` is never governed. These are the Apple apps'
-  `RepeatGovernor` numbers, so hub and phone rest a burst the same way.
+  1800 s calm gap (measured from the last repeat considered, notified or not)
+  starting a new episode. A higher tier always gets through, and `critical` is
+  never governed. These are the Apple apps' `RepeatGovernor` numbers, so hub
+  and phone rest a burst the same way. Seconds come from a monotonic clock,
+  and a stamp that arrives out of order is taken at face value: the newest
+  stamp wins. An episode whose last stamp is later than the new one first
+  moves back to it (its last stamp becomes the new one and its last
+  notification no later than the new one; the worst tier notified and the
+  count of notifications stay), then decides exactly as in order. The rule
+  fails toward noise, never toward silence. An early stray earlier than the
+  last notification shortens the rest in progress, which is then measured
+  from the stray. One stray stamp, early or late, costs at most one restart
+  of its episode (one extra first-of-episode notification, the rests
+  climbing again from 120 s), and never mutes the episode beyond one earned
+  rest from the next real stamp, however far in the future the stray was.
+  The `a_stray_*` sequences in the conformance vectors (§7.3) pin both
+  directions. The Apple apps' `RepeatGovernor` does not yet move its memory
+  back, and reconciles when it replays them.
 - **No identity, ever.** Credentials are not an input. The phrase table is
-  closed, its only blank is the operator's own zone name, and no phrase or
-  reason says a name, "known", "unknown", "stranger", "intruder",
-  "recognized", "verified", "familiar", "authorized" or "household".
+  closed, its only blank is the operator's own zone name, and phrases and
+  reasons are plain printable ASCII. None says a name, "known", "stranger",
+  "intruder", "recognized", "verified", "familiar", "authorized" or
+  "household", in any form: plural, or negated with "un" ("unknown",
+  "unfamiliar", "unauthorized").
 - **No new remote class.** A decision maps to a remote poke only when it is
   `critical`, and then only to one of the relay's four existing classes
   (tamper, integrity, offline, pattern). Household posture and everyday
