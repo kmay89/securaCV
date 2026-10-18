@@ -1705,7 +1705,7 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
     // since the owner otherwise sees only a pairing that ended.
     health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
                "opera: pairing failed: the partner's CONFIRM did not match (a different "
-               "code, or pairing firmware older than this device's on one side)");
+               "code, or the partner runs older pairing firmware)");
     cancel_pairing();
     return;
   }
