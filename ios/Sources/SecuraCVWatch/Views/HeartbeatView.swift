@@ -52,7 +52,7 @@ struct HeartbeatView: View {
                     Image(systemName: "questionmark.circle")
                         .font(.system(size: 40))
                         .foregroundStyle(.secondary)
-                    Text("Not yet verified")
+                    Text(HeartbeatCopy.summary(state: .unknown, secondsSinceVerified: nil))
                         .font(.footnote)
                 }
             }

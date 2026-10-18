@@ -742,6 +742,11 @@ test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", 
   assert.strictEqual(releaseTagFromManifestUrl(""), null);
   assert.strictEqual(releaseTagFromManifestUrl(null), null);
   assert.strictEqual(releaseTagFromManifestUrl(undefined), null);
+  // A visitor-typed ?manifest= override with a malformed escape names no
+  // release; it must not throw out of the missing-release banner.
+  assert.strictEqual(
+    releaseTagFromManifestUrl("http://127.0.0.1:8000/releases/download/%E0/manifest-flash.json"),
+    null);
 });
 
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────

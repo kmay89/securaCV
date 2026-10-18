@@ -1,0 +1,29 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: the Event API in Frigate mode (serves the sealed log, rotates
+# the capability token, answers /health). In standalone mode witnessd
+# serves the API itself, so this service steps aside.
+# ==============================================================================
+set -euo pipefail
+
+# The setup step (run.sh, cont-init) renders /run/securacv/setup.sh and
+# leaves /run/securacv/configured only when the app is configured. Before
+# that the setup wizard is the whole app: this service steps aside without
+# flapping (`s6-svc -O .` = do not restart me when I exit 0).
+SETUP_FILE=/run/securacv/setup.sh
+if [ ! -f /run/securacv/configured ] || [ ! -f "$SETUP_FILE" ]; then
+  bashio::log.info "witness_api: SecuraCV is not configured yet (open the app's Web UI); staying down."
+  s6-svc -O .
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$SETUP_FILE"
+
+if [ "$MODE" != "frigate" ]; then
+  bashio::log.info "witness_api: standalone mode — witnessd serves the Event API itself; staying down."
+  s6-svc -O .
+  exit 0
+fi
+
+bashio::log.info "witness_api: starting the Event API for Frigate mode"
+exec /usr/local/bin/witness_api

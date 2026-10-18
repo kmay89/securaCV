@@ -19,7 +19,7 @@ import sys
 import types
 
 from . import conftest  # noqa: F401  (installs the base HA stubs)
-from .conftest import run
+from .conftest import make_entry, make_runtime, run
 
 # Reuse the platform stubs the hardening tests install (idempotent).
 from .test_mqtt_payload_hardening import _install_platform_stubs
@@ -30,11 +30,13 @@ from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 
 from .. import async_unload_entry  # noqa: E402
 from .. import binary_sensor as bs_platform  # noqa: E402
+from .. import event as event_platform  # noqa: E402
 from .. import sensor as sensor_platform  # noqa: E402
 from ..const import DOMAIN  # noqa: E402
 
 ENTRY = types.SimpleNamespace(entry_id="e1")
 MQTT_STUB = sys.modules["homeassistant.components.mqtt"]
+DISPATCHER_STUB = sys.modules["homeassistant.helpers.dispatcher"]
 
 
 class _Recorder:
@@ -49,9 +51,10 @@ class _Recorder:
         return lambda: self.released.append(topic)
 
 
-def _hass(entry_data: dict | None = None) -> HomeAssistant:
+def _hass() -> HomeAssistant:
     hass = HomeAssistant()
-    hass.data = {DOMAIN: {"e1": entry_data if entry_data is not None else {}}}
+    hass.data = {DOMAIN: {}}
+    ENTRY.runtime_data = make_runtime(hass)
     return hass
 
 
@@ -77,6 +80,7 @@ ENTITY_CLASSES = [
     (bs_platform.SecuraCVCanaryOccupancySensor, ()),     # 2 subscriptions
     (bs_platform.SecuraCVCanaryMeshConnectedSensor, ()),
     (bs_platform.SecuraCVCanaryChirpActiveSensor, ()),
+    (event_platform.SecuraCVCanaryTamperEventEntity, ()),
 ]
 
 
@@ -93,52 +97,60 @@ def test_every_entity_releases_its_subscriptions_on_remove(monkeypatch) -> None:
         run(inst.async_added_to_hass())
 
         assert len(recorder.subscribed) >= 1, cls.__name__
-        assert len(on_remove) == len(recorder.subscribed), (
+        # Every MQTT subscription plus the one availability signal the base
+        # connects (the device's online/offline dispatch).
+        assert len(on_remove) == len(recorder.subscribed) + 1, (
             f"{cls.__name__} dropped an unsubscribe callable"
         )
+        listeners = inst.hass.data["_securacv_test_dispatcher"]
+        assert sum(len(v) for v in listeners.values()) == 1, cls.__name__
         # Releasing what was registered releases every subscription.
         for unsub in on_remove:
             unsub()
         assert sorted(recorder.released) == sorted(recorder.subscribed), cls.__name__
+        assert sum(len(v) for v in listeners.values()) == 0, cls.__name__
 
 
 def test_discovery_subscriptions_land_in_unsub_mqtt(monkeypatch) -> None:
     for setup, expected_topics in (
         (sensor_platform._setup_mqtt_sensors, 5),
         (bs_platform._setup_mqtt_binary_sensors, 8),
+        (event_platform._async_setup_tamper_events, 2),
     ):
         recorder = _Recorder()
         monkeypatch.setattr(MQTT_STUB, "async_subscribe", recorder.async_subscribe)
-        entry_data: dict = {"unsub_mqtt": []}
-        hass = _hass(entry_data)
+        hass = _hass()
+        runtime = ENTRY.runtime_data
 
         run(setup(hass, ENTRY, "securacv", lambda entities: None))
 
         assert len(recorder.subscribed) == expected_topics, setup.__name__
-        assert len(entry_data["unsub_mqtt"]) == expected_topics, (
+        assert len(runtime.unsub_mqtt) == expected_topics, (
             f"{setup.__name__} dropped a discovery unsubscribe"
         )
-        for unsub in entry_data["unsub_mqtt"]:
+        for unsub in runtime.unsub_mqtt:
             unsub()
         assert sorted(recorder.released) == sorted(recorder.subscribed)
 
 
 def test_unload_entry_releases_recorded_subscriptions() -> None:
-    """The reload half: async_unload_entry unwinds unsub_mqtt and drops the
-    entry slice, so a reload starts from zero subscriptions."""
+    """The reload half: async_unload_entry unwinds unsub_mqtt and clears it,
+    so a reload starts from zero subscriptions and a retried unload (Home
+    Assistant retries when a platform refused) never unsubscribes twice."""
     released: list[str] = []
-    entry_data = {
-        "unsub_mqtt": [lambda: released.append("a"), lambda: released.append("b")],
-    }
-    hass = _hass(entry_data)
-
-    async def _unload_platforms(entry, platforms):
-        return True
-
-    hass.config_entries = types.SimpleNamespace(
-        async_unload_platforms=_unload_platforms
+    hass = HomeAssistant()
+    hass.data = {DOMAIN: {}}
+    entry = make_entry(
+        hass,
+        runtime=make_runtime(
+            hass, unsub_mqtt=[lambda: released.append("a"), lambda: released.append("b")]
+        ),
     )
 
-    assert run(async_unload_entry(hass, ENTRY)) is True
+    assert run(async_unload_entry(hass, entry)) is True
     assert sorted(released) == ["a", "b"]
-    assert "e1" not in hass.data[DOMAIN]
+    assert entry.runtime_data.unsub_mqtt == []
+    # Nothing was published: the claim is withdrawn only on removal.
+    assert hass.data.get("_securacv_test_mqtt_published", []) == []
+    assert run(async_unload_entry(hass, entry)) is True
+    assert sorted(released) == ["a", "b"], "a retried unload must not release twice"

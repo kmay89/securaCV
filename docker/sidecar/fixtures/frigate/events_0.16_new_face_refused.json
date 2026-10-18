@@ -1,0 +1,35 @@
+{
+  "before": null,
+  "after": {
+    "id": "SENTINEL_ID_FACE_016",
+    "camera": "front_door",
+    "frame_time": 77700601.5,
+    "snapshot": null,
+    "label": "face",
+    "sub_label": ["SENTINEL_FACE_NAME_REFUSED_016", 7770.79],
+    "top_score": 0.97,
+    "false_positive": false,
+    "start_time": 77700602.5,
+    "end_time": null,
+    "score": 0.96,
+    "box": [77700610, 77700611, 77700612, 77700613],
+    "area": 77700620,
+    "ratio": 7770.27,
+    "region": [77700614, 77700615, 77700616, 77700617],
+    "active": true,
+    "stationary": false,
+    "motionless_count": 77700630,
+    "position_changes": 77700631,
+    "current_zones": ["porch"],
+    "entered_zones": ["porch"],
+    "has_snapshot": true,
+    "has_clip": true,
+    "thumbnail": "SENTINEL_THUMBNAIL_FACE_016",
+    "attributes": {"SENTINEL_ATTRIBUTE_FACE_016": 7770.92},
+    "current_attributes": [
+      {"label": "SENTINEL_CURRENT_ATTRIBUTE_FACE_016", "box": [77700660, 77700661, 77700662, 77700663], "score": 7770.92}
+    ],
+    "pending_loitering": false
+  },
+  "type": "new"
+}

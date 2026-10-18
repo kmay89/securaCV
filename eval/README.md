@@ -38,7 +38,8 @@ imagery** — the eval corpus must itself honor the project's privacy premise. R
 the stdlib-only script (no Pillow/numpy needed):
 
 ```bash
-python3 eval/datasets/sample/generate.py
+python3 eval/datasets/sample/generate.py           # write
+python3 eval/datasets/sample/generate.py --check   # what detect-eval.yml runs: names any stale file
 ```
 
 > The deterministic `test_detector.onnx` ignores pixels and emits fixed boxes, so it is **not**

@@ -1797,28 +1797,6 @@ bool ScvNetworkManager::startRedirectServer() {
   return true;
 }
 
-void ScvNetworkManager::stopHttpServer() {
-#if SECURACV_HAS_HTTPS_SERVER
-  if (m_https_server) {
-    httpd_ssl_stop(m_https_server);
-    m_https_server = nullptr;
-  }
-#endif
-  m_tls_enabled = false;
-  // F15: HTTPS is down, so the mDNS mirrors must stop claiming it — otherwise
-  // the next STA reconnect or raiseAp() re-announce would republish a stale
-  // tls=1 + secure port for a 443 that is no longer listening. Re-announce
-  // now when mDNS is up so the record drops to tls=0 immediately.
-  const bool was_tls = s_mdns_tls_enabled;
-  s_mdns_tls_enabled = false;
-  s_mdns_secure_port = 0;
-  if (was_tls) start_mdns(s_mdns_device_id);
-  if (m_http_server) {
-    httpd_stop(m_http_server);
-    m_http_server = nullptr;
-  }
-}
-
 void ScvNetworkManager::registerHttpHandlers(httpd_handle_t server) {
   // UI
   httpd_uri_t ui = { .uri = "/", .method = HTTP_GET, .handler = handle_ui };

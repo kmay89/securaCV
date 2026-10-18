@@ -105,9 +105,12 @@ jobs:
           key: ${{ matrix.platform }}
 
       - name: Set up Node
+        # The major every PR check runs (desktop-lab-check.yml stages the Lab
+        # frontend on it, CI.md "Node jobs"): the shipped bundle is built on
+        # the Node its checks were green on. 20 reached end of life 2026-04-30.
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop-lab/package-lock.json
 

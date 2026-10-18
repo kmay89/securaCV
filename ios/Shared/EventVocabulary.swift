@@ -54,8 +54,8 @@ enum WitnessEvent: String, CaseIterable, Codable, Sendable {
     /// Home Assistant card, on purpose: one sentence of meaning everywhere.
     var label: String {
         switch self {
-        case .boundaryCrossingObjectLarge: return "Large object crossed boundary"
-        case .boundaryCrossingObjectSmall: return "Small object crossed boundary"
+        case .boundaryCrossingObjectLarge: return "Person or vehicle"
+        case .boundaryCrossingObjectSmall: return "Animal or small object"
         case .acousticImpulseInZone: return "Acoustic impulse in zone"
         case .presenceInRestrictedZone: return "Presence in restricted zone"
         case .vehiclePresenceAfterHours: return "Vehicle presence after hours"

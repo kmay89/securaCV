@@ -990,17 +990,9 @@
        "on": true,
        "note": "subscribe to the fleet, publish own status"
       },
-      "FEATURE_CHAIN_VERIFY": {
-       "on": true,
-       "note": "on-device Ed25519 verify + TOFU pinning"
-      },
       "FEATURE_MDNS_DISCOVERY": {
        "on": true,
        "note": "fleet discovery: find/gossip the broker"
-      },
-      "FEATURE_PROOF_QR": {
-       "on": true,
-       "note": "tap-for-proof QR (trailblazer spec 1)"
       },
       "FEATURE_QR_COMMISSION": {
        "on": true,
@@ -1056,10 +1048,6 @@
       "FEATURE_SNTP": {
        "on": true,
        "note": "clock + quiet-hours source"
-      },
-      "FEATURE_NIGHT_BLACKOUT": {
-       "on": false,
-       "note": "bench verdict: LCD backlight bleed makes"
       },
       "FEATURE_COMFORT_WORDS": {
        "on": true,
@@ -1169,17 +1157,9 @@
        "on": true,
        "note": "subscribe to the fleet, publish own status"
       },
-      "FEATURE_CHAIN_VERIFY": {
-       "on": true,
-       "note": "on-device Ed25519 verify + TOFU pinning"
-      },
       "FEATURE_MDNS_DISCOVERY": {
        "on": true,
        "note": "fleet discovery: find/gossip the broker"
-      },
-      "FEATURE_PROOF_QR": {
-       "on": true,
-       "note": "tap-for-proof QR (trailblazer spec 1)"
       },
       "FEATURE_QR_COMMISSION": {
        "on": true,
@@ -1235,10 +1215,6 @@
       "FEATURE_SNTP": {
        "on": true,
        "note": "clock + quiet-hours source"
-      },
-      "FEATURE_NIGHT_BLACKOUT": {
-       "on": false,
-       "note": "dash night = dark theme + scheduled off"
       },
       "FEATURE_COMFORT_WORDS": {
        "on": true

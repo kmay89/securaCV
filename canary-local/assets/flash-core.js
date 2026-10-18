@@ -817,7 +817,9 @@ export const DEV_FLASH_MANIFEST_URL =
 export function releaseTagFromManifestUrl(url) {
   const m = /\/releases\/download\/([^/]+)\//.exec(String(url || ""));
   if (!m) return null;
-  const tag = decodeURIComponent(m[1]);
+  // The active manifest URL can be a visitor-typed ?manifest= override, so a
+  // malformed escape (…/download/%E0/…) names no release instead of throwing.
+  let tag; try { tag = decodeURIComponent(m[1]); } catch { return null; }
   return /^fw-v/.test(tag) ? tag : null;
 }
 
@@ -1374,49 +1376,91 @@ export function smartPick(catalog, opts = {}) {
   if (preferredId) {
     const p = byChip.find((x) => x.id === preferredId);
     if (p) {
-      return { product: p, kind: "picked",
+      return { product: p, kind: "picked", shortlist: [p],
         why: `Showing ${p.name} — the firmware you picked.` };
     }
   }
   if (currentProject) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
-      return { product: cur, kind: "current",
+      return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name} — installing keeps it, ` +
              `updated in place.` };
     }
   }
+  // The size filter is productsForBoard's — the tested function IS the
+  // shipped one (it used to be copied inline here, so its tests covered a
+  // twin). It answers the whole chip set when the size is unknown or matches
+  // nothing, so "fewer than the chip set" means the size narrowed the field.
   const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
-  if (mb) {
-    const sized = byChip.filter((p) => p.flash_mb === mb);
-    if (sized.length && sized.length < byChip.length) {
-      // Deliberately NOT tier-ordered. Sorting a proven board to the front
-      // here looks like caution and isn't: these candidates are different
-      // BOARDS, and the products differ in pins, so preferring a `verified`
-      // entry would hand a generic C3 DevKit owner the XIAO image — right
-      // tier, wrong pins. An unproven image built for the board in hand
-      // beats a proven one built for a different board. The tier is stated
-      // on every card instead, where it informs the choice without making it.
-      const p = sized[0];
-      // Chip + flash size narrows the field; it does not always NAME the
-      // board. When the survivors span more than one family, several
-      // different products fit the silicon equally well, and "that looks
-      // like a <board>" would be a guess wearing the clothes of a
-      // measurement. Say which it is.
-      const families = new Set(sized.map((x) => x.family));
-      const why = families.size > 1
-        ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
-          `one board matches that exactly, so this is a starting point, not ` +
-          `an identification: ${p.name} is first in the list below — check ` +
-          `the others if yours is a different board.`
-        : `Your board reads as an ${label} with ${mb} MB flash — that ` +
-          `looks like a ${p.board_label}. Recommended: ${p.name}.`;
-      return { product: p, kind: "board", why };
-    }
+  const sized = productsForBoard(catalog, chip, flashBytes);
+  if (sized.length < byChip.length) {
+    // Deliberately NOT tier-ordered. Sorting a proven board to the front
+    // here looks like caution and isn't: these candidates are different
+    // BOARDS, and the products differ in pins, so preferring a `verified`
+    // entry would hand a generic C3 DevKit owner the XIAO image — right
+    // tier, wrong pins. An unproven image built for the board in hand
+    // beats a proven one built for a different board. The tier is stated
+    // on every card instead, where it informs the choice without making it.
+    const p = sized[0];
+    // Chip + flash size narrows the field; it does not always NAME the
+    // board. When the survivors span more than one family, several
+    // different products fit the silicon equally well, and "that looks
+    // like a <board>" would be a guess wearing the clothes of a
+    // measurement. Say which it is.
+    const families = new Set(sized.map((x) => x.family));
+    const why = families.size > 1
+      ? `Your board reads as an ${label} with ${mb} MB flash. More than ` +
+        `one board matches that exactly, so this is a starting point, not ` +
+        `an identification: ${p.name} is first in the list below — check ` +
+        `the others if yours is a different board.`
+      : `Your board reads as an ${label} with ${mb} MB flash — that ` +
+        `looks like a ${p.board_label}. Recommended: ${p.name}.`;
+    return { product: p, kind: "board", why,
+      shortlist: families.size > 1 ? boardShortlist(sized) : [p] };
   }
+  // Nothing narrowed the field. That is only a recommendation when every
+  // product for this chip is cut for the same board; when they span
+  // different boards (an ESP32-C6 is a XIAO Sense node OR a Waveshare 1.47"
+  // display — same chip, same 4 MB), leading with the authored default and
+  // folding the rest would put the wrong image in front of half the owners
+  // and hide theirs behind a "developer" button. Say so and show each board.
   const p = recommendedProduct(catalog, chip);
-  return p ? { product: p, kind: "chip",
-    why: `Recommended for your ${label}: ${p.name}.` } : null;
+  if (!p) return null;
+  const shortlist = boardShortlist(sized);
+  if (shortlist.length > 1) {
+    const size = mb ? ` with ${mb} MB flash` : "";
+    return { product: p, kind: "chip", shortlist,
+      why: `Your board reads as an ${label}${size}. More than one board ` +
+        `uses that chip, so this is a starting point, not an ` +
+        `identification — pick yours by name and picture: ` +
+        `${orList(shortlist.map((x) => x.board_label))}.` };
+  }
+  return { product: p, kind: "chip", shortlist: [p],
+    why: `Recommended for your ${label}: ${p.name}.` };
+}
+
+// "A or B", "A, B, or C" — the shortlist sentence reads as English.
+function orList(items) {
+  if (items.length < 3) return items.join(" or ");
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+// One product per distinct physical board, in catalog (authored) order. What
+// the picker shows unfolded when the silicon could not name the board: the
+// products on one board differ in flavor (a family question the browse
+// answers), but products on different boards differ in PINS, and a board the
+// evidence cannot rule out must never sit behind a click.
+export function boardShortlist(products) {
+  const seen = new Set();
+  const out = [];
+  for (const p of products || []) {
+    const key = (p.tier && p.tier.board_id) || p.board_label || p.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 // ── catalog shape guard ─────────────────────────────────────────────────────
@@ -1631,6 +1675,61 @@ export function parseSelfManifest(text) {
     }
   } catch { /* partial line — wait for more bytes */ }
   return null;
+}
+
+// ── the setup network's key, off the board's own first-boot line ────────────
+// A Sense or Vision prints its setup network and its eight-character key
+// exactly once, when the portal comes up (firmware/common/network/
+// setup_portal.cpp: `[SETUP] Setup network up: "SecuraCV-XXXX"  password
+// <key>  (channel N)`); a WAP prints its cv-… key when its AP starts
+// (canary_wap.ino: `[WIFI] AP started: SecuraCV-XXXX (password: cv-…)`).
+// Nothing else ever shows that key — not the Flasher, not a sticker — so
+// the one honest place to hand it to the owner is the done card, read off
+// this line. One parser for both flashers: the desktop inlines the SAME two
+// patterns (desktop/src/app.js, pinned equal by tests/desktop_parity.test.js,
+// which also holds them to the firmware's own printf strings).
+export const SETUP_NETWORK_LINE_RES = [
+  /\[SETUP\] Setup network up: "([^"\n]+)"\s+password (\S+)/g,
+  /\[WIFI\] AP started: (\S+) \(password: ([^)\n]+)\)/g,
+];
+export function parseSetupNetwork(text) {
+  const t = String(text || "");
+  let last = null;
+  for (const re of SETUP_NETWORK_LINE_RES) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(t))) last = { ssid: m[1], key: m[2], at: m.index };
+  }
+  return last ? { ssid: last.ssid, key: last.key } : null;
+}
+// The one line both done cards print once the key is heard.
+export function setupNetworkLine(net) {
+  return `Its setup network: ${net.ssid} · key ${net.key}`;
+}
+
+// ── the Bluetooth setup door: when to say "leave the WiFi blank" ───────────
+// `setup_door` is a catalog fact gen_flash.py derives from what each build
+// compiles (improv_ble.cpp; the WAP's FULL profile), never a role guess: a
+// product that wrongly said true would send an owner to wait for a card
+// that never comes. Both flashers show the note only for these products.
+export function hasSetupDoor(product) {
+  return !!(product && product.setup_door === true);
+}
+export const SETUP_DOOR_NOTE =
+  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+
+// ── a network name with no password is a question, not an answer ────────────
+// An SSID typed with the password left empty used to seed an OPEN join: the
+// builder accepts an empty key for genuinely open networks, so a forgotten
+// password became a board that boots, fails to join, and raises its setup
+// network — with no word about why. Both flashers now refuse that unless the
+// owner ticked the explicit open-network choice. Same words in both.
+export const WIFI_PASS_REQUIRED =
+  "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+export function wifiFieldsVerdict(ssid, pass, openNetwork) {
+  if (!ssid) return { ok: true, skipped: true };
+  if (!pass && !openNetwork) return { ok: false, error: WIFI_PASS_REQUIRED };
+  return { ok: true, skipped: false };
 }
 
 // Group a hex fingerprint into readable byte pairs (aa:bb:cc…), capped.
@@ -2112,7 +2211,7 @@ export function installVerdict({ current, currentProduct, product, version }) {
   };
 }
 
-// ── roles: what a board IS, in one word — and what it does, in another ──────
+// ── roles: what a board IS, in one word ─────────────────────────────────────
 // The same loose id sniff postFlashNextStep always used, promoted to a named
 // helper (and taught about displays) so every surface agrees on the answer.
 export function productRole(productOrId) {
@@ -2122,11 +2221,6 @@ export function productRole(productOrId) {
   if (/vision/.test(id)) return "vision";
   if (/wap/.test(id)) return "wap";
   return "canary";
-}
-
-// The one-word verb for the role — a display SHOWS, everything else SENSES.
-export function roleVerb(role) {
-  return role === "display" ? "shows" : "senses";
 }
 
 // A firmware project name read off a bare board → does it look like one of

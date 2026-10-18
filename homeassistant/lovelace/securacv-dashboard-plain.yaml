@@ -1,0 +1,216 @@
+# SecuraCV dashboard — built-in cards only, no custom card, no strategy
+#
+# The same dashboard as securacv-dashboard.yaml for installs that block
+# auto-registered frontend modules, or that run a Home Assistant older than
+# the 2026.5 "Community dashboards" picker. Everything here is a stock card
+# over the integration's own entity ids, so it needs no resource and no
+# strategy — and it needs you to add a block per camera (see "Cameras").
+#
+# How to add: Settings → Dashboards → Add dashboard → New dashboard from
+# scratch → ⋮ → Raw configuration editor → paste. Or register it as a
+# YAML-mode dashboard (securacv-dashboard.yaml shows the configuration.yaml
+# block; use this filename).
+#
+# Entity ids (Developer Tools → States, filter "securacv" to confirm yours):
+#   binary_sensor.securacv_chain_valid      on = Home Assistant verified the chain against its pinned key
+#   sensor.securacv_chain_length            entries in the sealed log
+#   sensor.securacv_daily_digest            rolling 24 h counts per camera and period
+#   sensor.securacv_last_event              the most recent sealed event
+#   event.securacv_<camera>                 one witness event entity per camera
+#   button.securacv_verify_now / button.securacv_export_evidence
+#   binary_sensor.securacv_frigate_link / binary_sensor.securacv_kernel_online
+#   sensor.securacv_kernel_fingerprint
+
+title: "SecuraCV"
+views:
+  - title: "Witness"
+    icon: "mdi:shield-check"
+    path: witness
+    type: sections
+    max_columns: 4
+    sections:
+
+      # -----------------------------------------------------------------------
+      # Header: chain state, last verify, entries, the two buttons
+      # -----------------------------------------------------------------------
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: "SecuraCV"
+            heading_style: title
+            icon: mdi:shield-check
+
+          - type: markdown
+            content: >-
+              {% set cv = 'binary_sensor.securacv_chain_valid' %}
+              {% set st = states(cv) %}
+              {% set vbs = state_attr(cv, 'verified_bucket_start') %}
+              {% set n = state_attr(cv, 'verified_entries') %}
+              {% if n is none %}{% set n = states('sensor.securacv_chain_length') | int(0) %}{% endif %}
+              {% set err = state_attr(cv, 'error') | string | lower %}
+              {% set fs = state_attr(cv, 'failed_seq') %}
+              {% if state_attr(cv, 'verifying') %}
+              ### Verifying…
+              {% elif state_attr(cv, 'trust_reason') == 'kernel_key_mismatch' or ('key' in err and ('mismatch' in err or 'changed' in err)) %}
+              ### ⚠ Witness key changed — confirm it in Settings → Repairs
+              {% elif st == 'on' and vbs is number %}
+              ### ✅ Chain verified ✓ {{ relative_time(as_datetime(vbs)) }} ago{% if n is number %} · {{ '{:,}'.format(n | int) }} entries{% endif %} · key pinned
+              {% elif st == 'off' %}
+              ### ⚠ Verification failed{% if fs is number %} at entry #{{ '{:,}'.format(fs | int) }}{% endif %}
+              {% else %}
+              ### Not verified yet
+              {% endif %}
+
+          - type: markdown
+            content: >-
+              {% set on = 'binary_sensor.securacv_kernel_online' %}
+              {% set fl = 'binary_sensor.securacv_frigate_link' %}
+              {% set heard = state_attr(fl, 'last_message_bucket_start') %}
+              {% set pfx = state_attr(fl, 'topic_prefix') or 'frigate' %}
+              {% if is_state(on, 'off') %}
+              ⚠ SecuraCV can't reach the witness kernel{% set so = expand(on) %}{% if so %} since {{ as_local(so[0].last_changed).strftime('%H:%M') }}{% endif %} — [Open the SecuraCV integration](/config/integrations/integration/securacv).
+              {% elif is_state(fl, 'off') %}
+              ⚠ Frigate not heard{% if heard is number %} for {{ relative_time(as_datetime(heard)) }}{% endif %}. Check Frigate → Settings → MQTT is enabled and publishes under `{{ pfx }}/` (SecuraCV listens on `{{ pfx }}/events`).
+              {% else %}
+              SecuraCV records coarse claims — "person or vehicle", a 10-minute window, a zone — never who or exactly what. Frigate keeps the detail. One sealed event per camera, label and 10-minute window: three people at the door in one window are one row.
+              {% endif %}
+
+          - type: tile
+            entity: button.securacv_verify_now
+            name: "Verify now"
+            icon: mdi:shield-search
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.securacv_verify_now
+
+          - type: tile
+            entity: button.securacv_export_evidence
+            name: "Export evidence"
+            icon: mdi:file-certificate
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.securacv_export_evidence
+
+          - type: markdown
+            content: >-
+              Export evidence writes a signed pack of the last 24 hours — the bundle, the offline viewer and your
+              witness key fingerprint — and posts the download link as a notification (also under Media → SecuraCV evidence).
+
+      # -----------------------------------------------------------------------
+      # Today: the built-in logbook over the witness entities. The custom
+      # timeline card adds the per-row Sealed ✓ / Verified ✓ / Failed ⚠ badge;
+      # here the badge is the last event's `verification` attribute, below.
+      # -----------------------------------------------------------------------
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: "Today"
+            heading_style: title
+            icon: mdi:timeline-clock-outline
+
+          - type: markdown
+            content: >-
+              {% set e = 'sensor.securacv_last_event' %}
+              {% set tb = state_attr(e, 'time_bucket') %}
+              {% set v = state_attr(e, 'verification') %}
+              {% set labels = {'boundary_crossing_object_large': 'Person or vehicle', 'boundary_crossing_object_small': 'Animal or small object'} %}
+              {% if states(e) in ['unknown', 'unavailable'] or tb is not mapping %}
+              No witness events yet. The next person, car, dog or cat Frigate reports appears here sealed within a minute.
+              {% else %}
+              Last sealed: **{{ labels.get(states(e), state_attr(e, 'friendly_event') or states(e)) }}** on
+              {{ state_attr(e, 'zone') or (state_attr(e, 'zone_id') or '') | replace('zone:', '') }} ·
+              {{ tb.start_epoch_s | timestamp_custom('%H:%M') }}–{{ (tb.start_epoch_s + (tb.size_s | default(600))) | timestamp_custom('%H:%M') }} ·
+              {{ 'Verified ✓' if v == 'verified' else ('Failed ⚠' if v == 'failed' else 'Sealed ✓') }}{% if state_attr(e, 'seq') is number %} · entry #{{ '{:,}'.format(state_attr(e, 'seq') | int) }}{% endif %}
+              {% endif %}
+
+          - type: logbook
+            hours_to_show: 24
+            target:
+              entity_id:
+                - sensor.securacv_last_event
+                # Add your witness event entities, one per camera:
+                # - event.securacv_front_door
+                # - event.securacv_driveway
+
+      # -----------------------------------------------------------------------
+      # Cameras: copy this block per camera. For Frigate's picture add a
+      # picture-entity card over camera.<name> above the tile.
+      # -----------------------------------------------------------------------
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: "Cameras"
+            heading_style: title
+            icon: mdi:cctv
+
+          # - type: picture-entity
+          #   entity: camera.front_door
+          #   camera_view: auto
+          #   show_name: false
+          #   show_state: false
+          # - type: tile
+          #   entity: event.securacv_front_door
+          #   name: "Front door"
+          #   icon: mdi:cctv
+          #   state_content: last_changed
+          #   tap_action:
+          #     action: more-info
+
+          - type: markdown
+            content: >-
+              Copy the commented block above once per camera (`event.securacv_<camera>`), or let the
+              SecuraCV dashboard strategy (securacv-dashboard.yaml) do it from your live entities.
+
+      # -----------------------------------------------------------------------
+      # Last 24 hours: the kernel's digest
+      # -----------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Last 24 hours"
+            heading_style: title
+            icon: mdi:calendar-today
+
+          - type: markdown
+            content: >-
+              {% set d = 'sensor.securacv_daily_digest' %}
+              {% if states(d) in ['unknown', 'unavailable'] %}
+              The digest has not been published yet — it refreshes with the kernel.
+              {% else %}
+              **{{ states(d) }}** sealed event{{ '' if states(d) == '1' else 's' }} in the last {{ (((state_attr(d, 'window_secs') or 86400) / 3600) | round(0)) | int }} hours
+              {% set pp = state_attr(d, 'per_period') or {} %}{% if pp %}
+
+              {% for p in ['night', 'morning', 'afternoon', 'evening'] if p in pp %}- {{ p }}: {{ pp[p] }}
+              {% endfor %}{% endif %}
+              {% set pz = state_attr(d, 'per_zone') or {} %}{% if pz %}
+
+              {% for z, c in pz.items() %}- {{ z | replace('zone:', '') | replace('_', ' ') }}: {{ c }}
+              {% endfor %}{% endif %}
+
+              Periods are the kernel's UTC quarters of the day; counts are coarse 10-minute windows, not detections.
+              {% endif %}
+
+      # -----------------------------------------------------------------------
+      # Health
+      # -----------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Health"
+            heading_style: title
+            icon: mdi:heart-pulse
+
+          - type: entities
+            state_color: true
+            entities:
+              - entity: binary_sensor.securacv_frigate_link
+              - entity: binary_sensor.securacv_kernel_online
+              - entity: sensor.securacv_chain_length
+              - entity: sensor.securacv_kernel_fingerprint

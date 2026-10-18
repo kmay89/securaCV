@@ -14,6 +14,7 @@ never by noticing it is missing.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from homeassistant.components import mqtt
@@ -22,12 +23,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_URL, EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from typing import Any as _Any  # noqa: F401  (used in _read_trust_view signature below)
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
@@ -42,9 +43,6 @@ from .const import (
     TOPIC_TRANSPORT,
     TOPIC_MESH,
     TOPIC_CHIRP,
-    MANUFACTURER,
-    MODEL_KERNEL,
-    MODEL_CANARY,
     # Tamper types
     ALL_TAMPER_TYPES,
     TAMPER_POWER_LOSS,
@@ -72,6 +70,10 @@ from .const import (
     homekit_signals_for_event,
 )
 from homeassistant.helpers.event import async_call_later
+from .const import FRIGATE_LINK_STALE_AFTER_SECONDS
+from .data import runtime_for
+from .kernel_verify import chain_trust_reason
+from .entity import SecuraCVKernelEntity, canary_device_info, canary_status_signal
 from . import (
     mqtt_payload_within_cap,
     parse_mqtt_json,
@@ -87,6 +89,10 @@ from .health_metrics import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Nothing here polls (the kernel coordinator pushes, the Canary entities
+# subscribe), so parallel updates are unlimited (the parallel-updates rule).
+PARALLEL_UPDATES = 0
 
 # Per-type entity tables ({type: icon}), keyed by the ADVERTISED lists in
 # const.py (ALL_TAMPER_TYPES / ALL_TRANSPORTS): the discovery callback below
@@ -132,8 +138,8 @@ def _read_trust_view(
     entry_data so the binary sensor can ANNOTATE its state with the
     same trust info.
     """
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    verify = entry_data.get("verify", {}).get(device_id)
+    runtime = runtime_for(entry)
+    verify = runtime.verify.get(device_id) if runtime is not None else None
     if not verify:
         return {"verified": False, "trust_reason": "no_pubkey"}
     return {
@@ -150,8 +156,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up SecuraCV binary sensors from a config entry."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = entry_data.get("coordinator")
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    coordinator = runtime.coordinator
 
     # The kernel connectivity sensor only exists when a kernel is
     # configured (SETUP_MODE_KERNEL / SETUP_MODE_BOTH). In SETUP_MODE_MQTT
@@ -162,6 +170,8 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = []
     if coordinator is not None:
         entities.append(SecuraCVKernelOnlineSensor(coordinator, entry))
+        entities.append(SecuraCVKernelChainValidSensor(coordinator, entry))
+        entities.append(SecuraCVKernelFrigateLinkSensor(coordinator, entry))
         entities.append(SecuraCVKernelStorageReplaceSensor(coordinator, entry))
     async_add_entities(entities)
 
@@ -298,7 +308,10 @@ async def _setup_mqtt_binary_sensors(
     # callables land in entry_data["unsub_mqtt"] so async_unload_entry
     # releases them — otherwise every reload leaks wildcard subscriptions
     # whose closures hold the previous entities_added/async_add_entities.
-    unsubs = hass.data[DOMAIN][entry.entry_id].setdefault("unsub_mqtt", [])
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    unsubs = runtime.unsub_mqtt
     for topic_suffix in [TOPIC_STATUS, TOPIC_CHAIN, TOPIC_HEALTH, TOPIC_TAMPER, TOPIC_TRANSPORT, TOPIC_MESH, TOPIC_CHIRP, TOPIC_EVENTS]:
         unsubs.append(
             await mqtt.async_subscribe(
@@ -313,8 +326,14 @@ async def _setup_mqtt_binary_sensors(
 # Kernel Binary Sensors (HTTP API-based)
 # =============================================================================
 
-class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor for kernel connectivity status."""
+class SecuraCVKernelOnlineSensor(SecuraCVKernelEntity, BinarySensorEntity):
+    """Binary sensor for kernel connectivity status.
+
+    On when the bridge's ``witness/status`` last-will says online OR the
+    HTTP backstop answers. This entity itself never goes unavailable: a
+    connectivity sensor that disappears when the thing it watches is down
+    tells nobody anything.
+    """
 
     # With has_entity_name, HA prefixes the device name ("SecuraCV Privacy
     # Witness Kernel"), so the entity name must not repeat the brand. Names
@@ -324,33 +343,23 @@ class SecuraCVKernelOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     # holds every key to a strings.json entry and pins the rendered names.
     _attr_translation_key = "kernel_online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:server-network"
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_kernel_online"
+        super().__init__(coordinator, entry, "kernel_online")
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for the kernel."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
-            manufacturer=MANUFACTURER,
-            model=MODEL_KERNEL,
-            name="SecuraCV Privacy Witness Kernel",
-            configuration_url=self._entry.data[CONF_URL],
-        )
+    def available(self) -> bool:
+        """Always: `off` is the information."""
+        return True
 
     @property
     def is_on(self) -> bool:
-        """Return True if the kernel is reachable."""
-        return self.coordinator.last_update_success
+        """Return True if the kernel is reachable (push LWT or HTTP backstop)."""
+        return bool(getattr(self.coordinator, "kernel_available", False))
 
 
-class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
+class SecuraCVKernelStorageReplaceSensor(SecuraCVKernelEntity, BinarySensorEntity):
     """Problem sensor: the kernel recommends replacing its SD card.
 
     Turns on when the storage health status reaches replacement_recommended
@@ -361,30 +370,21 @@ class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
 
     _attr_translation_key = "storage_replace"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:sd-alert"
-    _attr_has_entity_name = True
+    # A verdict about the kernel's own hardware, beside the four storage
+    # sensors it summarizes (the entity-category rule; quality_scale.yaml
+    # names the storage entities diagnostic — this one used to be the
+    # exception without a reason).
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         """Initialize."""
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_storage_replace"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info for the kernel."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.data[CONF_URL])},
-            manufacturer=MANUFACTURER,
-            model=MODEL_KERNEL,
-            name="SecuraCV Privacy Witness Kernel",
-            configuration_url=self._entry.data[CONF_URL],
-        )
+        super().__init__(coordinator, entry, "storage_replace")
 
     def _status(self) -> str | None:
-        if not self.coordinator.data:
+        data = self.coordinator.data
+        if not isinstance(data, dict):
             return None
-        return storage_status(self.coordinator.data.get("status"))
+        return storage_status(data.get("status"))
 
     @property
     def is_on(self) -> bool:
@@ -398,6 +398,121 @@ class SecuraCVKernelStorageReplaceSensor(CoordinatorEntity, BinarySensorEntity):
         if status is None:
             return None
         return {"storage_status": status}
+
+
+class SecuraCVKernelChainValidSensor(SecuraCVKernelEntity, BinarySensorEntity):
+    """The INTEGRATION's verdict on the kernel's sealed log.
+
+    `on` = the integration's last chain walk verified every served entry's
+    hash link and Ed25519 signature against the pinned key; `off` = the
+    last walk failed; unknown until the first walk AND while the kernel
+    serves a key other than the pin (a key change is Repairs
+    `tofu_mismatch`, never "verification failed": the walk cannot run
+    against the pin, so there is no verdict). The attributes the card, the
+    dashboard strategy and the digest blueprint read — `key_mismatch`,
+    `trust_reason`, `error`, `verifying`, `failed_seq`, `verified_seq` —
+    are the one vocabulary the event rows use. No device class on purpose:
+    the card wants `on` = intact. The kernel's own self-check is an
+    attribute (`kernel_reported_chain_ok`), never this state.
+    """
+
+    _attr_translation_key = "chain_valid"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "chain_valid")
+
+    def _state(self):
+        runtime = runtime_for(self._entry)
+        return runtime.verification if runtime is not None else None
+
+    @property
+    def is_on(self) -> bool | None:
+        """True iff the last walk succeeded against the pinned key; unknown
+        while the served key is not the pin (see `key_mismatch`)."""
+        state = self._state()
+        if state is None or state.key_mismatch:
+            return None
+        return state.ok
+
+    @property
+    def extra_state_attributes(self) -> dict[str, _Any]:
+        """What the walk established, and what the kernel says about itself."""
+        state = self._state()
+        return {
+            "verified_seq": state.verified_seq if state else None,
+            "verified_entries": state.verified_entries if state else 0,
+            "verified_bucket_start": state.verified_bucket_start if state else None,
+            "verified_bucket_size": state.verified_bucket_size if state else None,
+            "head_seq": state.head_seq if state else None,
+            "failed_seq": state.failed_seq if state else None,
+            "key_mismatch": state.key_mismatch if state else False,
+            "trust_reason": chain_trust_reason(state),
+            "verifying": state.verifying if state else False,
+            "last_trigger": state.last_trigger if state else None,
+            "kernel_reported_chain_ok": self.coordinator.kernel_reported_chain_ok,
+            "kernel_verified_bucket_start": (
+                self.coordinator.kernel_reported_verified_bucket_start
+            ),
+            "error": state.error if state else None,
+        }
+
+
+class SecuraCVKernelFrigateLinkSensor(SecuraCVKernelEntity, BinarySensorEntity):
+    """Diagnostic: is Frigate still talking to the bridge?
+
+    From the bridge's retained `witness/frigate_link`: `on` iff the bridge
+    says it is connected to the broker's Frigate topics AND Frigate was
+    heard within the last hour — so a quiet night ("no events") and a
+    Frigate that stopped publishing (MQTT disabled, wrong topic prefix,
+    a broker ACL) read differently.
+    """
+
+    _attr_translation_key = "frigate_link"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        super().__init__(coordinator, entry, "frigate_link")
+
+    def _link(self) -> dict[str, _Any] | None:
+        data = self.coordinator.data
+        link = data.get("frigate_link") if isinstance(data, dict) else None
+        return link if isinstance(link, dict) else None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Connected and heard within the hour; unknown until the bridge says."""
+        link = self._link()
+        if link is None:
+            return None
+        if link.get("connected") is not True:
+            return False
+        last = link.get("last_message_bucket_start")
+        if isinstance(last, bool) or not isinstance(last, int):
+            return False
+        size = link.get("last_message_bucket_size")
+        size_s = size if isinstance(size, int) and not isinstance(size, bool) else 600
+        return (last + size_s) >= (datetime.now(timezone.utc).timestamp() - FRIGATE_LINK_STALE_AFTER_SECONDS)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, _Any] | None:
+        """The bridge's payload, as published."""
+        link = self._link()
+        if link is None:
+            return None
+        return {
+            key: link.get(key)
+            for key in (
+                "connected",
+                "topic_prefix",
+                "last_message_bucket_start",
+                "last_message_bucket_size",
+                "messages_since_start",
+                "mode",
+            )
+        }
 
 
 # =============================================================================
@@ -426,28 +541,75 @@ class SecuraCVCanaryBinarySensorBase(BinarySensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"canary_{self._device_id}")},
-            manufacturer=MANUFACTURER,
-            model=MODEL_CANARY,
-            name=f"SecuraCV Canary {self._device_id}",
+        """The Canary device, linked to the kernel when the entry has one."""
+        return canary_device_info(self.hass, self._entry, self._device_id)
+
+    @property
+    def available(self) -> bool:
+        """Follow the device's own liveness (its status / last-will topics).
+
+        A Canary that has never said anything about its liveness is shown;
+        one whose last word was `offline` is unavailable until it is back.
+        """
+        runtime = runtime_for(self._entry)
+        if runtime is None:
+            return True
+        return runtime.devices.get(self._device_id, {}).get("online") is not False
+
+    async def async_added_to_hass(self) -> None:
+        """Re-render when the device's liveness moves (every subclass subscribes
+        to its own topics after calling this)."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                canary_status_signal(self._entry.entry_id, self._device_id),
+                self._async_liveness_changed,
+            )
         )
+
+    @callback
+    def _async_liveness_changed(self) -> None:
+        self.async_write_ha_state()
 
 
 class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for Canary device online/offline status."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:access-point-network"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
         super().__init__(prefix, device_id, entry, "online")
         self._attr_is_on = False
 
+    @property
+    def available(self) -> bool:
+        """Always: `off` is the information."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        """The device's liveness verdict.
+
+        The entry's status handler merges BOTH liveness topics — the JSON
+        ``status`` and the canary base's bare ``availability`` last will — into
+        one verdict every other entity's availability follows. This sensor
+        used to read only its own ``status`` subscription, so after the
+        last will said ``offline`` it kept saying ``on`` while the device's
+        other entities went unavailable. The merged verdict wins when it
+        exists; the status-derived word is the fallback until it does.
+        """
+        runtime = runtime_for(self._entry)
+        if runtime is not None:
+            online = runtime.devices.get(self._device_id, {}).get("online")
+            if isinstance(online, bool):
+                return online
+        return bool(self._attr_is_on)
+
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT status topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -486,7 +648,6 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
 class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for hash chain integrity."""
 
-    _attr_icon = "mdi:shield-check"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -499,6 +660,7 @@ class SecuraCVCanaryChainValidSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT chain topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -533,7 +695,6 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for general tamper detection (any tamper type)."""
 
     _attr_device_class = BinarySensorDeviceClass.TAMPER
-    _attr_icon = "mdi:shield-alert"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -542,6 +703,7 @@ class SecuraCVCanaryTamperSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT health and tamper topics; release on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -622,6 +784,7 @@ class SecuraCVCanaryTamperTypeSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT tamper and health topics; release on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -731,7 +894,6 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:sd-alert"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -740,6 +902,7 @@ class SecuraCVCanarySDReplaceSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT health topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -772,7 +935,6 @@ class SecuraCVCanaryEventIdSpaceLowSensor(SecuraCVCanaryBinarySensorBase):
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:counter"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -781,6 +943,7 @@ class SecuraCVCanaryEventIdSpaceLowSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT health topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -808,9 +971,17 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
 
     Shows which communication paths are alive. Canary uses ANY available
     transport to get witness data out - this shows path resilience.
+
+    Diagnostic, and disabled by default (the entity-disabled-by-default
+    rule): six connectivity sensors per Canary are plumbing most people
+    never look at, and the device page offers them to anyone who does. The
+    aggregate `online` sensor stays on; so do the per-type tamper sensors,
+    which are the automation targets (docs/blueprints/securacv_alerts.yaml).
     """
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
@@ -828,6 +999,7 @@ class SecuraCVCanaryTransportSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT transport topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -893,10 +1065,11 @@ class SecuraCVCanaryProjectedSensorBase(SecuraCVCanaryBinarySensorBase):
                  key: str) -> None:
         super().__init__(prefix, device_id, entry, key)
         self._attr_is_on = False
-        self._cancel_clear = None
+        self._cancel_clear: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the events topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -963,7 +1136,6 @@ class SecuraCVCanaryMotionSensor(SecuraCVCanaryProjectedSensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.MOTION
-    _attr_icon = "mdi:motion-sensor"
     _signal = "motion"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
@@ -981,7 +1153,6 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     """
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-    _attr_icon = "mdi:account-question"
     _signal = "occupancy"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
@@ -1021,7 +1192,6 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
     """Binary sensor for Opera mesh network connection status."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_icon = "mdi:lan-connect"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1030,6 +1200,7 @@ class SecuraCVCanaryMeshConnectedSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT mesh topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,
@@ -1078,7 +1249,6 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
     for community awareness without surveillance.
     """
 
-    _attr_icon = "mdi:bird"
 
     def __init__(self, prefix: str, device_id: str, entry: ConfigEntry) -> None:
         """Initialize."""
@@ -1087,6 +1257,7 @@ class SecuraCVCanaryChirpActiveSensor(SecuraCVCanaryBinarySensorBase):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to MQTT chirp topic; release the subscription on removal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             await mqtt.async_subscribe(
                 self.hass,

@@ -771,7 +771,6 @@ export function buildMqtt(data, bus) {
   const scroll = el("div", "wap-term-scroll vis-mqtt-scroll");
   wrap.append(bar, scroll);
 
-  const store = {};
   const rows = new Map();
 
   const row = (topic, payload, retain) => {

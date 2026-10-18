@@ -185,7 +185,7 @@ pub async fn flash<H: FlashHost>(
     let emit = |line: String| host.emit("flash:log", line);
 
     // 1) Resolve the official factory image for this exact product.
-    emit(format!("→ resolving verified release for {product_id}…"));
+    emit(format!("→ resolving the pinned release for {product_id}…"));
     let catalog: Value = serde_json::from_str(bundled.raw())
         .map_err(|e| format!("bundled catalog is corrupt: {e}"))?;
     // Exactly two manifests are ever resolved: the catalog's pinned stable
@@ -320,10 +320,20 @@ pub async fn flash<H: FlashHost>(
         entry.get("signature").and_then(Value::as_str),
         release_pubkey,
     )?;
-    emit(format!(
-        "✓ release verified: SHA-256 {}… ({release_verification})",
-        &release_sha[..16]
-    ));
+    // "Verified" is the Ed25519 signature's word alone (AGENTS.md rule 4):
+    // with no release key pinned only the SHA-256 was checked, and the line
+    // says exactly that.
+    emit(if release_verification == "ed25519+sha256" {
+        format!(
+            "✓ release verified: SHA-256 {}… ({release_verification})",
+            &release_sha[..16]
+        )
+    } else {
+        format!(
+            "✓ release checked: SHA-256 {}… ({release_verification} — no release key is pinned, so no signature was checked)",
+            &release_sha[..16]
+        )
+    });
 
     // Provision only after verifying the untouched release. The installed hash
     // records the exact per-device image we actually hand to espflash.
@@ -513,10 +523,12 @@ pub async fn flash<H: FlashHost>(
     // (`staged` removes the private image on scope exit.)
 
     if code == 0 {
+        // espflash read the write back and it matched: a confirmation of the
+        // write, not a signature check, so not "verified" (AGENTS.md rule 4).
         let message = if expects_serial_receipt {
-            "✓ chip write verified — reopening serial for the live boot receipt."
+            "✓ chip write confirmed — reopening serial for the live boot receipt."
         } else {
-            "✓ chip write verified — this firmware does not require a live receipt."
+            "✓ chip write confirmed — this firmware does not require a live receipt."
         };
         emit(message.into());
         Ok(FlashReceipt {
@@ -798,7 +810,7 @@ mod tests {
                 && l.ends_with("(ed25519+sha256)")));
         assert_eq!(
             log.last().map(String::as_str),
-            Some("✓ chip write verified — reopening serial for the live boot receipt.")
+            Some("✓ chip write confirmed — reopening serial for the live boot receipt.")
         );
         // The final progress event is the whole image against the release size.
         let events = host.events.lock().unwrap();
@@ -827,7 +839,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             host.log().last().map(String::as_str),
-            Some("✓ chip write verified — this firmware does not require a live receipt.")
+            Some("✓ chip write confirmed — this firmware does not require a live receipt.")
         );
     }
 

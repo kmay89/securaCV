@@ -19,6 +19,7 @@
     "rgbled",
     "backlight_pwm"
   ],
+  "figure": "device.canary-display-nightstand-c6",
   "cad": {
     "scad": "docs/hardware/enclosure/canary_c6_display.scad",
     "enclosure_sets": [

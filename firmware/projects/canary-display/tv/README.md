@@ -67,8 +67,12 @@ firmware/projects/canary-display/tv/index.html?demo=1
 then regenerate the header the firmware serves:
 
 ```
-python3 gen_tv_html.py     # writes ../arduino/canary_display/tv_html.h
+python3 gen_tv_html.py           # writes ../include/canary/net/tv_html.h
+python3 gen_tv_html.py --check   # what CI runs: fails if the header is stale
 ```
+
+then `./setup.sh regen` from the project root, which refreshes the Arduino
+sketch's copy at `arduino/canary_display/tv_html.h`.
 
 `tv_html.h` is generated; don't hand-edit it. The Canary serves it at `GET
 /tv` from `glass_web.cpp`, exactly as it serves the phone mirror at `/`.

@@ -55,7 +55,13 @@ struct FleetWiFiSheet: View {
                         .disabled(runner.running)
                 }
             }
-            .task { plan = FleetWiFiRollout.plan(store.wifiRolloutCandidates()) }
+            .task {
+                plan = FleetWiFiRollout.plan(store.wifiRolloutCandidates())
+                // The network's NAME is the one the fleet is probably on
+                // already; the password is the thing that changed, so it
+                // starts empty rather than prefilled with the old one.
+                if ssid.isEmpty, let remembered = HouseholdWiFiStore.load() { ssid = remembered.ssid }
+            }
             .interactiveDismissDisabled(runner.running)
         }
     }
@@ -106,8 +112,10 @@ struct FleetWiFiSheet: View {
                + "password can never strand the whole fleet. The password "
                + "goes only to your Canaries — over bonded Bluetooth, over a "
                + "secure connection when the Canary has a certificate, or "
-               + "over plain Wi-Fi only after you say so below; it is not "
-               + "stored on this iPhone.")
+               + "over plain Wi-Fi only after you say so below. If this "
+               + "iPhone remembers your Wi-Fi for new Canaries, that copy "
+               + "is updated once a Canary proves the new password; "
+               + "otherwise nothing is stored.")
         }
     }
 
@@ -145,6 +153,15 @@ struct FleetWiFiSheet: View {
         Task {
             await runner.run(plan: plan, ssid: trimmed, password: pass,
                              cleartextApproved: approved)
+            // Keep the remembered household Wi-Fi (the one every new
+            // Canary is prefilled with) true: replaced only if the person
+            // had opted into it, and only once a Canary came back on the
+            // new password — never from an unproven one.
+            let existing = HouseholdWiFiStore.load()
+            let anyMoved = runner.steps.values.contains(.moved)
+            if HouseholdWiFiStore.shouldReplace(existing: existing, anyMoved: anyMoved, ssid: trimmed) {
+                try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: trimmed, password: pass, savedAt: Date()))
+            }
             // The rollout may have moved devices across networks — let the
             // fleet fold catch up right away rather than at the next cycle.
             await store.refreshOnce()

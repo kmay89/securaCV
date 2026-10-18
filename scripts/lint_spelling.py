@@ -215,7 +215,10 @@ def main() -> int:
                 probe = re.sub(pat, lambda m: "\x00" * len(m.group(0)), probe)
             m = BANNED.search(probe)
             if m:
-                offenders.append(f"{f.relative_to(ROOT)}:{i}: {m.group(0)}")
+                # A file outside this repo (the HACS mirror's README, as both
+                # mirror briefs document) is named as given, not a traceback.
+                where = f.relative_to(ROOT) if f.is_relative_to(ROOT) else f
+                offenders.append(f"{where}:{i}: {m.group(0)}")
     # The guard on the guard: if BANNED ever starts matching a word that is
     # correct English, say so here rather than in a corrupted commit.
     self_harm = [w for w in ALLOW if BANNED.search(w)]

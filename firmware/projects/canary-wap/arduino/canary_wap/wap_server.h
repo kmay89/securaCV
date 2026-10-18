@@ -94,7 +94,10 @@ struct RateLimitEntry {
 // ════════════════════════════════════════════════════════════════════════════
 
 /*
- * REST API Endpoints:
+ * REST API Endpoints (a selection, not the whole table; every route listed
+ * is registered: firmware/tests_host/test_dashboard_route_match.test.js
+ * routes each line through ESP-IDF's matcher and fails on a 404 or 405,
+ * since eight listed routes once had no registration, sweep F237):
  *
  * ── Public (no auth required) ──
  * GET  /                         - Dashboard UI (HTML)
@@ -105,28 +108,19 @@ struct RateLimitEntry {
  *
  * ── Authenticated (Bearer token required) ──
  * GET  /api/status          - Device status JSON
- * GET  /api/health          - System health metrics + auth stats
  * GET  /api/pairing-qr      - SVG QR of the pairing receipt (carries the API token)
- * GET  /api/identity        - Device identity (public key, fingerprint)
  * GET  /api/chain           - Chain state (head hash, sequence)
  *
  * GET  /api/witness         - List witness records (paginated)
  * GET  /api/v1/witness      - The shared witness-page contract (spec/witness_api_v1.md):
  *                             newest N signed records with their chain-hash pre-image,
  *                             from the RAM ring (witness_page.h); ?last=N, 1..100
- * GET  /api/witness/:seq    - Get specific witness record
- * GET  /api/witness/stats   - Witness statistics
  *
  * GET  /api/logs            - List health logs (paginated, filterable)
- * GET  /api/logs/unacked    - List unacknowledged logs
  * POST /api/logs/:seq/ack   - Acknowledge a log entry
  * POST /api/logs/ack-all    - Acknowledge all logs up to level
  *
- * GET  /api/gps             - Current GPS status
- * GET  /api/time            - Time synchronization status
- *
  * POST /api/export          - Create export bundle
- * GET  /api/export/download - Download export bundle
  *
  * GET  /api/config          - Get current configuration
  * POST /api/config          - Update configuration

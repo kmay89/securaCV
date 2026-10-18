@@ -285,7 +285,13 @@ fn handle_conn<O: BreakGlassOps>(
             return write_json(&mut stream, 401, r#"{"error":"missing_token"}"#);
         }
     };
-    if token_mgr.validate(&token, now_bucket).is_err() {
+    // The manager's rotation grace (`CAPABILITY_TOKEN_GRACE_SECS`) applies
+    // here too: one validate signature, one policy.
+    let now_epoch_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if token_mgr.validate(&token, now_bucket, now_epoch_s).is_err() {
         lockout.fail(peer.ip());
         return write_json(&mut stream, 401, r#"{"error":"invalid_token"}"#);
     }

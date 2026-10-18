@@ -7,7 +7,10 @@ file (so it lints, screenshots, and opens straight in a browser), so we
 generate its header instead of hand-copying — no drift between the file you
 edit and the bytes the device ships.
 
-    python3 gen_tv_html.py         # regenerate ../arduino/canary_display/tv_html.h
+    python3 gen_tv_html.py           # regenerate ../include/canary/net/tv_html.h
+    python3 gen_tv_html.py --check   # exit 1 if the committed header is stale (CI)
+
+`./setup.sh regen` then refreshes the Arduino sketch's copy of the header.
 
 The chosen raw-string delimiter must never appear in the page; we assert it.
 """
@@ -23,7 +26,8 @@ OUT = HERE.parent / "include" / "canary" / "net" / "tv_html.h"
 DELIM = "TVGLASS"  # yields the sentinel )TVGLASS"
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    check = "--check" in argv
     html = SRC.read_text(encoding="utf-8")
     sentinel = f"){DELIM}\""
     if sentinel in html:
@@ -39,10 +43,22 @@ def main() -> int:
         "#include <pgmspace.h>\n\n"
         f'static const char TV_HTML[] PROGMEM = R"{DELIM}(' + html + f'){DELIM}";\n'
     )
+    if check:
+        current = OUT.read_text(encoding="utf-8") if OUT.exists() else None
+        if current != header:
+            print(
+                f"error: {OUT.relative_to(HERE.parent)} is stale against tv/index.html — run "
+                "python3 firmware/projects/canary-display/tv/gen_tv_html.py, then ./setup.sh regen, "
+                "and commit both",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{OUT.name} matches tv/index.html")
+        return 0
     OUT.write_text(header, encoding="utf-8")
     print(f"wrote {OUT} ({len(header)} bytes from {len(html)} bytes of HTML)")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

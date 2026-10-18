@@ -177,6 +177,16 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
 
+# The hub hand-off (common/network/hub_handoff.h): the JSON a phone writes to
+# the companion service's HUB characteristic right after the Improv join — the
+# broker it found over Bonjour and the login it minted — read strictly (exactly
+# five keys, each once; a DNS name or IPv4 literal; a plain integer port; user
+# and pass together, 64 bytes each; the three escapes a password can need and
+# no other; 240 bytes at most), every refusal wiping the record, and the one
+# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's.
+HUBHO_HDR = ../common/network/hub_handoff.h
+HUBHO_BIN = $(BUILD_DIR)/test_hub_handoff
+
 # The BOOT short tap (common/io/short_tap.h) that opens the setup door for a
 # minute on a device that already has an owner: debounce, one report per
 # release, a hold past the bound is somebody else's gesture, wrap-safe.
@@ -648,7 +658,12 @@ VISFSM_GRACE_BIN = $(BUILD_DIR)/test_vision_presence_fsm_grace
 EMU_DIR    = ../../canary-local/emulator
 VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
-VISCORE_HDR = $(VISFSM_HDR) $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
+# Every header vision_core_bindings.cpp includes is a prerequisite, the
+# detection pipeline among them (sweep F249): without it an incremental make
+# after a pipeline edit rebuilt test_vision_detection_pipeline and reused a
+# stale test_vision_core_bindings. CI builds fresh, so only local runs lied.
+VISCORE_HDR = $(VISFSM_HDR) $(VISION_PIPE_HDR) $(VISION_INC)/canary/version.h \
+              $(VISION_CFG)/config.h $(wildcard $(EMU_DIR)/shim/*.h) \
               stubs/emscripten/emscripten.h
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
@@ -830,6 +845,9 @@ $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
 
+$(HUBHO_BIN): test_hub_handoff.cpp $(HUBHO_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_hub_handoff.cpp
+
 $(SHORTTAP_BIN): test_short_tap.cpp $(SHORTTAP_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_short_tap.cpp
 
@@ -937,6 +955,23 @@ $(DAILY_BIN): test_csi_daily_summary.cpp $(DAILY_INC) $(MODINT_SRC) $(MODINT_HDR
 run-daily-summary: $(DAILY_BIN)
 	./$(DAILY_BIN)
 run: run-daily-summary
+
+# Compile-only checks for sources no firmware build compiles, so they cannot
+# rot unseen (audit, 2026-10-09; firmware/scripts/
+# check_common_build_reachability.py waives the header on this basis):
+#   - common/chirp/chirp_channel.h, the ratified C-ABI Chirp API the ACTIVE
+#     tree's port will implement, as C and as C++ (`-include` of /dev/null,
+#     so `#pragma once` is not in the main file);
+#   - examples/modules/stub_door_opens.cpp, the template a third-party CSI
+#     module starts from, against the CSI library's host stubs.
+# Nothing to run: each passes by compiling under -Werror.
+.PHONY: run-syntax-checks
+run-syntax-checks:
+	$(CXX) $(CXXFLAGS) -fsyntax-only -x c++ -include ../common/chirp/chirp_channel.h /dev/null
+	$(CC) -std=c11 -Wall -Wextra -Werror -fsyntax-only -x c -include ../common/chirp/chirp_channel.h /dev/null
+	$(CXX) $(CXXFLAGS) -fsyntax-only -DCSI_TEST_HOST_BUILD -I ../common/csi/src -I ../common/csi/host_stubs \
+	    ../examples/modules/stub_door_opens.cpp
+run: run-syntax-checks
 
 $(PORTAL_BIN): test_setup_portal_logic.cpp $(PORTAL_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_setup_portal_logic.cpp -o $@
@@ -1061,7 +1096,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1079,6 +1114,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(WIFIJOIN_BIN)
 	./$(PROVGATE_BIN)
 	./$(IMPROV_BIN)
+	./$(HUBHO_BIN)
 	./$(CLAIM_BIN)
 	./$(SHORTTAP_BIN)
 	./$(TLSPOL_BIN)

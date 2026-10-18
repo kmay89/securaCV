@@ -19,8 +19,12 @@ envs/
 
 | Environment | Board | Config | Description |
 |-------------|-------|--------|-------------|
-| `canary-wap-default` | xiao-esp32s3-sense | default | Full-featured WAP |
-| `canary-wap-mobile` | xiao-esp32s3-sense | mobile | Power-optimized |
+| `canary-wap-default` | xiao-esp32s3-sense | `BUILD_PROFILE_FULL` | Full-featured WAP |
+| `canary-wap-mobile` | xiao-esp32s3-sense | `BUILD_PROFILE_DEV` | The lighter DEV profile: no camera, mesh or Opera discovery (no power tuning of its own) |
+
+The WAP's Config column is a build profile, not a `configs/` directory: the
+sketch reads its flags from `projects/canary-wap/arduino/canary_wap/build_config.h`,
+and `configs/canary-wap/` is on no include path (only the Lab's tooling reads it).
 
 ### Canary Vision
 

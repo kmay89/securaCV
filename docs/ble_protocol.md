@@ -37,8 +37,9 @@ All BLE functionality is gated behind the `FEATURE_BLE` compile flag. When disab
 | `00467768-6228-2272-4663-277478268004` | Characteristic | Improv RPC result (READ, NOTIFY; **encrypted link required**) |
 | `00467768-6228-2272-4663-277478268005` | Characteristic | Improv capabilities (READ; plain) |
 | `0x4677` | 16-bit service data | Improv's advert service data: `[state][capabilities][0 0 0 0]`, 6 bytes, in the scan response while the door is open |
-| `8fc1cf00-b162-4401-9607-c8ac21383e90` | Service | SecuraCV companion service (WAP only; outside the Improv service on purpose) |
-| `8fc1cf01-b162-4401-9607-c8ac21383e90` | Characteristic | CLAIM (READ; encrypted link required): the claim ticket, readable once by the link that provisioned, within 180 s of the join |
+| `8fc1cf00-b162-4401-9607-c8ac21383e90` | Service | SecuraCV companion service (outside the Improv service on purpose; the WAP registers CLAIM on it, Sense and Vision register HUB) |
+| `8fc1cf01-b162-4401-9607-c8ac21383e90` | Characteristic | CLAIM (READ; encrypted link required; WAP): the claim ticket, readable once by the link that provisioned, within 180 s of the join |
+| `8fc1cf02-b162-4401-9607-c8ac21383e90` | Characteristic | HUB (WRITE, READ; encrypted link required; Sense, Vision): the hub hand-off — the phone that gave the device its Wi-Fi writes the broker it found and the login it minted as JSON (`host`, `port`, `user`, `pass`, `tls`; ≤ 240 bytes), accepted only while the Improv session is Provisioned or Provisioning; a read answers one status byte (0 none, 1 stored, 2 rejected, 3 login refused), never the document — [magic_pairing.md §3.6](design/magic_pairing.md#36-the-hub-hand-off-sense-vision) |
 
 ## 4. Opera — BLE Advertising & GATT Service
 
@@ -265,4 +266,4 @@ While a door is open, nRF Connect / LightBlue see the `<Family>-XXXX` name and, 
 
 ### 13.7 Where
 
-`firmware/common/network/improv_core.h` (pure; `tests_host/test_improv_core.cpp`), `improv_ble.{h,cpp}` (NimBLE glue, both majors), `common/network/claim_ticket.h` (`test_claim_ticket.cpp`), `common/io/short_tap.h` (`test_short_tap.cpp`), `common/network/provisioning_gate.h` (`test_provisioning_gate.cpp`), the WAP's `ble_improv.h` and `build_config.h` (`FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE`, the FULL profile), the Sense's and Vision's `include/canary/config.h` (`FEATURE_IMPROV`). The flagship `firmware/canary` build is a follow-up; the displays keep their glass QR.
+`firmware/common/network/improv_core.h` (pure; `tests_host/test_improv_core.cpp`), `improv_ble.{h,cpp}` (NimBLE glue, both majors; the companion service's HUB on Sense and Vision), `common/network/hub_handoff.h` (the hub hand-off's document and status byte, pure; `test_hub_handoff.cpp`), `common/network/claim_ticket.h` (`test_claim_ticket.cpp`), `common/io/short_tap.h` (`test_short_tap.cpp`), `common/network/provisioning_gate.h` (`test_provisioning_gate.cpp`), the WAP's `ble_improv.h` and `build_config.h` (`FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE`, the FULL profile), the Sense's and Vision's `include/canary/config.h` (`FEATURE_IMPROV`). The flagship `firmware/canary` build is a follow-up (sweep [F251](audit/repo_todo_sweep_2026-09.md)); the displays keep their glass QR.

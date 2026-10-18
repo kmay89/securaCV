@@ -1,5 +1,8 @@
 menu "SecuraCV OTA Configuration"
 
+    comment "This teaching harness reads the platformio.ini -D flags and SECURACV_OTA_CONFIG_DEFAULT, not these options"
+    comment "Nothing reads a CONFIG_SECURACV_OTA_* symbol; setting one here changes no build"
+
     config SECURACV_OTA_MANIFEST_URL
         string "Firmware manifest URL"
         default "https://operacanary.com/api/v1/firmware/manifest.json"
@@ -72,8 +75,9 @@ menu "SecuraCV OTA Configuration"
         bool "Enable firmware signature verification"
         default n
         help
-            If enabled, downloaded firmware must have a valid Ed25519
-            signature. The public key is embedded in the firmware.
-            This is a Phase 3 feature - not yet implemented.
+            Not implemented in this teaching harness, which checks
+            SHA-256 only. Ed25519 release-signature verification
+            lives in the shared engine, firmware/common/ota, that every
+            released firmware uses: see docs/firmware_ota.md.
 
 endmenu

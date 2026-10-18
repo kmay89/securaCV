@@ -132,9 +132,11 @@ speak HKSV. We read all of it. The technical shape, for the record:
   (SDP offer/answer and ICE over HAP characteristics, ≥6 concurrent
   sessions, optional SFrame end-to-end media encryption), with a multi-tier
   RTP path (≥5 sessions) retained.
-- Recording is **CMAF ingest** to a publishing point on the home hub, with a
-  CSR/client-certificate provisioning flow, driven by buffer
-  upload/activity/event commands over HAP.
+- Recording is **CMAF ingest** to a publishing point the controller provisions
+  (a URL plus server CA certificates written to the camera; the guide never
+  says where it is hosted, and implementers report an Apple endpoint rather
+  than the home hub), with a CSR/client-certificate provisioning flow, driven
+  by buffer upload/activity/event commands over HAP.
 - **Three simultaneous encodings per sensor** minimum (1080p cameras:
   1080p30 + 720p30 + 360p15), **HEVC mandatory**, **Opus mandatory**
   (16 kHz capture minimum).

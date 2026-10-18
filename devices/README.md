@@ -163,10 +163,10 @@ import them — `lint_build_matrix.py` applies the matrix's side of the join
   does not build (none today: the flagship's `release_ha` is in
   `build_envs`, so the shipped image and its OTA-slot guard run on every
   PR). Envs no `flavors.json` list builds are not listed: the debug envs
-  (`*-debug`), the WAP's `mobile`, the canary's `minimal`, `standalone`,
-  `dev_ha` and `usb-onboard`, its compile-only `secure` / `secure_ha` (a
-  `firmware.yml` step, not a flavor env) and the Sentinel's window /
-  hallway / demo-head presets (door's image with other preset data).
+  (`*-debug`), the WAP's `mobile`, the canary's `minimal`, `dev_ha` and
+  `usb-onboard` and its `secure` / `secure_ha` (each compiled by a
+  compile-only `firmware.yml` step, not a flavor env) and the Sentinel's
+  window / hallway / demo-head presets (door's image with other preset data).
 - **`peripherals` come from the registry's pins header**, even for the
   `canary` and `canary-wap` trees, whose builds carry their pins in build
   flags and the sketch rather than compiling `boards/<id>/pins/pins.h`. The

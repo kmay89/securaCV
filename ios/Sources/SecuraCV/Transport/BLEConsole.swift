@@ -23,11 +23,28 @@
 // code on the manufacturer payload is strictly more reliable and is the only
 // way to hear the boards that run no GATT console at all.
 //
-// FOREGROUND-ONLY, BY DESIGN: an unfiltered scan with duplicates enabled does
-// not run in the background, and iOS withholds manufacturer data from
-// background scans. FleetStore stops the scan when the scene deactivates, so
-// this is the live-fleet view's transport, not a background delivery path —
-// that remains APNs through the notification service extension.
+// NO MANAGER UNTIL ASKED: creating a CBCentralManager is what makes iOS show
+// its Bluetooth permission alert, so this object creates none at init — the
+// first scan (after the discovery consent, FleetStore) or the first setup
+// tap does. A manager built at launch put the system alert in front of the
+// consent card that explains it, and a "Don't Allow" given with no context
+// left the new-Canary card unable to ever appear. (The watch's WristFinder
+// learned the same lesson first.)
+//
+// TWO SCANS, ONE AT A TIME. The presence scan above is FOREGROUND-ONLY, BY
+// DESIGN: an unfiltered scan with duplicates enabled does not run in the
+// background, and iOS withholds manufacturer data from background scans.
+// FleetStore stops it when the scene deactivates, so it is the live-fleet
+// view's transport, not a background delivery path — that remains APNs
+// through the notification service extension. What DOES run in the
+// background is the narrower DOOR SCAN (startBackgroundDoorScan): filtered
+// on the Improv Wi-Fi service a brand-new Canary advertises, duplicates off
+// — the one shape iOS keeps running under the bluetooth-central background
+// mode — so a Canary powered on while the phone is in a pocket is still
+// heard, and FleetStore can post the one notification that says so. It
+// hears doors only, never the fleet's status, and it is slower: iOS reports
+// a background discovery on its own schedule, once per peripheral. One
+// central runs one scan, so starting either replaces the other.
 
 import Foundation
 import CoreBluetooth
@@ -53,10 +70,6 @@ final class BLEConsole: NSObject, ObservableObject {
     static let provisionServiceUUID = CBUUID(string: "8fc1cef0-b162-4401-9607-c8ac21383e90")
     static let provisionCredsUUID   = CBUUID(string: "8fc1cef3-b162-4401-9607-c8ac21383e90")
     static let provisionStateUUID   = CBUUID(string: "8fc1cef4-b162-4401-9607-c8ac21383e90")
-    /// The `canary` firmware family's status service (securacv_ble_status.h).
-    /// Known so its adverts are recognized as ours; its characteristics are not
-    /// read yet — the beacon already carries this family's state.
-    static let statusServiceUUID  = CBUUID(string: "5e63a1b0-7c3d-4f2e-8a91-0d1b2c3e4f5a")
     /// The Improv Wi-Fi setup door every Sense, Vision and WAP opens while
     /// it has no Wi-Fi of its own (firmware/common/network/improv_ble): the
     /// 128-bit service in the scan response, and its 0x4677 service data
@@ -81,9 +94,19 @@ final class BLEConsole: NSObject, ObservableObject {
     /// and its service data. Kept short; the policy applies its own window.
     @Published private(set) var heard: [UUID: NearbyCanaries.Heard] = [:]
     @Published private(set) var poweredOn = false
+    /// The foreground presence scan is running.
     @Published private(set) var scanning = false
+    /// The background door scan is running (see the header).
+    @Published private(set) var doorScanning = false
+    /// The radio as the setup screens need it (Model/AddCanaryFlow.swift):
+    /// off, not allowed, or able to hear — so no screen spins "Listening…"
+    /// over a radio that cannot. Read from the class-level authorization
+    /// before any manager exists (that read never prompts), then from the
+    /// manager's own state reports.
+    @Published private(set) var radio: RadioStanding = BLEConsole.standing(authorization: CBCentralManager.authorization)
 
-    private var central: CBCentralManager!
+    /// Nil until something needs the radio — see "NO MANAGER UNTIL ASKED".
+    private var central: CBCentralManager?
     private var peripherals: [UUID: CBPeripheral] = [:]
     /// Every peripheral seen recently, held so one can be connected on
     /// demand for setup (CoreBluetooth needs a strong reference to connect).
@@ -99,10 +122,51 @@ final class BLEConsole: NSObject, ObservableObject {
     /// pick the scan up; keying that off `scanning` instead would deadlock,
     /// because `scanning` can only become true once the radio is already on.
     private var wantsScan = false
+    /// The same intent for the door scan: the scene may deactivate before
+    /// the radio has reported, and the state callback picks it up.
+    private var wantsDoorScan = false
+
+    /// A door heard while the door scan (not the presence scan) was the one
+    /// running — the moment FleetStore decides whether to tell the person.
+    /// Fired per discovery callback; the store keeps its own once-per-suffix.
+    var onBackgroundDoorSighting: ((NearbyCanaries.Heard) -> Void)?
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    /// Whether the central manager (and so the system's Bluetooth prompt)
+    /// exists yet. False from launch until a scan or a setup asks — the
+    /// guard AddCanaryFlowTests holds.
+    var hasManager: Bool { central != nil }
+
+    /// The one place a manager is born: on the first real need.
+    @discardableResult
+    private func ensureCentral() -> CBCentralManager {
+        if let central { return central }
+        let made = CBCentralManager(delegate: self, queue: .main)
+        central = made
+        return made
+    }
+
+    /// CBManagerAuthorization → the setup screens' standing, for the time
+    /// before a manager has reported a state.
+    nonisolated static func standing(authorization: CBManagerAuthorization) -> RadioStanding {
+        switch authorization {
+        case .denied, .restricted: return .denied
+        default: return .unknown
+        }
+    }
+
+    /// A manager's reported state → the setup screens' standing.
+    nonisolated static func standing(state: CBManagerState) -> RadioStanding {
+        switch state {
+        case .poweredOn: return .ready
+        case .poweredOff: return .off
+        case .unauthorized: return .denied
+        case .unsupported: return .unsupported
+        default: return .unknown          // .unknown, .resetting: a report is coming
+        }
     }
 
     /// Beacons heard recently enough to still mean something.
@@ -124,8 +188,10 @@ final class BLEConsole: NSObject, ObservableObject {
 
     func startScan() {
         wantsScan = true
+        let central = ensureCentral()     // the first call is the prompt's moment
         guard poweredOn else { return }   // resumed by centralManagerDidUpdateState
         scanning = true
+        doorScanning = false              // one central, one scan: this one replaces the door scan
         // Unfiltered: the beacon lives in manufacturer data, which no service
         // filter can select for. Duplicates ON so a status change (tamper!)
         // arrives on the next advert instead of only on first sight — the whole
@@ -137,7 +203,32 @@ final class BLEConsole: NSObject, ObservableObject {
     func stopScan() {
         wantsScan = false
         scanning = false
-        central.stopScan()
+        // No manager yet means nothing was ever scanning — and stopping
+        // must never be the thing that creates one (and its prompt).
+        if let central, central.state == .poweredOn { central.stopScan() }
+    }
+
+    /// The background door scan: the Improv Wi-Fi service only, duplicates
+    /// off. Started by FleetStore when the scene deactivates with discovery
+    /// consent on; it never builds the manager (consent already did, with
+    /// the presence scan — a background scan must never be the prompt's
+    /// moment), and it yields to the presence scan the moment that starts.
+    func startBackgroundDoorScan() {
+        wantsDoorScan = true
+        guard let central, poweredOn else { return }   // resumed by centralManagerDidUpdateState
+        guard !scanning else { return }                // the presence scan already hears everything
+        doorScanning = true
+        central.scanForPeripherals(withServices: [Self.improvServiceUUID],
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    }
+
+    /// Stop the door scan (the scene is active again). Leaves the radio
+    /// alone when the presence scan has already taken it over.
+    func stopBackgroundDoorScan() {
+        wantsDoorScan = false
+        guard doorScanning else { return }
+        doorScanning = false
+        if !scanning, let central, central.state == .poweredOn { central.stopScan() }
     }
 
     /// Drop sightings we haven't heard in a while so the fleet view can't show
@@ -167,7 +258,7 @@ final class BLEConsole: NSObject, ObservableObject {
         if peripheral.state == .connected {
             client.centralDidConnect()
         } else {
-            central.connect(peripheral)
+            ensureCentral().connect(peripheral)
         }
         return client
     }
@@ -177,7 +268,7 @@ final class BLEConsole: NSObject, ObservableObject {
         guard let client = setupClient else { return }
         setupClient = nil
         if let peripheral = seenPeripherals[client.peripheralID], peripheral.state != .disconnected {
-            central.cancelPeripheralConnection(peripheral)
+            central?.cancelPeripheralConnection(peripheral)
         }
     }
 
@@ -280,10 +371,16 @@ enum BLEProvisionOutcome: Hashable, Sendable {
 extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         poweredOn = central.state == .poweredOn
+        radio = Self.standing(state: central.state)
         if poweredOn {
-            if wantsScan { startScan() }        // the radio caught up with us
+            if wantsScan {
+                startScan()                     // the radio caught up with us
+            } else if wantsDoorScan {
+                startBackgroundDoorScan()       // same, for the background shape
+            }
         } else {
             scanning = false                    // powered off: we are not scanning
+            doorScanning = false
         }
     }
 
@@ -348,6 +445,10 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
         h.lastHeard = Date()
         heard[peripheral.identifier] = h
         seenPeripherals[peripheral.identifier] = peripheral
+        // Heard by the door scan, with the app in the background: hand the
+        // sighting to the store, which decides whether it is a new Canary
+        // and whether the person may be told (NearbyCanaries.backgroundNotice).
+        if doorScanning { onBackgroundDoorSighting?(h) }
 
         // ── Layer 2: connect ONLY to a WAP-class console ──
         // Everything else is heard, never dialed: connecting to arbitrary

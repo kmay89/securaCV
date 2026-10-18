@@ -1,0 +1,16 @@
+{
+  "$comment": "Contract C3 as amended: the retained claim the integration publishes and the bridge honors for 24 h (one bucket of future skew), and the retained claim_state word the bridge answers with.",
+  "topic": "witness/claim/pwk_1a2b3c4d",
+  "nonce": "0123456789abcdef",
+  "claimed_bucket_start": 1760140800,
+  "payload": "{\"v\":1,\"claimed\":true,\"nonce\":\"0123456789abcdef\",\"claimed_bucket_start\":1760140800}",
+  "withdrawal": "",
+  "fresh_for_secs": 86400,
+  "future_skew_secs": 600,
+  "republish_interval_secs": 3600,
+  "claim_state_topic": "witness/claim_state",
+  "claim_state_values": [
+    "claimed",
+    "unclaimed"
+  ]
+}

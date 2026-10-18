@@ -1723,6 +1723,22 @@ test("every firmware whose runtime_config reads a broker is tagged broker_nvs", 
   for (const p of catalog.products) {
     const proj = FAMILY_PROJECT[p.family];
     assert.ok(proj, `${p.id}: unmapped family "${p.family}" — add it above`);
+    // The flagship tree has no runtime_config.h (this used to try to read one
+    // and pass on the failed read). Its broker reader is securacv_mqtt.cpp,
+    // and it reads a different NVS shape from the one either flasher writes:
+    // mqtt_host as a blob (getBytes) and the port as a u32 (getUInt), where
+    // both builders write a string and a u16 — so a seed from here would read
+    // as empty, and broker_nvs is honestly false. Pin the reason, so a reader
+    // that moves to the seed's shape fails here and the capability is revisited.
+    if (p.family === "canary") {
+      const mqtt = read(join(ROOT, proj, "lib/securacv_mqtt/src/securacv_mqtt.cpp"));
+      assert.match(mqtt, /nvs\.getBytes\(NVS_KEY_MQTT_HOST, /,
+        "the flagship's broker reader no longer reads mqtt_host as a blob — if it now reads the flasher's string " +
+        "entry, teach gen_flash.py reads_broker() this file and let broker_nvs follow");
+      assert.match(mqtt, /nvs\.getUInt\(NVS_KEY_MQTT_PORT, /, "the flagship's broker reader no longer reads the port as a u32");
+      assert.equal(p.broker_nvs, false, `${p.id}: the flagship cannot read the flashers' broker seed, so broker_nvs must be false`);
+      continue;
+    }
     const rc = join(ROOT, proj, "include/canary/runtime_config.h");
     let reads = false;
     try {
@@ -2092,21 +2108,47 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
   assert.match(mgr, /built plain-only \(OTA slot budget, CANARY_MQTT_PLAIN_ONLY\)/,
     "the firmware's own reason text moved — both flashers quote it");
 
+  // The pinned-train gate (gen_flash.py CAPABILITY_TRAINS): the catalog
+  // describes the fw-v<fw_train> images, and a build that honors TLS in the
+  // working tree still offers it only once the pinned train carries it —
+  // until then broker_tls is false and broker_tls_from names the train it
+  // arrives with (a 2.4.15 image has no transport and would connect plain).
+  const trainBefore = (a, b) => {
+    const x = a.split(".").map(Number), y = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      const d = (x[i] || 0) - (y[i] || 0);
+      if (d) return d < 0;
+    }
+    return false;
+  };
+  const froms = new Set();
   for (const p of catalog.products) {
     assert.strictEqual(typeof p.broker_tls, "boolean",
       `${p.id}: catalog has no broker_tls — regenerate with canary-local/tools/gen_flash.py`);
     if (p.broker_nvs !== true) {
       assert.strictEqual(p.broker_tls, false, `${p.id}: no broker in NVS, so no TLS mode to honor`);
+      assert.strictEqual(p.broker_tls_from, undefined, `${p.id}: no broker in NVS, so no train to wait for`);
       continue;
     }
     // Envs are named by their asset stem (every product today); a flavor
     // that gains the flag under another naming shows up as a loud mismatch
     // here, which is the point.
-    const expect = !plainOnlyEnvs.has(p.asset_stem);
+    const builds = !plainOnlyEnvs.has(p.asset_stem);
+    if (p.broker_tls_from !== undefined) {
+      assert.ok(builds, `${p.id}: broker_tls_from names a train for a plain-only build, which never honors TLS`);
+      assert.match(p.broker_tls_from, /^\d+(?:\.\d+)*$/, `${p.id}: broker_tls_from is not a train`);
+      assert.ok(trainBefore(catalog.fw_train, p.broker_tls_from),
+        `${p.id}: broker_tls_from ${p.broker_tls_from} is not after the pinned train ${catalog.fw_train} — ` +
+        "the pinned images carry TLS, so it must be offered");
+      froms.add(p.broker_tls_from);
+    }
+    const expect = builds && p.broker_tls_from === undefined;
     assert.strictEqual(p.broker_tls, expect,
-      `${p.id}: catalog says broker_tls=${p.broker_tls} but its env ${expect ? "does not set" : "sets"} ` +
-      `-DCANARY_MQTT_PLAIN_ONLY. Regenerate with gen_flash.py — never hand-edit devices/flash.json.`);
+      `${p.id}: catalog says broker_tls=${p.broker_tls} but its env ${builds ? "does not set" : "sets"} ` +
+      `-DCANARY_MQTT_PLAIN_ONLY${p.broker_tls_from ? ` and the pinned train predates ${p.broker_tls_from}` : ""}. ` +
+      "Regenerate with gen_flash.py — never hand-edit devices/flash.json.");
   }
+  assert.ok(froms.size <= 1, `one capability, one first train — the catalog names ${[...froms].join(", ")}`);
   const c6 = catalog.products.find((p) => p.id === "securacv-canary-display-nightstand-c6");
   assert.ok(c6 && c6.broker_nvs === true && c6.broker_tls === false,
     "the nightstand-c6 reads a broker but honors no TLS mode — the case the flag exists for");
@@ -2124,6 +2166,16 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
   assert.match(appJs, /o\.disabled = !tlsOk/, "desktop must disable the TLS options where the build refuses them");
   assert.match(appJs, /const tlsMode = broker && product\.broker_tls === true/,
     "desktop readProvisioning must report plain where the build refuses TLS");
+  // The two reasons Plain can be all there is get two different notes — the
+  // plain-only build's reason would be false for an image that predates TLS
+  // (it would connect plain, not refuse) — in the same words on both.
+  const trainNote = (src) => /const mqttTlsTrainNote = \(from\) =>\n([\s\S]*?);\n/.exec(src);
+  assert.ok(trainNote(flashJs) && trainNote(appJs), "both flashers need the not-yet-released note (mqttTlsTrainNote)");
+  assert.strictEqual(trainNote(appJs)[1], trainNote(flashJs)[1], "the not-yet-released note must read the same in both flashers");
+  assert.match(flashJs, /product\.broker_tls_from \? mqttTlsTrainNote\(product\.broker_tls_from\) : MQTT_TLS_PLAIN_ONLY_NOTE/,
+    "browser must pick the note by the catalog's reason");
+  assert.match(appJs, /product && product\.broker_tls_from \? mqttTlsTrainNote\(product\.broker_tls_from\) : MQTT_TLS_PLAIN_ONLY_NOTE/,
+    "desktop must pick the note by the catalog's reason");
   for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
     assert.ok(src.includes("built plain-only") && src.includes("CANARY_MQTT_PLAIN_ONLY"),
       `${label} must give the firmware's own reason for the disabled TLS modes`);
@@ -2133,6 +2185,28 @@ test("broker TLS: the catalog's broker_tls is the firmware's own build fact, and
       assert.match(line, /^\s*\/\//,
         `${label}: gate on the catalog flag, never a hand-kept product id (${line.trim()})`);
     }
+  }
+});
+
+test("broker TLS: where the pinned release is tagged in this clone, it carries the transport the catalog offers", (t) => {
+  // The bug the pinned-train gate exists for, read from the release itself:
+  // broker_tls was derived from the working tree while fw-v2.4.15 had no
+  // TLS transport at all. A shallow CI checkout has no tags, so this skips
+  // there (gen_flash.py's CAPABILITY_TRAINS row stands, and the catalog
+  // drift gate pins what it produced); a developer clone checks the tag.
+  const tag = `fw-v${catalog.fw_train}`;
+  const tagged = spawnSync("git", ["-C", ROOT, "rev-parse", "-q", "--verify", `refs/tags/${tag}`]);
+  if (tagged.error || tagged.status !== 0) {
+    t.skip(`no ${tag} tag in this checkout`);
+    return;
+  }
+  const evidence = "firmware/common/network/mqtt_transport.h";
+  const present = spawnSync("git", ["-C", ROOT, "cat-file", "-e", `${tag}:${evidence}`]).status === 0;
+  for (const p of catalog.products.filter((q) => q.broker_tls === true)) {
+    assert.ok(present, `${p.id}: catalog offers broker TLS, but ${evidence} is absent at ${tag} — the pinned images have no TLS`);
+  }
+  for (const p of catalog.products.filter((q) => q.broker_tls_from !== undefined)) {
+    assert.ok(!present, `${p.id}: catalog withholds broker TLS until ${p.broker_tls_from}, but ${tag} already carries ${evidence}`);
   }
 });
 
@@ -2387,16 +2461,20 @@ const WALL_BOARDS = ["http://192.168.1.50:80", "http://192.168.1.51", "http://ca
 // The Apple TV's well-known candidates (tvos WallModel.wellKnownCandidates),
 // as bases — the test after the run test holds every monorepo wall to them.
 const WALL_WELL_KNOWN = ["http://canary.local:8099", "http://canary.local:8799", "http://canary.local"];
-const wallInvoke = (calls, sightings, caps) => async (cmd, args) => {
+const wallInvoke = (calls, sightings, caps, answer) => async (cmd, args) => {
   calls.push([cmd, args]);
   if (cmd === "native_capabilities") return caps;
   if (cmd === "fleet_scan") return sightings;
-  if (cmd === "witness_discover") throw "no kernel answered on the LAN yet";
+  if (cmd === "witness_discover") {
+    const doc = answer && answer(Array.from(args.bases));
+    if (doc) return doc;
+    throw "no kernel answered on the LAN yet";
+  }
   if (cmd === "companion_set_bases") return null;
   throw new Error(`the wall invoked an unexpected command: ${cmd}`);
 };
 const wallStatusEl = () => ({ textContent: "", classList: { toggle() {} } });
-async function runLabWall(typedBase, sightings) {
+async function runLabWall(typedBase, sightings, answer) {
   const calls = [];
   const scan = wallStatusEl();
   const frame = { src: "", contentWindow: { postMessage() {} } };
@@ -2414,15 +2492,17 @@ async function runLabWall(typedBase, sightings) {
     addEventListener() {},
   };
   ctx.window = ctx;
-  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }) } };
+  ctx.__TAURI__ = { core: { invoke: wallInvoke(calls, sightings, { mdns: true, notifications: false }, answer) } };
+  const posted = [];
+  frame.contentWindow.postMessage = (m) => posted.push(m);
   vm.runInNewContext(read(join(CANARY, "assets/witness-host.js")), ctx);
   for (let i = 0; i < 10 && !calls.some(([c]) => c === "witness_discover"); i++) {
     await new Promise((r) => setImmediate(r));
   }
-  await new Promise((r) => setImmediate(r));
-  return { calls, status: scan.textContent };
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  return { calls, status: scan.textContent, posted };
 }
-async function runFlasherWall(typedHost, sightings) {
+async function runFlasherWall(typedHost, sightings, answer) {
   const src = read(join(ROOT, "desktop/src/app.js"));
   const grab = (re, what) => {
     const m = re.exec(src);
@@ -2436,16 +2516,48 @@ async function runFlasherWall(typedHost, sightings) {
   ].join("\n");
   const calls = [];
   const scan = wallStatusEl();
+  const posted = [];
   const els = {
     "mqtt-host": { value: typedHost || "" },
     "fleet-scan-status": scan,
-    "witness-frame": { contentWindow: { postMessage() {} } },
+    "witness-frame": { contentWindow: { postMessage: (m) => posted.push(m) } },
   };
   const wall = new Function("$", "invoke", "witnessName", `${code}\nreturn witnessDiscovery;`)(
-    (id) => els[id] || null, wallInvoke(calls, sightings, {}), () => "New Canary");
+    (id) => els[id] || null, wallInvoke(calls, sightings, {}, answer), () => "New Canary");
   await wall.tick();
-  return { calls, status: scan.textContent };
+  return { calls, status: scan.textContent, posted };
 }
+
+test("witness wall: with no kernel, every answering board reaches the wall, once each", async () => {
+  // Three nightstands, no hub: each answers /api/fleet with itself first and
+  // the siblings it hears after. The wall used to stop at the first answer
+  // and show ONE node. Self-reports win over a sibling's (stale) view.
+  const nodes = [
+    { deviceId: "a", host: "a.local", ip: "192.168.1.61", port: 80 },
+    { deviceId: "b", host: "b.local", ip: "192.168.1.62", port: 80 },
+    { deviceId: "c", host: "c.local", ip: "192.168.1.63", port: 80 },
+  ];
+  const row = (name, online, extra) => ({ name, online, product: "canary-nightstand", ...extra });
+  const docs = {
+    "http://192.168.1.61:80": { kernel: "A", devices: [row("A", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("B", 0)] },
+    "http://192.168.1.62:80": { kernel: "B", devices: [row("B", 1, { hardware: "waveshare-esp32c6-lcd147" }), row("A", 1)] },
+    "http://192.168.1.63:80": { kernel: "C", devices: [row("C", 1)] },
+  };
+  const answer = (bases) => (bases.length === 1 ? docs[bases[0]] : null);
+  for (const [name, run] of [["Lab witness-host.js", () => runLabWall(null, nodes, answer)],
+                             ["Flasher app.js", () => runFlasherWall("", nodes, answer)]]) {
+    const { status, posted } = await run();
+    const fleet = posted.filter((m) => m && m.type === "witness:fleet").pop();
+    assert.ok(fleet, `${name} posted no fleet to the wall`);
+    const devs = Array.from(fleet.fleet.devices);
+    assert.deepStrictEqual(devs.map((d) => d.name).sort(), ["A", "B", "C"],
+      `${name}: every board must reach the wall, once each`);
+    const b = devs.find((d) => d.name === "B");
+    assert.strictEqual(b.online, 1, `${name}: B's own self-report must beat A's stale view of it`);
+    assert.strictEqual(b.hardware, "waveshare-esp32c6-lcd147", `${name}: the self row carries the board`);
+    assert.match(status, /3 Canaries on your network/, `${name} must count the merged fleet`);
+  }
+});
 
 test("witness wall: both apps try the kernel before any browsed board, and say what they heard", async () => {
   // witness_discover returns the FIRST base whose /api/fleet answers, and a
@@ -2470,8 +2582,14 @@ test("witness wall: both apps try the kernel before any browsed board, and say w
     assert.ok(scanAt >= 0, `${name}'s wall no longer browses mDNS (fleet_scan) before it polls`);
     assert.ok(pollAt > scanAt, `${name}'s wall must browse (fleet_scan) BEFORE it polls witness_discover`);
     // (Array.from: the Lab's list is built in the vm's realm, with its own Array.prototype.)
-    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), [...kernel, ...WALL_BOARDS],
-      `${name}: the kernel addresses must come before every browsed board, boards in browse order`);
+    // The kernel is asked alone first; only when none answers is every
+    // browsed board asked, each on its own, so all of them reach the wall.
+    assert.deepStrictEqual(Array.from(calls[pollAt][1].bases), kernel,
+      `${name}: the kernel addresses must be asked first, and alone`);
+    const boardPolls = calls.slice(pollAt + 1).filter(([c]) => c === "witness_discover")
+      .map(([, a]) => Array.from(a.bases));
+    assert.deepStrictEqual(boardPolls, WALL_BOARDS.map((b) => [b]),
+      `${name}: every browsed board must be asked on its own, in browse order, after the kernel`);
     assert.match(status, /^3 Canaries announced on this network — none serves the fleet document yet\.$/,
       `${name} must say the boards it heard, not "nothing answering yet"`);
     statuses.push(status);
@@ -2590,8 +2708,11 @@ const FLASH_COMMANDS = [
   ["fetch_manifest", "desktop/src-tauri/src/lib.rs"],
   ["flash", "desktop/src-tauri/src/lib.rs"],
   ["start_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
-  ["serial_monitor_send", "desktop/src-tauri/src/serial_monitor.rs"],
   ["stop_serial_monitor", "desktop/src-tauri/src/serial_monitor.rs"],
+  // serial_monitor_send is the Flasher's alone for now: the Lab's native
+  // monitor (flash-native.js) has no command box, and lab_bundle.test.js
+  // refuses a Lab command no page invokes. The day it gains one, the command
+  // comes back here, held to the Flasher's text like the rest.
 ];
 
 // One Rust fn — its attributes, signature and balanced body — whitespace
@@ -3417,6 +3538,13 @@ test("both flashers feed the board's real key into the mint", () => {
     "desktop/src/app.js must take the fingerprint from the boot receipt manifest");
   assert.match(desktop, /mintCertificate\(product,\s*undefined,\s*bootFp\)/,
     "the desktop hatch must pass that fingerprint into mintCertificate");
+  // …and `boot` must be the receipt, bound in the function that reads it. A
+  // bare `boot` there resolved to the app's own boot() function (truthy, no
+  // .manifest), so the regexes above passed while every certificate rolled.
+  const show = /function showHatchCard\(product\) \{([\s\S]*?)\n\}/.exec(desktop);
+  assert.ok(show, "couldn't find showHatchCard in desktop/src/app.js");
+  assert.match(show[1], /const boot = state\.vision\.hostBoot;[\s\S]*?const bootFp = \(boot && boot\.manifest/,
+    "showHatchCard must read the boot receipt (state.vision.hostBoot) before taking its fingerprint");
 
   const browser = read(join(CANARY, "assets", "flash.js"));
   assert.match(browser, /identity\.pubkey_fp/,
@@ -3636,7 +3764,7 @@ test("progressFromFrame reads espflash's bars and refuses everything else", () =
   assert.strictEqual(fn("[=====>          ] 512/1024"), 0.5);
   // Not frames: narration, plain numbers, a bare fraction with no bar.
   assert.strictEqual(fn("→ downloading https://example"), null);
-  assert.strictEqual(fn("✓ chip write verified"), null);
+  assert.strictEqual(fn("✓ chip write confirmed"), null);
   assert.strictEqual(fn("Flash size: 8MB"), null);
   // Degenerate frames must degrade to null, never a wrong number.
   assert.strictEqual(fn("[=========] 1024/0"), null);
@@ -4038,6 +4166,12 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
       `${label} smartPick no longer detects the ambiguous case`);
     assert.ok(src.includes("Recommended:"),
       `${label} smartPick no longer names its recommendation`);
+    // One chip, several boards (ESP32-C6: Sense node or 1.47" display): each
+    // board gets a card, never just the authored default.
+    assert.ok(/function boardShortlist/.test(src),
+      `${label} smartPick lost the one-card-per-board shortlist`);
+    assert.ok(src.includes("More than one board ` +\n        `uses that chip"),
+      `${label} smartPick no longer admits a chip that spans boards`);
   }
   // The rest of the chip's products stay reachable — folded, never filtered.
   // A recommendation that HIDES a flashable board is worse than a wall of them.
@@ -4045,7 +4179,7 @@ test("wave 5: the picker leads with one detection-led recommendation on both fla
     assert.ok(src.includes("for this chip (developer)"),
       `${label} no longer offers the full list behind the recommendation`);
   }
-  assert.match(appJs, /\[pick\.product, \.\.\.matches\.filter\(/,
+  assert.match(appJs, /\[\.\.\.shortlist, \.\.\.matches\.filter\(/,
     "the desktop must ORDER by the recommendation, never filter to it");
 });
 
@@ -4079,4 +4213,358 @@ test("wave 5: the firmware's single-key commands are labeled buttons on both fla
     assert.ok(src.includes("the firmware answers single keys; h shows its menu"),
       `${label} no longer teaches the single-key vocabulary in the command box`);
   }
+});
+
+// ── "verified" is the signature's word, on both flashers and in the engine ──
+//
+// AGENTS.md rule 4: "verified" means an Ed25519 signature checked against a
+// pinned key, nothing looser. Both flashers had drifted into using it for an
+// espflash read-back, a chip MD5, a SHA-256 match and a card read-back — and
+// the engine itself emitted "✓ chip write verified" for the desktop to echo.
+// Those are confirmations and checks, and they now say so. This pins the
+// shapes that slipped, on every surface they slipped on, so the next copy
+// edit cannot quietly bring one back.
+test("no flasher surface calls a read-back, a checksum or a write 'verified'", () => {
+  const surfaces = [
+    ["browser flash.js", read(join(CANARY, "assets/flash.js"))],
+    ["browser flash-native.js", read(join(CANARY, "assets/flash-native.js"))],
+    ["browser we2-flash.js", read(join(CANARY, "assets/we2-flash.js"))],
+    ["desktop app.js", read(join(ROOT, "desktop/src/app.js"))],
+    ["desktop index.html", read(join(ROOT, "desktop/src/index.html"))],
+    ["engine flash.rs", engineRs("flash")],
+    ["Flasher lib.rs", libRs],
+    ["Flasher hub.rs", read(join(ROOT, "desktop/src-tauri/src/hub.rs"))],
+    ["Flasher we2.rs", read(join(ROOT, "desktop/src-tauri/src/we2.rs"))],
+  ];
+  const banned = [
+    /write (?:is )?verified/i,
+    /written and verified/i,
+    /read back,? and verified/i,
+    /SHA-256-verified/i,
+    /verified by (?:SHA-256|checksum)/i,
+    /Verified — the chip/,
+    /completed and verified/i,
+    /verifiably holds/i,
+    /local copy verified/i,
+    /image verified against/i,
+  ];
+  for (const [label, src] of surfaces) {
+    for (const re of banned) {
+      const hit = re.exec(src);
+      assert.ok(!hit, `${label} says "${hit && hit[0]}" — a read-back or checksum is confirmed or checked, ` +
+        "never verified (AGENTS.md rule 4: Ed25519 against a pinned key, nothing looser)");
+    }
+  }
+  // The engine and the model burn keep "verified" for the one case it is
+  // true — the Ed25519 check ran — and say "checked" for checksum-only.
+  const flashRs = engineRs("flash");
+  assert.match(flashRs, /if release_verification == "ed25519\+sha256" \{\s*format!\(\s*"✓ release verified: /,
+    "the engine's release line must say verified only when the signature was checked");
+  assert.match(flashRs, /"✓ release checked: SHA-256 \{\}… \(\{release_verification\} — no release key is pinned/,
+    "the engine's checksum-only release line must say checked");
+  assert.match(libRs, /if model_verification == "ed25519\+sha256" \{\s*format!\(\s*"✓ model verified: /,
+    "the Vision model line must say verified only when the signature was checked");
+  // The desktop's stage strip keys on the engine's own words.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  assert.ok(flashRs.includes('"✓ chip write confirmed — ') && appJs.includes('["✓ chip write confirmed", '),
+    "the desktop stage strip must key on the engine's chip-write line");
+});
+
+// ── rule 7: the browser's post-flash proofs and pre-flash voice, on desktop ──
+//
+// Four browser-only diagnostics the desktop user silently lacked: the "is it
+// on?" Bluetooth check, the catalog's per-product prove block ("Prove it, two
+// ways"), the WAP's live field bench, and the self-check chips a board's own
+// self-manifest earns before anything is written. The two frontends share no
+// code, so these hold the desktop ports to the browser's logic by running
+// both — and pin the wiring the logic is useless without.
+function fnSource(src, name) {
+  const i = src.indexOf(`function ${name}(`);
+  assert.ok(i >= 0, `couldn't find function ${name}`);
+  const b = src.indexOf("{", src.indexOf(")", i));
+  let d = 0;
+  for (let k = b; k < src.length; k++) {
+    if (src[k] === "{") d++;
+    else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
+  }
+  throw new Error(`unbalanced function ${name}`);
+}
+
+test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — as a pointer, never a dead end", async () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  // Where: the connect page (any time, no flash needed) and the done row.
+  for (const id of ["ble-check", "ble-check-open", "prove-ble", "prove-ble-note"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `desktop/src/index.html lost #${id}`);
+  }
+  assert.match(appJs, /\$\("ble-check-open"\)\.addEventListener\("click", openBleCheck\)/);
+  assert.match(appJs, /\$\("prove-ble"\)\.addEventListener\("click", openBleCheck\)/);
+  // For whom: the boards that run the read-only console — the browser's rule,
+  // read off the catalog's role (which IS the browser's productRole).
+  assert.match(flashJs, /core\.productRole\(p\) === "wap" \|\| p\.provisioning === "ap"/);
+  assert.match(fnSource(appJs, "bleCheckable"), /product\.role === "wap" \|\| product\.provisioning === "ap"/);
+  for (const p of catalog.products) {
+    assert.strictEqual(p.role, core.productRole(p), `${p.id}: the catalog's role and the browser's productRole disagree`);
+  }
+  // Where it runs: the browser flasher, named from the catalog's repo.
+  assert.match(fnSource(appJs, "openBleCheck"), /labUrl\("flash\.html"\)/);
+  // The Lab app's webview has no Web Bluetooth either: its flash page says
+  // where the check runs instead of sending a native-shell user into the
+  // "use a Chromium browser" error.
+  assert.match(flashJs, /mount\.append\(renderReassurance\(\{ nativeShell: true \}\)\)/);
+  const reassure = fnSource(flashJs, "renderReassurance");
+  assert.match(reassure, /if \(nativeShell\) \{[\s\S]*?SecuraCV iPhone app[\s\S]*?\} else \{[\s\S]*?phaseBluetoothCheck/,
+    "the Lab app's Bluetooth entry must point to where the check runs, and only the browser opens it in-page");
+  for (const [label, src] of [["desktop app.js", appJs], ["desktop index.html", html], ["browser flash.js (Lab app)", reassure]]) {
+    // String concatenations and line wraps folded, so a sentence split
+    // across source lines still reads as one.
+    const flat = src.replace(/"\s*\+\s*"/g, "").replace(/\s+/g, " ");
+    assert.ok(flat.includes("the SecuraCV iPhone app") && flat.includes("in Chrome or Edge on this computer"),
+      `${label} must name both places the Bluetooth check runs`);
+  }
+});
+
+test("rule 7: the desktop reads the catalog's prove block and handles every real.kind it names", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const kinds = new Set(catalog.products.map((p) => p.prove && p.prove.real && p.prove.real.kind).filter(Boolean));
+  assert.ok(kinds.size >= 3, "the catalog's prove kinds went missing");
+  const prove = fnSource(appJs, "proveReal");
+  for (const k of kinds) {
+    // "monitor" and "glass" share the default branch on both: the console,
+    // with the self-manifest asked for on the way.
+    if (k === "monitor" || k === "glass") continue;
+    assert.ok(prove.includes(`kind === "${k}"`), `desktop proveReal doesn't handle the catalog's ${k}`);
+    assert.ok(flashJs.includes(`kind === "${k}"`), `browser proveReal doesn't handle the catalog's ${k}`);
+  }
+  const row = fnSource(appJs, "renderProveRow");
+  assert.match(row, /const shown = DESKTOP_PROVE_REAL\[spec\.real\.kind\] \|\| spec\.real;/,
+    "the desktop's proof button must carry the catalog's label, or say what it shows instead");
+  // An override exists only where the desktop draws something else, and
+  // says so: never for a kind it renders as the catalog describes.
+  const overrides = /const DESKTOP_PROVE_REAL = \{([\s\S]*?)\n\};/.exec(appJs);
+  assert.ok(overrides, "couldn't find DESKTOP_PROVE_REAL");
+  assert.deepStrictEqual([...overrides[1].matchAll(/^\s{2}"([a-z-]+)": \{/gm)].map((m) => m[1]), ["bench-radar"],
+    "a new desktop override needs a reason in DESKTOP_PROVE_REAL's comment and here");
+  assert.match(row, /labUrl\(spec\.emulated\.href\)/, "the desktop must offer the catalog's emulated twin");
+  for (const id of ["prove-row", "prove-real", "prove-twin", "prove-how"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `desktop/src/index.html lost #${id}`);
+  }
+  // Both success branches of the one-shot flash draw it.
+  assert.strictEqual(fnSource(appJs, "onFlash").split("renderProveRow(product);").length - 1, 2,
+    "both of onFlash's success branches must draw the prove row");
+  // Every twin link resolves to a page the Lab actually ships, on the URL
+  // derived from the catalog's repo — no typed host.
+  const labUrl = new Function("state", fnSource(appJs, "labUrl") + "\nreturn labUrl;")({ catalog });
+  for (const p of catalog.products) {
+    if (!p.prove || !p.prove.emulated) continue;
+    const u = labUrl(p.prove.emulated.href);
+    assert.ok(u && u.startsWith(`https://${catalog.repo.split("/")[0]}.github.io/${catalog.repo.split("/")[1]}/canary-local/`),
+      `${p.id}: the twin link isn't on the Lab's Pages site (${u})`);
+    assert.ok(readdirSync(CANARY).includes(p.prove.emulated.href.split("#")[0]),
+      `${p.id}: the twin page ${p.prove.emulated.href} isn't in canary-local/`);
+  }
+});
+
+test("rule 7: the desktop's WAP field bench reads the [wap] lines exactly as the browser's", async () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const desk = new Function(fnSource(appJs, "parseWapLine") + "\nreturn parseWapLine;")();
+  for (const line of [
+    "[wap] rf_presence_started devices=2 confidence=high dwell=transient stir=42",
+    "[wap] rf_presence_departed devices=0 confidence=low dwell=sustained stir=3",
+    "[wap] sustained_presence devices=1 confidence=moderate dwell=sustained stir=180",
+    "  [wap] dwell_started devices=3 confidence=high dwell=dwell stir=77  ",
+    "[wap] csi_clear devices=0 confidence=low dwell=transient stir=0",
+    "[sense] present count=1 range=near",
+    "[wap] rf_presence_started devices=two confidence=high dwell=transient stir=4",
+    "",
+    null,
+  ]) {
+    assert.deepStrictEqual(desk(line), core.parseWapLine(line), `the two parsers disagree on ${JSON.stringify(line)}`);
+  }
+  // The stir meter drains at the same informative rate on both.
+  assert.match(flashJs, /model\.stir = Math\.max\(0, model\.stir - 9 \* dt\)/);
+  assert.match(appJs, /wapField\.stir = Math\.max\(0, wapField\.stir - 9 \* dt\)/);
+  // Fed from the monitor, shown for a WAP, gone with the outcome it belongs to.
+  assert.match(appJs, /feedWapField\(ev\.payload\);/);
+  assert.match(fnSource(appJs, "startMonitor"), /renderWapField\(\);/);
+  assert.match(fnSource(appJs, "wapProductOnBench"), /p\.role === "wap"/);
+  assert.ok(catalog.products.some((p) => p.role === "wap" && p.prove.real.kind === "bench-field"),
+    "the catalog's WAP no longer names the field bench as its proof");
+  for (const id of ["wap-field", "wap-field-status", "wap-field-fill", "wap-field-stale"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `desktop/src/index.html lost #${id}`);
+  }
+});
+
+test("rule 7: the desktop's self-check chips use the browser's verdict, thresholds and fail-safe included", async () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const desk = new Function(fnSource(appJs, "healthVerdict") + "\nreturn healthVerdict;")();
+  for (const h of [null, undefined, NaN, -1, 0, 49, 49.9, 50, 79.9, 80, 100, 100.5, 101, Infinity, "90", true]) {
+    assert.deepStrictEqual(desk(h), core.healthVerdict(h), `the verdicts disagree on ${String(h)}`);
+  }
+  // The same three chips, the same words, the same sanity window on the
+  // temperature (a corrupted line must not raise a heat warning).
+  const chips = fnSource(appJs, "renderSelfCheck");
+  for (const needle of ["m.temp_c > -40 && m.temp_c < 150", "m.temp_c >= 70", " — give it air", "tamper flag raised",
+    "${m.health}/100"]) {
+    assert.ok(chips.includes(needle), `desktop renderSelfCheck lost ${needle}`);
+    assert.ok(flashJs.includes(needle), `browser self-check chips lost ${needle}`);
+  }
+  assert.match(html, /id="selfcheck-chips"/);
+  // Before a flash, too: a recognized resident firmware is asked twice, at
+  // the browser's moments, by an observer that never resets the board…
+  assert.match(fnSource(appJs, "renderPassport"), /if \(r\.product && !r\.blank && !r\.unknown\) \{[\s\S]*?askSelfCheck/);
+  const ask = fnSource(appJs, "askSelfCheck");
+  assert.match(ask, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
+  assert.match(flashJs, /setTimeout\(ask, 900\);\s*setTimeout\(ask, 2600\);/);
+  assert.match(ask, /if \(!state\.monitoring\) await startMonitor\(\);/, "askSelfCheck must start the monitor as an observer (no postFlash)");
+  // …which hands the port back before espflash touches it…
+  assert.match(fnSource(appJs, "onFlash"), /state\.busy = true;[^\n]*\n\s*await stopMonitor\(\);/);
+  // …and whose answer is a self-check, never an installation receipt: not
+  // before any flash, and not after one either — hostFlash outlives an
+  // unplug, so the board asked may be the NEXT board, and adopting its
+  // manifest would write its device id onto the flashed board's book row.
+  assert.match(appJs, /renderSelfCheck\(ev\.payload && ev\.payload\.manifest\);[\s\S]{0,600}if \(!state\.vision\.hostFlash \|\| state\.selfCheckAsked\) return;\s*state\.vision\.hostBoot = ev\.payload;/,
+    "a manifest the self-check asked for must not become the host boot receipt");
+  assert.match(ask, /if \(state\.busy\) return;\s*state\.selfCheckAsked = true;/,
+    "askSelfCheck must mark its answer as a self-check before the monitor can deliver it");
+  assert.match(fnSource(appJs, "resetOutcome"), /state\.selfCheckAsked = false;/,
+    "every write starts from resetOutcome, which must let the next manifest be that write's receipt");
+});
+
+test("both flashers name a full-flash backup canary-<mac6>…-backup.bin, and the engine's helper is the one in use", () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /const name = `canary-\$\{macStamp\(\)\}-backup\.bin`;/, "the browser's backup name moved");
+  assert.match(appJs, /defaultPath: `canary-\$\{macStamp\(mac \|\| ""\)\}-backup\.bin`,/, "the desktop's backup name must be the browser's");
+  const browserStamp = (mac) => new Function("state", fnSource(flashJs, "macStamp") + "\nreturn macStamp;")({ mac })();
+  const deskStamp = new Function("state", fnSource(appJs, "macStamp") + "\nreturn macStamp;")({ mac: null });
+  for (const mac of ["AA:BB:CC:DD:EE:FF", "aa-bb-cc-dd-ee-ff", "0:1", "", null, "zz"]) {
+    assert.strictEqual(deskStamp(mac || ""), browserStamp(mac), `macStamp disagrees on ${String(mac)}`);
+  }
+  // The automatic safety copy is named by the engine's helper, whose own
+  // test pins the browser's scheme.
+  assert.match(libRs, /\.join\(rescue::backup_filename\(&mac, &stamp\.to_string\(\)\)\)/);
+  assert.ok(engineRs("rescue").includes('"canary-ddeeff-backup.bin"'), "rescue.rs no longer pins the browser's scheme");
+});
+
+// ── The setup network's key, off the board's own first-boot line ───────────
+//
+// A Sense or Vision prints its setup network and key exactly once, when the
+// portal comes up; a WAP when its AP starts. Nothing else ever shows that key
+// ("the key the Flasher printed" never existed until both flashers read this
+// line). The browser parses it in flash-core.js; the Mac app inlines the SAME
+// two patterns. Hold them equal, hold both to the firmware's own printf
+// strings, and hold both frontends to rendering the result where the hatch
+// steps ask for it.
+test("setup-network key: one parser, both flashers, pinned to the firmware's printf", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const src = read(join(ROOT, "desktop", "src", "app.js"));
+  const block = src.match(
+    /const SETUP_DOOR_NOTE =[\s\S]*?\nfunction setupNetworkLine\([\s\S]*?\n}\n/);
+  assert.ok(block, "desktop/src/app.js no longer carries the inlined setup-network parser block");
+  const native = new Function(`${block[0]}; return { SETUP_DOOR_NOTE, WIFI_PASS_REQUIRED, ` +
+    `SETUP_NETWORK_LINE_RES, parseSetupNetwork, setupNetworkLine };`)();
+
+  // The copy and the patterns, byte for byte.
+  assert.equal(native.SETUP_DOOR_NOTE, core.SETUP_DOOR_NOTE, "the 'leave blank' note drifted between flashers");
+  assert.equal(native.WIFI_PASS_REQUIRED, core.WIFI_PASS_REQUIRED, "the no-password refusal drifted between flashers");
+  assert.deepEqual(native.SETUP_NETWORK_LINE_RES.map((r) => r.source),
+    core.SETUP_NETWORK_LINE_RES.map((r) => r.source), "the setup-network line patterns drifted");
+
+  // The firmware's own format strings — a reworded printf fails here, not on
+  // a bench. The %s slots are rendered with sample values and parsed back.
+  const portal = read(join(ROOT, "firmware/common/network/setup_portal.cpp"));
+  const senseFmt = '[SETUP] Setup network up: \\"%s\\"  password %s  (channel %u)\\n';
+  assert.ok(portal.includes(senseFmt),
+    "setup_portal.cpp no longer prints the `[SETUP] Setup network up` line both flashers parse");
+  const wap = read(join(ROOT, "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"));
+  const wapFmt = "[WIFI] AP started: %s (password: %s)\\n";
+  assert.ok(wap.includes(wapFmt),
+    "canary_wap.ino no longer prints the `[WIFI] AP started` line both flashers parse");
+  const render = (fmt, ...vals) => fmt.replace(/\\"/g, '"').replace(/\\n/g, "\n")
+    .replace(/%[su]/g, () => String(vals.shift()));
+  const senseLog = "rst:0x1 (POWERON)\n[WIFI] No credentials yet — raising the setup network; sensing continues.\n" +
+    render(senseFmt, "SecuraCV-4dC2", "a7Kq2pMx", 1) +
+    "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\n";
+  const wapLog = "[PROV] Deriving device-unique AP password...\n" +
+    render(wapFmt, "SecuraCV-m2G2", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
+  for (const [label, log, want] of [
+    ["sense/vision", senseLog, { ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }],
+    ["wap", wapLog, { ssid: "SecuraCV-m2G2", key: "cv-7hJ2kQ9mN4pR" }],
+  ]) {
+    assert.deepEqual(core.parseSetupNetwork(log), want, `browser parser misread the ${label} line`);
+    assert.deepEqual(native.parseSetupNetwork(log), want, `native parser misread the ${label} line`);
+    assert.equal(native.setupNetworkLine(want), core.setupNetworkLine(want), "the rendered line drifted");
+  }
+  assert.equal(core.parseSetupNetwork("just boot text"), null);
+  assert.equal(native.parseSetupNetwork("[SETUP] Join requested: \"Home\""), null,
+    "a different [SETUP] line must not read as the network-up line");
+  assert.match(core.setupNetworkLine({ ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }),
+    /^Its setup network: SecuraCV-4dC2 · key a7Kq2pMx$/);
+
+  // Both frontends LISTEN and RENDER it: the browser's voice/monitor and done
+  // card, the desktop's serial-log listener and hatch card.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+  assert.match(flashJs, /core\.parseSetupNetwork\(v\.buf\)/, "the browser voice no longer parses the key off the stream");
+  assert.match(flashJs, /startVoice\(vcon, null, showSetupNet\)/,
+    "the browser done card no longer listens to the first boot for the key");
+  assert.match(flashJs, /maybeSetupNet\(buf\)/, "the browser monitor no longer renders the key line");
+  assert.match(src, /feedSetupNetwork\(ev\.payload\)/, "the desktop serial:log listener no longer feeds the parser");
+  assert.match(html, /id="hatch-setup-net"/, "the desktop hatch card lost its setup-network line");
+  assert.match(src, /renderSetupNetwork\(\); \/\/ the key, if the first boot has printed it already/,
+    "showHatchCard no longer renders a key that landed before the card");
+});
+
+// ── The Bluetooth setup door: "leave the WiFi blank" only where it is true ──
+test("setup door: catalog-derived, both flashers say it, neither prefills past it", async () => {
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop", "src", "app.js"));
+  const html = read(join(ROOT, "desktop", "src", "index.html"));
+
+  // Every product carries the derived fact, and the WAP's/all-rounder's
+  // hatch leads with the iPhone card exactly when the door exists.
+  for (const p of catalog.products) {
+    assert.equal(typeof p.setup_door, "boolean", `${p.id}: setup_door must be derived for every product`);
+    if (p.provisioning === "ap") {
+      const leadsWithCard = /iPhone app/.test(p.hatch.steps[0]);
+      assert.equal(leadsWithCard, p.setup_door,
+        `${p.id}: the hatch leads with the iPhone card iff the build compiles the door`);
+      assert.match(p.hatch.steps.join(" "), /key it prints on its serial console/,
+        `${p.id}: the setup-network step must name the key — "nothing to type" was false`);
+      assert.doesNotMatch(p.provisioning_note, /Nothing to type/, `${p.id}: the setup network has a key`);
+    }
+  }
+  assert.ok(catalog.products.some((p) => p.setup_door), "no product derives a setup door — gen_flash.py's has_setup_door broke");
+  assert.ok(catalog.products.filter((p) => p.provisioning === "ap").some((p) => !p.setup_door),
+    "the all-rounder canary compiles no door and must not be told to wait for a card");
+
+  // Both read the catalog fact — never a role guess.
+  assert.match(flashJs, /core\.hasSetupDoor\(product\)/, "browser flasher no longer gates the note on setup_door");
+  assert.match(appJs, /const door = p\.setup_door === true;/, "desktop no longer gates on setup_door");
+  assert.match(appJs, /if \(!door && !\$\("wifi-ssid"\)\.value\) \{\s*\n\s*invoke\("current_ssid"\)/,
+    "desktop prefills the current SSID for a door-bearing product again");
+  // The note sits where the decision is made, in both.
+  assert.match(flashJs, /core\.SETUP_DOOR_NOTE/, "browser flasher lost the 'leave blank' note under WiFi (optional)");
+  assert.match(appJs, /\(door \? " " \+ SETUP_DOOR_NOTE : ""\)/, "desktop provision note lost the 'leave blank' sentence");
+
+  // A name with no password is refused unless the open-network box is ticked,
+  // in both — same words (pinned above), same explicit choice.
+  for (const [label, s] of [["browser flash.js", flashJs], ["desktop index.html", html]]) {
+    assert.ok(s.includes("open network (no password)"), `${label} lost the explicit open-network choice`);
+  }
+  assert.match(flashJs, /core\.wifiFieldsVerdict\(ssid\.value, pass\.value, openChk\.checked\)/,
+    "browser credentials() no longer runs the shared verdict");
+  assert.match(appJs, /if \(\$\("wifi-ssid"\)\.value && !wifiPass && !\(\$\("wifi-open"\) && \$\("wifi-open"\)\.checked\)\) \{\s*\n\s*setStatus\("flash-result", WIFI_PASS_REQUIRED, "err"\)/,
+    "desktop readProvisioning no longer refuses a name with no password");
 });

@@ -170,4 +170,55 @@ final class AwayReachTests: XCTestCase {
         XCTAssertTrue(AlertDelivery.away.rawValue > AlertDelivery.onLAN.rawValue,
                       "the ledger only moves delivery up, so away must outrank on-LAN")
     }
+
+    // MARK: - the away path follows the rules both ways
+
+    private func rule(_ id: String, reach: AlertRule.Reach, enabled: Bool = true) -> AlertRule {
+        AlertRule(id: id, title: id, minSeverity: .alert, reach: reach, enabled: enabled)
+    }
+
+    func testAnAnywhereRuleArmsTheAwayPath() {
+        let rules = [rule("tamper", reach: .anywhere), rule("activity", reach: .onWiFiOnly)]
+        XCTAssertEqual(AwayArming.decide(rules: rules, mayBeSubscribed: false), .arm)
+        XCTAssertEqual(AwayArming.decide(rules: rules, mayBeSubscribed: true), .arm)
+    }
+
+    func testNoAnywhereRuleTearsAStandingSubscriptionDown() {
+        // The bug this pins: disable() had no caller, so switching every rule
+        // to On Wi-Fi only left the iCloud subscription waking this phone.
+        let rules = [rule("tamper", reach: .onWiFiOnly), rule("dark", reach: .onWiFiOnly)]
+        XCTAssertEqual(AwayArming.decide(rules: rules, mayBeSubscribed: true), .disarm)
+    }
+
+    func testADisabledAnywhereRuleDoesNotKeepThePathArmed() {
+        let rules = [rule("tamper", reach: .anywhere, enabled: false)]
+        XCTAssertEqual(AwayArming.decide(rules: rules, mayBeSubscribed: true), .disarm)
+    }
+
+    func testNothingStandingAndNothingWantedCostsNoRoundTrip() {
+        let rules = [rule("activity", reach: .onWiFiOnly)]
+        XCTAssertEqual(AwayArming.decide(rules: rules, mayBeSubscribed: false), .leave)
+        XCTAssertEqual(AwayArming.decide(rules: [], mayBeSubscribed: false), .leave)
+    }
+
+    func testTheOffSentenceSaysWhyAndHowToTurnItBackOn() {
+        XCTAssertTrue(AwayArming.offSentence.contains("off"))
+        XCTAssertTrue(AwayArming.offSentence.contains("Anywhere"))
+    }
+
+    func testEveryAwayEntryPointGoesThroughFollow() throws {
+        // Launch and the rules sheet must both route through the one
+        // two-way decision; a bare enable() there is how the opt-out died.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        for rel in ["Sources/SecuraCV/App/FleetStore.swift", "Sources/SecuraCV/Views/AlertsView.swift"] {
+            let url = root.appendingPathComponent(rel)
+            try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
+                              "ios checkout not visible from the test host")
+            let src = try String(contentsOf: url, encoding: .utf8)
+            XCTAssertTrue(src.contains("follow(rules:"), "\(rel) must call AwayPush.follow(rules:)")
+            XCTAssertFalse(src.contains("AwayPush.shared.enable()") || src.contains("away.enable()"),
+                           "\(rel) must not arm the away path one-directionally")
+        }
+    }
 }

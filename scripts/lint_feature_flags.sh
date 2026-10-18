@@ -22,6 +22,12 @@ set -euo pipefail
 #      central registry docs/feature-flags.md, so the index can't drift behind
 #      the build. (The registry is the single source of truth per layer.)
 #
+#   D) Firmware FEATURE_* macros gate code — runs
+#      firmware/scripts/check_config_feature_flags.py, where that rule (and its
+#      list of deliberate descriptors) is written once. Called from here so the
+#      one feature-flag gate covers every layer on every PR; firmware.yml only
+#      runs on firmware/** paths, and a docs or Lab edit can advertise a flag too.
+#
 # This script is the executable companion to docs/feature-flags.md. Run it
 # locally before pushing; CI runs it via .github/workflows/lint.yml.
 
@@ -138,8 +144,14 @@ check_never_advertise() {
 check_never_advertise ALL_TRANSPORTS FUTURE_TRANSPORTS TRANSPORT_ transport
 check_never_advertise ALL_TAMPER_TYPES FUTURE_TAMPER_TYPES TAMPER_ "tamper type"
 
+# D) Firmware FEATURE_* macros: the rule lives in the Python script; it prints
+#    its own findings.
+if ! python3 firmware/scripts/check_config_feature_flags.py; then
+  fail "a firmware FEATURE_* flag gates no code (firmware/scripts/check_config_feature_flags.py, above)."
+fi
+
 if [ "$EXIT_CODE" -eq 0 ]; then
-  echo "[flag-lint] OK: ${feat_count} Cargo features referenced + registered; no FUTURE_* transport or tamper type advertised."
+  echo "[flag-lint] OK: ${feat_count} Cargo features referenced + registered; no FUTURE_* transport or tamper type advertised; every firmware FEATURE_* flag gates code."
 fi
 
 exit "$EXIT_CODE"

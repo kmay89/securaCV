@@ -9,7 +9,12 @@ Privacy-preserving witness device with GPS, SD storage, and wireless access poin
 ╚════════════════════════════════════════════════════════════════════╝
 ```
 
-## Quick Start (5 minutes)
+## Quick Start
+
+**Flash it from your browser → [the Lab's start page](https://kmay89.github.io/securaCV/canary-local/start.html)**
+(or the desktop Flasher; [`docs/browser_flasher.md`](../../../docs/browser_flasher.md)) —
+the released image, one click, no toolchain. The rest of this section is
+**building from source** for makers.
 
 ### 1. Hardware Required
 
@@ -177,8 +182,11 @@ re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
 and by **Forget Wi-Fi** on a unit that had credentials, which is the
-owner's way to re-arm the window), and a phone at the door is a sign of life
-for that wizard timer, so the restart cannot land mid-provisioning. A WAP on its own
+owner's way to re-arm the window), a phone at the door is a sign of life
+for that wizard timer, and the restart waits while the door is open at all
+(`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
+door's card on their phone has touched nothing yet) — so it cannot land
+mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
 dashboard, the bonded rescue service and the BOOT-tap receipt are the
 owner's paths). **There is no tap door on the WAP in this version:** the
@@ -221,9 +229,17 @@ foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
 is burned too, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
-the WAP just joined. The post-join reboot into steady state is held while a
-claim is outstanding (the claim promised 180 s; the reboot came at 120 s)
-and follows ~10 s after the claim is spent or expires.
+the WAP just joined. **The receipt the claim buys names the steady-state
+address** — `https://<name>.local` with the certificate's `tls_cert_fp` pin:
+the certificate is loaded or generated on every boot and only the HTTPS
+*server* waits for setup to end (the captive portal needs plain HTTP), so
+the claim's `claim_url` is the http address that answers now and the receipt
+is the one the phone keeps (`tls_after_setup()` in the sketch). The WAP then
+restarts once, ~10 s after the claim is spent (on HTTPS ~15 s after
+"Paired"); the reboot is held while a claim is outstanding (the claim
+promised 180 s; the grace alone ended at 120 s) and follows the same runway
+after one expires. Plain HTTP on an installed WAP redirects to https at the
+address the request used (its `Host`), never the setup network's.
 
 Design, threat model and bench checklist: `docs/design/magic_pairing.md`.
 **CI-compiled (also locally) and host-tested (`test_improv_core.cpp`,
@@ -369,7 +385,9 @@ toolchains produce the same firmware.
 This project follows the SecuraCV firmware architecture:
 
 - **Board definitions**: `../../boards/xiao-esp32s3-sense/`
-- **Configuration**: `../../configs/canary-wap/default/`
+- **Configuration**: `arduino/canary_wap/build_config.h` (hardware target +
+  build profile). `../../configs/canary-wap/` is compiled by no build; only
+  the Lab's tooling reads it.
 - **Common modules**: `../../common/`
 - **Build environments**: `../../envs/platformio/`
 

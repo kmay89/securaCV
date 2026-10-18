@@ -15,7 +15,9 @@ are replaced for every test, and a recorder keeps what WOULD have run):
     generator fails here rather than at the first real edit;
   • the OpenSCAD steps and --previews are refused BEFORE anything runs when
     `openscad` is missing, and the refusal is honest about there being no
-    Actions button that renders and pushes STLs;
+    Actions button that renders and pushes STLs; `$OPENSCAD` (the override
+    render.sh and scad_probe.py honor) is what is looked for and what the
+    previews run, so a binary off PATH is found and never mixed with another;
   • --check runs each check form in order and names the first failure with
     the resume command; --from skips exactly the earlier steps; --site
     reaches gen_builder_manifest.py and no other step, in both modes — the
@@ -104,6 +106,20 @@ class Recorder:
 
 def const(code, out=""):
     return lambda argv, cwd: (code, out)
+
+
+_ENV = mock.patch.dict(os.environ)
+
+
+def setUpModule():
+    # Every expectation below is for the default binary; a developer's own
+    # OPENSCAD export must not change them. OpenScadOverride sets it itself.
+    _ENV.start()
+    os.environ.pop("OPENSCAD", None)
+
+
+def tearDownModule():
+    _ENV.stop()
 
 
 def run_main(args, rules=(), which="/usr/bin/openscad", repo=None):
@@ -245,6 +261,42 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
             self.assertIn(f"{i:>2}  {name}", out)
 
 
+class OpenScadOverride(unittest.TestCase):
+    """OPENSCAD=/path/to/openscad is the documented override (enclosure
+    README; render.sh and scad_probe.py read it). regen_cad used to look for
+    a bare `openscad` on PATH only: with the binary inside a macOS .app it
+    refused every OpenSCAD step although OPENSCAD was set, and with another
+    openscad on PATH the previews came from that one while the STLs came
+    from $OPENSCAD."""
+
+    APP = "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD"
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"OPENSCAD": self.APP})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_available_looks_for_the_override_not_the_bare_name(self):
+        seen = []
+        with mock.patch.object(rc.shutil, "which",
+                               lambda name: seen.append(name) or (name if name == self.APP else None)):
+            self.assertTrue(rc.openscad_available())
+        self.assertEqual(seen, [self.APP])
+
+    def test_previews_run_the_override(self):
+        job = rc.preview_plan("canary_wap_enclosure.scad")[0]
+        self.assertEqual(rc.preview_argv(job, Path("/tmp/previews"), xvfb=False)[0], self.APP)
+        self.assertEqual(rc.preview_argv(job, Path("/tmp/previews"), xvfb=True)[:3],
+                         ["xvfb-run", "-a", self.APP])
+
+    def test_the_refusal_names_the_override(self):
+        self.assertIn(f"`{self.APP}` is not runnable", rc.openscad_missing_message(["--previews"]))
+
+    def test_an_empty_override_is_the_default(self):
+        os.environ["OPENSCAD"] = ""
+        self.assertEqual(rc.openscad_bin(), "openscad")
+
+
 class OpenScadIsRefusedUpFront(unittest.TestCase):
     def test_write_run_is_refused_before_anything_runs(self):
         code, out, rec = run_main([], which=None)
@@ -294,6 +346,11 @@ class OpenScadIsRefusedUpFront(unittest.TestCase):
         code, out, rec = run_main(["--check", "--from", "gen_hardware"], which=None)
         self.assertEqual(code, 1)
         self.assertIn("step 5 (gen_hardware) and step 6 (gen_assembly_poses) need OpenSCAD", out)
+
+    def test_the_refusal_names_the_binary_and_the_override(self):
+        msg = rc.openscad_missing_message(["--previews"])
+        self.assertIn("`openscad` is not runnable", msg)
+        self.assertIn("OPENSCAD=/path/to/openscad", msg)
 
     def test_from_past_the_openscad_steps_runs_without_openscad(self):
         code, out, rec = run_main(["--from", "gen_figures"], which=None)

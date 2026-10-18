@@ -149,7 +149,13 @@ bool bring_up_msc() {
   s_msc.onWrite(msc_write_cb);
   s_msc.onStartStop(msc_start_stop_cb);
   s_msc.mediaPresent(true);
-  s_msc.isWritable(false);            // enforce read-only to the host
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  s_msc.isWritable(false);            // core 3.x: the host mounts it read-only
+#endif
+  // Core 2.x (this env's espressif32@6.9.0 / 2.0.17) has no isWritable():
+  // there msc_write_cb refusing every write is what keeps the evidence
+  // read-only — a host may list the drive as writable, then fail each write.
+  // (This call compiled nowhere until firmware.yml began building this env.)
   return s_msc.begin(sectors, ssz);
 }
 

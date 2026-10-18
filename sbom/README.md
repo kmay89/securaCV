@@ -150,7 +150,12 @@ Tests: `scripts/tests/test_gen_firmware_sbom.py`.
 ## Retrieving the SBOMs
 
 All three are attached as build artifacts on each `sbom.yml` run, and as
-release assets on every published release:
+release assets on every release cut from October 2026 on (firmware-release.yml,
+desktop-flasher-release.yml, lab-publish.yml and release.yml call `sbom.yml`
+once their release is published). Earlier releases mostly carry none — only
+`app-v0.1.0`, `flasher-v0.1.4` and `app-v0.2.2` did — and re-running
+`sbom.yml` for one of those tags fails by design: the tagged tree predates
+the generator, and an SBOM must describe the tree it ships with.
 
 1. Go to the **Actions** tab in the repository
 2. Select the **SBOM Generation** workflow

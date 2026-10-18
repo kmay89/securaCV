@@ -532,7 +532,8 @@ def mesh(path: Path):
 
 
 def bbox(verts):
-    xs = [v[0] for v in verts]; ys = [v[1] for v in verts]
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
     return min(xs), max(xs), min(ys), max(ys)
 
 

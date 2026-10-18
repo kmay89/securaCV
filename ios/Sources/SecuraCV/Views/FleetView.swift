@@ -5,9 +5,9 @@
 // that fills in as the fleet grows). Automatic picks the hive once there are
 // enough Canaries to make a comb worth looking at; either can be pinned from
 // the toolbar. At scale the list groups by room and a search field appears —
-// ten Canaries should feel as calm as two. "Discovered on your network"
-// surfaces Canaries seen over mDNS that aren't paired yet; the hive's "+"
-// cell opens the same pairing path.
+// ten Canaries should feel as calm as two. "Ready to pair" surfaces a WAP
+// seen over mDNS that isn't paired yet (the hive's "+" cell opens the same
+// path); "Also on your network" names the rest without a dead-end tap.
 
 import SwiftUI
 
@@ -54,34 +54,21 @@ struct FleetView: View {
         }
     }
 
-    /// Canaries on the network that are NOT already in the fleet above.
+    /// Canaries on the network that are NOT already in the fleet above —
+    /// split by what can be done with them (FleetMerge.discoveredRows has
+    /// the matching rules and their history): a WAP this phone can pair
+    /// ("Ready to pair", a real flow), and the rest, which are simply on the
+    /// network and say so, with nothing to tap.
     ///
-    /// "Already in the fleet" is a bigger set than "paired", and treating them
-    /// as the same thing is what put a Nightstand in both lists at once — once
-    /// under "Your fleet", online and badged, and again under "Discovered on
-    /// your network" with a "+" beside it. A display never pairs over HTTP
-    /// (it serves no pairing route at all); it JOINS by answering /api/fleet,
-    /// and it is a full member of the fleet the moment it does. Offering to
-    /// add a device that is already there is an invitation to a flow that
-    /// cannot complete, on a device that needs nothing.
-    ///
-    /// Matched on the id AND on the route, because the two halves of the app
-    /// name the same device differently: a self-reported display becomes a
-    /// witness keyed `lan:<host>#<index>`, which will never equal the
-    /// `device_id` its advert carries. Comparing only ids is precisely why
-    /// the filter looked like it was working and wasn't.
-    private var unpaired: [DiscoveredCanary] {
-        let joined = Set(store.witnesses.map(\.id))
-        let joinedHosts = Set(store.witnesses.compactMap { w -> String? in
-            guard w.id.hasPrefix("lan:") else { return nil }
-            return w.id.dropFirst(4).split(separator: "#").first.map(String.init)
-        })
-        return store.discovery.found.filter { d in
-            if joined.contains(d.deviceID) { return false }
-            if let host = d.host, joinedHosts.contains(host) { return false }
-            return !store.devices.devices.contains { $0.id == d.deviceID }
-        }
+    /// "Already in the fleet" is a bigger set than "paired", and treating
+    /// them as the same thing is what put a Nightstand in both lists at
+    /// once. A display never pairs over HTTP; it JOINS by answering
+    /// /api/fleet, and is a full member the moment it does.
+    private var discovered: (pairable: [DiscoveredCanary], onNetwork: [DiscoveredCanary]) {
+        store.discoveredRows
     }
+
+    private var unpaired: [DiscoveredCanary] { discovered.pairable + discovered.onNetwork }
 
     var body: some View {
         NavigationStack {
@@ -151,7 +138,15 @@ struct FleetView: View {
             .sheet(item: $findTarget) { target in
                 NavigationStack { FindCanaryView(witness: target) }
             }
-            .onAppear { consumeFindRoute(); consumeSetupRoute() }
+            .onAppear {
+                consumeFindRoute(); consumeSetupRoute()
+                // The Fleet tab with a real fleet is the mDNS browse's
+                // consumer ("Ready to pair", "Also on your network", the
+                // rows a hub reports) — the consent tap started only the
+                // Bluetooth scan, so the browse begins here, with the fleet
+                // on screen as its reason.
+                if store.hasRealFleet { store.startLocalNetworkDiscoveryIfConsented() }
+            }
             .onChange(of: store.pendingRoute) { _, _ in consumeFindRoute(); consumeSetupRoute() }
             // A cold-launch link can outrun the first refresh; the fold's
             // arrival retries the still-pending route.
@@ -199,12 +194,14 @@ struct FleetView: View {
                     Text("Discovery is off — SecuraCV isn't looking for Canaries on this network.")
                 }
             }
-            if !store.nearbyCanaries.isEmpty {
-                // A brand-new Canary asking for Wi-Fi over Bluetooth.
-                Section { NearbyCanaryCard() }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-            }
+            // A brand-new Canary asking for Wi-Fi over Bluetooth. Mounted
+            // whether or not one is in earshot: the card renders nothing when
+            // it has no rows, and a conditional mount tore its setup sheet
+            // down 15 s into the ceremony (a connected Canary stops
+            // advertising, so it leaves nearbyCanaries while being set up).
+            Section { NearbyCanaryCard() }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             if !filtered.isEmpty {
                 if store.witnesses.count >= Self.roomGroupThreshold {
                     ForEach(roomGroups, id: \.room) { group in
@@ -228,11 +225,24 @@ struct FleetView: View {
                     }
                 }
             }
-            if !unpaired.isEmpty {
-                Section("Discovered on your network") {
-                    ForEach(unpaired) { d in
+            if !discovered.pairable.isEmpty {
+                Section {
+                    ForEach(discovered.pairable) { d in
                         Button { pairing = d } label: { DiscoveredRow(canary: d) }
                     }
+                } header: {
+                    Text("Ready to pair")
+                } footer: {
+                    Text("On your Wi-Fi, not yet paired with this phone.")
+                }
+            }
+            if !discovered.onNetwork.isEmpty {
+                Section {
+                    ForEach(discovered.onNetwork) { d in OnNetworkRow(canary: d) }
+                } header: {
+                    Text("Also on your network")
+                } footer: {
+                    Text("Already on your Wi-Fi. These don't pair with a phone. A camera or radar Canary reports to your hub once it has the hub's address and login — the setup card hands those over; a Canary that shows no events after a few minutes may need that step (Set up → Add a Canary).")
                 }
             }
             if store.witnesses.isEmpty && unpaired.isEmpty {
@@ -244,20 +254,26 @@ struct FleetView: View {
                     }
                 } description: {
                     Text(store.discoveryConsent == true
-                         ? "Plug in a Canary on this network — it'll appear here to pair. Or look around with sample data first."
-                         : "Enable discovery to find Canaries on this network — or look around with sample data first.")
+                         ? "Power on a new Canary near this phone — a card appears within seconds — or look around with sample data first."
+                         : "Turn on discovery and power on a new Canary near this phone — or look around with sample data first.")
                 } actions: {
                     // The walkthroughs first: a fleet starts with a hub and
                     // a Canary, and this phone explains and drives both.
-                    Button("Set up a hub or a Canary") {
+                    if store.discoveryConsent != true {
+                        Button("Find my Canary") { store.setDiscoveryConsent(true) }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        // Listening, with its reason when it can't — and,
+                        // after a while of silence, what to try.
+                        ListeningRow(text: "Listening — power it on within a few meters of this phone.",
+                                     advice: store.bluetoothAdvice,
+                                     since: store.listeningSince)
+                    }
+                    Button("Add a Canary or a hub") {
                         setupTarget = nil
                         showingSetup = true
                     }
-                    .buttonStyle(.borderedProminent)
-                    if store.discoveryConsent != true {
-                        Button("Enable discovery") { store.setDiscoveryConsent(true) }
-                            .buttonStyle(.bordered)
-                    }
+                    .buttonStyle(.bordered)
                     Button("Try the demo fleet") { store.setDemoMode(true) }
                         .buttonStyle(.bordered)
                     // Where a Canary comes from, said here instead of a dead
@@ -352,6 +368,25 @@ struct WitnessRow: View {
     }
 }
 
+/// A Canary seen on the network that this phone has nothing to do with
+/// (a Sense or Vision reports to the hub) — named, not tappable.
+struct OnNetworkRow: View {
+    let canary: DiscoveredCanary
+    var body: some View {
+        HStack(spacing: Theme.m) {
+            DeviceFigureIcon(canary.deviceType, published: canary.publishedType,
+                             hardware: canary.hardware, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(canary.name).font(.body)
+                Text("\(canary.deviceType.role) · on your network").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A Canary this phone can pair (a WAP), tapping into PairView.
 struct DiscoveredRow: View {
     let canary: DiscoveredCanary
     var body: some View {

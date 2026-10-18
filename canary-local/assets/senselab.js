@@ -17,7 +17,7 @@
 
 import {
   SensePipeline, sceneFrames, senseCanonical, bucketUptime,
-  buildFrame, Presence,
+  buildFrame,
 } from "./sense-sim.js";
 import {
   buildProtocol, buildStage, buildConsole, buildKnobs, buildPowerLab,

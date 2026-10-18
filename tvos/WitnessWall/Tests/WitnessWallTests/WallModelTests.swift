@@ -311,6 +311,31 @@ final class WallModelTests: XCTestCase {
                        "and their ids differ, or SwiftUI's ForEach folds them back into one")
     }
 
+    func testSeveralDisplaysOnOneBrokerDrawEachNodeOnce() throws {
+        // Each nightstand's /api/fleet answers itself first, then the
+        // siblings it hears over MQTT. Merged naively, three displays drew
+        // up to nine rows. Each node's own report wins; a peer row survives
+        // only for a device nobody self-reports (one row, the live one).
+        let a = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"A","online":true},{"name":"B","online":false},{"name":"Porch","online":false}]}"#.utf8))
+            .tagged(bySource: "a.local")
+        let b = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"B","online":true},{"name":"A","online":true},{"name":"Porch","online":true}]}"#.utf8))
+            .tagged(bySource: "b.local")
+        let c = try JSONDecoder().decode(FleetSnapshot.self, from: Data(
+            #"{"devices":[{"name":"C","online":true},{"name":"A","online":true},{"name":"B","online":true}]}"#.utf8))
+            .tagged(bySource: "c.local")
+
+        let merged = FleetSnapshot.merged([a, b, c])
+
+        XCTAssertEqual(merged.devices.map(\.name), ["A", "Porch", "B", "C"],
+                       "every node once — its own report, never a sibling's echo of it")
+        XCTAssertEqual(merged.devices.first { $0.name == "B" }?.online, true,
+                       "B's own report beats A's stale view of it")
+        XCTAssertEqual(merged.devices.first { $0.name == "Porch" }?.online, true,
+                       "a peer nobody self-reports keeps one row, the live one")
+    }
+
     func testDiscoveryKeepsListeningAndANewCanaryJoinsTheWall() async {
         let porch = #"{"devices":[{"name":"Porch","online":true}]}"#
         let attic = #"{"devices":[{"name":"Attic","online":true}]}"#

@@ -1,0 +1,5 @@
+{
+  "$comment": "Contract C4 as amended: GET /api/identity, IdentityDocument field order. The coordinator pins verifying_key over this channel and reads chain_length, latest_hash and last_verify (a self-report).",
+  "payload": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"key_algorithm\":\"ed25519\",\"kernel_version\":\"2.4.16\",\"ruleset_id\":\"ruleset:frigate_v1\",\"chain_length\":1287,\"latest_hash\":\"9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c\",\"last_verify\":{\"at\":1760140200,\"bucket_size\":600,\"ok\":true,\"verdict\":\"self-consistent; identity unverified\",\"identity_verified\":false},\"fleet_rollcall\":\"self\",\"paired_tokens\":1}",
+  "fingerprint": "10ba682c"
+}

@@ -232,20 +232,16 @@ class TrustStore:
     """
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
-        self._hass = hass
-        self._entry_id = entry_id
         self._store: Store = Store(
             hass,
             STORAGE_VERSION,
             STORAGE_KEY_FMT.format(entry_id=entry_id),
         )
         self._devices: dict[str, DeviceTrustEntry] = {}
-        self._loaded = False
 
     async def async_load(self) -> None:
         raw = await self._store.async_load()
         if not raw:
-            self._loaded = True
             return
         healed = False
         for device_id, payload in raw.get("devices", {}).items():
@@ -281,7 +277,6 @@ class TrustStore:
                 entry.fingerprint_hex = expected_fp
                 healed = True
             self._devices[device_id] = entry
-        self._loaded = True
         if healed:
             await self.async_save()
 
@@ -296,6 +291,19 @@ class TrustStore:
 
     async def async_save(self) -> None:
         await self._store.async_save(self._data_to_save())
+
+    async def async_remove(self) -> None:
+        """Delete the persisted pins: the config entry is being removed.
+
+        The pins belong to the entry (the storage key carries its id), so
+        nothing else can ever read them back; leaving the file behind would
+        keep every Canary's identity on disk for an installation that no
+        longer exists.
+        """
+        self._devices.clear()
+        remove = getattr(self._store, "async_remove", None)
+        if remove is not None:
+            await remove()
 
     # ─── Public API ────────────────────────────────────────────────────
 

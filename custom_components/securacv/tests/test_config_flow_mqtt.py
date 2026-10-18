@@ -4,60 +4,46 @@ Since HA 2022.6, ``async_step_mqtt`` receives an ``MqttServiceInfo``: a
 slots dataclass with attribute access only. The flow once read the topic
 with ``discovery_info.get("topic", "")`` — dict API from before 2022.6 —
 which raised AttributeError on the very first ``securacv/#`` publish and
-killed the advertised discovery prompt. These tests drive the step with a
-slots-dataclass stub shaped exactly like the real service info, so dict
-access can never regress silently again. The step also keeps a dict
-fallback for older cores and stubs, dedupes by ``mqtt_<prefix>``
-unique_id, and hands off to the confirm step.
+killed the advertised discovery prompt. These tests drive the step with the
+real-shaped slots dataclass, so dict access can never regress silently
+again. The step also keeps a dict fallback for older cores and stubs,
+dedupes by ``mqtt_<prefix>`` unique_id, and routes on the topic shape: a
+``witness/<id>/announce`` is a kernel offering itself (announce_confirm),
+``<prefix>/claim/<id>`` is the integration's own retained claim (not a
+device), anything else under ``securacv/#`` is a Canary (confirm).
 """
 
 from __future__ import annotations
 
-import sys
-from dataclasses import dataclass
+import json
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
 from .conftest import run
 
-# config_flow.py subclasses ConfigFlow with the `domain=` class kwarg, which
-# the base stubs' bare `object` cannot accept — upgrade the stub to a class
-# that swallows it (the same lightweight-stub convention as the sensor
-# platform stubs in test_modality_and_radar.py).
-_ce_mod = sys.modules["homeassistant.config_entries"]
-
-
-class _StubConfigFlow:
-    def __init_subclass__(cls, domain: str | None = None, **kwargs) -> None:
-        super().__init_subclass__(**kwargs)
-        cls._stub_domain = domain
-
-
-_ce_mod.ConfigFlow = _StubConfigFlow
+from homeassistant.helpers.service_info.mqtt import MqttServiceInfo  # noqa: E402
 
 from .. import config_flow  # noqa: E402
 from ..const import DEFAULT_MQTT_PREFIX  # noqa: E402
 
-
-@dataclass(slots=True)
-class _MqttServiceInfo:
-    """Mirror of homeassistant.helpers.service_info.mqtt.MqttServiceInfo.
-
-    A ``slots=True`` dataclass, exactly like the real one at the declared
-    minimum HA version (2024.4.1) — no ``.get``, no ``__getitem__``.
-    """
-
-    topic: str
-    payload: str
-    qos: int
-    retain: bool
-    subscribed_topic: str
-    timestamp: float
+ANNOUNCE = {
+    "v": 1,
+    "device_id": "pwk_1a2b3c4d",
+    "kernel_version": "2.4.16",
+    "verifying_key": "ab" * 32,
+    "api": {"scheme": "http", "bind": "all", "port": 8799},
+    "pairing": "required",
+    "mqtt_topic_prefix": "witness",
+    "discovery_prefix": "homeassistant",
+    "availability_topic": "witness/status",
+    "announced_bucket_start": 1760140800,
+    "announced_bucket_size": 600,
+}
 
 
-def _info(topic: str) -> _MqttServiceInfo:
-    return _MqttServiceInfo(
+def _info(topic: str, payload: str = "online") -> MqttServiceInfo:
+    return MqttServiceInfo(
         topic=topic,
-        payload="online",
+        payload=payload,
         qos=0,
         retain=False,
         subscribed_topic="securacv/#",
@@ -74,17 +60,22 @@ def _flow_with_captured_next_step():
         called["confirm"] = True
         return {"type": "form", "step_id": "confirm"}
 
+    async def _fake_announce_confirm(user_input=None):
+        called["announce_confirm"] = True
+        return {"type": "form", "step_id": "announce_confirm"}
+
     async def _fake_set_unique_id(unique_id):
         called["unique_id"] = unique_id
 
     flow.async_step_confirm = _fake_confirm
+    flow.async_step_announce_confirm = _fake_announce_confirm
     flow.async_set_unique_id = _fake_set_unique_id
-    flow._abort_if_unique_id_configured = lambda: None
+    flow._abort_if_unique_id_configured = lambda *a, **kw: None
     flow._async_current_entries = lambda: []
     return flow, called
 
 
-def test_service_info_stub_has_no_dict_api() -> None:
+def test_service_info_has_no_dict_api() -> None:
     """The premise of the regression: the real object rejects dict access."""
     info = _info("securacv/canary01/status")
     assert not hasattr(info, "get")
@@ -97,8 +88,9 @@ def test_mqtt_discovery_reads_topic_as_attribute() -> None:
     result = run(flow.async_step_mqtt(_info("securacv/canary01/status")))
     assert result == {"type": "form", "step_id": "confirm"}
     assert called.get("confirm") is True
-    # The prefix seen on the wire pre-fills the confirm step and keys dedupe.
-    assert flow.context["mqtt_prefix"] == "securacv"
+    # The prefix seen on the wire pre-fills the confirm step and keys dedupe;
+    # the flow keeps it on itself (ConfigFlowContext has no key for it).
+    assert flow._discovered_prefix == "securacv"
     assert flow.context["title_placeholders"] == {"name": "securacv"}
     assert called.get("unique_id") == "mqtt_securacv"
 
@@ -108,7 +100,7 @@ def test_mqtt_discovery_with_short_topic_still_routes() -> None:
     flow, called = _flow_with_captured_next_step()
     run(flow.async_step_mqtt(_info("securacv")))
     assert called.get("confirm") is True
-    assert flow.context["mqtt_prefix"] == DEFAULT_MQTT_PREFIX
+    assert flow._discovered_prefix == DEFAULT_MQTT_PREFIX
 
 
 def test_mqtt_discovery_accepts_dict_payload_from_older_cores() -> None:
@@ -116,5 +108,32 @@ def test_mqtt_discovery_accepts_dict_payload_from_older_cores() -> None:
     flow, called = _flow_with_captured_next_step()
     run(flow.async_step_mqtt({"topic": "barn/canary02/status"}))
     assert called.get("confirm") is True
-    assert flow.context["mqtt_prefix"] == "barn"
+    assert flow._discovered_prefix == "barn"
     assert called.get("unique_id") == "mqtt_barn"
+
+
+def test_a_kernel_announce_routes_to_the_announce_confirm() -> None:
+    """``witness/<id>/announce`` is a kernel, keyed on its device id, and the
+    payload (bytes on the real wire) is parsed off the service info."""
+    flow, called = _flow_with_captured_next_step()
+    info = _info("witness/pwk_1a2b3c4d/announce", json.dumps(ANNOUNCE).encode())
+    result = run(flow.async_step_mqtt(info))
+    assert result == {"type": "form", "step_id": "announce_confirm"}
+    assert called.get("announce_confirm") is True
+    assert called.get("unique_id") == "kernel_pwk_1a2b3c4d"
+    assert flow._announce is not None and flow._announce.device_id == "pwk_1a2b3c4d"
+    assert flow.context["title_placeholders"] == {"name": "sidecar pwk_1a2b3c4d"}
+
+
+def test_an_empty_announce_is_the_retained_clear_not_a_device() -> None:
+    flow, called = _flow_with_captured_next_step()
+    result = run(flow.async_step_mqtt(_info("witness/pwk_1a2b3c4d/announce", "")))
+    assert result["type"] == "abort" and result["reason"] == "invalid_discovery_info"
+    assert called == {}
+
+
+def test_the_integrations_own_claim_is_not_a_device() -> None:
+    flow, called = _flow_with_captured_next_step()
+    result = run(flow.async_step_mqtt(_info("witness/claim/pwk_1a2b3c4d", "{}")))
+    assert result["type"] == "abort" and result["reason"] == "not_securacv_device"
+    assert called == {}

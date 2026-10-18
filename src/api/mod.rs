@@ -1,7 +1,10 @@
+pub mod announce;
+pub mod pairing;
+
 use crate::fleet_peers::FleetRow;
 use crate::storage_health::SharedStorageHealth;
 use crate::verify_runner::VerifyReport;
-use crate::{ExportArtifact, ExportOptions, Kernel, KernelConfig, TimeBucket};
+use crate::{ApiCredential, ExportArtifact, ExportOptions, Kernel, KernelConfig, TimeBucket};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -14,7 +17,16 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 
+pub use pairing::PairingPaths;
+
 const MAX_REQUEST_BYTES: usize = 8192;
+
+/// A declared request body up to this size is read before any response is
+/// written (`read_request`), so a refusal reaches the client as a response
+/// instead of a connection reset. Larger declarations are never read; the
+/// body-taking routes bound what they accept far below this
+/// (`pairing::PAIR_REQUEST_MAX_BYTES`, `announce::SIGN_ANNOUNCE_MAX_BYTES`).
+const REQUEST_BODY_DRAIN_MAX: usize = 64 * 1024;
 
 /// Absolute wall-clock budget for one event-API connection: TLS handshake,
 /// request read, handler, and response write together. Generous for the real
@@ -303,6 +315,49 @@ pub struct ApiConfig {
     /// revocation takes effect on the next poll. Unset or missing on disk,
     /// the route stays exactly as it was: capability token only.
     pub viewer_token_path: Option<PathBuf>,
+    /// The pairing files ([`pairing`]): the pairing-code file
+    /// `POST /api/pair` redeems and the paired-bearer set it appends to,
+    /// which every token-gated route then accepts beside the capability
+    /// token. Unset, `/api/pair` answers its constant refusal and no paired
+    /// bearer exists (the add-on, where Home Assistant reads the token file
+    /// instead).
+    pub pairing: Option<PairingPaths>,
+    /// Whether `/api/fleet` lists the Canaries the bridge heard
+    /// ([`FleetRollcall::Full`], the Witness Wall's roll-call) or only the
+    /// kernel's own row ([`FleetRollcall::SelfOnly`], what a sidecar with a
+    /// published port serves unless the owner opts in).
+    pub fleet_rollcall: FleetRollcall,
+}
+
+/// What the open `/api/fleet` read discloses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FleetRollcall {
+    /// The kernel's row plus every peer the bridge heard.
+    #[default]
+    Full,
+    /// The kernel's row alone.
+    SelfOnly,
+}
+
+impl FleetRollcall {
+    /// Parse the `WITNESS_API_FLEET_ROLLCALL` / `api.fleet_rollcall` word.
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "self" => Ok(Self::SelfOnly),
+            other => Err(anyhow!(
+                "fleet rollcall must be `full` or `self`, got {other:?}"
+            )),
+        }
+    }
+
+    /// The word `/api/identity` reports.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::SelfOnly => "self",
+        }
+    }
 }
 
 /// Generous for legitimate clients — the HA coordinator polls every 30 s and
@@ -321,6 +376,8 @@ impl Default for ApiConfig {
             tls: ApiTlsConfig::default(),
             fleet_peers_path: None,
             viewer_token_path: None,
+            pairing: None,
+            fleet_rollcall: FleetRollcall::Full,
         }
     }
 }
@@ -345,10 +402,22 @@ impl ApiHandle {
     }
 }
 
+/// How long after its bucket ends a rotated-out capability token is still
+/// accepted. A client that read the token file just before the 10-minute
+/// boundary (the HA coordinator, the bridge) used to take one 401 — and one
+/// strike toward the lockout — every rotation; 90 s covers a poll interval
+/// plus the file re-read, and bounds the old token's whole life at 11.5
+/// minutes. A constant, not a knob: anything older still strikes.
+pub const CAPABILITY_TOKEN_GRACE_SECS: u64 = 90;
+
 #[derive(Clone, Debug)]
 pub struct CapabilityTokenManager {
     current_bucket: Option<TimeBucket>,
     token: [u8; 32],
+    /// The token rotated out most recently and the bucket it was current
+    /// for, honored until that bucket's end plus the grace. `None` until
+    /// the first rotation.
+    previous: Option<([u8; 32], TimeBucket)>,
 }
 
 impl CapabilityTokenManager {
@@ -358,6 +427,7 @@ impl CapabilityTokenManager {
         Ok(Self {
             current_bucket: Some(bucket),
             token,
+            previous: None,
         })
     }
 
@@ -367,6 +437,8 @@ impl CapabilityTokenManager {
         }
         let mut token = [0u8; 32];
         rand::fill(&mut token[..]);
+        // Only a token that was current for a known bucket earns the grace.
+        self.previous = self.current_bucket.map(|was| (self.token, was));
         self.current_bucket = Some(bucket);
         self.token = token;
         Ok(true)
@@ -376,19 +448,35 @@ impl CapabilityTokenManager {
         hex::encode(self.token)
     }
 
-    pub fn validate(&self, presented: &str, bucket: TimeBucket) -> Result<()> {
-        if self.current_bucket != Some(bucket) {
-            return Err(anyhow!("capability token expired"));
-        }
+    /// Accept `presented` when it is the token current for `bucket`, or the
+    /// token rotated out last while `now_epoch_s` is still inside its
+    /// bucket's end plus [`CAPABILITY_TOKEN_GRACE_SECS`]. Both compares run
+    /// whenever a candidate exists; neither short-circuits on a byte.
+    pub fn validate(&self, presented: &str, bucket: TimeBucket, now_epoch_s: u64) -> Result<()> {
         let presented = parse_hex32(presented)?;
         // SECURITY: Use constant-time comparison to prevent timing side-channel
         // attacks that could leak token bytes. The `!=` operator on byte arrays
         // short-circuits on the first differing byte, enabling byte-by-byte
         // extraction via response-time measurement.
-        if presented.ct_eq(&self.token).unwrap_u8() != 1 {
-            return Err(anyhow!("capability token invalid"));
+        let current_bucket_ok = self.current_bucket == Some(bucket);
+        let current_ok = presented.ct_eq(&self.token).unwrap_u8() == 1;
+        let previous_ok = match &self.previous {
+            Some((token, was)) => {
+                let grace_end = was
+                    .start_epoch_s
+                    .saturating_add(u64::from(was.size_s))
+                    .saturating_add(CAPABILITY_TOKEN_GRACE_SECS);
+                presented.ct_eq(token).unwrap_u8() == 1 && now_epoch_s < grace_end
+            }
+            None => false,
+        };
+        if (current_bucket_ok && current_ok) || previous_ok {
+            return Ok(());
         }
-        Ok(())
+        if !current_bucket_ok {
+            return Err(anyhow!("capability token expired"));
+        }
+        Err(anyhow!("capability token invalid"))
     }
 }
 
@@ -476,17 +564,32 @@ pub struct ViewerReceipt {
     pub token_id: String,
 }
 
+/// One freshly minted bearer: the clear token (the only copy there will
+/// ever be) and the entry the file now holds for it.
+#[derive(Clone, Debug)]
+pub struct MintedBearer {
+    /// 64 hex — the bearer itself.
+    pub token_hex: String,
+    pub entry: ViewerTokenEntry,
+}
+
 impl ViewerTokenSet {
     /// Read the set at `path`. A missing file is an empty set (the route
     /// stays capability-only); a file past the size bound, malformed, or
     /// of another schema version is an error the caller decides on.
     pub fn load(path: &Path) -> Result<Self> {
+        Self::load_kind(path, "viewer token")
+    }
+
+    /// [`Self::load`] naming the credential class in its errors — the
+    /// paired-bearer file has the same schema and a different name.
+    pub fn load_kind(path: &Path, kind: &str) -> Result<Self> {
         let file = match std::fs::File::open(path) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => {
                 return Err(anyhow!(
-                    "failed to open viewer token file {}: {err}",
+                    "failed to open {kind} file {}: {err}",
                     path.display()
                 ))
             }
@@ -494,7 +597,7 @@ impl ViewerTokenSet {
         let declared = file.metadata()?.len();
         if declared > VIEWER_TOKEN_MAX_FILE_BYTES {
             return Err(anyhow!(
-                "viewer token file {} is {declared} bytes, past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
+                "{kind} file {} is {declared} bytes, past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
                 path.display()
             ));
         }
@@ -503,20 +606,52 @@ impl ViewerTokenSet {
             .read_to_end(&mut bytes)?;
         if bytes.len() as u64 > VIEWER_TOKEN_MAX_FILE_BYTES {
             return Err(anyhow!(
-                "viewer token file {} grew past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
+                "{kind} file {} grew past the {VIEWER_TOKEN_MAX_FILE_BYTES}-byte bound",
                 path.display()
             ));
         }
         let set: Self = serde_json::from_slice(&bytes)
-            .map_err(|err| anyhow!("viewer token file {} is malformed: {err}", path.display()))?;
+            .map_err(|err| anyhow!("{kind} file {} is malformed: {err}", path.display()))?;
         if set.v != VIEWER_TOKEN_FILE_VERSION {
             return Err(anyhow!(
-                "viewer token file {} is schema v{}, this kernel reads v{VIEWER_TOKEN_FILE_VERSION}",
+                "{kind} file {} is schema v{}, this kernel reads v{VIEWER_TOKEN_FILE_VERSION}",
                 path.display(),
                 set.v
             ));
         }
         Ok(set)
+    }
+
+    /// Mint one bearer into the file at `path` and return it in the clear,
+    /// once. The shared half of [`Self::mint`] (viewer) and `POST /api/pair`
+    /// (paired): 32 random bytes, sha256 at rest, id = the hash's first 8
+    /// hex, label cleaned and required.
+    pub fn append(path: &Path, label: &str, kind: &str) -> Result<MintedBearer> {
+        let label = clean_viewer_label(label);
+        if label.is_empty() {
+            return Err(anyhow!("a {kind} needs a label"));
+        }
+        let mut set = Self::load_kind(path, kind)?;
+        let mut token = [0u8; 32];
+        rand::fill(&mut token[..]);
+        let sha256 = hex::encode(viewer_token_digest(&token));
+        let id = sha256[..8].to_string();
+        let minted = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let entry = ViewerTokenEntry {
+            id,
+            sha256,
+            label,
+            minted,
+        };
+        set.tokens.push(entry.clone());
+        set.save(path)?;
+        Ok(MintedBearer {
+            token_hex: hex::encode(token),
+            entry,
+        })
     }
 
     /// Write the set as a fresh 0600 regular file (atomic replace, never
@@ -559,8 +694,7 @@ impl ViewerTokenSet {
         verifying_key: String,
         base_url: Option<String>,
     ) -> Result<ViewerReceipt> {
-        let label = clean_viewer_label(label);
-        if label.is_empty() {
+        if clean_viewer_label(label).is_empty() {
             return Err(anyhow!(
                 "a viewer token needs a label (which screen holds it, e.g. \"living room tv\")"
             ));
@@ -568,28 +702,13 @@ impl ViewerTokenSet {
         if hex::decode(&verifying_key).map(|k| k.len()) != Ok(32) {
             return Err(anyhow!("verifying_key must be 64 hex characters"));
         }
-        let mut set = Self::load(path)?;
-        let mut token = [0u8; 32];
-        rand::fill(&mut token[..]);
-        let sha256 = hex::encode(viewer_token_digest(&token));
-        let id = sha256[..8].to_string();
-        let minted = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        set.tokens.push(ViewerTokenEntry {
-            id: id.clone(),
-            sha256,
-            label,
-            minted,
-        });
-        set.save(path)?;
+        let minted = Self::append(path, label, "viewer token")?;
         Ok(ViewerReceipt {
             kernel: KERNEL_NAME,
             base_url,
-            sealed_log_token: hex::encode(token),
+            sealed_log_token: minted.token_hex,
             verifying_key,
-            token_id: id,
+            token_id: minted.entry.id,
         })
     }
 
@@ -597,14 +716,19 @@ impl ViewerTokenSet {
     /// carrying that token is an auth failure. An unknown id is an error so
     /// a typo never reads as "revoked".
     pub fn revoke(path: &Path, id: &str) -> Result<ViewerTokenEntry> {
-        let mut set = Self::load(path)?;
+        Self::revoke_kind(path, id, "viewer token")
+    }
+
+    /// [`Self::revoke`] naming the credential class in its errors.
+    pub fn revoke_kind(path: &Path, id: &str, kind: &str) -> Result<ViewerTokenEntry> {
+        let mut set = Self::load_kind(path, kind)?;
         let index = set
             .tokens
             .iter()
             .position(|entry| entry.id == id)
             .ok_or_else(|| {
                 anyhow!(
-                    "no viewer token with id {id:?} in {} ({} minted)",
+                    "no {kind} with id {id:?} in {} ({} minted)",
                     path.display(),
                     set.tokens.len()
                 )
@@ -678,15 +802,17 @@ impl ApiServer {
         };
         let tls_active = tls_config.is_some();
 
-        // Firmware alignment: DEFAULT_TLS_REQUIRED = 1. When in-process TLS is
-        // not active, the honest remedies are: keep the default loopback bind
-        // and put a TLS reverse proxy or SSH tunnel in front of it, provide
-        // cert/key to an `api-tls` build, or accept plaintext exposure
-        // explicitly with WITNESS_API_ALLOW_INSECURE=1.
+        // The kernel's own policy, not a firmware one: a Canary release image
+        // still serves plain HTTP until FEATURE_HTTPS fits its slot, and no
+        // firmware macro requires TLS. When in-process TLS is not active, the
+        // honest remedies are: keep the default loopback bind and put a TLS
+        // reverse proxy or SSH tunnel in front of it, provide cert/key to an
+        // `api-tls` build, or accept plaintext exposure explicitly with
+        // WITNESS_API_ALLOW_INSECURE=1.
         if !tls_active && !self.cfg.allow_insecure {
             log::warn!(
                 "CONFORMANCE: event API serves plaintext HTTP (in-process TLS not \
-                 active; firmware policy DEFAULT_TLS_REQUIRED=1). Keep the bind \
+                 active). Keep the bind \
                  loopback behind a TLS reverse proxy or SSH tunnel, configure \
                  cert/key on an `api-tls` build, or set \
                  WITNESS_API_ALLOW_INSECURE=1 to accept plaintext exposure."
@@ -935,7 +1061,20 @@ impl RateLimiter {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The server-side state one request handler sees: the open kernel, both
+/// configs, the storage snapshot and the cached verify report. Bundled so
+/// the auth gate and every route handler share one signature.
+struct ServerState<'a> {
+    kernel: &'a mut Kernel,
+    cfg: &'a ApiConfig,
+    kernel_cfg: &'a KernelConfig,
+    storage_health: Option<&'a SharedStorageHealth>,
+    /// Most recent POST /verify outcome, surfaced in /digest and
+    /// /api/identity so consumers get chain status without re-running
+    /// verification on every request.
+    last_verify: &'a mut Option<VerifyReport>,
+}
+
 fn run_api(
     listener: TcpListener,
     cfg: ApiConfig,
@@ -946,13 +1085,8 @@ fn run_api(
     wrap: StreamWrap,
 ) -> Result<()> {
     let mut kernel = Kernel::open(&kernel_cfg)?;
-    let expected_ruleset_hash = kernel_cfg.ruleset_hash;
-    let kernel_version = kernel_cfg.kernel_version.clone();
-    let retention = kernel_cfg.retention;
     let mut auth_tracker = AuthFailureTracker::new();
     let mut rate_limiter = RateLimiter::new(cfg.rate_limit_per_minute);
-    // Most recent POST /verify outcome, surfaced in /digest so consumers
-    // get chain status without re-running verification on every request.
     let mut last_verify: Option<VerifyReport> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -960,19 +1094,20 @@ fn run_api(
         }
         match listener.accept() {
             Ok((stream, _)) => {
+                let state = ServerState {
+                    kernel: &mut kernel,
+                    cfg: &cfg,
+                    kernel_cfg: &kernel_cfg,
+                    storage_health: storage_health.as_ref(),
+                    last_verify: &mut last_verify,
+                };
                 if let Err(err) = handle_connection(
                     stream,
                     &wrap,
-                    &mut kernel,
-                    &cfg,
+                    state,
                     token_mgr,
-                    expected_ruleset_hash,
-                    &kernel_version,
-                    storage_health.as_ref(),
-                    retention,
                     &mut auth_tracker,
                     &mut rate_limiter,
-                    &mut last_verify,
                 ) {
                     log::warn!("event api request rejected: {}", err);
                 }
@@ -995,20 +1130,40 @@ fn run_api(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+fn now_epoch_s() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The 8-hex id a `DELETE /api/pair/<id>` names, when the path has that
+/// exact shape (lowercase hex, as `hex::encode` spells every id).
+fn pair_revoke_id(path: &str) -> Option<&str> {
+    let id = path.strip_prefix("/api/pair/")?;
+    let well_formed = id.len() == 8
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    well_formed.then_some(id)
+}
+
+/// The first `key=` value in `raw_path`'s query string, undecoded.
+fn query_param<'a>(raw_path: &'a str, key: &str) -> Option<&'a str> {
+    let query = raw_path.split('?').nth(1)?;
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then_some(v)
+    })
+}
+
 fn handle_connection(
     stream: TcpStream,
     wrap: &StreamWrap,
-    kernel: &mut Kernel,
-    cfg: &ApiConfig,
+    mut state: ServerState<'_>,
     token_mgr: &mut CapabilityTokenManager,
-    expected_ruleset_hash: [u8; 32],
-    kernel_version: &str,
-    storage_health: Option<&SharedStorageHealth>,
-    retention: Duration,
     auth_tracker: &mut AuthFailureTracker,
     rate_limiter: &mut RateLimiter,
-    last_verify: &mut Option<VerifyReport>,
 ) -> Result<()> {
     // Addresses are taken on the TCP stream BEFORE any TLS wrap; every
     // subsequent socket operation (the lazy rustls handshake included) runs
@@ -1027,13 +1182,20 @@ fn handle_connection(
         return Ok(());
     }
 
-    // Check auth lockout before processing request
+    // Check auth lockout before reading the request: a locked address is
+    // answered without the server spending a read on it.
     if let Some(retry_after) = auth_tracker.is_locked(&peer.ip()) {
         let body = format!(r#"{{"error":"auth_locked","retry_after":{}}}"#, retry_after);
         write_json_response(&mut stream, 429, &body)?;
         return Ok(());
     }
 
+    // The request is read in full — headers, and a declared body up to
+    // `REQUEST_BODY_DRAIN_MAX` — before any other answer is written: a
+    // response written onto a socket that still holds unread request bytes
+    // is lost to an RST when the socket closes, and the client sees
+    // "connection reset" where it was sent a 400 or a 401. The read is
+    // bounded by the same timeouts as everything else.
     let request = read_request(&mut stream)?;
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/health") => {
@@ -1058,15 +1220,18 @@ fn handle_connection(
         // metrics are operational metadata and stay behind the capability
         // token (Invariant III posture — only `/health` liveness is open).
         // `/api/sealed-log` (the checkpoint-anchored chain tail for read-only
-        // verifiers) is token-gated like `/events`. It takes NO query
-        // parameters — the sealed log is non-queryable (Invariant VII), so a
-        // query string is ignored the same way `/events` ignores one.
+        // verifiers) and `/api/identity` (the kernel's id, key and chain
+        // head) are token-gated the same way. The sealed log takes ONE
+        // query parameter, the incremental cursor `from_seq` (a sequential
+        // position, not a selector — Invariant VII stays intact); anything
+        // else in a query string is ignored the way `/events` ignores one.
         ("GET", "/events")
         | ("GET", "/events/latest")
         | ("GET", "/digest")
         | ("GET", "/status")
         | ("GET", "/export/bundle")
-        | ("GET", "/api/sealed-log") => {}
+        | ("GET", "/api/sealed-log")
+        | ("GET", "/api/identity") => {}
         // POST /verify carries no body — verification has no parameters and
         // request parsing stays at the 8 KB header-only surface.
         ("POST", "/verify") => {
@@ -1080,6 +1245,11 @@ fn handle_connection(
                 return Ok(());
             }
         }
+        // The two routes with a body. Each handler reads it itself, bounded
+        // (`PAIR_REQUEST_MAX_BYTES`, `SIGN_ANNOUNCE_MAX_BYTES`), and
+        // `/api/sign-announce` only after the token has been checked.
+        ("POST", "/api/pair") | ("POST", "/api/sign-announce") => {}
+        ("DELETE", path) if pair_revoke_id(path).is_some() => {}
         (_, "/health")
         | (_, "/events")
         | (_, "/events/latest")
@@ -1088,7 +1258,20 @@ fn handle_connection(
         | (_, "/status")
         | (_, "/export/bundle")
         | (_, "/api/sealed-log")
-        | (_, "/api/fleet") => {
+        | (_, "/api/fleet")
+        | (_, "/api/pair")
+        | (_, "/api/identity")
+        | (_, "/api/sign-announce") => {
+            write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
+            return Ok(());
+        }
+        // Under `/api/pair/`: a DELETE naming something that is not an id
+        // has nothing to revoke (404); any other method there is a 405.
+        ("DELETE", path) if path.starts_with("/api/pair/") => {
+            write_json_response(&mut stream, 404, r#"{"error":"not_found"}"#)?;
+            return Ok(());
+        }
+        (_, path) if path.starts_with("/api/pair/") => {
             write_json_response(&mut stream, 405, r#"{"error":"method_not_allowed"}"#)?;
             return Ok(());
         }
@@ -1115,21 +1298,30 @@ fn handle_connection(
         // a 429 there would block the GET it precedes), but no token: this
         // is the anyone-who-asks surface, and it is served before the token
         // machinery so an unauthenticated poll never counts as an auth
-        // failure against the caller's address.
-        let now_epoch_s = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let peers = cfg
-            .fleet_peers_path
-            .as_deref()
-            .map(|path| crate::fleet_peers::load_rows(path, now_epoch_s))
-            .unwrap_or_default();
-        let body = fleet_document(last_verify.as_ref().map(|r| r.chain_valid), &peers);
+        // failure against the caller's address. Under `self` roll-call
+        // (a sidecar whose port is published for pairing) the peers the
+        // bridge heard stay off this open read: who is home is the owner's
+        // to opt into, not a side effect of pairing.
+        let peers = match (
+            state.cfg.fleet_rollcall,
+            state.cfg.fleet_peers_path.as_deref(),
+        ) {
+            (FleetRollcall::Full, Some(path)) => crate::fleet_peers::load_rows(path, now_epoch_s()),
+            _ => Vec::new(),
+        };
+        let body = fleet_document(state.last_verify.as_ref().map(|r| r.chain_valid), &peers);
         let cors = fleet_cors_headers(request.headers.get("origin").map(String::as_str));
         let cors: Vec<(&str, &str)> = cors.iter().map(|(k, v)| (*k, v.as_str())).collect();
         write_response_with_headers(&mut stream, 200, "application/json", body.as_bytes(), &cors)?;
         return Ok(());
+    }
+
+    // `POST /api/pair` is the one unauthenticated write: it is what mints a
+    // credential for a client that has none. Served after the lockout and
+    // the limiter (every refusal below is a strike), before the token
+    // machinery (a caller with no token is the expected caller here).
+    if request.method == "POST" && request.path == "/api/pair" {
+        return handle_pair(&mut stream, &request, &state, auth_tracker, peer.ip());
     }
 
     if request.has_query_token() {
@@ -1162,15 +1354,14 @@ fn handle_connection(
     // lockout guards the capability token too, and a holder of the narrower
     // credential must not be able to reset it by slipping a read between
     // every four capability-token guesses. Only a capability success clears.
-    if let Some(viewer_path) = &cfg.viewer_token_path {
+    if let Some(viewer_path) = &state.cfg.viewer_token_path {
         let viewers = ViewerTokenSet::load(viewer_path).unwrap_or_else(|err| {
             log::warn!("viewer token file ignored: {err:#}");
             ViewerTokenSet::default()
         });
         if let Some(entry) = viewers.matches(&token) {
             if request.method == "GET" && request.path == "/api/sealed-log" {
-                write_sealed_log_document(&mut stream, kernel)?;
-                return Ok(());
+                return serve_sealed_log(&mut stream, &request, state.kernel);
             }
             auth_tracker.record_failure(peer.ip());
             write_json_response(&mut stream, 401, r#"{"error":"invalid_token"}"#)?;
@@ -1183,9 +1374,32 @@ fn handle_connection(
         }
     }
 
+    // Paired bearer (see `pairing`): the credential `POST /api/pair`
+    // minted. Checked before the capability token so it never rotates or
+    // touches that machinery, and admitted to every door the capability
+    // token opens — the receipts and the revocation rule are what tell
+    // the two apart. Read per request (a revocation lands on the next
+    // poll); a file the kernel cannot read admits no one. A paired
+    // success clears the address's failure history like a capability
+    // success: it is a full credential, not the viewer's narrow one.
+    if let Some(paths) = &state.cfg.pairing {
+        let paired =
+            ViewerTokenSet::load_kind(&paths.tokens_path, "paired token").unwrap_or_else(|err| {
+                log::warn!("paired token file ignored: {err:#}");
+                ViewerTokenSet::default()
+            });
+        if let Some(entry) = paired.matches(&token) {
+            auth_tracker.clear_on_success(&peer.ip());
+            let credential = ApiCredential::Paired {
+                token_id: entry.id.clone(),
+            };
+            return serve_authenticated(&mut stream, &request, &mut state, credential);
+        }
+    }
+
     let now_bucket = TimeBucket::now_10min()?;
     if token_mgr.rotate_if_needed(now_bucket)? {
-        if let Some(path) = &cfg.token_path {
+        if let Some(path) = &state.cfg.token_path {
             write_token_file(path, &token_mgr.token_hex())?;
         } else {
             // SECURITY: Never log the token value, even to stderr.
@@ -1198,7 +1412,7 @@ fn handle_connection(
         }
     }
 
-    if let Err(err) = token_mgr.validate(&token, now_bucket) {
+    if let Err(err) = token_mgr.validate(&token, now_bucket, now_epoch_s()) {
         auth_tracker.record_failure(peer.ip());
         write_json_response(&mut stream, 401, r#"{"error":"invalid_token"}"#)?;
         return Err(err);
@@ -1207,8 +1421,162 @@ fn handle_connection(
     // Successful auth — clear any failure history for this IP
     auth_tracker.clear_on_success(&peer.ip());
 
+    serve_authenticated(&mut stream, &request, &mut state, ApiCredential::Capability)
+}
+
+/// `POST /api/pair`: redeem a pairing code for a paired bearer.
+///
+/// Malformed input is a 400 and not a strike; every refusal of a code —
+/// wrong, never issued, burned, expired, or pairing not configured at all —
+/// is the SAME 401 body and a per-IP strike, so an unauthenticated caller
+/// learns nothing about the pairing state from the answer. On success the
+/// code file is already gone (consumed inside `redeem`) before the bearer
+/// is minted, and the response is the one copy of the bearer. A success
+/// does not clear the address's strikes: the credential just minted will,
+/// on its first authenticated request.
+fn handle_pair<S: Write>(
+    stream: &mut S,
+    request: &HttpRequest,
+    state: &ServerState<'_>,
+    auth_tracker: &mut AuthFailureTracker,
+    ip: std::net::IpAddr,
+) -> Result<()> {
+    use pairing::{PairRequest, PairResponse, PairingCodeFile, Redeem};
+
+    let body = match read_body(request, pairing::PAIR_REQUEST_MAX_BYTES) {
+        Ok(body) => body,
+        Err(refusal) => {
+            write_json_response(stream, 400, refusal.error_body())?;
+            return Ok(());
+        }
+    };
+    let parsed: PairRequest = match serde_json::from_slice(&body) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            write_json_response(stream, 400, r#"{"error":"bad_request"}"#)?;
+            return Ok(());
+        }
+    };
+    if !pairing::is_well_formed_code(&parsed.code) {
+        write_json_response(stream, 400, r#"{"error":"bad_request"}"#)?;
+        return Ok(());
+    }
+    let label = parsed
+        .label
+        .as_deref()
+        .map(clean_viewer_label)
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| pairing::DEFAULT_PAIRED_LABEL.to_string());
+
+    let refuse = |stream: &mut S, auth_tracker: &mut AuthFailureTracker| -> Result<()> {
+        auth_tracker.record_failure(ip);
+        write_json_response(stream, 401, r#"{"error":"invalid_pairing_code"}"#)
+    };
+    let Some(paths) = &state.cfg.pairing else {
+        return refuse(stream, auth_tracker);
+    };
+    // The paired set is bounded (`pairing::PAIRED_TOKEN_LIMIT`): past the
+    // file's read bound every paired client would be refused at once. A
+    // full set refuses the ceremony BEFORE the code is consumed — and only
+    // to a caller holding the right code, so the answer is no oracle — and
+    // the log names the remedy. A set the kernel cannot read is left to
+    // `append` below, which says why as a 500.
+    let has_room = match ViewerTokenSet::load_kind(&paths.tokens_path, "paired token") {
+        Ok(set) => set.tokens.len() < pairing::PAIRED_TOKEN_LIMIT,
+        Err(_) => true,
+    };
+    let issued_for =
+        match PairingCodeFile::redeem_if(&paths.code_path, &parsed.code, now_epoch_s(), has_room) {
+            Ok(Redeem::Accepted { label }) => label,
+            Ok(Redeem::Refused) => return refuse(stream, auth_tracker),
+            Ok(Redeem::AtCapacity) => {
+                log::warn!(
+                    "pairing refused: {} paired tokens are already issued (the limit); the code \
+                 is still valid — revoke one with `witness_api list-paired-tokens` and \
+                 `witness_api revoke-paired-token <id>` (`docker exec securacv unpair <id>`), \
+                 then enter the same code again",
+                    pairing::PAIRED_TOKEN_LIMIT
+                );
+                write_json_response(stream, 403, r#"{"error":"paired_token_limit"}"#)?;
+                return Ok(());
+            }
+            Err(err) => {
+                // The code's bookkeeping could not be written; refusing without
+                // counting the guess would make it free, and minting on top of
+                // a file we cannot update would be worse. Say so and stop.
+                log::error!("pairing refused: {err:#}");
+                write_json_response(stream, 500, r#"{"error":"internal_error"}"#)?;
+                return Ok(());
+            }
+        };
+    let minted = match ViewerTokenSet::append(&paths.tokens_path, &label, "paired token") {
+        Ok(minted) => minted,
+        Err(err) => {
+            log::error!(
+                "pairing code consumed but no paired token could be written: {err:#}; \
+                 issue a new code once {} is writable",
+                paths.tokens_path.display()
+            );
+            write_json_response(stream, 500, r#"{"error":"internal_error"}"#)?;
+            return Ok(());
+        }
+    };
+    log::info!(
+        "paired token {} issued for {:?} (pairing code issued for {:?})",
+        minted.entry.id,
+        label,
+        issued_for
+    );
+    let response = PairResponse {
+        token: minted.token_hex,
+        token_id: minted.entry.id,
+        device_id: crate::ha_device_id(&state.kernel_cfg.device_key_seed),
+        verifying_key: hex::encode(state.kernel.device_verifying_key().to_bytes()),
+        kernel_version: state.kernel_cfg.kernel_version.clone(),
+    };
+    let payload = serde_json::to_vec(&response)?;
+    write_response(stream, 200, "application/json", &payload)
+}
+
+/// The sealed-log document, for whichever credential opened the route
+/// (viewer, paired or capability): the ONE writer, so every credential
+/// serves byte-identical bytes, with the `from_seq` cursor applied when the
+/// query names one.
+fn serve_sealed_log<S: Write>(
+    stream: &mut S,
+    request: &HttpRequest,
+    kernel: &Kernel,
+) -> Result<()> {
+    let from_seq = match query_param(&request.raw_path, "from_seq") {
+        None => None,
+        Some(raw) => match raw.parse::<u64>() {
+            Ok(seq) => Some(seq),
+            Err(_) => {
+                let body = serde_json::json!({
+                    "error": "bad_request",
+                    "detail": "from_seq must be a non-negative integer",
+                });
+                write_json_response(stream, 400, &body.to_string())?;
+                return Ok(());
+            }
+        },
+    };
+    write_sealed_log_document(stream, kernel, from_seq)
+}
+
+/// Every route behind a full credential (capability token or paired
+/// bearer), with the credential named so a receipt can record it.
+fn serve_authenticated<S: Write>(
+    stream: &mut S,
+    request: &HttpRequest,
+    state: &mut ServerState<'_>,
+    credential: ApiCredential,
+) -> Result<()> {
+    let expected_ruleset_hash = state.kernel_cfg.ruleset_hash;
+
     if request.path == "/status" {
-        let report = storage_health
+        let report = state
+            .storage_health
             .and_then(|shared| shared.read().ok().and_then(|guard| guard.as_ref().cloned()));
         match report {
             Some(report) => {
@@ -1219,14 +1587,14 @@ fn handle_connection(
                     report: crate::storage_health::StorageHealthReport,
                 }
                 let payload = serde_json::to_vec(&StatusResponse {
-                    kernel_version,
+                    kernel_version: &state.kernel_cfg.kernel_version,
                     report,
                 })?;
-                write_response(&mut stream, 200, "application/json", &payload)?;
+                write_response(stream, 200, "application/json", &payload)?;
             }
             // No snapshot yet (monitoring disabled, or first sample pending):
             // 404 lets clients distinguish "not available" from an error.
-            None => write_json_response(&mut stream, 404, r#"{"error":"not_available"}"#)?,
+            None => write_json_response(stream, 404, r#"{"error":"not_available"}"#)?,
         }
         return Ok(());
     }
@@ -1238,10 +1606,72 @@ fn handle_connection(
         // Route through the kernel so a configured high-water-mark is checked
         // here too (mirrors witnessd's boot verify) — a rolled-back log fails
         // closed rather than reporting valid.
-        let report = kernel.verify_sealed_log()?;
-        *last_verify = Some(report.clone());
+        let report = state.kernel.verify_sealed_log()?;
+        *state.last_verify = Some(report.clone());
         let payload = serde_json::to_vec(&report)?;
-        write_response(&mut stream, 200, "application/json", &payload)?;
+        write_response(stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
+    if request.path == "/api/identity" {
+        let document = identity_document(state)?;
+        let payload = serde_json::to_vec(&document)?;
+        write_response(stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
+    if request.path == "/api/sign-announce" {
+        // The bridge's announce, signed by the key the bridge does not
+        // hold. Only a body that names THIS kernel is signed, and the bytes
+        // signed are the bytes received (see `announce`).
+        let body = match read_body(request, announce::SIGN_ANNOUNCE_MAX_BYTES) {
+            Ok(body) => body,
+            Err(refusal) => {
+                write_json_response(stream, 400, refusal.error_body())?;
+                return Ok(());
+            }
+        };
+        let own_device_id = crate::ha_device_id(&state.kernel_cfg.device_key_seed);
+        let own_key = hex::encode(state.kernel.device_verifying_key().to_bytes());
+        if let Err(refusal) = announce::check_announce_body(&body, &own_device_id, &own_key) {
+            let body = serde_json::json!({"error": "bad_request", "detail": refusal.detail()});
+            write_json_response(stream, 400, &body.to_string())?;
+            return Ok(());
+        }
+        let sig = state.kernel.sign_announce(&body);
+        let payload = serde_json::to_vec(&serde_json::json!({ "sig": sig }))?;
+        write_response(stream, 200, "application/json", &payload)?;
+        return Ok(());
+    }
+
+    if let Some(id) = pair_revoke_id(&request.path) {
+        // Revocation: the capability token (local, rotating) may revoke any
+        // paired bearer; a paired bearer may revoke ONLY itself — that is
+        // what lets the integration clean up after its own removal without
+        // letting one stolen bearer evict the others.
+        let Some(paths) = &state.cfg.pairing else {
+            write_json_response(stream, 404, r#"{"error":"not_found"}"#)?;
+            return Ok(());
+        };
+        if let ApiCredential::Paired { token_id } = &credential {
+            if token_id != id {
+                write_json_response(stream, 403, r#"{"error":"forbidden"}"#)?;
+                return Ok(());
+            }
+        }
+        let set = ViewerTokenSet::load_kind(&paths.tokens_path, "paired token")?;
+        if !set.tokens.iter().any(|entry| entry.id == id) {
+            write_json_response(stream, 404, r#"{"error":"not_found"}"#)?;
+            return Ok(());
+        }
+        let removed = ViewerTokenSet::revoke_kind(&paths.tokens_path, id, "paired token")?;
+        log::info!(
+            "paired token {} ({:?}) revoked over the API; the next request carrying it is refused",
+            removed.id,
+            removed.label
+        );
+        let payload = serde_json::to_vec(&serde_json::json!({ "revoked": id }))?;
+        write_response(stream, 200, "application/json", &payload)?;
         return Ok(());
     }
 
@@ -1250,39 +1680,42 @@ fn handle_connection(
         // (artifact + chained receipt + verifying keys) so the file is
         // self-verifying offline. Optional window: ?last=24h or
         // ?start=<epoch_s>&end=<epoch_s>, aligned outward to bucket
-        // boundaries. Receipt is labeled `api` (credential = capability
-        // token) and records the window — same audit posture as /events.
+        // boundaries. A disclosure act: the receipt names the credential
+        // (`api` for the capability token, `paired` + `token_id` for a
+        // paired bearer) and records the window.
         let window = match parse_window_query(&request.raw_path) {
             Ok(window) => window,
             Err(e) => {
                 let body = serde_json::json!({"error": "bad_window", "detail": e.to_string()});
-                write_json_response(&mut stream, 400, &body.to_string())?;
+                write_json_response(stream, 400, &body.to_string())?;
                 return Ok(());
             }
         };
-        let bundle = kernel.export_events_bundle_for_api(
+        let bundle = state.kernel.export_events_bundle_for_api_with(
             expected_ruleset_hash,
             ExportOptions {
                 window,
-                ..cfg.export_options
+                ..state.cfg.export_options
             },
+            credential,
         )?;
         let payload = serde_json::to_vec(&bundle)?;
         let filename = format!(
             "securacv-events-{}.json",
             TimeBucket::now_10min()?.start_epoch_s
         );
-        write_download_response(&mut stream, "application/json", &payload, &filename)?;
+        write_download_response(stream, "application/json", &payload, &filename)?;
         return Ok(());
     }
 
     if request.path == "/api/sealed-log" {
         // The checkpoint-anchored sealed-log tail as a self-contained
         // document (verifying key + entries exactly as stored) for read-only
-        // chain verifiers such as the Witness Wall's `tvos/witness-core`.
-        // A rotation-crossing tail is never served — the walk re-anchors at
-        // the newest rotation record so a single-key verifier verifies
-        // everything it receives (see Kernel::sealed_log_document).
+        // chain verifiers such as the Witness Wall's `tvos/witness-core` and
+        // the Home Assistant integration's own walk. A rotation-crossing
+        // tail is never served — the walk re-anchors at the newest rotation
+        // record so a single-key verifier verifies everything it receives
+        // (see Kernel::sealed_log_document).
         //
         // Deliberate, and different from `/export/bundle`: the payloads are
         // the STORED bytes, so nothing can be redacted from them — not even
@@ -1290,36 +1723,146 @@ fn handle_connection(
         // because any byte removed breaks the entry-hash walk that is this
         // endpoint's entire purpose. The capability token therefore reads
         // the chain as the chain, and redaction remains the export lane's
-        // job. No query parameters exist for this route (Invariant VII,
-        // non-queryable): any query string is ignored, apart from the
-        // `?token=` rejection above. A viewer token reaches the same writer
-        // (and only this writer) above.
-        write_sealed_log_document(&mut stream, kernel)?;
+        // job. Receipt-less: a chain walk is a read, not a disclosure. The
+        // one query parameter is the `from_seq` cursor; a viewer token
+        // reaches the same writer (and only this writer) above.
+        return serve_sealed_log(stream, request, state.kernel);
+    }
+
+    // The state reads: a projection of the sealed log that writes nothing
+    // (`Kernel::view_events`). `/events` without a cursor is the bulk
+    // artifact export, which stays receipted — it is the whole retained log
+    // handed over in one piece.
+    if request.path == "/events" {
+        let since_bucket = match query_param(&request.raw_path, "since_bucket") {
+            None => None,
+            Some(raw) => match raw.parse::<u64>() {
+                Ok(since) => Some(since),
+                Err(_) => {
+                    let body = serde_json::json!({
+                        "error": "bad_request",
+                        "detail": "since_bucket must be a non-negative integer (a bucket start)",
+                    });
+                    write_json_response(stream, 400, &body.to_string())?;
+                    return Ok(());
+                }
+            },
+        };
+        let artifact = match since_bucket {
+            Some(since) => state.kernel.view_events(
+                expected_ruleset_hash,
+                state.cfg.export_options,
+                Some(since),
+            )?,
+            None => state.kernel.export_events_for_api_with(
+                expected_ruleset_hash,
+                state.cfg.export_options,
+                credential,
+            )?,
+        };
+        let payload = serde_json::to_vec(&artifact)?;
+        write_response(stream, 200, "application/json", &payload)?;
         return Ok(());
     }
 
-    let artifact = kernel.export_events_for_api(expected_ruleset_hash, cfg.export_options)?;
+    let artifact =
+        state
+            .kernel
+            .view_events(expected_ruleset_hash, state.cfg.export_options, None)?;
 
     if request.path == "/digest" {
-        let digest = build_digest(&artifact, retention, last_verify.clone())?;
+        let digest = build_digest(
+            &artifact,
+            state.kernel_cfg.retention,
+            state.last_verify.clone(),
+        )?;
         let payload = serde_json::to_vec(&digest)?;
-        write_response(&mut stream, 200, "application/json", &payload)?;
+        write_response(stream, 200, "application/json", &payload)?;
         return Ok(());
     }
 
     if request.path == "/events/latest" {
         if let Some(event) = latest_event(&artifact) {
             let payload = serde_json::to_vec(event)?;
-            write_response(&mut stream, 200, "application/json", &payload)?;
+            write_response(stream, 200, "application/json", &payload)?;
         } else {
-            write_json_response(&mut stream, 404, r#"{"error":"no_events"}"#)?;
+            write_json_response(stream, 404, r#"{"error":"no_events"}"#)?;
         }
         return Ok(());
     }
 
-    let payload = serde_json::to_vec(&artifact)?;
-    write_response(&mut stream, 200, "application/json", &payload)?;
-    Ok(())
+    // Every routed path is handled above; the route table admits nothing else.
+    write_json_response(stream, 404, r#"{"error":"not_found"}"#)
+}
+
+/// `GET /api/identity`: who this kernel is, for a client that needs to pin
+/// it (the integration's TOFU pin, the bridge's announce). Field order is
+/// the wire order. Never the seed, a token, a token hash, a zone or an
+/// event.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+pub struct IdentityDocument {
+    pub v: u32,
+    /// `pwk_<8 hex>` — [`crate::ha_device_id`] of the seed.
+    pub device_id: String,
+    /// The CURRENT device key, 64 hex — the same bytes
+    /// `SealedLogDocument::verifying_key` serves.
+    pub verifying_key: String,
+    pub key_algorithm: String,
+    pub kernel_version: String,
+    pub ruleset_id: String,
+    /// Rows in the sealed log (every record kind).
+    pub chain_length: u64,
+    /// Hex `entry_hash` of the newest row, or the all-zero genesis anchor.
+    pub latest_hash: String,
+    /// The kernel's own last `POST /verify` outcome — a self-report, never
+    /// a verification a client may call its own. `null` until one has run.
+    pub last_verify: Option<LastVerifySummary>,
+    /// `full` | `self`: what `/api/fleet` discloses.
+    pub fleet_rollcall: String,
+    /// How many paired bearers are outstanding (0 when pairing is off).
+    pub paired_tokens: u32,
+}
+
+/// The coarse summary of a kernel self-verify: `at` is a bucket start.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+pub struct LastVerifySummary {
+    pub at: u64,
+    pub bucket_size: u32,
+    pub ok: bool,
+    pub verdict: String,
+    pub identity_verified: bool,
+}
+
+fn identity_document(state: &ServerState<'_>) -> Result<IdentityDocument> {
+    let (chain_length, latest) = state.kernel.sealed_log_tail()?;
+    let paired_tokens = match &state.cfg.pairing {
+        Some(paths) => ViewerTokenSet::load_kind(&paths.tokens_path, "paired token")
+            .map(|set| u32::try_from(set.tokens.len()).unwrap_or(u32::MAX))
+            .unwrap_or_else(|err| {
+                log::warn!("paired token file ignored: {err:#}");
+                0
+            }),
+        None => 0,
+    };
+    Ok(IdentityDocument {
+        v: 1,
+        device_id: crate::ha_device_id(&state.kernel_cfg.device_key_seed),
+        verifying_key: hex::encode(state.kernel.device_verifying_key().to_bytes()),
+        key_algorithm: "ed25519".to_string(),
+        kernel_version: state.kernel_cfg.kernel_version.clone(),
+        ruleset_id: state.kernel_cfg.ruleset_id.clone(),
+        chain_length,
+        latest_hash: hex::encode(latest.unwrap_or([0u8; 32])),
+        last_verify: state.last_verify.as_ref().map(|report| LastVerifySummary {
+            at: report.verified_at_bucket_start,
+            bucket_size: report.verified_at_bucket_size,
+            ok: report.chain_valid,
+            verdict: report.verdict.clone(),
+            identity_verified: report.identity_verified,
+        }),
+        fleet_rollcall: state.cfg.fleet_rollcall.as_str().to_string(),
+        paired_tokens,
+    })
 }
 
 /// Rolling 24h digest of the privacy-preserving event log.
@@ -1408,6 +1951,7 @@ fn period_of_day(epoch_s: u64) -> &'static str {
 fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
     let mut buf = [0u8; 1024];
     let mut data = Vec::new();
+    let mut header_end: Option<usize> = None;
     loop {
         let n = stream.read(&mut buf)?;
         if n == 0 {
@@ -1417,11 +1961,18 @@ fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
         if data.len() > MAX_REQUEST_BYTES {
             return Err(anyhow!("request too large"));
         }
-        if data.windows(4).any(|w| w == b"\r\n\r\n") {
+        if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            header_end = Some(pos + 4);
             break;
         }
     }
-    let text = String::from_utf8_lossy(&data);
+    // Whatever arrived after the terminator belongs to the body.
+    let (head, body_prefix) = match header_end {
+        Some(end) => data.split_at(end),
+        None => (data.as_slice(), &[][..]),
+    };
+    let mut body = body_prefix.to_vec();
+    let text = String::from_utf8_lossy(head);
     let mut lines = text.split("\r\n");
     let request_line = lines.next().ok_or_else(|| anyhow!("empty request"))?;
     let mut parts = request_line.split_whitespace();
@@ -1437,19 +1988,101 @@ fn read_request<S: Read>(stream: &mut S) -> Result<HttpRequest> {
         }
     }
     let path = raw_path.split('?').next().unwrap_or(raw_path).to_string();
+
+    // Read a declared body up to the drain bound, whatever the route will
+    // make of it (see `handle_connection`). A larger declared body is left
+    // unread; the route refuses it on the declared length alone. A peer
+    // that stops short of its declaration (or stalls into the per-op
+    // timeout) leaves a short body, which `read_body` reports as truncated
+    // — a 400, not a dropped connection.
+    let declared = headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if declared <= REQUEST_BODY_DRAIN_MAX {
+        body.truncate(declared);
+        while body.len() < declared {
+            match stream.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let take = (declared - body.len()).min(n);
+                    body.extend_from_slice(&buf[..take]);
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    break
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
     Ok(HttpRequest {
         method: method.to_string(),
         path,
         headers,
         raw_path: raw_path.to_string(),
+        body,
     })
 }
 
+/// Why a request body was not read: the 400 the route answers with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyRefusal {
+    /// No usable `Content-Length` (absent, unparsable, or zero).
+    Required,
+    /// `Content-Length` past the route's bound.
+    TooLarge,
+    /// The peer closed before sending what it declared.
+    Truncated,
+}
+
+impl BodyRefusal {
+    fn error_body(self) -> &'static str {
+        match self {
+            Self::Required => r#"{"error":"body_required"}"#,
+            Self::TooLarge => r#"{"error":"body_too_large"}"#,
+            Self::Truncated => r#"{"error":"bad_request"}"#,
+        }
+    }
+}
+
+/// The request body a route accepts: exactly its declared `Content-Length`
+/// bytes, which must be present, at most `max`, and fully received
+/// (`read_request` reads a body up to the drain bound; a route's `max` is
+/// far below it, so a body past `max` was refused on its declaration and
+/// never allocated for).
+fn read_body(request: &HttpRequest, max: usize) -> std::result::Result<Vec<u8>, BodyRefusal> {
+    let declared = match request
+        .headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        Some(len) if len > 0 => len,
+        _ => return Err(BodyRefusal::Required),
+    };
+    if declared > max {
+        return Err(BodyRefusal::TooLarge);
+    }
+    if request.body.len() < declared {
+        return Err(BodyRefusal::Truncated);
+    }
+    Ok(request.body[..declared].to_vec())
+}
+
 /// The one writer for `GET /api/sealed-log`, whichever credential opened
-/// it: the capability token and a viewer token must serve byte-identical
-/// documents, so neither path may serialize on its own.
-fn write_sealed_log_document<S: Write>(stream: &mut S, kernel: &Kernel) -> Result<()> {
-    let doc = kernel.sealed_log_document()?;
+/// it: the capability token, a paired bearer and a viewer token must serve
+/// byte-identical documents, so no path may serialize on its own.
+fn write_sealed_log_document<S: Write>(
+    stream: &mut S,
+    kernel: &Kernel,
+    from_seq: Option<u64>,
+) -> Result<()> {
+    let doc = kernel.sealed_log_document_from(from_seq)?;
     let payload = serde_json::to_vec(&doc)?;
     write_response(stream, 200, "application/json", &payload)
 }
@@ -1709,6 +2342,9 @@ struct HttpRequest {
     path: String,
     headers: HashMap<String, String>,
     raw_path: String,
+    /// The declared body, read up to `REQUEST_BODY_DRAIN_MAX` (possibly
+    /// short of the declaration if the peer stopped early); see `read_body`.
+    body: Vec<u8>,
 }
 
 impl HttpRequest {

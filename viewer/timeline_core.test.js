@@ -21,7 +21,7 @@ const load = (p) => JSON.parse(fs.readFileSync(path.join(__dirname, '..', p), 'u
 // Synthetic record helper — a 600 s bucket at t0.
 const ev = (t0, extra) => Object.assign({
   t0, size: 600, kind: 'event', type: 'BoundaryCrossingObjectLarge',
-  label: 'Large object crossed boundary', family: 'move', zone: 'zone:a', conf: 0.9, details: '',
+  label: 'Person or vehicle', family: 'move', zone: 'zone:a', conf: 0.9, details: '',
 }, extra);
 const beat = (t0) => ({ t0, size: 600, kind: 'heartbeat', type: 'heartbeat', label: 'Heartbeat', family: 'other', zone: '', conf: null, details: '' });
 
@@ -80,7 +80,7 @@ describe('record normalization', () => {
     for (const r of records) {
       assert.equal(r.kind, 'event');
       assert.equal(r.family, 'move');
-      assert.equal(r.label, 'Large object crossed boundary');
+      assert.equal(r.label, 'Person or vehicle');
       assert.equal(r.size, 600);
       assert.equal(typeof r.conf, 'number');
     }
@@ -511,7 +511,7 @@ describe('formatting (deterministic UTC)', () => {
 
   it('clamps greeked tick widths', () => {
     assert.equal(T.greekWidth(''), 12);
-    assert.ok(T.greekWidth('Large object crossed boundary') <= 46);
+    assert.ok(T.greekWidth('Person or vehicle') <= 46);
     assert.ok(T.greekWidth('Sound') > 12);
   });
 });

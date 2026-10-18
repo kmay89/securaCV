@@ -12,10 +12,14 @@
 // optocoupler (raw bit alongside the interpretation, exactly as the glass
 // shows it), a DI0 press rings DO0 (the "ding" link), DO drives are bounded
 // (1.5 s pulse / 30 s latch auto-off — outputs release themselves), the ToF
-// trip counts a falling edge under the threshold, and the I2C census flags
-// the CH422G/GT911 command addresses as reserved. tests/playground.test.js
-// re-pins these against the firmware's own constants, so a drift in either
-// side breaks CI.
+// trip counts a falling edge under the threshold, and the I2C census lists
+// every address that answers and (re)attaches the known sensors. As on the
+// glass, the census itself flags nothing: the CH422G command addresses and
+// the GT911 are annotated by whoever draws the bus, through i2cReserved()
+// (the firmware's i2c_addr_reserved(), which its UI uses to count "guests"),
+// and named through i2cName() (i2c_device_name()). tests/playground.test.js
+// re-pins these against the firmware's own constants and tables, so a drift
+// in either side breaks CI.
 //
 // The board pins, terminal map, station instructions, bring-up code and the
 // PG1 field grammar are carried in devices/playground.json — generated and
@@ -74,6 +78,11 @@ const I2C_NAMES = new Map([
   [0x26, "CH422G (RD_IO)"],
   [0x38, "CH422G (WR_IO)"],
   [0x29, "VL53L0X ToF"],
+  [0x28, "CAP1188 touch"],
+  [0x2a, "CAP1188 touch"],
+  [0x2b, "CAP1188 touch"],
+  [0x2c, "CAP1188 touch"],
+  [0x2d, "CAP1188 touch"],
   [0x39, "APDS-9960"],
   [0x44, "SHT4x temp/RH"],
   [0x45, "SHT4x temp/RH"],

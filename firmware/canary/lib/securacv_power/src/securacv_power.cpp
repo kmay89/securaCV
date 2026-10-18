@@ -446,7 +446,7 @@ static void track_charge_cycle(uint16_t battery_mv) {
     s_state.charge_cycles++;
     Preferences prefs;
     if (prefs.begin("securacv", false)) {
-      prefs.putUInt("batt_cycles", s_state.charge_cycles);
+      prefs.putUInt(NVS_KEY_BATT_CYC, s_state.charge_cycles);
       prefs.end();
     }
   }
@@ -459,19 +459,19 @@ static void track_charge_cycle(uint16_t battery_mv) {
 static void load_nvs_state() {
   Preferences prefs;
   if (prefs.begin("securacv", true)) {
-    s_state.charge_cycles = prefs.getUInt("batt_cycles", 0);
-    s_state.capacity_mah = prefs.getUShort("batt_cap", s_cfg.capacity_mah);
-    s_state.max_voltage_mv = prefs.getUShort("batt_max_mv", 0);
-    s_state.min_voltage_mv = prefs.getUShort("batt_min_mv", 0xFFFF);
+    s_state.charge_cycles = prefs.getUInt(NVS_KEY_BATT_CYC, 0);
+    s_state.capacity_mah = prefs.getUShort(NVS_KEY_BATT_CAP, s_cfg.capacity_mah);
+    s_state.max_voltage_mv = prefs.getUShort(NVS_KEY_BATT_MAX, 0);
+    s_state.min_voltage_mv = prefs.getUShort(NVS_KEY_BATT_MIN, 0xFFFF);
 
     /* Battery health history fields */
     s_history.charge_cycles     = s_state.charge_cycles;
-    s_history.total_runtime_min = prefs.getUInt("batt_rt_min", 0);
+    s_history.total_runtime_min = prefs.getUInt(NVS_KEY_BATT_RT, 0);
     s_history.voltage_min_mv    = s_state.min_voltage_mv;
     s_history.voltage_max_mv    = s_state.max_voltage_mv;
-    s_history.soc_min_pct       = prefs.getUChar("batt_soc_min", 100);
-    s_history.brownout_count    = prefs.getUInt("batt_bo_cnt", 0);
-    s_history.last_full_charge_ms = prefs.getUInt("batt_fc_ms", 0);
+    s_history.soc_min_pct       = prefs.getUChar(NVS_KEY_BATT_SOC, 100);
+    s_history.brownout_count    = prefs.getUInt(NVS_KEY_BATT_BO, 0);
+    s_history.last_full_charge_ms = prefs.getUInt(NVS_KEY_BATT_FC, 0);
 
     prefs.end();
   }
@@ -485,7 +485,7 @@ static void load_nvs_state() {
       s_history.brownout_count++;
       Preferences bo;
       if (bo.begin("securacv", false)) {
-        bo.putUInt("batt_bo_cnt", s_history.brownout_count);
+        bo.putUInt(NVS_KEY_BATT_BO, s_history.brownout_count);
         bo.end();
       }
     }
@@ -499,8 +499,8 @@ static void save_voltage_extremes() {
   s_last_persist_ms = now;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    prefs.putUShort("batt_max_mv", s_state.max_voltage_mv);
-    prefs.putUShort("batt_min_mv", s_state.min_voltage_mv);
+    prefs.putUShort(NVS_KEY_BATT_MAX, s_state.max_voltage_mv);
+    prefs.putUShort(NVS_KEY_BATT_MIN, s_state.min_voltage_mv);
     prefs.end();
   }
 }
@@ -748,7 +748,7 @@ void power_set_capacity_mah(uint16_t mah) {
   power::s_cfg.capacity_mah = mah;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    prefs.putUShort("batt_cap", mah);
+    prefs.putUShort(NVS_KEY_BATT_CAP, mah);
     prefs.end();
   }
   log_health(LOG_LEVEL_INFO, LOG_CAT_SENSOR,
@@ -841,10 +841,10 @@ void power_persist_history(void) {
   if (!s_initialized) return;
   Preferences prefs;
   if (prefs.begin("securacv", false)) {
-    prefs.putUInt("batt_rt_min",  s_history.total_runtime_min);
-    prefs.putUChar("batt_soc_min", s_history.soc_min_pct);
-    prefs.putUInt("batt_bo_cnt",  s_history.brownout_count);
-    prefs.putUInt("batt_fc_ms",   s_history.last_full_charge_ms);
+    prefs.putUInt(NVS_KEY_BATT_RT,  s_history.total_runtime_min);
+    prefs.putUChar(NVS_KEY_BATT_SOC, s_history.soc_min_pct);
+    prefs.putUInt(NVS_KEY_BATT_BO,  s_history.brownout_count);
+    prefs.putUInt(NVS_KEY_BATT_FC,   s_history.last_full_charge_ms);
     /* charge_cycles and voltage extremes are already persisted by
      * track_charge_cycle() and save_voltage_extremes(). */
     prefs.end();

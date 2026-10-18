@@ -1,27 +1,33 @@
-"""Actions — the automation surface for watches.
+"""Actions — the automation surface: watches, the chain walk, the export.
 
-Three ``securacv.*`` actions, registered once per Home Assistant instance
+Five ``securacv.*`` actions, registered once per Home Assistant instance
 from ``async_setup`` (the action-setup rule: they exist whether or not a
 config entry is loaded, and say so when none is):
 
-  - ``securacv.start_watch``  subject, duration?, concern?  -> the watch
-  - ``securacv.end_watch``    watch (id or label)           -> the watch
-  - ``securacv.list_watches`` (response only)               -> {"watches": [...]}
+  - ``securacv.start_watch``     subject, duration?, concern?  -> the watch
+  - ``securacv.end_watch``       watch (id or label)           -> the watch
+  - ``securacv.list_watches``    (response only)               -> {"watches": [...]}
+  - ``securacv.verify``          entry_id?                     -> the walk's verdict
+  - ``securacv.export_evidence`` window_hours?, entry_id?      -> the pack
 
-They go through ``watch_runtime``'s start/end path together with the
-voice intents, so a watch is the same object however it began and is
-persisted the same way. The field vocabulary is the spoken one on purpose
-("two weeks", "if it stops"): an automation says what a person would say.
+The watch actions go through ``watch_runtime``'s start/end path together
+with the voice intents, so a watch is the same object however it began and
+is persisted the same way. The field vocabulary is the spoken one on
+purpose ("two weeks", "if it stops"): an automation says what a person
+would say. ``verify`` runs the integration's own chain walk against the
+pinned kernel key (``kernel_verify``) and ``export_evidence`` composes the
+signed evidence pack (``evidence``); the Verify now and Export evidence
+buttons call the same two coroutines, so a press and an automation do one
+thing. ``entry_id`` (a config_entry selector) says which kernel when more
+than one entry has one; left out, the only one.
 
-Why only watches. Pinning, rotating and unpinning a device key are trust
-decisions the options flow deliberately asks a human to make: the key
-mismatch path (``__init__.py``) tells the owner and asks them to rotate by
-hand precisely so a re-flashed or impersonating device cannot be laundered
-into "trusted" by a rule reacting to its own notification. Watches are the
-opposite direction — starting one only adds attention, and ending one
-removes only attention, never trust — and ending is the authenticated
-surface the design already says ending belongs on (docs/design/watches.md;
-docs/device_trust.md, "Why pin, rotate and unpin are not actions").
+What is NOT here. Pinning, rotating and unpinning a device key are trust
+decisions the options flow and the Repairs fix flow deliberately ask a
+human to make: the key mismatch path tells the owner and asks them to
+confirm the fingerprint by hand precisely so a re-flashed or impersonating
+device cannot be laundered into "trusted" by a rule reacting to its own
+notification. Services never mutate trust (docs/device_trust.md, "Why pin,
+rotate and unpin are not actions"); verifying and exporting only read.
 """
 from __future__ import annotations
 
@@ -32,36 +38,67 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from . import watch_runtime, watches
-from .const import DOMAIN
+from .api import SecuraCVApiAuthError, SecuraCVApiConnectionError, SecuraCVApiError
+from .const import (
+    DOMAIN,
+    EXPORT_WINDOW_DEFAULT_HOURS,
+    EXPORT_WINDOW_MAX_HOURS,
+    EXPORT_WINDOW_MIN_HOURS,
+    VERIFY_TRIGGER_SERVICE,
+)
+from .data import runtime_for
 
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_START_WATCH = "start_watch"
 SERVICE_END_WATCH = "end_watch"
 SERVICE_LIST_WATCHES = "list_watches"
+SERVICE_VERIFY = "verify"
+SERVICE_EXPORT_EVIDENCE = "export_evidence"
 # The whole vocabulary. Action names are a compatibility promise; anything
 # added here needs a written decision (docs/device_trust.md for trust).
-SERVICES = (SERVICE_START_WATCH, SERVICE_END_WATCH, SERVICE_LIST_WATCHES)
+SERVICES = (
+    SERVICE_START_WATCH,
+    SERVICE_END_WATCH,
+    SERVICE_LIST_WATCHES,
+    SERVICE_VERIFY,
+    SERVICE_EXPORT_EVIDENCE,
+)
 
 ATTR_SUBJECT = "subject"
 ATTR_DURATION = "duration"
 ATTR_CONCERN = "concern"
 ATTR_WATCH = "watch"
+ATTR_ENTRY_ID = "entry_id"
+ATTR_WINDOW_HOURS = "window_hours"
 
-START_WATCH_SCHEMA = vol.Schema(
+# `Any`: the schema class is voluptuous on cores before 2026.9 and probatio
+# (through its `voluptuous` alias) after; mypy must not pin either.
+START_WATCH_SCHEMA: Any = vol.Schema(
     {
         vol.Required(ATTR_SUBJECT): cv.string,
         vol.Optional(ATTR_DURATION): cv.string,
         vol.Optional(ATTR_CONCERN): vol.In(watches.CONCERNS),
     }
 )
-END_WATCH_SCHEMA = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
-LIST_WATCHES_SCHEMA = vol.Schema({})
+END_WATCH_SCHEMA: Any = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
+LIST_WATCHES_SCHEMA: Any = vol.Schema({})
+VERIFY_SCHEMA: Any = vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string})
+EXPORT_EVIDENCE_SCHEMA: Any = vol.Schema(
+    {
+        vol.Optional(ATTR_WINDOW_HOURS, default=EXPORT_WINDOW_DEFAULT_HOURS): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=EXPORT_WINDOW_MIN_HOURS, max=EXPORT_WINDOW_MAX_HOURS),
+        ),
+        vol.Optional(ATTR_ENTRY_ID): cv.string,
+    }
+)
 
 # Every refusal the actions raise, by the key strings.json's ``exceptions``
 # section (and translations/en.json, its byte-identical copy) declares it
@@ -102,6 +139,37 @@ REFUSALS: dict[str, str] = {
         "No watch is called {watch}. securacv.list_watches names the ones running."
     ),
     "watch_ambiguous": "{watch} names {count} watches ({ids}); end it by id.",
+    # The kernel actions (verify, export_evidence).
+    "no_kernel_entry": (
+        "No SecuraCV entry with a witness kernel is loaded, so there is no sealed "
+        "log to verify or export. Add the SecuraCV app or sidecar first."
+    ),
+    "kernel_entry_ambiguous": (
+        "{count} SecuraCV entries have a witness kernel; say which one with entry_id."
+    ),
+    "entry_not_loaded": (
+        "SecuraCV entry {entry_id} is not loaded or has no witness kernel."
+    ),
+    "window_out_of_range": (
+        "window_hours is {window_hours}; give a whole number of hours from "
+        "{min_hours} to {max_hours}."
+    ),
+    "kernel_unreachable": (
+        "The witness kernel did not answer. Check that the SecuraCV app or sidecar "
+        "is running, then try again."
+    ),
+    "kernel_auth_failed": (
+        "The witness kernel rejected Home Assistant's credential. Re-authenticate "
+        "the SecuraCV entry under Settings → Devices & services."
+    ),
+    "kernel_bad_response": (
+        "The witness kernel answered with something other than the sealed log or "
+        "the evidence bundle: {detail}."
+    ),
+    "export_write_failed": (
+        "The evidence pack could not be written under the configuration directory: "
+        "{detail}."
+    ),
 }
 
 
@@ -114,6 +182,18 @@ def _refusal(key: str, **placeholders: str) -> ServiceValidationError:
     frontend localizes from.
     """
     return ServiceValidationError(
+        REFUSALS[key].format(**placeholders),
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders=placeholders or None,
+    )
+
+
+def _failure(key: str, **placeholders: str) -> HomeAssistantError:
+    """A failure in doing what was asked (the kernel did not answer, the pack
+    could not be written) — HomeAssistantError, not a validation refusal,
+    so an automation's error handling tells the two apart."""
+    return HomeAssistantError(
         REFUSALS[key].format(**placeholders),
         translation_domain=DOMAIN,
         translation_key=key,
@@ -239,14 +319,116 @@ def _async_list_watches(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
     return {"watches": rows}
 
 
+# ── the kernel actions ──────────────────────────────────────────────────
+
+
+def _kernel_entries(hass: HomeAssistant) -> list[ConfigEntry]:
+    """Every loaded entry that has a kernel (a coordinator)."""
+    found: list[ConfigEntry] = []
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        runtime = runtime_for(entry)
+        if runtime is not None and runtime.coordinator is not None:
+            found.append(entry)
+    return found
+
+
+def _kernel_entry_or_refuse(hass: HomeAssistant, entry_id: Any) -> ConfigEntry:
+    """The entry an action targets: the named one, else the only one."""
+    entries = _kernel_entries(hass)
+    if entry_id:
+        wanted = str(entry_id)
+        for entry in entries:
+            if entry.entry_id == wanted:
+                return entry
+        raise _refusal("entry_not_loaded", entry_id=wanted)
+    if not entries:
+        raise _refusal("no_kernel_entry")
+    if len(entries) > 1:
+        raise _refusal("kernel_entry_ambiguous", count=str(len(entries)))
+    return entries[0]
+
+
+def _window_hours_or_refuse(value: Any) -> int:
+    """`window_hours` as a bounded int (the schema bounds it on a real core;
+    the handler bounds it again so a stub lane or a direct call cannot ask
+    the kernel for a window it does not serve)."""
+    if value is None:
+        return EXPORT_WINDOW_DEFAULT_HOURS
+    try:
+        if isinstance(value, bool):
+            raise ValueError(value)
+        hours = int(value)
+    except (TypeError, ValueError):
+        hours = -1
+    if not EXPORT_WINDOW_MIN_HOURS <= hours <= EXPORT_WINDOW_MAX_HOURS:
+        raise _refusal(
+            "window_out_of_range",
+            window_hours=repr(value),
+            min_hours=str(EXPORT_WINDOW_MIN_HOURS),
+            max_hours=str(EXPORT_WINDOW_MAX_HOURS),
+        )
+    return hours
+
+
+async def async_verify_for_entry(
+    hass: HomeAssistant, entry: ConfigEntry, *, trigger: str
+) -> dict[str, Any]:
+    """Run the entry's chain walk now and shape the response (action + button)."""
+    from .kernel_verify import async_verify_entry, kernel_device_id_of, verification_response
+
+    try:
+        state = await async_verify_entry(hass, entry, trigger=trigger)
+    except ValueError as err:
+        raise _refusal("entry_not_loaded", entry_id=entry.entry_id) from err
+    except SecuraCVApiAuthError as err:
+        raise _failure("kernel_auth_failed") from err
+    except SecuraCVApiConnectionError as err:
+        raise _failure("kernel_unreachable") from err
+    except SecuraCVApiError as err:
+        raise _failure("kernel_bad_response", detail=str(err)) from err
+    return verification_response(state, kernel_device_id_of(entry))
+
+
+async def async_export_for_entry(
+    hass: HomeAssistant, entry: ConfigEntry, *, window_hours: int
+) -> dict[str, Any]:
+    """Compose the entry's evidence pack (action + button)."""
+    from .evidence import async_export_evidence
+
+    try:
+        return await async_export_evidence(hass, entry, window_hours=window_hours)
+    except ValueError as err:
+        raise _refusal("entry_not_loaded", entry_id=entry.entry_id) from err
+    except SecuraCVApiAuthError as err:
+        raise _failure("kernel_auth_failed") from err
+    except SecuraCVApiConnectionError as err:
+        raise _failure("kernel_unreachable") from err
+    except SecuraCVApiError as err:
+        raise _failure("kernel_bad_response", detail=str(err)) from err
+    except OSError as err:
+        raise _failure("export_write_failed", detail=str(err)) from err
+
+
+async def _async_verify(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    entry = _kernel_entry_or_refuse(hass, call.data.get(ATTR_ENTRY_ID))
+    return await async_verify_for_entry(hass, entry, trigger=VERIFY_TRIGGER_SERVICE)
+
+
+async def _async_export_evidence(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    hours = _window_hours_or_refuse(call.data.get(ATTR_WINDOW_HOURS))
+    entry = _kernel_entry_or_refuse(hass, call.data.get(ATTR_ENTRY_ID))
+    return await async_export_for_entry(hass, entry, window_hours=hours)
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the actions, once; a second call is a no-op.
 
-    ``hass`` is bound here, never read off the call: ``ServiceCall`` has
-    no ``hass`` before Home Assistant 2025.1, and the integration supports
-    2024.4.1 and newer (hacs.json). A handler that read ``call.hass`` would
-    raise AttributeError on every call there.
+    ``hass`` is bound here, never read off the call: the handlers then
+    work with any ``ServiceCall`` shape, including the slotted one without
+    ``hass`` that cores before 2025.1 passed and the tests still drive
+    (hacs.json's floor is 2026.5.0 now, but the binding costs nothing and
+    keeps the handlers free of the call object's layout).
     """
     if hass.services.has_service(DOMAIN, SERVICE_START_WATCH):
         return
@@ -262,6 +444,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
     @callback
     def _list_watches(call: ServiceCall) -> dict[str, Any]:
         return _async_list_watches(hass, call)
+
+    async def _verify(call: ServiceCall) -> dict[str, Any]:
+        return await _async_verify(hass, call)
+
+    async def _export_evidence(call: ServiceCall) -> dict[str, Any]:
+        return await _async_export_evidence(hass, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -283,4 +471,18 @@ def async_setup_services(hass: HomeAssistant) -> None:
         _list_watches,
         schema=LIST_WATCHES_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_VERIFY,
+        _verify,
+        schema=VERIFY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EXPORT_EVIDENCE,
+        _export_evidence,
+        schema=EXPORT_EVIDENCE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )

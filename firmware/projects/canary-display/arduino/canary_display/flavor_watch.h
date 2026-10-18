@@ -32,9 +32,11 @@
 #define FEATURE_BACKLIGHT_DIM       1   // LEDC PWM night dimming (board supports it)
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1   // subscribe to the fleet, publish own status
-#define FEATURE_CHAIN_VERIFY        1   // on-device Ed25519 verify + TOFU pinning
 #define FEATURE_MDNS_DISCOVERY      1   // fleet discovery: find/gossip the broker
-#define FEATURE_PROOF_QR            1   // tap-for-proof QR (trailblazer spec 1)
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_QR_COMMISSION       1   // "add a canary" SCV1 QR minting
                                         // The surface has always compiled here
                                         // (empty-nest long-press + settings
@@ -70,11 +72,11 @@
 #define FEATURE_WATCHDOG            1
 #define FEATURE_SNTP                1   // clock + quiet-hours source
 // ── Nightstand wave (display_nightstand.md) ──
-#define FEATURE_NIGHT_BLACKOUT      0   // bench verdict: LCD backlight bleed makes
-                                        // "off" a glowing gray panel - worse than a
-                                        // calm dim glow. Now just the first-boot
-                                        // seed for the runtime "at night" choice
-                                        // (settings surface, glass_settings.h).
+// Bench verdict: LCD backlight bleed makes "off" a glowing gray panel -
+// worse than a calm dim glow. Night is the runtime "at night" choice
+// (settings surface, glass_settings.h), DIM at first boot on every flavor;
+// the FEATURE_NIGHT_BLACKOUT flag that claimed to seed it was read by no
+// source and was removed 2026-10-09.
 #define FEATURE_COMFORT_WORDS       1   // bedroom temp/humidity as sleep-science words
 #define FEATURE_HUB_WEATHER         1   // hub-republished forecast (securacv/env/weather)
 #define FEATURE_WAKE_ALARM          1   // on-device two-phase gentle wake (needs the

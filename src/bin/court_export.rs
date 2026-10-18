@@ -420,6 +420,10 @@ fn auth_mode_label(mode: Option<ExportAuthMode>) -> &'static str {
             "self-export (device owner, authenticated by possession of the device key seed)"
         }
         Some(ExportAuthMode::Api) => "local capability-token API",
+        Some(ExportAuthMode::Paired) => {
+            "paired bearer (a long-lived credential issued to Home Assistant by a pairing code; \
+             the receipt's token_id names it)"
+        }
         None => "legacy receipt (predates the auth_mode field)",
     }
 }

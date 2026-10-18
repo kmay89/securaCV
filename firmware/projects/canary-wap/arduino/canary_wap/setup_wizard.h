@@ -139,10 +139,16 @@ inline void dns_process() {
   }
 }
 
-inline void check_timeout() {
+// The idle restart. `setup_door_open`: the Bluetooth setup door is open (its
+// first-boot window has not run out) — the restart is not due then, whatever
+// the idle time (provisioning_logic::wizard_restart_due): a phone showing the
+// door's card is a person about to tap, and nothing they do before the tap
+// touches this timer. The door's window bounds the hold; when it shuts, the
+// idle rule applies again.
+inline void check_timeout(bool setup_door_open) {
   uint32_t started = __atomic_load_n(&s_started_ms, __ATOMIC_ACQUIRE);
-  if (provisioning_logic::setup_timeout_due(s_active, millis(), started,
-                                            SETUP_TIMEOUT_MS)) {
+  if (provisioning_logic::wizard_restart_due(s_active, millis(), started,
+                                             SETUP_TIMEOUT_MS, setup_door_open)) {
     s_active = false;
     stop_captive_portal();
     delay(500);

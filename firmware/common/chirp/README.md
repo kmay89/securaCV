@@ -13,7 +13,7 @@ which, so the eventual ACTIVE body port targets the right contract instead of re
 
 | Surface | Path | Role | Canonical? |
 |---|---|---|:---:|
-| **`chirp_channel.h`** | `firmware/common/chirp/chirp_channel.h` | **The canonical C-ABI chirp-channel API** (Community Witness Network: ephemeral identity, structured templates, ≤3-hop relay, cooldowns). Consumed by canary-wap through `firmware/projects/canary-wap/arduino/canary_wap/` (the one source tree both the Arduino and PlatformIO builds compile — `platformio.ini` points `src_dir` there). | ✅ |
+| **`chirp_channel.h`** | `firmware/common/chirp/chirp_channel.h` | **The canonical C-ABI chirp-channel API** (Community Witness Network: ephemeral identity, structured templates, ≤3-hop relay, cooldowns). No build includes it yet: canary-wap compiles its own C++ `chirp_channel::` (the next row), not this header, and `firmware/canary/` has no chirp body. `firmware/tests_host`'s Makefile syntax-checks it as C and C++ so the contract keeps compiling until the port includes it. | ✅ |
 | `chirp_channel::` (C++) | `firmware/projects/canary-wap/arduino/canary_wap/mesh_network.h` (decls) + `chirp_channel.cpp` (~1480 LOC body) | **Reference implementation** of the same feature, in a C++ namespace embedded in the Arduino lane's mesh header. v0.2 wire format (`PROTOCOL_VERSION = 1`, MAGIC `0xC4`). | reference impl |
 | `chirp_api::` | `firmware/projects/canary-wap/arduino/canary_wap/chirp_api.h` | HTTP/REST handlers **above** the chirp API (web endpoints) — a layer, not a competing core API. | — |
 | `ble_chirp` | `firmware/projects/canary-wap/arduino/canary_wap/ble_chirp.h` | A **separate** BLE-advertisement broadcast-alert feature (different transport). Shares only the word "chirp". | — (unrelated) |
@@ -33,11 +33,11 @@ rewrite):
 | ESP-NOW recv callback | register chirp's dispatcher on `mesh_transport::set_recv_callback` in `firmware/canary/src/main.cpp` under `#if FEATURE_CHIRP` | mirrors how `mesh_session` receives. |
 | `Ed25519::generate/derive/sign/verify` (`<Ed25519.h>`) | `crypto_generate_keypair()` / `crypto_sign()` / `crypto_verify()` (`securacv_crypto`) | `generate`+`derive` collapse into one keypair call. |
 | `mbedtls_sha256_*` (`<mbedtls/sha256.h>`) | `sha256_domain(domain, data, n, out)` (`securacv_crypto`) | domain-separated hash wrapper. |
-| `nvs_get_u8` / `nvs_set_u8` (`nvs_store.h`) | `NvsManager` (`securacv_crypto`) or `hal_nvs_*` (`hal/hal_storage.h`) | persists `relay_enabled`, `urgency_filter`. |
+| `nvs_get_u8` / `nvs_set_u8` (`nvs_store.h`) | `NvsManager` (`securacv_crypto`) | persists `relay_enabled`, `urgency_filter`. (The `hal_nvs_*` prototypes once listed beside it were never implemented; `common/hal/` was deleted on 2026-10-09.) |
 | `health_log()` + `SCV_LOG_*` / `SCV_CAT_*` (`health_log.h`) | `log_health()` in `firmware/canary/lib/securacv_witness/src/securacv_witness.h` (levels from `log_level.h`); add a chirp category | integration hook wired in `firmware/canary/src/main.cpp`. |
 | `airtime_governor::try_reserve_routine()` (`airtime_governor.h`) | **no ACTIVE equivalent yet** | thin shim returning `true` for slice 1, or port the governor in a later slice. |
 | `esp_fill_random()`, `millis()`, `time()`, `localtime()` | same (ESP-IDF / Arduino built-ins) | — |
-| `FEATURE_CHIRP` | already `-DFEATURE_CHIRP=1` in `firmware/canary/platformio.ini` `[env:full]` (currently inert) | PlatformIO LDF auto-discovers `lib/securacv_chirp/`. |
+| `FEATURE_CHIRP` | add it with the body: `#ifndef` default 0 in `canary_config.h`, `-DFEATURE_CHIRP=1` in `[env:full]` (an inert copy stood there until 2026-10-09; `firmware/scripts/check_config_feature_flags.py` refuses a flag no source reads) | PlatformIO LDF auto-discovers `lib/securacv_chirp/`. |
 
 The only dependency without an ACTIVE equivalent is the **airtime governor** (one call site) — shim
 or port it in the body PR.

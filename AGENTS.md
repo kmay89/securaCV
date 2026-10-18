@@ -217,7 +217,7 @@ These run on every PR. Run the relevant one locally before you push.
 | `scripts/lint_build_matrix.py` | `build_matrix.json` matches `platformio.ini` + `canary_config.h`; every product lane resolves to one `devices/<slug>/device.json`, whose envs are real |
 | `scripts/lint_device_manifests.py` | Every `devices/<slug>/device.json` validates and its env / board / figure / flasher / emulator / CAD joins hold; every `flavors.json` build env is claimed or explained. Since wave 2 the generators read the manifests (`gen_flash.py`, `gen_figures.mjs`), so a stale join also moves a generated file; since wave 3 it also runs the `cad.params` check below |
 | `docs/hardware/enclosure/gen_cad_params.py --check` | Every manifest-owned CAD knob equals the literal in its case `.scad` (a registry reference resolved first) — in `lint.yml` for a manifest edit and in `enclosure.yml` for a `.scad` edit that bypassed the manifest; `scripts/regen_cad.py --check` runs it first and every generator downstream of it after |
-| `scripts/lint_feature_flags.sh` | Feature-flag hygiene |
+| `scripts/lint_feature_flags.sh` | Feature-flag hygiene: every Cargo feature referenced and registered, no `FUTURE_*` transport or tamper type advertised, and every firmware `FEATURE_*` flag read by code (it runs `firmware/scripts/check_config_feature_flags.py`) |
 | `scripts/lint_version_sync.sh`, `desktop/scripts/check_app_versions.py` | One version per app across `tauri.conf.json` / `package.json` / `Cargo.toml` |
 | `scripts/lint_bom.py` | BOM CSVs schema-clean and wired to the generator |
 | `scripts/lint_bench_rows.py` | No benchmark table the harness prints is committed to any Markdown file (rule 4; `docs/BENCHMARKS.md`) |

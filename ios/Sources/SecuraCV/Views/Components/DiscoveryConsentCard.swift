@@ -3,9 +3,12 @@
 // The ask-before-the-radios card. Nothing browses, nothing scans — and iOS
 // shows no Local Network / Bluetooth dialog — until the user taps yes here,
 // so the system prompt lands right after their own decision instead of
-// ambushing the first launch. "Not now" is a real answer: the card goes
-// away and a quiet, findable row remains (Fleet list + the Add sheet) —
-// an invitation that waits, never a nag.
+// ambushing the first launch. ONE prompt, too: the tap starts the Bluetooth
+// scan only (what finds a brand-new Canary); the mDNS browse and its Local
+// Network prompt wait for the first thing that needs the Wi-Fi searched
+// (FleetStore.startLocalNetworkDiscoveryIfConsented). "Not now" is a real
+// answer: the card goes away and a quiet, findable row remains (Fleet list
+// + the Add sheet) — an invitation that waits, never a nag.
 
 import SwiftUI
 
@@ -21,7 +24,7 @@ struct DiscoveryConsentCard: View {
                         .font(.headline)
                         .labelStyle(.titleOnly)
                 }
-                Text("SecuraCV looks for Canaries on your own network and listens for their Bluetooth presence beacons. Everything stays between your devices — nothing touches any company server. iOS will ask for Local Network access next; that prompt is this feature.")
+                Text("SecuraCV looks for Canaries on your own network and listens for their Bluetooth beacons — that is also how it hears a brand-new one. Everything stays between your devices; nothing touches any company server. iOS asks for Bluetooth next — that prompt is this feature — and for Local Network only once there is a Canary to find on your Wi-Fi.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack(spacing: Theme.s) {

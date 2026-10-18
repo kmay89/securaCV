@@ -42,7 +42,7 @@ final class WallTimelineTests: XCTestCase {
         XCTAssertEqual(m.standing, .verified)
         XCTAssertEqual(m.timeline.map(\.kind), [.event, .event, .heartbeat])
         XCTAssertEqual(m.timeline.map(\.label),
-                       ["Large object crossed boundary", "Large object crossed boundary", "Heartbeat"])
+                       ["Person or vehicle", "Person or vehicle", "Heartbeat"])
         XCTAssertEqual(m.timeline.map(\.zone), ["zone:a", "zone:b", ""])
         XCTAssertEqual(m.timeline.map(\.t0), [1_700_000_400, 1_700_001_000, 1_700_001_600],
                        "the buckets the kernel sealed, never a finer time")

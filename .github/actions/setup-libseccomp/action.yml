@@ -8,6 +8,11 @@ description: >
   line. This is the one copy (CI.md R10). Jobs that install libseccomp-dev
   in the same apt-get call as other packages (ffmpeg, mosquitto, GStreamer)
   keep their combined line — one apt transaction beats two.
+  apt retries a dropped fetch and gives up on a stalled one: a hung
+  `apt-get` on 2026-10-07 used the "Optional feature build gate" job's whole
+  30 minutes and left main's Rust run canceled. Each caller also sets
+  `timeout-minutes: 5` on the step, so a hang that gets past these fails in
+  minutes, named, instead of eating the job's budget.
 
 runs:
   using: composite
@@ -16,5 +21,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y libseccomp-dev
+        # DEBIAN_FRONTEND goes on the command line through `env`: sudo resets
+        # the environment, so a step-level `env:` would never reach apt.
+        apt=(sudo env DEBIAN_FRONTEND=noninteractive apt-get
+             -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+        "${apt[@]}" update
+        "${apt[@]}" install -y libseccomp-dev

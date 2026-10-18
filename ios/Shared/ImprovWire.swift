@@ -38,14 +38,18 @@
 // shuts it (NotAuthorized); a link that sends nothing for three minutes is
 // dropped; after a join the Canary drops the link about 20 s later.
 //
-// SECURACV'S ADDITION, OUTSIDE THE IMPROV SERVICE (a WAP only): the claim
-// ticket, `firmware/common/network/claim_ticket.h`. The door's link is
-// encrypted but not authenticated (Just Works), so the bearer token never
-// rides it. Once the join this phone asked for succeeded, the link that
-// asked may read CLAIM exactly once, within 180 s:
+// SECURACV'S ADDITIONS, OUTSIDE THE IMPROV SERVICE: one companion service,
+// two characteristics, each for the Canaries that need it. Optional — the
+// door itself never depends on either.
 //
 //   Companion service  8fc1cf00-b162-4401-9607-c8ac21383e90
-//   CLAIM              8fc1cf01-…  READ (encrypted)   JSON, below
+//   CLAIM              8fc1cf01-…  READ (encrypted)          JSON out  (a WAP)
+//   HUB                8fc1cf02-…  WRITE | READ (encrypted)  JSON in, one byte out  (Sense, Vision)
+//
+// THE CLAIM TICKET (a WAP only), `firmware/common/network/claim_ticket.h`.
+// The door's link is encrypted but not authenticated (Just Works), so the
+// bearer token never rides it. Once the join this phone asked for
+// succeeded, the link that asked may read CLAIM exactly once, within 180 s:
 //
 //   {"device_id":"…","claim":"<32 lowercase hex>",
 //    "claim_url":"https://canary-ab12.local/api/provisioning-receipt?claim=<hex>",
@@ -56,7 +60,23 @@
 //   claim ON THE HOME LAN — an unauthenticated GET of claim_url — and gets
 //   the same pairing receipt the BOOT-tap route serves. Single use: a wrong
 //   guess burns it; a 403 is spent, expired or refused. Sense and Vision
-//   serve no companion service (nothing to pair over HTTP).
+//   serve no CLAIM (nothing to pair over HTTP).
+//
+// THE HUB HAND-OFF (a Sense or Vision): a camera or radar Canary reports to
+// the hub over MQTT, and the only phone-side way to tell it which hub used
+// to be the Flasher's MQTT fields. Now, once the join this phone asked for
+// succeeded and while the link lingers (~20 s), the phone writes HUB one
+// UTF-8 JSON object of at most 240 bytes:
+//
+//   {"host":"homeassistant.local","port":1883,"user":"canary","pass":"<secret>","tls":false}
+//
+//   `host` is required (a host name or IPv4 address); `port` is optional
+//   (1883 when absent); `user` and `pass` come together or not at all;
+//   `tls` is optional (false when absent). Then the phone reads HUB back:
+//   one status byte — 0 nothing stored, 1 stored, 2 rejected (the Canary
+//   would not take it), 3 stored but the broker refused the login. The
+//   broker password crosses the encrypted link once, device-bound on both
+//   ends; it is never advertised and never readable back.
 
 import Foundation
 
@@ -77,6 +97,14 @@ enum ImprovWire {
     static let companionServiceUUID = "8fc1cf00-b162-4401-9607-c8ac21383e90"
     /// The claim ticket, readable once by the link that provisioned.
     static let claimUUID            = "8fc1cf01-b162-4401-9607-c8ac21383e90"
+    /// The hub hand-off: the phone writes where this Canary should report,
+    /// then reads one status byte (a Sense or Vision; see the header).
+    static let hubUUID              = "8fc1cf02-b162-4401-9607-c8ac21383e90"
+    /// The longest HUB write the firmware takes, in bytes.
+    static let hubHandoffMaxBytes = 240
+    /// The broker port the firmware assumes when the frame names none —
+    /// the hub's Mosquitto, plain.
+    static let hubDefaultPort = 1883
     /// The firmware spells a claim as 16 random bytes in hex.
     static let claimHexLength = 32
 
@@ -115,7 +143,11 @@ enum ImprovWire {
             case .none: return ""
             case .invalidRPC: return "The Canary didn't understand that request, or got it too soon after the last one — wait a moment and try again."
             case .unknownRPC: return "This Canary's firmware doesn't know that request."
-            case .unableToConnect: return "The Canary couldn't join with those credentials — check the password."
+            // Improv reports one error for every way a join can fail, so
+            // the words name both real causes: a mistyped password, and a
+            // network the board cannot see at all (these boards join 2.4 GHz
+            // only, so a 5 GHz-only name fails the same way).
+            case .unableToConnect: return "The Canary couldn't join that network. Check the password (it's case-sensitive), and that the network is 2.4 GHz — these boards can't see 5 GHz-only Wi-Fi."
             case .notAuthorized: return "This Canary isn't accepting a new network right now: it already has Wi-Fi, or its setup door closed. Tap its BOOT button once to open it for a minute, or power-cycle a brand-new one; a WAP uses its setup page instead."
             case .badHostname: return "The Canary refused that name."
             case .unknown: return "The Canary reported an error it couldn't name."
@@ -303,6 +335,96 @@ enum ImprovWire {
         guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         comps.host = newHost
         guard let out = comps.url, out.host?.isEmpty == false else { return nil }
+        return out
+    }
+
+    // MARK: - the hub hand-off (SecuraCV's companion service, a Sense or Vision)
+
+    /// What HUB answers after the write: the Canary's own word on what it
+    /// did with the hub this phone handed it.
+    enum HubHandoffStatus: Equatable, Sendable {
+        /// 0 — nothing stored (the write never landed, or was not taken).
+        case none
+        /// 1 — stored: it reports to that hub from now on.
+        case stored
+        /// 2 — rejected: the Canary would not take what was written.
+        case rejected
+        /// 3 — stored, but the broker refused the login it was given.
+        case loginRefused
+        /// No byte, a byte outside the vocabulary, or no answer in time.
+        case unknown
+    }
+
+    static func parseHubStatus(_ data: Data) -> HubHandoffStatus {
+        guard let b = data.first else { return .unknown }
+        switch b {
+        case 0: return .none
+        case 1: return .stored
+        case 2: return .rejected
+        case 3: return .loginRefused
+        default: return .unknown
+        }
+    }
+
+    /// The HUB write: where this Canary should report, as the firmware
+    /// reads it — keys in the header's order, strings JSON-escaped. Nil
+    /// when the host is not a host name or IPv4 address, when the port is
+    /// out of range, when one of user/pass comes without the other (or
+    /// either is empty), or when the frame would run past
+    /// `hubHandoffMaxBytes` — refused here rather than cut on the device.
+    static func hubHandoff(host: String, port: Int? = nil,
+                           user: String? = nil, pass: String? = nil,
+                           tls: Bool? = nil) -> Data? {
+        let h = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isHubHost(h) else { return nil }
+        if let port, !(1...65535).contains(port) { return nil }
+        guard (user == nil) == (pass == nil) else { return nil }
+        if let user, let pass, user.isEmpty || pass.isEmpty { return nil }
+        var json = "{\"host\":" + jsonString(h)
+        if let port { json += ",\"port\":\(port)" }
+        if let user, let pass {
+            json += ",\"user\":" + jsonString(user) + ",\"pass\":" + jsonString(pass)
+        }
+        if let tls { json += ",\"tls\":" + (tls ? "true" : "false") }
+        json += "}"
+        let data = Data(json.utf8)
+        guard data.count <= hubHandoffMaxBytes else { return nil }
+        return data
+    }
+
+    /// A host the firmware's MQTT client can dial: a DNS name or dotted
+    /// IPv4 — letters, digits, dots and hyphens only, no empty label, no
+    /// label starting or ending in a hyphen, 253 characters at most. No
+    /// scheme, no path, no port (the port has its own field).
+    static func isHubHost(_ host: String) -> Bool {
+        guard !host.isEmpty, host.count <= 253 else { return false }
+        guard host.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == ".") }) else {
+            return false
+        }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        return labels.allSatisfy { !$0.isEmpty && $0.count <= 63 && !$0.hasPrefix("-") && !$0.hasSuffix("-") }
+    }
+
+    /// One JSON string literal: the quote, the backslash and every control
+    /// character escaped as RFC 8259 asks; everything else as its UTF-8.
+    static func jsonString(_ s: String) -> String {
+        var out = "\""
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if scalar.value < 0x20 {
+                    out += String(format: "\\u%04x", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        out += "\""
         return out
     }
 }

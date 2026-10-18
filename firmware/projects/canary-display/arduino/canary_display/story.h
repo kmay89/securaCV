@@ -176,7 +176,6 @@ class StoryTeller {
   uint16_t expand(const Beat* b, char* out, uint16_t cap) const;
 
  private:
-  uint32_t beat_started_ms(uint32_t now) const;
   uint16_t typed_len(const Beat* b, uint32_t elapsed) const;
   uint16_t line_ms(const Beat* b) const;
 

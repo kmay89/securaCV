@@ -36,7 +36,9 @@ from pathlib import Path
 import pytest
 
 from .test_mqtt_payload_hardening import _entity, _msg
-from .conftest import run
+from .conftest import make_entry, run
+
+from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 
 from .. import binary_sensor as bs_platform
 from .. import sensor as sensor_platform
@@ -355,9 +357,10 @@ def _discovered(monkeypatch, payloads: list[tuple[str, str]]) -> list:
 
     monkeypatch.setattr(bs_platform.mqtt, "async_subscribe", subscribe)
     created: list = []
-    hass = types.SimpleNamespace(data={DOMAIN: {"e1": {"unsub_mqtt": []}}})
-    run(bs_platform._setup_mqtt_binary_sensors(
-        hass, types.SimpleNamespace(entry_id="e1"), "securacv", created.extend))
+    hass = HomeAssistant()
+    hass.data = {DOMAIN: {}}
+    entry = make_entry(hass)
+    run(bs_platform._setup_mqtt_binary_sensors(hass, entry, "securacv", created.extend))
     for topic, payload in payloads:
         suffix = topic.rsplit("/", 1)[1]
         callbacks[f"securacv/+/{suffix}"](types.SimpleNamespace(topic=topic, payload=payload))

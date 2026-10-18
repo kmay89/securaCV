@@ -39,9 +39,11 @@
 #define FEATURE_BACKLIGHT_DIM       0   // CH422G backlight is ON/OFF only (no PWM)
 #define FEATURE_WIFI_STA            1
 #define FEATURE_MQTT                1
-#define FEATURE_CHAIN_VERIFY        1
 #define FEATURE_MDNS_DISCOVERY      1
-#define FEATURE_PROOF_QR            1
+// (FEATURE_CHAIN_VERIFY and FEATURE_PROOF_QR used to sit here. Neither gated
+// any code: the trust engine (trust.cpp: Ed25519 verify + TOFU pinning)
+// compiles on every flavor, and the proof QR wherever its UI does, the
+// watch glance and the dash. Removed 2026-10-09.)
 #define FEATURE_ACK_SYNC            1
 #define FEATURE_PRESENCE_WAKE       1
 #define FEATURE_CHIME               0
@@ -57,7 +59,6 @@
 #define FEATURE_SNTP                1
 // ── Nightstand wave — the 7" is a WALL/desk panel like the 4.3": data lines,
 // not bedside behaviors (backlight on/off only, no wake alarm) ──
-#define FEATURE_NIGHT_BLACKOUT      0
 #define FEATURE_COMFORT_WORDS       1
 #define FEATURE_HUB_WEATHER         1
 #define FEATURE_STANDALONE_WEATHER  1   // hub-less homes may OPT IN to the glass

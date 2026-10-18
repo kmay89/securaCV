@@ -1,0 +1,69 @@
+{
+  "before": {
+    "id": "SENTINEL_BEFORE_ID_014",
+    "camera": "front_door",
+    "frame_time": 7770001.5,
+    "snapshot_time": 7770004.5,
+    "label": "person",
+    "sub_label": ["SENTINEL_BEFORE_SUB_LABEL_NAME_014", 7770.79],
+    "top_score": 7770.86,
+    "false_positive": false,
+    "start_time": 7770002.5,
+    "end_time": null,
+    "score": 7770.84,
+    "box": [7770010, 7770011, 7770012, 7770013],
+    "area": 7770020,
+    "ratio": 7770.21,
+    "region": [7770014, 7770015, 7770016, 7770017],
+    "stationary": false,
+    "motionless_count": 7770030,
+    "position_changes": 7770031,
+    "current_zones": [],
+    "entered_zones": [],
+    "thumbnail": "SENTINEL_BEFORE_THUMBNAIL_BASE64_014",
+    "has_snapshot": false,
+    "has_clip": false,
+    "attributes": {"SENTINEL_BEFORE_ATTRIBUTE_014": 7770.91},
+    "current_attributes": []
+  },
+  "after": {
+    "id": "SENTINEL_ID_014",
+    "camera": "front_door",
+    "frame_time": 7770101.5,
+    "snapshot_time": 7770104.5,
+    "snapshot": {
+      "frame_time": 7770105.5,
+      "box": [7770110, 7770111, 7770112, 7770113],
+      "area": 7770120,
+      "region": [7770114, 7770115, 7770116, 7770117],
+      "score": 7770.85,
+      "attributes": [
+        {"label": "SENTINEL_SNAPSHOT_ATTRIBUTE_LABEL_014", "box": [7770118, 7770119, 7770121, 7770122], "score": 7770.9}
+      ]
+    },
+    "label": "person",
+    "sub_label": ["SENTINEL_SUB_LABEL_NAME_014", 7770.79],
+    "top_score": 0.92,
+    "false_positive": false,
+    "start_time": 7770102.5,
+    "end_time": null,
+    "score": 0.84,
+    "box": [7770130, 7770131, 7770132, 7770133],
+    "area": 7770140,
+    "ratio": 7770.22,
+    "region": [7770134, 7770135, 7770136, 7770137],
+    "stationary": false,
+    "motionless_count": 7770150,
+    "position_changes": 7770151,
+    "current_zones": ["porch"],
+    "entered_zones": ["driveway", "porch"],
+    "thumbnail": "SENTINEL_THUMBNAIL_BASE64_014",
+    "has_snapshot": true,
+    "has_clip": true,
+    "attributes": {"SENTINEL_ATTRIBUTE_AMAZON_014": 7770.91},
+    "current_attributes": [
+      {"label": "SENTINEL_CURRENT_ATTRIBUTE_LABEL_014", "box": [7770160, 7770161, 7770162, 7770163], "score": 7770.92}
+    ]
+  },
+  "type": "new"
+}

@@ -1,0 +1,23 @@
+{
+  "$comment": "Contract C1: the retained announce. `payload` is the sig-less compact JSON in AnnouncePayload struct order (what the bridge POSTs to /api/sign-announce), `canonical_message` the bytes the kernel signs, `sig` plain Ed25519 over them under the test seed, `published` the retained bytes. Test identity only.",
+  "signing_key_seed": "1111111111111111111111111111111111111111111111111111111111111111",
+  "verifying_key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "fingerprint": "10ba682c",
+  "topic": "witness/pwk_1a2b3c4d/announce",
+  "vectors": [
+    {
+      "name": "sidecar_required_no_host",
+      "payload": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799},\"pairing\":\"required\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600}",
+      "canonical_message": "securacv-announce|v1|{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799},\"pairing\":\"required\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600}",
+      "sig": "e80c422ebdf3bd12ef386f19ba7d6f194f119bac8df62c9303138f025644bc19caad4a1a3c6bdcbe2ab13564781c2a113583ed55fa3bec49985d28582dd7280f",
+      "published": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799},\"pairing\":\"required\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600,\"sig\":\"e80c422ebdf3bd12ef386f19ba7d6f194f119bac8df62c9303138f025644bc19caad4a1a3c6bdcbe2ab13564781c2a113583ed55fa3bec49985d28582dd7280f\"}"
+    },
+    {
+      "name": "addon_token_file_with_host",
+      "payload": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799,\"host\":\"d0491a67-privacy-witness-kernel\"},\"pairing\":\"token_file\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600}",
+      "canonical_message": "securacv-announce|v1|{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799,\"host\":\"d0491a67-privacy-witness-kernel\"},\"pairing\":\"token_file\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600}",
+      "sig": "87b8397b9bf92b70a3a4ac54ea94c0d97f6b1642be40cfeaaad30e40fd089e19295e3c9136a8192834f65773b73b596b9e1d3a8726a012615fd82fd9ea15130e",
+      "published": "{\"v\":1,\"device_id\":\"pwk_1a2b3c4d\",\"kernel_version\":\"2.4.16\",\"verifying_key\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"api\":{\"scheme\":\"http\",\"bind\":\"all\",\"port\":8799,\"host\":\"d0491a67-privacy-witness-kernel\"},\"pairing\":\"token_file\",\"mqtt_topic_prefix\":\"witness\",\"discovery_prefix\":\"homeassistant\",\"availability_topic\":\"witness/status\",\"announced_bucket_start\":1760140800,\"announced_bucket_size\":600,\"sig\":\"87b8397b9bf92b70a3a4ac54ea94c0d97f6b1642be40cfeaaad30e40fd089e19295e3c9136a8192834f65773b73b596b9e1d3a8726a012615fd82fd9ea15130e\"}"
+    }
+  ]
+}

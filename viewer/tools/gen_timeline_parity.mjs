@@ -62,11 +62,11 @@ const SCENARIOS = [
     name: 'ordinary-day',
     why: 'A normal day: a few clusters, an hour of quiet that folds, one busy bucket.',
     records: [
-      ev(BASE + 6 * H + 2400, 'Small object crossed boundary', 'move', 'zone:garden', 0.72),
+      ev(BASE + 6 * H + 2400, 'Animal or small object', 'move', 'zone:garden', 0.72),
       ev(BASE + 7 * H, 'Vehicle arrival/departure', 'move', 'zone:driveway', 0.94),
-      ev(BASE + 7 * H + 600, 'Large object crossed boundary', 'move', 'zone:driveway', 0.91),
+      ev(BASE + 7 * H + 600, 'Person or vehicle', 'move', 'zone:driveway', 0.91),
       ev(BASE + 7 * H + 600, 'Contact state change', 'touch', 'zone:porch', 0.99),
-      ev(BASE + 9 * H + 1800, 'Large object crossed boundary', 'move', 'zone:sidewalk', 0.66),
+      ev(BASE + 9 * H + 1800, 'Person or vehicle', 'move', 'zone:sidewalk', 0.66),
       ev(BASE + 11 * H, 'Acoustic impulse in zone', 'sound', 'zone:garden', 0.58),
     ],
   },
@@ -85,14 +85,14 @@ const SCENARIOS = [
     records: [
       ev(BASE + 18 * H, 'Contact state change', 'touch', 'zone:porch', 0.98),
       beat(BASE + 20 * H), beat(BASE + 22 * H), beat(BASE + 24 * H), beat(BASE + 26 * H),
-      ev(BASE + 30 * H, 'Small object crossed boundary', 'move', 'zone:garden', 0.6),
+      ev(BASE + 30 * H, 'Animal or small object', 'move', 'zone:garden', 0.6),
     ],
   },
   {
     name: 'tamper-and-system',
     why: 'Reserved statuses win their cell outright, so trouble is never averaged away.',
     records: [
-      ev(BASE + 12 * H, 'Large object crossed boundary', 'move', 'zone:gate', 0.8),
+      ev(BASE + 12 * H, 'Person or vehicle', 'move', 'zone:gate', 0.8),
       ev(BASE + 12 * H, 'Tamper detected', 'tamper', 'zone:gate', 0.97),
       sys(BASE + 12 * H + 600, 'Key rotation'),
     ],
@@ -121,7 +121,7 @@ const SCENARIOS = [
     records: [
       ev(BASE + 6 * H - 120, 'Contact state change', 'touch', 'zone:porch', 0.9),
       ev(BASE + 12 * H, 'Vehicle arrival/departure', 'move', 'zone:driveway', 0.8),
-      ev(BASE + 18 * H + 90, 'Small object crossed boundary', 'move', 'zone:garden', 0.6),
+      ev(BASE + 18 * H + 90, 'Animal or small object', 'move', 'zone:garden', 0.6),
     ],
   },
   {
@@ -133,10 +133,10 @@ const SCENARIOS = [
       ev(BASE + 5 * H, 'Contact state change', 'touch', 'zone:porch', 0.9),
       ev(BASE + 5 * H, 'Acoustic impulse in zone', 'sound', 'zone:garden', 0.7),
       // Two 300 s buckets and two 600 s buckets — a tie on the modal size.
-      { t0: BASE + 5 * H + 600, size: 300, kind: 'event', type: 'Small object crossed boundary',
-        label: 'Small object crossed boundary', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
-      { t0: BASE + 5 * H + 900, size: 300, kind: 'event', type: 'Small object crossed boundary',
-        label: 'Small object crossed boundary', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
+      { t0: BASE + 5 * H + 600, size: 300, kind: 'event', type: 'Animal or small object',
+        label: 'Animal or small object', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
+      { t0: BASE + 5 * H + 900, size: 300, kind: 'event', type: 'Animal or small object',
+        label: 'Animal or small object', family: 'move', zone: 'zone:garden', conf: 0.5, details: '' },
       ev(BASE + 5 * H + 1200, 'Vehicle arrival/departure', 'move', 'zone:driveway', 0.8),
     ],
   },
@@ -287,7 +287,7 @@ function formattingVectors() {
     day_label: [0, BASE, BASE + DAY, 1767225600].map((t) => ({ t, s: T.fmtDayLabel(t) })),
     duration: [600, 3600, 3 * 3600 + 20 * 60, 2 * DAY, DAY + 5 * H, 90]
       .map((s) => ({ s, out: T.fmtDuration(s) })),
-    greek_width: ['', 'Sound', 'Tamper detected', 'Large object crossed boundary',
+    greek_width: ['', 'Sound', 'Tamper detected', 'Person or vehicle',
       'A very long label that should clamp at the maximum width for the column']
       .map((l) => ({ label: l, w: T.greekWidth(l) })),
     zone_indent: (() => {

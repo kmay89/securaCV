@@ -486,7 +486,7 @@ where
             return Err(
                 "No AT answer after reboot, even after an automatic reset — unplug and \
                  replug the module and it should come up with the new model. \
-                 The burn itself completed and verified."
+                 The burn itself completed — every block was acknowledged."
                     .into(),
             );
         }

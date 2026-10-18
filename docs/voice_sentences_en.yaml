@@ -5,11 +5,12 @@
 # The wizard (tools/hub_voice_setup.sh) does it for you. Setup recipe and
 # the voice contract: docs/voice_control.md.
 #
-# Every intent here is a read-only query handled by the SecuraCV
-# integration (custom_components/securacv/intent.py). There are
-# deliberately no sentences that arm, disarm, mute, or unseal anything — a
-# spoken word carries no signature, so those actions stay on
-# authenticated surfaces.
+# Every intent here is handled by the SecuraCV integration
+# (custom_components/securacv/intent.py): queries, plus starting a bounded
+# watch, which only adds attention and ends by itself (ending one early is
+# not here). There are deliberately no sentences that arm, disarm, mute, or
+# unseal anything — a spoken word carries no signature, so those actions
+# stay on authenticated surfaces.
 #
 # On phrasing: these cover how people actually ask, not one canonical
 # form each. Bracketed words are optional, parentheses are alternatives.

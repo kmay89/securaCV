@@ -485,10 +485,6 @@ impl StorageHealthMonitor {
         self.write_errors.clone()
     }
 
-    pub fn current_status(&self) -> StorageHealthStatus {
-        self.tracker.current()
-    }
-
     /// Take one health sample. Probe failures degrade to `None` fields; the
     /// report itself is always produced.
     pub fn sample(&mut self) -> Result<StorageHealthReport> {

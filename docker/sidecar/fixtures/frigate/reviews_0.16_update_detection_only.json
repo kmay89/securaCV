@@ -1,0 +1,33 @@
+{
+  "type": "update",
+  "before": {
+    "id": "SENTINEL_BEFORE_REVIEW_ID_DETECTION_016",
+    "camera": "side_gate",
+    "start_time": 77701201.5,
+    "end_time": null,
+    "severity": "detection",
+    "thumb_path": "SENTINEL_BEFORE_THUMB_PATH_DETECTION_016",
+    "data": {
+      "detections": ["SENTINEL_BEFORE_DETECTION_ID_DETECTION_016"],
+      "objects": ["cat"],
+      "sub_labels": [],
+      "zones": [],
+      "audio": []
+    }
+  },
+  "after": {
+    "id": "SENTINEL_REVIEW_ID_DETECTION_016",
+    "camera": "side_gate",
+    "start_time": 77701202.5,
+    "end_time": null,
+    "severity": "detection",
+    "thumb_path": "SENTINEL_THUMB_PATH_DETECTION_016",
+    "data": {
+      "detections": ["SENTINEL_DETECTION_ID_DETECTION_016"],
+      "objects": ["cat"],
+      "sub_labels": ["SENTINEL_SUB_LABEL_DETECTION_016"],
+      "zones": ["path"],
+      "audio": ["SENTINEL_AUDIO_DETECTION_016"]
+    }
+  }
+}

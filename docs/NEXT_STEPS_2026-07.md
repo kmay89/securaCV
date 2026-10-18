@@ -169,6 +169,10 @@ a fleet of one, and the Witness Wall's premise is the whole fleet on one screen.
 The shared builder already exposes the open/append/close shape a hub needs to
 list peers. This is the smallest remaining step between "a Canary appears on
 the wall" and "your fleet appears on the wall."
+*Since closed:* the kernel aggregates — `event_mqtt_bridge --fleet-peers-path`
+writes the peer summary and witnessd's `/api/fleet` lists those peers beside
+its own row (`src/fleet_peers.rs`, `src/api/mod.rs` `fleet_document`;
+semantics in [`FLEET_SEMANTICS.md`](FLEET_SEMANTICS.md), "Hub roll-call").
 
 ### P2 — the website's render ladder
 
@@ -182,6 +186,11 @@ real STL as the quality ceiling.
 The ground rules that bit us there are already written down and CI-enforced
 (no coplanar surfaces, outward normals, plain glTF only, real-world metric
 scale). Keep them in front of any new geometry work.
+*Since closed (5 of 6):* label/decal placement, spot-varnish masks, the
+roughness/micro-wear map, per-product Showroom AR and the Blender hero bake are
+under "Shipped" in the website's `render-roadmap.md`; only the WebGPU cinematic
+mode is still a TODO there (tracked, with judging the micro-wear map on a GPU,
+as [`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md) W13).
 
 ### P2 — hardware validation, as a scheduled activity
 
@@ -252,6 +261,9 @@ wrong in, but it costs real planning time — the work looks open when it isn't.
 **Do:** move both entries to their "Shipped" sections in the same pass, and note
 the residual — a real-terminal smoke test for `n` — where it belongs, under
 hardware validation rather than as unfinished feature work.
+*Since closed (both):* the website's `docs/roadmap.md` lists `/fleet` under
+"Shipped", and `self_star_roadmap.md` now marks TODO 1 shipped (manifest
+`fleet[]` and `/fleet` done), with the `n` smoke test as its hardware residual.
 
 ---
 

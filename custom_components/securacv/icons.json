@@ -1,0 +1,180 @@
+{
+  "entity": {
+    "sensor": {
+      "kernel_last_event": {
+        "default": "mdi:shield-eye"
+      },
+      "kernel_fingerprint": {
+        "default": "mdi:fingerprint"
+      },
+      "storage_health": {
+        "default": "mdi:sd"
+      },
+      "storage_free_pct": {
+        "default": "mdi:harddisk"
+      },
+      "storage_wear_pct": {
+        "default": "mdi:sd"
+      },
+      "storage_write_rate": {
+        "default": "mdi:database-arrow-down"
+      },
+      "soc_temperature": {
+        "default": "mdi:thermometer"
+      },
+      "adapter_stats": {
+        "default": "mdi:hub"
+      },
+      "witness_count": {
+        "default": "mdi:counter"
+      },
+      "chain_length": {
+        "default": "mdi:link-variant"
+      },
+      "last_event": {
+        "default": "mdi:eye-outline"
+      },
+      "health_status": {
+        "default": "mdi:heart-pulse"
+      },
+      "sd_wear": {
+        "default": "mdi:sd"
+      },
+      "gps_fix": {
+        "default": "mdi:crosshairs-gps"
+      },
+      "radar_link": {
+        "default": "mdi:radar"
+      },
+      "daily_digest": {
+        "default": "mdi:calendar-today"
+      }
+    },
+    "binary_sensor": {
+      "kernel_online": {
+        "default": "mdi:server-network",
+        "state": {
+          "off": "mdi:server-network-off"
+        }
+      },
+      "storage_replace": {
+        "default": "mdi:sd-alert",
+        "state": {
+          "off": "mdi:sd"
+        }
+      },
+      "frigate_link": {
+        "default": "mdi:video-off",
+        "state": {
+          "on": "mdi:video-check",
+          "off": "mdi:video-off"
+        }
+      },
+      "online": {
+        "default": "mdi:access-point-network",
+        "state": {
+          "off": "mdi:access-point-network-off"
+        }
+      },
+      "chain_valid": {
+        "default": "mdi:shield-check",
+        "state": {
+          "on": "mdi:shield-check",
+          "off": "mdi:shield-alert-outline"
+        }
+      },
+      "tamper": {
+        "default": "mdi:shield-alert",
+        "state": {
+          "on": "mdi:shield-alert",
+          "off": "mdi:shield-check-outline"
+        }
+      },
+      "tamper_power_loss": {
+        "default": "mdi:power-plug-off"
+      },
+      "tamper_sd_remove": {
+        "default": "mdi:sd-off"
+      },
+      "tamper_sd_error": {
+        "default": "mdi:alert-circle"
+      },
+      "tamper_gps_jamming": {
+        "default": "mdi:crosshairs-off"
+      },
+      "tamper_motion": {
+        "default": "mdi:motion-sensor"
+      },
+      "tamper_enclosure": {
+        "default": "mdi:package-variant-closed-remove"
+      },
+      "tamper_gpio": {
+        "default": "mdi:alert-circle"
+      },
+      "tamper_watchdog": {
+        "default": "mdi:timer-alert"
+      },
+      "tamper_unexpected_reboot": {
+        "default": "mdi:restart-alert"
+      },
+      "tamper_memory_critical": {
+        "default": "mdi:memory"
+      },
+      "sd_replace": {
+        "default": "mdi:sd-alert"
+      },
+      "event_id_space_low": {
+        "default": "mdi:counter"
+      },
+      "transport_wifi_ap": {
+        "default": "mdi:access-point"
+      },
+      "transport_wifi_sta": {
+        "default": "mdi:wifi"
+      },
+      "transport_mqtt": {
+        "default": "mdi:message-arrow-right"
+      },
+      "transport_ble": {
+        "default": "mdi:bluetooth"
+      },
+      "transport_mesh": {
+        "default": "mdi:lan"
+      },
+      "transport_chirp": {
+        "default": "mdi:bird"
+      },
+      "motion": {
+        "default": "mdi:motion-sensor"
+      },
+      "occupancy": {
+        "default": "mdi:account-question"
+      },
+      "mesh_connected": {
+        "default": "mdi:lan-connect"
+      },
+      "chirp_active": {
+        "default": "mdi:bird"
+      }
+    },
+    "event": {
+      "witness": {
+        "default": "mdi:shield-eye"
+      },
+      "tamper_events": {
+        "default": "mdi:shield-alert"
+      },
+      "verification_events": {
+        "default": "mdi:shield-search"
+      }
+    },
+    "button": {
+      "verify_now": {
+        "default": "mdi:shield-search"
+      },
+      "export_evidence": {
+        "default": "mdi:file-certificate"
+      }
+    }
+  }
+}

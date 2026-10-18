@@ -45,7 +45,7 @@
       #pragma message "NimBLEDevice.h not found — BLE stubbed out (host/validation build)"
     #endif
   #else
-    #error "NimBLE-Arduino not found but BLE is enabled. Install it (PlatformIO: lib_deps = h2zero/NimBLE-Arduino@^2.3.8 ; Arduino: arduino-cli lib install \"NimBLE-Arduino\"), or build a non-BLE profile (-DBUILD_PROFILE_MINIMAL), or set -DSECURACV_HOST_BUILD for off-target tests."
+    #error "NimBLE-Arduino not found but BLE is enabled. Install it (PlatformIO: lib_deps = h2zero/NimBLE-Arduino@^2.3.8 ; Arduino: arduino-cli lib install \"NimBLE-Arduino\"): both CI-built profiles, FULL and DEV, compile BLE in (the only BLE-free one, BUILD_PROFILE_MINIMAL, is built by no CI job). Or set -DSECURACV_HOST_BUILD for off-target tests."
   #endif
 #endif
 

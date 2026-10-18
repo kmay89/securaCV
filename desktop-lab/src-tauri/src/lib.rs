@@ -24,11 +24,6 @@ mod fleet;
 #[cfg(desktop)]
 mod self_update;
 
-#[tauri::command]
-fn app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
-
 /// What build is actually running — the same DTO the Flasher's About panel
 /// reads (`desktop/src-tauri/src/lib.rs:app_info`), so the two apps answer
 /// "which version am I on?" identically. Stamped at compile time by build.rs;
@@ -61,7 +56,7 @@ fn app_info() -> AppInfo {
 // is false, so the page never lights a path that can only fail. On macOS and
 // Linux it is ALSO a runtime answer (espflash_bundled): the platform bundles
 // espflash, and the file is really there next to this binary.
-// `serial_list` advertises the port list (list_serial_ports) on every desktop
+// `serial_list` advertises the port list (flash::list_ports) on every desktop
 // build. LAN discovery is two live
 // commands on desktop: an mDNS browse that finds the boards (fleet_scan,
 // src/fleet.rs) and the /api/fleet poll that finds a kernel
@@ -75,7 +70,7 @@ fn native_capabilities(app: tauri::AppHandle) -> serde_json::Value {
         // run. desktop_parity.test.js refuses this unless the sidecar, its
         // bundling step and the frontend path all exist.
         "serial": cfg!(any(target_os = "macos", target_os = "linux")) && espflash_bundled(&app),
-        // Native port enumeration (list_serial_ports). Desktop only:
+        // Native port enumeration (flash::list_ports). Desktop only:
         // MOBILE.md's contract is that generic USB serial does not exist on
         // iOS/iPadOS, so a mobile build neither registers the command nor
         // advertises it — a capability must never light a path that can
@@ -115,17 +110,6 @@ fn espflash_bundled(app: &tauri::AppHandle) -> bool {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn espflash_bundled(_app: &tauri::AppHandle) -> bool {
     false
-}
-
-/// Serial ports the OS can see this instant. No Web Serial permission prompt,
-/// no Chromium — just the platform enumerating its own devices. The Flasher's
-/// `list_ports` (one engine, one wire shape: flash_engine::ports), kept under
-/// the name this seam always promised; `list_ports` itself is registered too
-/// (src/flash.rs), so either frontend's port picker works here unchanged.
-#[cfg(desktop)]
-#[tauri::command]
-fn list_serial_ports() -> Result<Vec<flash_engine::ports::PortDto>, String> {
-    flash_engine::ports::list_ports()
 }
 
 /// Only ever talk to a host that can be on this network: `.local`-style
@@ -260,22 +244,22 @@ pub fn run() {
         .manage(companion::Companion::default())
         .manage(flash_engine::monitor::SerialMonitorState::default())
         .manage(flash::Sidecars::default())
+        // Every command here has a caller in the Lab's own pages, and every
+        // page's invoke() has a command here: canary-local/tests/
+        // lab_bundle.test.js holds both directions, so the webview's IPC
+        // surface is exactly what the Lab uses.
         .invoke_handler(tauri::generate_handler![
-            app_version,
             app_info,
             native_capabilities,
-            list_serial_ports,
             flash::list_ports,
             flash::detect_chip,
             flash::fetch_manifest,
             flash::flash,
             flash::start_serial_monitor,
-            flash::serial_monitor_send,
             flash::stop_serial_monitor,
             witness_discover,
             fleet::fleet_scan,
             companion::companion_set_bases,
-            companion::companion_snapshot,
             self_update::check_update,
             self_update::install_update,
             self_update::read_update_journal,
@@ -283,7 +267,6 @@ pub fn run() {
         ]);
     #[cfg(not(desktop))]
     let builder = builder.invoke_handler(tauri::generate_handler![
-        app_version,
         app_info,
         native_capabilities,
         witness_discover

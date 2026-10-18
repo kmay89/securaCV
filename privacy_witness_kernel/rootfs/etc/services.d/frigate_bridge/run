@@ -1,0 +1,34 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: Frigate ingestion. Subscribes to Frigate's MQTT events and
+# seals them into the witness log. Frigate mode only.
+# ==============================================================================
+set -euo pipefail
+
+# The setup step (run.sh, cont-init) renders /run/securacv/setup.sh and
+# leaves /run/securacv/configured only when the app is configured. Before
+# that the setup wizard is the whole app: this service steps aside without
+# flapping (`s6-svc -O .` = do not restart me when I exit 0).
+SETUP_FILE=/run/securacv/setup.sh
+if [ ! -f /run/securacv/configured ] || [ ! -f "$SETUP_FILE" ]; then
+  bashio::log.info "frigate_bridge: SecuraCV is not configured yet (open the app's Web UI); staying down."
+  s6-svc -O .
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$SETUP_FILE"
+
+if [ "$MODE" != "frigate" ]; then
+  bashio::log.info "frigate_bridge: standalone mode; staying down."
+  s6-svc -O .
+  exit 0
+fi
+
+bashio::log.info "frigate_bridge: starting"
+# The broker password reaches the bridge through the environment, never
+# argv (readable from /proc/<pid>/cmdline), and it is THIS broker's
+# password only — set, or cleared, right here at the exec.
+if [ -n "${FRIGATE_MQTT_PASSWORD:-}" ]; then
+  exec env MQTT_PASSWORD="$FRIGATE_MQTT_PASSWORD" "${FRIGATE_CMD_ARRAY[@]}"
+fi
+exec env -u MQTT_PASSWORD "${FRIGATE_CMD_ARRAY[@]}"

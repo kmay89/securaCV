@@ -41,8 +41,33 @@ struct HubSetupView: View {
         }
         .navigationTitle("A hub")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { if runner.phase == .idle { runner.startWatching() } }
+        .onAppear {
+            // A first visit starts the watch; a return RESUMES it — the
+            // onDisappear below stops the loop, and without this a glance
+            // at another screen mid-boot lost the hub (the phase stayed
+            // "watching", so nothing ever started it again).
+            if runner.phase == .idle {
+                runner.startWatching()
+            } else {
+                runner.resumeWatching(typedHost: typedHost.isEmpty ? nil : typedHost)
+            }
+        }
         .onDisappear { if case .watching = runner.phase { runner.stopWatching() } }
+        // The hub answered. Say so once (only if notifications are already
+        // allowed — nothing here asks), and finish by itself when the form
+        // above is complete; otherwise the button below is the fallback.
+        .onChange(of: runner.phase) { _, phase in
+            guard case .watching(.ready) = phase else { return }
+            let finishing = HubWalkthrough.finishesByItself(ready: true,
+                                                            loginProblem: login.problem(),
+                                                            passwordsMatch: passwordsMatch)
+            Task {
+                await CourtesyNotice.postIfAlreadyAllowed(title: HubWalkthrough.readyNoticeTitle,
+                                                          body: HubWalkthrough.readyNoticeBody(finishing: finishing),
+                                                          threadID: HubWalkthrough.readyNoticeThreadID)
+            }
+            if finishing { startFinish() }
+        }
     }
 
     // MARK: - the watch
@@ -70,6 +95,11 @@ struct HubSetupView: View {
                         Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+            }
+            if probe != .ready, let advice = SetupRadioAdvice.localNetwork(blocked: runner.discovery.localNetworkBlocked) {
+                // The browse can't see anything at all — say so now, not
+                // after 25 minutes of a spinner.
+                RadioAdviceRow(advice: advice)
             }
             if runner.escalated {
                 Text("Nothing has answered in 25 minutes. Check the Pi's light is blinking, that it is on the same Wi-Fi as this phone (or on ethernet), and look for \"homeassistant\" in your router's client list — then type its address here.")
@@ -151,6 +181,9 @@ struct HubSetupView: View {
         HubOwnerLogin(name: name, username: username, password: password)
     }
 
+    /// The confirm field exists only while the password is hidden.
+    private var passwordsMatch: Bool { showPassword || confirm == password }
+
     // MARK: - finishing
 
     @ViewBuilder private var provisionControl: some View {
@@ -165,7 +198,9 @@ struct HubSetupView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!ready)
             if !ready {
-                Text("Enabled once Home Assistant answers.").font(.caption).foregroundStyle(.secondary)
+                Text("Fill in the account above and this phone finishes the hub the moment it answers.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         case .onboarding:
             HStack { ProgressView(); Text("Finishing Home Assistant's setup…") }
@@ -232,7 +267,7 @@ struct HubSetupView: View {
             formProblem = problem
             return
         }
-        if !showPassword && confirm != password {
+        if !passwordsMatch {
             formProblem = "The two passwords don't match."
             return
         }

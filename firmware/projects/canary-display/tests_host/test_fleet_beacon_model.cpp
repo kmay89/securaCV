@@ -273,7 +273,7 @@ int main() {
     Model m;
     // A witness and a sibling display, both alive at t=0.
     m.on_status("wap-1", "canary-wap", true, -1, 0);
-    m.on_status("night-1", "canary-display-nightstand-c6", true, -1, 0);
+    m.on_status("night-1", "canary-nightstand", true, -1, 0);
     m.acknowledge(0);  // household is acked and quiet
     CHECK(m.worst(1000) == Sev::Ok, "both peers online -> fleet Ok");
 
@@ -291,10 +291,36 @@ int main() {
     // The un-ack on crossing Lost is witness-only: with just a display lost,
     // a standing ack must survive.
     Model m2;
-    m2.on_status("night-2", "canary-display-nightstand-s3", true, -1, 0);
+    m2.on_status("night-2", "canary-nightstand", true, -1, 0);
     m2.acknowledge(0);
     m2.tick(late);
     CHECK(m2.ack_active(late), "display going Lost does not un-ack the household");
+  }
+
+  // ── every device_type a display flavor really publishes is a sibling
+  //    screen (configs/canary-display/*/config.h CD_DEVICE_TYPE) ──
+  {
+    const char* kTypes[] = {"canary-nightstand", "canary-nightstand7",
+                            "canary-dash", "canary-watch",
+                            "canary-nightlight", "canary-display"};
+    const uint32_t late = 30UL * 60UL * 1000UL;
+    for (const char* t : kTypes) {
+      Model m;
+      m.on_status("screen", t, true, -1, 0);
+      m.tick(late);
+      const Witness* d = find(m, "screen");
+      CHECK(d && m.witness_sev(*d, late) <= Sev::Notice, t);
+    }
+    // ...and the sensors are not: a lost Sense, Vision or WAP still alarms.
+    const char* kSensors[] = {"canary", "canary-wap", "canary-sense",
+                              "canary-vision"};
+    for (const char* t : kSensors) {
+      Model m;
+      m.on_status("sensor", t, true, -1, 0);
+      m.tick(late);
+      const Witness* w = find(m, "sensor");
+      CHECK(w && m.witness_sev(*w, late) == Sev::Alert, t);
+    }
   }
 
   // ── A canary-wap's fp arrives in capitals (canary_wap.ino hex_to_str) ──

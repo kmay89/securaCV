@@ -502,7 +502,7 @@ export function buildBoardRoom(mount, boardsData, wiring) {
   }
 
   function renderWireInfo() {
-    const build = room.build, b = room.board;
+    const build = room.build;
     info.innerHTML = "";
     const ribbon = el("p", "ondevice asm-prov");
     ribbon.append(el("strong", null, "How to read this: "), document.createTextNode(

@@ -11,6 +11,16 @@ Privacy-preserving witness device firmware for ESP32 boards.
 
 ## Quick Start
 
+**Flash it from your browser → [the Lab's start page](https://kmay89.github.io/securaCV/canary-local/start.html)**
+(or the desktop Flasher; [`docs/browser_flasher.md`](../docs/browser_flasher.md)).
+Every released image below is one click there — no toolchain. A Sense,
+Vision or WAP then takes your Wi-Fi from the SecuraCV iPhone app in one tap
+at first power-on; every board also raises its own `SecuraCV-XXXX` setup
+network, with the key the Flasher's done card shows (read off the board's
+first boot).
+
+### Build from source (makers)
+
 Choose your project and board:
 
 | Project | Board | Use Case | Quick Start |
@@ -21,7 +31,7 @@ Choose your project and board:
 | **Canary Display** | ESP32-S3 / C6 / C3 glass: round watch, 4.3" dash, 7" dash7 / nightstand7, 1.47" sticks, Touch 1.69, AMOLED 2.41 (one manifest per product under [`devices/`](../devices/)) | Fleet status glass: MQTT subscribe, on-device Ed25519 chain verify, glance UI | [Get Started →](projects/canary-display/) |
 | **Canary Sentinel** | XIAO ESP32-C3 / C6+MR60 (+S3 hub) | Multi-sensor fusion people detection (PIR + radar + WiFi/BLE + light), Lite/Standard/Heavy — **Phase 1a: compile-gated in CI, not released** (no flasher product, no published OTA channel) | [Get Started →](projects/canary-sentinel/) |
 
-### Canary WAP (Recommended First Project)
+### Canary WAP
 
 ```bash
 cd firmware/projects/canary-wap
@@ -36,12 +46,14 @@ make upload
 make monitor
 ```
 
-Connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the numeric
-fallback http://192.168.4.1)
+Hand it your Wi-Fi from the SecuraCV iPhone app (the *new Canary is nearby*
+card), or connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the
+numeric fallback http://192.168.4.1).
 
 > **Security Note:** The AP password is device-unique (derived from the
-> device key) and printed on the serial console at first boot — there is
-> no shared default. See `secrets/secrets.example.h` for optional overrides.
+> device key) and printed on the serial console at first boot (`[WIFI] AP
+> started: … (password: cv-…)`) — there is no shared default. See
+> `secrets/secrets.example.h` for optional overrides.
 
 ### Canary Vision
 
@@ -257,21 +269,24 @@ Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tab
 |-------------|----------|----------|-------|
 | `dev` | SD, WiFi, HTTP + self-signed HTTPS on 443 (port 80 redirects), Camera, OTA | Development iteration | built |
 | `release` | as dev, size-optimized; HTTPS stays off until the size guard shows it fits the OTA slot | Production | built + OTA-slot guard |
-| `full` | + Mesh, BLE, RF Presence, Chirp (pioarduino core 3, `default_8MB` table) | Full WAP parity | built |
-| `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery | Home Assistant development | — |
+| `full` | + Mesh, BLE (the Scout and the GATT status service) (pioarduino core 3, `default_8MB` table). No BLE discovery, RF presence or Chirp: this tree has no code for them yet, and the inert flags that said otherwise were removed 2026-10-09 | Closest to WAP parity | built |
+| `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery | Home Assistant development | compile-only |
 | `release_ha` | release + the same MQTT + HA Discovery | The published, OTA-signed canary image | built + OTA-slot guard |
-| `standalone` | release with MQTT forced off | Standalone WAP mode | — |
-| `minimal` | Crypto + GPS only | Testing crypto/chain logic | — |
-| `usb-onboard` | dev + USB-OTG HID help-launch + read-only SD drive | Opt-in; on-device (Phase 2) validation pending | — |
+| `minimal` | Crypto + GPS only | Testing crypto/chain logic | compile-only |
+| `usb-onboard` | dev + USB-OTG HID help-launch + read-only SD drive | Opt-in; on-device (Phase 2) validation pending | compile-only |
 | `esp32cam` | classic-ESP32 reach port: camera peek, CSI, SPI SD, pull-OTA | AI-Thinker ESP32-CAM | built (compile-tested; USB install only, no OTA manifest) |
 | `esp32-wroom` | classic ESP32: CSI presence witness, chain, pull-OTA | Generic WROOM-32 DevKit | built (same) |
 | `freenove-s3` | S3 camera kit, SD off (1-bit SDMMC only) | Freenove FNK0085 | built (same) |
 | `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image, flash encryption required (`provisioning/platformio_secure.ini`) | The production eFuse path; nothing publishes it | compile-only |
 
 "PR CI" is `firmware/flavors.json` `build_envs` (with the size guards its
-`size_guards` name) plus `firmware.yml`'s two compile-only steps: `dev`
-rebuilt with the tamper contact on, and the secure pair. A `—` env is not
-compiled by any workflow.
+`size_guards` name) plus `firmware.yml`'s compile-only steps on the canary
+leg: `dev` rebuilt with the tamper contact on, the secure pair, and the
+opt-in trio (`dev_ha`, `minimal`, `usb-onboard`). "compile-only" means no
+size guard, release or OTA manifest touches the env. Every env above is
+compiled by some PR workflow. (`standalone`, which was `release` with MQTT
+forced off, the release default already, was removed on 2026-10-09;
+`pio run -e release` builds that image.)
 
 ## Fleet Management
 

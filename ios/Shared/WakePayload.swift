@@ -1,15 +1,18 @@
 // WakePayload.swift
 //
-// The away wake, and the ONLY thing it is allowed to say. Compiled into both
-// the app and the notification service extension (and nothing else), so the
-// two halves of the away path can never disagree about what a wake means or
-// what sentence it becomes.
+// The away wake, and the ONLY thing it is allowed to say. Compiled into the
+// app, the notification service extension and the Witness Wall (its resident
+// watch publishes wakes — tvos/WitnessWall/project.yml), so every publisher
+// and the one receiver can never disagree about what a wake means or what
+// sentence it becomes. (The watch targets compile all of Shared/ and so carry
+// it too, unused.)
 //
 // The rule this file exists to enforce: a wake carries a coarse severity
 // CLASS and nothing more — no zone, no device name, no precise time, no event
-// content (Invariants I and III). Everything a user reads is composed on their
-// own device from their own data. Keeping the vocabulary and the copy here
-// means a reviewer can check that claim by reading one short file.
+// content (Invariants I and III). The sentence a user reads is the class's
+// fixed line (`WakeClass.line`), chosen on their own device. Keeping the
+// vocabulary and the copy here means a reviewer can check that claim by
+// reading one short file.
 //
 // That claim is about the PAYLOAD, which is what this file governs. The record
 // carrying it also gets a precise creation date from CloudKit that we can

@@ -199,7 +199,7 @@ export function phaseModule(ctx) {
   box.append(el("p", "muted",
     "This flow talks to the Grove Vision AI V2 over the MODULE’s own USB-C port and burns " +
     "the pinned " + m.model.name + " model into its flash. One model, tested with this " +
-    "firmware train, SHA-256-verified before a byte is written. " + m.persistence));
+    "firmware train, checked by SHA-256 before a byte is written. " + m.persistence));
 
   const facts = el("div", "wap-facts");
   for (const [k, v] of [
@@ -373,7 +373,7 @@ function phaseModuleFlash(ctx, s, job) {
   const box = el("section", "flash-card we2-flow");
   box.append(el("h2", null, "Burning " + job.label));
   box.append(el("p", "muted",
-    (job.pinned ? "Verified against the release manifest. " : "Your file. ") +
+    (job.pinned ? "Matched against the release manifest. " : "Your file. ") +
     "SHA-256 " + job.sha256.slice(0, 16) + "… · " + job.bytes.length.toLocaleString() +
     " bytes → " + ctx.catalog.we2_module.model_addr + ". Keep the cable in; an interrupted " +
     "burn just means reset and retry — the bootloader lives in ROM."));
@@ -778,8 +778,8 @@ function phaseModuleDone(ctx, s, job) {
           "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";
     } else {
       proof.textContent = "No AT answer after reboot, even after an automatic reset — unplug/" +
-        "replug the module and it should come up with the new model. The burn itself completed " +
-        "and verified.";
+        "replug the module and it should come up with the new model. The burn itself completed — " +
+        "every block was acknowledged.";
     }
   })();
 

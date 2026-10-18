@@ -540,6 +540,15 @@ BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
 Each run applies mutations to the sources in memory and requires the check
 to fail on every one. A mutation whose anchor moved fails the run.
 
+The mutations are independent, and each re-runs the whole check (about a
+second apiece, over 300 of them): run one after another they took about five
+minutes, which took the Regression Guards job from 0.2 to as much as 6.4
+minutes against its 10-minute limit (audit, 2026-10-09). They now run in a
+pool of forked worker processes, one per CPU (LOOP_CMD_JOBS=<n> sets the
+count; LOOP_CMD_JOBS=1, or a platform without fork, runs them in this
+process), and the problems come back in the mutations' own order, so the
+output is the same either way.
+
 Run locally:  python3 firmware/scripts/check_wap_loop_commands.py   (repo root)
 CI:           firmware.yml "Regression guard", via regression_check.sh
 """
@@ -547,8 +556,11 @@ CI:           firmware.yml "Regression guard", via regression_check.sh
 from __future__ import annotations
 
 import functools
+import multiprocessing
+import os
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -4308,22 +4320,64 @@ BV_MUTATIONS += [
 MUTATIONS += BV_MUTATIONS
 
 
+# The sources every mutation starts from, set by self_test() before the pool
+# forks, so a worker inherits them (and MUTATIONS, whose mutators are closures
+# that cannot be pickled) instead of receiving 5 MB per task.
+_SELF_TEST_INPUT: tuple[dict, dict[str, str]] | None = None
+
+
+def _mutation_problem(i: int) -> str | None:
+    """Apply MUTATIONS[i] and say what is wrong if the check does not bite."""
+    srcs, others = _SELF_TEST_INPUT
+    name, mutate = MUTATIONS[i]
+    try:
+        m = mutate(srcs)
+    except AnchorMissing as missing:
+        return (f"self-test: mutation '{name}' no longer applies (anchor {missing}) — "
+                "the source changed shape; update this guard's mutations with it")
+    if m == srcs:
+        return f"self-test: mutation '{name}' changed nothing"
+    if not check(m["ino"], m["mesh_h"], m["mesh_cpp"], m["mqtt"], m.get("others", others)):
+        return f"self-test: the check did not bite on mutation '{name}'"
+    return None
+
+
+def self_test_jobs() -> int:
+    """Worker count: LOOP_CMD_JOBS if set, else the CPUs this process may use."""
+    env = os.environ.get("LOOP_CMD_JOBS", "").strip()
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            raise SystemExit(f"LOOP_CMD_JOBS={env!r} is not a number")
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:  # not Linux
+        return max(1, os.cpu_count() or 1)
+
+
 def self_test(srcs: dict, others: dict[str, str]) -> list[str]:
-    problems = []
+    global _SELF_TEST_INPUT
     srcs = dict(srcs)
     srcs["others"] = others
-    for name, mutate in MUTATIONS:
+    _SELF_TEST_INPUT = (srcs, others)
+    indices = range(len(MUTATIONS))
+    jobs = min(self_test_jobs(), len(MUTATIONS))
+    ctx = None
+    if jobs > 1:
         try:
-            m = mutate(srcs)
-        except AnchorMissing as missing:
-            problems.append(f"self-test: mutation '{name}' no longer applies (anchor {missing}) — "
-                            "the source changed shape; update this guard's mutations with it")
-            continue
-        if m == srcs:
-            problems.append(f"self-test: mutation '{name}' changed nothing")
-        elif not check(m["ino"], m["mesh_h"], m["mesh_cpp"], m["mqtt"], m.get("others", others)):
-            problems.append(f"self-test: the check did not bite on mutation '{name}'")
-    return problems
+            ctx = multiprocessing.get_context("fork")
+        except ValueError:  # no fork on this platform: run them here
+            ctx = None
+    if ctx is None:
+        results = map(_mutation_problem, indices)
+    else:
+        # Small chunks keep the workers evenly loaded (the mutations' costs
+        # differ by area); map() returns the answers in submission order.
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
+            results = list(pool.map(_mutation_problem, indices,
+                                    chunksize=max(1, len(MUTATIONS) // (jobs * 8))))
+    return [p for p in results if p]
 
 
 def sketch_others() -> dict[str, str]:

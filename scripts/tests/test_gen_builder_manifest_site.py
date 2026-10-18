@@ -249,7 +249,7 @@ class LedgerShape(unittest.TestCase):
                                  # the display cases joined with pure JSON
                                  "device.canary-display-dash", "device.canary-display-nightstand",
                                  "device.canary-display-touch169", "device.canary-display-watch",
-                                 "device.canary-nightlight"})
+                                 "device.canary-nightlight", "device.canary-display-nightstand-c6"})
         with_knobs = {fid for fid, e in self.dims["figures"].items() if "knobs" in e}
         self.assertEqual(with_knobs, drawn)
         # the doorbell's case is owned (devices/canary-vision cad.also) but no
@@ -306,15 +306,15 @@ class LedgerShape(unittest.TestCase):
                     self.assertEqual(figs[fig]["knobs"][name], o.value, f"{fig}.{name}")
                     seen += 1
         self.assertGreaterEqual(seen, 54)
-        # owned, not carried: the Nightstand C6 owns its ws147 trio but its
-        # manifest names no figure (its board is unmapped, no STL is
-        # committed), so the ledger has no home for its knobs — and it is the
-        # only such manifest. Its pocket case IS drawn, for its Lab card, and
-        # that figure is carried like any sketch — without knobs, because
-        # knobs ride on the figure a manifest names.
-        self.assertEqual(uncarried, {"canary-display-nightstand-c6"})
+        # every owner is carried. The Nightstand C6 was the one exception
+        # (its manifest named no figure, so its ws147 trio had no home); it
+        # names its pocket case's figure now — the same drawing its Lab card
+        # shows and the one the apps draw for its `hw` key — so its knobs
+        # ride on it like any sibling's.
+        self.assertEqual(uncarried, set())
         self.assertEqual([fid for fid in figs if "c6" in fid], ["device.canary-display-nightstand-c6"])
-        self.assertNotIn("knobs", figs["device.canary-display-nightstand-c6"])
+        self.assertEqual(figs["device.canary-display-nightstand-c6"]["knobs"],
+                         {"board_l": 36.37, "board_w": 20.32, "pcb_t": 1.6})
         # the Touch 1.69's split line reaches the ledger as two more knobs
         t169 = figs["device.canary-display-touch169"]["knobs"]
         self.assertEqual((t169["aa_dx"], t169["aa_dy"]), (0.0, 0.0))

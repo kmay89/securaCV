@@ -148,7 +148,7 @@ final class HeartbeatTests: XCTestCase {
         let beat = Heartbeat(defaults: defaults)
         beat.recordBeat(source: .pathVerified, now: t0)
         XCTAssertEqual(beat.lastVerified, t0)
-        XCTAssertTrue(beat.summary.hasPrefix("Delivery verified"), beat.summary)
+        XCTAssertTrue(beat.summary.hasPrefix("Alert delivery confirmed"), beat.summary)
     }
 
     // MARK: - silence is only evidence when we were listening

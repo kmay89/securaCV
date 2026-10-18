@@ -83,7 +83,8 @@ tagging v1):**
 
 ### Stream A: CV Backend Abstraction
 
-**Goal:** Decouple detection from `StubDetector`
+**Goal:** Decouple detection from `StubDetector` (the pre-registry detector in `src/frame.rs`,
+since removed; the crate-root `DetectorBackend` now names the trait below)
 
 | Step | Deliverable | Est. Effort |
 |------|-------------|-------------|

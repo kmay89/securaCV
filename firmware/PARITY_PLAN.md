@@ -57,13 +57,14 @@ is already at parity ✅) are omitted.
 > §4 scorecard row were flipped to ✅. The mesh / chirp / RF / BLE cells were re-checked and left
 > as-is — their ⚠️/❌ correctly reflect "code-present-but-bench-pending" (mesh) or "header-only /
 > absent in ACTIVE" (chirp/RF/BLE), per Step 0. The remaining genuinely-open *code* gap in ACTIVE
-> is the **chirp + RF-presence `.cpp` bodies** (the `[env:full]` `FEATURE_CHIRP`/`FEATURE_RF_PRESENCE`
-> flags are set but inert — `firmware/canary/src/` has no references; bodies live only in the
-> Arduino tree).
+> is the **chirp + RF-presence `.cpp` bodies** (bodies live only in the Arduino tree; the inert
+> `[env:full]` `FEATURE_CHIRP`/`FEATURE_RF_PRESENCE` flags that stood in for them were removed on
+> 2026-10-09, and each port adds its flag with its body).
 
 > **Chirp API consolidation (2026-06-09):** the chirp **API** was consolidated as a precursor to
 > the body port. `firmware/common/chirp/chirp_channel.h` is ratified as the **single canonical
-> C-ABI chirp-channel API** (already consumed by the canary-wap PIO lane); the Arduino
+> C-ABI chirp-channel API** (no build includes it yet: the canary-wap PIO lane that was said to
+> consume it was the deleted `src/` scaffold, and firmware/tests_host only syntax-checks it); the Arduino
 > `chirp_channel::` C++ namespace (in that lane's `mesh_network.h` + `chirp_channel.cpp`) is the
 > reference implementation to adapt, and `chirp_api.h` (HTTP layer) / `ble_chirp.h` (separate BLE
 > feature) are adjacent surfaces, not competing core APIs. The catalog + the

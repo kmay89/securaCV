@@ -447,8 +447,6 @@ final class HomeKitBridge: ObservableObject {
         #endif
     }
 
-    /// Automations this app authored (recognized by the trigger-name
-    /// prefix), for the review-and-remove list.
     /// Durable anchors for automations this app authored. UUIDs, not names:
     /// a rename in the Home app must not orphan the review-and-remove list.
     /// The name prefix stays as a fallback for automations authored before
@@ -473,6 +471,8 @@ final class HomeKitBridge: ObservableObject {
         anchors.contains(id.uuidString) || name.hasPrefix("SecuraCV: ")
     }
 
+    /// Automations this app authored (anchored by UUID, or recognized by
+    /// the trigger-name prefix), for the review-and-remove list.
     func authoredAutomations() -> [(id: UUID, name: String)] {
         #if canImport(HomeKit)
         guard let home = manager?.primaryHome else { return [] }
@@ -501,6 +501,11 @@ final class HomeKitBridge: ObservableObject {
                 if let error { c.resume(throwing: error) } else { c.resume() }
             }
         }
+        // The anchor goes with the automation. Left behind, removed ids
+        // piled up in defaults, and a stale one is a standing claim that
+        // some trigger is ours — exactly the kind of "ours" this list must
+        // never extend to the household's own automations.
+        Self.forgetAuthored(id)
         #else
         _ = id
         #endif

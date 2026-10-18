@@ -78,7 +78,7 @@ def stl_stats(path: Path) -> tuple[int, list[float]]:
                 lo[k] = min(lo[k], v[j])
                 hi[k] = max(hi[k], v[j])
         off += 50
-    return n, [round(h - l, 3) for l, h in zip(lo, hi)]
+    return n, [round(top - bot, 3) for bot, top in zip(lo, hi)]
 
 
 def version_of(scad: Path) -> str:
@@ -96,7 +96,9 @@ def git(*args: str) -> str:
 
 
 def openscad_version() -> str:
-    out = subprocess.run(["openscad", "--version"], capture_output=True, text=True)
+    # The binary scad_probe.render() just used ($OPENSCAD, else `openscad`),
+    # so the version recorded is the version that rendered the files.
+    out = subprocess.run([scad_probe.OPENSCAD, "--version"], capture_output=True, text=True)
     return (out.stdout + out.stderr).strip().replace("OpenSCAD version ", "")
 
 

@@ -16,6 +16,30 @@
 import Combine
 import Foundation
 
+/// The walkthrough's two small judgment calls, pure so HubOnboardingTests
+/// can pin them: when the phone finishes the hub by itself, and what the
+/// one courtesy notification says.
+enum HubWalkthrough {
+    /// The 10–20 minute first boot ends with the hub answering, and nobody
+    /// should have to be watching the screen at that moment: when the
+    /// account form is already complete and valid, the phone finishes the
+    /// hub the instant the probe reads ready. An incomplete form keeps the
+    /// button as the fallback — nothing is sent on a half-typed password.
+    static func finishesByItself(ready: Bool, loginProblem: String?, passwordsMatch: Bool) -> Bool {
+        ready && loginProblem == nil && passwordsMatch
+    }
+
+    /// Posted when the hub answers — only when notifications are already
+    /// allowed (CourtesyNotice), with the honest body: "finishing it" only
+    /// when the form lets the phone do so.
+    static let readyNoticeTitle = "Your hub is ready"
+    static let readyNoticeThreadID = "hub-ready"
+    static func readyNoticeBody(finishing: Bool) -> String {
+        finishing ? "This phone is finishing it."
+                  : "Fill in your account in SecuraCV and this phone finishes it."
+    }
+}
+
 @MainActor
 final class HubSetupRunner: ObservableObject {
     enum Phase: Equatable {
@@ -77,6 +101,20 @@ final class HubSetupRunner: ObservableObject {
         stopWatching()
         watchStartedAt = Date()
         phase = .watching(.offline)
+        runWatch(typedHost: typedHost)
+    }
+
+    /// Pick the watch back up after the screen went away and returned (its
+    /// onDisappear stops the loop): same hub, same start time, so the
+    /// 25-minute escalation still counts from the power-on, and a walk to
+    /// another tab mid-boot does not lose the hub. A watch already running,
+    /// or a phase past watching, is left alone.
+    func resumeWatching(typedHost: String? = nil) {
+        guard watchTask == nil, case .watching = phase else { return }
+        runWatch(typedHost: typedHost)
+    }
+
+    private func runWatch(typedHost: String?) {
         discovery.start()
         watchTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -205,11 +243,14 @@ final class HubSetupRunner: ObservableObject {
         let observed = HubProvisionPlan.observe(
             repositories: await api.supervisorGET("store/repositories", session: session),
             addons: await api.supervisorGET("addons", session: session),
-            mosquittoInfo: await api.supervisorGET("addons/\(HubProvisionPlan.mosquittoSlug)/info", session: session),
-            kernelInfo: await api.supervisorGET("addons/\(HubProvisionPlan.kernelSlug)/info", session: session),
+            mosquittoInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.mosquittoSlug), session: session),
+            kernelInfo: await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.kernelSlug), session: session),
             configEntries: await api.coreGET("config/config_entries/entry", session: session))
         let plan = HubProvisionPlan.plan(observed: observed)
         steps = plan
+        if HubProvisionPlan.todo(plan).isEmpty {
+            note("Everything this phone sets up is already in place — nothing to redo.")
+        }
         for step in plan {
             for a in step.actions {
                 stepState[a.id] = a.already ? .skipped(a.reason) : .planned
@@ -233,26 +274,39 @@ final class HubSetupRunner: ObservableObject {
         return true
     }
 
+    /// Unreachable while HubProvisionPlanTests holds every Supervisor
+    /// action to a path — said plainly rather than force-unwrapped.
+    private static let noPath = "This build has no Supervisor path for that step."
+
     private func perform(_ action: HubProvisionAction, api: HubAPI, session: HubSession) async -> StepState {
+        // Every Supervisor call takes its path from HubProvisionPlan's one
+        // table (supervisorPath / infoPath / restartPath), so the paths the
+        // tests pin are the paths this runner calls — they used to be typed
+        // twice, and the tests checked a copy nothing used.
+        let path = HubProvisionPlan.supervisorPath(for: action)
         do {
             switch action {
             case .registerRepository(let url):
-                try await api.supervisorPOST("store/repositories", body: ["repository": url], session: session)
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, body: ["repository": url], session: session)
                 return .done
-            case .installAddon(let slug, _):
-                try await api.supervisorPOST("store/addons/\(slug)/install", session: session, timeout: 900)
+            case .installAddon:
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, session: session, timeout: 900)
                 return .done
-            case .startAddon(let slug, _):
-                try await api.supervisorPOST("addons/\(slug)/start", session: session, timeout: 300)
+            case .startAddon:
+                guard let path else { return .failed(Self.noPath) }
+                try await api.supervisorPOST(path, session: session, timeout: 300)
                 return .done
             case .setKernelMode(let mode):
-                var options = await api.supervisorGET("addons/\(HubProvisionPlan.kernelSlug)/info", session: session)
+                guard let path else { return .failed(Self.noPath) }
+                var options = await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.kernelSlug), session: session)
                     .flatMap(HubProvisionPlan.options(in:)) ?? [:]
                 options["mode"] = mode
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.kernelSlug)/options",
-                                             body: ["options": options], session: session)
+                try await api.supervisorPOST(path, body: ["options": options], session: session)
                 return .done
             case .addBrokerLogin(let username):
+                guard let path else { return .failed(Self.noPath) }
                 // Keep a password this phone already minted (a re-run must
                 // not lock out Canaries flashed with the first one); mint
                 // one only when none exists.
@@ -265,14 +319,14 @@ final class HubSetupRunner: ObservableObject {
                     }
                     password = minted
                 }
-                var options = await api.supervisorGET("addons/\(HubProvisionPlan.mosquittoSlug)/info", session: session)
+                var options = await api.supervisorGET(HubProvisionPlan.infoPath(slug: HubProvisionPlan.mosquittoSlug), session: session)
                     .flatMap(HubProvisionPlan.options(in:)) ?? [:]
                 let current = (options["logins"] as? [[String: Any]]) ?? []
                 options["logins"] = HubProvisionPlan.loginsAppending(username: username, password: password, to: current)
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.mosquittoSlug)/options",
-                                             body: ["options": options], session: session)
+                try await api.supervisorPOST(path, body: ["options": options], session: session)
                 // The broker reads `logins` at start, so it must cycle.
-                try await api.supervisorPOST("addons/\(HubProvisionPlan.mosquittoSlug)/restart", session: session, timeout: 120)
+                try await api.supervisorPOST(HubProvisionPlan.restartPath(slug: HubProvisionPlan.mosquittoSlug),
+                                             session: session, timeout: 120)
                 try HubSecretStore.set(.init(username: username, password: password))
                 return .done
             case .connectMQTT:
@@ -307,7 +361,7 @@ final class HubSetupRunner: ObservableObject {
                 guard let flows = await api.coreGET("config/config_entries/flow", session: session),
                       let list = try? JSONSerialization.jsonObject(with: flows) as? [[String: Any]],
                       let id = list.first(where: { $0["handler"] as? String == "securacv" })?["flow_id"] as? String
-                else { return .yours("Finish the SecuraCV integration in Home Assistant: Settings → Devices & Services → Add integration → SecuraCV.") }
+                else { return .yours("One click is still yours: open the SecuraCV panel in the hub's sidebar and press Install the integration.") }
                 switch try await api.flow("/\(id)", body: ["setup_mode": "auto"], session: session) {
                 case .created, .alreadyConfigured: return .done
                 case .needsForm(let step): return .yours("The SecuraCV integration wants a click (\(step)) — Settings → Devices & Services.")

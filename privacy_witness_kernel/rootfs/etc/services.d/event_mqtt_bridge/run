@@ -1,0 +1,45 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# SecuraCV: the Home Assistant publisher. Polls the Event API with the
+# capability token and publishes the witness/* state topics, MQTT
+# discovery, the signed announce and the fleet roll-call. Runs whenever
+# mqtt_publish is enabled, in both modes.
+# ==============================================================================
+# DEVICE_ID, TOKEN_FILE, PUBLISH_PREFIX and ADDON_HOST come from the sourced
+# /run/securacv/setup.sh (rendered by run.sh), which shellcheck cannot follow.
+# shellcheck disable=SC2153
+set -euo pipefail
+
+# shellcheck source=privacy_witness_kernel/run_lib.sh disable=SC1091
+source /usr/local/bin/run_lib.sh
+
+# The setup step (run.sh, cont-init) renders /run/securacv/setup.sh and
+# leaves /run/securacv/configured only when the app is configured. Before
+# that the setup wizard is the whole app: this service steps aside without
+# flapping (`s6-svc -O .` = do not restart me when I exit 0).
+SETUP_FILE=/run/securacv/setup.sh
+if [ ! -f /run/securacv/configured ] || [ ! -f "$SETUP_FILE" ]; then
+  bashio::log.info "event_mqtt_bridge: SecuraCV is not configured yet (open the app's Web UI); staying down."
+  s6-svc -O .
+  exit 0
+fi
+# shellcheck disable=SC1090
+source "$SETUP_FILE"
+
+if [ "$MQTT_PUBLISH_ENABLED" != "true" ]; then
+  bashio::log.info "event_mqtt_bridge: MQTT publishing is disabled; staying down."
+  s6-svc -O .
+  exit 0
+fi
+
+# The kernel (witness_api or witnessd) takes a moment to answer; the bridge
+# retries on its own after that, this just keeps the first poll clean.
+bashio::log.info "event_mqtt_bridge: waiting for the Event API..."
+wait_for_kernel_health "http://127.0.0.1:8799/health" 30 1 || \
+  bashio::log.warning "event_mqtt_bridge: the Event API is not answering yet; starting anyway"
+
+bashio::log.info "event_mqtt_bridge: starting the MQTT publisher (device id $DEVICE_ID)"
+if [ -n "${PUBLISHER_MQTT_PASSWORD:-}" ]; then
+  exec env MQTT_PASSWORD="$PUBLISHER_MQTT_PASSWORD" "${PUBLISHER_CMD_ARRAY[@]}"
+fi
+exec env -u MQTT_PASSWORD "${PUBLISHER_CMD_ARRAY[@]}"

@@ -6,13 +6,16 @@ has been bench-tested on hardware yet.** The radio, the iOS pairing sheet's
 timing on NimBLE 1.4.x and the BOOT button on each board are the bench items
 ([the checklist](#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 The flagship `firmware/canary` build is a **follow-up**, not part of this
-change. The displays keep their glass QR and open no door.
+change (tracked as F251 in the
+[sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The displays keep their glass QR and open no door.
 
 **Canonical statements this page restates, never overrides:** the wire and
 the door rules are the header comment of
 [`firmware/common/network/improv_core.h`](../../firmware/common/network/improv_core.h);
 the claim ticket is
 [`firmware/common/network/claim_ticket.h`](../../firmware/common/network/claim_ticket.h);
+the hub hand-off's document is
+[`firmware/common/network/hub_handoff.h`](../../firmware/common/network/hub_handoff.h);
 the receipt's grant order is
 [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h).
 If this page and a header disagree, the header wins and this page is the bug.
@@ -26,8 +29,8 @@ ticket", "Magic pairing"). The user-facing answers:
 ## 1. Purpose
 
 A brand-new Canary has no Wi-Fi and no screen. Until now the person had to
-find its `SecuraCV-XXXX` setup network, type a key the Flasher printed (or a
-display showed), join it, and fill in a portal. Magic pairing is the one-tap
+find its `SecuraCV-XXXX` setup network, type a key only its serial console
+had printed (or a display showed), join it, and fill in a portal. Magic pairing is the one-tap
 version: the Canary says "I am new and I am listening" over Bluetooth, the
 SecuraCV iPhone app shows a card ("A new Canary is nearby"), the person taps
 it, picks their Wi-Fi from the networks *the Canary itself can see*, types the
@@ -169,12 +172,15 @@ The Improv standard's, verbatim (`improv_core.h`, `ImprovWire.swift`):
 | `...8005` | Capabilities | READ (plain) | one byte, `CAP_*` bits |
 | `0x4677` (16-bit) | Service data in the scan response | — | 6 bytes, §3.2 |
 
-SecuraCV's own, on the WAP only (`claim_ticket.h`, the sketch's `ble_improv`):
+SecuraCV's own — the WAP registers CLAIM on it (`claim_ticket.h`, the
+sketch's `ble_improv`), Sense and Vision register HUB (`hub_handoff.h`,
+`improv_ble.cpp`); no device registers both yet:
 
 | UUID | Role | Properties | Payload |
 |---|---|---|---|
 | `8fc1cf00-b162-4401-9607-c8ac21383e90` | SecuraCV companion service | — | — |
-| `8fc1cf01-b162-4401-9607-c8ac21383e90` | CLAIM | READ, **encrypted** | the claim JSON, §3.5, one read (with its blob continuations) by the provisioning link |
+| `8fc1cf01-b162-4401-9607-c8ac21383e90` | CLAIM (WAP) | READ, **encrypted** | the claim JSON, §3.5, one read (with its blob continuations) by the provisioning link |
+| `8fc1cf02-b162-4401-9607-c8ac21383e90` | HUB (Sense, Vision) | WRITE, READ, **encrypted** | write: the broker JSON, §3.6, ≤ 240 bytes; read: one status byte |
 
 The companion service is deliberately *outside* the Improv service, so a
 standard client sees a standard Improv device and never meets it. The whole
@@ -276,7 +282,7 @@ it. Its JSON:
   "device_id":   "<the device id>",
   "claim":       "<32 hex characters>",
   "claim_url":   "<where to spend it: the receipt route at the device's .local name>",
-  "tls_cert_fp": "<SHA-256 of the HTTPS certificate when TLS is on, else absent or empty>",
+  "tls_cert_fp": "<SHA-256 of the HTTPS certificate the WAP will serve once setup completes — the pin the receipt's https base_url is held to; empty on a build with no HTTPS>",
   "sta_ip":      "<the address it got on your Wi-Fi, for a phone whose .local resolve is slow>",
   "mdns_host":   "<its .local host label>",
   "expires_in_s": 180
@@ -309,7 +315,99 @@ once the AP drops). The rules, from `claim_ticket.h`:
   minted-at word goes through the `__atomic` builtins exactly as
   `provisioning_gate.h`'s `State` does.
 
-### 3.6 The HTTP grant order
+### 3.6 The hub hand-off (Sense, Vision)
+
+A Sense or Vision that takes its Wi-Fi over this door has, at that moment,
+no hub: its broker address and login come from NVS the flashers seeded or
+from the compiled secrets, and neither family browses for a broker. Until
+this hand-off, the "All set" card was followed by a Canary that never
+published to Home Assistant, and the only remedy was a USB re-flash with the
+Flasher's MQTT fields and a broker password dug out of Mosquitto's
+configuration. The phone already holds both halves — it found Home
+Assistant over Bonjour, and it minted the broker login it keeps in its hub
+secret store — so right after the join it hands them over on the same
+encrypted link.
+
+**What crosses.** One WRITE to the companion service's HUB characteristic
+(`8fc1cf02`), UTF-8 JSON, at most **240 bytes**:
+
+```json
+{"host":"homeassistant.local","port":1883,"user":"canary","pass":"<secret>","tls":false}
+```
+
+| Key | | Rule (`hub_handoff.h`) |
+|---|---|---|
+| `host` | required | 1..63 bytes: a DNS name — letters, digits, dots and hyphens in labels, no leading, trailing or doubled dot, no label starting or ending in a hyphen — or an IPv4 literal (four octets 0..255, no leading zeros). A name of digits and dots alone must be an address. |
+| `port` | optional, 1883 | an integer 1..65535 as a plain JSON number (no sign, fraction, exponent or leading zero) |
+| `user`, `pass` | optional, together | strings of at most 64 bytes each after unescaping; both present or both absent; the user is never empty, the pass may be |
+| `tls` | optional, `false` | a JSON boolean |
+
+The reader is small and strict, as the Improv packet parser is: exactly
+these five keys, each at most once (**a duplicate key is refused**, not
+"last wins"), the three escapes a password can need (`\"`, `\\`, `\/`) and
+no other (`\n`, `\t`, `\uXXXX` are refused), no control byte inside a
+string, no value of another type, no unknown key, nothing after the closing
+brace but whitespace. A document that fails any of that is refused whole; a
+field that fails its rule is refused with its own verdict (host, then port,
+then credentials) once the document itself parsed. Every refusal wipes the
+record. Host-tested in `firmware/tests_host/test_hub_handoff.cpp`.
+
+**When it is accepted.** Only on an **encrypted link** — the characteristic's
+`WRITE_ENC` property, **and** the write handler checks the link's
+encryption again, as the RPC write does — **and** only while the Improv
+session is **Provisioned** (the device has the Wi-Fi this phone gave it) or
+**Provisioning** (a phone that writes a beat before the verdict lands). Any
+other time — the door open but no join, the door shut, a stranger who
+paired — the write stores nothing, logs one health line, and reads back as
+rejected. The write callback runs on the NimBLE host task and only copies
+the document into a mailbox (release/acquire, exactly like the RPC
+command's); the loop task parses and applies it in `tick()`.
+
+**What "stored" means.** The glue hands the parsed record to the board
+(`Identity::store_hub`), which persists it through `runtime_config`'s
+`set_mqtt_credentials()` — the same NVS keys the flashers seed
+(`mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_pass`), with the same
+readback-durability check the Wi-Fi credentials get — and then points the
+MQTT manager at it: `mqtt_init()` is re-run, which re-reads the cached
+config (PubSubClient keeps the host *pointer* into that cache and copies the
+port; the broker transport re-reads its socket mode), and the connect
+supervisor's backoff is reset so its next attempt dials the new broker at
+once. The one case that path cannot absorb is a live session to a
+*previous* broker (an installed witness re-pointed through the tap door on
+the same network — nothing in `mqtt_mgr` hangs up); that case restarts the
+unit ~25 s later, after the Improv link has lingered its 20 s and the phone
+has read its status byte. The `tls` flag: `false` writes the broker socket
+mode back to plain, so a plaintext hub named now never meets a TLS mode
+flashed earlier; `true` leaves the stored mode alone — the hand-off carries
+no certificate, so a unit with a provisioned CA or pin keeps verifying and a
+unit without one stays plain and still reports stored (the contract's
+"a device that cannot do MQTT-TLS stores false").
+
+**The status byte.** A READ of HUB answers one byte:
+
+| Byte | Meaning |
+|---|---|
+| `0` | nothing stored through the door this join (reset when a new `WIFI_SETTINGS` is accepted) |
+| `1` | stored — durably, by readback — and the MQTT manager re-pointed |
+| `2` | rejected: malformed, too long, a bad field, an unencrypted link, no join this session, or a store that would not hold it |
+| `3` | stored, but the broker refused the login on the first attempt — **never emitted by Sense or Vision today**: nothing in their MQTT managers reports the CONNACK reason cheaply, so the phone reads `1` and the device's health log carries the refusal |
+
+**Why the secret never reads back.** The document is the characteristic's
+written value for the length of one callback: the host task copies it into
+the mailbox and immediately sets the value back to the status byte over a
+zeroed buffer, so neither a READ nor the attribute's own memory keeps it;
+the loop task parses from the mailbox, wipes the mailbox, the parse buffer
+and the record, and republishes the status byte. The broker password lives
+in NVS and in `runtime_config`'s cache after that — the same two places the
+flashers put it — and on the air only once, encrypted, in the direction the
+phone chose.
+
+**The WAP.** Its companion service carries CLAIM (§3.5) and not HUB: the
+WAP's own setup page still carries its Home Assistant step for now, so the
+phone pairs it through the receipt and the owner names the broker there. A
+HUB on the WAP is a follow-up, not a claim this page makes.
+
+### 3.7 The HTTP grant order
 
 `GET /api/provisioning-receipt` is decided by the four-grant
 `receipt_decide` in `provisioning_gate.h`, in this order and no other:
@@ -419,6 +517,7 @@ portal).
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
 | After the join | `""` in the result (no page to open); the device appears on the LAN by mDNS and MQTT | same | the claim ticket → the receipt over Wi-Fi → **paired**; the post-join reboot into steady state waits while the claim is outstanding | — | — |
 | Identify | blinks the LED | blinks the LED | the sketch's identify | — | — |
+| Hub hand-off | ✅ | ✅ | ➖ not yet (its own page) | — | — |
 
 **Sense.** `improv_ble::begin` after the beacon, `tick` beside it every loop
 pass; the beacon carrier hands its bytes to `improv_ble::advertise()` instead
@@ -470,7 +569,8 @@ after it left the card on the newcomer). The profile swap and the
 
 **The flagship `firmware/canary` build.** Not in this change. Its
 `securacv_network` keeps the SoftAP wizard and the BOOT-tap receipt; the door
-and the claim are a follow-up (`claim_ticket.h` says so in its header). The
+and the claim are a follow-up (`claim_ticket.h` says so in its header;
+tracked as F251 in the [sweep backlog](../audit/repo_todo_sweep_2026-09.md)). The
 iOS name grammar already accepts a `Canary-XXXX` name and treats it as a
 WAP-class device, so the app needs no change when it lands.
 
@@ -483,54 +583,100 @@ scan does read `FLEET_BEACON_FLAG_SETUP_OPEN` from its siblings' beacons
 
 ## 6. The iOS flow
 
-The pure policy is `ios/Shared/` (Foundation only, tested); the glue is the
-app's `Transport/` and `Security/`.
+The pure policy is `ios/Shared/` and `ios/Sources/SecuraCV/Model/`
+(Foundation only, tested); the glue is the app's `Transport/` and
+`Security/`. The bar is AirPods: bring a powered-on Canary near the phone →
+one card slides up → one tap → Wi-Fi asked for at most once → a success
+card that names this device.
 
+0. **No prompt before its reason.** `BLEConsole` creates no
+   `CBCentralManager` until the first scan or setup tap — creating one is
+   what raises iOS's Bluetooth alert — and the scan starts only after the
+   discovery consent. On a fresh install Today itself asks ("Find my
+   Canary", `FirstRunCard`), and that tap raises only iOS's Bluetooth
+   prompt: the mDNS browse, and the Local Network prompt with it, waits for
+   its first real consumer — the walkthrough's "Watch it appear" row, the
+   Fleet tab with a real fleet, or a Canary heard announcing it just joined
+   (`FleetStore.startLocalNetworkDiscoveryIfConsented`).
 1. **Hear it.** `BLEConsole` collects, per peripheral, the beacon (with its
    setup bit), the local name and the scan response's Improv UUID + service
    data. `NearbyCanaries.candidates` decides what qualifies: heard within
    15 s, **and** the Improv service with a state that accepts credentials
    (Authorized or Provisioning) — or, for a sighting whose service data was
    not caught this time, the beacon's setup bit. The name grammar is strict
-   (`Sense-AB12`, `Vision-AB12`, `WAP-AB12`, four upper-case hex). A device
-   that is unambiguously one already paired is not "new"; a dismissed suffix
-   stays quiet.
-2. **The card.** "A new Canary is nearby" — on Today, on Fleet (comb and
-   list), and as the first step of the Set up walkthrough for the three
-   families (`SetupGuide.hasBluetoothDoor`). Strongest signal first.
-3. **Tap → connect → pick → type once.** `ImprovClient` connects, discovers
-   the service, subscribes to state / error / result, reads the state, asks
-   `GET_WIFI_NETWORKS` and shows the list the Canary sent. The person picks a
-   network and types its password once.
-4. **The pairing sheet.** The first write to the command characteristic
-   needs an encrypted link, so iOS shows its one-tap pairing sheet;
-   CoreBluetooth pairs and retries the write on its own. Nothing is bonded,
-   so the next Canary shows the sheet again — that is the design, and the
-   screen says so.
-5. **The Canary's own verdict.** The app waits on the state and error
-   characteristics: Provisioned, or `UnableToConnect` with the message in the
-   Canary's terms ("check the password"). `NotAuthorized` reads "This Canary
-   already has Wi-Fi and isn't accepting a new network. Tap its button to
-   open it up, or use its setup network."
-6. **Remember the Wi-Fi — only after it worked.** `HouseholdWiFi` is written
+   (`Sense-K7MZ`, `Vision-K7MZ`, `WAP-AB12`: four upper-case letters or
+   digits — a Sense or Vision upper-cases its pseudonym, which is drawn from
+   the no-confusion alphabet, not hex; a WAP's are hex). A device that is
+   unambiguously one already paired is not "new"; a dismissed suffix stays
+   quiet.
+2. **The card comes to you.** When exactly one candidate is "close by"
+   (−70 dBm or stronger) and has not been offered this session
+   (`NearbyCanaries.autoOffer`), one card slides up over whatever screen is
+   showing (`NearbyOfferOverlay`): the device's figure, its name,
+   **Continue**, **Not now**. Two on the table stay a choice in the inline
+   card — on Today, Fleet (comb and list), the "+" sheet and the first
+   section of the Set up walkthrough, which listens before it asks which
+   family it is (the advert already says). Strongest signal first.
+3. **Tap → connect → the pairing sheet → pick.** `ImprovClient` connects,
+   discovers the service, subscribes to state / error / result, reads the
+   state, and asks `GET_WIFI_NETWORKS`. That first write to the command
+   characteristic needs an encrypted link, so iOS shows its one-tap pairing
+   sheet *now* — the screen says "Tap Pair when iOS asks" at this step, and
+   a declined pairing is named (`ImprovClient.pairingDeclined`) instead of
+   showing as an empty list. CoreBluetooth pairs and retries the write on
+   its own. Nothing is bonded, so the next Canary shows the sheet again —
+   that is the design. The person picks from the list the Canary sent; the
+   remembered household Wi-Fi is preselected when it is in that list.
+   Before sending, the likely failure is named: a network not in the
+   Canary's list (2.4 GHz only), a password under 8 characters.
+4. **The Canary's own verdict.** The app waits on the state and error
+   characteristics: Provisioned, or `UnableToConnect` with both real causes
+   (the password, or a network the board cannot see). `NotAuthorized`
+   reads "This Canary isn't accepting a new network right now…" with the
+   way back in (a BOOT tap on a Sense or Vision, a power cycle on a new
+   one).
+5. **Remember the Wi-Fi — only after it worked.** `HouseholdWiFi` is written
    to the **device-only Keychain** (`ThisDeviceOnly`; never iCloud Keychain,
    never CloudKit) only with the toggle on and only after the Canary itself
-   said it joined (`shouldRemember(toggleOn:joined:ssid:)`). "Forget" on the
-   Set up screen clears it. The second Canary is two taps.
-7. **A WAP: the claim and the receipt.** `MagicPairPlan` sequences the rest:
+   said it joined (`shouldRemember(toggleOn:joined:ssid:)`). Every Wi-Fi
+   form opens with it (the card and the setup network), "Update fleet
+   Wi-Fi" replaces it once a Canary proved the new password, "Forget" on
+   the Set up screen clears it. The second Canary is two taps.
+6. **A WAP: the claim and the receipt.** `MagicPairPlan` sequences the rest:
    read the CLAIM characteristic over the same link, then, on the home LAN,
    `GET` the receipt at `claim_url` (the `.local` name; `sta_ip` as the
    fallback), pinning `tls_cert_fp` when present. The receipt lands in
    `DeviceStore` and the WAP is **paired**.
+7. **The success card names this unit.** "<title> is on <network>", then
+   the network watch ticks only the device whose mDNS host's last label
+   starts with the same characters as its advert name or its setup network
+   (`NearbyCanaries.isSameDevice`) — never any device of the same family —
+   and ends in words after 90 s rather than spinning.
 
 Fallbacks, each one named on screen: no card → the setup network (the key
-the Flasher printed) or a display's glass QR; "not accepting" → tap BOOT, or
-power-cycle; a `403` on the claim (expired, burned, or the phone is not on
-the device's network) → tap BOOT and **Add from receipt**.
+the Flasher shows on its card after the flash, read from the Canary's own
+first-boot `[SETUP]` line — the phone asks the portal's `GET /scan` for the
+Canary's own network list), a display's glass QR (the camera is asked for
+at the tap; a good scan starts the join), or a WAP's own setup page;
+"not accepting" → tap BOOT, or power-cycle; a radio that is off or not
+allowed → the reason and **Open Settings**, never a spinner. On a WAP's
+claim: nothing answered (the phone off Wi-Fi, or the `.local` name not yet
+settled) → the claim is unspent, so **Try again** while it lives (180 s);
+a `403` or any other answer → the device's row under **Ready to pair** on
+the Fleet tab, which takes its recovery kit (the receipt its own page saves
+after a BOOT tap — its setup-network address moved onto the address the
+WAP answers at now, the pin still its own) or a fresh setup. The app has
+no BOOT-tap pairing over the LAN: a receipt served on a BOOT tap names the
+SoftAP address, and an installed WAP speaks https with no pin the phone
+could hold it to before the first dial.
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
-`MagicPairPlanTests` (the sequence and its fallbacks), `NearbyCanaryTests`
-(which sightings qualify), `SetupGuideTests` (the words the screen shows).
+`MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),
+`NearbyCanaryTests` (which sightings qualify, which one is offered, which
+unit joined), `SetupGuideTests` (the words the screen shows, twenty words
+up front), `SetupPortalTests` (the scan list and the next step for every
+verdict), `AddCanaryFlowTests` (no prompt at launch, the first-run card,
+the radio and camera words).
 
 ---
 
@@ -598,6 +744,13 @@ cannot speak to.
 - [ ] The first write to `...8003` raises the iOS pairing sheet; one tap
       pairs; the write lands. **On NimBLE 1.4.x (Vision) the sheet's timing
       is the open question** — confirm the retried write is not refused.
+- [ ] Decline (or ignore) the pairing sheet at the network scan: the card
+      says pairing was declined and offers a typed name — never a silently
+      empty list — and the next Pair tap lets the join through.
+- [ ] A fresh install launches with no Bluetooth alert; the alert appears
+      only after "Find my Canary" on Today, and the card slides up by itself
+      within seconds of a Canary powering on on the table (and not for one
+      in the next room — the −70 dBm band).
 - [ ] A write without encryption (a client that declines to pair) is
       refused by the stack **and** by the handler.
 - [ ] The join succeeds with the right password; the state reads
@@ -675,7 +828,18 @@ cannot speak to.
       paired-and-unambiguous exclusion with two devices sharing a suffix.
 - [ ] The Keychain item is written only after a proven join, never on a
       failure; Forget clears it; it is absent from iCloud Keychain.
-- [ ] The `403`-on-claim path lands on BOOT tap + Add from receipt.
+- [ ] The `403`-on-claim path lands on the WAP's row under Ready to pair,
+      and its recovery kit (saved before it joined) pairs it there.
+- [ ] With the phone on cellular at the claim, the card names it and Try
+      again pairs once the phone is back on the home Wi-Fi (inside 180 s).
+- [ ] With an older Vision already on the network, the success card does
+      not tick it for a new Vision; only the new unit's host is ticked.
+- [ ] Bluetooth off / Bluetooth denied / Local Network denied: each setup
+      screen names the cause (and offers Settings where the fix is there)
+      instead of "Listening…".
+- [ ] On the Sense / Vision walkthrough, the hub login copied on the
+      iPhone pastes into the Flasher's MQTT fields on a Mac over Universal
+      Clipboard, and is gone from the clipboard after its two minutes.
 
 ---
 
@@ -687,6 +851,8 @@ cannot speak to.
 | The NimBLE glue, both majors (Sense, Vision) | [`firmware/common/network/improv_ble.h`](../../firmware/common/network/improv_ble.h), `improv_ble.cpp` | CI-compiled; bench |
 | The short BOOT tap (pure) | [`firmware/common/io/short_tap.h`](../../firmware/common/io/short_tap.h) | `firmware/tests_host/test_short_tap.cpp` |
 | The claim ticket (pure) | [`firmware/common/network/claim_ticket.h`](../../firmware/common/network/claim_ticket.h) | `firmware/tests_host/test_claim_ticket.cpp` |
+| The hub hand-off's document and status byte (pure) | [`firmware/common/network/hub_handoff.h`](../../firmware/common/network/hub_handoff.h) | `firmware/tests_host/test_hub_handoff.cpp` |
+| The hub hand-off's store (Sense, Vision) | `include/canary/runtime_config.h` (`set_mqtt_credentials`), the `store_hub` hook in each `main.cpp` | CI-compiled; bench |
 | The receipt's four-grant order | [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h) (`receipt_decide`) | `firmware/tests_host/test_provisioning_gate.cpp` |
 | The beacon's setup bit | [`firmware/common/fleet_link/fleet_beacon.h`](../../firmware/common/fleet_link/fleet_beacon.h) (`FLEET_BEACON_FLAG_SETUP_OPEN`) | the beacon tests |
 | Sense / Vision flag and window | `include/canary/config.h` (`FEATURE_IMPROV`, `IMPROV_FIRST_BOOT_WINDOW_MS`) | the per-board `-DFEATURE_IMPROV=0` CI veto |
