@@ -83,10 +83,17 @@ class HardwareCarry(unittest.TestCase):
         self.assertIsNone(out, "a refused carry must not write build.json")
 
     def test_control_the_scratch_carry_is_the_committed_one(self):
-        proc, out = self.run_with(self.hw)
-        self.assertIsNotNone(out, proc.stderr)
-        committed = json.loads((REPO / REL_BUILD).read_text(encoding="utf-8"))
-        self.assertEqual(out, committed, "the scratch copy is missing an input the build stage reads")
+        # the committed hardware.json itself, not its re-serialization
+        shutil.copy2(REPO / REL_HW, self.root / REL_HW)
+        (self.root / REL_BUILD).unlink(missing_ok=True)
+        proc = subprocess.run(
+            [sys.executable, str(self.root / "canary-local/tools/gen_enclosures.py")],
+            cwd=self.root, capture_output=True, text=True, timeout=120)
+        built = self.root / REL_BUILD
+        self.assertTrue(built.exists(), proc.stderr)
+        self.assertEqual(built.read_bytes(), (REPO / REL_BUILD).read_bytes(),
+                         "the scratch copy is missing an input the build stage reads")
+        out = json.loads(built.read_text(encoding="utf-8"))
         carried = {s for d in out["devices"].values() for s in d.get("hardware", {}).get("sets", {})}
         self.assertEqual(carried, set(self.hw["sets"]), "every hardware.json set is carried")
 
