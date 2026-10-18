@@ -8,7 +8,7 @@ measurement. This page is the wiring for the released
 [Vision Doorbell case](./enclosure/canary_vision_doorbell.scad) (the
 **Lite** tier of the [doorbell dossier](./canary_doorbell_research.md)).
 
-![Wiring: XIAO D1 to the button through R5 with C2 to ground; XIAO D2 through R3 to a 2N3904 that sinks the button LED, powered from 5V](./canary_vision_doorbell_wiring.svg)
+![Wiring: XIAO D1 to the button through R5 with C2 to ground; XIAO D2 through R3 to a 2N3904 that sinks the button LED, powered from 5V; XIAO D10 through an RC filter, a coupling cap and a divider to a PAM8302A that drives the speaker](./canary_vision_doorbell_wiring.svg)
 
 ## What it does
 
@@ -68,11 +68,11 @@ All in [`bom_canary_vision.csv`](./bom_canary_vision.csv), items 19–19e:
 | Ref | Part | Notes |
 |---|---|---|
 | SPK1 | 36 mm sealed full-range driver, 4 Ω, 3 W class, ≥ 88 dB/W/m, 6 mm deep | A mylar-cone driver with a plastic frame and a sealed back is what survives outdoors; the case seats its rim in a boss on the face over a foam ring and presses its magnet with a cradle on the plate, no screws. The **target** is a chime that carries over a busy street (70–75 dB at the curb); the arithmetic on this sensitivity and AMP1's 2.5 W says about 90 dB at 1 m before the grille, the mesh, the filter and the tone's own losses, **none of which has been metered yet** (see "What's not done"). Buy the sensitivity; the meter decides. Candidates to verify in hand (depth ≤ 6, rim ≤ 36): PUI AS03604MR-N50-R, CUI CMS-36T-28? — buy by the numbers, not the name. |
-| AMP1 | PAM8302A class-D amplifier, 2.5 W into 4 Ω at 5 V (Adafruit 2130 breakout or bare) | Mono, single-ended input, fixed 24 dB gain, shutdown pin. Parks on edge against the −X wall beside the button, long side vertical, in the 18 mm between the bottom corner post and the speaker zone's first post (the case was probed with a 20 × 18 × 3 board there: it fits, snug). Its VIN is the XIAO's **5V** pin; SD ties to VIN (always on; idle draw is a few mA). |
+| AMP1 | PAM8302A class-D amplifier, 2.5 W into 4 Ω at 5 V (Adafruit 2130 breakout or bare) | Mono, differential input (driven single-ended here), fixed 24 dB gain, active-low shutdown pin. The Adafruit 2130 breakout adds a pull-up on SD (on when high or open), 1 µF caps on both inputs and a volume trim; its back-side labels are 2-5VDC (VIN), Shutdown (SD), Ground, Audio In+ (A+), Audio In− (A−) and 4-8R Load (+ / −). Parks on edge against the −X wall beside the button, long side vertical, in the 18 mm between the bottom corner post and the speaker zone's first post (the case was probed with a 20 × 18 × 3 board there: it fits, snug). Its VIN is the XIAO's **5V** pin; SD ties to VIN (always on; idle draw is a few mA). |
 | R6, R7 | 1 kΩ ×2 | The two-pole input filter with C3/C5: knocks the 78 kHz PWM carrier down ~40 dB before the amplifier. |
 | C3, C5 | 22 nF ceramic ×2 | With R6/R7: ~7 kHz corner, twice. |
 | C4 | 1 µF film or ceramic | Couples the audio to A+ and blocks the PWM's mid-scale DC (the speaker never sees it). |
-| R8, R9 | 10 kΩ / 2.2 kΩ | A divider after C4: the XIAO's 3.3 V swing at the amp's 24 dB gain would clip; this leaves ~0.6 V peak, which is full output. |
+| R8, R9 | 10 kΩ / 2.2 kΩ | A divider after C4: R8 in series to A+, R9 from A+ to GND. The XIAO's 3.3 V swing at the amp's 24 dB gain would clip; this leaves ~0.6 V peak, which is full output. The Adafruit breakout's volume trim can only turn it down further. |
 | FOAM2 | foam ring Ø36 / Ø30 × 1.5 (compresses to 1.0) | Between the driver's rim and the face, inside the boss: it is the acoustic seal and the thing that lets the plate press the driver without rattles. |
 | FOAM3 | foam pad Ø20 × 1.5 | Between the magnet and the plate's cradle. |
 | MESH1 | acoustic mesh patch Ø34, hydrophobic (Saati Acoustex class, or a GORE acoustic vent), adhesive | On the face's **inner** side over the grille, in its 0.3 mm seat: rain stays out, sound goes through. It guards the driver's chamber only — the driver's back is sealed and its rim sits on a foam ring — so it is **not** the case's pressure path; since the v0.9 case the GORE cluster is off by default and the sealed body breathes through its Ø2 weep. |
@@ -103,8 +103,8 @@ Two more parts live in the v0.7 case beside the module, both optional:
 | XIAO **D1** | R5 → BTN2 **NO** | The press pulls D1 low (internal pull-up). |
 | XIAO **D1** | C2 → **GND** | Next to the XIAO. |
 | BTN2 **C** | **GND** | |
-| XIAO **D3** | R6 → C3 to GND → R7 → C5 to GND → C4 → R8/R9 divider → AMP1 **A+** | 10-bit PWM at 78 kHz carrying 8 kHz audio; the filter leaves the audio, the cap drops the DC, the divider matches the amp's gain. |
-| AMP1 **A−** | 1 µF to **GND** | The amp's input is differential; A− rides at its own bias through the cap. |
+| XIAO **D10** | R6 → C3 to GND → R7 → C5 to GND → C4 → R8 → AMP1 **A+**, with R9 from A+ to **GND** | 10-bit PWM at 78 kHz carrying 8 kHz audio; the filter leaves the audio, the cap drops the DC, R8 over R9 matches the amp's gain. **Never D3**: see the socket map below. |
+| AMP1 **A−** | 1 µF to **GND** | The amp's input is differential; A− rides at its own bias through the cap. On the Adafruit 2130 breakout both inputs already pass through on-board 1 µF caps, so A− may go straight to GND instead (Adafruit's own advice for a single-ended source). |
 | XIAO **5V** | AMP1 **VIN** (and **SD**) | 2.5 W peak on the chime; the USB supply covers it. **The 5V pin is USB only on both XIAOs**: on the LiPo (USB out) it reads 0 V, so the speaker is silent during a ride-through while the ring still seals and the glow still swells (the 3V3 rail stays up). Feeding AMP1 from 3V3 instead is not the fix: the XIAO's 3.3 V regulator cannot carry the module *and* a watt of chime, and the amp would make ~1 W. A battery-backed 5 V rail for the amp is a v0.9 question, if the chime must ring through an outage. |
 | AMP1 **GND** | **GND** | |
 | AMP1 **+ / −** | SPK1 **+ / −** | The sealed driver behind the grille. |
@@ -117,25 +117,53 @@ Pin numbers by board:
 |---|---|---|---|
 | D1 | GPIO2 | GPIO3 | button in |
 | D2 | GPIO3 | GPIO4 | glow PWM |
-| D3 | GPIO4 | GPIO5 | speaker PWM (v0.8) |
+| D10 | GPIO9 | GPIO10 | speaker PWM (v0.8) |
+| D8 | GPIO7 | GPIO8 | nothing wired: the firmware holds it low (the module's SPI clock) |
 
-D3 is the module socket's SPI chip-select line. The Vision firmware never
-runs SPI to the module (it talks I²C), and a chip select that wiggles while
-SCK and MOSI stay idle clocks no byte into the module's SPI slave, so the
-pin is free to carry the audio. That was the last spare header pin on the
-stacked build; `firmware/boards/PIN_BUDGET.md` now shows both XIAO hosts
-with D1, D2 and D3 committed to the doorbell.
+**Every header pin also lands on the Grove Vision AI V2.** Stacked, the XIAO
+has no pin the module leaves alone, so the doorbell takes only module
+*inputs* that this firmware never clocks. The socket, as Seeed prints it on
+the module's silkscreen, as Seeed's own Arduino library drives it
+(`AI.begin(&Wire, D3)`; SPI mode is `AI.begin(&SPI, cs = D1, sync = D0,
+rst = D3)`) and as Himax's SWD guide names it:
 
-D1 and D2 are used because the Grove Vision AI V2's socket owns the rest of the
-header: D4/D5 (I2C, which this firmware uses), D6/D7 (UART) and the SPI
-group D8–D10 with chip select on D3 (unused by this firmware, but wired to
-the module). **Check once before you solder:** with the XIAO removed, put a meter
-in continuity mode between the module socket's D1 and D2 pads and each of
-its other pads. Neither should beep to anything except where you expect.
-If your board revision differs, the pins live in one place each,
-`DOORBELL_BUTTON_PIN` / `DOORBELL_GLOW_PIN` in
+| XIAO pad | Module silkscreen | What it is on the module | Doorbell use |
+|---|---|---|---|
+| D0 | D0 | SPI-mode SYNC, a module **output** | none: never drive it |
+| D1 | D1 | SPI chip select, module input | button |
+| D2 | D2 | SWDIO, the WE2's debug data, module input | glow ring |
+| D3 | RST | **the WE2's reset**, active low | **none: never drive it** |
+| D4 / D5 | SDA / SCL | I²C, this firmware's link | (the module) |
+| D6 | RXD | the module's UART receive | none |
+| D7 | TXD | the module's UART transmit (also SWCLK) | none |
+| D8 | CLK | SPI clock, module input | held low by the firmware |
+| D9 | MISO | SPI data out, a module **output** | none: never drive it |
+| D10 | MOSI | SPI data in, module input | speaker |
+
+The firmware talks I²C only and never clocks SPI. The speaker driver drives
+D8 low before the carrier starts and keeps it there, so a module input that
+moves while that clock stays low shifts no bit into the module: the button
+may pull the chip select low, the speaker may toggle MOSI, and SWDIO does
+nothing without its clock. **D3 must never carry the speaker:** it is the
+WE2's reset, and the 78 kHz carrier, which runs from boot even while the
+speaker is silent, would hold the camera in reset. Earlier revisions of this
+page (and of `pins.h`) put the speaker there on the belief that D3 was the
+SPI chip select; the module's silkscreen and Seeed's library both say RST.
+`firmware/boards/PIN_BUDGET.md` shows both XIAO hosts with D1, D2, D8 and
+D10 committed to the doorbell.
+
+**Check once before you solder:** with the XIAO removed, put a meter in
+continuity mode between the module socket's D1, D2, D8 and D10 pads and
+each of its other pads. None should beep to anything except where you
+expect. If your board revision differs, the pins live in one place each,
+`DOORBELL_BUTTON_PIN` / `DOORBELL_GLOW_PIN` / `DOORBELL_AUDIO_PIN` /
+`DOORBELL_AUDIO_SPI_CLK_HOLD_PIN` in
 [`firmware/boards/xiao-esp32s3/pins/pins.h`](../../firmware/boards/xiao-esp32s3/pins/pins.h)
 and [`xiao-esp32c3/pins/pins.h`](../../firmware/boards/xiao-esp32c3/pins/pins.h).
+
+On the XIAO ESP32-C3, D8 is GPIO8, a strapping pin. It is read only at
+reset, the firmware drives it only after boot, and with GPIO9 (the BOOT
+button, pulled up) high the chip boots from flash whatever GPIO8 reads.
 
 On the XIAO ESP32-S3, D2 is GPIO3, a strapping pin (the JTAG source select).
 It only counts when an eFuse no stock XIAO has burned is set, and R3 + R4
@@ -210,9 +238,10 @@ before you trust the dimples, and flip the knob if they are swapped.
 (or C3) in the Grove Vision AI V2's socket; the camera is the module's
 OV5647. The microSD slot in the XIAO family lives on the **Sense expansion
 board**, which attaches to the XIAO's underside — the side the Grove socket
-takes — so it cannot be in this stack, and the Grove Vision AI V2 has no
-slot of its own. The witness chain and the doorbell's state live in the
-XIAO's flash (NVS); there is nothing on a card to get at. If a card ever
+takes — so it cannot be in this stack. The Grove Vision AI V2 does carry a
+microSD slot of its own (Himax's board photo labels it), but nothing in this
+build reads or writes it: the witness chain and the doorbell's state live in
+the XIAO's flash (NVS); there is nothing on a card to get at. If a card ever
 matters here it is a different host board, not a hole in the case.
 
 ## Bring-up
@@ -228,8 +257,8 @@ matters here it is a different host board, not a hole in the case.
    (the press is sealed on the device).
 5. Hold the button for 15 s: `[BELL] … reported stuck`, and the ring goes
    steady and low. Release it: `[BELL] Button released - no longer stuck.`
-6. The speaker: boot prints `[BELL] Speaker on D3 (PWM 78125 Hz, 10-bit,
-   8000 samples/s), volume 60%`. A press plays the chime with the swell; a
+6. The speaker: boot prints `[BELL] Speaker on D10 (GPIO10, PWM 78125 Hz,
+   10-bit, 8000 samples/s), volume 60%` (GPIO9 on the S3). A press plays the chime with the swell; a
    second press inside 3 s plays the tick, and so does a press before the
    witness has an identity (the serial line says `unsigned`). Set **Doorbell
    volume** to 100 and stand at the curb with a sound-level meter: the chime
@@ -239,6 +268,11 @@ matters here it is a different host board, not a hole in the case.
    `speaker: fault` in the state row means the sample timer did not start;
    no sound with `speaker: ok` is the wiring (check the 5 V at AMP1 VIN and
    the ~0.6 V peak at A+ on a scope while a reply plays).
+7. The camera must keep working with all of it wired: send a reply and
+   press the button while someone stands in view, and the Vision's
+   detections keep arriving. If the module stops answering (`Grove Vision
+   AI ID=0`, or init fails at boot), something is driving one of its pins:
+   check that nothing is wired to D0, D3 or D9.
 
 If step 3 does nothing, check the button with a meter: NO and C should
 close when pressed. D1 should read ~3.3 V released and ~0 V pressed.

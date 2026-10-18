@@ -3804,7 +3804,9 @@ function renderWifiFields(box, product) {
   // accepted that suggestion and the join failed. Grab yours from the router
   // sticker / your phone, or let "Remember on this computer" recall it.
   // (Pattern: firmware/LESSONS_LEARNED.md "iOS offers to invent a password".)
-  pass.type = "text"; pass.placeholder = "password";
+  pass.type = "text"; pass.placeholder = core.WIFI_CREDENTIAL.fieldLabel;
+  pass.maxLength = core.WIFI_CREDENTIAL.passwordMaxBytes;
+  pass.setAttribute("aria-label", core.WIFI_CREDENTIAL.fieldLabel);
   pass.classList.add("pw-masked");
   pass.autocomplete = "off";
   pass.setAttribute("autocapitalize", "none");
@@ -4652,7 +4654,8 @@ function phaseDone(opts) {
 
   const product = opts.product;
   // Where the key for the setup network gets printed. A Canary with no
-  // network baked in raises SecuraCV-XXXX on this first boot and prints the
+  // network baked in raises its setup network on this first boot
+  // (SecuraCV-<type>-XXXX; SecuraCV-XXXX on older firmware) and prints the
   // network's key on its serial console — the only place it ever appears.
   // The port is still ours, so listen: the voice (startVoice) reopens it at
   // console speed across the reset and hands the line over the moment it

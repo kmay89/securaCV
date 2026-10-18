@@ -110,6 +110,28 @@ there gets **both I2C and UART** with zero wiring. Orientation matters:
 **the XIAO's USB-C must face the same direction as the module's USB-C** —
 plugging it in backwards feeds power into GPIO and can kill either board.
 
+Every one of the XIAO's eleven signal pins lands on the module. What each
+one is, from the module's silkscreen, Seeed's own Arduino library
+(`Seeed_Arduino_SSCMA`: `AI.begin(&Wire, D3)`, and in SPI mode
+`AI.begin(&SPI, cs = D1, sync = D0, rst = D3)`) and Himax's SWD guide:
+
+| XIAO pad | Module silkscreen | On the module |
+|---|---|---|
+| D0 | D0 | SPI-mode SYNC (data ready), a module **output** |
+| D1 | D1 | SPI chip select (input) |
+| D2 | D2 | SWDIO, the WE2's debug data (input) |
+| D3 | RST | **the WE2's reset**, active low |
+| D4 / D5 | SDA / SCL | I2C (address `0x62`) |
+| D6 / D7 | RXD / TXD | the module's UART; TXD doubles as SWCLK |
+| D8 / D9 / D10 | CLK / MISO / MOSI | SPI slave: clock in, data **out**, data in |
+
+`canary-vision` uses I2C only and leaves D3 alone (`AI.begin()` passes no
+reset pin). Never drive D0, D3 or D9 from the host: two are module outputs
+and D3 resets the camera. The Vision Doorbell's button, glow ring and
+speaker take D1, D2 and D10, with D8 held low, for exactly that reason
+([wiring](./canary_vision_doorbell_wiring.md)). The module also carries
+a microSD slot; this firmware does not use it.
+
 ### UART (alternative transport)
 
 The module also speaks the same protocol over UART at a fixed **921600

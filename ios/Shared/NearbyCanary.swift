@@ -261,17 +261,38 @@ enum NearbyCanaries {
         return label.hasPrefix(want)
     }
 
-    /// The four identity characters in a setup network's name:
-    /// "SecuraCV-aB3k" → "aB3k", and "SecuraCV-aB3k-x9" (a key that could
-    /// not be made durable) → "aB3k". Nil for anything that is not a
-    /// Canary's setup network.
+    /// The four identity characters in a setup network's name, read by the
+    /// grammar of the firmware's `onboard::is_setup_ssid`
+    /// (firmware/common/network/onboarding_fsm.h; SetupPortal.isSetupNetwork
+    /// is its public twin and asks here): "SecuraCV-sense-aB3k" → "aB3k",
+    /// "SecuraCV-sentinel-aB3k-x9" → "aB3k", and older firmware's
+    /// "SecuraCV-aB3k" / "SecuraCV-aB3k-x9" → "aB3k". The node type in front
+    /// (1...8 lowercase ASCII letters) is not identity, nor is the two-
+    /// character tag behind (a key that could not be made durable). Nil for
+    /// anything that is not a Canary's setup network — ASCII only, as the
+    /// firmware reads it.
     static func suffix(ofSetupSSID ssid: String) -> String? {
         let prefix = "SecuraCV-"
         guard ssid.hasPrefix(prefix) else { return nil }
-        let rest = ssid.dropFirst(prefix.count)
-        guard let first = rest.split(separator: "-", omittingEmptySubsequences: false).first,
-              first.count == 4, first.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
-        return String(first)
+        let parts = ssid.dropFirst(prefix.count).split(separator: "-", omittingEmptySubsequences: false)
+        func alnum(_ s: Substring, _ n: Int) -> Bool {
+            s.count == n && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        }
+        func nodeType(_ s: Substring) -> Bool {
+            (1...8).contains(s.count) && s.allSatisfy { $0.isASCII && $0.isLetter && $0.isLowercase }
+        }
+        switch parts.count {
+        case 1 where alnum(parts[0], 4):
+            return String(parts[0])                                           // SecuraCV-aB3k
+        case 2 where alnum(parts[0], 4) && alnum(parts[1], 2):
+            return String(parts[0])                                           // SecuraCV-aB3k-x9
+        case 2 where nodeType(parts[0]) && alnum(parts[1], 4):
+            return String(parts[1])                                           // SecuraCV-sense-aB3k
+        case 3 where nodeType(parts[0]) && alnum(parts[1], 4) && alnum(parts[2], 2):
+            return String(parts[1])                                           // SecuraCV-sense-aB3k-x9
+        default:
+            return nil
+        }
     }
 }
 

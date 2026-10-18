@@ -4470,47 +4470,84 @@ test("setup-network key: one parser, both flashers, pinned to the firmware's pri
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
   const src = read(join(ROOT, "desktop", "src", "app.js"));
   const block = src.match(
-    /const SETUP_DOOR_NOTE =[\s\S]*?\nfunction setupNetworkLine\([\s\S]*?\n}\n/);
+    /const SETUP_DOOR_NOTE =[\s\S]*?\nfunction isSetupNetworkSsid\([\s\S]*?\n}\n/);
   assert.ok(block, "desktop/src/app.js no longer carries the inlined setup-network parser block");
   const native = new Function(`${block[0]}; return { SETUP_DOOR_NOTE, WIFI_PASS_REQUIRED, ` +
-    `SETUP_NETWORK_LINE_RES, parseSetupNetwork, setupNetworkLine };`)();
+    `SETUP_NETWORK_LINE_RES, parseSetupNetwork, setupNetworkLine, ` +
+    `SETUP_QR_LINE_RE, parseSetupQr, SETUP_SSID_RE, isSetupNetworkSsid };`)();
 
   // The copy and the patterns, byte for byte.
   assert.equal(native.SETUP_DOOR_NOTE, core.SETUP_DOOR_NOTE, "the 'leave blank' note drifted between flashers");
   assert.equal(native.WIFI_PASS_REQUIRED, core.WIFI_PASS_REQUIRED, "the no-password refusal drifted between flashers");
   assert.deepEqual(native.SETUP_NETWORK_LINE_RES.map((r) => r.source),
     core.SETUP_NETWORK_LINE_RES.map((r) => r.source), "the setup-network line patterns drifted");
+  for (const name of ["SETUP_QR_LINE_RE", "SETUP_SSID_RE"]) {
+    assert.equal(native[name].source, core[name].source, `${name} drifted between flashers`);
+    assert.equal(native[name].flags, core[name].flags, `${name}'s flags drifted between flashers`);
+  }
 
   // The firmware's own format strings — a reworded printf fails here, not on
   // a bench. The %s slots are rendered with sample values and parsed back.
+  // The Sense/Vision line is built by onboarding_fsm.h announce_line (no
+  // trailing newline: setup_portal.cpp prints it with Serial.println, which
+  // adds CR LF) and the QR line beside it by qr_line; the WAP prints its own.
+  const fsm = read(join(ROOT, "firmware/common/network/onboarding_fsm.h"));
+  const senseFmt = '[SETUP] Setup network up: \\"%s\\"  password %s  (channel %u)';
+  assert.ok(fsm.includes(senseFmt),
+    "onboarding_fsm.h no longer builds the `[SETUP] Setup network up` line both flashers parse");
+  assert.ok(fsm.includes('"[SETUP] QR "'), "onboarding_fsm.h no longer builds the `[SETUP] QR` line");
   const portal = read(join(ROOT, "firmware/common/network/setup_portal.cpp"));
-  const senseFmt = '[SETUP] Setup network up: \\"%s\\"  password %s  (channel %u)\\n';
-  assert.ok(portal.includes(senseFmt),
-    "setup_portal.cpp no longer prints the `[SETUP] Setup network up` line both flashers parse");
+  assert.ok(portal.includes("onboard::announce_line("),
+    "setup_portal.cpp no longer prints the announce line through onboarding_fsm.h");
+  assert.ok(portal.includes("onboard::qr_line("),
+    "setup_portal.cpp no longer prints the QR line beside it");
   const wap = read(join(ROOT, "firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino"));
   const wapFmt = "[WIFI] AP started: %s (password: %s)\\n";
   assert.ok(wap.includes(wapFmt),
     "canary_wap.ino no longer prints the `[WIFI] AP started` line both flashers parse");
   const render = (fmt, ...vals) => fmt.replace(/\\"/g, '"').replace(/\\n/g, "\n")
     .replace(/%[su]/g, () => String(vals.shift()));
-  const senseLog = "rst:0x1 (POWERON)\n[WIFI] No credentials yet — raising the setup network; sensing continues.\n" +
-    render(senseFmt, "SecuraCV-4dC2", "a7Kq2pMx", 1) +
-    "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\n";
+  const qrPayload = "WIFI:T:WPA;S:SecuraCV-sense-4dC2;P:a7Kq2pMx;;";
+  const senseLog = "rst:0x1 (POWERON)\r\n[WIFI] No credentials yet — raising the setup network; sensing continues.\r\n" +
+    render(senseFmt, "SecuraCV-sense-4dC2", "a7Kq2pMx", 1) + "\r\n" +
+    "[SETUP] QR " + qrPayload + "\r\n" +
+    "[SETUP] Join it from a phone - the setup page opens by itself (or open http://192.168.4.1/).\r\n";
+  const legacyLog = render(senseFmt, "SecuraCV-4dC2-k7", "a7Kq2pMx", 6) + "\n";
   const wapLog = "[PROV] Deriving device-unique AP password...\n" +
-    render(wapFmt, "SecuraCV-m2G2", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
+    render(wapFmt, "SecuraCV-wap-m2G2", "cv-7hJ2kQ9mN4pR") + "[OK] WiFi AP active\n";
   for (const [label, log, want] of [
-    ["sense/vision", senseLog, { ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }],
-    ["wap", wapLog, { ssid: "SecuraCV-m2G2", key: "cv-7hJ2kQ9mN4pR" }],
+    ["sense/vision", senseLog, { ssid: "SecuraCV-sense-4dC2", key: "a7Kq2pMx" }],
+    ["older firmware", legacyLog, { ssid: "SecuraCV-4dC2-k7", key: "a7Kq2pMx" }],
+    ["wap", wapLog, { ssid: "SecuraCV-wap-m2G2", key: "cv-7hJ2kQ9mN4pR" }],
   ]) {
     assert.deepEqual(core.parseSetupNetwork(log), want, `browser parser misread the ${label} line`);
     assert.deepEqual(native.parseSetupNetwork(log), want, `native parser misread the ${label} line`);
     assert.equal(native.setupNetworkLine(want), core.setupNetworkLine(want), "the rendered line drifted");
+    assert.ok(core.isSetupNetworkSsid(want.ssid) && native.isSetupNetworkSsid(want.ssid),
+      `the ${label} name is one the matcher accepts`);
   }
   assert.equal(core.parseSetupNetwork("just boot text"), null);
   assert.equal(native.parseSetupNetwork("[SETUP] Join requested: \"Home\""), null,
     "a different [SETUP] line must not read as the network-up line");
   assert.match(core.setupNetworkLine({ ssid: "SecuraCV-4dC2", key: "a7Kq2pMx" }),
     /^Its setup network: SecuraCV-4dC2 · key a7Kq2pMx$/);
+  // The QR line: both read the payload as printed, without println's CR.
+  assert.equal(core.parseSetupQr(senseLog), qrPayload, "browser misread the QR line");
+  assert.equal(native.parseSetupQr(senseLog), qrPayload, "native misread the QR line");
+  assert.equal(native.parseSetupQr(wapLog), null, "a WAP prints no QR line");
+  // The name grammar: the host test's vectors (test_onboarding_fsm.cpp
+  // the_matcher_accepts_every_shape_ever_emitted), same verdict in both.
+  for (const [ssid, ours] of [
+    ["SecuraCV-4dC2", true], ["SecuraCV-4dC2-k7", true], ["SecuraCV-sense-4dC2", true],
+    ["SecuraCV-sentinel-4dC2-k7", true], ["SecuraCV-display-CNRY", true],
+    ["SecuraCV-4dC", false], ["SecuraCV-4dC2x", false], ["SecuraCV-4dC2-", false], ["SecuraCV-4dC2-k", false],
+    ["SecuraCV-Sense-4dC2", false], ["SecuraCV-s3nse-4dC2", false], ["SecuraCV-vision-4dC2-k7x", false],
+    ["SecuraCV-a-b-c-d", false], ["securacv-4dC2", false], ["MyWiFi", false], ["SecuraCV-", false],
+    ["SecuraCV-4d C2", false],
+  ]) {
+    assert.equal(core.isSetupNetworkSsid(ssid), ours, `browser matcher: ${ssid}`);
+    assert.equal(native.isSetupNetworkSsid(ssid), ours, `native matcher: ${ssid}`);
+  }
 
   // Both frontends LISTEN and RENDER it: the browser's voice/monitor and done
   // card, the desktop's serial-log listener and hatch card.

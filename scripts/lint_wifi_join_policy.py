@@ -63,12 +63,28 @@ REPO = Path(__file__).resolve().parents[1]
 # only as wide as its list, which is the other lesson from that session.
 WIFI_SUPERVISORS = [
     "firmware/projects/canary-display/src/net/wifi_mgr.cpp",
+    "canary-local/emulator/src/emu_net.cpp",
+]
+
+# The headless boards' supervisor lives ONCE, in common/, and knows no board's
+# config.h: it keeps the WifiRetry, lets wifi_next_action() decide, and takes
+# the WifiRetryPolicy ready-built from the board. It may not name a tunable
+# or build a policy from a literal.
+SHARED_SUPERVISORS = [
+    "firmware/common/network/wifi_supervisor.cpp",
+]
+
+# Each headless board's thin shim over that core: it includes the board's
+# config.h and the policy header, builds the WifiRetryPolicy from the board's
+# tunables BY NAME (the same `p.base_ms = WIFI_RETRY_BASE_MS;` spelling every
+# full supervisor uses), and hands it to the core (`pc.retry = p;` +
+# `wifi_sup::begin(`). It decides nothing itself: no WifiRetry, no schedule,
+# no restart. canary-sentinel's is canary-sense's byte-for-byte but for the
+# product-name line (firmware/scripts/check_sentinel_net_sync.sh).
+SUPERVISOR_SHIMS = [
     "firmware/projects/canary-sense/src/net/wifi_mgr.cpp",
-    # canary-sense's supervisor, carried byte-for-byte but for the setup
-    # network's product name (firmware/scripts/check_sentinel_net_sync.sh).
     "firmware/projects/canary-sentinel/src/net/wifi_mgr.cpp",
     "firmware/projects/canary-vision/src/net/wifi_mgr.cpp",
-    "canary-local/emulator/src/emu_net.cpp",
 ]
 
 # The generated Arduino sketch is a flattened copy of the display tree, so it
@@ -122,6 +138,12 @@ CONFIG_INCLUDE = re.compile(r'#include\s+"(?:canary/)?config\.h"')
 REQUIRED_DRIVERS = {
     "WifiRetry": re.compile(r"\bWifiRetry\b"),
     "wifi_next_action()": re.compile(r"\bwifi_next_action\s*\("),
+}
+# What a shim must do instead of deciding: hand the policy it built to the
+# shared core, and start that core.
+SHIM_DRIVERS = {
+    "the policy handed to the core (`pc.retry = p;`)": re.compile(r"\.retry\s*=\s*\w+\s*;"),
+    "wifi_sup::begin()": re.compile(r"\bwifi_sup::begin\s*\("),
 }
 
 # The tunables the shared policy consumes, and the field each must feed. A
@@ -265,11 +287,18 @@ def policy_assignments(text: str) -> dict[str, str]:
     return out
 
 
-def check_text(rel: str, text: str) -> list[str]:
-    """Every rule, applied to `text` as though it were the file at `rel`."""
+def check_text(rel: str, text: str, kind: str = "board") -> list[str]:
+    """Every rule, applied to `text` as though it were the file at `rel`.
+
+    `kind` is "board" (a full supervisor: decides AND is built from its
+    board's tunables), "shim" (builds the policy by name, decides nothing) or
+    "core" (the shared supervisor: decides, names no tunable).
+    """
     lines = text.splitlines()
     code = _code_lines(text)
     problems: list[str] = []
+    if kind not in ("board", "shim", "core"):
+        raise ValueError(kind)
 
     if not REQUIRED_INCLUDE.search(text):
         problems.append(
@@ -280,22 +309,50 @@ def check_text(rel: str, text: str) -> list[str]:
             f"join/retry rules are shared on purpose: three boards each kept their "
             f"own and drifted apart, which is how a reboot loop shipped on one of them."
         )
-    if not CONFIG_INCLUDE.search(text):
+    if kind != "core" and not CONFIG_INCLUDE.search(text):
         problems.append(
             f"{rel}: does not include its board's canary/config.h — that is where "
             f"WIFI_RETRY_BASE_MS / WIFI_RETRY_MAX_MS / WIFI_OUTAGE_REBOOT_MS live, "
             f"and the policy must be built from those symbols, not from literals."
         )
-    for name, pat in REQUIRED_DRIVERS.items():
+    if kind == "core" and CONFIG_INCLUDE.search(text):
+        problems.append(
+            f"{rel}: the shared supervisor includes a board's canary/config.h — it "
+            f"must know no board; the tunables arrive ready-built in its Config."
+        )
+    drivers = SHIM_DRIVERS if kind == "shim" else REQUIRED_DRIVERS
+    for name, pat in drivers.items():
         if not pat.search(text):
             problems.append(
-                f"{rel}: no {name} — the supervisor must keep a WifiRetry and let "
-                f"wifi_next_action() decide Wait / Retry / Reboot, rather than "
-                f"deciding locally."
+                f"{rel}: no {name} — "
+                + (
+                    "the shim must build the policy and hand it to the shared "
+                    "supervisor, which decides."
+                    if kind == "shim"
+                    else "the supervisor must keep a WifiRetry and let "
+                    "wifi_next_action() decide Wait / Retry / Reboot, rather than "
+                    "deciding locally."
+                )
             )
+    if kind == "shim":
+        for name, pat in REQUIRED_DRIVERS.items():
+            if pat.search(text):
+                problems.append(
+                    f"{rel}: a shim carries {name} — deciding belongs to the shared "
+                    f"supervisor; a shim that decides is the third copy this lint "
+                    f"exists to prevent."
+                )
 
     got = policy_assignments(text)
-    if got != POLICY_FIELDS:
+    if kind == "core":
+        if got:
+            have = ", ".join(f"p.{k} = {v};" for k, v in got.items())
+            problems.append(
+                f"{rel}: the shared supervisor builds a WifiRetryPolicy of its own "
+                f"({have}) — it must apply the one its Config carries, built by the "
+                f"board's shim from the board's tunables."
+            )
+    elif got != POLICY_FIELDS:
         want = ", ".join(f"p.{k} = {v};" for k, v in POLICY_FIELDS.items())
         have = ", ".join(f"p.{k} = {v};" for k, v in got.items()) or "(none)"
         problems.append(
@@ -344,14 +401,24 @@ def check_text(rel: str, text: str) -> list[str]:
     return problems
 
 
-def check_file(rel: str) -> list[str]:
+def check_file(rel: str, kind: str = "board") -> list[str]:
     path = REPO / rel
     if not path.exists():
         return [
             f"{rel}: listed as a Wi-Fi supervisor but not found — if the file "
-            f"moved, update WIFI_SUPERVISORS in this script."
+            f"moved, update WIFI_SUPERVISORS / SHARED_SUPERVISORS / SUPERVISOR_SHIMS "
+            f"in this script."
         ]
-    return check_text(rel, path.read_text(encoding="utf-8"))
+    return check_text(rel, path.read_text(encoding="utf-8"), kind)
+
+
+def listed() -> list[tuple[str, str]]:
+    """Every (rel, kind) this lint holds."""
+    return (
+        [(rel, "board") for rel in WIFI_SUPERVISORS]
+        + [(rel, "core") for rel in SHARED_SUPERVISORS]
+        + [(rel, "shim") for rel in SUPERVISOR_SHIMS]
+    )
 
 
 def main() -> int:
@@ -361,11 +428,11 @@ def main() -> int:
         "on a link that never worked):"
     )
 
-    for rel in WIFI_SUPERVISORS:
-        found = check_file(rel)
+    for rel, kind in listed():
+        found = check_file(rel, kind)
         problems.extend(found)
         if not found:
-            print(f"  {rel} ✓")
+            print(f"  {rel} ✓" + ("" if kind == "board" else f" ({kind})"))
 
     for rel in GENERATED_COPIES:
         path = REPO / rel

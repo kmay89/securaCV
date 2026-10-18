@@ -43,7 +43,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
-from . import watch_runtime, watches
+from . import rollout, watch_runtime, watches
 from .api import SecuraCVApiAuthError, SecuraCVApiConnectionError, SecuraCVApiError
 from .const import (
     DOMAIN,
@@ -61,14 +61,17 @@ SERVICE_END_WATCH = "end_watch"
 SERVICE_LIST_WATCHES = "list_watches"
 SERVICE_VERIFY = "verify"
 SERVICE_EXPORT_EVIDENCE = "export_evidence"
+SERVICE_STAGED_UPDATE = "staged_update"
 # The whole vocabulary. Action names are a compatibility promise; anything
-# added here needs a written decision (docs/device_trust.md for trust).
+# added here needs a written decision (docs/device_trust.md for trust;
+# docs/OTA.md §5 for staged_update, which mutates firmware, never trust).
 SERVICES = (
     SERVICE_START_WATCH,
     SERVICE_END_WATCH,
     SERVICE_LIST_WATCHES,
     SERVICE_VERIFY,
     SERVICE_EXPORT_EVIDENCE,
+    SERVICE_STAGED_UPDATE,
 )
 
 ATTR_SUBJECT = "subject"
@@ -77,6 +80,8 @@ ATTR_CONCERN = "concern"
 ATTR_WATCH = "watch"
 ATTR_ENTRY_ID = "entry_id"
 ATTR_WINDOW_HOURS = "window_hours"
+ATTR_ENTITY_ID = "entity_id"
+ATTR_NODE_TIMEOUT = "node_timeout"
 
 # `Any`: the schema class is voluptuous on cores before 2026.9 and probatio
 # (through its `voluptuous` alias) after; mypy must not pin either.
@@ -90,6 +95,25 @@ START_WATCH_SCHEMA: Any = vol.Schema(
 END_WATCH_SCHEMA: Any = vol.Schema({vol.Required(ATTR_WATCH): cv.string})
 LIST_WATCHES_SCHEMA: Any = vol.Schema({})
 VERIFY_SCHEMA: Any = vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string})
+def _entity_ids(value: Any) -> list[str]:
+    """One entity id or a list of them, always a list out. A validator
+    function rather than vol.Any(cv.string, [cv.string]) so the stub
+    voluptuous the unit tests run against can hold it too."""
+    items = [value] if isinstance(value, str) else list(value)
+    if not items or not all(isinstance(item, str) and item for item in items):
+        raise ValueError("entity_id must be an entity id or a list of them")
+    return items
+
+
+STAGED_UPDATE_SCHEMA: Any = vol.Schema(
+    {
+        vol.Optional(ATTR_ENTITY_ID): _entity_ids,
+        vol.Optional(ATTR_NODE_TIMEOUT, default=rollout.DEFAULT_NODE_TIMEOUT_S): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=rollout.MIN_NODE_TIMEOUT_S, max=rollout.MAX_NODE_TIMEOUT_S),
+        ),
+    }
+)
 EXPORT_EVIDENCE_SCHEMA: Any = vol.Schema(
     {
         vol.Optional(ATTR_WINDOW_HOURS, default=EXPORT_WINDOW_DEFAULT_HOURS): vol.All(
@@ -169,6 +193,19 @@ REFUSALS: dict[str, str] = {
     "export_write_failed": (
         "The evidence pack could not be written under the configuration directory: "
         "{detail}."
+    ),
+    # The staged firmware rollout (docs/OTA.md §5).
+    "rollout_no_update_entities": (
+        "No Canary has a firmware update entity yet. A Canary announces one over "
+        "MQTT once it is on the broker; check that the fleet is online."
+    ),
+    "rollout_not_update_entities": (
+        "{entity_ids} are not update entities; name the Canaries' firmware "
+        "update entities (the update domain) or leave entity_id out."
+    ),
+    "rollout_aborted": (
+        "The staged rollout stopped: {reason}. {installed} installed, "
+        "{not_attempted} not attempted. Fix that node, then run it again."
     ),
 }
 
@@ -414,6 +451,33 @@ async def _async_verify(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any
     return await async_verify_for_entry(hass, entry, trigger=VERIFY_TRIGGER_SERVICE)
 
 
+async def _async_staged_update(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """Install the fleet's pending firmware updates one node at a time."""
+    named = call.data.get(ATTR_ENTITY_ID)
+    if isinstance(named, str):
+        named = [named]
+    if named:
+        wrong = [e for e in named if not str(e).startswith(f"{rollout.UPDATE_DOMAIN}.")]
+        if wrong:
+            raise _refusal("rollout_not_update_entities", entity_ids=repr(sorted(wrong)))
+        entity_ids = [str(e) for e in named]
+    else:
+        entity_ids = rollout.candidate_entity_ids(hass)
+        if not entity_ids:
+            raise _refusal("rollout_no_update_entities")
+    result = await rollout.async_run(
+        hass, entity_ids, node_timeout_s=float(call.data[ATTR_NODE_TIMEOUT])
+    )
+    if result.aborted:
+        raise _failure(
+            "rollout_aborted",
+            reason=str(result.reason),
+            installed=str(len(result.installed)),
+            not_attempted=str(len(result.not_attempted)),
+        )
+    return result.as_dict()
+
+
 async def _async_export_evidence(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     hours = _window_hours_or_refuse(call.data.get(ATTR_WINDOW_HOURS))
     entry = _kernel_entry_or_refuse(hass, call.data.get(ATTR_ENTRY_ID))
@@ -451,6 +515,9 @@ def async_setup_services(hass: HomeAssistant) -> None:
     async def _export_evidence(call: ServiceCall) -> dict[str, Any]:
         return await _async_export_evidence(hass, call)
 
+    async def _staged_update(call: ServiceCall) -> dict[str, Any]:
+        return await _async_staged_update(hass, call)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_START_WATCH,
@@ -484,5 +551,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_EXPORT_EVIDENCE,
         _export_evidence,
         schema=EXPORT_EVIDENCE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_STAGED_UPDATE,
+        _staged_update,
+        schema=STAGED_UPDATE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )

@@ -73,6 +73,12 @@ void IRAM_ATTR on_tick() {
 }
 
 void pwm_setup() {
+#if defined(DOORBELL_AUDIO_SPI_CLK_HOLD_PIN)
+  // The speaker shares the stacked module's SPI MOSI (pins.h). Its SPI clock
+  // goes low first and stays low, so the carrier can never clock a bit in.
+  pinMode(DOORBELL_AUDIO_SPI_CLK_HOLD_PIN, OUTPUT);
+  digitalWrite(DOORBELL_AUDIO_SPI_CLK_HOLD_PIN, LOW);
+#endif
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   ledcAttach(DOORBELL_AUDIO_PIN, kCarrierHz, kBits);
   ledcWrite(DOORBELL_AUDIO_PIN, kIdleDuty);
@@ -135,7 +141,8 @@ void init() {
   if (!s_timer_ok) {
     canary::log_line("BELL", "Speaker timer failed to start - the doorbell is silent (the ring still swells).");
   }
-  canary::dbg_serial().printf("[BELL] Speaker on D3 (PWM %lu Hz, %u-bit, %lu samples/s), volume %u%%\n",
+  canary::dbg_serial().printf("[BELL] Speaker on %s (GPIO%d, PWM %lu Hz, %u-bit, %lu samples/s), volume %u%%\n",
+                              DOORBELL_AUDIO_PIN_NAME, (int)DOORBELL_AUDIO_PIN,
                               (unsigned long)kCarrierHz, (unsigned)kBits,
                               (unsigned long)::doorbell::kSampleRate, (unsigned)s_volume);
 }

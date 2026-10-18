@@ -156,11 +156,19 @@ struct HubSetupView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             HStack {
+                // This one IS a new credential — the Home Assistant owner
+                // account being created on the hub — so it says so, and
+                // `.newPassword` lets iOS offer a strong one. It is the only
+                // password a person creates anywhere in setup; every Wi-Fi
+                // field is an existing network's password and is annotated
+                // `.password` instead.
                 if showPassword {
-                    TextField("Password", text: $password)
+                    TextField("New hub account password", text: $password)
+                        .textContentType(.newPassword)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } else {
-                    SecureField("Password", text: $password)
+                    SecureField("New hub account password", text: $password)
+                        .textContentType(.newPassword)
                 }
                 Button { showPassword.toggle() } label: {
                     Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
@@ -168,7 +176,8 @@ struct HubSetupView: View {
                 .buttonStyle(.plain)
             }
             if !showPassword {
-                SecureField("Confirm password", text: $confirm)
+                SecureField("Confirm hub account password", text: $confirm)
+                    .textContentType(.newPassword)
             }
             if let formProblem {
                 Label(formProblem, systemImage: "exclamationmark.triangle")

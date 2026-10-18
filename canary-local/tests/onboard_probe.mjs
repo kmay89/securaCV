@@ -8,7 +8,8 @@
 // passes:
 //
 //  1. The harness, per committed display flavor (?meet=1): the firmware says
-//     its first-boot line on serial and raises "SecuraCV-XXXX" with the key it
+//     its first-boot line on serial and raises "SecuraCV-display-XXXX" (the
+//     fleet's typed setup name, onboarding_fsm.h) with the key it
 //     printed; the Hello scene before it (read on a clock slowed tenfold, as
 //     it stands for 2.6 s) and the PhoneJoined scene after it show the bird
 //     on the glass, clear of every line, and breathing exactly about the
@@ -70,7 +71,9 @@
 //     the halo stand where onboard_layout.h's stack seats them
 //     (onboardJoin; cardAtLayout within the anti-aliased edge, haloAtLayout
 //     exactly), the halo's stroke is inked on the glass where its circle
-//     says and nothing just outside it (haloInked), and the card stands over
+//     says and nothing just outside it, on every side the ring keeps on the
+//     glass (haloInked — the landscape nightlight's ring runs off the
+//     panel's right edge by onboard_layout.h's rule), and the card stands over
 //     the halo's center with its sides inside the stroke (cardInHalo; on the
 //     dash its corners reach past the 800 px glass's ring, F155, and are
 //     printed, not held; on the nightlight they are held inside the stroke,
@@ -641,7 +644,9 @@ async function walkHarness(flavor, turn = null) {
     }
     const ap = await until(() => E(() => window.__emu.softAp()), "the SoftAP to come up");
     const s0 = await serial();
-    check(/^SecuraCV-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-XXXX`);
+    // onboarding_fsm.h's typed name for a display (the node type word tells a
+    // glass's setup network from a Sense's unboxed beside it).
+    check(/^SecuraCV-display-[2-9A-HJ-NP-Za-km-z]{4}$/.test(ap.ssid), `SoftAP SSID ${ap.ssid} is not SecuraCV-display-XXXX`);
     check(ap.pass.length === PORTAL.ap.password_length, `SoftAP key length ${ap.pass.length}`);
     check(s0.includes(`First boot - onboarding AP "${ap.ssid}"  password ${ap.pass}`),
       "the serial line and the radio disagree on the setup network");
@@ -843,9 +848,13 @@ async function walkHarness(flavor, turn = null) {
     check(v.state === "fail" && v.reason === PORTAL.join_failures.NotFound, `absent SSID verdict ${JSON.stringify(v)}`);
     await failFixOnGlass("NotFound");
 
-    // A body the firmware refuses outright.
+    // A body the firmware refuses outright — with the shared credential
+    // policy's word for it (wifi_credential_policy.h: every portal answers a
+    // 33-byte network name with "ssid_too_long" and a sentence a person can
+    // read), not the bare "bad request" the display used to answer.
     r = await join("x".repeat(33), "k");
-    check(r.status === 400 && JSON.parse(r.body).reason === "bad request", `33-byte SSID → ${r.status} ${r.body}`);
+    check(r.status === 400 && JSON.parse(r.body).error === "ssid_too_long" && JSON.parse(r.body).reason.length > 0,
+          `33-byte SSID → ${r.status} ${r.body}`);
 
     // The right key, with a zone: success, and only now the credentials.
     r = await join("HomeNet", "correct-horse", "UTC0");

@@ -371,12 +371,18 @@ deriving the number inline.
 
 An ellipsis is honest for a caption and a dead end for a credential. The
 first-boot Join scene's two low rows carry the setup network's name and key —
-the only way in when the QR does not scan — so they never lean on the
+the only way in when the QR does not scan — so they do not lean on LVGL's
 ellipsis: `onboard_layout.h`'s `join_lines()` keeps the joined
-`SecuraCV-XXXX  •  <key>` line only where it fits its row, splits it the way
-round glass does everywhere else (name, then key), tries shorter forms
-before a smaller face, and steps a row down to the default Character's
-caption only when nothing else fits (F45). Nothing displaces the name or the
+`SecuraCV-display-XXXX  •  <key>` line only where it fits its row, splits it
+the way round glass does everywhere else (name, then key), tries shorter
+forms before a smaller face, and steps a row down to the default Character's
+caption only when nothing else fits (F45). The fleet's typed setup name
+(`common/network/onboarding_fsm.h`) is 21 to 24 characters, and its widest
+minting outruns the 156 px portrait rows and the round watch's 174 even in
+the floor face; there, and only there, the name takes `name_line()`'s rule —
+its head and the unit's tail around `...`, so the four characters a phone's
+list shows stay on the glass (a typical name, 141 px, shows whole on every
+small glass). The key never needs a rung. Nothing displaces the name or the
 key while the scene is up: a standing hint gets the note row (under the key
 on rectangular glass, the title's band on round glass). The host test
 measures every glass and ladder with LVGL's own glyph metrics

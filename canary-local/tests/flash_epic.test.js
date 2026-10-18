@@ -364,7 +364,10 @@ test("buildNvsWifiImage: unchanged behavior through the general builder", async 
   assert.strictEqual(new TextDecoder().decode(get("wifi_ssid").bytes), "nest");
   assert.strictEqual(get("wifi_en").value, 1);
   assert.throws(() => c.buildNvsWifiImage("", "x".repeat(8), 0x4000));
-  assert.throws(() => c.buildNvsWifiImage("ok", "short", 0x4000));
+  // No minimum on the password (the router's business); the firmware's own
+  // 64-byte bound is the only refusal.
+  assert.doesNotThrow(() => c.buildNvsWifiImage("ok", "short", 0x4000));
+  assert.throws(() => c.buildNvsWifiImage("ok", "p".repeat(65), 0x4000));
 });
 
 // ── the pre-flash passport ─────────────────────────────────────────────────

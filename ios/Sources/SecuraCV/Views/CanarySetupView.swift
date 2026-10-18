@@ -158,7 +158,7 @@ struct CanaryFamilySetupView: View {
                             scanNote = "That QR names \(qr.ssid), which isn't a Canary's setup network — it can still be tried."
                         }
                     } else {
-                        scanNote = "That code isn't a Wi-Fi QR. The glass shows one named SecuraCV-XXXX."
+                        scanNote = "That code isn't a Wi-Fi QR. The one on the glass names a network starting SecuraCV-."
                     }
                 }
             }
@@ -208,7 +208,7 @@ struct CanaryFamilySetupView: View {
                 RadioAdviceRow(advice: RadioAdvice(text: CameraGate.deniedNote, opensSettings: true))
             }
         }
-        TextField("Setup network (SecuraCV-XXXX)", text: $setupSSID)
+        TextField("Setup network (SecuraCV-…)", text: $setupSSID)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
         TextField("Its key", text: $setupKey)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -217,7 +217,7 @@ struct CanaryFamilySetupView: View {
             Text(scanNote).font(.caption).foregroundStyle(.secondary)
         }
         if !setupSSID.isEmpty && !SetupPortal.isSetupNetwork(setupSSID) {
-            Text("A Canary's setup network is named SecuraCV- plus four characters.")
+            Text("A Canary's setup network is named SecuraCV-, its device type, then four characters — older Canaries show SecuraCV- and four characters.")
                 .font(.caption).foregroundStyle(Theme.color(.warn))
         }
     }
@@ -336,19 +336,33 @@ struct CanaryFamilySetupView: View {
             TextField("Your Wi-Fi name", text: $homeSSID)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
         }
-        if !chosenIsOpen {
+        if chosenIsOpen {
+            Text(SetupPortal.openNetworkNote)
+                .font(.footnote).foregroundStyle(.secondary)
+        } else {
             HStack {
+                // The password of the network picked above — an EXISTING
+                // credential. `.password` tells iOS so: it offers to fill a
+                // saved one and never to invent a strong new one (the
+                // sign-up reading an unannotated secure field can get;
+                // firmware/LESSONS_LEARNED.md "iOS offers to invent a
+                // password"). Never `.newPassword` here.
                 if showPassword {
-                    TextField("Your Wi-Fi password", text: $homePassword)
+                    TextField(SetupPortal.passwordFieldLabel, text: $homePassword)
+                        .textContentType(.password)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } else {
-                    SecureField("Your Wi-Fi password", text: $homePassword)
+                    SecureField(SetupPortal.passwordFieldLabel, text: $homePassword)
+                        .textContentType(.password)
                 }
                 Button { showPassword.toggle() } label: {
                     Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
+            Text(SetupPortal.passwordFieldHint)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         ForEach(preflightHints, id: \.self) { hint in
             Label(hint, systemImage: "info.circle")

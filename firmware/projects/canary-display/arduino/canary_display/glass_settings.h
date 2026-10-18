@@ -92,6 +92,10 @@ Settings& settings_mut();          // mutate, then settings_mark_dirty()
 void settings_mark_dirty();
 void settings_loop(uint32_t now_ms);
 void settings_reset();             // defaults; calibration untouched
+// Commit a pending change NOW, debounce or not — for the one caller that is
+// about to reboot (the BOOT button's factory-reset hold) and cannot wait the
+// window out. True when nothing is pending or the blob landed in flash.
+bool settings_flush();
 
 const NightCal& nightcal();
 // Store the calibrated floor. RAM updates either way (tonight works even

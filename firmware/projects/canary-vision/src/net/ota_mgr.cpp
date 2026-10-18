@@ -123,6 +123,19 @@ void ota_init(const Topics& topics) {
   cfg.manifest_url     = SECURACV_OTA_MANIFEST_URL;
   cfg.release_pubkey   = SECURACV_OTA_RELEASE_PUBKEY;
   cfg.on_progress      = on_progress;
+  // The hardware binding a manifest_version 2 manifest is checked against
+  // (docs/OTA.md §3): the pins header's board token and the IDF target this
+  // image was built for. A v1 manifest names neither and binds nothing.
+#ifdef CANARY_FIGURE_HARDWARE
+  cfg.board            = CANARY_FIGURE_HARDWARE;
+#endif
+#ifdef CONFIG_IDF_TARGET
+  cfg.chip             = CONFIG_IDF_TARGET;
+#endif
+  // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
+  // image pending and ota_health_tick() confirms it after a minute of the
+  // link holding, so a crash loop inside that minute rolls back.
+  cfg.confirm_dwell_ms = 60000;
   if (securacv_ota_init(&cfg) == ESP_OK) {
     log_line("OTA", "Pull-OTA engine ready.");
   } else {
@@ -149,6 +162,10 @@ void ota_init(const Topics& topics) {
   // First check a couple of minutes after boot (jittered) so a fresh
   // install learns about updates right away; then daily.
   schedule_next(120000UL, 60000UL);
+}
+
+void ota_health_tick(uint32_t now_ms, bool healthy) {
+  securacv_ota_health_tick(now_ms, healthy);
 }
 
 void ota_loop(uint32_t now_ms) {

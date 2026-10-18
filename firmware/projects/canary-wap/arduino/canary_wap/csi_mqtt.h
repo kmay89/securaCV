@@ -181,6 +181,13 @@ struct Config {
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
 
+/* The factory reset's share (canary_wap.ino factory_reset_by_hold): remove
+ * the broker row and its CA — every MQTT key this namespace holds and
+ * nothing else in it (the CSI module's own settings live here too). Leaves
+ * the open client alone; the reset restarts the device next. True when no
+ * MQTT key remains. */
+bool config_clear();
+
 /* Store (or, with an empty/null PEM, remove) the broker CA under
  * NVS_KEY_CA. Callers validate the PEM shape first
  * (canary::net::mqtt_tls::ca_pem_looks_valid); init() re-reads it. */

@@ -138,6 +138,9 @@ def manifest_signed_message(
     size: int,
     release_notes: str,
     release_url: str,
+    board: str = "",
+    chip: str = "",
+    manifest_version: int = 1,
 ) -> bytes:
     """Build the canonical byte string the manifest signature covers.
 
@@ -147,10 +150,21 @@ def manifest_signed_message(
     """
     fields = [product, version, min_version, url, sha256_hex.lower(),
               str(size), release_notes, release_url]
+    if manifest_version == 2:
+        # v2 appends the board and chip the image was built for, so a
+        # manifest cannot be re-pointed at the wrong hardware without the
+        # release key (docs/OTA.md "Anti-brick"). A v1 device ignores a v2
+        # manifest's signature it cannot rebuild — releases stay v1 until
+        # the fleet runs an engine that reads v2 (the same migration rule
+        # as every other signed format here).
+        fields += [board, chip]
+    elif manifest_version != 1:
+        raise ValueError(f"unknown manifest_version {manifest_version}")
     for f in fields:
         if "\0" in f:
             raise ValueError("manifest fields must not contain NUL")
-    return b"scv-manifest-v1\0" + b"".join(f.encode() + b"\0" for f in fields)
+    prefix = b"scv-manifest-v2\0" if manifest_version == 2 else b"scv-manifest-v1\0"
+    return prefix + b"".join(f.encode() + b"\0" for f in fields)
 
 
 BLE_OTA_DOMAIN = b"scv-ble-ota-v2\0"
@@ -288,11 +302,26 @@ def build_manifest(
     min_version: str | None = None,
     release_notes: str | None = None,
     release_url: str | None = None,
+    board: str | None = None,
+    chip: str | None = None,
+    manifest_version: int | None = None,
 ) -> dict:
-    """Build a signed manifest dict for one firmware binary."""
+    """Build a signed manifest dict for one firmware binary.
+
+    ``board`` (the pins header's CANARY_FIGURE_HARDWARE token) and ``chip``
+    (the IDF target, e.g. ``esp32s3``) bind the image to its hardware; naming
+    either makes this a manifest_version 2 manifest, because they are only
+    worth having under the signature.
+    """
     parse_semver(version)
     if min_version is not None:
         parse_semver(min_version)
+    if manifest_version is None:
+        manifest_version = 2 if (board or chip) else MANIFEST_VERSION
+    if manifest_version == 1 and (board or chip):
+        raise ValueError("board/chip are signed only by manifest_version 2")
+    if manifest_version not in (1, 2):
+        raise ValueError(f"unknown manifest_version {manifest_version}")
     digest = hashlib.sha256(firmware).hexdigest()
     signature = sign_firmware(private_key, firmware)
     manifest_sig = private_key.sign(manifest_signed_message(
@@ -304,9 +333,12 @@ def build_manifest(
         size=len(firmware),
         release_notes=release_notes or "",
         release_url=release_url or "",
+        board=board or "",
+        chip=chip or "",
+        manifest_version=manifest_version,
     ))
     manifest = {
-        "manifest_version": MANIFEST_VERSION,
+        "manifest_version": manifest_version,
         "product": product,
         "version": version,
         "url": url,
@@ -325,6 +357,9 @@ def build_manifest(
         manifest["release_notes"] = release_notes
     if release_url:
         manifest["release_url"] = release_url
+    if manifest_version == 2:
+        manifest["board"] = board or ""
+        manifest["chip"] = chip or ""
     return manifest
 
 
@@ -367,6 +402,14 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
 
     # Manifest signature: covers the metadata itself (version, URL, notes…)
     # so a hostile mirror cannot forge what users see or where devices fetch.
+    mver = manifest.get("manifest_version", 1)
+    if mver not in (1, 2):
+        problems.append(f"unknown manifest_version: {mver!r}")
+        return problems
+    if mver == 1 and (manifest.get("board") or manifest.get("chip")):
+        # Unsigned hardware fields are worse than none: a device would trust
+        # a binding nobody signed.
+        problems.append("board/chip present on a manifest_version 1 manifest (unsigned)")
     msig_hex = manifest.get("manifest_signature")
     if not msig_hex:
         problems.append("missing required field: manifest_signature")
@@ -384,6 +427,9 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
                 size=manifest["size"],
                 release_notes=manifest.get("release_notes") or "",
                 release_url=manifest.get("release_url") or "",
+                board=manifest.get("board") or "",
+                chip=manifest.get("chip") or "",
+                manifest_version=mver,
             ))
         except Exception:
             problems.append("manifest_signature verification failed")
@@ -560,6 +606,9 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         min_version=args.min_version,
         release_notes=args.release_notes,
         release_url=args.release_url,
+        board=args.board,
+        chip=args.chip,
+        manifest_version=args.manifest_version,
     )
     text = json.dumps(manifest, indent=2) + "\n"
     if args.out:
@@ -667,9 +716,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--product", required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--url", required=True, help="download URL for the binary")
-    p.add_argument("--min-version")
+    p.add_argument("--min-version", help="the oldest running version this release installs over "
+                   "(the device refuses below it and asks for the intermediate release)")
     p.add_argument("--release-notes")
     p.add_argument("--release-url")
+    p.add_argument("--board", help="the board token the image was built for (CANARY_FIGURE_HARDWARE); "
+                   "makes a manifest_version 2 manifest")
+    p.add_argument("--chip", help="the IDF target the image was built for (esp32s3, esp32c6, ...); "
+                   "makes a manifest_version 2 manifest")
+    p.add_argument("--manifest-version", type=int, choices=(1, 2),
+                   help="1 (default without --board/--chip) or 2 (signs board + chip)")
     p.add_argument("--out", help="write to file instead of stdout")
     p.add_argument("firmware")
     p.set_defaults(fn=cmd_manifest)

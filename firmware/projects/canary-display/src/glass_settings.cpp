@@ -351,6 +351,8 @@ void settings_reset() {
   settings_mark_dirty();
 }
 
+bool settings_flush() { return !s_dirty || commit_now(); }
+
 const NightCal& nightcal() { return s_cal; }
 
 bool nightcal_put(uint16_t floor_duty) {

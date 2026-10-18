@@ -141,6 +141,90 @@ exercise.
 
 ---
 
+### F) The Wi-Fi password field means the network's password — on every surface
+
+This is the regression case for the parity program's §1 fix: the field used to
+be labeled only "Password" on the shared portal and the display, and three
+clients refused anything shorter than 8 characters on the router's behalf. The
+rule now lives once, in
+`firmware/common/network/wifi_credential_policy.h` (host-tested by
+`firmware/tests_host/test_wifi_credential_policy.cpp`): SSID 1–32 bytes,
+password 0–64 bytes, **no minimum**, open network accepted, and the one label
+every surface shows. Run F1–F4 on each surface that applies: the shared portal
+(Sense / Vision / Sentinel), the display's portal, the canary (PIO) `/setup`
+wizard and dashboard, the WAP companion wizard, the iPhone app's Bluetooth
+card and SoftAP walkthrough, the desktop Flasher and the browser flasher.
+
+#### F1) The field says whose password it is, and the OS invents nothing
+**Action**
+- Pick a secured network from the list; focus the password field on an iPhone
+  and on an Android phone.
+
+**Expected**
+- The field is labeled **"Wi-Fi network password"** (placeholder or label),
+  with a hint that it is the password you already use for this network.
+- Neither OS offers to generate or "create" a strong password. iOS may offer
+  a *saved* password (the field is annotated as an existing credential);
+  Android shows its keyboard and nothing else.
+- Show / hide toggles the masking without changing the field's kind.
+
+#### F2) The router sets the rule, not the Canary
+**Action**
+- Type a 1-character password and tap Join; then the real password.
+
+**Expected**
+- The 1-character password is **sent**, not refused: the device reports
+  **"Wrong password"** (or the router's verdict) live, the sheet shakes, the
+  field clears and keeps focus, and the network list is still there — no
+  re-scan needed. The real password then joins.
+- A 65-character password is refused **before** the join with
+  "A Wi-Fi password is at most 64 characters."; a 64-character hex key is
+  accepted (it is a raw PSK).
+
+#### F3) An open network asks for nothing
+**Action**
+- Pick a network the scan marked open (no lock glyph).
+
+**Expected**
+- The portal hides the password field and shows "Open network — no password
+  needed."; Join proceeds with an empty password. "Join another network…"
+  (a hidden SSID) keeps the field, since the device cannot know.
+- The flashers accept an empty password only with the explicit "open network
+  (no password)" choice ticked — a name with no password is still a question
+  there, because nothing has scanned the air yet.
+
+#### F4) The only password anyone creates is labeled as such
+**Action**
+- Open the hub card in the desktop Flasher and the hub walkthrough in the
+  iPhone app.
+
+**Expected**
+- The Home Assistant owner account fields read **"New hub account password"**
+  / **"Confirm hub account password"**; iOS offers a strong password there and
+  nowhere else. This step is about the hub, not a Canary, and is the one
+  legitimate create-a-password form.
+
+### G) One onboarding state machine — the same five states on every node
+
+The shared core is `firmware/common/network/onboarding_fsm.h` (host-tested);
+every case below holds on a Sense, a Vision, a Sentinel, a WAP, a display and a
+PIO canary unless the row says otherwise. `GET /api/status` is the oracle: its
+`onboarding` word is the state (the WAP and the PIO canary answer it inside
+their bearer-gated `/api/status` under `node_status`).
+
+| # | Step | Expect |
+|---|------|--------|
+| G1 | Power a factory-fresh node | Serial prints `[SETUP] Setup network up: "SecuraCV-<type>-XXXX"  password …  (channel N)` and, on the next line, `[SETUP] QR WIFI:T:WPA;S:…;P:…;;`. The type is the node's (`sense`, `vision`, `sentinel`, `wap`, `display`, `canary`). Scanning the QR line with a phone camera offers to join that network. `onboarding` = `unprovisioned`. |
+| G2 | Join the setup network and open the page; pick a network and type its password | After POST `/join`, `onboarding` = `provisioning` for an instant, then `joining` while the node tests the credentials. |
+| G3 | The join succeeds; keep the phone on the setup network and do NOT reload the page | The setup network stays up for **two minutes** after the join (the WAP's grace, now the fleet's); `onboarding` = `provisioned` while it lingers. |
+| G4 | Repeat G2/G3 but let the page poll `/status` to its done screen | The setup network closes about **1.6 s after the page shows done** — once the phone has confirmed, the hold is over. |
+| G5 | Scan the page's list for the Sense you just provisioned, then power-cycle the house router for 11 minutes (or move the node out of range) | The node retries its saved network with the shared backoff, and after **10 minutes offline** re-raises its setup network and (Sense / Vision) its Bluetooth door **without forgetting anything**: `onboarding` = `recovery`, `saved_networks` unchanged. When the router returns, the node rejoins by itself and the setup network closes. |
+| G6 | Provision a node onto network A, carry it to network B, provision again, carry it back | Both networks are saved (`saved_networks` = 2); on a `Network not found` the node moves to the other saved network within two retries. |
+| G7 | Hold the BOOT button | At **3 s** serial says keep holding; at **10 s** serial announces the factory reset and the node reboots into G1 — with its witness identity kept: the hub, a display and the Wall still recognize it (same fingerprint). PIO canary only: holding on to **30 s** wipes the identity too, and says so first. Boards with no BOOT pin (the 7" dash) have no hold; their Settings page's reset stays the path. |
+| G8 | `curl http://<node>/api/status` on a Sense, Vision, Sentinel or display | A JSON body with `node`, `fw`, `uptime_s`, `ip`, `rssi`, `onboarding`, `hub`, `peers_seen`, `wall`, `ota{state,…}`, `creds_at_rest`, `clock` — no MAC, no key, no broker address. `creds_at_rest` reads `plaintext-nvs` on every shipped build (an honest ⚠️, see `PARITY.md`). |
+| G9 | `curl http://<node>/api/fleet` on a Sense, Vision, Sentinel or PIO canary | The roll-call row the Witness Wall polls (`DISCOVERY.md`); within a minute `/api/status` says `wall: "direct"`. |
+| G10 | Two provisioned nodes on the same Wi-Fi, no hub | Each node's `peers_seen` counts the other within 10 s; `coord` is `self` on the one with the longer uptime and that node's fingerprint on the other. Point either at a hub: both read `coord: "hub"` within one heartbeat. On an **open** Wi-Fi network `peer` reads `off` and serial says why (no fleet key). |
+
 ## Pass/Fail Summary
 Record per platform (✅ / ❌ / N/A):
 

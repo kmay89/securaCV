@@ -23,6 +23,11 @@ void ota_init(const Topics& topics);
 // Call every loop() pass.
 void ota_loop(uint32_t now_ms);
 
+// The health-gated half of the A/B confirmation (docs/OTA.md §2): call every
+// loop pass with the glass's notion of healthy; a pending image is confirmed
+// once that has held for the configured dwell.
+void ota_health_tick(uint32_t now_ms, bool healthy);
+
 // ── On-glass settings facade ─────────────────────────────────────────────
 // A thin read/act surface for the Settings "firmware" page, so the UI layer
 // never includes the raw OTA engine header. Mirrors what the HA update

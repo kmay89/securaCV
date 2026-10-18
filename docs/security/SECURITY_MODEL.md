@@ -94,13 +94,19 @@ exactly the paths disclosed in the next section and nothing else: the MQTT
 broker you point them at (plain by default; CA-verified or SHA-256-pinned
 TLS once you provision it, refusing to connect rather than downgrading), a
 daily jittered check of a small signed update manifest on the products with
-pull-OTA, and on the display line SNTP and the opt-in standalone forecast.
+pull-OTA, SNTP on every product without GPS (the display line, and since the
+shared Wi-Fi supervisor also sense, vision and the sentinel), and on the
+display line the opt-in standalone forecast.
 The third-party paths carry no identifier; the broker link carries your
 device's own id and name to the broker you run, in every topic. The
 forecast and the update fetch's URL policy are pinned by host tests
 (`firmware/tests_host/test_wx_core.cpp`,
 `firmware/common/ota/test_ota_logic.cpp`); SNTP's two hosts are literals
-in the display firmware's `tz_auto.cpp`, with no test of their own.
+in the display firmware's `tz_auto.cpp` and, for the headless boards,
+`firmware/common/time/clock_sync.h`'s `NTP_PRIMARY` / `NTP_SECONDARY`
+(pinned by `firmware/tests_host/test_clock_sync.cpp`; the supervisor names
+them at its call site so `regression_check.sh`'s phone-home scan matches
+them against this list).
 
 This means:
 - A WAP on its own access point is invisible to anyone watching your
@@ -144,14 +150,18 @@ with a host test pinning its request shape the way
    or off from the network, and it carries no location. Disclosed on the
    glass's own network page (`docs/hardware/display_settings.md`).
 
-The display line adds three of its own:
+Every product without GPS adds the first of these; the display line adds
+the other two:
 
 3. **Time (SNTP)** — always on when networked: UTC from two public time
-   sources (`pool.ntp.org`, `time.nist.gov`). This is what keeps a
-   bedside clock honest. (The flagship and the WAP take their time from
-   GPS; sense and vision have no clock source of their own — no GPS, no
-   SNTP — and sense stamps `ts_ms` from uptime; the displays have no
-   GPS, so they sync.)
+   sources (`pool.ntp.org`, `time.nist.gov`), with the hub as a third
+   source once one is provisioned. On the display line this is what keeps
+   a bedside clock honest. Sense, vision and the sentinel sync the same
+   way through the shared Wi-Fi supervisor
+   (`firmware/common/network/wifi_supervisor.cpp`), so their `/api/status`
+   can say whether the clock is believable (`clock: ntp` or `none`); their
+   records still stamp `ts_ms` from uptime. (The flagship and the WAP take
+   their time from GPS and make no SNTP request.)
 4. **Timezone lookup** — compile-time opt-in only (`CD_TZ_WEB_LOOKUP` in
    `secrets.h`); off in every shipped image. Without it the zone comes
    from configuration or the app.
@@ -485,7 +495,7 @@ could use against the kernel; the receipt names the credential that asked
 |-----|---------|
 | **ERRERlabs** (the manufacturer) | We have no remote access capability. No backdoor exists. |
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
-| **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and, on the display line, SNTP. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
+| **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and SNTP from every product without GPS. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
 | **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |

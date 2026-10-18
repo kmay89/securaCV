@@ -19,7 +19,7 @@ import NetworkExtension
 final class SetupPortalClient: ObservableObject {
     enum Phase: Equatable {
         case idle
-        case joining              // asking iOS to join SecuraCV-XXXX
+        case joining              // asking iOS to join the SecuraCV- setup network
         case reachingPortal       // on it; waiting for 192.168.4.1 to answer
         case listing              // asking the Canary which networks it can see
         case ready                // on its setup network, its list in hand: pick and Join
