@@ -13,7 +13,7 @@ scripts/check_witness_emulator_sync.sh enforces that in CI).
   demo-fleet.json   <- demo-fleet.json    (byte-identical)
 
 Source sha256 at vendoring time:
-  witness-wall.html  bd4b1536daaed17cc72ce9f27e6a89fc801a921ac14d4088547cffbc9f5ff15b
+  witness-wall.html  fa9aa3dd97d8f8a0be72b02644623c1313f099ff2d3bb843007a41f518c87f62
   js/tv-emulator.js  1757f54b76a77c468d6453918868e1a009bac9fd385eddade425ad5d6481a1c2
   js/highlight.js    959bbbec02e837bcdd0e0647f851f6ebd708d67428acb8515cd0d60108524915
   demo-fleet.json    5a95c05cafb7c1c4be83c31114dd1de89895685ea9cc1b7065b0b3282b3cb6e6
