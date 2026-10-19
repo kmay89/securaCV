@@ -51,11 +51,14 @@ file, `firmware/configs/canary-vision/default/config.h`, holds only what
 something reads from it: the `FEATURE_*` flags and the watchdog timeout,
 which it owns, and a copy of the device type the fleet figures key the
 flavor on (`CONFIG_DEVICE_TYPE`, read by `gen_figures.mjs`). Change a
-default in `include/canary/config.h` alone, then rerun `gen_vision.py`
-and `gen_flash.py`, whose committed output CI byte-diffs;
-`scripts/tests/test_vision_flavor_config_readers.py` fails while the
-device type's copy differs from `DEVICE_TYPE`, and fails on a `CONFIG_*`
-in the flavor file that nothing reads.
+default in `include/canary/config.h` alone. It is compiled into the Lab
+emulator's Vision core (`canary-local/emulator/build.sh` builds
+`src/detect_config.cpp`), so dispatch Actions → "Rebuild emulator dist
+(pinned emsdk)" on your branch and pull its commit, then rerun
+`gen_vision.py` and `gen_flash.py`; CI byte-diffs the dist and both
+outputs. `scripts/tests/test_vision_flavor_config_readers.py` fails while
+the device type's copy differs from `DEVICE_TYPE`, and fails on a
+`CONFIG_*` in the flavor file that nothing reads.
 
 **Watch profiles** (`include/canary/detect_profiles.h`) make one firmware
 serve different jobs without a rebuild: `room_presence` (the default —
