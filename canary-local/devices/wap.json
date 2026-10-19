@@ -177,14 +177,14 @@
       "path": "/api/mqtt/config",
       "kind": "json",
       "desc": "optional Home Assistant broker host/port/user/pass",
-      "auth": "pairing token"
+      "auth": "session cookie or bearer; a save that moves the saved password: bearer"
     },
     {
       "method": "POST",
       "path": "/api/mqtt/test",
       "kind": "json",
       "desc": "test the broker connection",
-      "auth": "pairing token"
+      "auth": "session cookie or bearer"
     }
   ],
   "wizard": {
