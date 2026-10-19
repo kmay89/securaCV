@@ -2112,8 +2112,89 @@ so — see D2 below.)
   on the old tree, so it is proven by mutation: 30 cases plant each break on
   copies of the real inputs, and thirteen mutations of the checker each fail a
   case. `ENTERPRISE_READINESS_TODO.md`'s box is ticked. Still open in F34: the
-  factory-reset and setup-preset decisions and the MQTT contract fixture.
+  factory-reset and setup-preset decisions (the MQTT contract fixture landed
+  in #1832, below).
   Found here: A102 (the tract model is not hashed at load).
+  *Partly done (#1832), the MQTT contract fixture:*
+  `firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp` (`make
+  run-wap-mqtt-bodies`, in `run`; 356 checks) runs the real `csi_mqtt.cpp`
+  over stubs/mqtt and a fake esp_mqtt client through a unit's life (the
+  connect burst, a healthy loop, a tamper commit sent the way
+  `csi_event_egress::pump()` sends one, a backfill replay, a unit in trouble,
+  unsigned early-boot bodies, discovery removed). Its signed bodies are signed
+  for real (device_signature.cpp compiled in, OpenSSL's Ed25519 on the repo's
+  test key). It checks the record (every publish QoS 0, the last will QoS 1
+  and retained, the command topics subscribed at QoS 1, state and discovery
+  retained and events and tamper not, every body one strict JSON object,
+  `replay` true on the backfilled row only, the sketch's update-state and
+  acoustic bodies relayed byte for byte), delivers every command word a
+  discovery config names back as MQTT_EVENT_DATA and checks it latches (no
+  host test delivered a command before), and prints the record with `--json`.
+  `custom_components/securacv/tests/test_wap_mqtt_contract.py` (17 cases, 14
+  strict xfails) builds it with make, so there is no committed fixture to go
+  stale. It replays the record into the integration, set up in MQTT mode
+  against an emulated broker (retained on subscribe, an empty retained publish
+  clears), and holds: the TOFU pin from health, the signed chain, counts and
+  event verifying, Last Event's timestamp, zone, confidence, signed flag and
+  `wifi-csi` modality, the health and egress attributes, the tamper, event-id
+  and Chirp levels with the tamper body's type and severity, unsigned bodies
+  read as unsigned, and the last will taking the device offline; and it holds
+  the 33 discovery configs to the record at key and word level.
+  `scripts/tests/test_ha_discovery_wap_render.py` (lint.yml, jinja2 at Home
+  Assistant's pin, through `_ha_jinja`) renders every template on every body
+  on its topic: availability, each sensor's field, Online and Channel Locked,
+  Presence over every state core_presence.cpp and core_breathing.cpp emit,
+  each acoustic sensor over securacv_audio.cpp's event words, and the device
+  triggers firing on live rows of their own state only. The update-state and
+  acoustic keys are held to canary_wap.ino. QoS is written down as the
+  delivery bound (not 'QoS 0 everywhere': the last will and the command
+  subscriptions are QoS 1). python.yml lists every file the harness compiles
+  (the test holds the list to every rule of the compile's dependency file) and
+  sets `SECURACV_WAP_HARNESS=require` on the pytest step, as lint.yml does on
+  its scripts/tests step, so a toolchain that cannot build the harness fails
+  there instead of skipping; that wiring has not run in Actions yet. Proven by
+  mutation: 33 plantings in the firmware, the integration and the workflows
+  each fail it (among them health unretained, QoS 1, the status key, a
+  discovery template key, the mic switch's pl_on, the install word, an
+  inverted Online, a Presence list without active, the smoke word, the anomaly
+  trigger's payload, a trigger without its replay gate, the replay flag
+  ignored, zone, device_type, severity and timestamp renamed, a dropped
+  python.yml path, the require moved); 20 of them passed the first version.
+  The firmware and the integration are not changed: the gaps the record shows
+  are pinned as strict expected failures and filed. Host-tested only (the
+  templates rendered with jinja2 configured as Home Assistant configures it,
+  not in a running Home Assistant); reconnect on a live broker is U1.
+  `ENTERPRISE_READINESS_TODO.md`'s box is ticked. The record also reproduces
+  F41's open call (the aggregate Tamper sensor clears on the WAP's next health
+  while the lid is open), pinned as a strict xfail. Found here: HA44 (the
+  first event lost to Last Event), F367 (discovery entities on the
+  non-retained events topic), HA45 (the device's firmware version), HA46
+  (entities a WAP feeds nothing), HA47 (WAP presence and the HomeKit
+  projection), HA48 (Memory Critical on a WAP) and F368 (Signal Strength after
+  a connect). Still open in F34: the factory-reset and setup-preset decisions.
+- [ ] **F367 [decision] Six of the canary-wap's own MQTT-discovery entities
+  read the non-retained events topic.** Presence, State, Confidence, Motion
+  Score, Breathing Score and Breathing Rate take their state from `events`,
+  which csi_mqtt.cpp publishes unretained (so a reconnect replays no committed
+  event). After a Home Assistant or broker restart each reads unknown until
+  the WAP's next committed event, which can be hours. Options: a retained
+  presence snapshot topic for those configs (canary-sense's `state` pattern),
+  or document the gap. Pinned by
+  `custom_components/securacv/tests/test_wap_mqtt_contract.py::test_every_discovery_entity_finds_its_state_after_a_restart`
+  (strict xfail). Found by F34's contract fixture (#1832).
+- [ ] **F368 [code] A canary-wap's Signal Strength reads 0 dBm after every
+  MQTT connect.** The connect burst's retained status (csi_mqtt.cpp's
+  MQTT_EVENT_CONNECTED handler) is {"online":true,"device_type":"canary-wap"},
+  with no rssi, and the discovery template `{{ value_json.rssi | default(0)
+  }}` renders 0 for it, so Home Assistant shows 0 dBm until the loop's next
+  status (canary_wap.ino publishes it every 30 s, longer under the power gate,
+  and does not force one on a connect). Either the burst carries the loop's
+  status fields (rssi, csi_running, wifi_connected), or the template renders
+  nothing when rssi is absent (Home Assistant then keeps the last reading).
+  Pinned by
+  `scripts/tests/test_ha_discovery_wap_render.py::test_signal_strength_keeps_its_reading_across_a_connect`
+  (expectedFailure) and `DEFAULTED_GAPS` in `test_wap_mqtt_contract.py`. Found
+  by F34's contract fixture (#1832).
 - [x] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
   loop-task SD read bridge `docs/design/witness_history_bridge.md` specifies
   over F26's walker: one outstanding request (a second gets
@@ -2274,6 +2355,10 @@ so — see D2 below.)
   those sensors still clear at the next publish. The MQTT-discovery triggers
   clause of F29 was not attempted. Bench (U1): a lid opening and an SD pull
   held across two publishes.
+  *Since F34's contract fixture (#1832):* the record reproduces the open call
+  (the aggregate Tamper sensor clears on the WAP's next health while the lid
+  is open), pinned in `test_wap_mqtt_contract.py` as a strict xfail; the
+  levels the WAP health lacks are still the maintainer's call.
 - [x] **F42 [code] The Tier-1 secure build is not buildable as written.**
   `firmware/provisioning/platformio_secure.ini` `[env:secure]` replaces
   the canary `[env]` build flags instead of extending `${env.build_flags}`,
@@ -10984,7 +11069,7 @@ so — see D2 below.)
   979 of 1407 drawn frames per canvas, by up to 54 px; the new tree's never.
   Host-tested and measured natively; not bench-tested. The emulator dist moves
   for the five display flavors and shows no tail, as before. Found here: F185.
-- [ ] **F159 [code+decision] On the AMOLED the first meeting's speech bubble
+- [x] **F159 [code+decision] On the AMOLED the first meeting's speech bubble
   covers the bird's body.** The 450x600 AMOLED runs splash.cpp's small-glass
   composition (a 64 px bird at CENTER -70 over a bubble centered at +5) with
   the big type ladder's label face (20 px, 24 under Heirloom), so its bubble
@@ -10997,6 +11082,61 @@ so — see D2 below.)
   below the drawn bird. `test_splash_layout` and `test_splash_scenes` print
   these and do not hold them. Seat the bird from the tallest bubble where the
   canvas has room, or give the AMOLED its own seats. Found by F88 (#1762).
+  *Done (#1832):* the first meeting's bird sits clear of its speech bubble,
+  and of the tail on it, wherever the canvas has room. `splash.cpp` measures
+  the tallest bubble the meeting will show before it seats the bird (every
+  line of `story::kHello`, the unit's pseudonym in place, laid out by LVGL in
+  the bubble's own face and width, the label emptied after), and
+  `splash_layout.h`'s `seat()` takes that height: where the bubble stays
+  centered, the bird rises until its box, over its breath, ends `kGap` (2 px)
+  above the highest the tail stands (`kTailRise`, the 10th row over the
+  bubble's top edge), and only where the raised seat's hop stays on the
+  canvas; a seat that already clears stays. One rule, no table. The AMOLED's
+  bird rises 26 px at the default type and 49 under Heirloom with "2222...",
+  37 and 63 with the widest-lettered "WWWW..."; the 172 px glass's 14, 18
+  under Heirloom, 27 with "WWWW..." (F183); the 180 px glass's 14 and 18; the
+  touch169's 6 to 18; and the dash's 9, only under Heirloom with a
+  wide-lettered pseudonym (its 103 px bubble). The raised bird keeps that seat
+  through the wordmark's beat after the bubble bows out, so it stands further
+  above its name than the old seats did (F372). The round watch keeps its
+  seat: a clear one would lift its hop off the disc, so its bubble's top stays
+  2 px into the bird's box at the default type and 6 under Heirloom, below the
+  drawn bird, but the tail F185 now draws there reaches into the bird itself
+  (F371). The landscape nightlight's hung bubble keeps its seat too: its tail
+  stands 8 px into the empty foot of the bird's box and hides none of the
+  drawn bird at any tick (held). Hello again is unchanged everywhere.
+  `test_splash_layout` holds `seat()` for every tallest bubble a canvas could
+  measure and for each one-letter pseudonym of the minting alphabet, derives
+  `kTailRise` from the tail's side, inset and pivot, and pins the 12 first
+  meetings that rise and the 4 that cannot clear (the watch's and the
+  landscape nightlight's, both ladders); `test_splash_scenes` seats every play
+  from its pseudonym's tallest bubble, holds the bird clear of the tail's
+  reach at every refresh wherever `seat()` says it is, and holds the bubble's
+  first words to the script's first line, in its round, small-glass and wide
+  builds. Natively, the real `splash.cpp` played through LVGL 8.4.0
+  (`glass_splash_test.cpp`, in the watch, nightstand-s3, touch169, AMOLED and
+  nightlight configs, the nightlight also turned to 320x180, and the
+  emulator's dash on 800x480 and turned to 480x800) and LVGL 9.5.0
+  (`glass_splash_lvgl9_test.cpp`, the dash both ways and nightstand-c6), under
+  the default Character and Heirloom with "2222..." and "WWWW...", seats the
+  bird where `seat()` says for the tallest bubble it drew (LVGL's own measure
+  agreeing with the host wrap model on every canvas), and keeps the bird's box
+  at its deepest breath at least `kGap` above the tail's highest ink wherever
+  `seat()` says it is clear (exactly 2 px on every canvas that rises); the 8.4
+  test pins the watch and the landscape nightlight as the only plays not
+  clear, the 9.5 test pins every play clear. A `seat()` that never raises
+  fails 18 layout checks, 1 scene check in each of the small-glass and wide
+  builds, the 8.4 pin on every config that rises and the 9.5 pin on the dash
+  and the C6; a seat 1 px short of `kGap` fails 4 checks on each rising 8.4
+  config (2 on the dash) and 2 and 4 on 9.5; a `splash.cpp` that seats without
+  measuring fails 44 and 4 scene checks, and one that leaves the measured line
+  in the label fails 3, 18 and 6; the tree before this change fails the seat
+  on every canvas that rises, on both majors, and the clearance on 9.5 (on 8.4
+  it drew no tail to clear). Host-tested and rendered natively on a 64-bit
+  host, not an ESP32 build; not bench-tested. The emulator dist moves for
+  every display flavor, and the dist rebuild follows on this branch: CI's
+  pinned-emsdk rebuild has not run yet, and the browser probes have not run on
+  a rebuilt dist. Found here: F371 and F372.
 - [x] **F160 [code] The first meeting's 196 px speech bubble is wider than the
   172 and 180 px portrait glass.** splash.cpp's small-glass bubble is 196 px
   wide (`kSmallGlass.bubble_w`), drawn for the round watch's 240 px disc, and
@@ -11032,7 +11172,7 @@ so — see D2 below.)
   none with a typical pseudonym; F183). Host-tested and measured natively; not
   bench-tested. The emulator dist moves for the five display flavors. Found
   here: F183.
-- [ ] **F183 [decision] The 172 px glass's narrowed splash bubble reaches
+- [x] **F183 [decision] The 172 px glass's narrowed splash bubble reaches
   further into the bird under Heirloom.** F160 narrows the first meeting's
   speech bubble to 164 px on the 172x320 nightstand (s3 and c6). Under
   Heirloom its tallest form, "Not that kind of bird. Call me %s." with the
@@ -11048,6 +11188,19 @@ so — see D2 below.)
   AMOLED (seat the bird from the tallest bubble), which would settle both.
   `test_splash_layout` and `test_splash_scenes` print it. Found by F160
   (#1762).
+  *Done (#1832), settled by F159's choice:* the 172 px glass seats its
+  first-meeting bird from its tallest bubble. Under Heirloom with the
+  widest-lettered pseudonym (the 112 px bubble) the bird rises 27 px, to y 31
+  (its hop to y 15), with "2222..." (94 px) 18, and at the default type 14, on
+  nightstand-s3 and -c6 alike, so its box, over its breath, ends 2 px above
+  the tail's reach on that bubble. In native renders under Heirloom with
+  "WWWW..." the bird's box at its deepest breath ends exactly 2 px (`kGap`)
+  above the tail's highest ink, on LVGL 8.4.0 (the S3 nightstand's config) and
+  on LVGL 9.5.0 (nightstand-c6's) alike, so neither the bubble nor its tail
+  hides any of the bird. Held as F159's seats are; host-tested and rendered
+  natively, not bench-tested; the dist rebuild follows on this branch (F159).
+  Found here: under Heirloom the 172 px glass's wordmark reaches both edge
+  columns, older than this change (F373).
 - [x] **F184 [code] No emulator flavor runs a turned panel.** The onboarding
   and the splash on the 480x800 portrait dash glass and the 320x180 landscape
   nightlight are held only on the host (`test_onboard_layout`,
@@ -11148,7 +11301,7 @@ so — see D2 below.)
   same probes green on the commit that landed the manifest claim
   (`41d53091`: 72 checks, the wasm job's boot, onboard, csp and render probes
   included). Not bench-tested.
-- [ ] **F185 [code+decision] The LVGL 8.4 glass's speech bubble has no tail.**
+- [x] **F185 [code+decision] The LVGL 8.4 glass's speech bubble has no tail.**
   splash.cpp turns its 12 px tail square 45 degrees with rounded corners; LVGL
   8.4 renders a turned object through a transform layer, a rounded one needs
   that layer's alpha, and `lv_draw_sw_layer_create` refuses an alpha layer
@@ -11181,6 +11334,86 @@ so — see D2 below.)
   same 12 px object, keeps it green; a tail built as another widget would also
   have to change the test's `find_parts`. LVGL 8.4's side is not rendered
   there.
+  *Done (#1832):* the tail is drawn on both LVGL majors, on the same 12 px
+  object with the smallest change: `splash.cpp` turns a square with no radius
+  about its center (`splash_layout.h`'s `kTailPivot`, 6 px). A square covers
+  its transform layer, so LVGL 8.4 asks for no alpha layer and draws it on
+  this lv_conf; turned about its center it stands on the bubble's center line.
+  Rendered natively through the real libraries, the whole turned square is
+  drawn, not clipped, so the triangle fallback is not needed: on LVGL 8.4.0,
+  in the watch, nightstand-s3, touch169, AMOLED and nightlight configs and the
+  emulator's dash (800x480, and turned to 480x800), 127 px of ink on the glass
+  (126 in one play) and 144 to 145 of its own, +0.5 px off the center line,
+  its ink starting on the 10th row above the bubble's top edge (`kTailRise`)
+  and reaching 7 px into it; on LVGL 9.5.0 (the dash both ways, nightstand-c6)
+  123 px at the default Character and 128 under Heirloom, +0.5 px, 10 above
+  and 7 in, where the old tail stood 5.5 px left. Drawn over the bubble, the
+  turned square's lower half shows inside it as an outlined V under its top
+  edge: the visible difference from F246's triangle option, which would show
+  only the bubble's border row there. `emulator/test/glass_splash_test.cpp`,
+  new, is F246's test for LVGL 8.4: `glass_turn.sh` builds it in those six
+  configs against the LVGL objects it already builds, with `test/native9/`'s
+  stand-ins, every suite running and the script failing at its end on any red
+  (`onboard.test.js` derives the ini's LVGL 8.4 builds and holds a suite to
+  each, and one to `build.sh`'s dash flavor), and it holds the tail drawn,
+  whole (at least 130 px of its own ink, where its styles put it), centered
+  within 1 px and no higher than `kTailRise`; `glass_splash_lvgl9_test.cpp`
+  now holds the same centering and reach, and plays both Characters with two
+  pseudonyms. Against the tree before this change the 8.4 test fails 396 to
+  826 checks per config (no ink at all; 656 on the emulator's dash) and the
+  9.5 test 222 on the dash and 152 on the C6; a tail turned about the old
+  top-left pivot fails the center line by 5.5 px on both. `test_splash_scenes`
+  holds the tail's styles (radius 0, turned 450 about (6, 6)); the old styles
+  fail 3, 18 and 6 checks in its three builds. The tail is now drawn on the
+  watch, nightstand-s3, touch169, AMOLED and nightlight-c3 and in every
+  emulator flavor, where it was not. On the round watch, whose bird F159 could
+  not raise, it reaches into the bird: read at every tick of the native 8.4
+  render, its ink stands up to 16 px into the bird's box under Heirloom (the
+  watch's tallest bubble is 94 px there whatever the pseudonym) and hides as
+  many as 13 of the bird's drawn pixels with "2222..." and 30 with "WWWW...";
+  at the default type 4 and 12 px, hiding 0 and 1 (F371). Natively on a 64-bit
+  host, not an ESP32 build; not bench-tested. The emulator dist moves for
+  every display flavor, and the dist rebuild follows on this branch: CI's
+  pinned-emsdk rebuild has not run yet, and no browser probe reads the tail
+  (A112). Found here: F371 and A112.
+- [ ] **F371 [decision] The round watch's splash tail now reaches into its
+  bird.** F185 draws the speech bubble's tail on LVGL 8.4, so the round watch
+  shows one for the first time, and F159 could not raise the watch's bird
+  clear of it: a seat clear of the tail would lift the bird's hop off the 240
+  px disc. In the native LVGL 8.4 render (`glass_splash_test.cpp`, read at
+  every tick) the tail's ink stands up to 16 px into the bird's box at every
+  first meeting under Heirloom (the watch's tallest bubble is 94 px there
+  whatever the pseudonym) and hides as many as 13 of the bird's drawn pixels
+  with "2222..." and 30 with the widest-lettered "WWWW..."; at the default
+  type 4 and 12 px, hiding 0 and 1. Accept it, let the watch's hop graze the
+  disc's top, draw its tail as the shorter triangle F246 renders (7 rows over
+  the bubble, not 10), or seat its bubble lower where the disc's chord allows.
+  The test prints it; `test_splash_layout` and `glass_splash_test.cpp` pin the
+  watch as one of the two canvases not clear of the tail. Rendered natively,
+  not on a watch. Found by F185 (#1832).
+- [ ] **F372 [decision] The first meeting's raised bird stays raised through
+  the wordmark beat.** Since F159 (#1832) the first meeting's bird rises clear
+  of its tallest bubble, and `splash.cpp` keeps it there when the bubble bows
+  out and the wordmark takes its 900 ms beat. In native LVGL 8.4 renders
+  (`glass_splash_test.cpp` prints it on every play) the bird's ink now ends 69
+  to 89 px above the wordmark's on the 172 px, 180 px and touch169 glass, 87
+  to 125 px on the AMOLED (the most under Heirloom with "WWWW...") and 76 to
+  78 on the dash under Heirloom with "WWWW...", where the seats before F159
+  kept 60 to 67 on every portrait canvas and 67 to 70 on the dash; the round
+  watch and the landscape nightlight, which do not rise, keep theirs. Accept
+  it, or settle the bird back to its family's seat as the bubble bows out (an
+  animated drop over the beat). Found by F159's review (#1832).
+- [ ] **F373 [code] The 172 px glass's splash wordmark reaches both edges
+  under Heirloom.** On the 172x320 nightstand the splash's "SecuraCV"
+  wordmark, in Heirloom's title face with 2 px letter spacing, is as wide as
+  the glass: in the native LVGL 8.4 render of the first meeting's wordmark
+  beat (`glass_splash_test.cpp`, the S3 nightstand's config) its ink spans
+  every column, 0 to 171, before F159 and after, so its first and last letters
+  are cut at the panel's edges, and hello again shows the same label. The
+  default type (12 to 161) and every other 8.4 canvas keep it inside, nothing
+  holds the wordmark's box, and the C6 nightstand's lean ladder was not
+  rendered. Fit it to the canvas (a smaller face, or no letter spacing where
+  it would not fit) and hold its ink on the glass. Found by F183 (#1832).
 - [x] **F204 [code] No emulator flavor builds the nightlight.**
   `canary-local/emulator/build.sh` builds the watch, dash, nightstand,
   touch169 and amoled241 glasses; none defines `CD_NIGHTLIGHT`, so the
@@ -11632,7 +11865,7 @@ so — see D2 below.)
   hands back the calm 1400 ms breath in a quickened mood (F281). Host-tested
   and run natively on LVGL 8.4; the ESP32 builds and `pio check` are CI's;
   not bench-tested.
-- [ ] **F245 [code+decision] A refused turn is still shown as the glass's
+- [x] **F245 [code+decision] A refused turn is still shown as the glass's
   orientation.** When `lvgl_port_set_rotation()` refuses a turn for want of a
   turn buffer (F205), the face stays landscape (F223), but Settings >
   Orientation (`settings_ui.cpp`'s `build_display()`) checks the saved
@@ -11643,6 +11876,59 @@ so — see D2 below.)
   the port wore (`lvgl_port_rotation()`), then hold it with a host test of the
   Display page with the turn buffer refused. From code. Found by F223's review
   (#1762).
+  *Done (#1832):* the saved choice is kept in NVS, not overwritten with the
+  turn worn, so a refusal at one start does not lose the owner's setting, and
+  what the glass shows follows the turn it actually wears. `lvgl_port.cpp` now
+  records its own refusal (`lvgl_port_turn_refused()`: the last turn asked had
+  no turn buffer; always false on LVGL 8 and the fixed glass), and
+  `include/canary/ui/orientation_page.h` (pure: no LVGL, no Arduino) states
+  the rule from `settings().rotation`, `lvgl_port_rotation()` and that flag. A
+  refusal is the port's word and the saved turn not worn, never the two turns
+  differing alone: they also differ, with nothing refused, for up to a second
+  after a phone write, which `/api/set` only stores until `main.cpp`'s render
+  hands it to the port. Settings > Orientation (`settings_ui.cpp`'s
+  `build_display()`) checks the row the glass wears and, on a refused turn,
+  replaces "The layout follows the turn." with, for a saved Portrait, "Not
+  enough memory to turn this glass, so it stays Landscape. A restart tries the
+  saved turn again: Portrait." (the turn buffer is asked for at bring-up only,
+  so tapping the row again cannot). The root row names the turn worn. `GET
+  /api/settings` keeps `orientation` (the saved choice, the value `/api/set`
+  writes) and adds `orientation_worn` and `orientation_refused` (0 or 1).
+  `firmware/scripts/microcopy_lint.sh`'s glass plain-words and glyph audits
+  now read the header, which holds the page's words. `test_display_settings`
+  holds the rule over all 16 saved/worn pairs with and without the port's word
+  (102 checks fail against the base rule, the check, the root row and one
+  footer on the saved turn; 26 against a rule that calls any difference a
+  refusal). `test_lvgl_port_turn` reads the page's state from the real
+  `lvgl_port.cpp` after the boot call `main.cpp` makes, replayed, on the
+  granted glass and both refusing glasses, and across a phone write the render
+  has not applied yet (2149 checks; 48 fail against the base rule, 2 against
+  the difference-only rule, 33 with a port that never records its refusal).
+  `canary-local/tests/dash_orientation.test.js`, in canary-local.yml's logic
+  tests, pins `settings_ui.cpp`, `glass_web.cpp`, `lvgl_port.cpp` and the copy
+  lint's source list to the header by source (with those sources as on
+  8bb5647d, six of its eight tests fail); canary-local.yml's path lists gain
+  `firmware/scripts/microcopy_lint.sh`, which it now reads. The Arduino sketch
+  mirror is regenerated. The emulator's LVGL 8.4 port never refuses a turn, so
+  its dash draws what it drew and no browser shows the footer. The dist moves:
+  the dash flavor certainly (`settings_ui.cpp` and `lvgl_port.cpp` are
+  compiled into it), the others if the unreferenced getter survives the link.
+  The dist rebuild follows on this branch: CI's pinned-emsdk rebuild has not
+  run yet, and the committed dist is the old one. Host-tested, and the real
+  `lvgl_port.cpp` built natively against LVGL 9.5 (`glass_turn_lvgl9.sh`); the
+  ESP32 builds and `pio check` are CI's; not bench-tested: no refused or
+  turned dash glass has been seen (F224). Found here: F370 and A111.
+- [ ] **F370 [code] A phone turn under an open dash settings sheet leaves the
+  sheet in the old canvas.** `/api/set orientation` only stores the choice;
+  `main.cpp`'s `render()` turns the glass with `lvgl_port_set_rotation()` on
+  its next pass whether or not the settings sheet is open, but nothing calls
+  `settings_ui.cpp`'s `layout_host()` or rebuilds the open page
+  (`settings_ui_tick()` rebuilds only Firmware and Network), so the sheet
+  keeps the 800x480 layout on a 480x800 canvas (or the reverse) and an open
+  Orientation page keeps its old check until the next navigation. The reset
+  path in `settings_ui.cpp` already re-measures the canvas for exactly this
+  reason (the review comment on its re-measure). From code, not run. Found by
+  F245 (#1832).
 - [x] **F246 [code] `splash.cpp`'s speech-bubble tail is not rendered through
   the real LVGL 9.5.** `glass_turn_lvgl9.sh` draws the tail's styles (12 px,
   radius 2, border 1, turned 450) and holds a 145 px diamond hung from the
@@ -12413,7 +12699,11 @@ so — see D2 below.)
   verification). Dist: no deleted macro was read, so no
   compiled byte moves. Host-tested; the ESP32 compiles are CI's; not
   bench-tested. Found here: F313.
-- [ ] **F313 [code] Repoint the Vision flavor seeds' readers and drop the
+  *Since F313 (#1832):* `gen_flash.py` reads the four detection defaults from
+  the project config, and the flavor file holds one seed,
+  `CONFIG_DEVICE_TYPE`, which the fleet figures read; the five seeds above are
+  the file as #1802 left it.
+- [x] **F313 [code] Repoint the Vision flavor seeds' readers and drop the
   seeds.** `canary-local/tools/gen_flash.py`'s `vision_detect_block` reads
   `CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS` and
   `CONFIG_DWELL_START_MS` from
@@ -12427,6 +12717,66 @@ so — see D2 below.)
   the rest, and rewrite the test's seed list to match. `flash.json` and
   `figures.json` must not move. Wave 18's `gen_flash.py` changes (A86) are on
   #1802, so nothing blocks it. Found by F182 (#1802).
+  *Done (#1832):* `canary-local/tools/gen_flash.py`'s `vision_detect_block`
+  reads `PERSON_TARGET`, `SCORE_MIN`, `LOST_TIMEOUT_MS` and `DWELL_START_MS`
+  from `firmware/projects/canary-vision/include/canary/config.h`
+  (`VISION_CONFIG_H`). These are the constants `detect_config.cpp` loads, and
+  `gen_vision.py` already read them there. Their four copies are deleted from
+  `firmware/configs/canary-vision/default/config.h`. The figures generator's
+  device type keeps its seed: `CONFIG_DEVICE_TYPE` stays beside the
+  `FEATURE_*` flags and `CV_WATCHDOG_TIMEOUT_SEC`, because `gen_figures.mjs`
+  `walkConfigs` reads it by pattern. The deleted copies were what refused a
+  default spelled as an expression (the reader test compared literals). So
+  `read_const` now blanks comments before it matches (string and character
+  literals kept, so the OTA URL's `//` opens nothing), refuses a name defined
+  more than once by naming its lines (an `#if`/`#else` pair or an `#undef` and
+  redefinition leave the choice to the preprocessor), and reads only `0` or a
+  decimal literal with no leading zero (a U/L suffix allowed) that ends the
+  `#define` line or the `constexpr` statement. It dies naming the constant,
+  the file and the text otherwise, and names a leading zero as octal. Before,
+  it took the first run of digits of the first textual match: `30u * 1000u`
+  read as 30, `0x10` as 0, `070` as 70 (it compiles as 56), and a
+  commented-out definition above the live one won. Every constant it reads
+  today is defined once as a plain literal, so `flash.json` is byte-identical
+  (`gen_flash.py --check`, same sha256), and `vision.json`, `workshop.json`,
+  `catalog.json` and the figures do not move.
+  `canary-local/tools/tests/test_flash_read_const.py` (10 tests) covers the
+  real shapes, the refusals the old reader passed silently, comments and
+  strings, duplicates, which files `vision_detect_block` reads, the defaults
+  following a retuned project config, and an expression there refused.
+  `scripts/tests/test_vision_flavor_config_readers.py` (12 tests) pins the one
+  seed (its exact-list pin is the backstop), plants each former seed back
+  against the real tree and fails on all four as unread, pins that
+  `gen_flash.py` names nothing in the flavor directory, and compares a seed
+  only as a plain decimal literal. The project and flavor READMEs say which
+  header owns what, and the project README says a default change owes the
+  pinned-emsdk dist rebuild before the catalogs. Integration: #1833 had
+  already landed F182's handed-up `firmware/CONFIG_CHANGES.md` entry (the
+  seventeen macros, dated 20261019) and the flavor README's pointer lines, so
+  this branch keeps #1833's entry and adds the package's four-seeds entry,
+  also 20261019, above it, in place of the package's own split of the two; and
+  the flavor README's paragraph on which header owns what is #1833's,
+  reconciled to name one seed, under the package's new opening paragraph.
+  Dist: every source the emulator's Vision core compiles preprocesses to the
+  same tokens with the old and new flavor file, so the dist does not move.
+  Host-tested; the ESP32 compiles are CI's; not bench-tested. Found here:
+  F369.
+- [ ] **F369 [code] `gen_vision.py` and `vision.test.js` read the Vision's
+  detection defaults by their first number.**
+  `canary-local/tools/gen_vision.py:121-124` (`igrab(CONFIG_H,
+  r"SCORE_MIN\s*=\s*(\d+)", ...)`) and
+  `canary-local/tests/vision.test.js:47-51` (`num()`, `name +
+  "\\s*=\\s*(\\d+)"`) take the first run of digits after the first `NAME =` in
+  the file, with no word boundary before the name. A default spelled as an
+  expression (`3 * 500`) reads as 3, a leading-zero literal (`070`, octal in
+  C, so 56) as 70, and a commented-out or `#if`-ed-out definition above the
+  live one is the one read; the two agree with each other on the wrong number.
+  Since F313, `gen_flash.py`'s `read_const` refuses all of those, so CI goes
+  red, but only in the flash-catalog step, while `vision.json`'s drift gate
+  and `vision.test.js` (:88-93) stay green on the wrong number. Make both read
+  the way `read_const` does: comments stripped (string literals respected), a
+  whole-word name defined exactly once, a plain decimal literal with no
+  leading zero, and a refusal otherwise. Found by F313 (#1832).
 - [x] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
   and `presence_ended` starts a second dwell in the same visit, so the
   lingering alert pages twice.** After `dwell_ended`, `PresenceFSM::tick`
@@ -14493,7 +14843,7 @@ so — see D2 below.)
   extreme-box grid, not every way two compilers can differ. The emulator dist
   does not move for it. `native_cores.test.js` under `LAB_CORES=native` stays
   opt-in (A50). Found here: A58 (whole cores as wasm32).
-- [ ] **A50 [code+decision] Run `native_cores.test.js` under
+- [x] **A50 [code+decision] Run `native_cores.test.js` under
   `LAB_CORES=native` in CI.** `canary-local.yml` runs that file only in its
   default mode, where its Vision and audio parity scenarios skip; its
   `LAB_CORES=native` step runs only `vision.test.js`, `eyes.test.js` and
@@ -14506,6 +14856,43 @@ so — see D2 below.)
   red in a second place until CI's dist rebuild, as `vision.test.js` already
   does. Decide whether that second red is worth it, and if so add the file to
   the step. Found by A42's review (#1762).
+  *Done (#1832):* the premise held: `canary-local.yml` ran
+  `native_cores.test.js` only in the dist step, where its parity scenarios
+  skip, and its `LAB_CORES=native` step ran only `vision.test.js`,
+  `eyes.test.js` and `audio.test.js`. Decided yes: the file now runs a second
+  time under `LAB_CORES=native`, in a step of its own straight after the
+  native page-test step, with the same `if:` (whenever the dist step ran, red
+  or green) and the path-filter recorder env, named "Native cores vs the
+  committed dist, call for call (LAB_CORES=native; red = the dist is stale, or
+  a build disagrees)". A core change therefore goes red there as well as in
+  the dist step until CI's dist rebuild lands. That second red names the first
+  call that differs, with its arguments and its tick or frame, which the other
+  steps do not, and the native page-test step keeps its meaning. The three
+  parity scenarios moved to `tests/native/scenarios.js`, their calls
+  unchanged. A default-mode test reads the step the way the runner does
+  (`tests/native/ci_steps.js`: comments dropped, each key once) and holds its
+  place, its `if:`, its exact env (`LAB_CORES` and the recorder's three
+  lines), its exact command and its key set, so a `|| true`, a
+  `continue-on-error`, a dropped `NODE_OPTIONS` or an env line turned into a
+  comment fails it, as does 8bb5647d's workflow. The triage's unexplained
+  1-in-6 failure did not reproduce in 27 plain runs at load averages of 5.8 to
+  9.7 on 4 CPUs. A failure of the same file did show once under the
+  path-filter recorder, as CI runs the step (the triage's own output was not
+  captured, so whether it was the same failure cannot be shown, and commit
+  69bc4ddc's body overstates it): the probes' stand-in test threw `"=p
+  55a721141700"`, a pointer reply, as an error. That was a race in
+  `tests/native/cores.js`'s `rpc`. The worker stores an answer's state before
+  it notifies, so the test's thread could read the answer, move on, and take
+  the late notify as the answer to its next request, re-reading the previous
+  reply and throwing it. `rpc` now waits until the state says answered. A new
+  default-mode test runs a slow fake-core call while a second thread wakes the
+  waiting one every 10 ms: it fails on the old `rpc` with the previous reply
+  (`"=n 41"`) and passes on the new one, and 12 recorder runs at load 9.7 to
+  11.9 passed after the fix. The same `rpc` serves the wasm job's native
+  probes, and all three passed natively in Chromium. Proved here that a source
+  change (the Vision contract's schema string, reverted) turns the new step
+  red at "contract differs from the committed dist". Host-tested; the new step
+  has not run in CI yet.
 - [x] **A51 [code] `boot_probe.mjs` and `onboard_probe.mjs` still listen on
   every interface.** Both serve an allowlist built before their server starts,
   so no request becomes a path, but both call `listen(0)`, which binds
@@ -14685,7 +15072,7 @@ so — see D2 below.)
   their bucket and split a page where the offset moved, a flag that adds no
   finer time than Invariant III's bucket; (c) anchor only on rows from a
   synced device. Found in A48 (#1762).
-- [ ] **A58 [code+decision] The source-level wasm32 check covers the Vision
+- [x] **A58 [code+decision] The source-level wasm32 check covers the Vision
   box pipeline alone.** `vision_wasm32.test.js` (A49) builds
   `detection_pipeline.h` freestanding; the rest of the Vision core
   (`presence_fsm.cpp`, `voxel_tracker.cpp`, `detect_config.cpp`, the bindings'
@@ -14696,6 +15083,53 @@ so — see D2 below.)
   wasm32 and run `native_cores.test.js`'s call-for-call scenarios between that
   build and the g++ one on every PR, with no emsdk. Decide whether the 32-bit
   check should cover whole cores, and at what CI cost. Found by A49 (#1762).
+  *Done (#1832):* the premise held: `vision_wasm32.test.js` builds
+  `detection_pipeline.h` alone, freestanding. (The audio core's `millis()`
+  returns `unsigned long` in
+  `canary-local/emulator/audio/audio_core_bindings.cpp`, against the WAP's
+  host stub `tests_host/stubs/audio/Arduino.h`. The emulator shim's
+  `Arduino.h` declares `uint32_t millis(void)` and serves the Vision and
+  display builds.) Decided yes, whole cores, on Ubuntu's packaged sysroot with
+  no emsdk. `tests/native/wasi.js` builds each core from `build.sh`'s sources,
+  flags and include paths (through `cores.js`'s `buildPlan`) for `wasm32-wasi`
+  with the host's clang, against wasi-libc, libc++, libc++abi and
+  compiler-rt's wasm32 builtins. It links a reactor that exports each
+  `EMSCRIPTEN_KEEPALIVE` function by name and refuses any undefined symbol,
+  and runs it under `node:wasi` with the dist module's shape.
+  `cores_wasm32.test.js` checks each module's 32-bit `long`, WASI-only
+  imports, exports and runtime methods, and drives it next to the g++ build on
+  the three scenarios in `scenarios.js`. It then puts a `long` back in each
+  core in a scratch copy (A42's posture products; the audio RMS's sum of
+  squares): the g++ build must miss each one and the wasm32 build must catch
+  it. Here the audio mutant reads the first loud frame's level as 2270 where
+  the sources say 5656, and the Vision one reads a box 240 wide and two
+  billion tall as `ambiguous` where the sources say `upright`. Ubuntu's
+  libc++abi for wasm32-wasi names `__cxa_throw` from `operator new` though it
+  is built without exceptions, so `wasm32/wasi_support.cpp` defines that pair
+  to abort, as emscripten does with exceptions off. Where a tool or sysroot
+  part is missing the tests skip and name it with its Ubuntu package;
+  `CORES_WASM32=require` fails instead. The page logic job installs noble's
+  `wasi-libc`, `libc++-18-dev-wasm32`, `libc++abi-18-dev-wasm32` and
+  `libclang-rt-18-dev-wasm32` (about 3 MB) through a new composite action,
+  `.github/actions/setup-wasi-sysroot` (a `clang-major` input, and
+  setup-libseccomp's apt retries and fetch timeouts), and runs the file with
+  `CORES_WASM32=require` and `WASM32_CLANGXX=clang++-18` whenever the dist
+  step ran. Both steps have a 5-minute timeout, so a stalled mirror, or a
+  wasm32 call that never returns (`node:wasi` sets no deadline of its own),
+  fails named instead of using the job's 20 minutes. The file's CI test reads
+  both steps the way the runner does and holds their `if:`, env, command, key
+  set and timeouts, the action's package list to `wasi.js`'s `packages()` and
+  its apt guards, `clang-major` to `WASM32_CLANGXX`, and the job's
+  `ubuntu-24.04` image; 35 workflow and action mutations each turn it or A50's
+  CI test red. All 8 tests passed here with the packages apt-installed (clang
+  18.1.3). With them removed, the build tests skipped naming all four. It is
+  the host's clang and wasi-libc, not emscripten or the dist, so a libm,
+  printf or overflow difference between the two toolchains could turn the step
+  red with no dist or 32-bit `long` problem behind it (its message says so);
+  the dist does not move. Host-tested; the action's apt install on the runner,
+  the runner's clang 18 and the two timeouts' headroom there are CI's, and the
+  steps have not run in CI yet. CLAUDE.md's stale-dist paragraph does not name
+  either step yet (D15).
 - [x] **A59 [code] The Lab's bench prints the ESP32-S3's ROM banner for every
   board.** `canary-local/emulator/web/bench.js`'s `romBanner()` writes
   `ESP-ROM:esp32s3-20210327` and the S3's strap story (GPIO0 for download)
@@ -15027,6 +15461,16 @@ so — see D2 below.)
   holds 159.9 px (163.5 under Heirloom) and 12.9 (16.5) px past the stroke's
   inner edge. Hold the same ceilings on the drawn glass and drop the "F155,
   open" wording. Found by F155 (#1802).
+- [ ] **A112 [code] No browser probe reads the splash's tail.** Since F185
+  (#1832) every display flavor draws the speech bubble's tail, and the native
+  renders read it off the frame (`glass_splash_test.cpp` on LVGL 8.4, in every
+  8.4 build's config and the emulator's dash; `glass_splash_lvgl9_test.cpp` on
+  9.5), but the emulator's probes (`onboard_probe.mjs`'s splash reads,
+  `boot_probe.mjs`) read only the bubble's lines and the bird, so a rebuilt
+  dist that drew no tail, or drew it off the bubble's center line or into the
+  bird, would pass them. A read of the tail's ink around its box, the way the
+  native tests take it (the frame with and without the tail), would hold the
+  dist to it. Found by F185 (#1832).
 - [x] **A64 [code] `glass_turn_test.cpp` does not read the turn the HAL
   announces.** `canary-local/emulator/test/glass_turn_test.cpp` counts
   `js_display_ready` calls, but its stand-in drops the fourth argument, so the
@@ -15501,6 +15945,18 @@ so — see D2 below.)
   initializer (UserDefaults, not the Keychain). The Python pins and lint ran
   here; the Swift compile and tests are CI's (`ios-selfheal.yml`), not run
   here; not on a phone (two section 9 rows in `magic_pairing.md`).
+- [ ] **A111 [code] The phone's Orientation picker shows only the saved
+  turn.** The dash's `GET /api/settings` now serves `orientation_worn` and
+  `orientation_refused` beside `orientation` (F245, #1832), but
+  `ios/Sources/SecuraCV/Transport/GlassSettings.swift` decodes only
+  `orientation`, so a glass that refused a turn still reads as turned on the
+  phone. Reading `orientation_refused` (absent from older firmware: treat as
+  0), the sheet could say the glass stayed landscape for want of memory, in
+  the glass's own words. It must read the port's word, not `orientation_worn`
+  differing from `orientation`: `GlassSettingsSheet.swift` posts one key and
+  re-reads at once, which usually lands in the second before the render loop
+  wears the turn, when the two differ on a healthy glass. Swift builds are
+  CI's. Found by F245 (#1832).
 - [x] **A88 [code] The iPhone keeps a stale `.local` recovery kit instead of
   moving it onto the WAP it found.** `PairView.pair(from:)` runs
   `decoded.rebased(onto: discovered)` only for the same device, and
@@ -16539,6 +16995,65 @@ so — see D2 below.)
   with `verified: true`. Decide whether Last event shows `state`, which the
   signature covers, or marks the label as unsigned. Found by HA28's review
   (#1802).
+- [ ] **HA44 [code] The first event a Canary sends after Home Assistant starts
+  is lost to the Last Event sensor it creates.** sensor.py creates Last Event
+  on the first `events` publish from a device. The topic is not retained, and
+  the entity subscribes after that delivery, so the publish that created it is
+  never shown (Motion and Occupancy are created the same way). The tamper
+  event entity already carries its creating publish over (`initial_payload`,
+  event.py); do the same for Last Event and the two projected sensors. Pinned
+  by
+  `custom_components/securacv/tests/test_wap_mqtt_contract.py::test_the_first_event_is_shown_by_the_entity_it_creates`
+  (strict xfail). Found by F34's contract fixture (#1832).
+- [ ] **HA45 [code+decision] A canary-wap's device page in the SecuraCV
+  integration shows no firmware version.** `_async_device_status_received`
+  (__init__.py) takes `sw_version` from the `status` topic only. A
+  canary-wap's status carries `online`, `device_type`, `csi_running`,
+  `wifi_connected` and `rssi`; its `firmware_version` is in health and egress.
+  Either the WAP adds it to its status (csi_mqtt::publish_status and the
+  connect burst), or the integration reads it from health. Pinned by
+  `test_wap_mqtt_contract.py::test_the_device_shows_the_firmware_the_wap_reports`
+  (strict xfail). Found by F34's contract fixture (#1832).
+- [ ] **HA46 [code+decision] Integration entities a canary-wap gets and feeds
+  nothing.** Mesh Connected (binary_sensor.py) reads `peer_count`, `peers`,
+  `sent`, `received` and `relayed`, which no firmware publishes: the WAP's
+  `mesh` topic carries its airtime governor's counters (airtime_pct_x100,
+  channel, locked_to_sta/ap, fallback, routine_allowed/denied, urgent_sends),
+  so it reads off on every WAP whatever its mesh does, against
+  docs/homeassistant_setup.md's 'Opera mesh peers present'. GPS Fix
+  (sensor.py) reads the health's `gps` object and reads `no_fix` forever. SD
+  Wear (sensor.py) and SD Replace (binary_sensor.py) read the health's `sd`
+  object (wear_pct, replace_recommended); a WAP's health carries only
+  `sd_mounted`. Tamper GPIO, Tamper GPS Jamming and Tamper Motion
+  (binary_sensor.py's tamper-type sensor) read tamper.gpio / tamper_gpio,
+  gps_fix_lost / gps_jamming and tamper.motion / unexpected_motion; a WAP's
+  lid switch is `enclosure_open`, and it has no GPS and no motion sensor.
+  Decide per entity: not created for a canary-wap (device_type), or read the
+  WAP's fields. Pinned by
+  `test_wap_mqtt_contract.py::test_an_entity_a_wap_gets_moves_with_what_it_sends`
+  (seven strict xfails; not creating the entity for a WAP resolves its case).
+  Found by F34's contract fixture (#1832).
+- [ ] **HA47 [decision] A canary-wap's presence never asserts the HomeKit
+  Motion and Occupancy sensors.** Both are created for a WAP from its events
+  topic. But `HOMEKIT_EVENT_SIGNALS` (const.py, generated from
+  spec/witness_dictionary.json's homekit_projection) maps none of the WAP's
+  presence vocabulary (event_type active, subtle, quiet, together, empty, from
+  core_presence.cpp), so both stay off. Whether CSI presence projects to
+  occupancy is a maintainer's call (it is a privacy promise in the Apple Home
+  quickstart). The dictionary, gen_apple_home_docs.py and the kernel's
+  homekit.rs move together. Pinned by
+  `test_wap_mqtt_contract.py::test_a_wap_presence_event_asserts_motion_and_occupancy`
+  (two strict xfails; not creating them for a WAP also resolves it). Found by
+  F34's contract fixture (#1832).
+- [ ] **HA48 [code] A canary-wap's Memory Critical tamper sensor never turns
+  on.** binary_sensor.py's tamper-type sensor reads the health's `free_heap`
+  (default 100000) for TAMPER_MEMORY; a canary-wap's health carries
+  `memory_free` (csi_mqtt::publish_health). health_metrics.memory_free_bytes()
+  already reads both for the Health sensor, which reads critical at 9 kB free
+  while Memory Critical stays off. Read it through memory_free_bytes(). Pinned
+  by
+  `test_wap_mqtt_contract.py::test_memory_critical_turns_on_when_the_wap_is_low_on_memory`
+  (strict xfail). Found by F34's contract fixture (#1832).
 - [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
   reads an entity no publisher creates.** It reads
   `sensor.pwk_boundary_crossing_count`; the kernel bridge makes
@@ -18537,6 +19052,12 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `desktop-hub-core.yml`, `desktop-lab-check.yml`, `ram_audit.yml`, and every
   job that relies on the image's `jq`, `gh` or `xvfb`. Each pin's reason
   comment says to revisit before 24.04 retires. Found by CI11 (#1802).
+  *Since A58 (#1832):* `canary-local.yml`'s page logic job also installs a
+  WASI sysroot for the image's clang through
+  `.github/actions/setup-wasi-sysroot` (`clang-major: "18"`) and pins
+  `WASM32_CLANGXX=clang++-18` for `cores_wasm32.test.js`: the input, the pin
+  and the job's `runs-on` move together, and that file's CI test fails by name
+  on a `runs-on` change until they do.
 - [ ] **CI18 [code] R11 should refuse a stale `ubuntu_latest_ok` entry.**
   `check_floating_runners()` (`.github/scripts/ci_policy_check.py`) skips
   every file the list names, and nothing asks whether a listed file still
