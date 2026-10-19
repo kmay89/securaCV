@@ -433,7 +433,9 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      (only `consume` runs it), and each `apply_<event>()` only from
      `apply_event()`, but `apply_connect()` and `apply_disconnect()`, which
      `reconcile_link()` calls too (F169: after a link's event was dropped,
-     the loop task ends or records the link from the stack's own record).
+     the loop task ends or records the link from the stack's own record),
+     and `apply_auth_complete()`, which `refuse_unauthenticated_links()`
+     calls too (F191's review, BV9).
      `reconcile_link();` is `update()`'s, once, between the consume and the
      drain, and nobody else calls it. What a full queue does (a link's
      events kept, the drops logged by kind, a passkey failed closed, the
@@ -722,6 +724,44 @@ BV9. No pairing completes, and no bond stays, without the owner (F191,
      `the_bond_store_shows_beside_the_list`); that NimBLE refuses the
      out-of-range passkey and times the pairing out is read from its source
      (2.3.8 and 2.5.0), not run.
+     And the roads F191's and F209's review found (in
+     `bluetooth_channel.cpp` unless named): `owner_comparison_open()` is
+     exactly `return g_settings.enabled && g_settings.allow_pairing &&
+     (g_pairing.state == PAIR_INITIATED || g_pairing.state ==
+     PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING);`, and
+     `apply_confirm_passkey()` answers no with `if
+     (!owner_comparison_open()) { NimBLEDevice::injectConfirmPasskey(
+     *e.u.passkey.conn, false); delete e.u.passkey.conn;
+     g_passkey_refused_count++; return; }` before it takes the pending copy
+     (a Numeric Comparison asked the owner with no pairing mode); the
+     unauthenticated branch drops the link as `if (g_server) {
+     g_server->disconnect(link.handle); }`, on no other condition and by
+     no other handle, names no `g_pairing` (that bond was never the owner's
+     pairing), says `drop_entries_without_bond();` and
+     `keep_for_retry(link.id_address);`, and the authenticated block says
+     `drop_kept(link.id_address);`; `refuse_unauthenticated_links()` skips
+     exactly a link that is not the stack's, not bonded, authenticated, or
+     whose bond is gone, and applies the rest as their report
+     (`apply_auth_complete(link_event(BT_EV_AUTH_COMPLETE, live));`), and
+     is called once by `reconcile_link()` and once by `adopt_init_result()`
+     after its `set_owner(`; `retry_kept_bonds(now);` is `update()`'s,
+     once, and `reconcile_link()` ends every retry (`g_kept_bond_count =
+     0;`), the kept list named only by `keep_for_retry()`, `drop_kept()`,
+     `retry_kept_bonds()` and `reconcile_link()`; `apply_store_full()` and
+     `reconcile_link()` each mark the store dirty (`g_bond_store_dirty =
+     true;`); `ble_server_dispatch.h`'s `onPassKeyDisplay()` with no
+     pairing owner returns `1000000u + esp_random() % 1000000;` (past what
+     NimBLE takes); and no file of the sketch calls `setSecurityPasskey(`:
+     NimBLE-Arduino calls `onPassKeyDisplay()` only while the static
+     passkey is its default 123456 (NimBLEServer.cpp, 2.3.8 and 2.5.0), so
+     one would hand every Passkey Entry that key, in or out of pairing
+     mode, and the stand-in does not model it. Held over the stand-in by
+     `a_comparison_outside_pairing_mode_asks_nobody`,
+     `a_just_works_bond_beside_the_recorded_link_drops_its_own`,
+     `a_bond_whose_report_never_came_goes_from_the_stacks_record`,
+     `a_bond_the_stack_kept_is_asked_again_each_minute`,
+     `the_bond_count_follows_a_dropped_report_and_a_refused_pairing` and
+     `a_listed_phone_that_pairs_again_by_just_works_leaves_the_list`.
 
 BV10. Safe mode says so, and a late bring-up says what it left out (F259,
      F260). `canary_wap.ino`'s `setup()` says
@@ -2707,7 +2747,10 @@ BT_EVENT_APPLIERS = ("apply_connect", "apply_disconnect", "apply_auth_complete",
 # dropped, the loop task asks the stack and applies what the lost event
 # would have).
 BT_EVENT_APPLIER_CALLERS = {"apply_connect": ("apply_event", "reconcile_link"),
-                            "apply_disconnect": ("apply_event", "reconcile_link")}
+                            "apply_disconnect": ("apply_event", "reconcile_link"),
+                            # F191's review: a Just Works bond whose report never
+                            # came, refused from the stack's record (BV9)
+                            "apply_auth_complete": ("apply_event", "refuse_unauthenticated_links")}
 # The channel's state: the loop task's (update(), its commands and the
 # events it applies). A callback on the NimBLE host task names none of it.
 BT_LIVE_STATE = ("g_state", "g_settings", "g_initialized", "g_connection", "g_pairing",
@@ -3959,6 +4002,30 @@ SIG_BT_PUBLISH_STATUS = r"\bstatic\s+void\s+publish_status_view\s*\(\s*\)"
 # The bond store's counts (F209): written by the one function that reads the
 # store, read by the status view's builder.
 BT_BOND_COUNTS = ("g_bonds_held", "g_bonds_unlisted")
+# The roads F191's and F209's review found.
+SIG_BT_COMPARISON_OPEN = r"\bstatic\s+bool\s+owner_comparison_open\s*\(\s*\)"
+BT_COMPARISON_OPEN_BODY = ("returng_settings.enabled&&g_settings.allow_pairing&&(g_pairing.state==PAIR_INITIATED||"
+                           "g_pairing.state==PAIR_PIN_DISPLAYED||g_pairing.state==PAIR_CONFIRMING);")
+SIG_BT_CONFIRM_PASSKEY_APPLY = r"\bstatic\s+void\s+apply_confirm_passkey\s*\([^)]*\)"
+BT_COMPARISON_GATE = ("if(!owner_comparison_open()){NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn,false);"
+                      "deletee.u.passkey.conn;g_passkey_refused_count++;return;}")
+BT_PENDING_TAKE = "g_pending_pair_info=e.u.passkey.conn;"
+BT_UNAUTH_DROP_WHOLE = "if(g_server){g_server->disconnect(link.handle);}"
+BT_UNAUTH_KEEP = "keep_for_retry(link.id_address);"
+BT_UNAUTH_DROP_ENTRIES = "drop_entries_without_bond();"
+BT_AUTH_DROP_KEPT = "drop_kept(link.id_address);"
+SIG_BT_REFUSE_LINKS = r"\bstatic\s+void\s+refuse_unauthenticated_links\s*\(\s*\)"
+BT_REFUSE_LINKS_TEST = ("if(live.getConnHandle()!=handle||!live.isBonded()||live.isAuthenticated())continue;"
+                        "if(!NimBLEDevice::isBonded(live.getIdAddress()))continue;"
+                        "apply_auth_complete(link_event(BT_EV_AUTH_COMPLETE,live));")
+BT_REFUSE_LINKS_CALLERS = ("reconcile_link", "adopt_init_result")
+SIG_BT_STORE_FULL = r"\bstatic\s+void\s+apply_store_full\s*\([^)]*\)"
+SIG_BT_RECONCILE_LINK = r"\bstatic\s+void\s+reconcile_link\s*\(\s*\)"
+BT_DIRTY_MARK = "g_bond_store_dirty=true;"
+BT_KEPT_CLEAR = "g_kept_bond_count=0;"
+BT_KEPT_NAMERS = ("keep_for_retry", "drop_kept", "retry_kept_bonds", "reconcile_link")
+BT_DISPATCH_NO_OWNER_PASSKEY = "return1000000u+esp_random()%1000000;"
+SIG_DISPATCH_PASSKEY = r"\buint32_t\s+onPassKeyDisplay\s*\(\s*\)\s*override"
 
 
 def check_bluetooth_owner_pairing(files: dict[str, str], errors: list[str]) -> None:
@@ -4051,6 +4118,95 @@ def check_bluetooth_owner_pairing(files: dict[str, str], errors: list[str]) -> N
     if builder is not None and squash(builder).count("refresh_bond_store();") != 1:
         errors.append(f"{BT_CPP}: publish_status_view() must call refresh_bond_store() once, with the stack "
                       "up — the count GET /api/bluetooth shows beside the list (F209)")
+    check_bluetooth_owner_pairing_review(files, code, spans, errors)
+
+
+def check_bluetooth_owner_pairing_review(files: dict[str, str], code: str, spans: list, errors: list[str]) -> None:
+    """Rule BV9's second half: the roads F191's and F209's review found."""
+    body = body_of(code, SIG_BT_COMPARISON_OPEN, f"{BT_CPP}: owner_comparison_open()", errors)
+    if body is not None and squash(body) != BT_COMPARISON_OPEN_BODY:
+        errors.append(f"{BT_CPP}: owner_comparison_open() must be exactly `return g_settings.enabled && "
+                      "g_settings.allow_pairing && (g_pairing.state == PAIR_INITIATED || g_pairing.state == "
+                      "PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING);` — a Numeric Comparison asks "
+                      "the owner only inside pairing mode, with new pairings allowed (F191's review)")
+    body = body_of(code, SIG_BT_CONFIRM_PASSKEY_APPLY, f"{BT_CPP}: apply_confirm_passkey()", errors)
+    if body is not None:
+        sq = squash(body)
+        gate, take = sq.find(BT_COMPARISON_GATE), sq.find(BT_PENDING_TAKE)
+        if sq.count(BT_COMPARISON_GATE) != 1 or not (0 <= gate < take):
+            errors.append(f"{BT_CPP}: apply_confirm_passkey() must answer no, before it takes the pending copy, "
+                          f"with `{BT_COMPARISON_GATE}` — outside pairing mode a stranger's comparison waited "
+                          "for the owner's confirm, which bonded and listed it with new pairings off (F191's review)")
+    auth = body_of(code, SIG_BT_AUTH_COMPLETE, f"{BT_CPP}: apply_auth_complete()", errors)
+    if auth is not None:
+        sq = squash(auth)
+        at = sq.find(BT_UNAUTH_BRANCH)
+        open_at = at + len(BT_UNAUTH_BRANCH) - 1
+        end = close_brace(sq, open_at) if at >= 0 else -1
+        branch = sq[open_at + 1:end] if end > 0 else ""   # the whole branch, its inner blocks too
+        authed = sq[:at] if at >= 0 else sq
+        drops = re.findall(r"g_server->disconnect\(", branch)
+        if branch.count(BT_UNAUTH_DROP_WHOLE) != 1 or len(drops) != 1 or "g_pairing" in branch or \
+                BT_UNAUTH_KEEP not in branch or BT_UNAUTH_DROP_ENTRIES not in branch or \
+                authed.count(BT_AUTH_DROP_KEPT) != 1:
+            errors.append(f"{BT_CPP}: apply_auth_complete()'s unauthenticated branch must drop the link as "
+                          f"`{BT_UNAUTH_DROP_WHOLE}` (on no other condition, by no other handle: a stranger beside "
+                          "the recorded link stayed connected, or the owner's link went), name no g_pairing (that "
+                          f"bond was never the owner's pairing), say `{BT_UNAUTH_DROP_ENTRIES}` and "
+                          f"`{BT_UNAUTH_KEEP}`, and the authenticated block `{BT_AUTH_DROP_KEPT}` (F191's review)")
+    body = body_of(code, SIG_BT_REFUSE_LINKS, f"{BT_CPP}: refuse_unauthenticated_links()", errors)
+    if body is not None and squash(body).count(BT_REFUSE_LINKS_TEST) != 1:
+        errors.append(f"{BT_CPP}: refuse_unauthenticated_links() must skip exactly a link that is not the stack's, "
+                      "not bonded, authenticated, or whose bond is gone, and apply the rest as their report, "
+                      f"`{BT_REFUSE_LINKS_TEST}` — a bond whose report never came is refused as F191 refuses one, "
+                      "and nothing else is applied (F191's review)")
+    calls = [enclosing_function(spans, m.start())
+             for m in re.finditer(r"(?<![\w:.>])refuse_unauthenticated_links\s*\(", code)]
+    calls = sorted(c for c in calls if c is not None)
+    adopt = body_of(code, SIG_BT_ADOPT, f"{BT_CPP}: adopt_init_result()", errors)
+    adopt_sq = squash(adopt) if adopt is not None else ""
+    owner_at = adopt_sq.find("ble_server_dispatch::set_owner(")
+    refuse_at = adopt_sq.find("refuse_unauthenticated_links();")
+    if calls != sorted(BT_REFUSE_LINKS_CALLERS) or not (0 <= owner_at < refuse_at):
+        errors.append(f"{BT_CPP}: refuse_unauthenticated_links() is called by {calls} — once by reconcile_link() "
+                      "(a report the full queue dropped) and once by adopt_init_result() after its set_owner( (a "
+                      "report that reached the dispatcher before the channel owned it) (F191's review)")
+    calls = [enclosing_function(spans, m.start()) for m in re.finditer(r"(?<![\w:.>])retry_kept_bonds\s*\(", code)]
+    update = body_of(code, SIG_UPDATE, f"{BT_CPP}: update()", errors)
+    if [c for c in calls if c is not None] != ["update"] or update is None or \
+            squash(update).count("retry_kept_bonds(now);") != 1:
+        errors.append(f"{BT_CPP}: retry_kept_bonds(now); must be update()'s, once — a bond the stack kept is asked "
+                      "again each minute (F191's review)")
+    for sig, what, want in ((SIG_BT_STORE_FULL, "apply_store_full()", (BT_DIRTY_MARK,)),
+                            (SIG_BT_RECONCILE_LINK, "reconcile_link()", (BT_DIRTY_MARK, BT_KEPT_CLEAR))):
+        body = body_of(code, sig, f"{BT_CPP}: {what}", errors)
+        if body is not None and any(w not in squash(body) for w in want):
+            errors.append(f"{BT_CPP}: {what} must say {' and '.join('`' + w + '`' for w in want)} — the bond count "
+                          "is read again when the full store refuses a pairing or a link event was dropped, and a "
+                          "dropped event ends every kept bond's retry (its report may have been an owner's "
+                          "pairing) (F209's and F191's review)")
+    for name in ("g_kept_bonds", "g_kept_bond_count"):
+        for hit in re.finditer(r"\b" + name + r"\b", code):
+            where = enclosing_function(spans, hit.start())
+            if where is not None and where not in BT_KEPT_NAMERS:
+                errors.append(f"{BT_CPP}: {where}() names {name} — only {', '.join(BT_KEPT_NAMERS)} may (F191's "
+                              "review)")
+                break
+    dispatch = files.get(BT_DISPATCH_H)
+    if dispatch is not None:
+        body = body_of(blank_comments_and_strings(dispatch), SIG_DISPATCH_PASSKEY,
+                       f"{BT_DISPATCH_H}: Dispatcher::onPassKeyDisplay()", errors)
+        if body is not None and not squash(body).endswith(BT_DISPATCH_NO_OWNER_PASSKEY):
+            errors.append(f"{BT_DISPATCH_H}: Dispatcher::onPassKeyDisplay() with no pairing owner must return "
+                          "`1000000u + esp_random() % 1000000;` — six digits nobody is shown are still six digits "
+                          "a guess can match; past 999999 NimBLE sets no key (F191's review)")
+    for path, src in files.items():
+        if re.search(r"(?<![\w])setSecurityPasskey\s*\(", blank_comments_and_strings(src)):
+            errors.append(f"{path}: calls setSecurityPasskey( — NimBLE-Arduino calls onPassKeyDisplay() only while "
+                          "the static passkey is its default 123456 (NimBLEServer.cpp, 2.3.8 and 2.5.0), so a static "
+                          "passkey is handed to every Passkey Entry, in or out of the owner's pairing mode, and F191's "
+                          "refusal never runs (F191's review)")
+            break
 
 
 # BV10 (F259, F260): safe mode says so; a late bring-up says what it left out.
@@ -5763,6 +5919,74 @@ BV_MUTATIONS += [
      on_other(BT_CPP, SIG_BT_PUBLISH_STATUS, r"refresh_bond_store\(\);", "")),
     ("a reader on the httpd task reads the bond count in place",
      on_other(BT_CPP, SIG_BT_READ_STATUS, r"(\*out = v\.status;)", r"\1 out->bonds_held = g_bonds_held;")),
+]
+# Rule BV9's second half: the roads F191's and F209's review found.
+SIG_BT_RETRY_KEPT = r"\bstatic\s+void\s+retry_kept_bonds\s*\([^)]*\)"
+BV_MUTATIONS += [
+    ("a comparison asks the owner after a completed pairing",
+     on_other(BT_CPP, SIG_BT_COMPARISON_OPEN, r"g_pairing\.state == PAIR_CONFIRMING\)",
+              "g_pairing.state == PAIR_CONFIRMING || g_pairing.state == PAIR_COMPLETE)")),
+    ("a comparison asks the owner with new pairings off",
+     on_other(BT_CPP, SIG_BT_COMPARISON_OPEN, r"g_settings\.allow_pairing &&\s*", "")),
+    ("a comparison outside pairing mode asks the owner",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+              r"if \(!owner_comparison_open\(\)\) \{.*?return;\s*\}", "")),
+    ("a comparison outside pairing mode waits instead of a no",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+              r"(if \(!owner_comparison_open\(\)\) \{)\s*NimBLEDevice::injectConfirmPasskey\(\*e\.u\.passkey\.conn, false\);",
+              r"\1")),
+    ("a comparison is refused only after the pending copy is taken",
+     lambda s: on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY, r"(g_pending_pair_active = true;)",
+                        r"\1 if (!owner_comparison_open()) { NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn, "
+                        r"false); delete e.u.passkey.conn; g_passkey_refused_count++; return; }")(
+         on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+                  r"if \(!owner_comparison_open\(\)\) \{.*?return;\s*\}", "")(s))),
+    ("an unauthenticated bond's link is dropped only when recorded",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"if \(g_server\) \{(\s*g_server->disconnect\(link\.handle\);)",
+              r"if (g_server && recorded) {\1")),
+    ("an unauthenticated bond drops the recorded link instead of its own",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"g_server->disconnect\(link\.handle\);",
+              "g_server->disconnect(g_connection_handle);")),
+    ("an unauthenticated bond fails the owner's pairing again",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"(keep_for_retry\(link\.id_address\);\s*\})",
+              r"\1 if (recorded) { g_pairing.state = PAIR_FAILED; }")),
+    ("a bond the stack kept is never retried",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"keep_for_retry\(link\.id_address\);", "(void)0;")),
+    ("a listed phone's Just Works re-pair keeps its bondless entry",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"drop_entries_without_bond\(\);", "(void)0;")),
+    ("an owner's re-pair of a kept identity is retried away",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"drop_kept\(link\.id_address\);", "")),
+    ("the reconcile refuses an authenticated link too",
+     on_other(BT_CPP, SIG_BT_REFUSE_LINKS, r" \|\| live\.isAuthenticated\(\)", "")),
+    ("the reconcile refuses a link whose bond is gone again",
+     on_other(BT_CPP, SIG_BT_REFUSE_LINKS, r"if \(!NimBLEDevice::isBonded\(live\.getIdAddress\(\)\)\) continue;", "")),
+    ("the reconcile never refuses a dropped report's bond",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"refuse_unauthenticated_links\(\);", "")),
+    ("the adoption never refuses a pre-owner bond",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"refuse_unauthenticated_links\(\);", "")),
+    ("the adoption refuses before the channel owns the callbacks",
+     lambda s: on_other(BT_CPP, SIG_BT_ADOPT, r"(ble_server_dispatch::set_owner\()", r"refuse_unauthenticated_links(); \1")(
+         on_other(BT_CPP, SIG_BT_ADOPT, r"refuse_unauthenticated_links\(\);", "")(s))),
+    ("update() never retries a kept bond",
+     on_other(BT_CPP, SIG_UPDATE, r"retry_kept_bonds\(now\);", "")),
+    ("a kept bond is retried by the reconcile too",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"(g_kept_bond_count = 0;)", r"\1 retry_kept_bonds(millis());")),
+    ("a dropped event leaves the kept bonds retried",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"g_kept_bond_count = 0;", "")),
+    ("the reconcile leaves the bond count stale",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"g_bond_store_dirty = true;", "")),
+    ("a refused pairing leaves the bond count stale",
+     on_other(BT_CPP, SIG_BT_STORE_FULL, r"g_bond_store_dirty = true;", "")),
+    ("the kept list is cleared from outside its owners",
+     on_other(BT_CPP, SIG_BT_START_PAIRING, r"(g_pairing\.state = PAIR_INITIATED;)", r"\1 g_kept_bond_count = 0;")),
+    ("the dispatcher hands NimBLE six digits with no pairing owner",
+     on_other(BT_DISPATCH_H, SIG_DISPATCH_PASSKEY, r"return 1000000u \+ esp_random\(\) % 1000000;",
+              "return esp_random() % 1000000;")),
+    ("the channel sets a static passkey",
+     on_other(BT_CPP, SIG_BT_PUBLISH_VIEWS, r"(publish_status_view\(\);)", r"NimBLEDevice::setSecurityPasskey(123456); \1")),
+    ("the sketch sets a static passkey",
+     on("ino", SIG_SETUP, r"(bluetooth_channel::skip_boot_bring_up_for_safe_mode\(\);)",
+        r"\1 NimBLEDevice::setSecurityPasskey(246810);")),
 ]
 # Rule BV10 (F259, F260): safe mode says so; a late bring-up says what it left out.
 BV_MUTATIONS += [
