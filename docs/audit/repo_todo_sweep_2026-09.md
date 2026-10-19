@@ -12777,6 +12777,11 @@ so — see D2 below.)
   the way `read_const` does: comments stripped (string literals respected), a
   whole-word name defined exactly once, a plain decimal literal with no
   leading zero, and a refusal otherwise. Found by F313 (#1832).
+- [ ] **F374 [code] `test_fleet_selfreport.cpp`'s birth-day comment is off by
+  a day.** `firmware/tests_host/test_fleet_selfreport.cpp:238` reads
+  `d.born_day = 20673; // 2026-08-07`, but day 20673 is 2026-08-08 UTC, the
+  same off-by-one the iPhone's local-zone formatting makes (A113), in a
+  comment only. Correct it to 2026-08-08. Found by A72 (#1832).
 - [x] **F186 [code] A Vision dweller seen on the frame between `dwell_ended`
   and `presence_ended` starts a second dwell in the same visit, so the
   lingering alert pages twice.** After `dwell_ended`, `PresenceFSM::tick`
@@ -15866,7 +15871,7 @@ so — see D2 below.)
   cards (the browser's `flash.js`, the desktop's `app.js`), with a
   `desktop_parity.test.js` assertion. Until then neither flasher mentions the
   door, which is right.
-- [ ] **A72 [code] The Witness Wall does not show a device's birth day.**
+- [x] **A72 [code] The Witness Wall does not show a device's birth day.**
   Firmware serves `born_day` and `born_exact` in its self-report
   (`firmware/common/fleet_selfreport/fleet_selfreport.h`), and
   `tvos/discovery/DISCOVERY.md` documents them since the 2026-10 cleanup, but
@@ -15876,6 +15881,95 @@ so — see D2 below.)
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, which
   `scripts/carry_to_site.py` carries into the website's tests, so it lands as
   one cross-repo change.
+  *Done (#1832, the monorepo half, 9514c694..f48a8d18; the website half is
+  `kmay89/securacv_website` wip/w24-a72-site, 57b564d..49f3ae8, not yet
+  merged):* witness-core's `Device` (`tvos/witness-core/src/fleet.rs`) now
+  carries `born_day` and `born_exact`. `born_day` is kept only when it is an
+  integral day a Canary can stamp: `BORN_DAY_MIN` 20089 (`kClockFloor` / 86400
+  in `firmware/common/identity/birth_day.h`, 2025-01-01) through
+  `BORN_DAY_MAX` 49710 (`u32::MAX` / 86400, 2106-02-07). Anything else,
+  including the firmware's own 0 ("never dated"), negatives, fractions,
+  strings and nulls, drops to absent instead of failing the snapshot.
+  `born_exact` is kept only when it is a boolean. Each half crosses on its
+  own, and the reader decides what it means: a day with no flag is not exact,
+  and a flag with no day draws nothing. `fleet_contract_vectors.json` gained
+  five vectors: an exact day and a first-dated day (both
+  `fleet_selfreport_build()` bytes, the iPhone's bornBody and firstDatedBody),
+  absence and half pairs, wrong types (including a good day beside a
+  `born_exact` of "true" or 1, which must read First dated), and the edges of
+  the window. Each carries a per-row `born` line (`{label, utc_date}` or
+  null). `fleet_contract.rs` checks those lines against the normalized pair
+  and reads the window out of `birth_day.h`, which `tvos.yml` now watches. The
+  Wall's `FleetSnapshot.Device` (WitnessCore.swift) decodes both keys with the
+  same window as a backstop, and keeps them through `withEveryDeviceOffline`.
+  `DeviceDetailView` shows "Born <day>" only when `born_exact` is true.
+  Otherwise it shows "First dated <day>", with the phone's explanation only
+  when the device itself said `born_exact: false`, and nothing when the device
+  sends no day. The labels are the iPhone BirthCertificateCard's, and the day
+  is formatted in UTC (the firmware logs "day N (UTC)"). DeviceParityTests
+  replays the vectors' `born` lines through both the core's normalized
+  snapshot and the Swift decoder, and checks the detail screen's words with
+  the process set to America/Los_Angeles. WitnessCoreTests round-trips a birth
+  day through the C ABI. The Swift is not compiled here: it is compile-tested
+  by CI only once `tvos.yml` runs on macOS, which it has not yet for this
+  change (the likeliest breakages are the tvOS 16+ `Date.FormatStyle` with
+  `TimeZone.gmt`, the exact en_US day strings the replay expects, and the
+  time-zone set and restore in teardown). On the website, `tv/app.js`
+  (parseFleet, plus a `.born` line on each card, with `bornLine` checking its
+  own input) and `js/tv-emulator.js` (a self-contained `bornLine(row,
+  locale)`, shown on a live tile's toast and in the connect panel) render the
+  same line. `tests/tv-wall.test.mjs` replays the carried vectors through
+  both, runs in Pacific/Honolulu so that a reader that slipped to the local
+  zone goes red on a UTC runner, and checks the emulator's wiring. The vectors
+  went over with `scripts/carry_to_site.py --only verifier`, which also
+  carried #1799's `viewer/verify_core.js` because PROVENANCE.txt pins both
+  files. `scripts/vendor_witness_emulator.sh` re-vendored the emulator into
+  `canary-local/witness/` and `desktop/src/witness/` (the first re-vendor also
+  brought the site's W32 dark-ink fix into the app copies of `witness.html`),
+  and `canary_local.test.js` replays the line through both copies, also west
+  of UTC. Only a Canary that answers `/api/fleet` for itself sends the pair
+  today. The kernel's `FleetRow` and a display's peer rows do not relay it
+  (A114), and DISCOVERY.md, tvos/README.md, the site's tv/README.md and the
+  /witness-wall fold say so. Host-tested: witness-core's cargo suite, clippy
+  and fmt, the kernel's two-row vector test, `canary_local.test.js` and
+  `desktop_parity.test.js` here, and the website's suite (768) and its night
+  contrast pass on the site branch; nothing ran on a TV.
+  *Merge order (load-bearing):* the website half must merge after #1832, and
+  before the website's next scheduled carry runs; never merge only the
+  website. If it merges first, `update-everything.yml`'s weekly carry from
+  securaCV main reverts the website's
+  `tests/fixtures/fleet_contract_vectors.json` to the 8-vector file,
+  `tests/tv-wall.test.mjs` goes red, and that carry's PR would delete the
+  birth-day vectors. If a carry PR shows up while the website PR is still
+  open, merge the website PR first; the carry's vector bytes then match. The
+  vendored `PROVENANCE.txt` here also pins site files that exist only on that
+  branch (`witness-wall.html` fa9aa3dd..., `js/tv-emulator.js` 1757f54b...),
+  and no monorepo CI checks them against the site. Found here: A113, A114,
+  F374, W40 and W41.
+- [ ] **A113 [code] The iPhone reads a birth day the Wall drops, and shows it
+  a day early west of UTC.** Since A72 (#1832) the Wall and the web readers
+  keep `born_day` only inside the window a Canary can stamp (20089 to 49710)
+  and format it in UTC. The iPhone's `FleetSelfReport`
+  (`ios/Sources/SecuraCV/Wire/FleetSelfReport.swift`) accepts any `born_day`
+  above 0, with no window, so a day from 1 to 20088 or above 49710, which no
+  Canary can stamp, shows on the phone but nowhere else; and its
+  `BirthCertificateCard` formats `bornOn` (midnight UTC) in the local time
+  zone, so west of UTC it shows the day before (day 20673 reads Aug 7 instead
+  of Aug 8 in US time zones). It also shows its 'met a clock late' note for a
+  day with no flag, where the Wall shows it only beside `born_exact: false`.
+  Bring the phone in line: the same window, a UTC `FormatStyle`, and a
+  west-of-UTC test zone, as the Wall's DeviceParityTests use. Swift builds are
+  CI's. Found by A72 (#1832).
+- [ ] **A114 [code+decision] No hub or display relays a device's birth day.**
+  The kernel's `/api/fleet` (`fleet_document`, `FleetRow` in
+  `src/fleet_peers.rs`) and a display's peer rows (canary-display
+  `src/net/glass_web.cpp`, whose `FleetSelfDevice peer{}` leaves `born_day` 0)
+  never relay `born_day` / `born_exact`, so a fleet read through a hub or a
+  display shows no birth day on any reader. Only a Canary that answers
+  `/api/fleet` for itself (canary-wap, canary, node_http) sends it; since A72
+  (#1832) DISCOVERY.md, tvos/README.md and the website's /witness-wall fold
+  say so. Relaying it is a contract change, made in DISCOVERY.md first, then
+  in the kernel's two-row vector. Found by A72 (#1832).
 - [ ] **A73 [decision] Build or drop the watch's per-witness day strip and
   reason log.** `docs/design/apple_watch_and_notifications.md` §3.3 specifies
   a 24-bucket day strip and a reason log per witness on the wrist. The 2026-10
@@ -17914,6 +18008,22 @@ so — see D2 below.)
   Give the mock an iOS secondary gray that reads (#6b7280 reads 4.8:1 on
   white, as the mock's own `.toast small` already uses). Found by W33's review
   (the website PR, securacv_website#228).
+- [ ] **W40 [code] The emulator's tile toast says "online · chain intact" for
+  an offline tile.** `js/tv-emulator.js`'s live tile toast says 'online ·
+  chain intact' for every tile, a live offline one included (left website-side
+  by A24's re-vendor, #1720), and since A72 (#1832) the birth-day line is
+  appended to that sentence. Say what the tile's own state is, then re-vendor
+  the emulator (`scripts/vendor_witness_emulator.sh`) into both app copies.
+  The toast's wiring regexes in both repos (`tests/tv-wall.test.mjs`,
+  `canary-local/tests/canary_local.test.js`) pin its current shape, so the fix
+  updates them too. Found by A72 (#1832).
+- [ ] **W41 [code] The website's `js/builder-data.js` is stale against the
+  monorepo's builder manifest.**
+  `docs/hardware/enclosure/gen_builder_manifest.py --site <website> --check`
+  reports `js/builder-data.js` stale on the website at origin/main 8cdba6a, a
+  CAD carry no change of A72's touched. Run the carry
+  (`gen_builder_manifest.py --site`, or the weekly Update everything job) and
+  commit the result on the website. Found by A72 (#1832).
 - [x] **W23 [code] Four small website leftovers from the 2026-10 cleanup.**
   (1) `js/help.js`'s flasher door note says the Flasher "backs up before it
   writes and verifies after"; say it checks the write after ("verified" is
@@ -18101,7 +18211,7 @@ major, by theme") — work its themes, then tick here.
   whose help says the other meaning and names the name to use;
   `DESIGN_RULES.md` §10 carries the table. The website carried the renames in
   website PR #202; one stale comment is left for C13. (#1703)
-- [ ] **C3 [code] Lid-rib proportions + hardware counts** — the hardware half
+- [x] **C3 [code] Lid-rib proportions + hardware counts** — the hardware half
   landed (#1703): `docs/hardware/enclosure/gen_hardware.py` reads each
   committed set's `HARDWARE` echo off the CAD (13 sets: the `render.sh`
   presets, the WAP shield render and one `screw_insert` set per case family)
@@ -18117,6 +18227,33 @@ major, by theme") — work its themes, then tick here.
   `--check`. The call is C11 (evidence recorded, no rib changed — maintainer
   to confirm). Also still open here: carrying per-set hardware into
   `build.json`, with a third `assembly.test.js` leg.
+  *Done (#1832):* the build-sets half landed.
+  `canary-local/tools/gen_enclosures.py` carries each `hardware.json` set (its
+  case, scad, -D selectors, counted items and, on the eight preset sets, its
+  lid rib) into `build.json` under `devices[<slug>].hardware`, an additive key
+  (the website reads only `bom`; no page renders the list yet); the carry
+  refuses a set for a device with no `build.json` entry, a set or item missing
+  a field, and a count that is not a whole positive number
+  (`canary-local/tools/tests/test_gen_enclosures_hardware.py`, which runs the
+  generator from a scratch copy and never imports it). At this head the WAP,
+  the Vision and the Sense carry their sets.
+  `canary-local/tests/assembly.test.js`'s third leg holds every screw or
+  insert the Assemble tab draws to the `HARDWARE` echo of the set the tab
+  shows (every set cut from the case file and selectors
+  `gen_assembly_poses.py` poses the device from, `screw_insert` sets excluded)
+  by size, head, length and count: the drawn count is one per placement, an
+  echo's lines of one spec add within a set (as `gen_hardware.py`'s BOM join
+  adds them), two sets of one build must agree, and every echoed screw needs a
+  part. The comparison is a pure function, `fastenerGaps()`, pinned by ten
+  synthetic tests, so none of its branches can be deleted with the suite
+  green. The WAP (8 M2 pan x 8, and the shield's 4 M2 flat x 12) and the Sense
+  (4 M2 pan x 8) agree; two gaps sit in a shrink-only `FASTENER_GAPS` (C25).
+  `scripts/regen_cad.py` already ran `gen_hardware` before `gen_enclosures`;
+  its docstring now says why, and `scripts/tests/test_regen_cad.py` requires
+  the read. No `.scad`, STL, firmware byte or the emulator dist moved.
+  Host-tested; canary-local.yml's catalog drift step, logic tests and
+  recorded-reads gate, lab-lint and enclosure.yml have not run on this branch.
+  No rib changed: that call is C11. Found here: C25, C26 and the C12 update.
 - [ ] **C4 [decision] The C6 `brass_h` disagreement** — registry says 5.0, the
   file prints the C3's measured 3.0; `devices/README.md` says owning either
   number would bless it. A maintainer measures and decides.
@@ -18271,6 +18408,72 @@ major, by theme") — work its themes, then tick here.
   it, and 95 in [Hidden] groups. The C10c-1 counts (33/21/18) include each
   file's `part` selector, which the house leaves bare; without the selectors
   the three files had 32/20/17 knobs without help.
+
+  *Wave 4 (#1832):*
+  - Help for the next monorepo-only cases (C10c-2): in 19 case files (the C3
+    pocket case, the solar relay, the sign, the vehicle mount, the Hammond
+    plate, the wear clip, the Sense bedside stand and gang plate, the inserts,
+    the Pi hub, the mount adapters, the Vision Pro plate, the shop tools, the
+    dock, the outlet cradle, the 7-inch frame, the S3 stick, the 1.69 case and
+    the C6 display), every knob has help read off the geometry and asserts
+    that use it. That is 133 knobs: 76 alone on their lines, 36 on eleven
+    shared lines now split one knob per line, and 21 boolean options, whose
+    help is also their catalog label. Seven knobs that no geometry reads say
+    so (C29): the gang plate's `board_clear`, the mount adapters' `tol_slide`
+    and `tol_hole`, the vehicle mount's two tolerances, the S3 stick's
+    `tol_hole` and the C6's `snap_n`. Writing it found three things the help
+    now states: the solar relay's cavity, 17.7 deep at the defaults, clears
+    `bh_h` + 1.5 while an 18650 is 18 mm across (C28); the cable gland's
+    overfill assert compares `cg_fill` with itself (C34); and the 7-inch
+    frame's brand-word width estimate reads about 25 % short of the cut words
+    (C33). It also found the builder parser giving the 1.69 case's
+    `skirt_wall` the help of its computed neighbor `skirt_dep`, which the lint
+    and `HELP_DEBT` counted as help (no surface showed it: the Lab skipped the
+    line and the builder does not offer the case); that line is split too, a
+    twelfth, and a test on each parser holds it (the lint rule that let it
+    pass is C32). `scripts/tests/test_lint_design_lang.py`'s `HELP_DEBT` holds
+    all 19 at zero. Knobs without help: 246 -> 113 of 1807 (the 81 option
+    selectors are not counted). No geometry moved: the CSG of 104 part options
+    and 27 other selector sets is byte-identical to the base under OpenSCAD
+    2021.01, the comment-stripped token streams are identical, and 207 of the
+    208 PNG previews are byte-identical to base renders (the 7-inch frame's
+    underside view varies from run to run in both trees; 14 of the 208 render
+    blank at the defaults on the base too, nine of them gates whose pass is an
+    empty render). The wave leaves `build.json`, `workshop.json`,
+    `figures.json` and `builder_manifest.json` as they were; only
+    `enclosures.json` and `catalog.json` regenerate. Host-tested; nothing
+    printed.
+  - Two maintainer decisions ride on it, each in commits of its own so they
+    can be dropped alone (C27). The shared-line splits (the package's e29b9282
+    and 33433c38, cherry-picked here as 222f6827 and efb87fbd; the second's
+    cherry-pick conflicted in `catalog.json`, and the resolved counts are the
+    package's): the Lab lists the 36 knobs it skipped, three of them read by
+    nothing (the C6's `snap_n`, the vehicle mount's `tol_slide` and
+    `tol_press`), and the 1.69 case's `skirt_wall` and its computed
+    `skirt_dep`, in three groups it never showed (the C3 case's and the
+    vehicle mount's Print tolerances, the Hammond plate's Board snap clips),
+    and `catalog.json`'s `engineering_param_count` moves for seven products
+    (c3_lcd147 176 -> 182, c6_display 88 -> 92, hammond_chassis 26 -> 31,
+    relay_solar 100 -> 107, s3_touch169 94 -> 100, vehicle_mount 19 -> 26,
+    wear_clip 15 -> 18), as it reads at this head. And the 21 boolean helps
+    (08e44df1, here c5abc963, with two labels reworded by the review fix, here
+    1c9f871d), which replace bare knob names such as `opt_btn` as Lab catalog
+    labels. Rejected: waiting for C21, which moves the same counts and leaves
+    the knobs without help. Two commit bodies overstate and cannot be amended:
+    efb87fbd says the builder and the Lab showed `skirt_dep`'s help on
+    `skirt_wall` (neither did), and b28df079 calls 0.392 x `edge_text_size`
+    the per-letter width (it is the half-width; the help says so since
+    1c9f871d).
+
+  Still open after wave 4: 113 knobs without help, namely the carried four's
+  55 (combo 33, fit_coupon 10, dash_display 7, watch_station 5; each edit
+  moves a website sha256 pin, and watch_station needs a `gen_print_files.py`
+  re-render), C10c-1's 42 (its handed-up shared-line patch for the field case,
+  the J-box and the bench fixture is C27's decision too, and is still not
+  applied), `canary_templates_2d.scad`'s 12 (C30) and 4 in the released
+  doorbell and Vision (C31); the Lab stopping at the first module like the
+  builder (C21); and the maintainer call on the OpenSCAD 2021.01 desktop
+  Customizer.
 - [ ] **C21 [code+decision] The Lab's knob list is not the builder's.** After
   C10a's group fix, `canary-local/tools/gen_enclosures.py`'s `parse_scad`
   still differs from `gen_builder_manifest.parse_scad` in three ways. First,
@@ -18283,6 +18486,11 @@ major, by theme") — work its themes, then tick here.
   `engineering_param_count`, which is the decision.
   `scripts/tests/test_enclosure_parsers.py` would grow a knob-set comparison
   once the parsers agree. Found by C10a and C10c-1 (#1802).
+  *Since C10c-2 (#1832):* 37 of those shared-line knobs (C10's wave 4: eleven
+  lines in seven cases and the 1.69 case's `skirt_wall`) sit on their own
+  lines, so the Lab lists them and the builder's and the Lab's lists agree on
+  them; the rest of the first difference, and the other two, are unchanged.
+  Whether those splits stand is C27.
 - [ ] **C22 [code] The 1.69 case's [Side cluster] header is in the wrong
   place.** `canary_s3_touch169.scad`'s `/* [Side cluster] ... */` sits
   directly above `/* [Port / button datums] ... */`, so it holds no knob.
@@ -18307,6 +18515,105 @@ major, by theme") — work its themes, then tick here.
   paragraph on the summary line. Show the note's first sentence in the summary
   and the full note as the first row inside the details. Found by C10a's
   review (#1802).
+- [ ] **C27 [decision] Confirm or revert C10c-2's two decision commits.** Wave
+  4 of C10 (#1832) carries two commits the package marked as maintainer
+  decisions, each droppable alone. (1) The shared-line splits: e29b9282, here
+  222f6827 (eleven lines in seven cases, 36 knobs, three read by nothing),
+  with 33433c38, here efb87fbd (the 1.69 case's `skirt_wall` / `skirt_dep`
+  line): the Lab gains 38 entries in three new groups and `catalog.json`'s
+  `engineering_param_count` moves for seven products (c3_lcd147 +6, c6_display
+  +4, hammond_chassis +5, relay_solar +7, s3_touch169 +6, vehicle_mount +7,
+  wear_clip +3). (2) 08e44df1, here c5abc963: help for 21 boolean options,
+  which becomes their Lab catalog label in place of the bare knob name (two
+  labels reworded by 1c9f871d). Confirm both, or revert either commit and
+  regenerate `enclosures.json` and `catalog.json` (`gen_enclosures.py`).
+  C10c-1's handed-up patch for the field case, the J-box and the bench fixture
+  (help for 42 knobs, `bez_on` among them, and the J-box `opt_weep` label) is
+  the same decision and waits on this one. Found by C10c-2 (#1832).
+- [ ] **C28 [code+decision] The solar relay's cavity is shallower than a
+  fitted 18650.** `canary_relay_solar.scad` sizes the cavity as `cav_d =
+  max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5`, which is 17.7 at the
+  defaults (the LoRa stack sets it; an echo probe confirms). `bh_h = 15.0` is
+  the only battery height it reads, and the holder lies flat on the plate (the
+  bay's pocket does not go into the floor). Its help reads `bh_h` as the
+  holder's height with its cell fitted, which is what the cavity must clear,
+  and an 18650 is 18 mm across, so a fitted holder stands at least 18 mm off
+  the plate, into the face's underside. Measure a holder with its cell, then
+  grow the default or the cavity formula, and re-check the posts, the roof
+  screws' pilots and the fit-check. Since #1832 (C10c-2) the help asks for the
+  measurement; the geometry is unchanged. Found by C10c-2 (#1832).
+- [ ] **C29 [decision] Seven knobs no geometry reads are still offered.**
+  `canary_sense_gang.scad`'s `board_clear` (the carrier is located by rails
+  and clips), `canary_mount_adapters.scad`'s `tol_slide` and `tol_hole` (its
+  wall-screw holes are `screw_d` as drawn), `canary_vehicle_mount.scad`'s
+  `tol_slide` and `tol_press`, `canary_s3_lcd147.scad`'s `tol_hole` (the case
+  has no screws) and `canary_c6_display.scad`'s `snap_n` (the nubs are always
+  two per side wall) are literal knobs, so the OpenSCAD Customizer and the Lab
+  list them, and turning them does nothing. Since #1832 (C10c-2) their help
+  says so. For each, either remove it, which moves `catalog.json`'s
+  `engineering_param_count`, or wire it where a fit needs it, which is a
+  geometry change with previews. Found by C10c-2 (#1832).
+- [ ] **C30 [code] The paper templates retype other cases' numbers.**
+  `canary_templates_2d.scad`'s [Bracket] and [Doorbell] knobs are hand copies
+  ('mirror canary_vision_enclosure bracket defaults', 'mirror
+  canary_vision_doorbell plate defaults'): 12 knobs on four shared lines with
+  no help, and the builder's parser drops two trailing notes on those lines.
+  Today `br_x`/`br_y`/`br_screw_d` (46/34/4.2) match the Vision bracket, and
+  `db_out_x`/`db_out_y` (51.5/169.2) and `db_exit_dx` (2.2) match the
+  doorbell's echo. The screw insets and `db_exit_cy` were not checked. Read
+  the values through `use <>` (the outlet cradle's `target_gap()` pattern), or
+  hold them to their sources with a check, then split and help the lines. The
+  file is in `lint_design_lang.py`'s SKIP list as not a case, so C10c-2 left
+  it out. Found by C10c-2 (#1832).
+- [ ] **C31 [code] The released doorbell and Vision have knobs without help
+  again.** C10 gave every knob in the released four help except the option
+  selectors. On #1832's base (8bb5647d), `canary_vision_doorbell.scad` has
+  `svc_pip_depth` (:390), `ant_rib_d` (:472) and `spk_post_dy` (:669) without
+  help (added by the doorbell v0.8/v0.9 work), and
+  `canary_vision_enclosure.scad` has `span_max` (:436). Both files are
+  carried, so the fix rides the carried batch: the `gen_builder_manifest.py
+  --site` carry, the website's builder-facts pins and `builder_manifest.json`.
+  Add the released four to `test_lint_design_lang.py`'s `HELP_DEBT` at zero in
+  the same change, so a new released knob cannot land without help. Found by
+  C10c-2 (#1832).
+- [ ] **C32 [code] The third lint rule passes a help written for a computed
+  neighbor.** `lint_help_lines()` counts only the knobs
+  `gen_builder_manifest.parse_scad` keeps, so `skirt_wall = 1.6; skirt_dep =
+  back_stack; // must not exceed back_stack` passed: `skirt_dep` is
+  computed, the builder's parser gave its help to `skirt_wall`, and the lint
+  and `HELP_DEBT` counted `skirt_wall` as helped (no surface showed it: the
+  Lab's parser skips a two-assignment line, and the builder does not offer
+  that case). `test_computed_neighbor_does_not_count` keeps that pass on
+  purpose. #1832 (C10c-2) split the one such line in the tree (a scan of
+  every case file found no other). A rule that refuses a trailing help on
+  any line holding a knob and a second assignment would catch the next one
+  at no cost to the tree today, but it reverses that test's decision. Found
+  by C10c-2 (#1832).
+- [ ] **C33 [code] The 7-inch frame's brand-word width estimate reads about 25
+  % short.** `canary_s3_lcd7.scad` sizes the bottom-wall words with
+  `vword_half = 0.392 x edge_text_size x letters` (:2137), from '0.70 em x
+  1.12 tracking' (:2133), but OpenSCAD 2021.01's text size is not the em:
+  SECURACV at size 7, spacing 1.12, in Liberation Sans Bold inks 58.7 mm (x
+  -29.56..29.16 in a DXF export) against the 43.9 mm estimate. The asserts
+  that keep the leash anchor, the peel scoop, the port label and the dock keys
+  off the words (:2557, :2574, :2587, :2785) therefore guard a shorter word
+  than the one cut. At the defaults the cut word reaches x = 13.74, inside the
+  anchor's and the scoop's 1 mm keep-outs (bounds 15.2 and 15.44), though the
+  C10c-2 review's CGAL intersection with the scoop was empty, and `port_lbl_a`
+  ships empty. Calibrate the factor against a measured render (a DXF of the
+  default words) or carry measured widths, and fix the :1968 comment, which
+  calls 0.392 the advance where `_lbl_w` doubles it. Since #1832 (C10c-2) the
+  `edge_text_size` help says the estimate reads short. Found by the C10c-2
+  review (#1832).
+- [ ] **C34 [code] The cable gland's overfill assert is a tautology.**
+  `canary_inserts.scad` derives `cg_bush_l` from `cg_fill` (:79), then asserts
+  `cg_bush_l * cg_a_free <= cg_fill * cg_cav_l * cg_a_room` (:91), which holds
+  for every `cg_fill`: 0.95 renders clean against the O-ring rule's 90 %
+  ceiling, and only the rise-out assert (:93; `(cg_top - cg_seat_z) /
+  cg_cav_l`, about 0.96 at the defaults) refuses more. Assert against the
+  rule's constant (`cg_fill <= 0.90`) instead; that is a geometry-gate change
+  with a re-render of the gland parts. Since #1832 (C10c-2) the `cg_fill` help
+  says nothing holds the ceiling. Found by the C10c-2 review (#1832).
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib
   changed: `DESIGN_RULES.md` §11's "Lid rib proportions" table gives the
@@ -18325,7 +18632,8 @@ major, by theme") — work its themes, then tick here.
   byte-identical, only the slack presets' lids and fronts move (their
   envelopes do not), shipped through `scripts/regen_cad.py --previews`. A
   maintainer decides, per case.
-- [ ] **C12 [human] The 12 BOM disagreements `gen_hardware.py` found.** Its
+- [ ] **C12 [human] The BOM disagreements `gen_hardware.py` found (12 at its
+  first run, 8 today).** Its
   first run joined each committed preset's fasteners to the BOM CSVs and
   listed what disagrees in `docs/hardware/enclosure/hardware.json`
   (`bom_drift`): two short quantities in `bom_canary_vision.csv` (the doorbell
@@ -18337,6 +18645,35 @@ major, by theme") — work its themes, then tick here.
   and shrinks `KNOWN_DRIFT`, whose `--check` fails when a listed entry stops
   happening. Same pass: `bom_canary_display.csv`'s D-ENC1 still describes the
   Dash back's retired keyholes and M4 pair.
+  *Update (#1832):* `hardware.json` `bom_drift` lists 8 today. SCR5 is no
+  longer short (18, the doorbell's 12+4+2 echoed screws); INS1 is the one
+  short quantity left (5 against the 13 inserts set `doorbell+inserts`
+  echoes); the other seven are unbilled: the #6 bracket wall screws of the
+  Sense and the three Vision presets, the Vision weather preset's #6 keyhole
+  screws, the Sense's M5 hinge bolt and nut, and the WAP weather base's M3
+  wall screws.
+- [ ] **C25 [code+decision] The Assemble tab's two fastener gaps.**
+  `canary-local/tests/assembly.test.js` lists them in its shrink-only
+  `FASTENER_GAPS` (#1832, beside C12). (1) The Vision tab seats the OV5647 on
+  the front's posts but draws none of the four M2 pan x 6 self-tap screws
+  `canary_vision_enclosure.scad` echoes for it (set `vision.xiao_indoor`): add
+  a camera-screw part posed from the camera posts in
+  `docs/hardware/enclosure/gen_assembly_poses.py`, or decide the tab leaves
+  them out and say so in its step. (2) `canary_dash_display.scad` prints no
+  `HARDWARE` line, so no `gen_hardware.py` set counts the four D-SCR1 screws
+  the Dash tab drives: give the case an `hw_echo()` and `gen_hardware.py` a
+  set (with a JOIN against `bom_canary_display.csv`'s D- rows), or decide the
+  in-development case stays uncounted. Each fix shrinks `FASTENER_GAPS`, and
+  the test fails until it does. Found by C3 (#1832).
+- [ ] **C26 [code] The Sense and Vision Assemble-tab screws name no BOM
+  RefDes.** Their `screws` parts in `canary-local/devices/assembly.json` carry
+  no `ref`, so `assembly.test.js`'s "part quantities match the BOM" leg never
+  checks them (the CAD leg from #1832 now does). The Sense's four match
+  `bom_canary_sense.csv` SCR3 (4, M2 pan 8 mm) and can carry it. The Vision's
+  sit in SCR5's mixed row, which bills the Vision case and the doorbell in one
+  quantity (18, the doorbell's 12+4+2); the BOM leg's equality cannot compare
+  a per-device part against it until that row is split per product or the leg
+  learns a per-device share. Found by C3's review (#1832).
 - [x] **C19 [code] The WAP BOM's GNSS row names a flag the WAP does not
   have.** `docs/hardware/bom_canary_wap.csv` M1's note ends `FEATURE_GNSS`, a
   canary-tree flag; the WAP sketch opens its GNSS UART in every profile and
@@ -18654,6 +18991,22 @@ major, by theme") — work its themes, then tick here.
   more, so on the watch a press wakes the glass and a hold acknowledges (A83's
   bench note now says so). Make the comment say what the firmware does. A
   comment only. Found by A83 (#1802).
+- [ ] **D15 [code] CLAUDE.md leaves out three things #1832 added.** Nothing it
+  says is wrong; each sentence predates the change. (1) "A stale dist no
+  longer stops you proving the sources." says `native_cores.test.js` drives
+  each native core next to its dist, but not that the page logic job now runs
+  it under `LAB_CORES=native` in a step of its own right after the native step
+  (A50), nor that the scenarios live in `tests/native/scenarios.js`. (2) The
+  same paragraph names `vision_wasm32.test.js` but not `cores_wasm32.test.js`,
+  which builds the whole Vision and WAP audio cores from `build.sh`'s sources
+  for wasm32-wasi against Ubuntu's `wasi-libc`, `libc++-<n>-dev-wasm32`,
+  `libc++abi-<n>-dev-wasm32` and `libclang-rt-<n>-dev-wasm32`, runs them under
+  `node:wasi`, skips naming a missing part, and in CI installs the four for
+  clang 18 through `.github/actions/setup-wasi-sysroot` with
+  `CORES_WASM32=require` (A58). (3) The CAD order's `gen_enclosures.py` line
+  does not say `build.json` carries `hardware.json`'s sets, which is why it
+  runs after `gen_hardware.py` (C3). The packages handed up the exact wording.
+  Found by A50, A58 and C3 (#1832).
 
 ---
 
