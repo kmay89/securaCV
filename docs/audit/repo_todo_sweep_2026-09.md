@@ -3292,7 +3292,7 @@ so — see D2 below.)
   passes its 625 checks. Three comments that still describe the old reset
   (`test_wap_module_boot.cpp`, `csi_settings_nvs.h`) and the U1 rows (a new
   F166-section row, and the two F93 rows F127 makes false) are handed to the
-  integrator. Host-tested; the page is not driven in a browser; the compile is
+  integrator (landed 2026-10-19 by the post-#1802 verification). Host-tested; the page is not driven in a browser; the compile is
   CI's; not bench-tested.
 - [ ] **F315 [code] The dashboard does not say when stored thresholds override
   its preset.** Since F166 the calibration status carries `current_source`
@@ -11122,7 +11122,8 @@ so — see D2 below.)
   integrated tree. The Vision README and the flavor file's header say which
   header owns what and name the five seeds. A `firmware/CONFIG_CHANGES.md`
   entry for the removal and two pointer lines in the flavor directory's README
-  are handed to the integrator. Dist: no deleted macro was read, so no
+  are handed to the integrator (landed 2026-10-19 by the post-#1802
+  verification). Dist: no deleted macro was read, so no
   compiled byte moves. Host-tested; the ESP32 compiles are CI's; not
   bench-tested. Found here: F313.
 - [ ] **F313 [code] Repoint the Vision flavor seeds' readers and drop the
@@ -11379,8 +11380,9 @@ so — see D2 below.)
   test_*.d)` in canary-wap's, last so no rule in them can become the default
   goal) and gives every source they name an empty rule, as `-MP` gives each
   header, so a header or source moved since is a rebuild and not "No rule
-  to make target". The hand-kept header lists are gone, `VISCORE_HDR` and
-  `BT_CMD_DEPS` among them, and an edit to `arduino_globals.h` rebuilds
+  to make target". The hand-kept header lists are gone (`VISCORE_HDR`, and the
+  fifteen headers `BT_CMD_DEPS` used to spell out; that variable stays as the
+  suite's source list), and an edit to `arduino_globals.h` rebuilds
   every canary-wap suite. `scripts/tests/test_vision_core_make_deps.py` (six
   cases over both Makefiles) holds it to the two tools that decide, not to a
   list: make's plan (`make -n -B --trace`) for every compile of the default
@@ -11550,7 +11552,8 @@ so — see D2 below.)
   including that a node alone on the bus goes error-passive and never bus-off,
   so a bench drives bus-off with another node on the bus;
   `board_capability_map_43b.md`, which still says nothing recovers a bus-off
-  controller, has its replacement handed to the integrator. Host-tested; the
+  controller, has its replacement handed to the integrator (landed 2026-10-19
+  by the post-#1802 verification). Host-tested; the
   ESP32 compile of dash-can is CI's; recovery on a real bus is not
   bench-tested (U1). Found here: A109 (the Lab's playground sim).
 - [x] **F291 [code] A Modbus exception reply reads as no reply after the full
@@ -15151,8 +15154,8 @@ so — see D2 below.)
   replay cases, the three voice answers, and in the monorepo the placeholder
   held to `test_csi_event_wire.cpp`'s own pin); 17 fail on the old sensor and
   7 on the first, broader version, and all 30 pass on the integrated tree. The
-  Last Event row of `docs/homeassistant_setup.md` is handed to the integrator.
-  Host-tested on the stubbed Home Assistant harness; `tests/ha` is CI's; not
+  Last Event row of `docs/homeassistant_setup.md` is handed to the integrator
+  (landed 2026-10-19 by the post-#1802 verification). Host-tested on the stubbed Home Assistant harness; `tests/ha` is CI's; not
   seen in a running Home Assistant. `sensor.py` and the new test reach the
   HACS mirror with the carry that follows #1802's merge (U6). Found here:
   HA40, HA41, HA42, HA43.

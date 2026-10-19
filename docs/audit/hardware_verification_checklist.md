@@ -1149,7 +1149,9 @@ Code: `mesh_session.cpp` (`execute_request`'s PAIR_JOIN refusal,
 OPERA_EXISTS; the one signed `HEARTBEAT` after NOTIFY_PAIRED and on the
 first `process()` pass after a boot that bound a member),
 `handle_mesh_pair_join` (409 `opera_exists`) and the peers handler
-(`mesh_api::peer_views_from_status`) in `main.cpp`, and the kernel wizard's
+(`mesh_api::peer_views_from_status`) in
+`firmware/canary/lib/securacv_network/src/securacv_network.cpp`, and the
+kernel wizard's
 `meshEndAtTimeout` (F215). Host-tested (`test_mesh_session`,
 `test_mesh_pairing`, `check_canary_mesh_status.py`,
 `test_canary_mesh_status_wiring.py`, `test_wizard_mesh_pairing.test.js`);

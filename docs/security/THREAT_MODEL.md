@@ -986,8 +986,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     (registry 16, empty payload) to bound members only, right after
     NOTIFY_PAIRED and once on the first pass after a boot that bound a
     member; never to a pairing partner that is not a member, and never on
-    a timer (a recurring heartbeat was rejected as a new periodic RF
-    pattern, F324). A receiver handles it as any verified opera frame; it
+    a timer (a recurring heartbeat would be a new periodic RF pattern;
+    whether to add one is the maintainer's open call, F324). A receiver handles it as any verified opera frame; it
     discloses nothing an opera frame does not.
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the

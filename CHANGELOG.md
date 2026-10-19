@@ -493,7 +493,8 @@ Home Assistant was seen.
   with `-MM` after the compile), and the end of each Makefile reads the files
   back (`-include $(wildcard ...*.d)`) with an empty rule for every source
   they name, so a header or source moved since is a rebuild and not an
-  error. The hand-kept header lists (`VISCORE_HDR`, `BT_CMD_DEPS`) are gone,
+  error. The hand-kept header lists (`VISCORE_HDR`, and the headers
+  `BT_CMD_DEPS` used to spell out) are gone,
   and an edit to `arduino_globals.h` rebuilds every canary-wap suite.
   `scripts/tests/test_vision_core_make_deps.py` (six cases over both
   Makefiles) builds every target in a scratch copy of each tests_host

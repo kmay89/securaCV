@@ -1678,7 +1678,7 @@
   the STA address or the `.local` name), never the SoftAP address
   (amended 2026-10-19: since F255 the fallback is `receipt_authority.h`'s
   choice — the SoftAP address for a caller on the setup network, else the
-  `.local` name — and the `Host` is kept only when it is an IP literal or
+  `.local` name, or the STA's own address when the device has no name — and the `Host` is kept only when it is an IP literal or
   one of the device's own names; the post-#1802 verification settled that
   after #1802's merge had kept no `Host` at all). The
   wizard's idle restart is not due while the door is open
