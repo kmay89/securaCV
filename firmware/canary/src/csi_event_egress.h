@@ -100,11 +100,14 @@ void csi_event_egress_begin(void);
  * FEATURE_HA_MQTT. */
 void csi_event_egress_pump(void);
 
-/* Loop task, right before a planned restart (sweep F92): main.cpp's
- * deliberate_restart_now() (POST /api/reboot, deferred to the loop, and the
- * serial 'x'), ahead of the chain persist and the MQTT disconnect. Commits
- * every open CSI bundle now (csi_event_flush_bundles(): each takes its event
- * id and queues here), then runs csi_event_egress_pump() until the egress
+/* Loop task, right before a planned restart (sweep F92), through main.cpp's
+ * flush_events_before_restart(): deliberate_restart_now() (POST /api/reboot,
+ * deferred to the loop, and the serial 'x'), ahead of the chain persist and
+ * the MQTT disconnect, and setup's restart once Wi-Fi joins. Pumps the
+ * egress queue empty first (it is as deep as the bundler has slots, so a
+ * full slot table closing onto queued rows would overflow it), then commits
+ * every open CSI bundle (csi_event_flush_bundles(): each takes its event id
+ * and queues here), then runs csi_event_egress_pump() until the egress
  * queue is empty and the RAM hold has gone (onto the card, or to the MQTT
  * layer), or budget_ms has passed, whichever is first, with a short delay
  * between passes. Bounded: a broker that does not answer, a hold waiting
@@ -112,9 +115,11 @@ void csi_event_egress_pump(void);
  * and no more (each pass is the loop's own pump, as bounded as on any pass;
  * the caller resets the watchdog first). What is still in the queue or the
  * hold then is lost to the restart, as before, and the MQTT layer's offline
- * queue is RAM too; rows on the card stay owed. Returns true when the queue
- * and the hold were empty. Without FEATURE_HA_MQTT it only commits the
- * bundles (nothing leaves the device). */
+ * queue is RAM too. Rows on the card stay owed, but for up to kStride ids a
+ * walk in progress had already covered with its NVS ceiling (F47's trade:
+ * the next boot reads them as delivered). Returns true when the queue and
+ * the hold were empty. Without FEATURE_HA_MQTT it only commits the bundles
+ * (nothing leaves the device). */
 bool csi_event_egress_flush_for_restart(uint32_t budget_ms);
 
 #ifdef CSI_TEST_HOST_BUILD

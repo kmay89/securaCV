@@ -691,6 +691,21 @@ extern "C" void csi_event_egress_pump(void) {
 }
 
 extern "C" bool csi_event_egress_flush_for_restart(uint32_t budget_ms) {
+#if FEATURE_HA_MQTT
+  const uint32_t start = millis();
+  /* First the queue the flush commits into. It holds kQueueDepth rows, as
+   * many as the bundler has slots (csi_bundler.cpp's CSI_BUNDLER_SLOTS), so
+   * a full slot table closing onto rows still queued would find it full:
+   * the last commits would be refused, counted in `dropped`, and lost with
+   * the counter at the restart, though witnessed and in the ring (sweep
+   * F92's review). The pump takes up to kPumpBudget rows a pass, whatever
+   * the link (onto the card, into the hold, or out), so this is a pass or
+   * two. The canary-wap's queue is sixteen deep and needs no such pass. */
+  while (s_queue && uxQueueMessagesWaiting(s_queue) > 0 &&
+         (uint32_t)(millis() - start) < budget_ms) {
+    csi_event_egress_pump();
+  }
+#endif
   /* Every open bundle closes and commits now, on this task: each takes its
    * event id, and the commit hook above queues it for the pump. */
   csi_event_flush_bundles();
@@ -701,7 +716,6 @@ extern "C" bool csi_event_egress_flush_for_restart(uint32_t budget_ms) {
    * (owed across the restart) and out when the link is up; a held row goes
    * when nothing older waits. The delay lets the network stack move the
    * bytes and keeps the pass count bounded by the budget. */
-  const uint32_t start = millis();
   for (;;) {
     csi_event_egress_pump();
     const bool drained = uxQueueMessagesWaiting(s_queue) == 0 && s_hold.count == 0;

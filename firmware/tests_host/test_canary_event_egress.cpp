@@ -63,7 +63,12 @@
  * on the card for the next boot's backfill; and a row that cannot go costs
  * it the budget and no more. Each fails with the helper's body a bare
  * `return true;` (the restart as it was), and with only one of its halves
- * (the flush, the drain).
+ * (the flush, the drain). F92's review added a restart with three rows
+ * queued and all eight bundle slots open: the queue is eight deep, so the
+ * helper drains it before it flushes, and eleven rows are more than a pump
+ * pass takes. It fails on the helper before the review (three bundles
+ * refused by the full queue), without that first drain, and with the
+ * drained test reduced to the hold (rows left queued).
  *
  * F103's review added a line that lands without its newline: its append
  * fails, so the row waits in the hold, and the next append seals the line,
@@ -1495,6 +1500,41 @@ static void test_a_planned_restart_in_an_outage_keeps_the_bundle_owed() {
         "after the restart the backfill sends it, as a replay");
 }
 
+/* Sweep F92's review: the egress queue holds eight rows, as many as the
+ * bundler has slots, and the flush commits every open slot at once. With
+ * rows still queued it found the queue full and its last commits were
+ * refused (`dropped`, then lost to the restart), so the helper drains the
+ * queue before it flushes. Eleven rows wait at the restart, more than one
+ * pump pass takes, so the drained test must also see the queue empty, not
+ * just the hold. Fails on the helper before the review (three bundles
+ * dropped), and with its drained test reduced to the hold. */
+static void test_a_planned_restart_with_every_slot_open_drops_nothing() {
+  std::printf("-- F92: a planned restart with rows queued and every bundle slot open loses none\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) ids.push_back(emit_ping());   // committed, no pump between
+  int opened = 0;
+  for (int i = 0; i < 8; ++i) {
+    const std::string state = "s" + std::to_string(i);
+    if (open_bundle(state.c_str()) != 0) opened++;
+  }
+  CHECK(opened == 8, "eight bundles open, one per slot");
+  const uint32_t next = csi_event_get_next_event_id();
+  for (uint32_t k = 0; k < 8; ++k) ids.push_back(next + k);
+  CHECK(csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs),
+        "the flush drains: nothing is left in the queue or the hold");
+  CHECK(csi_event_get_next_event_id() == next + 8, "the eight bundles committed");
+  CHECK(csi_event_egress_stats().dropped == 0, "the egress queue refused none of them");
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "all eleven reach HA before the restart, in id order");
+  boot();
+  connect();
+  drain(40);
+  CHECK(W.wire.size() == ids.size(), "after the restart nothing is sent twice");
+}
+
 /* The drain is bounded: a row that cannot go (here, one held for a card
  * that may still mount, the first 45 s after boot) costs the budget, about
  * a second, and the restart goes on. */
@@ -1551,6 +1591,7 @@ int main() {
   test_ambient_lines_an_older_firmware_logged_are_not_replayed();
   test_a_planned_restart_delivers_the_open_bundle();
   test_a_planned_restart_in_an_outage_keeps_the_bundle_owed();
+  test_a_planned_restart_with_every_slot_open_drops_nothing();
   test_a_planned_restart_is_bounded();
   test_broker_change_before_the_card_opens();
   test_card_closes_long_after_boot();
