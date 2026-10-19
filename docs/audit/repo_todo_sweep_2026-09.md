@@ -3755,10 +3755,13 @@ so — see D2 below.)
   pumps its queue empty first too, on the same clock as the rest of the
   budget, because more than eight rows can already wait in its sixteen (a
   burst committed between two loop pumps, a restart before the loop's first
-  pump) and the eight closes dropped the excess, and a sixth scenario in
+  pump) and the eight closes dropped the excess; a sixth scenario in
   `test_wap_event_egress.cpp` (twelve rows queued and every slot open, with
   the link up and in an outage) fails 7 checks on the flush before it (four
-  bundles refused each time).
+  bundles refused each time), and since that pass sends the eleven-row
+  scenario's queued rows before the closes, on the canary-wap it is a
+  seventh (a row committed during the flush beside the eight closes) that
+  fails, 3 checks, with the drained test reduced to the hold.
 - [ ] **F355 [decision] The restarts and sleeps that still flush no open
   bundle.** The canary's `setup_check_timeout()` (`securacv_setup.cpp`) and
   the canary-wap's `setup_wizard::check_timeout()` restart from inside the

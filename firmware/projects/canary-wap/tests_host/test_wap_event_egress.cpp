@@ -82,11 +82,15 @@
  * `return true;` (the restart as it was), and the first three with only one
  * of its halves (the flush, the drain). F92's review added a restart with
  * three rows queued and all eight bundle slots open, more than a pump pass
- * takes: it fails with the drained test reduced to the RAM hold. Its
+ * took then: it failed with the drained test reduced to the RAM hold. Its
  * second review (#1836) added one with twelve rows queued, more than the
  * sixteen-deep queue holds beside eight closes: it fails 7 checks on the
  * flush before the pass that pumps the queue empty first (fabc2411), four
- * bundles refused with the link up and four in an outage.
+ * bundles refused with the link up and four in an outage. That pass sends
+ * the three queued rows before the closes, so the three-row scenario passes
+ * with the drained test reduced to the hold; the second review's other
+ * addition, a row committed during the flush beside the eight closes, fails
+ * with it.
  * Built with -DEGRESS_BEFORE_REVIEW against the egress and card sources the
  * review fixes replaced, the late-card, closed-card, broker-change, ambient
  * and dismissal-wait scenarios fail.
@@ -1620,12 +1624,14 @@ static void test_a_planned_restart_with_no_card_sends_it_live() {
 }
 
 /* Sweep F92's review: the flush commits every open slot at once, and with
- * rows already queued that is more than one pump pass takes (eight), so
- * the drained test must see the queue empty, not just the RAM hold. Three
- * queued rows and eight closes fit the sixteen-deep queue even without the
- * pass that empties it first; the next scenario queues more than eight.
- * Fails with the drained test reduced to the hold (three rows left queued
- * and lost to the restart). */
+ * rows already queued that was more than one pump pass takes (eight), so
+ * the drained test must see the queue empty, not just the RAM hold. Since
+ * its second review the flush pumps the three queued rows out before the
+ * closes, so one pass takes the eight and this scenario no longer holds
+ * that half of the drained test: the one after next does, with a row
+ * committed during the flush. Three queued rows and eight closes fit the
+ * sixteen-deep queue even without the pass that empties it first; the next
+ * scenario queues more than eight. */
 static void test_a_planned_restart_with_every_slot_open_drops_nothing() {
   printf("-- a planned restart with rows queued and every bundle slot open loses none (F92)\n");
   fresh_device();
@@ -1702,6 +1708,44 @@ static void test_a_planned_restart_onto_a_deep_queue_drops_nothing() {
           up ? "after the restart nothing is sent twice"
              : "after the restart the backfill sends all twenty, once each, in id order");
   }
+}
+
+/* Sweep F92's second review: with the queue emptied before the closes,
+ * what one pump pass can leave in it is a row committed during the flush
+ * (another task's commit, modeled from inside the first bundle's publish,
+ * as the backfill-walk scenario models one). Eight closes and that row are
+ * nine, one more than a pass takes, so the drained test must still see the
+ * queue empty, not just the RAM hold. Fails with the drained test reduced
+ * to the hold (that row left queued and lost to the restart). */
+static void test_a_planned_restart_drains_a_row_committed_during_it() {
+  printf("-- a row committed during a planned restart's flush is drained with the bundles (F92)\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  int opened = 0;
+  for (int i = 0; i < 8; ++i) {
+    const std::string state = "s" + std::to_string(i);
+    if (open_bundle(state.c_str()) != 0) opened++;
+  }
+  CHECK(opened == 8, "eight bundles open, one per slot");
+  const uint32_t next = csi_event_get_next_event_id();
+  uint32_t late = 0;
+  W.after_publish = [&late](uint32_t) { late = emit_ping(); };   // fires once, on the first publish
+  CHECK(csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs),
+        "the flush drains: nothing is left in the queue or the hold");
+  CHECK(late == next + 8, "a row committed during the flush, after the eight bundles");
+  std::vector<uint32_t> ids;
+  for (uint32_t k = 0; k <= 8; ++k) ids.push_back(next + k);
+  CHECK(csi_event_egress::stats().dropped == 0, "the egress queue refused none of them");
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "the eight bundles, then the late row, reach HA before the restart, in id order");
+  size_t on_card = 0;
+  for (uint32_t id : ids) on_card += card_lines_for(id);
+  CHECK(on_card == ids.size(), "and each is on the card");
+  boot();
+  connect();
+  drain();
+  CHECK(W.wire.size() == ids.size(), "after the restart nothing is sent twice");
 }
 
 /* The drain is bounded: a row that cannot go (here, one held for a card
@@ -2054,6 +2098,7 @@ int main() {
   test_a_planned_restart_with_no_card_sends_it_live();
   test_a_planned_restart_with_every_slot_open_drops_nothing();
   test_a_planned_restart_onto_a_deep_queue_drops_nothing();
+  test_a_planned_restart_drains_a_row_committed_during_it();
   test_a_planned_restart_is_bounded();
 #ifndef EGRESS_BEFORE_REVIEW
   test_ambient_rows_stay_off_the_card_and_the_broker();
