@@ -1629,7 +1629,9 @@ PairSlot* find_slot(const uint8_t* token) {
  * on / (per pull-request review #392 r3213361582).
  *
  * Each cookie is HttpOnly + SameSite=Strict, so JS can't read it (no XSS
- * exfil) and cross-origin requests can't forge it (no CSRF). Cookie body
+ * exfil) and cross-origin requests can't forge it (no CSRF), and Secure
+ * on an answer from the HTTPS server (canary_wap.ino
+ * session_cookie_header()). Cookie body
  * is 32 bytes hex-encoded — 256-bit entropy, indistinguishable from
  * random by anything an in-page script could observe.
  *
@@ -1686,9 +1688,14 @@ bool find_valid_session(const uint8_t* token) {
 
 /* Read the cv_session cookie out of the Cookie request header.
  * The Cookie header is a single string of "name=value; name=value; ..."
- * pairs. We scan for "cv_session=" and copy out exactly SESSION_TOK_HEX_LEN
- * bytes after it. Returns false on any parse failure (header missing,
- * cookie absent, hex too short / too long). Never sends a response. */
+ * pairs. We find the first cookie NAMED cv_session and copy out exactly
+ * SESSION_TOK_HEX_LEN bytes after its "=". The name is the whole name: it
+ * starts the header or follows a ';' (spaces or tabs between), so another
+ * cookie whose name ends in it ("xcv_session=") or whose value holds it
+ * ("foo=cv_session=") is never read as the session (sweep F289's
+ * residual; tests_host/test_session_cookie.cpp). Returns false on any
+ * parse failure (header missing, cookie absent, hex too short / too long).
+ * Never sends a response. */
 bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (!req || !hex_out) return false;
   const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Cookie");
@@ -1699,9 +1706,17 @@ bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (httpd_req_get_hdr_value_str(req, "Cookie", buf, sizeof(buf)) != ESP_OK) {
     return false;
   }
-  const char* k = strstr(buf, "cv_session=");
+  static const char kName[] = "cv_session=";
+  const char* k = nullptr;
+  for (const char* p = strstr(buf, kName); p; p = strstr(p + 1, kName)) {
+    const char* q = p;
+    while (q > buf && (q[-1] == ' ' || q[-1] == '\t')) --q;
+    if (q == buf || q[-1] == ';') {
+      k = p + (sizeof(kName) - 1);
+      break;
+    }
+  }
   if (!k) return false;
-  k += 11;  /* len("cv_session=") */
   /* Ensure there are exactly SESSION_TOK_HEX_LEN hex chars and the
    * value is terminated by ';' or end-of-string. Anything else is
    * a malformed cookie and we reject it. */
