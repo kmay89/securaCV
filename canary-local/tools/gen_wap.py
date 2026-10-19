@@ -168,8 +168,10 @@ BOARD_NAME_FULL = boards.get("boards", {}).get(BOARD_ID, {}).get("name", "")
 
 # The SoftAP's channel and client cap, and each server's port, are read where
 # the sketch uses them (sweep F277: they were read from wap_server.h, whose
-# copies of them no code used). Every WiFi.softAP() call must pass the
-# two constants, so the page's numbers are the ones on the air.
+# copies of them no code used). Every WiFi.softAP() call must pass the two
+# constants, so the page's numbers are the ones the SoftAP is raised with (the
+# channel follows the router's once the station joins: the sketch runs
+# WIFI_AP_STA).
 AP_CHANNEL = int(grab(INO, r"static const int\s+AP_CHANNEL\s*=\s*(\d+);", "AP_CHANNEL"))
 AP_MAX_CLIENTS = int(grab(INO, r"static const int\s+AP_MAX_CLIENTS\s*=\s*(\d+);", "AP_MAX_CLIENTS"))
 _SOFTAP = [ln.strip() for ln in read(INO).splitlines()
@@ -177,24 +179,56 @@ _SOFTAP = [ln.strip() for ln in read(INO).splitlines()
 if not _SOFTAP or not all(re.search(r"WiFi\.softAP\([^()]*,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);", ln)
                           for ln in _SOFTAP):
     die(f"a WiFi.softAP() call does not pass AP_CHANNEL, false, AP_MAX_CLIENTS on its line: {_SOFTAP}")
+# The ports. A reader that cannot spell a value must refuse it, never fall
+# through to "equal" (CLAUDE.md), so every code line that names a server's
+# port or the TLS transport is read, and each one must be a form read here:
+# a digit-literal write to one of the three configs the sketch starts its
+# servers from, made once. Anything else (a named constant, a cast, a suffix,
+# a second config, a second write, transport_mode) is refused, not skipped.
+# Full-line comments are not code. Any other line that names one of these
+# fields (a trailing comment on a line that is not such a write, say) is
+# refused with its text, which is the safe way to be wrong.
+_INO_CODE = [ln for ln in read(INO).splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))]
+_PORT_WRITE = re.compile(r"\s*(ssl_config\.httpd\.server_port|ssl_config\.port_secure|redirect_config\.server_port"
+                         r"|config\.server_port)\s*=\s*(\d+)\s*;\s*(?://.*)?")
+_SECURE_MODE = re.compile(r"\s*ssl_config\.transport_mode\s*=\s*HTTPD_SSL_TRANSPORT_SECURE\s*;\s*(?://.*)?")
+_PORTS: dict = {}
+for _ln in _INO_CODE:
+    if not re.search(r"\b(server_port|port_secure|port_insecure|transport_mode)\b", _ln):
+        continue
+    if _SECURE_MODE.fullmatch(_ln):
+        continue  # the default, spelled out: port_secure is still what binds
+    _m = _PORT_WRITE.fullmatch(_ln)
+    if not _m:
+        die(f"the sketch sets a server port or the TLS transport in a form this generator cannot read "
+            f"({_ln.strip()!r}): write it as <config>.server_port = <digits>; or "
+            f"ssl_config.port_secure = <digits>; (or teach gen_wap.py the new form)")
+    if _m.group(1) in _PORTS:
+        die(f"the sketch writes {_m.group(1)} twice ({_PORTS[_m.group(1)]} and {_m.group(2)}): "
+            f"write each server's port once")
+    _PORTS[_m.group(1)] = int(_m.group(2))
 # HTTPS: ESP-IDF's httpd_ssl_start() overwrites httpd.server_port with the
 # config's port_secure (HTTPD_SSL_CONFIG_DEFAULT: 443), so the port the sketch
 # writes into httpd.server_port is the page's number only while it is the one
 # bound: port_secure as the sketch sets it, or the default when it does not.
 IDF_PORT_SECURE_DEFAULT = 443  # HTTPD_SSL_CONFIG_DEFAULT()'s port_secure
 must(INO, "httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();", "the HTTPS config starts from IDF's default")
-HTTPS_PORT = int(grab(INO, r"ssl_config\.httpd\.server_port\s*=\s*(\d+);", "the HTTPS server's port"))
-_PORT_SECURE = ([int(x) for x in re.findall(r"ssl_config\.port_secure\s*=\s*(\d+);", read(INO))]
-                or [IDF_PORT_SECURE_DEFAULT])
-if set(_PORT_SECURE) != {HTTPS_PORT}:
+_SSL_STARTS = [ln.strip() for ln in _INO_CODE if "httpd_ssl_start(" in ln]
+if len(_SSL_STARTS) != 1 or not re.search(r"httpd_ssl_start\(&g_https_server,\s*&ssl_config\)", _SSL_STARTS[0]):
+    die(f"expected one httpd_ssl_start() call, starting the HTTPS server from ssl_config: {_SSL_STARTS}")
+if "ssl_config.httpd.server_port" not in _PORTS:
+    die("the HTTPS server's port: no ssl_config.httpd.server_port = <digits>; in the sketch")
+HTTPS_PORT = _PORTS["ssl_config.httpd.server_port"]
+_PORT_SECURE = _PORTS.get("ssl_config.port_secure", IDF_PORT_SECURE_DEFAULT)
+if _PORT_SECURE != HTTPS_PORT:
     die(f"the HTTPS server's httpd.server_port says {HTTPS_PORT}, but httpd_ssl_start() binds "
         f"port_secure, {_PORT_SECURE}: set port_secure to the port the page should name")
 # HTTP: the port-80 server beside HTTPS (redirect_config) and the HTTP-only
 # fallback (config) bind one port, the page's http_port.
-_HTTP_PORTS = re.findall(r"\b(redirect_config|config)\.server_port\s*=\s*(\d+);", read(INO))
-if sorted(n for n, _ in _HTTP_PORTS) != ["config", "redirect_config"] or len({v for _, v in _HTTP_PORTS}) != 1:
+_HTTP_PORTS = {k: v for k, v in _PORTS.items() if k in ("redirect_config.server_port", "config.server_port")}
+if len(_HTTP_PORTS) != 2 or len(set(_HTTP_PORTS.values())) != 1:
     die(f"expected one port for the port-80 redirect server and the HTTP-only fallback, got {_HTTP_PORTS}")
-HTTP_PORT = int(_HTTP_PORTS[0][1])
+HTTP_PORT = _HTTP_PORTS["config.server_port"]
 DEVICE_NAME_MAX = int(grab(SETUP_WIZARD_H, r"DEVICE_NAME_MAX\s*=\s*(\d+)", "DEVICE_NAME_MAX"))
 DNS_PORT = int(grab(SETUP_WIZARD_H, r"DNS_PORT\s*=\s*(\d+)", "DNS_PORT"))
 NVS_NS = grab(SETUP_WIZARD_H, r'prefs\.begin\("([a-z]+)"', "NVS namespace")

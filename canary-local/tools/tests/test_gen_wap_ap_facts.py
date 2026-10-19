@@ -132,6 +132,57 @@ class SketchApFacts(unittest.TestCase):
         self.edit(INO, "ssl_config.httpd.server_port = 443;", "ssl_config.httpd.server_port = 8443;")
         self.assert_refused("httpd_ssl_start() binds port_secure")
 
+    def test_a_port_secure_the_generator_cannot_read_is_refused(self):
+        # Each of these binds 8443 while httpd.server_port still says 443; a
+        # reader that skipped what it could not read would write 443 green.
+        for rhs in ("kWapHttpsPort", "8443U", "(8443)", "(uint16_t)8443", "0x20FB"):
+            with self.subTest(rhs=rhs):
+                self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                          f"ssl_config.httpd.server_port = 443;\n    ssl_config.port_secure = {rhs};")
+                self.assert_refused("in a form this generator cannot read")
+                self.tearDown()
+
+    def test_a_port_secure_on_another_config_is_refused(self):
+        self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                  "ssl_config.httpd.server_port = 443;\n    tls_config.port_secure = 8443;")
+        self.assert_refused("in a form this generator cannot read")
+
+    def test_a_transport_mode_other_than_secure_is_refused(self):
+        # HTTPD_SSL_TRANSPORT_INSECURE binds port_insecure, not port_secure.
+        self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                  "ssl_config.httpd.server_port = 443;\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_INSECURE;")
+        self.assert_refused("in a form this generator cannot read")
+
+    def test_the_default_transport_spelled_out_moves_nothing(self):
+        self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                  "ssl_config.httpd.server_port = 443;\n    ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;")
+        self.assertEqual(self.generate(), self.base)
+
+    def test_a_second_port_write_is_refused(self):
+        self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                  "ssl_config.httpd.server_port = 443;\n    ssl_config.port_secure = 443;\n"
+                  "    ssl_config.port_secure = 8443;")
+        self.assert_refused("writes ssl_config.port_secure twice")
+
+    def test_a_named_server_port_is_refused(self):
+        self.edit(INO, "    config.server_port = 80;", "    config.server_port = HTTP_PORT;")
+        self.assert_refused("in a form this generator cannot read")
+
+    def test_a_comment_line_naming_port_secure_moves_nothing(self):
+        self.edit(INO, "ssl_config.httpd.server_port = 443;",
+                  "ssl_config.httpd.server_port = 443;\n    // httpd_ssl_start() binds port_secure = 8443; here")
+        self.assertEqual(self.generate(), self.base)
+
+    def test_the_https_config_must_start_from_idfs_default(self):
+        # The 443 fallback for an unwritten port_secure is that default's.
+        self.edit(INO, "httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();",
+                  "httpd_ssl_config_t ssl_config = {};")
+        self.assert_refused("the HTTPS config starts from IDF's default")
+
+    def test_an_https_server_started_from_another_config_is_refused(self):
+        self.edit(INO, "httpd_ssl_start(&g_https_server, &ssl_config)", "httpd_ssl_start(&g_https_server, &tls_config)")
+        self.assert_refused("expected one httpd_ssl_start() call")
+
     def test_a_softap_raised_on_another_channel_is_refused(self):
         self.edit(INO, "WiFi.softAP(g_device.ap_ssid, ap_pass, AP_CHANNEL, false, AP_MAX_CLIENTS);",
                   "WiFi.softAP(g_device.ap_ssid, ap_pass, 6, false, AP_MAX_CLIENTS);")

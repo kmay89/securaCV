@@ -93,7 +93,9 @@ test("AP channel, client cap and server ports are the sketch's own (F277)", () =
   };
   assert.strictEqual(data.ap.channel, num(/static const int\s+AP_CHANNEL\s*=\s*(\d+);/, "AP_CHANNEL"));
   assert.strictEqual(data.ap.max_clients, num(/static const int\s+AP_MAX_CLIENTS\s*=\s*(\d+);/, "AP_MAX_CLIENTS"));
-  for (const line of ino.split("\n").filter((l) => l.includes("WiFi.softAP(") && !/^\s*(\/\/|\*)/.test(l))) {
+  const softAps = ino.split("\n").filter((l) => l.includes("WiFi.softAP(") && !/^\s*(\/\/|\/?\*)/.test(l));
+  assert.ok(softAps.length > 0, "no WiFi.softAP() call found in canary_wap.ino");
+  for (const line of softAps) {
     assert.match(line, /,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);/, "a SoftAP raised without the two constants");
   }
   assert.strictEqual(data.ap.https_port, num(/ssl_config\.httpd\.server_port\s*=\s*(\d+);/, "the HTTPS server's port"));
