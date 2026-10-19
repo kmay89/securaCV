@@ -3278,6 +3278,18 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("a recorded builder is renamed, leaving its record behind",
      raw_in(f"{SKETCH}/wap_diagnostics.h", "inline size_t build_json(const Inputs& in, const csi_event_egress::Stats* egress,",
             "inline size_t build_json2(const Inputs& in, const csi_event_egress::Stats* egress,")),
+    # The rename above also leaves an unrecorded builder behind, which a second rule
+    # refuses; here the recorded builder spells no JSON text at all, so only the
+    # stale-record rule can refuse it.
+    ("a recorded builder stops spelling its JSON text, leaving its record behind",
+     raw_in(f"{SKETCH}/witness_store.h",
+            "  const int n = snprintf(buf, buflen,\n"
+            "                         \"{\\\"v\\\":1,\\\"seq\\\":%u,\\\"tb\\\":%u,\\\"type\\\":%u,\"\n"
+            "                         \"\\\"ph\\\":\\\"%s\\\",\\\"prev\\\":\\\"%s\\\",\\\"ch\\\":\\\"%s\\\",\"\n"
+            "                         \"\\\"sig\\\":\\\"%s\\\"}\\n\",\n"
+            "                         (unsigned)seq, (unsigned)time_bucket,\n"
+            "                         (unsigned)type, ph, prev, ch, sig);\n",
+            "  const int n = 0;\n")),
     ("a new card line writes a raw char array",
      add_file(f"{SKETCH}/zz_card_line.h",
               "inline int zz_line(char* out, size_t cap, const char label[24]) {\n"
