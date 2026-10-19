@@ -127,10 +127,12 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. See
   `docs/audit/repo_todo_sweep_2026-09.md` F289. Its follow-up: the receipt's
   bearer grant counts a wrong token toward the lockout
-  (`api_auth_bearer_grant`), and the session can no longer send the stored
-  broker password to a broker of its choosing: a `POST /api/mqtt/config` that
-  keeps the password while changing where it goes takes the bearer. Also
-  host-tested only.)*
+  (`api_auth_bearer_grant`), and a `POST /api/mqtt/config` that keeps the
+  stored broker password while changing where it goes takes the bearer, so
+  the session can no longer send that password to a broker of its choosing
+  through that route. Still open: the camera's QR provisioning re-point
+  (`qr_scan_task_fn`) keeps the stored user and password when a scanned SCV1
+  code moves the broker host. Also host-tested only.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the

@@ -2554,7 +2554,7 @@
   could read the secret without any route ever answering it (the F289
   follow-up, shown by the re-init host test's fake client recording the
   password it was configured with). The flagship's `credential_carry` had
-  refused the same carry to a new host or port since wave 8; the WAP's
+  refused the same carry to a new host or port since wave 7 (#1691); the WAP's
   handler had no such rule.
 - **Root cause:** "write-only" was checked on the answer and not on the
   destination. Changing where a kept secret goes is a read of that secret
@@ -2573,10 +2573,13 @@
   drives the real `csi_mqtt.cpp`: ten move bodies on a session are refused
   and no client is ever given the stored password for another URI; the
   saves that keep it home, the wizard's shape and first boot are served;
-  the bearer moves it. `check_route_security.py` holds `config_save()` to
-  a bearer-only re-point gate and every answer that carries a secret (the
-  token, the SoftAP password, the TLS pin, the broker password) to a
-  bearer-only gate, never an any-session one. Rule for the next setting:
+  the bearer moves it. `check_route_security.py` holds every answer that
+  carries a secret (the token, the SoftAP password, the TLS pin) to a
+  bearer-only gate, never an any-session one; it lets only the functions
+  that store, load or use the broker password name it, and requires the
+  save to sit behind a returning bearer refusal. That half is a check of
+  the code's shape: what counts as a move is the host test's. Rule for the
+  next setting:
   for each stored secret, list every field that decides where it is sent.
   Each of those fields is as sensitive as the secret. The QR provisioning
   re-point (`qr_scan_task_fn`) has the same shape and is not covered by

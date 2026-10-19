@@ -334,8 +334,13 @@ covers the broker password the WAP keeps for its MQTT bridge: it is
 write-only, and a save that keeps it while changing where it goes (a new
 broker host, port, user or encryption setting, or any CA) takes the bearer
 token too, so a session alone is asked to type the password again (`403
-password_needed`) and cannot point the bridge at a listener of its own to
-collect it. A wrong bearer on the receipt counts toward the same lockout as
+password_needed`) and cannot use that route to point the bridge at a
+listener of its own and collect it. Not covered by that gate, and open: the
+camera's QR provisioning re-point, where an SCV1 code that names a hub host,
+scanned while a scan a landing-page session or pair token started is
+running (or during the unprovisioned boot scan), moves the broker host and
+port and keeps the stored user and password (the code has to be held in
+the camera's view). A wrong bearer on the receipt counts toward the same lockout as
 the admin routes, and the session cookie itself is `HttpOnly`,
 `SameSite=Strict`, and `Secure` whenever it is set over HTTPS (the
 first-boot setup runs plain HTTP, where a `Secure` cookie would be
