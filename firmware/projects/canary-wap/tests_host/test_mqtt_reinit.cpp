@@ -49,6 +49,12 @@
 // publish's event-id space warning (sweep F82): `event_id_space_low` comes
 // up once the allocator reaches kHoldLimit, and stays up after a wrap.
 //
+// And where the stored broker password goes (sweep F289): a config POST
+// that keeps it and moves it (a new host, port, user, TLS mode or CA) takes
+// only the bearer token, never a dashboard session alone, which the landing
+// page mints for any caller on the home network. The session is a stand-in
+// (session::cookie below); api_auth.h's bearer check is the real one.
+//
 // Run: ./test_mqtt_reinit [name]
 
 #include "csi_mqtt.h"
@@ -89,6 +95,8 @@ struct esp_mqtt_client {
   std::string uri;
   std::string will_topic;
   std::string certificate;     // broker.verification.certificate, as configured
+  std::string username;        // credentials.username, as configured (sweep F289)
+  std::string password;        // credentials.authentication.password, as configured
   int network_timeout_ms = 0;  // as configured; 0 or less is esp_mqtt's 10 s
   bool connected = false;      // esp_mqtt's own view: CONNECTED until aborted
 };
@@ -227,6 +235,9 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->uri = config->broker.address.uri ? config->broker.address.uri : "";
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
   c->certificate = config->broker.verification.certificate ? config->broker.verification.certificate : "";
+  c->username = config->credentials.username ? config->credentials.username : "";
+  c->password = config->credentials.authentication.password
+                    ? config->credentials.authentication.password : "";
   c->network_timeout_ms = config->network.timeout_ms;
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
@@ -332,8 +343,17 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
 
 // ── What the sketch links in on a device ────────────────────────────────
 
+// Whether the request carries a live dashboard session (a cv_session
+// cookie), as csi_integration::session_validate_cookie() would answer for it.
+// The landing page at / mints one for any caller on the home network, so a
+// session is no proof of holding the token (sweep F289). Every test starts
+// with one (boot_with_broker()), as the /mqtt page's browser has.
+namespace session {
+bool cookie = true;
+}  // namespace session
+
 namespace csi_integration {
-bool session_validate_cookie(httpd_req_t*) { return true; }
+bool session_validate_cookie(httpd_req_t*) { return session::cookie; }
 void add_outbound_bytes(uint32_t) {}
 void hex_encode(const uint8_t* in, size_t len, char* out) {
   static const char k[] = "0123456789abcdef";
@@ -472,9 +492,12 @@ void power_cycle() {
 // A device whose bridge is enabled for `host`, booted: setup() gives the
 // bridge its identity and start_http_server() runs the boot init(), both
 // on the loop task; then the esp_mqtt task connects.
-void boot_with_broker(const char* host, bool connect = true) {
+void boot_with_broker(const char* host, bool connect = true, const char* user = "",
+                      const char* pass = "") {
   power_cycle();
   fake::reset();
+  session::cookie = true;   // a dashboard session, and no bearer token set
+  csi_mqtt::set_api_token_provider(nullptr);
   stub_nvs().clear();
   stub_mqtt::on_delay = nullptr;
   stub_mqtt::tasks.clear();
@@ -487,6 +510,8 @@ void boot_with_broker(const char* host, bool connect = true) {
   csi_mqtt::config_load(&c);
   c.enabled = true;
   strcpy(c.host, host);
+  strcpy(c.user, user);
+  strcpy(c.pass, pass);
   CHECK(csi_mqtt::config_save(c));
   csi_mqtt::set_identity(kDeviceId, "2.4.15-wap", "ab");
   CHECK(csi_mqtt::init(kDeviceId, "2.4.15-wap", "ab"));
@@ -553,6 +578,8 @@ struct Wire {
   size_t content_len = 0;
 };
 Wire g_wire;
+// The request headers the next http() call sends (taken, then cleared).
+std::map<std::string, std::string> g_next_req_hdrs;
 Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned turn_at,
           std::function<void(unsigned)> on_delay = nullptr, bool workers = true) {
   Http h;
@@ -560,6 +587,8 @@ Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned 
   h.req.content_len = g_wire.set_len ? g_wire.content_len : body.size();   // IDF: Content-Length
   h.req.recv_plan = g_wire.plan;
   g_wire = Wire{};
+  h.req.req_hdrs = std::move(g_next_req_hdrs);
+  g_next_req_hdrs.clear();
   const uint32_t start = stub_mqtt::now_ms;
   stub_mqtt::on_delay = [&](uint32_t ms) {
     stub_mqtt::now_ms += ms;
@@ -1423,10 +1452,13 @@ void test_the_config_answer_escapes_what_the_page_sent() {
   // every field at its limit, is 622 bytes), so its fixed 800-byte buffer
   // never cut one; an escaped answer can pass it, so the answer's buffer is
   // its measured length. (Kept under the fields' limits: what config_load()
-  // reads back at the limit is F241's.)
+  // reads back at the limit is F241's. The password is sent again: a new
+  // broker and user with a password stored and none sent is F289's refusal.)
   const std::string long_host(120, '\x02'), long_user(60, '\x03');
-  (void)http(csi_mqtt::handle_config_post, "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\"}",
-             /*turn_at=*/1);
+  const Http hl = http(csi_mqtt::handle_config_post,
+                       "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\",\"password\":\"pw\"}",
+                       /*turn_at=*/1);
+  CHECK(hl.req.status == "200 OK");
   const ConfigGet gl = get_config();
   CHECK(gl.h.req.resp.size() > 800);
   json_strict::Value lv;
@@ -1914,6 +1946,250 @@ void test_the_settings_page_limits_each_field() {
   std::printf("PASS the_settings_page_limits_each_field\n");
 }
 
+// ── Where the stored broker password goes (sweep F289) ──────────────────
+//
+// The landing page at / mints a dashboard session (the cv_session cookie)
+// for any caller on the home network, and authorized() takes any session:
+// deliberate LAN posture for the dashboard's own routes. Before this a POST
+// that moved the broker and sent no "password" kept the stored one, so any
+// host on the LAN could point the bridge at a listener of its own (host
+// "evil.example", TLS off) and the re-init handed that listener the owner's
+// broker user and password, in the clear. Now a save that keeps a non-empty
+// stored password and moves it (a new host, port, user or TLS mode, or any
+// CA sent) takes only a real bearer token in the Authorization header; with
+// a session alone it is refused, 403 password_needed with a reason, before
+// anything is saved, and no client is opened. Typing the password again
+// still saves, since the caller then sends its own; so does every save that
+// keeps the password where it was going, and every save with nothing stored.
+
+constexpr char kOwnerBroker[] = "mqtt://10.0.0.1:1883";
+constexpr char kBrokerUser[] = "homeuser";
+constexpr char kBrokerPass[] = "s3cret-broker-pw";
+constexpr char kApiToken[] = "cv_a3f1c09e5b7d42e8a3f1c09e5b7d42e8";
+const char* api_token() { return kApiToken; }
+const char* empty_token() { return ""; }
+
+// The owner's bridge, with a user and a password saved, connected.
+void boot_with_password() {
+  boot_with_broker("10.0.0.1", true, kBrokerUser, kBrokerPass);
+  CHECK(fake::last_client()->uri == kOwnerBroker);
+  CHECK(fake::last_client()->username == kBrokerUser);
+  CHECK(fake::last_client()->password == kBrokerPass);   // the harness sees it
+  fake::calls.clear();
+}
+
+void with_bearer(const std::string& token) {
+  g_next_req_hdrs["Authorization"] = "Bearer " + token;
+}
+
+// Any client, ever opened, that was handed the stored password for a broker
+// other than the owner's.
+bool stored_password_left_home() {
+  for (const esp_mqtt_client* c : fake::clients) {
+    if (c->password == kBrokerPass && c->uri != kOwnerBroker) return true;
+  }
+  return false;
+}
+
+// The stored settings are the owner's, untouched.
+bool stored_settings_are_the_owners() {
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  return c.enabled && std::strcmp(c.host, "10.0.0.1") == 0 && c.port == 1883 &&
+         std::strcmp(c.user, kBrokerUser) == 0 && std::strcmp(c.pass, kBrokerPass) == 0 &&
+         std::strcmp(c.prefix, "securacv") == 0 && c.tls_mode == 0 && stored_ca().empty();
+}
+
+// 403 {"ok":false,"error":"password_needed","reason":"..."}, one JSON object
+// a browser's JSON.parse() takes, the reason a sentence the /mqtt page shows.
+bool refused_for_the_password(const Http& h) {
+  json_strict::Value v;
+  if (h.req.status != "403 Forbidden" || h.req.type != "application/json") return false;
+  if (!json_strict::parse(h.req.resp, &v) || v.kind != json_strict::Value::Object) return false;
+  const json_strict::Value* ok = v.get("ok");
+  const json_strict::Value* error = v.get("error");
+  const json_strict::Value* reason = v.get("reason");
+  return v.keys.size() == 3 && ok && ok->kind == json_strict::Value::Bool && !ok->b && error &&
+         error->kind == json_strict::Value::String && error->text == "password_needed" && reason &&
+         reason->kind == json_strict::Value::String && reason->text.find("password") != std::string::npos;
+}
+
+void test_a_session_cannot_send_the_kept_password_elsewhere() {
+  const std::string ca = pem_of(400, 'A');
+  const std::string moves[] = {
+      "{\"host\":\"evil.example\",\"tls_mode\":0}",   // the sweep's probe
+      "{\"host\":\"evil.example\"}",
+      "{\"port\":1884}",
+      "{\"user\":\"someone-else\"}",
+      "{\"user\":\"\"}",
+      "{\"tls_mode\":1}",
+      "{\"tls\":true}",
+      "{\"ca\":\"" + json_inside(ca + "\n") + "\"}",
+      "{\"ca\":\"\"}",
+      // The /mqtt page's save shape, with only the host changed.
+      "{\"enabled\":true,\"host\":\"evil.example\",\"port\":1883,\"user\":\"homeuser\","
+      "\"prefix\":\"securacv\",\"tls_mode\":0,\"discovery\":true}",
+  };
+  for (const std::string& body : moves) {
+    boot_with_password();
+    const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+    if (!refused_for_the_password(h)) {
+      std::printf("FAIL [%s]: a session moved the kept password: %s %s\n", body.c_str(),
+                  h.req.status.c_str(), h.req.resp.c_str());
+    }
+    CHECK(refused_for_the_password(h));
+    CHECK(stored_settings_are_the_owners());
+    CHECK(fake::count("init") == 0 && fake::count("stop") == 0);   // no client was opened or retired
+    CHECK(!stored_password_left_home());
+    CHECK(fake::last_client()->uri == kOwnerBroker && fake::last_client()->alive);
+  }
+  std::printf("PASS a_session_cannot_send_the_kept_password_elsewhere\n");
+}
+
+void test_a_session_still_saves_what_keeps_the_password_home() {
+  // The /mqtt page's ordinary save: the same broker, user and encryption,
+  // a new prefix and discovery off. Nothing moves the password.
+  boot_with_password();
+  const Http same = http(csi_mqtt::handle_config_post,
+                         "{\"enabled\":true,\"host\":\"10.0.0.1\",\"port\":1883,\"user\":\"homeuser\","
+                         "\"prefix\":\"house\",\"tls_mode\":0,\"discovery\":false}",
+                         /*turn_at=*/1);
+  CHECK(same.req.status == "200 OK" && same.req.resp == "{\"ok\":true}");
+  csi_mqtt::Config c;
+  csi_mqtt::config_load(&c);
+  CHECK(std::strcmp(c.prefix, "house") == 0 && !c.discovery);
+  CHECK(std::strcmp(c.pass, kBrokerPass) == 0);
+  CHECK(fake::last_client()->uri == kOwnerBroker && fake::last_client()->password == kBrokerPass);
+
+  // A prefix alone, and the switch alone, off and on again.
+  for (const char* body : {"{\"prefix\":\"attic\"}", "{\"enabled\":false}", "{\"enabled\":true}"}) {
+    const Http h = http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+    if (h.req.status != "200 OK") std::printf("FAIL [%s]: %s %s\n", body, h.req.status.c_str(), h.req.resp.c_str());
+    CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+  }
+  csi_mqtt::config_load(&c);
+  CHECK(c.enabled && std::strcmp(c.prefix, "attic") == 0 && std::strcmp(c.pass, kBrokerPass) == 0);
+  CHECK(fake::last_client()->uri == kOwnerBroker && fake::last_client()->password == kBrokerPass);
+  CHECK(!stored_password_left_home());
+
+  // A new broker with a password the caller typed: the stored one is
+  // replaced, never sent.
+  const Http typed = http(csi_mqtt::handle_config_post,
+                          "{\"host\":\"evil.example\",\"password\":\"typed-here\"}", /*turn_at=*/1);
+  CHECK(typed.req.status == "200 OK");
+  CHECK(fake::last_client()->uri == "mqtt://evil.example:1883");
+  CHECK(fake::last_client()->password == "typed-here");
+  CHECK(!stored_password_left_home());
+
+  // An empty one clears it: the new broker gets no password at all.
+  boot_with_password();
+  const Http cleared = http(csi_mqtt::handle_config_post,
+                            "{\"host\":\"evil.example\",\"password\":\"\"}", /*turn_at=*/1);
+  CHECK(cleared.req.status == "200 OK");
+  CHECK(fake::last_client()->uri == "mqtt://evil.example:1883");
+  CHECK(fake::last_client()->password.empty());
+  CHECK(!stored_password_left_home());
+
+  // The setup wizard's Home Assistant step (companion_pwa.h) always sends
+  // its password field, empty or not, so it is never asked again.
+  boot_with_password();
+  const Http wizard = http(csi_mqtt::handle_config_post,
+                           "{\"enabled\":true,\"host\":\"broker.lan\",\"port\":1883,\"user\":\"homeuser\","
+                           "\"password\":\"typed-in-the-wizard\"}",
+                           /*turn_at=*/1);
+  CHECK(wizard.req.status == "200 OK");
+  CHECK(fake::last_client()->uri == "mqtt://broker.lan:1883");
+  CHECK(fake::last_client()->password == "typed-in-the-wizard");
+
+  // First boot: nothing stored, nothing to keep. A session sets the broker
+  // up as it always could.
+  boot_with_broker("10.0.0.1");
+  const Http none = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.9\",\"user\":\"u\"}",
+                         /*turn_at=*/1);
+  CHECK(none.req.status == "200 OK");
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.9:1883");
+  CHECK(fake::last_client()->password.empty());
+  power_cycle();
+  stub_nvs().clear();
+  const Http fresh = http(csi_mqtt::handle_config_post,
+                          "{\"enabled\":true,\"host\":\"10.0.0.7\",\"port\":1883,\"user\":\"\","
+                          "\"prefix\":\"securacv\",\"tls_mode\":0,\"discovery\":true}",
+                          /*turn_at=*/1);
+  CHECK(fresh.req.status == "200 OK" && fresh.req.resp == "{\"ok\":true}");
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.7:1883");
+  std::printf("PASS a_session_still_saves_what_keeps_the_password_home\n");
+}
+
+void test_only_the_bearer_moves_the_kept_password() {
+  // The bearer header, beside a session ...
+  boot_with_password();
+  csi_mqtt::set_api_token_provider(api_token);
+  with_bearer(kApiToken);
+  const Http bearer = http(csi_mqtt::handle_config_post, "{\"host\":\"10.0.0.3\"}", /*turn_at=*/1);
+  CHECK(bearer.req.status == "200 OK" && bearer.req.resp == "{\"ok\":true}");
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.3:1883");
+  CHECK(fake::last_client()->username == kBrokerUser);
+  CHECK(fake::last_client()->password == kBrokerPass);
+
+  // ... and with no session at all: a script or an app holding the token.
+  boot_with_password();
+  session::cookie = false;
+  csi_mqtt::set_api_token_provider(api_token);
+  with_bearer(kApiToken);
+  const Http alone = http(csi_mqtt::handle_config_post, "{\"port\":1884,\"tls_mode\":0}", /*turn_at=*/1);
+  CHECK(alone.req.status == "200 OK");
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.1:1884");
+  CHECK(fake::last_client()->password == kBrokerPass);
+
+  // A wrong bearer beside a session is the session: refused.
+  boot_with_password();
+  csi_mqtt::set_api_token_provider(api_token);
+  std::string wrong = kApiToken;
+  wrong.back() = wrong.back() == '0' ? '1' : '0';
+  with_bearer(wrong);
+  const Http bad = http(csi_mqtt::handle_config_post, "{\"host\":\"evil.example\"}", /*turn_at=*/1);
+  CHECK(refused_for_the_password(bad));
+  CHECK(stored_settings_are_the_owners() && !stored_password_left_home());
+
+  // A wrong bearer with no session is no caller at all: the 401 as before.
+  boot_with_password();
+  session::cookie = false;
+  csi_mqtt::set_api_token_provider(api_token);
+  with_bearer(wrong);
+  const Http nobody = http(csi_mqtt::handle_config_post, "{\"host\":\"evil.example\"}", /*turn_at=*/1);
+  CHECK(nobody.req.status == "401 Unauthorized");
+  CHECK(stored_settings_are_the_owners() && !stored_password_left_home());
+
+  // An empty token is no token, whatever the header says ...
+  boot_with_password();
+  csi_mqtt::set_api_token_provider(empty_token);
+  with_bearer("");
+  const Http empty = http(csi_mqtt::handle_config_post, "{\"host\":\"evil.example\"}", /*turn_at=*/1);
+  CHECK(refused_for_the_password(empty));
+  CHECK(stored_settings_are_the_owners() && !stored_password_left_home());
+
+  // ... and neither is a bridge whose token was never registered.
+  boot_with_password();
+  with_bearer(kApiToken);
+  const Http unset = http(csi_mqtt::handle_config_post, "{\"host\":\"evil.example\"}", /*turn_at=*/1);
+  CHECK(refused_for_the_password(unset));
+  CHECK(stored_settings_are_the_owners() && !stored_password_left_home());
+  csi_mqtt::set_api_token_provider(nullptr);
+  std::printf("PASS only_the_bearer_moves_the_kept_password\n");
+}
+
+// The /mqtt page shows the refusal's reason and asks for the password: the
+// page is a browser's, so its save sends the session, and the refusal is
+// what the owner sees there. (wizard_logic.test.js runs the page's save
+// against this answer; here the page is held to the answer's key.)
+void test_the_settings_page_asks_for_the_password() {
+  const Http page = http(csi_mqtt::handle_ui, "", /*turn_at=*/0);
+  CHECK(page.req.status == "200 OK");
+  CHECK(page.req.resp.find("j.error === 'password_needed'") != std::string::npos);
+  CHECK(page.req.resp.find("password.focus()") != std::string::npos);
+  std::printf("PASS the_settings_page_asks_for_the_password\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1956,6 +2232,12 @@ const Test kTests[] = {
     {"the_config_post_reads_a_body_that_arrives_in_pieces",
      test_the_config_post_reads_a_body_that_arrives_in_pieces},
     {"the_config_post_refuses_a_body_past_its_cap", test_the_config_post_refuses_a_body_past_its_cap},
+    {"a_session_cannot_send_the_kept_password_elsewhere",
+     test_a_session_cannot_send_the_kept_password_elsewhere},
+    {"a_session_still_saves_what_keeps_the_password_home",
+     test_a_session_still_saves_what_keeps_the_password_home},
+    {"only_the_bearer_moves_the_kept_password", test_only_the_bearer_moves_the_kept_password},
+    {"the_settings_page_asks_for_the_password", test_the_settings_page_asks_for_the_password},
 };
 
 }  // namespace reinit

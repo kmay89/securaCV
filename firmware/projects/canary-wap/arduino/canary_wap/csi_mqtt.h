@@ -603,7 +603,12 @@ void set_api_token_provider(const char* (*fn)());
 /* HTTP handlers — registered by csi_integration::init alongside the
  * other CSI routes. Auth-gated by either the cv_session cookie or a
  * Bearer header carrying the api_token (the same dual-mode
- * CSI_AUTH_OR_RETURN uses). The /test handler asks the loop task for a
+ * CSI_AUTH_OR_RETURN uses), except a config POST that keeps the stored
+ * broker password and moves it (a new host, port, user, TLS mode or CA):
+ * that one takes only the Bearer header, and a session alone gets 403
+ * {"ok":false,"error":"password_needed","reason":...} before anything is
+ * saved (sweep F289: the landing page mints a session for any caller on
+ * the home network). The /test handler asks the loop task for a
  * reconnect with current NVS settings (request_reinit), waits for it, and
  * reports the broker's reachability within about 4 s, so the dashboard's
  * "Test connection" button gives a real signal rather than a spinner. The

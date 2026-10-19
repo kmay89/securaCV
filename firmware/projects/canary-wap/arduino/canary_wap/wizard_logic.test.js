@@ -335,3 +335,88 @@ describe('the Home Assistant step shows why the device refused a setting (sweep 
     assert.deepEqual(r.asked, ['/api/mqtt/config', '/api/mqtt/test']);
   });
 });
+
+// Sweep F289: POST /api/mqtt/config refuses a save that keeps the stored
+// broker password and moves it (a new host, port, user, TLS mode or CA)
+// unless it carries the bearer token, since the landing page mints the
+// dashboard session for any caller on the home network: 403
+// {"ok":false,"error":"password_needed","reason":...}. The Home Assistant
+// step always sends its password field, empty or typed, so the device never
+// asks it; the /mqtt page sends one only when typed, so it shows the reason
+// and puts the cursor in the password field. (The handler's side is
+// tests_host/test_mqtt_reinit.cpp's, over the real csi_mqtt.cpp.)
+describe('a broker change that keeps the saved password (sweep F289)', () => {
+  const NEEDED = { ok: false, error: 'password_needed',
+                   reason: 'type the broker password again to change the broker, the user or the encryption' };
+
+  it('the Home Assistant step always sends a password, so the device never asks it', async () => {
+    const src = fs.readFileSync(PWA, 'utf8');
+    const m = src.match(/\$w\('wiz-ha-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
+    assert.ok(m, 'the wiz-ha-save handler was not found in companion_pwa.h');
+    const els = {};
+    const $w = (id) => (els[id] = els[id] || { value: '', textContent: '', style: {}, disabled: false });
+    $w('wiz-ha-host').value = 'broker.lan';          // the password field left empty
+    const bodies = [];
+    const fetch = async (url, opts) => {
+      if (url === '/api/mqtt/config') bodies.push(JSON.parse(opts.body));
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    await vm.runInNewContext('(' + m[1] + ')', { $w, fetch, JSON, Error, parseInt })();
+    assert.equal(bodies.length, 1);
+    assert.ok(Object.prototype.hasOwnProperty.call(bodies[0], 'password'), JSON.stringify(bodies[0]));
+    assert.equal(bodies[0].password, '');
+  });
+
+  // The /mqtt page's save handler exactly as csi_mqtt.cpp's MQTT_UI_HTML
+  // ships it, run against a device that answers `answer`.
+  function pageSave(answer, typed) {
+    const src = fs.readFileSync(path.join(__dirname, 'csi_mqtt.cpp'), 'utf8');
+    const page = src.match(/MQTT_UI_HTML\[\] PROGMEM = R"HTML\(([\s\S]*?)\)HTML"/);
+    assert.ok(page, 'MQTT_UI_HTML not found in csi_mqtt.cpp');
+    const m = page[1].match(/f\.addEventListener\('submit', (async \(e\) => \{[\s\S]*?\n\})\);\n/);
+    assert.ok(m, "the /mqtt page's submit handler was not found");
+    const field = (value) => ({ value, checked: false, attrs: {}, focused: 0,
+                                setAttribute(k, v) { this.attrs[k] = v; }, focus() { this.focused++; } });
+    const ctx = {
+      enabled: Object.assign(field(''), { checked: true }), host: field('evil.example'), port: field('1883'),
+      user: field('homeuser'), prefix: field('securacv'), tls_mode: field('0'),
+      discovery: Object.assign(field(''), { checked: true }), password: field(typed || ''),
+      ca_clear: field(''), ca: field(''),
+    };
+    const status = { textContent: '', className: '' };
+    const sent = [];
+    Object.assign(ctx, {
+      JSON, parseInt, setTimeout: () => {}, load: () => {},
+      document: { getElementById: (id) => (id === 'status' ? status : ctx[id]) },
+      cvFetch: async (url, opts) => { sent.push({ url, body: JSON.parse(opts.body) });
+                                      return { ok: answer.status === 200, status: answer.status,
+                                               json: async () => answer.json }; },
+    });
+    return vm.runInNewContext('(' + m[1] + ')', ctx)({ preventDefault() {} })
+      .then(() => ({ status, password: ctx.password, sent }));
+  }
+
+  it('the /mqtt page shows the reason and puts the cursor in the password field', async () => {
+    const r = await pageSave({ status: 403, json: NEEDED });
+    assert.equal(r.sent.length, 1);
+    assert.ok(!('password' in r.sent[0].body), 'the page sends no password it was not given');
+    assert.equal(r.status.textContent, 'Save failed. ' + NEEDED.reason);
+    assert.equal(r.status.className, 'status bad');
+    assert.equal(r.password.focused, 1);
+    assert.equal(r.password.attrs['aria-describedby'], 'status');
+  });
+  it('the /mqtt page leaves the cursor alone on any other answer', async () => {
+    const saved = await pageSave({ status: 200, json: { ok: true } }, 'typed-here');
+    assert.equal(saved.sent[0].body.password, 'typed-here');
+    assert.equal(saved.status.textContent, 'Saved.');
+    assert.equal(saved.password.focused, 0);
+    const other = await pageSave({ status: 400, json: { ok: false, reason: 'host must be at most 128 bytes' } });
+    assert.equal(other.status.textContent, 'Save failed. host must be at most 128 bytes');
+    assert.equal(other.password.focused, 0);
+  });
+  it("the page's copy of the reason is the device's", () => {
+    const src = fs.readFileSync(path.join(__dirname, 'csi_mqtt.cpp'), 'utf8');
+    assert.ok(src.includes('\\"error\\":\\"password_needed\\",\\"reason\\":\\"' + NEEDED.reason + '\\"'),
+              'csi_mqtt.cpp no longer answers ' + JSON.stringify(NEEDED));
+  });
+});
