@@ -437,9 +437,9 @@ for whoever loads it on the home network, so it signs a browser into the
 dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
 token, takes the bearer alone the same way; and a `POST /api/mqtt/config`
 that moves the broker (host, port, TLS mode or CA) while keeping the stored
-broker password — no `password` in the body — takes the bearer alone too, so
-the session cannot send that password to a host it names
-(`403 password_needed`). Host-tested in
+broker password — no `password` in the body — takes the bearer too, or the
+password typed again, so the session cannot send that password to a host it
+names (`403 password_needed`). Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
 the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document

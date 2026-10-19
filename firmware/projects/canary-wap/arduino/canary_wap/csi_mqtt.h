@@ -184,7 +184,8 @@ struct Config {
 };
 
 /* The broker row in NVS, as config_load() reads it back (a stored port of 0
- * as the default for the stored TLS mode, a missing prefix as the default).
+ * as the default for the stored TLS mode, a missing port as 1883, a missing
+ * prefix as the default).
  * config_save() writes it key by key on the caller's task; the loop task's
  * re-init opens no client from a row a save (this, ca_save, config_clear) is
  * still writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep

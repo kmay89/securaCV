@@ -1948,7 +1948,7 @@ void test_the_settings_page_limits_each_field() {
 // when the body carried none, and the loop task's re-init sent it to the new
 // host — in plain text with tls_mode 0. Now a save without a valid bearer
 // that moves the destination (the host; the port, a stored 0 read as the
-// mode's default; the TLS mode; a "ca" key, set or cleared) while the body
+// mode's default and a missing key as 1883; the TLS mode; a "ca" key, set or cleared) while the body
 // carries no "password" key and a password is stored is refused: 403,
 // {"ok":false,"code":"password_needed","reason":...}, nothing saved, no
 // re-init, no secret in the answer (csi_mqtt.cpp's move_needs_password()).
@@ -2271,7 +2271,8 @@ void test_a_bearer_may_move_the_broker_and_keep_its_password() {
   std::printf("PASS a_bearer_may_move_the_broker_and_keep_its_password\n");
 }
 
-// A stored port of 0 is the default for the stored TLS mode. That is
+// A stored port of 0 is the default for the stored TLS mode (a missing key
+// is 1883 in every mode). That is
 // config_load()'s reading, not the gate's: the gate compares the port
 // config_load() read with the one the body left (set only in 1..65535, else
 // the loaded one), so neither side is ever 0 there. What this pins is the

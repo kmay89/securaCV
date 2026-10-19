@@ -1242,8 +1242,8 @@ so — see D2 below.)
   valid bearer (`api_auth_bearer_valid()`, computed once up front) is refused
   when the body carries no `password` key, a password is stored, and the
   destination moves — the host (bytes), the port (both sides as
-  `config_load()` reads them: it reads a stored 0 as the mode's default, and
-  the body sets a port only in 1..65535, so a session's `enabled` toggle on
+  `config_load()` reads them: it reads a stored 0 as the mode's default and a
+  missing key as 1883, and the body sets a port only in 1..65535, so a session's `enabled` toggle on
   a device whose NVS holds port 0 is not refused), the TLS mode in either
   spelling, or a `ca` key, set or cleared; `user`, `prefix`, `enabled` and
   `discovery` alone are not a
