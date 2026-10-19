@@ -1252,7 +1252,7 @@ so — see D2 below.)
   and moves it, needs `bearer_authorized(req, tok)`: a non-empty token and
   `api_auth_bearer_valid()`, the `Authorization: Bearer` header alone,
   constant-time, never the cookie. Otherwise the handler wipes its copy of the
-  password and the body and answers `403`
+  password and its field buffer and answers `403`
   `{"ok":false,"error":"password_needed","reason":"type the broker password
   again to change the broker, the user or the encryption"}` before
   `config_save()`, so no client is opened. A save that keeps the broker
@@ -1298,7 +1298,7 @@ so — see D2 below.)
   beside HTTPS, no cookie from the first-boot setup flow, one spelling and
   both `Set-Cookie` sites. `test_receipt_grant.cpp`'s
   `test_receipt_cookie_secure_over_https_only` holds the tap and the claim (2
-  of 280 checks fail on #1822's sources). Left: a browser that holds the
+  of the 280 checks the suite had then fail on #1822's sources). Left: a browser that holds the
   `Secure` cookie and meets the same unit back on plain HTTP within the
   cookie's day, and the `__Host-` name (F337). Host-tested; the ESP32 compile
   is CI's; nothing ran on a device or in a browser (U1: the second row of the
@@ -1347,9 +1347,12 @@ so — see D2 below.)
   copy and the functions that may keep it named (`MODULE_TOKEN_COPIES`), and
   `csi_mqtt`'s handlers may hand theirs only to a gate. A clean fixture and 21
   planted ones, each failing for its named reason, run before the tree on
-  every run. The tree passes (202 registrations, 25 documented-public);
-  #1822's parent fails with 12 problems (the two F289 routes) and #1822 with 2
-  (the broker save, F325). `function_body()` caches each file's blanked text
+  every run. The tree passes (202 registrations, 25 documented-public). With
+  the rule as it stands at #1832's head, #1822's parent fails with 13 problems
+  (eight on the pairing QR and the receipt, the broker save, and four bearer
+  gates it does not define) and #1822 with 3 (the broker save, and the gates
+  F325 and F329 add, defined nowhere there); the rule as first landed failed
+  them with 12 and 2. `function_body()` caches each file's blanked text
   (no rule changed; about 56 s to 3 s here). It is a text check that matches
   names: a secret reached through a name it does not know, a second copy of
   the token taken inside a function allowed to keep it, or a dead condition in
@@ -1403,8 +1406,10 @@ so — see D2 below.)
   4 fail on the page before the change) drives the page's real sign-in against
   per-route answers: the kit's 403 and the QR's 401 on a cookie page, a held
   token refused on the receipt, the QR and `/api/status` and the next refusal
-  naming no token, and the 429 keeping the token. Host-tested in node; not
-  driven in a browser (U1: the F289 section's receipt row names the copy).
+  naming no token, and the 429 keeping the token. Host-tested in node; the
+  page ships in the firmware through `web_assets_gz.h`, and the ESP32 compile
+  is CI's; nothing ran on a device or in a browser (U1: the F289 section's
+  receipt row names the copy).
 - [x] **F331 [code] canary-wap: an empty device token matches a bearer header
   with no token in it.** `api_auth.h`'s compares took `token_len ==
   strlen("")` and a zero-length constant-time compare as a match, so with an
@@ -1449,12 +1454,16 @@ so — see D2 below.)
   `config_save()` and `request_reinit()`, keeping the stored user and
   password, so the next connect sends them to the host the code names: the
   leak F325 closed on `POST /api/mqtt/config`, by another road. A
-  phone-session scan (`POST /api/wifi/qr-scan`) needs only
-  `qr_scan_request_allowed()`, a `?token=` pair token (which the landing page
-  hands any caller) or `api_auth_check_optional()` (which takes the cookie),
-  and the unprovisioned boot scan (`qr_auto_scan_tick()`, only while Wi-Fi is
-  unconfigured, when a stored broker password is unlikely) needs no request at
-  all; the code has to be held in the camera's view. A product decision: the
+  phone-session scan (`POST /api/wifi/qr-scan`, `handle_qr_scan_start()`)
+  needs only a valid pair token in its body (`pair_token_valid()`), which the
+  landing page hands any caller; `qr_scan_request_allowed()` (a `?token=` pair
+  token or `api_auth_check_optional()`, which takes the cookie) gates only the
+  scan's status and stop, so a cookie alone starts none (`SECURITY_MODEL.md`
+  and `THREAT_MODEL.md` say a landing-page session or a pair token starts
+  one, which is looser than that). The unprovisioned boot scan
+  (`qr_auto_scan_tick()`, only while Wi-Fi is unconfigured, when a stored
+  broker password is unlikely) needs no request at all; the code has to be
+  held in the camera's view. A product decision: the
   display's add-a-canary flow re-points the bridge at the hub, which may or
   may not be the same broker. The smallest fix: when the code's host or port
   differs from the stored one, clear the stored user and password (the code
@@ -1587,10 +1596,11 @@ so — see D2 below.)
   `magic_pairing.md` §3.7 states today's. Found by the F289 follow-up's review
   (#1832).
 - [ ] **F344 [decision] canary-wap checks no Host on the post-setup landing
-  page or the `?cv_pair=` exchange.** After setup the Host is read only in
-  `handle_ui()`'s first-boot wizard branch (`request_host_is_direct()`), so on
-  a unit served over plain HTTP (a build without `esp_https_server`, TLS off,
-  or an HTTPS start that fell back) a DNS-rebinding page might mint its own
+  page or the `?cv_pair=` exchange.** The Host is read only on the first-boot
+  wizard's paths (`handle_ui()`'s setup branch and `request_host_is_direct()`,
+  for the wizard's pair-token re-issue), so after setup, on a unit served
+  over plain HTTP (a build without `esp_https_server`, TLS off, or an HTTPS
+  start that fell back), a DNS-rebinding page might mint its own
   `cv_session` and use every cookie route; `SameSite=Strict` does not stop a
   same-origin page. An HTTPS unit's port-80 redirect and self-signed
   certificate stop it, and the receipt, the QR and the broker move stay
@@ -1656,12 +1666,12 @@ so — see D2 below.)
   review (#1832).
 - [ ] **F349 [decision] canary-wap: `handle_config_post()` wipes its copy of
   the stored broker password on the `password_needed` refusal only.** Since
-  F325 the handler's `config_load()` copy and the body are wiped before that
-  403; its other returns (a refused body, a save) leave the stack copy as
-  every return did before. A holder that wipes on every return was not added:
-  the extra struct inside the handler is parsed by `check_route_security.py`
-  and `check_wap_json_answers.py`, for a property no host test can observe.
-  Decide whether to add it. Found by the F289 follow-up's review (#1832).
+  F325 the handler's `config_load()` copy and its field buffer are wiped
+  before that 403; its other returns (a refused body, a save) leave the stack
+  copy as every return did before. A holder that wipes on every return was
+  not added: the extra struct inside the handler is parsed by
+  `check_route_security.py` and `check_wap_json_answers.py`, for a property no
+  host test can observe. Decide whether to add it. Found by the F289 follow-up's review (#1832).
 
 ### Parity & sub-projects
 

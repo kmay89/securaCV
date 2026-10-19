@@ -33,7 +33,7 @@
   browser if the unit falls back to plain HTTP within its day; the `__Host-`
   name; HSTS).
 - **canary-wap: a wrong bearer on the provisioning receipt is a strike, as on
-  every other bearer route (sweep F329, F331, F332).** Since #1822 the receipt
+  the pairing QR and the admin routes (sweep F329, F331, F332).** Since #1822 the receipt
   compared its bearer silently, so guessing the token there cost nothing while
   the pairing QR and the admin routes backed a guesser off.
   `api_auth_bearer_grant()` keeps the lockout's accounting: a wrong or
@@ -55,8 +55,8 @@
   token. Please re-enter."; it now reads "Your session does not cover this, or
   has ended. Paste the API token, or use BOOT Tap Once.", and a page that sent
   a token keeps the old line. **Host-tested** in node (`recovery_kit.test.js`,
-  32 tests; 4 fail on the page before); `web_assets_gz.h` regenerated; not
-  driven in a browser.
+  32 tests; 4 fail on the page before); `web_assets_gz.h` regenerated; the
+  ESP32 compile is CI's; not run on a device or in a browser.
 - **The WAP's route check holds every answer that carries a secret to a
   bearer-only gate (sweep F328).** `check_route_security.py` carries the
   token, the SoftAP password and the TLS pin up the sketch's call graph to the
@@ -64,10 +64,12 @@
   `api_auth_check_bearer()`, `api_auth_bearer_grant()` or the receipt's
   claim-or-tap refusal, or that names a gate any session passes on the way. In
   `csi_mqtt.cpp` it holds the stored broker password to the four functions
-  that load, save and use it, the broker save to its bearer refusal, and each
-  module's copy of the token to its keepers. It fails #1822's parent (12
-  problems, the two routes F289 closed) and #1822 itself (2, the broker save
-  above), and its 21 planted fixtures each fail for their named reason before
+  that load, save and use it, and the broker save to its bearer refusal; and
+  it holds each module's copy of the token to its keepers. It fails #1822's
+  parent (13 problems: eight on the pairing QR and the receipt, the broker
+  save, and four bearer gates it does not define) and #1822 itself (3: the
+  broker save above, and the gates F325 and F329 add, defined nowhere there),
+  and its 21 planted fixtures each fail for their named reason before
   the tree is read. A static text check that matches names; it now runs in
   seconds (`function_body()` caches its blanking). Filed: F338 (the flagship's
   check has no such rule) and F348.
@@ -362,8 +364,8 @@ All are closed here; none of the code changes is run on a device.
   regenerates. **Host-tested** (Python and node suites, the generator checks);
   nothing printed. C10 stays open. Filed: C21-C24.
 - **Dependency advisories (bullet added 2026-10-19 by #1832's ledger, since
-  #1802 took the bumps without one).** rustls 0.23.46 in all five Rust
-  lockfiles (the root `Cargo.lock`, `desktop/src-tauri`,
+  #1802 took the bumps without one).** rustls 0.23.46 in the five
+  lockfiles that carry it (the root `Cargo.lock`, `desktop/src-tauri`,
   `desktop-lab/src-tauri`, `desktop/flash-engine` and `desktop/hub-io`) for
   RUSTSEC-2026-0346 to -0349; quinn-proto 0.11.19 in the three desktop
   lockfiles that carry it (`desktop/src-tauri`, `desktop-lab/src-tauri`,
