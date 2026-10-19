@@ -845,11 +845,12 @@ void build_root() {
   row_nav("Clock", clock_style_name(gs.clock_style), ID_ROW_CLOCK);
   {
     // The turn the glass wears, not a saved one it could not (F245).
-    char rn[24];
+    char rn[kOrientationValueCap];
     row_nav("Orientation",
             orientation_row_value(
-                orientation_state(gs.rotation, lvgl_port_rotation()), rn,
-                sizeof(rn)),
+                orientation_state(gs.rotation, lvgl_port_rotation(),
+                                  lvgl_port_turn_refused()),
+                rn, sizeof(rn)),
             ID_ROW_DISPLAY);
   }
 #endif
@@ -1138,12 +1139,12 @@ void build_clock() {
 // Preview, taken literally). The bench turns the panel; the software follows.
 // The check sits on the turn the glass WEARS (lvgl_port_rotation()): a glass
 // with no turn buffer refuses a turn and stays landscape, the saved choice
-// is kept for a later start, and the footer says so (orientation_page.h,
-// F245).
+// is kept for a later start, and the footer says so when the port reports
+// the refusal (lvgl_port_turn_refused(); orientation_page.h, F245).
 void build_display() {
   page_begin("Orientation", "Settings");
-  const OrientationState os =
-      orientation_state(settings().rotation, lvgl_port_rotation());
+  const OrientationState os = orientation_state(
+      settings().rotation, lvgl_port_rotation(), lvgl_port_turn_refused());
   group_begin(nullptr);
   for (uint8_t rot : kOrientationRows)
     row_check(orientation_label(rot), nullptr, orientation_row_checked(os, rot),
