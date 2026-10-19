@@ -40,13 +40,13 @@
   decision). A card that mounts late, after a crash boot's tamper row, still
   reloads the Today sheet beneath it. A planned restart (`POST /api/reboot` on
   both, which the canary-wap now serves on its loop task; the canary's serial
-  `x`; the setup and provisioning restarts) commits every open bundle, drains
-  the egress for up to a second and persists the witness chain first; the
-  setup libraries' idle restarts, safe mode's recovery, the low-battery sleep
-  and a credentials reset still do not (F355). **Host-tested** on the real
-  library and egress sources of both trees; `main.cpp` and `canary_wap.ino`
-  compile only in CI, where rules 10 and 13 hold their call sites; not
-  bench-tested. Filed: F355.
+  `x`; the setup and provisioning restarts) empties the egress queue, commits
+  every open bundle, drains the egress (up to a second in all) and persists
+  the witness chain first; the setup libraries' idle restarts, safe mode's
+  recovery, the low-battery sleep and a credentials reset still do not
+  (F355). **Host-tested** on the real library and egress sources of both
+  trees; `main.cpp` and `canary_wap.ino` compile only in CI, where rules 10
+  and 13 hold their call sites; not bench-tested. Filed: F355.
 - **A pairing CONFIRM is bound to its sender's role, on both mesh trees (sweep
   F94).** The CONFIRM hash was the same in both directions, and ESP-NOW does
   not authenticate a source address. So a radio that sent a device's own

@@ -535,17 +535,32 @@ void pump() {
 }
 
 bool flush_for_restart(uint32_t budget_ms) {
+  const uint32_t start = (uint32_t)millis();
+  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
+  /* First the queue the flush commits into, on the same clock as the rest
+   * of the budget. It is sixteen rows deep and the bundler has eight slots
+   * (csi_bundler.cpp's CSI_BUNDLER_SLOTS), but rows can already wait in it
+   * when a restart begins: a burst committed on other tasks between two
+   * loop pumps, or a restart that runs before the loop's first pump. With
+   * more than eight there, a full slot table closing onto them would find
+   * it full: the last commits would be refused, counted in `dropped`, and
+   * lost with the counter at the restart, though witnessed and in the ring
+   * (sweep F92's second review). The pump takes up to kPumpBudget rows a
+   * pass, whatever the link (onto the card, into the RAM hold, or out), so
+   * this is a pass or two. The canary does the same. */
+  while (g_state && q && uxQueueMessagesWaiting(q) > 0 &&
+         (uint32_t)((uint32_t)millis() - start) < budget_ms) {
+    pump();
+  }
   /* Every open bundle closes and commits now, on this task: each takes its
    * event id, and on_committed() queues it for the pump. */
   csi_event_flush_bundles();
-  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
   if (!g_state || !q) return true;
   /* Then the pump, pass after pass, until nothing waits in the queue or the
    * RAM hold, or the budget is spent: a row the card keeps goes onto it
    * (owed across the restart) and out when the link is up; a held row goes
    * when nothing older waits. The delay lets esp_mqtt and the network stack
    * move the bytes and bounds the pass count by the budget. */
-  const uint32_t start = (uint32_t)millis();
   for (;;) {
     pump();
     if (uxQueueMessagesWaiting(q) == 0 && g_state->held_count == 0) return true;

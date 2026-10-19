@@ -700,7 +700,11 @@ extern "C" bool csi_event_egress_flush_for_restart(uint32_t budget_ms) {
    * the counter at the restart, though witnessed and in the ring (sweep
    * F92's review). The pump takes up to kPumpBudget rows a pass, whatever
    * the link (onto the card, into the hold, or out), so this is a pass or
-   * two. The canary-wap's queue is sixteen deep and needs no such pass. */
+   * two. The canary-wap's flush drains its queue first too (F92's second
+   * review): that queue is sixteen deep, twice its slot table, but more
+   * than eight rows can already wait in it when a restart begins (a burst
+   * committed between two loop pumps, a restart before the loop's first
+   * pump). */
   while (s_queue && uxQueueMessagesWaiting(s_queue) > 0 &&
          (uint32_t)(millis() - start) < budget_ms) {
     csi_event_egress_pump();

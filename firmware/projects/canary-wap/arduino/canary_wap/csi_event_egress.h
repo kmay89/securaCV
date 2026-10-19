@@ -124,14 +124,17 @@ constexpr uint32_t kRestartBudgetMs = 1000;
  * flush_events_before_restart(), which POST /api/reboot (deferred to the
  * loop) and the provisioning grace reboot run, each ahead of its chain
  * persist (the flushed bundles' witness records advanced the head).
- * Commits every open CSI bundle now (csi_event_flush_bundles(): each takes
+ * Pumps the queue empty first (more than eight rows can already wait in
+ * it, and a full slot table closing onto them would overflow its sixteen),
+ * then commits every open CSI bundle (csi_event_flush_bundles(): each takes
  * its event id and queues here, its witness record written on this task),
  * then runs pump() until the queue is empty and the RAM hold has gone, or
- * budget_ms has passed, whichever is first, with a short delay between
- * passes. Bounded: a broker that does not answer, a hold waiting for a card
- * or behind a backlog the backfill is still walking costs the budget and no
- * more (each pass is the loop's own pump, as bounded as on any pass; the
- * caller resets the watchdog first). What is still in the queue or the hold
+ * budget_ms has passed since the call (one budget for all three steps),
+ * whichever is first, with a short delay between passes. Bounded: a broker
+ * that does not answer, a hold waiting for a card or behind a backlog the
+ * backfill is still walking costs the budget and no more (each pass is the
+ * loop's own pump, as bounded as on any pass; the caller resets the
+ * watchdog first). What is still in the queue or the hold
  * then is lost to the restart, as before. Rows on the card stay owed, but
  * for up to kStride ids a walk in progress had already covered with its
  * NVS ceiling (F47's trade: the next boot reads them as delivered).
