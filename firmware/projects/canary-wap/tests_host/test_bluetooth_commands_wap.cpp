@@ -5786,25 +5786,35 @@ void test_a_bond_whose_report_never_came_goes_from_the_stacks_record() {
   CHECK(health_says(kUnauthDeleted) == 1 && host_sim::bonds_deleted.size() == 1);
   link_ends(s);
 
-  // The owner's authenticated bonded link and the setup door's encrypted
-  // unbonded one, their reports dropped too: untouched.
+  // The owner's authenticated bonded link, the setup door's encrypted
+  // unbonded one, and a bonded phone's link not encrypted yet (its bond in
+  // the store), their reports dropped too: untouched.
   boot();
   NimBLEConnInfo mine = public_phone(151, 0xF6);
   host_sim::store_bond(mine.getIdAddress(), /*irk=*/false);
   mine.encrypted = mine.authenticated = mine.bonded = true;
   NimBLEConnInfo door = public_phone(152, 0xF7);
   door.encrypted = true;
+  NimBLEConnInfo plain = public_phone(155, 0xFA);
+  host_sim::store_bond(plain.getIdAddress(), /*irk=*/false);
   while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
     on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
   }
-  host_sim::server->peers = {151, 152};
+  host_sim::server->peers = {151, 152, 155};
   host_sim::server->link_up(mine);
   host_sim::server->link_up(door);
+  host_sim::server->link_up(plain);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), plain); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(mine); });
   on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(door); });
   loop_pass();
-  CHECK(NimBLEDevice::isBonded(mine.getIdAddress()) && host_sim::bonds_deleted.empty());
+  CHECK(NimBLEDevice::isBonded(mine.getIdAddress()) && NimBLEDevice::isBonded(plain.getIdAddress()));
+  CHECK(host_sim::bonds_deleted.empty());
   CHECK(host_sim::server->disconnected.empty() && health_says(kUnauthDeleted) == 0);
+  // Nothing is applied for either: the reconcile refuses, it does not report
+  // (an authenticated bond whose report was dropped is not listed here, nor
+  // an unbonded link's failure logged).
+  CHECK(bc::g_paired_count == 0 && health_says("New device paired") == 0 && health_says("Pairing failed") == 0);
 
   // Before the adoption: the dispatcher has no pairing owner yet, so the
   // report goes nowhere; the loop task's adoption refuses the bond.
