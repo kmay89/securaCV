@@ -3030,8 +3030,8 @@ void test_the_worker_never_meets_a_taps_bring_up() {
 // Sweep F259: every tap that brings the stack up waits for the sketch's boot
 // bring-up, saved on or off, in each of its windows, and in safe mode for
 // good. Enable and a settings POST naming "enabled": true answer 503 like
-// Start Advertising and Pair: "has not started yet" (and when) before the
-// gate opens, "still starting" from it until the finalize stage marks the
+// Start Advertising and Pair: "not ready yet; try again" (and when) before
+// the gate opens, "still starting" from it until the finalize stage marks the
 // end, and in safe mode that Bluetooth stays off until a normal boot (the
 // sketch never runs the bring-up there; until F259 Start Advertising and
 // Pair were told it would start within five minutes, and Enable and the
@@ -3045,6 +3045,12 @@ void test_every_tap_waits_for_the_boot_bring_up() {
   const char* const kOn = "{\"enabled\":true}";
   const char* const kPending = bc::boot_bring_up_pending_error();
   const char* const kSafe = bc::boot_bring_up_skipped_error();
+  // The 503 asks for a retry; it promises no start (the review of F259): on
+  // a device saved off the boot bring-up brings up only the stack, and
+  // Bluetooth stays off until the owner taps again (below, after the end).
+  CHECK(std::string(kPending).find("try again") != std::string::npos);
+  CHECK(std::string(kPending).find("it starts") == std::string::npos);
+  CHECK(std::string(kPending).find("not ready yet") != std::string::npos);
   struct Tapper {
     Handler h;
     const char* body;
@@ -5205,6 +5211,29 @@ void test_a_passkey_outside_pairing_mode_is_shown_nowhere() {
   bc::g_pairing.started_ms = host_sim::now_ms;                 // no timeout due this pass
   loop_pass();
   CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && !bc::g_pairing.pin_displayed);
+
+  // After the owner's own completed pairing (PAIR_COMPLETE, where a unit
+  // rests once its owner has paired: the pairing timeout leaves it), and
+  // after a failed one (a wrong PIN confirmed): shut, a stranger's passkey
+  // shown nowhere (the review of F191).
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo mine = public_phone(84, 0xE4);
+  CHECK(pair_through_stack(mine, /*irk=*/false));
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE && !bc::g_owner_pairing_open);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED && bc::g_pairing.state == bc::PAIR_COMPLETE && !bc::g_pairing.pin_displayed);
+  CHECK(health_says(kRefused) == 1 && !health_carries(six_digits(given % bc::PASSKEY_REFUSED)));
+  boot();
+  pairing_awaiting_confirm(135246, link(85, 0xE5));
+  bc::Command wrong = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  wrong.pin = 135247;
+  CHECK(!rest(wrong).r.ok && bc::g_pairing.state == bc::PAIR_FAILED && !bc::g_owner_pairing_open);
+  on_nimble([&] { given = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(given >= bc::PASSKEY_REFUSED && bc::g_pairing.state == bc::PAIR_FAILED && bc::g_pairing.pin_code == 135246);
+  CHECK(health_says(kRefused) == 1);
   std::printf("PASS a_passkey_outside_pairing_mode_is_shown_nowhere\n");
 }
 
@@ -5270,6 +5299,10 @@ void test_an_unauthenticated_bond_is_deleted_and_its_link_dropped() {
   CHECK(host_sim::server->ended_by_unpair.size() == 1 && host_sim::server->ended_by_unpair[0] == 91);
   CHECK(bc::g_paired_count == 0 && host_sim::main_nvs.count("bt_paired") == 0);
   CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && bc::g_owner_pairing_open);
+  uint32_t shown = 0;                                          // the owner's own passkey that follows
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(shown < bc::PASSKEY_REFUSED && bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
   CHECK(health_says(kUnauthDeleted) == 1 && health_level(kUnauthDeleted) == SCV_LOG_WARNING);
   CHECK(health_says("New device paired") == 0 && health_says("Pairing failed") == 0);
   CHECK(!health_names(identity.toString()) && !health_names(phone.getAddress().toString()));
@@ -5287,6 +5320,10 @@ void test_an_unauthenticated_bond_is_deleted_and_its_link_dropped() {
   CHECK(just_works_through_stack(plain, /*irk=*/false));
   CHECK(host_sim::bonds.empty() && bc::g_paired_count == 0 && health_says(kUnauthDeleted) == 1);
   CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 92) == 1);
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE);                 // no pairing to fail, none failed
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(health_says("Pairing timeout") == 0);
 
   // Encrypted by Just Works, no bond (the setup door's profile): no bond to
   // delete and the link stays, as before F191.
@@ -5451,7 +5488,467 @@ void test_the_bond_store_shows_beside_the_list() {
   bc::read_status(&st);
   CHECK(st.bonds_held == 3 && st.bonds_unlisted == 1 && health_says(kLockout) == 3);
   CHECK(health_detail(kLockout) == "1 of 3 bonds unlisted");
+  const Tap one = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(one.body.find("\"bond_store\":{\"held\":3,\"capacity\":3,\"unlisted\":1}") != std::string::npos);
   std::printf("PASS the_bond_store_shows_beside_the_list\n");
+}
+
+// ── The review of F191 and F209 ─────────────────────────────────────────
+
+const char* const kNotShown = "BLE pairing passkey not shown: no pairing mode (Pair in the web UI first)";
+const char* const kRetried = "BLE unauthenticated bond the stack kept: deleted on a retry";
+
+// A Numeric Comparison outside the owner's pairing mode (the review of
+// F191). Before, apply_confirm_passkey() asked the owner whenever Bluetooth
+// was on: with no pairing mode the comparison read PAIR_CONFIRMING, its
+// digits in GET /api/bluetooth, until a pairing timeout that ran from a
+// stale start (logged Pairing timeout), and within a minute of a Pair (the
+// owner's own completed pairing included), with new pairings off, the
+// owner's confirm bonded and listed that phone. Now outside pairing mode,
+// after a completed or a failed pairing, and with new pairings off, the
+// loop task answers no at once, its copy deleted, nothing shown, counted
+// with the passkeys shown nowhere. Inside pairing mode it asks the owner,
+// and a second comparison of it (the phone tried again) replaces the
+// first, as before.
+void test_a_comparison_outside_pairing_mode_asks_nobody() {
+  // No pairing mode, ten minutes after boot.
+  boot();
+  host_sim::now_ms += 600000;
+  NimBLEConnInfo phone = link(86, 0xE6);
+  host_sim::server->peers = {86};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  loop_pass();
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 482913); });
+  CHECK(host_sim::passkey_answers.empty());                   // the host task only posts it
+  loop_pass();
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].task == "loop" && host_sim::passkey_answers[0].handle == 86);
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE && !bc::g_pairing.pin_displayed && bc::g_pairing.pin_code == 0);
+  CHECK(!bc::g_pending_pair_active && bc::g_pending_pair_info == nullptr && host_sim::conn_heap == 0);
+  const Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(answer.body.find("\"pin\"") == std::string::npos && answer.body.find("482913") == std::string::npos);
+  CHECK(health_says(kNotShown) == 1 && health_detail(kNotShown) == "1 since boot");
+  CHECK(health_says("Pairing timeout") == 0 && health_says("BLE pairing PIN — awaiting user confirmation") == 0);
+
+  // After the owner's own completed pairing, within its minute.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo mine = public_phone(87, 0xE7);
+  CHECK(pair_through_stack(mine, /*irk=*/false));
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE && bc::g_paired_count == 1);
+  NimBLEConnInfo stranger = link(88, 0xE8);
+  host_sim::server->link_up(stranger);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(stranger, 111222); });
+  loop_pass();
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].handle == 88 && bc::g_pairing.state == bc::PAIR_COMPLETE);
+  CHECK(!bc::g_pending_pair_active && host_sim::conn_heap == 0 && health_says(kNotShown) == 1);
+
+  // Pairing mode, then new pairings turned off.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  bc::Command off = cmd_of(bc::BT_CMD_SETTINGS);
+  off.settings.allow_pairing = false;
+  off.set_mask = bc::BT_SET_ALLOW_PAIRING;
+  CHECK(rest(off).r.ok && bc::g_pairing.state == bc::PAIR_INITIATED);
+  host_sim::server->link_up(stranger);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(stranger, 333444); });
+  loop_pass();
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && !bc::g_pending_pair_active && host_sim::conn_heap == 0);
+
+  // After a failed pairing (a wrong PIN confirmed).
+  boot();
+  pairing_awaiting_confirm(135246, link(89, 0xE9));
+  bc::Command wrong = cmd_of(bc::BT_CMD_PAIR_CONFIRM);
+  wrong.pin = 135247;
+  CHECK(!rest(wrong).r.ok && bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(host_sim::passkey_answers.size() == 1);                 // the wrong PIN's no
+  host_sim::server->link_up(stranger);
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(stranger, 555666); });
+  loop_pass();
+  CHECK(host_sim::passkey_answers.size() == 2 && !host_sim::passkey_answers[1].accept);
+  CHECK(host_sim::passkey_answers[1].handle == 88 && bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(bc::g_pairing.pin_code == 135246 && host_sim::conn_heap == 0);
+
+  // Inside pairing mode: asked, and the phone's second comparison replaces the first.
+  boot();
+  pairing_awaiting_confirm(777888, link(90, 0xEA));
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(stranger, 999000); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 999000);
+  CHECK(host_sim::passkey_answers.empty() && host_sim::conn_heap == 1 && health_says(kNotShown) == 0);
+  std::printf("PASS a_comparison_outside_pairing_mode_asks_nobody\n");
+}
+
+// A Just Works bond made on a link beside the recorded one (FULL: Opera's
+// advertising lets a second link up, the F171 review) is deleted and that
+// link dropped by its own handle; the recorded link, its record and the
+// owner's pairing mode are untouched (the review of F191: the disconnect
+// must not be conditioned on the recorded link, nor go to its handle).
+void test_a_just_works_bond_beside_the_recorded_link_drops_its_own() {
+  boot();
+  opera_init();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo a = link(7, 0xA7);
+  NimBLEConnInfo b = link(8, 0xB8);
+  host_sim::server->peers = {7, 8};
+  host_sim::server->link_up(a);
+  host_sim::server->link_up(b);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), a); });
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), b); });
+  loop_pass();
+  CHECK(bc::g_connection_handle == 8);
+  host_sim::store_bond(a.getIdAddress(), /*irk=*/false);
+  a.encrypted = a.bonded = true;
+  a.authenticated = false;
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(a); });
+  loop_pass();
+  CHECK(!NimBLEDevice::isBonded(a.getIdAddress()) && health_says(kUnauthDeleted) == 1);
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 7) == 1);
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 8) == 0);
+  CHECK(bc::g_connection_handle == 8 && bc::g_connection.connected);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && bc::g_owner_pairing_open);
+  std::printf("PASS a_just_works_bond_beside_the_recorded_link_drops_its_own\n");
+}
+
+// Three listed phones fill the store: no lockout line (every bond is one
+// Remove reaches), and the count says none is unlisted (the review of
+// F209: a lockout that ignored the list, or a count that read held for
+// unlisted, passed every test).
+void test_three_listed_bonds_fill_the_store_with_no_lockout() {
+  boot();
+  for (uint8_t k = 0; k < 3; ++k) {
+    CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+    NimBLEConnInfo p = public_phone((uint16_t)(120 + k), (uint8_t)(0xD0 + k));
+    CHECK(pair_through_stack(p, /*irk=*/false));
+    link_ends(p);
+  }
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 0 && bc::g_paired_count == 3);
+  const Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(answer.body.find("\"bond_store\":{\"held\":3,\"capacity\":3,\"unlisted\":0}") != std::string::npos);
+  CHECK(health_says(kLockout) == 0);
+  std::printf("PASS three_listed_bonds_fill_the_store_with_no_lockout\n");
+}
+
+// The store read again while it stays locked (each setup-door link's
+// encryption marks it: a link that keeps no bond) names the lockout no
+// second time (the review of F209: the "once" was proven only across
+// passes that read nothing).
+void test_a_locked_store_read_again_names_the_lockout_once() {
+  boot(/*bring_up=*/false);
+  for (uint8_t k = 0; k < 3; ++k) {
+    const uint8_t addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, (uint8_t)(0xB0 + k)};
+    host_sim::store_bond(NimBLEAddress(addr, 0), /*irk=*/false);
+  }
+  FakeMainNvs nvs;
+  nvs.putBool("bt_paired_id", true);
+  loop_pass();
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  loop_pass();
+  CHECK(health_says(kLockout) == 1);
+  for (int k = 0; k < 3; ++k) {
+    NimBLEConnInfo door = public_phone((uint16_t)(130 + k), (uint8_t)(0xE0 + k));
+    host_sim::server->peers = {door.getConnHandle()};
+    host_sim::server->link_up(door);
+    on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), door); });
+    loop_pass();
+    door.encrypted = true;
+    on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(door); });
+    CHECK(!bc::g_bond_store_dirty);
+    loop_pass();
+    link_ends(door);
+  }
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 3);
+  CHECK(health_says(kLockout) == 1);
+  std::printf("PASS a_locked_store_read_again_names_the_lockout_once\n");
+}
+
+// The loop task stalled: the queue full (scan ends), every event of two
+// Just Works pairings is dropped, and both phones walk away before the next
+// pass. The reconcile of the dropped link events reads the store again, so
+// GET /api/bluetooth counts the two unlisted bonds and the health log names
+// the lockout, and the owner's next pairing, refused at its start, says the
+// same. And a store that moved with nothing dropped and nothing reported is
+// read again at that refusal. Before (the review of F209), only a report,
+// a list save, the hand-over, Remove and Clear all marked the store: the
+// count read held 1, unlisted 0, and no lockout line came, exactly when the
+// lockout refused the owner.
+void test_the_bond_count_follows_a_dropped_report_and_a_refused_pairing() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo owner = public_phone(140, 0xF0);
+  CHECK(pair_through_stack(owner, /*irk=*/false));
+  link_ends(owner);
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  for (uint8_t k = 0; k < 2; ++k) {
+    NimBLEConnInfo s = public_phone((uint16_t)(141 + k), (uint8_t)(0xF1 + k));
+    host_sim::server->link_up(s);
+    on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), s); });
+    int rc = -1;
+    on_nimble([&] { rc = host_sim::pairing_starts(s.getConnHandle()); });
+    CHECK(rc == 0);
+    on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/false); });
+    s.encrypted = s.bonded = true;
+    on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(s); });
+    host_sim::server->link_down(s.getConnHandle());
+    on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), s, 0x13); });
+  }
+  CHECK(bc::g_events.dropped_reserved() == 6 && host_sim::bonds.size() == 3);
+  loop_pass();
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 2);
+  CHECK(health_says(kLockout) == 1 && health_detail(kLockout) == "2 of 3 bonds unlisted");
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo again = public_phone(144, 0xF4);
+  CHECK(!pair_through_stack(again, /*irk=*/false));
+  CHECK(health_says("BLE pairing refused: the bond store is full") == 1);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 2 && health_says(kLockout) == 1);
+  const Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  CHECK(answer.body.find("\"bond_store\":{\"held\":3,\"capacity\":3,\"unlisted\":2}") != std::string::npos);
+
+  // Bonds the loop task was never told of, nothing dropped: stale until the
+  // stack's refusal says the store is full.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  CHECK(pair_through_stack(owner, /*irk=*/false));
+  link_ends(owner);
+  for (uint8_t k = 0; k < 2; ++k) {
+    const uint8_t addr[6] = {0x00, 0x1B, 0x2C, 0x3D, 0x4E, (uint8_t)(0xF5 + k)};
+    host_sim::store_bond(NimBLEAddress(addr, 0), /*irk=*/false);
+  }
+  loop_pass();
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 1 && health_says(kLockout) == 0);       // nothing said the store moved
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  CHECK(!pair_through_stack(again, /*irk=*/false));
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 3 && st.bonds_unlisted == 2 && health_says(kLockout) == 1);
+  std::printf("PASS the_bond_count_follows_a_dropped_report_and_a_refused_pairing\n");
+}
+
+// A Just Works bond whose report never reached the loop task (the review
+// of F191): a full queue dropped it, with the link's connect, and the link
+// stays up, encrypted and bonded in the stack's own record; or it reached
+// the dispatcher before the loop task named the channel its pairing owner
+// (the adoption), where it went nowhere. Before, reconcile_link() recorded
+// the link and the bond stayed, unlisted, until that phone came back. Now
+// the reconcile, and the adoption, refuse it from the stack's record as
+// F191 refuses one on its report: the bond deleted with the radio quiet,
+// the link dropped by its handle. An authenticated bonded link and an
+// encrypted link with no bond (the setup door) are left alone, and a link
+// whose bond is gone already is passed over.
+void test_a_bond_whose_report_never_came_goes_from_the_stacks_record() {
+  boot();
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo s = rpa_phone(150, 0x50);                    // its bond carries an IRK
+  host_sim::server->peers = {150};
+  host_sim::server->link_up(s);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), s); });
+  int rc = -1;
+  on_nimble([&] { rc = host_sim::pairing_starts(s.getConnHandle()); });
+  CHECK(rc == 0);
+  on_nimble([&] { (void)host_sim::persist_bond(s.getIdAddress(), /*irk=*/true); });
+  s.encrypted = s.bonded = true;
+  s.authenticated = false;
+  host_sim::server->link_up(s);                                // the stack's record of the link
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(s); });
+  CHECK(bc::g_events.dropped_reserved() == 2 && NimBLEDevice::isBonded(s.getIdAddress()));
+  loop_pass();
+  CHECK(!NimBLEDevice::isBonded(s.getIdAddress()) && host_sim::bonds_busy.empty());
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 150) == 1);
+  CHECK(health_says(kUnauthDeleted) == 1 && bc::g_paired_count == 0);
+  CHECK(health_says("BLE link up, its start dropped: recorded from the stack's record") == 1);
+  CHECK(bc::g_pairing.state == bc::PAIR_NONE);                 // no pairing failed: none was the owner's
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(health_says("Pairing timeout") == 0);
+  // Another dropped event while that link's end has not come yet: its bond
+  // is gone, so nothing is refused twice.
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(s); });
+  loop_pass();
+  CHECK(health_says(kUnauthDeleted) == 1 && host_sim::bonds_deleted.size() == 1);
+  link_ends(s);
+
+  // The owner's authenticated bonded link and the setup door's encrypted
+  // unbonded one, their reports dropped too: untouched.
+  boot();
+  NimBLEConnInfo mine = public_phone(151, 0xF6);
+  host_sim::store_bond(mine.getIdAddress(), /*irk=*/false);
+  mine.encrypted = mine.authenticated = mine.bonded = true;
+  NimBLEConnInfo door = public_phone(152, 0xF7);
+  door.encrypted = true;
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  host_sim::server->peers = {151, 152};
+  host_sim::server->link_up(mine);
+  host_sim::server->link_up(door);
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(mine); });
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(door); });
+  loop_pass();
+  CHECK(NimBLEDevice::isBonded(mine.getIdAddress()) && host_sim::bonds_deleted.empty());
+  CHECK(host_sim::server->disconnected.empty() && health_says(kUnauthDeleted) == 0);
+
+  // Before the adoption: the dispatcher has no pairing owner yet, so the
+  // report goes nowhere; the loop task's adoption refuses the bond.
+  boot(/*bring_up=*/false);
+  host_sim::task = "bringup";
+  CHECK(bc::init());
+  host_sim::task = "loop";
+  NimBLEConnInfo early = public_phone(153, 0xF8);
+  host_sim::server->peers = {153};
+  host_sim::server->link_up(early);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), early); });
+  on_nimble([&] { (void)host_sim::persist_bond(early.getIdAddress(), /*irk=*/false); });
+  early.encrypted = early.bonded = true;
+  host_sim::server->link_up(early);
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(early); });
+  CHECK(bc::g_events.waiting() == 0 && NimBLEDevice::isBonded(early.getIdAddress()));
+  loop_pass();                                                 // the adoption
+  CHECK(bc::g_initialized && !NimBLEDevice::isBonded(early.getIdAddress()));
+  CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 153) == 1);
+  CHECK(health_says(kUnauthDeleted) == 1);
+  std::printf("PASS a_bond_whose_report_never_came_goes_from_the_stacks_record\n");
+}
+
+// A bond the stack kept when F191 asked it gone (another task restarted the
+// advertiser in the delete's window) is asked again with the radio quiet a
+// minute later, and each minute while the stack keeps refusing, until it is
+// gone (the review of F191: before, nothing asked again until its phone
+// came back, and a reboot in between let the next boot's rebuild list it).
+// Never once the phone paired again with the owner (its authenticated bond
+// reported), and never once a link event was dropped (that report may have
+// been in it).
+void test_a_bond_the_stack_kept_is_asked_again_each_minute() {
+  boot();
+  NimBLEConnInfo kept = rpa_phone(160, 0x60);
+  const NimBLEAddress identity = kept.getIdAddress();
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  CHECK(just_works_through_stack(kept, /*irk=*/true));
+  CHECK(NimBLEDevice::isBonded(identity) && health_says(kUnauthKept) == 1);
+  link_ends(kept);
+  host_sim::now_ms += 30000;
+  loop_pass();
+  CHECK(host_sim::bonds_deleted.size() == 1);                   // not within the minute
+  host_sim::now_ms += 30000;
+  loop_pass();                                                 // asked again; the stack still refuses
+  CHECK(host_sim::bonds_deleted.size() == 2 && host_sim::bonds_busy.size() == 2);
+  CHECK(NimBLEDevice::isBonded(identity) && health_says(kRetried) == 0);
+  CHECK(host_sim::count("bond_delete", "loop") == 2);
+  host_sim::before_unpair = nullptr;
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(!NimBLEDevice::isBonded(identity) && host_sim::bonds_deleted.size() == 3);
+  CHECK(health_says(kRetried) == 1 && host_sim::advertising.isAdvertising());   // the radio given back
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 0 && st.bonds_unlisted == 0);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(host_sim::bonds_deleted.size() == 3);                   // nothing left to ask
+
+  // The phone pairs again, with the owner: NimBLE-Arduino's repeat-pairing
+  // handler deletes the old bond first, and the new one is authenticated
+  // and listed. Not retried away.
+  boot();
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  NimBLEConnInfo first = rpa_phone(161, 0x61);
+  CHECK(just_works_through_stack(first, /*irk=*/true));
+  host_sim::before_unpair = nullptr;
+  link_ends(first);
+  host_sim::bonds.clear();                                      // the stack's repeat-pairing delete
+  host_sim::bond_irks.clear();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo mine = rpa_phone(162, 0x62);
+  CHECK(pair_through_stack(mine, /*irk=*/true));
+  CHECK(bc::g_paired_count == 1);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(NimBLEDevice::isBonded(identity) && host_sim::bonds_deleted.size() == 1 && bc::g_paired_count == 1);
+
+  // A link event dropped after the bond was kept: not retried (an
+  // authenticated pairing of that identity may have been in it); the bond
+  // reads unlisted, and the health log already named Clear all.
+  boot();
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  NimBLEConnInfo later = rpa_phone(163, 0x63);
+  CHECK(just_works_through_stack(later, /*irk=*/true));
+  host_sim::before_unpair = nullptr;
+  link_ends(later);
+  while (bc::g_events.waiting() < bc::EVENT_SLOTS) {
+    on_nimble([&] { host_sim::scan.callbacks()->onScanEnd(NimBLEScanResults(), 0); });
+  }
+  NimBLEConnInfo other = public_phone(164, 0xF9);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), other, 0x13); });
+  CHECK(bc::g_events.dropped_reserved() == 1);
+  loop_pass();
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(NimBLEDevice::isBonded(identity) && host_sim::bonds_deleted.size() == 1);
+  bc::read_status(&st);
+  CHECK(st.bonds_held == 1 && st.bonds_unlisted == 1);
+  std::printf("PASS a_bond_the_stack_kept_is_asked_again_each_minute\n");
+}
+
+// A listed phone pairs again by Just Works (its own re-pairing, or another
+// phone sending its public address): NimBLE-Arduino's repeat-pairing
+// handler deleted its old bond before the new one was made, and F191
+// deletes the new one, so its entry names no bond. Dropped and saved at
+// once (the review of F191: before, it stayed listed, bondless, until the
+// next boot's drop_entries_without_bond()).
+void test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo mine = public_phone(170, 0x70);
+  CHECK(pair_through_stack(mine, /*irk=*/false));
+  CHECK(bc::g_paired_count == 1 && host_sim::main_nvs["bt_paired"].size() == sizeof(bc::PairedDevice));
+  link_ends(mine);
+  host_sim::bonds.clear();                                      // the stack's repeat-pairing delete
+  NimBLEConnInfo jw = public_phone(171, 0x70);
+  CHECK(just_works_through_stack(jw, /*irk=*/false));
+  CHECK(host_sim::bonds.empty() && bc::g_paired_count == 0 && health_says(kUnauthDeleted) == 1);
+  CHECK(host_sim::main_nvs["bt_paired"].empty());
+  CHECK(health_says("Paired list: entries without a bond dropped") == 1);
+  bc::PairedView paired;
+  bc::read_paired(&paired);
+  CHECK(paired.count == 0);
+  // The same with the stack keeping the new bond at first: the entry goes
+  // when the minute's retry deletes it.
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo again = rpa_phone(172, 0x72);
+  CHECK(pair_through_stack(again, /*irk=*/true));
+  link_ends(again);
+  host_sim::bonds.clear();
+  host_sim::bond_irks.clear();
+  host_sim::before_unpair = [] { host_sim::advertising.start(); };
+  NimBLEConnInfo jw2 = rpa_phone(173, 0x73);
+  CHECK(just_works_through_stack(jw2, /*irk=*/true));
+  host_sim::before_unpair = nullptr;
+  CHECK(health_says(kUnauthKept) == 1 && bc::g_paired_count == 1);   // listed, its bond the stranger's
+  link_ends(jw2);
+  host_sim::now_ms += 60000;
+  loop_pass();
+  CHECK(host_sim::bonds.empty() && health_says(kRetried) == 1 && bc::g_paired_count == 0);
+  CHECK(host_sim::main_nvs["bt_paired"].empty());
+  std::printf("PASS a_listed_phone_that_pairs_again_by_just_works_leaves_the_list\n");
 }
 
 struct Test {
@@ -5554,6 +6051,18 @@ const Test kTests[] = {
      test_an_unauthenticated_bond_is_deleted_and_its_link_dropped},
     {"unlisted_bonds_no_longer_lock_the_owner_out", test_unlisted_bonds_no_longer_lock_the_owner_out},
     {"the_bond_store_shows_beside_the_list", test_the_bond_store_shows_beside_the_list},
+    {"a_comparison_outside_pairing_mode_asks_nobody", test_a_comparison_outside_pairing_mode_asks_nobody},
+    {"a_just_works_bond_beside_the_recorded_link_drops_its_own",
+     test_a_just_works_bond_beside_the_recorded_link_drops_its_own},
+    {"three_listed_bonds_fill_the_store_with_no_lockout", test_three_listed_bonds_fill_the_store_with_no_lockout},
+    {"a_locked_store_read_again_names_the_lockout_once", test_a_locked_store_read_again_names_the_lockout_once},
+    {"the_bond_count_follows_a_dropped_report_and_a_refused_pairing",
+     test_the_bond_count_follows_a_dropped_report_and_a_refused_pairing},
+    {"a_bond_whose_report_never_came_goes_from_the_stacks_record",
+     test_a_bond_whose_report_never_came_goes_from_the_stacks_record},
+    {"a_bond_the_stack_kept_is_asked_again_each_minute", test_a_bond_the_stack_kept_is_asked_again_each_minute},
+    {"a_listed_phone_that_pairs_again_by_just_works_leaves_the_list",
+     test_a_listed_phone_that_pairs_again_by_just_works_leaves_the_list},
 };
 
 }  // namespace bt_commands

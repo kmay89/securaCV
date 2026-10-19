@@ -338,12 +338,18 @@ void bringup_worker_finished();
 // refusal it met is not the last word (on FULL ble_manager's NimBLE init
 // and the Scout's follow it, and a tap after the finalize stage runs init()
 // again and names its own), and the stack is moments from its answer.
-// Before it, boot_bring_up_pending_error(): nothing has started yet.
+// Before it, boot_bring_up_pending_error(): nothing has started yet. It
+// asks for a retry rather than promising a start (the review of F259):
+// since F259 a device saved off gets it too, for Enable and the settings
+// POST turning Bluetooth on, and there the boot bring-up brings up only
+// the stack, with Bluetooth left off until the owner taps again. ("Never in
+// safe mode" covers the moment between the HTTP server's start and setup's
+// Bluetooth gate; after it, boot_bring_up_skipped_error().)
 void boot_bring_up_finished();
 bool boot_bring_up_tried();
 bool boot_bring_up_started();
 inline const char* boot_bring_up_pending_error() {
-  return "Bluetooth has not started yet; it starts once Wi-Fi setup is done or within five minutes (never in safe mode)";
+  return "Bluetooth is not ready yet; try again once Wi-Fi setup is done or within five minutes (never in safe mode)";
 }
 // The sketch skips its boot bring-up (sweep F259): safe mode, at setup's
 // Bluetooth gate, on the loop task. boot_bring_up_finished() is never

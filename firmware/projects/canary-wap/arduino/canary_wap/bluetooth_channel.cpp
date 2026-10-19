@@ -1059,15 +1059,12 @@ static void apply_auth_complete(const Event& e) {
     } else {
       keep_for_retry(link.id_address);
     }
-    // The owner's pairing mode goes on (the review of F191): this bond was
-    // never the owner's pairing (that one is authenticated), and ending the
-    // mode here let a stranger on the recorded link end it at will.
-    if (recorded && g_pairing.state != PAIR_INITIATED && g_pairing.state != PAIR_PIN_DISPLAYED) {
-      g_pairing.state = PAIR_FAILED;
-      if (g_pair_callback) {
-        g_pair_callback(&g_pairing);
-      }
-    }
+    // The owner's pairing state is left as it is (the review of F191): this
+    // bond was never the owner's pairing (that one is authenticated), so it
+    // neither fails nor ends one. Before, on the recorded link it read
+    // failed, which ended the owner's pairing mode (a stranger there could
+    // end it at will), and from no pairing at all a failure the pairing
+    // timeout then logged as a timeout.
   } else {
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "Pairing failed", nullptr);
     if (recorded) {

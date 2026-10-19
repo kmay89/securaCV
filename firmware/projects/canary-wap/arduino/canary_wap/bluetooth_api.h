@@ -329,13 +329,14 @@ inline bool waits_for_boot_bring_up() {
 // init()'s latch or has just brought the stack up; in safe mode, that
 // Bluetooth stays off until a normal boot (boot_bring_up_skipped(), F259:
 // the sketch never runs the bring-up there, and the tap was told it would
-// start within five minutes); otherwise that the stack starts once Wi-Fi
-// setup is done or within five minutes (a fresh unit with nobody on its
-// SoftAP within seconds). Before F235's review such a tap submitted to a
-// stack that was down and answered a failed start; until wave 16's verify,
-// a tap after the worker's init() was refused and before the finalize stage
-// was told Bluetooth had not started yet, with Wi-Fi setup done and the
-// refusal recorded.
+// start within five minutes); otherwise to try again once Wi-Fi setup is
+// done or within five minutes (a fresh unit with nobody on its SoftAP within
+// seconds; a retry, not a promised start: on a device saved off the boot
+// bring-up leaves Bluetooth off, the review of F259). Before F235's review
+// such a tap submitted to a stack that was down and answered a failed
+// start; until wave 16's verify, a tap after the worker's init() was
+// refused and before the finalize stage was told Bluetooth had not started
+// yet, with Wi-Fi setup done and the refusal recorded.
 inline esp_err_t send_boot_bring_up_pending(httpd_req_t* req) {
   httpd_resp_set_status(req, http_status_line(503));
   return send_error(req, bluetooth_channel::boot_bring_up_skipped()
