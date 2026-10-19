@@ -1475,17 +1475,20 @@ clean: clean-ha-discovery-ids
 # What a canary-wap publishes over MQTT, and how (sweep F34, the MQTT
 # contract fixture): the REAL csi_mqtt.cpp over stubs/mqtt and a fake
 # esp_mqtt client that records every publish with its QoS and retain flag,
-# driven through a unit's life (the connect burst, a healthy loop, a unit in
-# trouble, unsigned early-boot bodies, discovery removed), its signed bodies
-# signed for real (device_signature.cpp, compiled in, over OpenSSL's Ed25519
-# on the repo's test key). Run bare, it checks the record: every publish QoS
-# 0, the last will QoS 1 and retained, the command topics subscribed at QoS
-# 1, every state topic and discovery config retained and the events and
-# tamper topics not, every phase's topics there, every body one strict JSON
-# object. With --json it prints the record for
-# custom_components/securacv/tests/test_wap_mqtt_contract.py, which builds
-# this target, runs it and feeds the record to the Home Assistant
-# integration's parsers. Hooked into `run` and `clean` by prerequisite.
+# driven through a unit's life (the connect burst, a healthy loop, a tamper
+# commit, a backfill replay, a unit in trouble, unsigned early-boot bodies,
+# discovery removed), its signed bodies signed for real (device_signature.cpp,
+# compiled in, over OpenSSL's Ed25519 on the repo's test key). Run bare, it
+# checks the record: every publish QoS 0, the last will QoS 1 and retained,
+# the command topics subscribed at QoS 1, every state topic and discovery
+# config retained and the events and tamper topics not, every phase's topics
+# there, every body one strict JSON object, replay true on the backfilled row
+# only; and it delivers each command word a discovery config names back as
+# MQTT_EVENT_DATA and checks it latches. With --json it prints the record for
+# custom_components/securacv/tests/test_wap_mqtt_contract.py (the Home
+# Assistant integration's parsers) and scripts/tests/
+# test_ha_discovery_wap_render.py (the discovery templates, rendered), which
+# build this target and run it. Hooked into `run` and `clean` by prerequisite.
 MQTT_BODIES_BIN = test_wap_mqtt_bodies
 MQTT_BODIES_SRC = test_wap_mqtt_bodies.cpp
 
