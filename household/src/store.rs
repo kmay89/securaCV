@@ -129,7 +129,10 @@ pub fn read_bounded(path: &Path, max: usize) -> Result<Vec<u8>> {
 /// `Vec`) would free each outgrown copy unwiped, with the first bytes of the
 /// secret in it; here the only allocation is the one returned, and the whole
 /// of it is wiped on drop, the bytes past the truncated length included.
-/// Every file whose bytes are a secret or its hex (a key file, a card key, a
+/// The bound sizes the buffer, never the file's reported length, so a pipe
+/// or a FIFO (whose length reads as zero, and from which `std::fs::read`
+/// grows by doubling) is read the same way as a regular file. Every file
+/// whose bytes are a secret or its hex (the KEK, a key file, a card key, a
 /// bearer token) is read by this; [`read_bounded`] is for public data.
 pub fn read_bounded_secret(path: &Path, max: usize) -> Result<Zeroizing<Vec<u8>>> {
     use std::io::Read;
@@ -587,6 +590,40 @@ pub(crate) mod tests {
         Kek::generate().unwrap()
     }
 
+    /// A FIFO at `path`, mode 0600, through the system's `mkfifo` (the crate
+    /// forbids unsafe code, so no direct syscall). `false` when the tool is
+    /// not installed, for the caller to skip and say so.
+    #[cfg(unix)]
+    pub fn try_mkfifo(path: &Path) -> bool {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        let status = match std::process::Command::new("mkfifo")
+            .arg("-m")
+            .arg("600")
+            .arg(path)
+            .status()
+        {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => panic!("mkfifo: {e}"),
+        };
+        assert!(status.success(), "mkfifo failed: {status}");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(std::fs::metadata(path).unwrap().file_type().is_fifo());
+        true
+    }
+
+    /// Write `bytes` into the FIFO at `path` from another thread, then close
+    /// it (the reader sees EOF). The open blocks until a reader opens the
+    /// FIFO, so the caller reads before it joins.
+    #[cfg(unix)]
+    pub fn feed_fifo(path: PathBuf, bytes: Vec<u8>) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut w = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            w.write_all(&bytes).unwrap();
+        })
+    }
+
     #[test]
     fn create_open_and_keys() {
         let p = tmpdir("store");
@@ -721,6 +758,29 @@ pub(crate) mod tests {
         // The bound means what read_bounded's does: at most `max` bytes.
         assert!(read_bounded_secret(&f, 49).is_err());
         assert_eq!(read_bounded_secret(&f, 50).unwrap().len(), 50);
+        std::fs::remove_dir_all(&p).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secret_reads_from_a_fifo_allocate_once() {
+        let p = tmpdir("bounded-secret-fifo");
+        std::fs::create_dir_all(&p).unwrap();
+        let f = p.join("k.fifo");
+        if !try_mkfifo(&f) {
+            eprintln!("skipping: mkfifo is not installed");
+            std::fs::remove_dir_all(&p).unwrap();
+            return;
+        }
+        // A FIFO's metadata says length 0, which is what makes a read sized
+        // from it (std::fs::read) grow by doubling; the bound sizes this one,
+        // so the buffer is the same max + 1 as for a regular file, and the
+        // bytes arrive whole across however many reads the pipe hands over.
+        let writer = feed_fifo(f.clone(), vec![b'a'; 65]);
+        let b = read_bounded_secret(&f, 100).unwrap();
+        assert_eq!(&b[..], &[b'a'; 65][..]);
+        assert_eq!(b.capacity(), 101, "the secret buffer grew");
+        writer.join().unwrap();
         std::fs::remove_dir_all(&p).unwrap();
     }
 

@@ -15,8 +15,9 @@
 //! [`Zeroizing`] buffers (and in `ed25519_dalek::SigningKey`, which zeroizes
 //! itself on drop): a key that arrives as hex is decoded by
 //! [`crate::hex::decode_secret_array`] straight into such a buffer, and a
-//! key file is read into one ([`crate::store::read_bounded_secret`], whose
-//! buffer is allocated once and never grows) and parsed into a typed struct
+//! key file (the KEK file included) is read into one
+//! ([`crate::store::read_bounded_secret`], whose buffer is allocated once,
+//! sized by its bound, and never grows) and parsed into a typed struct
 //! whose secret field is one ([`deserialize_zeroizing_string`]), never into
 //! a `serde_json::Value`.
 //! File formats:
@@ -55,6 +56,10 @@ const HUB_MAGIC: &[u8; 4] = b"SCVH";
 const HUB_INFO: &[u8] = b"securacv-hk-hub-keys-v1";
 /// Largest sealed file accepted.
 pub const MAX_SEALED_BYTES: usize = 64 * 1024;
+/// Largest KEK file accepted by [`load_kek`]: 64 hex characters and a line
+/// ending leave room to spare, and the bound sizes the one buffer the KEK's
+/// hex is read into.
+pub const MAX_KEK_FILE_BYTES: usize = 128;
 
 /// A serde `deserialize_with` for a secret string field (the hex key in an
 /// admin or client key file): the string lands in a [`Zeroizing`] buffer as
@@ -250,6 +255,13 @@ pub fn is_inside(path: &Path, dir: &Path) -> Result<bool> {
 
 /// Read the KEK file (64 hex characters, optional trailing newline). Refuses
 /// a KEK inside `data_dir`, and on Unix one readable by group or others.
+///
+/// The file is read by [`crate::store::read_bounded_secret`], into one
+/// [`Zeroizing`] buffer sized by the bound ([`MAX_KEK_FILE_BYTES`]), never by
+/// the file's reported length: the checks above admit a pipe or a FIFO
+/// (`/dev/stdin` and a FIFO are 0600), whose length reads as zero, and a read
+/// sized from that would grow by doubling and free each outgrown copy
+/// unwiped with the KEK's hex in it. A longer file is refused.
 pub fn load_kek(path: &Path, data_dir: &Path) -> Result<Kek> {
     if is_inside(path, data_dir)? {
         return Err(Error::Invalid(
@@ -266,7 +278,7 @@ pub fn load_kek(path: &Path, data_dir: &Path) -> Result<Kek> {
             ));
         }
     }
-    let raw = Zeroizing::new(std::fs::read(path).map_err(Error::io("read the KEK file"))?);
+    let raw = crate::store::read_bounded_secret(path, MAX_KEK_FILE_BYTES)?;
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Invalid("KEK file is not text"))?;
     let bytes = crate::hex::decode_secret_array::<32>(text.trim_end())?;
     Ok(Kek::from_bytes(*bytes))
@@ -478,6 +490,45 @@ mod tests {
         // A path that sneaks back in through `..` is still inside.
         let sneaky = base.join("data").join("..").join("data").join("kek");
         assert!(load_kek(&sneaky, &data).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kek_is_read_bounded_from_a_fifo() {
+        use crate::store::tests::{feed_fifo, try_mkfifo};
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "hk-kek-fifo-{}",
+            crate::hex::encode(&rng::array::<8>().unwrap())
+        ));
+        let data = base.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        // The bound is what refuses a long file, so the read is the bounded
+        // one and not a read sized from the file: a 0600 file past the bound
+        // fails as too large, before any hex is looked at.
+        let long = base.join("long");
+        std::fs::write(&long, vec![b'a'; MAX_KEK_FILE_BYTES + 1]).unwrap();
+        std::fs::set_permissions(&long, std::fs::Permissions::from_mode(0o600)).unwrap();
+        match load_kek(&long, &data) {
+            Err(Error::Invalid(m)) => assert!(m.contains("larger than allowed"), "{m}"),
+            other => panic!("a KEK file past the bound was not refused as too large: {other:?}"),
+        }
+        // A KEK fed through a FIFO (which the permission check admits, as it
+        // admits /dev/stdin) is read whole, through the same one buffer.
+        let fifo = base.join("kek.fifo");
+        if !try_mkfifo(&fifo) {
+            eprintln!("skipping: mkfifo is not installed");
+            std::fs::remove_dir_all(&base).unwrap();
+            return;
+        }
+        let kek = Kek::generate().unwrap();
+        let mut line = kek.to_hex().as_bytes().to_vec();
+        line.push(b'\n');
+        let writer = feed_fifo(fifo.clone(), line);
+        let read = load_kek(&fifo, &data).unwrap();
+        assert_eq!(*read.to_hex(), *kek.to_hex());
+        writer.join().unwrap();
         std::fs::remove_dir_all(&base).unwrap();
     }
 }
