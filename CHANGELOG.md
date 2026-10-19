@@ -31,10 +31,10 @@
   `api_auth.h` gate, and the lockout's `Retry-After` can no longer wrap to
   about 49.7 days when a backoff ends mid-request. **Host-tested**
   (`test_receipt_grant.cpp`, 536 checks; the sketch before the lockout change
-  fails 36, the `api_auth.h` before the empty-token change 34); the compile is
-  CI's; not run on a device (U1). Filed: F341-F343 (a strike the tap then
-  serves, the claim and the tap spent by whoever asks first, one backoff for
-  every caller).
+  fails 51 of them, and the suite fails 34 of 534 on the `api_auth.h` before
+  the empty-token change, F331); the compile is CI's; not run on a device
+  (U1). Filed: F341-F343 (a strike the tap then serves, the claim and the
+  tap spent by whoever asks first, one backoff for every caller).
 - **canary-wap's sign-in names no token a cookie-only page never held (sweep
   F330).** A browser signed in by its session cookie alone, refused by the
   recovery-kit save or the pairing QR since #1822, read "Invalid or expired

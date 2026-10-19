@@ -1408,9 +1408,15 @@ so — see D2 below.)
   the route check's broker half holds the handler's first write behind
   `move_needs_password()` handed a bearer (F328), and the Lab's WAP page
   (`canary-local/tools/gen_wap.py`, `wap.json` regenerated) names the MQTT
-  routes' real gate, where it said "pairing token". Not covered: a QR code
-  shown to the camera (F333, the road F289's amendment names) and a broker
-  link a host on the network answers for (F334).
+  routes' real gate, where it said "pairing token". The gate's client side
+  has no test: the `/companion` wizard always sends a `password` key
+  (`companion_pwa.h`), which `move_needs_password()`'s comment says keeps it
+  from being refused, and the `/mqtt` page puts the cursor in the password
+  field on `password_needed` (`csi_mqtt.cpp`); #1832's dropped
+  `wizard_logic.test.js` block tested F325's answer shape, so it was not
+  ported. Not covered: a QR code shown to the camera (F333, the road F289's
+  amendment names) and a broker link a host on the network answers for
+  (F334).
 - [x] **F326 [code] canary-wap: the session cookie carries no `Secure` over
   HTTPS.** Both `cv_session` mints, `handle_ui()`'s `/?cv_pair=` exchange and
   the receipt's tap and claim, spelled `cv_session=%s; HttpOnly;
@@ -1486,11 +1492,12 @@ so — see D2 below.)
   planted ones, each failing for its named reason, run before the tree on
   every run. The tree passes (202 registrations, 25 documented-public). Main
   at #1835 (99153e66) fails it once, for the receipt's grant F329 adds (the
-  broker half passes #1835's code as it stands); main before #1835 and #1822
-  fail with 5 (that grant, and no move gate: four broker problems), and
-  #1822's parent with 15 (eight on the pairing QR and the receipt, three
-  bearer gates it does not define, and the four); the rule as first landed,
-  before F329's grant was a bearer gate, failed those with 4 and 14.
+  broker half passes #1835's code as it stands); main before #1835 (5d077d21)
+  and main at #1822 (065f34b6) each fail with 5 (that grant, and no move
+  gate: four broker problems), and #1822's parent with 15 (eight on the
+  pairing QR and the receipt, three bearer gates it does not define, and the
+  four); the rule as first landed, before F329's grant was a bearer gate,
+  failed those with 4 and 14.
   `function_body()` caches each file's blanked text (no rule changed; about
   56 s to 3 s here). It is a text check that matches names: a secret reached
   through a name it does not know, a second copy of the token taken inside a
@@ -1520,9 +1527,10 @@ so — see D2 below.)
   the right token keeps it (`secureFetch` drops a token on a 403, not on a
   429); a poll with no header keeps the `403` with `gate_ttl_seconds` the
   BOOT-tap wait reads. The lockout never gates the claim or the tap.
-  `test_receipt_grant.cpp` (536 checks; the sketch before the change fails 36
-  of 464) holds each case, the receipt and the QR sharing one lockout, and
-  that the grant never takes the cookie; the route check and
+  `test_receipt_grant.cpp` (536 checks; the sketch before the change fails 51
+  of them, and failed 36 of the 466 the suite had at the change) holds each
+  case, the receipt and the QR sharing one lockout, and that the grant never
+  takes the cookie; the route check and
   `check_wap_json_answers.py`'s 429 record know the new functions. Accepted
   edges: a stale-token request a tap serves still records its strike (F341),
   and the lockout is read twice, microseconds apart, so a request at its
