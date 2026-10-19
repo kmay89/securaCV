@@ -7,8 +7,8 @@ firmware/projects/canary-vision/include/canary/config.h (the topic patterns
 in include/canary/topics.h), which own the values. The flavor file named
 eighteen CONFIG_* settings nothing read, so editing one changed nothing;
 they are gone, and so are the four detection defaults gen_flash.py read
-there before it read the project config.h's own constants (F182's
-follow-up). It still owns the FEATURE_* flags and the watchdog timeout, and
+there before it read the project config.h's own constants (sweep F313,
+F182's follow-up). It still owns the FEATURE_* flags and the watchdog timeout, and
 keeps one copy, the device type the fleet figures read. What is pinned and
 why:
 
@@ -26,10 +26,14 @@ why:
     test can compare, is refused rather than passed;
   • the four detection defaults the flasher catalog used to read here
     (CONFIG_PERSON_TARGET, CONFIG_SCORE_MIN, CONFIG_LOST_TIMEOUT_MS,
-    CONFIG_DWELL_START_MS) have no reader left, so putting one back fails
-    the first check: gen_flash.py reads PERSON_TARGET, SCORE_MIN,
-    LOST_TIMEOUT_MS and DWELL_START_MS from the project config.h, and names
-    nothing under firmware/configs/canary-vision/;
+    CONFIG_DWELL_START_MS) have no reader left: gen_flash.py reads
+    PERSON_TARGET, SCORE_MIN, LOST_TIMEOUT_MS and DWELL_START_MS from the
+    project config.h, and names nothing under
+    firmware/configs/canary-vision/. Putting one back fails
+    test_the_only_seed_is_the_figure_type, which pins the exact list of
+    macros and is the load-bearing backstop: the first check fails too, but
+    only while no code file names the macro, because a whole-word mention
+    anywhere in a reader file (a comment included) counts as a read;
   • a tool that reads a macro by pattern rather than by name (gen_figures.mjs
     matches any `#define ...DEVICE_TYPE`) is a reader only through
     PATTERN_READERS, and only while that file still holds the pattern and
@@ -73,7 +77,7 @@ PATTERN_READERS = {
                            r"#define\s+\w*DEVICE_TYPE\s+"),
 }
 # The detection defaults gen_flash.py read from the flavor file until it read
-# the project config.h's constants instead (F182's follow-up).
+# the project config.h's constants instead (sweep F313, F182's follow-up).
 FORMER_FLASHER_SEEDS = ("CONFIG_PERSON_TARGET", "CONFIG_SCORE_MIN",
                         "CONFIG_LOST_TIMEOUT_MS", "CONFIG_DWELL_START_MS")
 
@@ -99,10 +103,11 @@ def strip_comment(value: str) -> str:
 
 
 def literal(text: str):
-    """A plain integer (optionally U/L-suffixed) or string literal as a value,
-    else None: anything else cannot be compared and is refused."""
+    """A plain decimal integer (optionally U/L-suffixed, no leading zero,
+    which C reads as octal) or string literal as a value, else None:
+    anything else cannot be compared and is refused."""
     t = text.strip()
-    m = re.fullmatch(r"(\d+)[uUlL]*", t)
+    m = re.fullmatch(r"(0|[1-9][0-9]*)[uUlL]*", t)
     if m:
         return int(m.group(1))
     m = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', t)
@@ -218,6 +223,8 @@ class FlavorConfigReaders(unittest.TestCase):
     def test_a_former_flasher_seed_put_back_has_no_reader(self):
         # Against the real tree: each of the four, planted back in the flavor
         # file, is a CONFIG_* nothing reads, so the first check fails on it.
+        # A code comment that names one makes this fail too, on purpose: a
+        # mention is where a reader would be, so look before you relax it.
         planted = self.flavor_text + "".join(f"#define {n}  1\n" for n in FORMER_FLASHER_SEEDS)
         macros = flavor_macros(planted)
         missing = [n for n in unread(macros, self.corpus) if not pattern_read(n, planted)]
@@ -271,6 +278,12 @@ class FlavorConfigReaders(unittest.TestCase):
                       seed_problems({"CONFIG_X": "4"}, {"X": "VISION_X"})[0])
         self.assertIn("not a plain literal",
                       seed_problems({"CONFIG_X": "(2 * 2)"}, {"X": "4"})[0])
+        # A leading zero is octal in C and C++ (070 compiles as 56), so it is
+        # not compared as decimal on either side.
+        self.assertIn("not a plain literal",
+                      seed_problems({"CONFIG_X": "070"}, {"X": "70"})[0])
+        self.assertIn("not a literal",
+                      seed_problems({"CONFIG_X": "70"}, {"X": "070"})[0])
 
     def test_the_parsers_read_the_real_shapes(self):
         consts = project_constants("static constexpr uint32_t LOST_TIMEOUT_MS = 1500;\n"
