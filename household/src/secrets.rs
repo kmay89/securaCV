@@ -512,7 +512,8 @@ mod tests {
         std::fs::set_permissions(&long, std::fs::Permissions::from_mode(0o600)).unwrap();
         match load_kek(&long, &data) {
             Err(Error::Invalid(m)) => assert!(m.contains("larger than allowed"), "{m}"),
-            other => panic!("a KEK file past the bound was not refused as too large: {other:?}"),
+            Ok(_) => panic!("a KEK file past the bound was read as a key instead of being refused"),
+            Err(e) => panic!("a KEK file past the bound was refused for the wrong reason: {e:?}"),
         }
         // A KEK fed through a FIFO (which the permission check admits, as it
         // admits /dev/stdin) is read whole, through the same one buffer.
