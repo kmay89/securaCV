@@ -1,15 +1,18 @@
 """A canary-wap's MQTT publishes, read the way Home Assistant reads them (F34).
 
-The device-to-broker contract, from the firmware's own bytes. Nothing here is
-typed from the firmware by hand: the module builds the canary-wap's host
-harness (``firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp``,
-``make -C <tests_host> test_wap_mqtt_bodies``), which runs the REAL
-``csi_mqtt.cpp`` over a fake esp_mqtt client through a unit's life (the connect
-burst, a healthy loop, a unit in trouble, unsigned early-boot bodies, discovery
-removed) and prints every publish it recorded, with its QoS and retain flag,
-the last will and the command subscriptions (``--json``). The signed bodies
-are signed for real, on the repo's test key (seed 0x42 * 32). That record is
-then held to what reads it:
+The device-to-broker contract, from the real ``csi_mqtt.cpp``: the module
+builds the canary-wap's host harness
+(``firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp``,
+``make -C <tests_host> test_wap_mqtt_bodies``), which runs it over a fake
+esp_mqtt client through a unit's life (the connect burst, a healthy loop, a
+tamper commit, a backfill replay, a unit in trouble, unsigned early-boot
+bodies, discovery removed) and prints every publish it recorded, with its QoS
+and retain flag, the last will and the command subscriptions (``--json``).
+The signed bodies are signed for real, on the repo's test key (seed
+0x42 * 32). Two bodies are the sketch's, not csi_mqtt.cpp's (the update
+entity's state and the acoustic snapshot): the harness types them in the
+sketch's shape and this module holds their keys to canary_wap.ino. That
+record is then held to what reads it:
 
   * The delivery bound. Every publish is QoS 0 (at most once); the last will
     is QoS 1 and retained; the command topics are subscribed at QoS 1. State
@@ -23,18 +26,23 @@ then held to what reads it:
     subscription; an empty retained publish clears the topic), the platforms
     it forwards to are set up for real, and the record is replayed into it.
     Its entities are then read: the key TOFU-pinned from health, the signed
-    chain / counts / events verifying, the health and egress attributes, the
-    tamper and event-id levels, Chirp, unsigned bodies read as unsigned, the
-    last will taking the device offline.
-  * Home Assistant's MQTT discovery. The integration does not parse the
-    discovery configs; Home Assistant's MQTT integration does, and it is not
-    installed in this lane. So the configs are held to the record instead:
-    every topic a config reads is one the WAP publishes (its availability
-    topic retained), every ``value_json.<key>`` a template reads is in
-    the bodies on its topic (in every body, unless the template gives a
-    default), the payload words agree, the commands are the ones the WAP
-    subscribes to, and the removal clears every config. No template is
-    rendered here (no Jinja in the stub lane).
+    chain / counts / events verifying, the Last Event's attributes and
+    modality, the health and egress attributes, the tamper and event-id
+    levels with the tamper body's type and severity, Chirp, unsigned bodies
+    read as unsigned, the last will taking the device offline.
+  * Home Assistant's MQTT discovery, at key and word level. The integration
+    does not parse the discovery configs; Home Assistant's MQTT integration
+    does, and it is not installed in this lane. So the configs are held to
+    the record: every topic a config reads is one the WAP publishes (its
+    availability topic retained), every ``value_json.<key>`` a template reads
+    is in the bodies on its topic (in every body, unless the template gives a
+    default and the gap is named below), each binary sensor's template names
+    ON and OFF, the switches' state words are the ones the WAP publishes,
+    the commands are the ones it subscribes to, and the removal clears every
+    config. The templates are rendered, the way Home Assistant renders them,
+    by ``scripts/tests/test_ha_discovery_wap_render.py`` (lint.yml, where
+    jinja2 is installed at Home Assistant's pin); the harness itself delivers
+    each command word back and checks the WAP acts on it.
   * The sketch's two relayed bodies. The update entity's state and the
     acoustic snapshot are built by canary_wap.ino and only relayed by
     csi_mqtt.cpp; the harness hands over bodies in the sketch's shape, and
@@ -50,8 +58,11 @@ config was read from its documentation, not run. Reconnect behavior on a real
 broker is bench work (U1).
 
 The HACS mirror carries no firmware source, so the module skips there. A
-missing ``make`` or C++ compiler skips it too, except under
-``SECURACV_WAP_HARNESS=require`` (python.yml sets it), where it fails.
+missing ``make`` or C++ compiler, or a harness that does not build here (it
+needs GCC, as CI builds it, and OpenSSL's headers: clang refuses one of its
+GCC warning flags), skips it too, naming why, except under
+``SECURACV_WAP_HARNESS=require`` (python.yml sets it), where it fails. A
+harness that builds and whose own checks fail is a failure everywhere.
 """
 
 from __future__ import annotations
@@ -82,6 +93,7 @@ from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 from .. import async_setup_entry  # noqa: E402
 from ..const import (  # noqa: E402
     CONF_ENABLE_MQTT,
+    CRITICAL_MEMORY_THRESHOLD_BYTES,
     CONF_MQTT_PREFIX,
     CONF_SETUP_MODE,
     SETUP_MODE_MQTT,
@@ -132,15 +144,29 @@ def _toolchain_missing() -> list[str]:
     return [tool for tool in ("make", *cxx) if shutil.which(tool) is None]
 
 
+def _cannot_build(why: str) -> None:
+    """Skip, or fail under SECURACV_WAP_HARNESS=require."""
+    if os.environ.get(_REQUIRE) == "require":
+        pytest.fail(f"{why} ({_REQUIRE}=require)")
+    pytest.skip(f"{why}; {_REQUIRE}=require makes this a failure")
+
+
+def _first_error(output: str) -> str:
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    errors = [ln for ln in lines if "error" in ln.lower()]
+    return (errors or lines or ["no output"])[0]
+
+
 @pytest.fixture(scope="module")
 def record() -> dict[str, Any]:
-    """The harness's record, built and run from the firmware sources."""
+    """The harness's record, built and run from the firmware sources.
+
+    Every failure here is pytest.fail or a skip, never an assert, so a broken
+    harness cannot pass as one of the strict xfails below (raises=AssertionError).
+    """
     missing = _toolchain_missing()
     if missing:
-        why = f"cannot build the WAP MQTT harness: {', '.join(missing)} not on PATH"
-        if os.environ.get(_REQUIRE) == "require":
-            pytest.fail(f"{why} ({_REQUIRE}=require)")
-        pytest.skip(f"{why}; {_REQUIRE}=require makes this a failure")
+        _cannot_build(f"cannot build the WAP MQTT harness: {', '.join(missing)} not on PATH")
     build = subprocess.run(
         ["make", "-C", str(_HOST), _HARNESS.name],
         capture_output=True,
@@ -148,14 +174,28 @@ def record() -> dict[str, Any]:
         timeout=900,
         check=False,
     )
-    assert build.returncode == 0, f"the harness did not build:\n{build.stdout}\n{build.stderr}"
+    if build.returncode != 0:
+        if os.environ.get(_REQUIRE) == "require":
+            pytest.fail(f"the harness did not build:\n{build.stdout}\n{build.stderr}")
+        _cannot_build(
+            f"the WAP MQTT harness does not build here ({_first_error(build.stderr)})"
+        )
     out = subprocess.run(
         [str(_HARNESS), "--json"], capture_output=True, text=True, timeout=120, check=False
     )
-    assert out.returncode == 0, f"the harness's own checks failed:\n{out.stderr}"
+    if out.returncode != 0:
+        pytest.fail(f"the harness's own checks failed:\n{out.stderr}")
     data = json.loads(out.stdout)
-    assert data["harness"] == _HARNESS.name
+    if data.get("harness") != _HARNESS.name:
+        pytest.fail(f"not the harness's record: {data.get('harness')!r}")
     return data
+
+
+def _require(condition: bool, why: str) -> None:
+    """A strict xfail's precondition: pytest.fail, so a broken one fails
+    instead of passing as the expected failure (raises=AssertionError)."""
+    if not condition:
+        pytest.fail(f"precondition: {why}")
 
 
 def _publishes(record: dict[str, Any], *phases: str) -> list[dict[str, Any]]:
@@ -463,6 +503,27 @@ def test_health_pins_the_key_and_the_signed_topics_verify(record, monkeypatch):
     assert verdict.trusted and verdict.reason == "ok", verdict
 
 
+def test_last_event_reads_the_wap_event_body(record, monkeypatch):
+    """Each field of the events body Last Event reads, and the modality it
+    derives from the status's device_type. The event is delivered again once
+    the entity exists: the first one created it (see the xfail below)."""
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    sent = _one(record, "running", "events")
+    status = _one(record, "connect", "status")
+    assert status["device_type"] == "canary-wap"
+    last = wap.entity("last_event")
+    assert last is not None, "the first events publish creates Last Event"
+    wap.broker.publish(_topic(record, "events"), json.dumps(sent), False)
+    attrs = _attrs(last)
+    assert _value(last, "native_value") == sent["event_type"] == sent["state"] == "active"
+    for key in ("timestamp", "zone", "confidence", "signed"):
+        assert attrs[key] == sent[key], key
+    assert attrs["signed"] is True
+    assert (attrs["verified"], attrs["trust_reason"]) == (True, "ok")
+    assert attrs["received_fingerprint"] == sent["fp"] == record["fingerprint"]
+    assert attrs["modality"] == "wifi-csi", "a canary-wap's status names it a CSI sensor"
+
+
 def test_health_and_egress_read_as_the_wap_sent_them(record, monkeypatch):
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     health = wap.entity("health_status")
@@ -497,7 +558,19 @@ def test_tamper_and_event_id_levels_follow_the_wap(record, monkeypatch):
     tamper = _one(record, "tamper", "tamper")
     assert events.state == tamper["type"] == "enclosure"
     assert [kind for kind, _ in events.fired] == ["enclosure"]
-    assert _value(wap.entity("tamper_enclosure"), "is_on") is True
+    enclosure = wap.entity("tamper_enclosure")
+    assert _value(enclosure, "is_on") is True
+    assert _attrs(enclosure)["severity"] == tamper["severity"] == "tamper"
+    aggregate = wap.entity("tamper")
+    assert _value(aggregate, "is_on") is True
+    assert _attrs(aggregate)["tamper_type"] == tamper["type"]
+    # The row itself rides events too, as the anomaly the device trigger fires on.
+    row = _one(record, "tamper", "events")
+    assert (row["category"], row["module"], row["state"]) == (
+        "anomaly",
+        "system.integrity",
+        tamper["type"],
+    )
     assert _value(wap.entity("tamper_sd_remove"), "is_on") is False
     assert _value(wap.entity("event_id_space_low"), "is_on") is False
 
@@ -600,10 +673,25 @@ def test_discovery_configs_read_topics_the_wap_publishes(record):
             assert cfg["cmd_t"] in subscribed, (config_topic, cfg["cmd_t"])
 
 
+# A key a template reads with a default and that some body on its topic does
+# not carry, and why the default is what the entity shows then. Held both
+# ways: a new gap needs its reason here, and a closed one must leave.
+DEFAULTED_GAPS = {
+    ("status", "rssi"): (
+        "the connect burst's status and the last will carry no rssi: after the "
+        "will the entity is unavailable, so the default is not shown; after a "
+        "connect Signal Strength reads 0 dBm until the loop's next status "
+        "(handed up (#1832))"
+    ),
+}
+
+
 def test_discovery_templates_read_keys_the_bodies_carry(record):
     """A key read without a default is in every body on its topic; one read with
-    a default is in at least one (else the default is all the entity shows)."""
+    a default is in at least one (else the default is all the entity shows),
+    and is missing from one only where DEFAULTED_GAPS says why."""
     read = 0
+    gaps: set[tuple[str | None, str]] = set()
     for config_topic, cfg in _configs(record):
         pairs = [(cfg.get("stat_t") or cfg.get("topic"), cfg.get("val_tpl"))]
         pairs.append((cfg.get("avty_t"), cfg.get("avty_tpl")))
@@ -617,12 +705,20 @@ def test_discovery_templates_read_keys_the_bodies_carry(record):
                 have = [key in b for b in bodies]
                 if defaulted:
                     assert any(have), (config_topic, topic, key)
+                    if not all(have):
+                        gaps.add((_suffix(record, topic), key))
                 else:
                     assert all(have), (config_topic, topic, key, have)
     assert read > 30, "the templates read fewer keys than the configs carry"
+    assert gaps == set(DEFAULTED_GAPS), "name each defaulted gap's reason, or drop a closed one"
 
 
 def test_discovery_payload_words_match_the_bodies(record):
+    """At word level: each binary sensor's template names ON and OFF (what
+    each renders, body by body, is test_ha_discovery_wap_render.py's), the
+    switches' state words are the ones the WAP publishes, the update state is
+    keys Home Assistant reads, and the presence triggers' words are states the
+    WAP's presence rows carry."""
     configs = dict(_configs(record))
     by_object = {t.split("/")[-2]: cfg for t, cfg in configs.items()}
     for topic, cfg in configs.items():
@@ -683,8 +779,14 @@ def test_the_relayed_bodies_carry_the_keys_the_sketch_writes(record):
     body = _sketch_function(text, "static void ota_publish_update_state()")
     sketch_update = set(re.findall(r'doc\["(\w+)"\]', body))
     assert sketch_update <= HA_UPDATE_STATE_KEYS, sketch_update - HA_UPDATE_STATE_KEYS
+    # The two keys the sketch sets only when a release is on offer; the
+    # harness's body is the no-update shape, every other key the sketch sets.
+    offer_only = {"release_url", "release_summary"}
+    assert offer_only <= sketch_update, "the sketch's offer-only keys moved"
     (update,) = _bodies(record, _topic(record, "update/state"))
-    assert set(json.loads(update)) <= sketch_update, "kUpdateState in the harness is stale"
+    assert set(json.loads(update)) == sketch_update - offer_only, (
+        "kUpdateState in the harness is stale"
+    )
 
 
 # ─── the CI wiring ─────────────────────────────────────────────────────
@@ -760,7 +862,7 @@ def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     sent = _one(record, "running", "events")
     last = wap.entity("last_event")
-    assert last is not None
+    _require(last is not None, "the first events publish creates Last Event")
     assert _value(last, "native_value") == sent["state"]
     assert _attrs(last)["verified"] is True
 
@@ -792,8 +894,8 @@ def test_every_discovery_entity_finds_its_state_after_a_restart(record):
 )
 def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch):
     wap = _Wap(record, monkeypatch).replay("connect", "running", "tamper", "trouble")
-    assert _one(record, "trouble", "health")["enclosure_open"] is True
-    assert _value(wap.entity("tamper_enclosure"), "is_on") is True
+    _require(_one(record, "trouble", "health")["enclosure_open"] is True, "the lid is open")
+    _require(_value(wap.entity("tamper_enclosure"), "is_on") is True, "Tamper Enclosure is on")
     assert _value(wap.entity("tamper"), "is_on") is True
 
 
@@ -809,6 +911,24 @@ def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
     assert device.sw_version == record["firmware_version"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="handed up (#1832): Memory Critical reads the health's free_heap (default "
+    "100000); a canary-wap's health carries memory_free",
+)
+def test_memory_critical_turns_on_when_the_wap_is_low_on_memory(record, monkeypatch):
+    wap = _Wap(record, monkeypatch).replay("connect", "running", "trouble")
+    sent = _one(record, "trouble", "health")
+    _require(sent["memory_free"] < CRITICAL_MEMORY_THRESHOLD_BYTES, "the unit in trouble is low")
+    _require("free_heap" not in sent, "the WAP's health spells it memory_free")
+    _require(
+        _value(wap.entity("health_status"), "native_value") == "critical",
+        "the Health sensor reads it critical",
+    )
+    assert _value(wap.entity("tamper_memory_critical"), "is_on") is True
+
+
 @pytest.mark.parametrize(
     ("key", "topic"),
     [
@@ -817,6 +937,16 @@ def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
         ("mesh_connected", "mesh"),
         # Reads the health's `gps` object; the WAP's health has none.
         ("gps_fix", "health"),
+        # Read the health's `sd` object (wear_pct, replace_recommended); the
+        # WAP's health carries only sd_mounted.
+        ("sd_wear", "health"),
+        ("sd_replace", "health"),
+        # Read tamper.gpio / tamper_gpio, gps_fix_lost / gps_jamming and
+        # tamper.motion / unexpected_motion; the WAP's lid switch is
+        # enclosure_open, and it has no GPS and no motion sensor.
+        ("tamper_gpio", "health"),
+        ("tamper_gps_jamming", "health"),
+        ("tamper_motion", "health"),
     ],
 )
 @pytest.mark.xfail(
@@ -827,7 +957,7 @@ def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
 def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key, topic):
     """The entity is not created for a WAP, or its state moves when the WAP's
     publish on its topic changes (the healthy unit against the one in trouble)."""
-    assert _one(record, "running", topic) != _one(record, "trouble", topic)
+    _require(_one(record, "running", topic) != _one(record, "trouble", topic), "the bodies differ")
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     ent = wap.entity(key)
     if ent is None:
@@ -845,15 +975,17 @@ def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key,
     "sends (its presence vocabulary: active, subtle, quiet, together, empty)",
 )
 def test_a_wap_presence_event_asserts_motion_and_occupancy(record, monkeypatch, key):
+    """The entity is not created for a WAP, or a presence event asserts it."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     ent = wap.entity(key)
-    assert ent is not None
+    if ent is None:
+        return
     (sent,) = [
         pub["payload"]
         for pub in _publishes(record, "running")
         if pub["topic"] == _topic(record, "events")
     ]
-    assert json.loads(sent)["state"] == "active"
+    _require(json.loads(sent)["state"] == "active", "the running phase's event is active")
     # Delivered again now that the entity exists (the first one created it).
     wap.broker.publish(_topic(record, "events"), sent, False)
     assert _value(ent, "is_on") is True
