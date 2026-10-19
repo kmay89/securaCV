@@ -3594,6 +3594,11 @@ void test_pairing_over_the_air_as_initiator() {
   std::printf("PASS test_pairing_over_the_air_as_initiator  (code=%06u)\n", code_j);
 }
 
+/* GET /api/mesh's body, as handle_mesh_status builds it (defined below,
+ * with the F133 tests). */
+std::string status_body();
+bool has(const std::string& body, const char* frag);
+
 /* F94, through the session as the INITIATOR: its own CONFIRM, sent back to
  * it from the joiner's address, ends the pairing (bad_confirm in GET
  * /api/mesh), and nothing is sealed, sent, registered or bound: the partner's
@@ -3627,7 +3632,7 @@ void test_a_reflected_confirm_fails_the_pairing_through_the_session() {
   const std::vector<uint8_t> accept = wire(a);
   mesh_transport::test::inject_recv(mac_j, accept.data(), accept.size(), -40);
   mesh_transport::process();
-  assert(g_code_ready != 0 || mesh_session::pairing_confirmation_code() == g_code_ready);
+  assert(g_code_ready != 0 && g_code_ready == cj.confirmation_code);
 
   assert(mesh_session::confirm_pairing_code(40));
   const std::vector<uint8_t> conf_i = last_to(mac_j);
@@ -3642,6 +3647,7 @@ void test_a_reflected_confirm_fails_the_pairing_through_the_session() {
   assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
   assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::BAD_CONFIRM);
   assert(mesh_session::pairing_outcome() == mesh_pairing::Outcome::FAILED);
+  assert(has(status_body(), "\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"bad_confirm\""));
   assert(!g_paired_fired && g_paired_mac.empty());
   assert(mesh_session::trusted_peer_count() == 0);
   assert(!transport_has(mac_j));
@@ -3662,6 +3668,81 @@ void test_a_reflected_confirm_fails_the_pairing_through_the_session() {
   assert(!g_paired_fired && mesh_session::trusted_peer_count() == 0);
   assert(g_failed_count == 1);
   std::printf("PASS test_a_reflected_confirm_fails_the_pairing_through_the_session\n");
+}
+
+/* The same as the JOINER: its own CONFIRM, sent back to it from the
+ * initiator's address, ends its pairing (bad_confirm in GET /api/mesh), and
+ * nothing is opened, registered or bound: the initiator's address leaves the
+ * transport table, so the COMPLETE the initiator sends on the joiner's
+ * genuine CONFIRM is dropped there. That initiator still completes, holding
+ * the genuine CONFIRM: a joiner's reflected CONFIRM ends only the joiner's
+ * pairing, as a wrong hash in that slot already did (spec §5.2). Until F94
+ * the joiner took its own CONFIRM as the initiator's, and that COMPLETE
+ * paired it. */
+void test_a_reflected_confirm_fails_the_joiners_pairing_through_the_session() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x95 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(nullptr, pub, priv);
+  mesh_session::set_paired_callback(on_paired_register);
+  g_paired_mac.clear();
+
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x00, 0x95, 0x01};
+  const uint8_t mac_i[6] = {0x24, 0x0A, 0xC4, 0x00, 0x95, 0x02};
+  const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  uint8_t i_pub[32], i_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  mesh_pairing::PairingContext ci;
+  mesh_pairing::context_init(ci);
+  mesh_pairing::Action a = mesh_pairing::start_initiator(ci, i_pub, i_priv, S, "Home", 10);
+
+  assert(mesh_session::start_pairing_joiner(20));
+  feed_pure(ci, me, last_to(bcast), 30, &a);
+  assert(a.type == mesh_pairing::ActionType::SEND_OFFER);
+  const std::vector<uint8_t> offer = wire(a);
+  mesh_transport::test::inject_recv(mac_i, offer.data(), offer.size(), -40);
+  mesh_transport::process();
+  feed_pure(ci, me, last_to(mac_i), 40, &a);
+  assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+  assert(a.confirmation_code == mesh_session::pairing_confirmation_code());
+
+  /* This owner confirms; the CONFIRM comes back from the initiator's address. */
+  assert(mesh_session::confirm_pairing_code(50));
+  const std::vector<uint8_t> conf_j = last_to(mac_i);
+  assert(!conf_j.empty() &&
+         conf_j[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_CONFIRM));
+  g_outs.clear();
+  mesh_transport::test::inject_recv(mac_i, conf_j.data(), conf_j.size(), -40);
+  mesh_transport::process();
+  mesh_session::process(55);
+  assert(g_failed_fired && g_failed_count == 1);
+  assert(g_failed_why == mesh_pairing::FailReason::BAD_CONFIRM);
+  assert(mesh_session::pairing_state() == mesh_pairing::State::FAILED);
+  assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::BAD_CONFIRM);
+  assert(mesh_session::pairing_outcome() == mesh_pairing::Outcome::FAILED);
+  assert(has(status_body(), "\"pairing_result\":\"failed\",\"pairing_fail_reason\":\"bad_confirm\""));
+  assert(!g_paired_fired && g_paired_mac.empty());
+  assert(!transport_has(mac_i));
+
+  /* The genuine CONFIRM reaches the initiator, which completes; its
+   * CONFIRM and COMPLETE, and a copy, reach a joiner with no pairing. */
+  feed_pure(ci, me, conf_j, 60, &a);
+  assert(a.type == mesh_pairing::ActionType::NONE && ci.peer_confirmed);
+  a = mesh_pairing::confirm_code(ci, 70);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  inject_all(mac_i, wire_all(a));
+  assert(mesh_pairing::tick(ci, 75).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  a = mesh_pairing::tick(ci, 70 + mesh_pairing::COMPLETE_RESEND_INTERVAL_MS);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  inject_all(mac_i, wire_all(a));
+  for (uint32_t t = 80; t < 80 + 3 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 500) {
+    mesh_session::process(t);
+  }
+  assert(!g_paired_fired && !g_paired_with_secret && g_paired_mac.empty());
+  assert(!transport_has(mac_i) && mesh_session::trusted_peer_count() == 0);
+  assert(g_failed_count == 1);
+  assert(mesh_session::pairing_fail_reason() == mesh_pairing::FailReason::BAD_CONFIRM);
+  std::printf("PASS test_a_reflected_confirm_fails_the_joiners_pairing_through_the_session\n");
 }
 
 /* The same as the JOINER: the initiator's OFFER comes from an unknown MAC;
@@ -8342,6 +8423,7 @@ int main() {
   test_unheard_rekey_offer_replayed_from_a_new_address_moves_nothing();
   test_pairing_over_the_air_as_initiator();
   test_a_reflected_confirm_fails_the_pairing_through_the_session();
+  test_a_reflected_confirm_fails_the_joiners_pairing_through_the_session();
   test_pairing_over_the_air_as_joiner();
   test_pairing_over_the_air_joiner_confirms_first();
   test_pairing_over_the_air_initiator_confirms_first();
