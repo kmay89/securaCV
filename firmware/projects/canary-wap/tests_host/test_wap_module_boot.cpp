@@ -259,11 +259,13 @@ static int32_t tune_default_of(const char* full_key) {
 // A threshold stored directly wins over the saved preset and sensitivity,
 // at boot as after a change (core_presence.cpp's on_init() passes the
 // preset's baseline only as the default of the direct reads). The
-// calibration's apply stores all three thresholds, and so do the Tuning
-// Lab's per-row reset and "Reset all" (each POSTs its TUNE_COEFFS default
-// as a row) and a bundle import (every coefficient). On such a board a
-// saved preset changes nothing, at boot or at once. The docs and the
-// CHANGELOG say so; this pins it. It is not an F93 behavior: the precedence
+// calibration's apply stores all three thresholds, and so does a bundle
+// import (every coefficient); the Tuning Lab's per-row reset and "Reset
+// all" store nothing: since sweep F127 each POSTs JSON null for the row,
+// which csi_tune_lab.cpp routes to tune_clear_value(), so a reset returns
+// the board to the preset. On a calibrated or imported board a saved
+// preset changes nothing, at boot or at once. The docs and the CHANGELOG
+// say so; this pins it. It is not an F93 behavior: the precedence
 // predates it. The first case fails on the canary-wap before F93 (no boot
 // init: the static 35 reads a motion of 40 as "subtle"); every case fails
 // with on_init() made to let the preset win.

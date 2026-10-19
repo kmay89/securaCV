@@ -45,18 +45,30 @@ It fails closed: a make that fails, a preprocessor that fails, no compile in
 the plan, or a tests_host/test_*.cpp no compile in the full plan preprocesses
 (a suite the check cannot read) is a failure.
 
+The .inc files a suite includes are cut out of the sketch by make, and the
+preprocessor reads them, so they are run-arduino-globals' prerequisites: the
+Makefile's CUT_INCS, which every cutting rule appends its outputs to. This
+check holds the two together by what the compiler read: every .inc in this
+directory that any translation unit of the plan reads must be a prerequisite
+of run-arduino-globals as make's database (`make -p -n`) expands them. A cut
+missing from the list (the list this rule held by hand missed three) fails
+here, not only on the next fresh checkout, where `make run-arduino-globals`
+tripped on the missing cut, and under -jN, where the compile could race the
+rule that cuts it.
+
 The self-test (on by default; --no-self-test skips it) guards the guard:
 synthetic preprocessor output for each rule, recipe lines the shell splitter
 must read (or refuse), compile lines whose dependency flags it must drop (or
 whose dependency listing it must pass over), and mutated copies of the Makefile (the forced include
 dropped, its `override` dropped, a recipe that does not pass CXXFLAGS, a tsan
 build without the include, one behind `cd . &&`, a command that names the
-compiler and is not a compile) that the check must fail on, next to the
-unmutated Makefile on the same targets, which it must pass, and an explicit
-first include and a compile behind `cd . && env`, which it must accept.
+compiler and is not a compile, a cut .inc dropped from CUT_INCS) that the
+check must fail on, next to the unmutated Makefile on the same targets, which
+it must pass, and an explicit first include and a compile behind `cd . &&
+env`, which it must accept.
 
 Run it through make, which first cuts the .inc files the suites read out of
-the .ino (CI: `make -C firmware/projects/canary-wap/tests_host`, whose `run`
+the sketch (CI: `make -C firmware/projects/canary-wap/tests_host`, whose `run`
 target runs it; on its own:
 `make -C firmware/projects/canary-wap/tests_host run-arduino-globals`). Run
 directly on a fresh checkout it fails closed on the missing cuts.
@@ -74,7 +86,10 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+HERE_REAL = os.path.realpath(HERE)
 MAKEFILE = os.path.join(HERE, "Makefile")
+# The make target that runs this check, whose prerequisites are the cuts.
+GLOBALS_TARGET = "run-arduino-globals"
 SKETCH = os.path.realpath(os.path.join(HERE, "..", "arduino", "canary_wap"))
 GLOBALS = os.path.realpath(os.path.join(HERE, "arduino_globals.h"))
 
@@ -275,14 +290,21 @@ def in_sketch(path: str | None) -> bool:
     return path is not None and (path + os.sep).startswith(SKETCH + os.sep)
 
 
-def analyze(text: str) -> tuple[list[str], set[str]]:
+def is_cut(path: str | None) -> bool:
+    """A file make cuts out of the sketch for a suite: a .inc in this
+    directory (none is tracked; every one is a rule's output)."""
+    return path is not None and path.endswith(".inc") and os.path.dirname(path) == HERE_REAL
+
+
+def analyze(text: str) -> tuple[list[str], set[str], set[str]]:
     """One translation unit's preprocessed text: (what was compiled before
-    arduino_globals.h, every sketch file it read)."""
+    arduino_globals.h, every sketch file it read, every cut .inc it read)."""
     seen = False
     current: str | None = None
     current_line = 0
     problems: list[str] = []
     sketch_files: set[str] = set()
+    cut_files: set[str] = set()
     reported: set[str] = set()   # one problem per sketch file
     pos = 0
     n = len(text)
@@ -297,6 +319,8 @@ def analyze(text: str) -> tuple[list[str], set[str]]:
             current = resolve(unescape(m.group(2)))
             current_line = int(m.group(1))
             flags = m.group(3).split()
+            if is_cut(current):
+                cut_files.add(current)
             if current == GLOBALS and "1" in flags:
                 seen = True
             elif in_sketch(current):
@@ -312,12 +336,14 @@ def analyze(text: str) -> tuple[list[str], set[str]]:
                             "before arduino_globals.h")
         current_line += 1
     # Past the include nothing can come before it: only which sketch files
-    # the unit reads is left to collect.
+    # and which cuts the unit reads is left to collect.
     for name in set(MARKERS.findall(text, pos)):
         path = resolve(unescape(name))
         if in_sketch(path):
             sketch_files.add(path)
-    return problems, sketch_files
+        if is_cut(path):
+            cut_files.add(path)
+    return problems, sketch_files, cut_files
 
 
 def preprocess(cxx: list[str], flags: list[str], src: str) -> str:
@@ -328,6 +354,20 @@ def preprocess(cxx: list[str], flags: list[str], src: str) -> str:
                 "`make run-arduino-globals`)" if ".inc" in out.stderr else "")
         raise CheckError(f"{src}: the preprocessor failed: " + " | ".join(err[:6]) + hint)
     return out.stdout
+
+
+def globals_prerequisites(makefile: str) -> set[str]:
+    """The prerequisites of run-arduino-globals as make expands them (the
+    Makefile's CUT_INCS), read from make's database (`make -p -n`), which
+    prints each target's rule with its prerequisites expanded, once."""
+    out = subprocess.run(["make", "-p", "-n", "-f", makefile, GLOBALS_TARGET],
+                         cwd=HERE, env=clean_env(), capture_output=True, text=True)
+    if out.returncode != 0:
+        raise CheckError(f"make -p -n {GLOBALS_TARGET} failed:\n{out.stderr.strip()}")
+    rules = [line for line in out.stdout.splitlines() if line.startswith(GLOBALS_TARGET + ":")]
+    if len(rules) != 1:
+        raise CheckError(f"make's database names {GLOBALS_TARGET} {len(rules)} times; one rule expected")
+    return {resolve(word) for word in rules[0].split(":", 1)[1].split()}
 
 
 def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dict]:
@@ -350,10 +390,10 @@ def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dic
     def run(job):
         output, cxx, flags, src = job
         try:
-            problems, files = analyze(preprocess(cxx, flags, src))
+            problems, files, cuts = analyze(preprocess(cxx, flags, src))
         except CheckError as e:
-            return job, [str(e)], set()
-        return job, problems, files
+            return job, [str(e)], set(), set()
+        return job, problems, files, cuts
 
     try:
         workers = max(2, len(os.sched_getaffinity(0)))
@@ -364,17 +404,27 @@ def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dic
 
     problems: list[str] = []
     sketch_files: set[str] = set()
+    cut_files: set[str] = set()
     units_with_sketch = 0
     read_sources: set[str] = set()
-    for (output, _cxx, _flags, src), unit_problems, files in results:
+    for (output, _cxx, _flags, src), unit_problems, files, cuts in results:
         read_sources.add(os.path.realpath(os.path.join(HERE, src)))
         if files:
             units_with_sketch += 1
         sketch_files |= files
+        cut_files |= cuts
         if unit_problems:
             more = (f" (and {len(unit_problems) - 1} more sketch files)"
                     if len(unit_problems) > 1 else "")
             problems.append(f"{output}: {src}: {unit_problems[0]}{more}")
+    # Every cut a compile reads is one make must have made first: a
+    # prerequisite of run-arduino-globals (CUT_INCS), whatever rule cuts it.
+    prerequisites = globals_prerequisites(makefile)
+    for (output, _cxx, _flags, src), _unit_problems, _files, cuts in results:
+        for cut in sorted(cuts - prerequisites):
+            problems.append(f"{os.path.relpath(cut, HERE)} is read by {output}'s compile of {src} and is "
+                            f"not a prerequisite of {GLOBALS_TARGET}: append it to the Makefile's "
+                            "CUT_INCS beside the rule that cuts it")
     if full:
         for name in sorted(os.listdir(HERE)):
             if name.startswith("test_") and name.endswith(".cpp"):
@@ -382,7 +432,7 @@ def check(makefile: str, targets: list[str], full: bool) -> tuple[list[str], dic
                     problems.append(f"{name}: no compile in `make -n -B {' '.join(targets)}` "
                                     "preprocesses it, so this check cannot read it")
     stats = {"commands": len(cmds) - listings, "units": len(jobs), "units_with_sketch": units_with_sketch,
-             "sketch_files": sketch_files}
+             "sketch_files": sketch_files, "cut_files": cut_files}
     return problems, stats
 
 
@@ -508,6 +558,11 @@ MUTATIONS = [
     ("the forced include dropped, a sketch source compiled on its own",
      "override CXXFLAGS += $(ARDUINO_GLOBALS)\n", "\n",
      ["test_mqtt_reinit"], False, "../arduino/canary_wap/csi_mqtt.cpp: "),
+    ("the unmutated Makefile, a suite that includes a cut of the .ino",
+     None, None, ["test_export_answer"], True, None),
+    ("a cut .inc dropped from run-arduino-globals' prerequisites (CUT_INCS)",
+     "CUT_INCS  += $(EXPORT_INC)\n", "\n",
+     ["test_export_answer"], False, "test_export_answer.inc is read by test_export_answer's compile"),
 ]
 
 
@@ -547,7 +602,7 @@ def self_test() -> list[str]:
         if got != want:
             problems.append(f"self-test: split case '{name}': flags {got}, {want} expected")
     for name, text, must_pass in parser_cases():
-        found, _ = analyze(text)
+        found, _, _ = analyze(text)
         if must_pass and found:
             problems.append(f"self-test: parser case '{name}' failed: {found[0]}")
         if not must_pass and not found:
@@ -597,7 +652,8 @@ def main(argv: list[str]) -> int:
     headers = [f for f in files if f.endswith(".h")]
     print(f"check_arduino_globals: OK — {stats['units']} translation units in {stats['commands']} "
           f"compiles ({' '.join(targets)}); {stats['units_with_sketch']} read {len(files)} files of "
-          f"the sketch folder ({len(headers)} headers), each after arduino_globals.h"
+          f"the sketch folder ({len(headers)} headers), each after arduino_globals.h; "
+          f"{len(stats['cut_files'])} cut .inc files read, each a prerequisite of {GLOBALS_TARGET}"
           + ("" if "--no-self-test" in argv else
              f"; self-test: {len(parser_cases())} parser cases, {len(line_cases())} recipe-line cases, "
              f"{len(split_cases())} compile-split cases, {len(MUTATIONS)} Makefile cases"))

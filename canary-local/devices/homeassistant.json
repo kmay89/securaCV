@@ -598,7 +598,7 @@
     },
     {
       "name": "Last Event",
-      "desc": "latest witness event type, with zone, confidence, modality and attestation (`last_event`; signed `events` topic)"
+      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown` (`last_event`; signed `events` topic)"
     },
     {
       "name": "Health",

@@ -162,7 +162,11 @@ input-poll's brief expander direction-flip causes no backlight flicker.
 - `tests_host/test_fieldbus_glue.cpp` — the real driver and the playground's
   station against a stand-in `Serial1`: request bytes, 9600 8N1 on the board
   pins, the 300 ms reply window, the stale-byte drain, argument refusals and
-  return codes, in a build of each transport.
+  return codes, in a build of each transport; and a Modbus exception (sweep
+  F291): the five-byte exception reply returns at once with its code named
+  (`rs485 slave=1 exception=2`), a good read after it reads as before, an
+  exception with bytes behind it is still the exception, and a reply that is
+  not a whole, good exception waits the window.
 - `canary-display-dash-rs485` PlatformIO env (in `flavors.json` build_envs) so
   CI compiles the gated driver and its call site against the real toolchain
   (the env also sets `FEATURE_DEVMODE`, which compiles the bench in).
@@ -208,11 +212,20 @@ playground's CAN station asks for 500 kbit/s itself).
   stay byte-identical. Its caller is the dev playground's CAN station
   (`action_can_send` and the loop's receive drain) under `FEATURE_CAN`; builds
   without the flag keep the station's own thin transport, with the same wire
-  behavior. Nothing recovers a controller that has gone bus-off.
+  behavior. A controller that has gone bus-off is recovered (sweep F290):
+  `can_recover()` steps the controller's standard recovery — `BUS_OFF` into
+  `twai_initiate_recovery()` once, `STOPPED` after its own recovery into
+  `twai_start()` — and the playground's `can_drain()` calls it every 100 ms
+  pass; while it runs the tap says `tx=fail bus=off (recovering)`, not "bus
+  quiet?". Not bench-tested.
 - `tests_host/test_fieldbus_glue.cpp` — the real driver and the playground's
   station against a stand-in TWAI driver: the install configuration (pins,
   normal mode, the 500 kbit/s preset, accept-all), the test frame, the drain,
-  refused install/start, frame packing both ways and the bitrate presets.
+  refused install/start, frame packing both ways, the bitrate presets, a
+  bus-off that recovers (one recovery initiated from the drain, not the tap;
+  the restart once the bus frees; the tap's and the log's lines; nothing
+  sent by the recovery) and a recovery the bus holds up (initiated once,
+  waited out).
 - `canary-display-dash-can` PlatformIO env (in `flavors.json` build_envs) so CI
   compiles the gated driver and its call sites — including `<driver/twai.h>` —
   against the toolchain (the env also sets `FEATURE_DEVMODE`).

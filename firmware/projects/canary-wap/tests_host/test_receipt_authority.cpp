@@ -15,6 +15,16 @@
 // the SoftAP dropped, an installed WAP's steady state, where core 3.x's
 // WiFi.softAPIP() reads 0.0.0.0 (APClass::onDisable releases the AP netif and
 // NetworkInterface::localIP() answers IPAddress() for a null one).
+//
+// Since 2026-10-19 (the post-#1802 verification): the redirect keeps the
+// request's Host in front of that choice when it is an IP literal or one of
+// the device's own names (receipt_authority::redirect_host(); #1804 kept any
+// Host in the alphabet, #1802's merge kept none, so a browser that typed the
+// device's IP was sent to a .local name it could not resolve), its 256-byte
+// Location goes to the root rather than cut a URI (redirect_location()), and
+// a setup-door claim answers the .local name whenever the device has one,
+// the STA down included (#1804's rule, which #1802 had narrowed to the STA
+// holding an address; old_authority() below models #1804's).
 
 #include "arduino_globals.h"
 
@@ -94,16 +104,21 @@ std::string authority(const Inputs& in) {
   return out;
 }
 
-// The old send_provisioning_receipt()'s rule, verbatim in effect:
+// The old send_provisioning_receipt()'s rule (#1804's, main's until F255),
+// verbatim in effect:
 //   String authority = WiFi.softAPIP().toString();
-//   if (via_claim && WiFi.isConnected() && g_device.mdns_hostname[0] != '\0')
+//   if (via_claim && g_device.mdns_hostname[0] != '\0')
 //     authority = String(g_device.mdns_hostname) + ".local";
-// The old handle_https_redirect() wrote WiFi.softAPIP().toString() for every
-// caller: the same rule with no claim.
+// (#1780's first cut asked WiFi.isConnected() too; #1804 dropped that, so the
+// claim's receipt spells the steady-state address whatever the STA is doing,
+// and F255's first cut modeled #1780's rule here and asserted the SoftAP
+// address for a claim with the STA down "as before".) handle_https_redirect()
+// before #1804 wrote WiFi.softAPIP().toString() for every caller: the same
+// rule with no claim (#1804's Host rule, kept in front of this choice since
+// 2026-10-19, is test_redirect_host()'s).
 std::string old_authority(const Inputs& in) {
   const bool via_claim = in.grant == Grant::SETUP_DOOR_CLAIM;
-  const bool connected = in.sta_ip != 0;
-  if (via_claim && connected && in.mdns_host && in.mdns_host[0] != '\0') {
+  if (via_claim && in.mdns_host && in.mdns_host[0] != '\0') {
     return std::string(in.mdns_host) + ".local";
   }
   char d[16];
@@ -178,11 +193,39 @@ void test_setup_door_claim() {
   CHECK(authority(ap) == kLocal);
   CHECK(authority(ap) == old_authority(ap));
 
-  // The STA down (the join was lost): the SoftAP address, as before.
+  // The STA down (the join lost in the same moment): still the .local name.
+  // The claim receipt is the one the phone keeps for the life of the
+  // pairing, so it spells the steady-state address, never the SoftAP's,
+  // which is dead once the AP drops (#1804's rule, as before; F255's first
+  // cut named 192.168.4.1 here, and the post-#1802 verification put the
+  // contract back).
   Inputs down = make(Net::STA_DOWN_ON_SOFTAP, Grant::SETUP_DOOR_CLAIM);
-  CHECK(receipt_authority::choose(down) == Choice::SOFTAP_ADDRESS);
-  CHECK(authority(down) == kApStr);
+  CHECK(receipt_authority::choose(down) == Choice::MDNS_NAME);
+  CHECK(authority(down) == kLocal);
   CHECK(authority(down) == old_authority(down));
+
+  // Every network state, then: the .local name, as #1804 answered it.
+  for (Net n : {Net::ON_SOFTAP_STA_UP, Net::ON_STA_STA_UP, Net::STA_DOWN_ON_SOFTAP, Net::UNREAD_STA_UP,
+                Net::UNREAD_STA_DOWN, Net::AP_DROPPED_ON_STA, Net::AP_DROPPED_UNREAD,
+                Net::AP_DROPPED_STA_DOWN}) {
+    Inputs in = make(n, Grant::SETUP_DOOR_CLAIM);
+    CHECK(receipt_authority::choose(in) == Choice::MDNS_NAME);
+    CHECK(authority(in) == kLocal);
+    CHECK(authority(in) == old_authority(in));
+  }
+  // ... and with no name, like any other grant: the SoftAP address with the
+  // STA down, the STA's own address on the STA (never the SoftAP's, even
+  // when it arrived there), nothing with neither.
+  for (const char* none : {(const char*)nullptr, ""}) {
+    CHECK(receipt_authority::choose(make(Net::STA_DOWN_ON_SOFTAP, Grant::SETUP_DOOR_CLAIM, none)) ==
+          Choice::SOFTAP_ADDRESS);
+    CHECK(receipt_authority::choose(make(Net::ON_STA_STA_UP, Grant::SETUP_DOOR_CLAIM, none)) ==
+          Choice::STA_ADDRESS);
+    CHECK(receipt_authority::choose(make(Net::ON_SOFTAP_STA_UP, Grant::SETUP_DOOR_CLAIM, none)) ==
+          Choice::STA_ADDRESS);
+    CHECK(receipt_authority::choose(make(Net::AP_DROPPED_STA_DOWN, Grant::SETUP_DOOR_CLAIM, none)) ==
+          Choice::NONE);
+  }
 }
 
 void test_https_redirect() {
@@ -233,12 +276,17 @@ void test_ap_dropped() {
   // The AP dropped and the join lost at the same moment (a request accepted
   // on the STA, answered after it went; wifi_raise_ap() is about to bring
   // the AP back): the .local name, the one the device answers to on
-  // whichever network returns. The old rule wrote "0.0.0.0" for every grant.
+  // whichever network returns. The old rule wrote "0.0.0.0" for every grant
+  // but the claim, whose .local answer #1804 already had.
   for (Grant g : kAllGrants) {
     Inputs in = make(Net::AP_DROPPED_STA_DOWN, g);
     CHECK(receipt_authority::choose(in) == Choice::MDNS_NAME);
     CHECK(authority(in) == kLocal);
-    CHECK(old_authority(in) == "0.0.0.0");
+    if (g == Grant::SETUP_DOOR_CLAIM) {
+      CHECK(old_authority(in) == kLocal);
+    } else {
+      CHECK(old_authority(in) == "0.0.0.0");
+    }
   }
   // ... and with no name either there is nothing to give: nothing is
   // written, and the sketch refuses (503) rather than name 0.0.0.0.
@@ -269,12 +317,166 @@ void test_unread_socket_fallback() {
     CHECK(receipt_authority::choose(in) == Choice::MDNS_NAME);
     CHECK(authority(in) == kLocal);
   }
-  // ... and with the STA down, the SoftAP address.
+  // ... and with the STA down, the SoftAP address (the claim: its .local
+  // name, rule 0, as in every state).
   for (Grant g : kAllGrants) {
     Inputs in = make(Net::UNREAD_STA_DOWN, g);
-    CHECK(receipt_authority::choose(in) == Choice::SOFTAP_ADDRESS);
-    CHECK(authority(in) == kApStr);
+    if (g == Grant::SETUP_DOOR_CLAIM) {
+      CHECK(receipt_authority::choose(in) == Choice::MDNS_NAME);
+      CHECK(authority(in) == kLocal);
+    } else {
+      CHECK(receipt_authority::choose(in) == Choice::SOFTAP_ADDRESS);
+      CHECK(authority(in) == kApStr);
+    }
   }
+}
+
+// ── port 80's redirect: the Host the request carried ──────────────────────
+
+std::string kept_host(const char* host, const Inputs& in, size_t cap = 80) {
+  char out[80];
+  std::memset(out, 'x', sizeof(out));
+  const size_t n = receipt_authority::redirect_host(out, cap, host, in);
+  CHECK(n == std::strlen(out));
+  return out;
+}
+
+void test_redirect_host() {
+  const Inputs lan = make(Net::ON_STA_STA_UP, Grant::HTTPS_REDIRECT);
+  const Inputs ap  = make(Net::STA_DOWN_ON_SOFTAP, Grant::HTTPS_REDIRECT);
+
+  // A typed IP is kept (a PC or phone with no mDNS reached the device at it:
+  // Windows, Android without Bonjour), its port dropped: the STA's address,
+  // the SoftAP's, any IPv4 literal the request reached the device at (a port
+  // forward's), an IPv6 literal in brackets with its port after the bracket.
+  CHECK(kept_host("192.168.1.37", lan) == "192.168.1.37");
+  CHECK(kept_host("192.168.1.37:80", lan) == "192.168.1.37");
+  CHECK(kept_host("192.168.4.1", ap) == "192.168.4.1");
+  CHECK(kept_host("192.168.4.1:80", ap) == "192.168.4.1");
+  CHECK(kept_host("10.0.0.7", lan) == "10.0.0.7");
+  CHECK(kept_host("255.255.255.255", lan) == "255.255.255.255");
+  CHECK(kept_host("[fe80::1]", lan) == "[fe80::1]");
+  CHECK(kept_host("[fe80::1]:8080", lan) == "[fe80::1]");
+  CHECK(kept_host("[::ffff:192.168.1.37]", lan) == "[::ffff:192.168.1.37]");
+  CHECK(kept_host("[2001:db8:0:0:0:0:0:1]", lan) == "[2001:db8:0:0:0:0:0:1]");
+
+  // The device's own names are kept as typed (DNS names compare without
+  // case), the port dropped: its .local name and the canary.local catch-all.
+  CHECK(kept_host("canary-kitchen.local", lan) == "canary-kitchen.local");
+  CHECK(kept_host("canary-kitchen.local:80", lan) == "canary-kitchen.local");
+  CHECK(kept_host("Canary-Kitchen.LOCAL", lan) == "Canary-Kitchen.LOCAL");
+  CHECK(kept_host("canary.local", lan) == "canary.local");
+  CHECK(kept_host("CANARY.local:80", ap) == "CANARY.local");
+
+  // Anything else is refused, never forwarded: a foreign name, another
+  // Canary's, the device's name with more around it, a byte outside the
+  // alphabet (a slash, a space, a CR, a percent, an underscore), a bare IPv6
+  // literal (its colons read as a port), an address that is not one, an
+  // empty or missing Host, a port alone, two ports.
+  for (const char* bad : {"evil.example", "other-canary.local", "canary-kitchen.local.evil.example",
+                          "xcanary-kitchen.local", "canary-kitchen.localx", "canary-kitchen", "kitchen.local",
+                          "canary-kitchen.local/x", "canary-kitchen.local x", "canary-kitchen.local\r\nX: y",
+                          "canary-kitchen.local%00", "canary_kitchen.local", "fe80::1", "999.1.1.1", "256.1.1.1",
+                          "1.2.3", "1.2.3.4.5", "1.2.3.", ".1.2.3", "1..2.3", "1234.1.1.1", "[fe80]", "[]", "[",
+                          "]:80", "", ":80", "192.168.1.37:80:80", "[fe80::1]x", "[fe80::g]"}) {
+    CHECK(kept_host(bad, lan) == "");
+    CHECK(kept_host(bad, ap) == "");
+  }
+  CHECK(kept_host(nullptr, lan) == "");
+
+  // A device with no name has no .local name to keep; the catch-all and an
+  // address are still its.
+  const Inputs unnamed = make(Net::ON_STA_STA_UP, Grant::HTTPS_REDIRECT, nullptr);
+  CHECK(kept_host("canary-kitchen.local", unnamed) == "");
+  CHECK(kept_host("canary.local", unnamed) == "canary.local");
+  CHECK(kept_host("192.168.1.37", unnamed) == "192.168.1.37");
+
+  // A Host that does not fit the buffer is refused, not cut.
+  CHECK(kept_host("192.168.1.37", lan, 12) == "");
+  CHECK(kept_host("192.168.1.37", lan, 13) == "192.168.1.37");
+  char out[8];
+  std::memset(out, 'x', sizeof(out));
+  CHECK(receipt_authority::redirect_host(out, sizeof(out), "192.168.1.37", lan) == 0);
+  CHECK(out[0] == '\0');
+  CHECK(receipt_authority::redirect_host(nullptr, 80, "192.168.1.37", lan) == 0);
+  CHECK(receipt_authority::redirect_host(out, 0, "192.168.1.37", lan) == 0);
+}
+
+std::string location(const char* host, const char* uri, const Inputs& in, size_t cap = 256) {
+  char out[256];
+  std::memset(out, 'x', sizeof(out));
+  const size_t n = receipt_authority::redirect_location(out, cap, host, uri, in);
+  CHECK(n == std::strlen(out));
+  return out;
+}
+
+void test_redirect_location() {
+  const Inputs lan  = make(Net::ON_STA_STA_UP, Grant::HTTPS_REDIRECT);
+  const Inputs ap   = make(Net::ON_SOFTAP_STA_UP, Grant::HTTPS_REDIRECT);
+  const Inputs down = make(Net::STA_DOWN_ON_SOFTAP, Grant::HTTPS_REDIRECT);
+
+  // A typed IP stays the address the browser reached: a Windows PC or an
+  // Android phone without mDNS lands on https at it, not on a .local name it
+  // cannot resolve (what #1802's merge sent it to).
+  CHECK(location("192.168.1.37", "/settings", lan) == "https://192.168.1.37/settings");
+  CHECK(location("192.168.1.37:80", "/", lan) == "https://192.168.1.37/");
+  // The device's own .local name typed on the home network stays.
+  CHECK(location("canary-kitchen.local", "/settings?x=1", lan) == "https://canary-kitchen.local/settings?x=1");
+  CHECK(location("canary-kitchen.local:80", "/", lan) == "https://canary-kitchen.local/");
+  // The setup network's captive browser: 192.168.4.1 and canary.local, as typed.
+  CHECK(location("192.168.4.1", "/", down) == "https://192.168.4.1/");
+  CHECK(location("canary.local", "/", down) == "https://canary.local/");
+  CHECK(location("192.168.4.1", "/", ap) == "https://192.168.4.1/");
+  // A foreign Host is refused and the Location falls back to the device's
+  // name for this reach (the receipt's choice): never the Host.
+  CHECK(location("evil.example", "/settings", lan) == "https://canary-kitchen.local/settings");
+  CHECK(location("evil.example", "/", ap) == "https://192.168.4.1/");
+  CHECK(location("evil.example", "/", down) == "https://192.168.4.1/");
+  CHECK(location("canary-kitchen.local\r\nX: y", "/", lan) == "https://canary-kitchen.local/");
+  // No Host (HTTP/1.0, or one the sketch's buffer could not hold): the same.
+  CHECK(location("", "/x", lan) == "https://canary-kitchen.local/x");
+  CHECK(location(nullptr, "/x", lan) == "https://canary-kitchen.local/x");
+  // The fallback with no name is the STA's own address, as the receipt's.
+  CHECK(location("evil.example", "/", make(Net::ON_STA_STA_UP, Grant::HTTPS_REDIRECT, "")) ==
+        "https://192.168.1.37/");
+  // ... and with nothing to name (the AP dropped, the STA down, no name)
+  // nothing is written: the sketch answers 503. A typed IP is still kept
+  // there: the request reached the device at it.
+  const Inputs none = make(Net::AP_DROPPED_STA_DOWN, Grant::HTTPS_REDIRECT, nullptr);
+  char out[256];
+  std::memset(out, 'x', sizeof(out));
+  CHECK(receipt_authority::redirect_location(out, sizeof(out), "evil.example", "/", none) == 0);
+  CHECK(out[0] == '\0');
+  CHECK(location("", "/", none) == "");
+  CHECK(location("192.168.1.37", "/", none) == "https://192.168.1.37/");
+
+  // A URI the 256-byte Location cannot hold is not cut (a cut URI redirects
+  // to the wrong page): the root instead. "https://canary-kitchen.local" is
+  // 28 bytes, so a 227-byte URI fills the buffer exactly with its NUL and is
+  // kept, and one byte more goes to the root.
+  const std::string fits = "/" + std::string(226, 'a');
+  CHECK(location("canary-kitchen.local", fits.c_str(), lan) == "https://canary-kitchen.local" + fits);
+  CHECK(location("canary-kitchen.local", fits.c_str(), lan).size() == 255);
+  const std::string over = "/" + std::string(227, 'a');
+  CHECK(location("canary-kitchen.local", over.c_str(), lan) == "https://canary-kitchen.local/");
+  const std::string huge = "/" + std::string(1000, 'a');
+  CHECK(location("192.168.1.37", huge.c_str(), lan) == "https://192.168.1.37/");
+  CHECK(location("evil.example", huge.c_str(), lan) == "https://canary-kitchen.local/");
+  CHECK(location("evil.example", huge.c_str(), ap) == "https://192.168.4.1/");
+  // An empty URI (nothing sends one: req->uri starts with "/") is appended
+  // as it is.
+  CHECK(location("192.168.1.37", "", lan) == "https://192.168.1.37");
+  CHECK(location("192.168.1.37", nullptr, lan) == "https://192.168.1.37");
+  // A buffer too small for even the root: nothing, not half a URL.
+  std::memset(out, 'x', sizeof(out));
+  CHECK(receipt_authority::redirect_location(out, 21, "192.168.1.37", "/", lan) == 0);   // 21 bytes + NUL
+  CHECK(out[0] == '\0');
+  CHECK(receipt_authority::redirect_location(out, 22, "192.168.1.37", "/", lan) == 21);
+  CHECK(std::string(out) == "https://192.168.1.37/");
+  CHECK(receipt_authority::redirect_location(out, 22, "192.168.1.37", "/x", lan) == 21);   // the root
+  CHECK(std::string(out) == "https://192.168.1.37/");
+  CHECK(receipt_authority::redirect_location(nullptr, 256, "192.168.1.37", "/", lan) == 0);
+  CHECK(receipt_authority::redirect_location(out, 0, "192.168.1.37", "/", lan) == 0);
 }
 
 // ── edges ─────────────────────────────────────────────────────────────────
@@ -545,15 +747,26 @@ void test_sketch_glue() {
   CHECK(has(route, R"(send_provisioning_receipt\(\s*req, claim_served \? receipt_authority::Grant::SETUP_DOOR_CLAIM\s*: receipt_authority::Grant::BOOT_TAP\);)"));
   CHECK(count_of(ino, R"(\bsend_provisioning_receipt\()") == 3);   // the definition and the two calls
 
-  // Port 80's redirect: the same reach, as HTTPS_REDIRECT, written into the
-  // Location; nothing written refuses; the SoftAP address is no longer read
-  // here.
+  // Port 80's redirect, whole: the Host read into a buffer (a header that
+  // does not fit reads as none), and the Location — the Host kept by the
+  // header's rule, else the same reach as the receipt's, as HTTPS_REDIRECT;
+  // the root for a URI that does not fit — written by the header into 256
+  // bytes; nothing written refuses; the SoftAP and STA addresses are not
+  // read here.
   const std::string redirect = body_of(ino, "static esp_err_t handle_https_redirect(httpd_req_t* req) {");
   CHECK(!redirect.empty());
-  const std::string r = squash(redirect);
-  CHECK(has(r, R"(char authority\[80\];if\(receipt_authority::write\(authority,sizeof\(authority\),request_reach\(req,receipt_authority::Grant::HTTPS_REDIRECT\)\)==0\)\{httpd_resp_set_status\(req,"503 Service Unavailable"\);return httpd_resp_sendstr\(req,"No address to redirect to\."\);\})"));
-  CHECK(has(r, R"(snprintf\(location,sizeof\(location\),"https://%s%s",authority,req->uri\);)"));
-  CHECK(has(r, R"(httpd_resp_set_hdr\(req,"Location",location\);)"));
+  CHECK(squash(redirect) ==
+        "static esp_err_t handle_https_redirect(httpd_req_t*req){"
+        "char host[96]={0};"
+        "if(httpd_req_get_hdr_value_str(req,\"Host\",host,sizeof(host))!=ESP_OK)host[0]='\\0';"
+        "char location[256];"
+        "if(receipt_authority::redirect_location(location,sizeof(location),host,req->uri,"
+        "request_reach(req,receipt_authority::Grant::HTTPS_REDIRECT))==0){"
+        "httpd_resp_set_status(req,\"503 Service Unavailable\");"
+        "return httpd_resp_sendstr(req,\"No address to redirect to.\");}"
+        "httpd_resp_set_status(req,\"301 Moved Permanently\");"
+        "httpd_resp_set_hdr(req,\"Location\",location);"
+        "return httpd_resp_sendstr(req,\"Redirecting to HTTPS...\");}");
   CHECK(!has(redirect, R"(softAPIP|localIP)"));
   CHECK(count_of(ino, R"(\bhandle_https_redirect\b)") == 3);   // the definition and the two /* registrations
 
@@ -569,6 +782,8 @@ int main() {
   test_boot_tap();
   test_setup_door_claim();
   test_https_redirect();
+  test_redirect_host();
+  test_redirect_location();
   test_ap_dropped();
   test_unread_socket_fallback();
   test_edges();

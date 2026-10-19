@@ -1063,6 +1063,36 @@ so — see D2 below.)
   `identity_json.h`'s comments, `LESSONS_LEARNED.md`, the U1 checklist rows
   (https; the redirect before and after the AP drops). Host-tested; the ESP32
   compiles are CI's; not run on a device (U1). Found here: F289 and A88.
+  *Amended 2026-10-19 (the post-#1802 verification, WBS-1 and WBS-2):* two
+  of the Done text's claims did not hold. (1) The redirect: #1802's merge
+  chose the Location from the device's own names alone and so lost two
+  things #1804 had — the 256-byte Location with its root fallback (a URI
+  past 128 bytes was cut, into a redirect to the wrong page) and the
+  request's Host, so a browser that typed the WAP's IP on a PC or phone with
+  no mDNS (Windows, Android without Bonjour) was sent to a `.local` name it
+  could not resolve. The rule now: the request's Host is kept when it is an
+  IP literal or one of the device's own names (`canary-<suffix>.local`, the
+  `canary.local` catch-all), its port dropped, from the alphabet alone
+  (letters, digits, dots, dashes, an IPv6 literal's brackets and colons);
+  anything else is refused, never forwarded, and the Location falls back to
+  `receipt_authority.h`'s choice for the redirect grant; the Location is 256
+  bytes and a URI that does not fit goes to the root
+  (`receipt_authority::redirect_host()` and `redirect_location()`, pure;
+  `handle_https_redirect()` is held token for token). The 2026-07 MEDIUM is
+  closed by that rule, not by "the device's own names, not the request's
+  Host header". (2) The claim: "the STA holding no address answers the
+  SoftAP address" was true of every grant, the claim included, so a claim
+  spent in the moment the join was lost named `192.168.4.1` — against
+  #1804's rule (`via_claim && mdns_hostname[0]`, no STA condition), which
+  the test's `old_authority()` had modeled as #1780's `via_claim &&
+  WiFi.isConnected()`, so "as before" asserted the wrong before. A
+  setup-door claim now answers the `.local` name whenever the device has
+  one, in every network state, and "Unchanged: ... every claim while the
+  STA is up" reads "every claim". `test_receipt_authority.cpp` runs 533
+  checks (263 at #1802): the old rule modeled as #1804's, the claim in every
+  state, the kept and refused Hosts, the Location's fallbacks. The compile
+  stays CI's; not run on a device; the F255 bench row gained the
+  typed-address, foreign-Host and long-URI redirects.
 - [ ] **F256 [code+decision] canary-wap does not advertise its TLS certificate
   fingerprint over mDNS.** Its `_securacv._tcp` TXT set (`MDNS.addServiceTxt`
   in `canary_wap.ino`) carries `device_id`, `fw`, `host`, `name`, `model` and
@@ -1556,7 +1586,10 @@ so — see D2 below.)
   win the window: that is the documented limit. The Scout limits paragraph of
   `docs/csi_developer_api.md` and the threat note in both copies of
   `ble_scout_pairing.h` still say a neighboring Canary's advert can pair;
-  their new text, and a U1 row, are handed to the integrator. Still open (U1):
+  their new text, and a U1 row, are handed to the integrator (landed
+  2026-10-19 by the post-#1802 verification: both copies of the threat note,
+  the Scout limits paragraph, and the F36 section of
+  `hardware_verification_checklist.md`). Still open (U1):
   the N-advert confirmation (several qualifying adverts from one `hashed_id`
   before it pairs), which waits for real advert rates from the bench, and
   whether the Canary adverts above reach a passive Scout at pairing strength.
@@ -2116,6 +2149,18 @@ so — see D2 below.)
   `docs/homeassistant_setup.md`'s `event_id_space_low` bullet, which still
   says the recovery is not decided, is handed to the integrator. Comment and
   docs only.
+  *Amended 2026-10-19 (the post-#1802 verification):* "a factory reset
+  clears its NVS namespace" held for the canary's one-stage reset, and since
+  #1816 the BOOT hold has two stages (`common/io/reset_hold.h`, wired in
+  `main.cpp`): the 10 s release, `ResetScope::CredentialsAndSettings`,
+  removes only `firmware/canary/include/reset_scope_keys.h`'s fixed key
+  list, which names neither `csi.evid` nor `csi.evsent`, so an exhausted id
+  space survives it; only the 30 s hold, `ResetScope::Everything`
+  (`nvs.clear()`), drops them, and it drops the witness identity and chain
+  with them, so every hub and display that pinned the device sees a
+  stranger. The note at `space_low()` (both trees, the `kIdSpaceBase` line
+  untouched) and `docs/csi_developer_api.md` say so now; the canary-wap half
+  is unchanged. No behavior changed; not run on a device.
 - [x] **F83 [code] The canary-wap can commit an event before its id floor
   is restored.** `csi_integration::init` calls `register_v1_modules()`
   before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
@@ -3247,7 +3292,7 @@ so — see D2 below.)
   passes its 625 checks. Three comments that still describe the old reset
   (`test_wap_module_boot.cpp`, `csi_settings_nvs.h`) and the U1 rows (a new
   F166-section row, and the two F93 rows F127 makes false) are handed to the
-  integrator. Host-tested; the page is not driven in a browser; the compile is
+  integrator (landed 2026-10-19 by the post-#1802 verification). Host-tested; the page is not driven in a browser; the compile is
   CI's; not bench-tested.
 - [ ] **F315 [code] The dashboard does not say when stored thresholds override
   its preset.** Since F166 the calibration status carries `current_source`
@@ -5980,7 +6025,8 @@ so — see D2 below.)
   and a space alike to `-`, so the device keeps its hostname; the NVS row
   keeps its old bytes until the next rename (`init()` opens the namespace
   read-only). The Bluetooth name is a different setting and still takes the
-  byte (F261). `tests_host/test_device_name.cpp` (1812 checks) cuts `init()`,
+  byte (F261). `tests_host/test_device_name.cpp` (1812 checks at the package
+  head; 1844 at the merge, F263's added later in the PR) cuts `init()`,
   `get_device_name()`, `set_device_name()` and `sanitize_mdns_label()`
   verbatim from the sketch and sends every byte below 0x20, at three
   positions, through both routes' steps: each is refused and both answers
@@ -6169,7 +6215,8 @@ so — see D2 below.)
   length or reserve, and `fleet_scan_cache.h`'s room test the same. A refused
   build now returns at least its cap (`identity_json::build()`), and both
   handlers answer 503 `answer_changed` (the receipt wiped first) instead of an
-  empty 200. `tests_host/test_wap_json_writer.cpp` (115 checks, under
+  empty 200. `tests_host/test_wap_json_writer.cpp` (115 checks at the package
+  head; 12573 at the merge, F262's added later in the PR; under
   AddressSanitizer) grows a string between the passes and inside each copy
   through two test hooks, on exactly sized heap buffers and guard bytes, for
   the writer, both identity answers and the fleet cache (a grown row is
@@ -8006,7 +8053,10 @@ so — see D2 below.)
   changed on purpose; the wizard's node test, the swapped case included); the
   `[env:full]` compile is CI's; not bench-tested. The THREAT_MODEL sentences
   and the U1 section for F136, F162, F199 and F215 are handed to the
-  integrator.
+  integrator (landed 2026-10-19 by the post-#1802 verification: the
+  membership bullet in `THREAT_MODEL.md` beside the pairing endings, the
+  F134 copies sentence amended for F162, and the F136/F162/F199/F215 section
+  of `hardware_verification_checklist.md`).
 - [ ] **F318 [code+decision] canary-wap: `pair/join` on a Canary that holds an
   opera still runs and keeps the old members.** `start_pairing_joiner`
   (`mesh_network.cpp`) does not check `g_opera_config.configured`, and the
@@ -10412,8 +10462,8 @@ so — see D2 below.)
   compiler (the nightstand config on the C6 pin map, `CD_LEAN_BUILD`, the
   env's feature flags), against LVGL compiled with the lean `lv_conf` (no 36
   or 48 px face, LVGL's stock refresh period), and refuses to run when the env
-  stops carrying its five flags or its core-3 base stops asking for
-  `lvgl/lvgl@^9.5.0`. The package also checked for and compiled with
+  stops carrying its five flags or its core-3 base stops asking for exactly
+  `lvgl/lvgl@9.5.0` (F247). The package also checked for and compiled with
   `-DCONFIG_NIGHTSTAND`, which main's 2026-10-09 dead-config pass removed from
   every display env (the flavor is its `config.h` on the `-I` path), so on
   main the script stopped before building; the port's 23074493 drops the
@@ -10436,8 +10486,9 @@ so — see D2 below.)
   fails at its end if any did, so a red dash turn cannot hide the C6 result;
   `glass_turn_lvgl9.test.js` pins the config, the checks on the env and the
   run-every-suite tail (and fails on the old script). Natively on a 64-bit
-  host against LVGL 9.5.0 (the env's caret admits 9.6, F247); the C6 ESP32
-  build stays CI's; not bench-tested. The emulator dist does not move.
+  host against LVGL 9.5.0, the exact pin both PlatformIO rows carry since
+  F247; the C6 ESP32 build stays CI's; not bench-tested. The emulator dist
+  does not move.
 - [ ] **F250 [code] `io/orientation.h` describes `Orient::R90` two ways.** Its
   classifier picks R90 when gravity pulls toward the glass's right edge, the
   device turned clockwise, and R90's own comment says "turned clockwise", but
@@ -11071,7 +11122,8 @@ so — see D2 below.)
   integrated tree. The Vision README and the flavor file's header say which
   header owns what and name the five seeds. A `firmware/CONFIG_CHANGES.md`
   entry for the removal and two pointer lines in the flavor directory's README
-  are handed to the integrator. Dist: no deleted macro was read, so no
+  are handed to the integrator (landed 2026-10-19 by the post-#1802
+  verification). Dist: no deleted macro was read, so no
   compiled byte moves. Host-tested; the ESP32 compiles are CI's; not
   bench-tested. Found here: F313.
 - [ ] **F313 [code] Repoint the Vision flavor seeds' readers and drop the
@@ -11261,20 +11313,31 @@ so — see D2 below.)
   `$(VISION_PIPE_HDR)` to `VISCORE_HDR`. Pre-existing. Found by F221's review
   (#1762).
   *Done (2026-10 cleanup):* `VISCORE_HDR` lists `$(VISION_PIPE_HDR)`.
-  *Wave 16 (#1802):* main's list still missed two headers the suite reads.
-  `VISCORE_HDR` now also lists `detect_profiles.h` and `log.h`, which
-  `detect_config.cpp` reads, beside main's `$(VISION_PIPE_HDR)` and
-  `version.h`. `scripts/tests/test_vision_core_make_deps.py` (2 cases, run by
-  lint.yml's scripts/tests step) takes the recipe make prints (`make -n -B`),
-  runs it with `-MM` for the compiler's own header closure, and asks make
-  whether a touch of each file rebuilds the suite (`make -q -W`, so the tree
-  is never touched); its self-test runs the same check on the old list and
-  requires the pipeline headers named. Against main's Makefile it fails,
-  naming `detect_profiles.h` and `log.h` (the port review's run); on the
-  integrated tree it passes. CI builds fresh, so no CI result moves. Found
-  here: F286 (fourteen more suites, and the canary-wap Bluetooth suite, miss
-  headers they compile).
-- [ ] **F286 [code] Host suites in both tests_host trees are not rebuilt after
+  *Wave 16 (#1802):* main's list still missed two headers the suite reads,
+  `detect_profiles.h` and `log.h`, which `detect_config.cpp` reads; the
+  package's first cut added them to `VISCORE_HDR`, and F286 (found here,
+  below) then replaced every hand-kept header list in both tests_host
+  Makefiles, `VISCORE_HDR` included, with the compiler's own dependency
+  files: every compile writes one (`DEPFLAGS = -MMD -MP`, on each compile
+  through `override CXXFLAGS += $(DEPFLAGS)`; a recipe that compiles several
+  sources runs as `$(call with_deps, ...)`, which lists them with `-MM` after
+  the compile), and the end of each Makefile reads them back (`-include
+  $(wildcard ...*.d)`) with an empty rule for every source they name, so an
+  edit to any header the bindings suite read, `detection_pipeline.h` and
+  `optical_features.h` among them, rebuilds it with nothing listed by hand.
+  `scripts/tests/test_vision_core_make_deps.py` (six cases over both
+  Makefiles, run by lint.yml's scripts/tests step) holds that to the two
+  tools that decide: it builds every target in a scratch copy of each
+  tests_host directory at `-j`, takes each compile's header closure with
+  `g++ -MM`, and asks make's database (`make -p`) whether every file read
+  is a prerequisite with a rule of its own; its self-test takes the
+  `-include` line out and requires the pipeline headers named for this
+  suite. Against main's Makefile the check named `detect_profiles.h` and
+  `log.h` (the port review's run); on the merged tree every header a suite
+  compiled rebuilds it. CI builds fresh, so no CI result moves. (Corrected
+  2026-10-19 by the post-#1802 verification: this paragraph had described
+  the hand list and a 2-case test, which #1802 did not ship.)
+- [x] **F286 [code] Host suites in both tests_host trees are not rebuilt after
   an edit to a header they compile.** Reading each recipe with `g++ -MM`
   against make's prerequisites (the method of
   `scripts/tests/test_vision_core_make_deps.py`), in `firmware/tests_host`:
@@ -11304,6 +11367,41 @@ so — see D2 below.)
   generating dependency files with `-MMD -MP`) would close the class. Found by
   F249, with the port review's `BT_CMD_DEPS` finding and F229's
   `arduino_globals.h` note merged in (#1802).
+  *Done (#1802):* dependency files, in both Makefiles. Every compile writes
+  the headers it read beside its binary (`DEPFLAGS = -MMD -MP`, added to
+  every compile by `override CXXFLAGS += $(DEPFLAGS)`, so a CXXFLAGS given
+  on make's command line keeps it; a recipe that does not pass CXXFLAGS
+  passes `$(DEPFLAGS)` itself); a recipe that compiles several sources,
+  where `-MMD` writes the one file once per source, each over the last,
+  runs as `$(call with_deps,<the compile>)`, the compile and then the same
+  flags and sources with `-MM -MT $@` writing `$@.d` with every source's
+  headers; and the end of each Makefile reads the files back (`-include
+  $(wildcard $(BUILD_DIR)/*.d)` in firmware/tests_host, `-include $(wildcard
+  test_*.d)` in canary-wap's, last so no rule in them can become the default
+  goal) and gives every source they name an empty rule, as `-MP` gives each
+  header, so a header or source moved since is a rebuild and not "No rule
+  to make target". The hand-kept header lists are gone (`VISCORE_HDR`, and the
+  fifteen headers `BT_CMD_DEPS` used to spell out; that variable stays as the
+  suite's source list), and an edit to `arduino_globals.h` rebuilds
+  every canary-wap suite. `scripts/tests/test_vision_core_make_deps.py` (six
+  cases over both Makefiles) holds it to the two tools that decide, not to a
+  list: make's plan (`make -n -B --trace`) for every compile of the default
+  goal and of every other target with a recipe, each of a non-phony target
+  writing a dependency file, with CXXFLAGS given on the command line or not;
+  then every target built as `make` builds it, at `-j` (`MAKE_DEPS_JOBS`), in
+  a scratch copy of the tests_host directory with every file around it
+  linked, so the dependency files are the Makefile's own; then the
+  compiler's closure for every file each compile reads (`g++ -MM`) held to
+  the prerequisites make's database (`make -p`) carries for the target, by
+  real path, each a target of a rule of its own, and `make -q` finding every
+  target up to date. Its self-test reads the same build through each
+  Makefile changed one line at a time and requires each check to refuse the
+  change (the `-include` line out, the source rules out, the `-include`
+  above `all`, `override` dropped, `with_deps` running the compile alone, the
+  syntax checks keeping DEPFLAGS). Host-tested; CI builds fresh, so no CI
+  result moves; `check_arduino_globals.py` drops the dependency flags from
+  the preprocessor runs it plans. (Ticked 2026-10-19 by the post-#1802
+  verification: #1802 shipped this and left the item open.)
 - [ ] **F252 [code+decision] canary-wap's rf-sensing wizard is unreachable:
   the Phase 12 routes were never built.** The Phase 10 setup wizard
   (`wizard.h` / `wizard.cpp` in
@@ -11454,7 +11552,8 @@ so — see D2 below.)
   including that a node alone on the bus goes error-passive and never bus-off,
   so a bench drives bus-off with another node on the bus;
   `board_capability_map_43b.md`, which still says nothing recovers a bus-off
-  controller, has its replacement handed to the integrator. Host-tested; the
+  controller, has its replacement handed to the integrator (landed 2026-10-19
+  by the post-#1802 verification). Host-tested; the
   ESP32 compile of dash-can is CI's; recovery on a real bus is not
   bench-tested (U1). Found here: A109 (the Lab's playground sim).
 - [x] **F291 [code] A Modbus exception reply reads as no reply after the full
@@ -14077,7 +14176,14 @@ so — see D2 below.)
   screens also read the hub's broker login (two Keychain items) in `body` on
   every render: `SetupView`, `CanaryFamilySetupView`'s watch step and
   `NearbySetupSheet`'s done card; each now reads it into a `@State` beside the
-  Wi-Fi read (`onAppear`, `prefill()`, `begin()`).
+  Wi-Fi read (`onAppear`, `prefill()`). (Corrected 2026-10-19 by the
+  post-#1802 verification: this text had counted `NearbySetupSheet`'s done
+  card as a third screen reading the login in `body` and moved into a
+  `@State` in `begin()`; the merged `NearbyCanaryCard.swift` has no such
+  state, and its one `brokerLogin()` read is in the async `handOverHub(_:)`
+  that `begin()` calls, which the lint accepts. Three reads on the base
+  tree, not four: `CanarySetupView.swift`'s body, `SetupView.swift`'s
+  initializer and body.)
   `scripts/lint_ios_keychain_reads.py` (a `lint.yml` step; a source heuristic
   whose blind spots its docstring lists) keeps the static Keychain readers out
   of view initializers, bodies, view builders and view-modifier content:
@@ -14086,7 +14192,7 @@ so — see D2 below.)
   type name or a bare call), may be called only from a func that returns no
   view or from an effect closure (`.task`, `.onAppear`, `.onChange`, a
   `Button` action, ...); a `Task` decides nothing on its own, so one made in
-  `body` is refused. It names the four reads on the base tree and none now;
+  `body` is refused. It names the three reads on the base tree and none now;
   `scripts/tests/test_lint_ios_keychain_reads.py` (20 cases) pins the verdicts
   it lists, and 25 of 26 mutants of the lint fail it (the one left,
   `header_of` not stopping at `;`, changes no verdict on Swift a view can
@@ -15048,8 +15154,8 @@ so — see D2 below.)
   replay cases, the three voice answers, and in the monorepo the placeholder
   held to `test_csi_event_wire.cpp`'s own pin); 17 fail on the old sensor and
   7 on the first, broader version, and all 30 pass on the integrated tree. The
-  Last Event row of `docs/homeassistant_setup.md` is handed to the integrator.
-  Host-tested on the stubbed Home Assistant harness; `tests/ha` is CI's; not
+  Last Event row of `docs/homeassistant_setup.md` is handed to the integrator
+  (landed 2026-10-19 by the post-#1802 verification). Host-tested on the stubbed Home Assistant harness; `tests/ha` is CI's; not
   seen in a running Home Assistant. `sensor.py` and the new test reach the
   HACS mirror with the carry that follows #1802's merge (U6). Found here:
   HA40, HA41, HA42, HA43.
@@ -17180,14 +17286,15 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   defaults) and `--parser-options sourceType:module`. Nothing in the tree can
   weaken that rule: `--no-config-lookup` reads no config file and
   `--no-inline-config` obeys no `eslint-disable` or `/* eslint ... */`
-  comment. The ESLint is canary-vision's lockfile pin (10.11.0), installed as
+  comment. The ESLint is canary-vision's lockfile pin (10.12.0 at merge, after
+  Dependabot's #1809; 10.11.0 when the package was written), installed as
   viewer.yml's ESLint job installs it, and canary-vision's three manifests are
   in its path filters. It is its own workflow rather than a `canary-local.yml`
   step, so a canary-vision lockfile bump does not pay for the wasm build
   (CI.md R5). The item's premise did not hold: ESLint 8.57.1 at its own
   defaults already finds 5 unused bindings on the base tree, and ESLint 9's
   `caughtErrors: "all"` default adds 19 catch clauses that never read their
-  error, so 10.11.0 found 24 problems in 10 files. The 19 catch clauses are
+  error, so the lockfile's ESLint found 24 problems in 10 files. The 19 catch clauses are
   now `catch {` and the 5 bindings are dropped, with their arguments where a
   caller passed one (11 files edited). No behavior change: the page-logic
   tests pass with the same counts before and after, and the CSP probe and

@@ -1143,6 +1143,66 @@ CI's. Owner: U1.
     new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
+## PlatformIO opera membership: a join needs a leave first, the paired heartbeat, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215) — on-device verification
+
+Code: `mesh_session.cpp` (`execute_request`'s PAIR_JOIN refusal,
+OPERA_EXISTS; the one signed `HEARTBEAT` after NOTIFY_PAIRED and on the
+first `process()` pass after a boot that bound a member),
+`handle_mesh_pair_join` (409 `opera_exists`) and the peers handler
+(`mesh_api::peer_views_from_status`) in
+`firmware/canary/lib/securacv_network/src/securacv_network.cpp`, and the
+kernel wizard's
+`meshEndAtTimeout` (F215). Host-tested (`test_mesh_session`,
+`test_mesh_pairing`, `check_canary_mesh_status.py`,
+`test_canary_mesh_status_wiring.py`, `test_wizard_mesh_pairing.test.js`);
+the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
+
+- [ ] **A Canary already in an opera refuses a join until it leaves**
+  - Setup: two PlatformIO canaries (`[env:full]`) paired into an opera; a
+    third, fresh one; the API tokens.
+  - Repro: on the third, `POST /api/mesh/pair/start`; on one of the paired
+    two, `POST /api/mesh/pair/join` with that number; then
+    `POST /api/mesh/leave` on it and join again.
+  - Expected: the first join answers `409` `{"error":"opera_exists"}` at
+    once, before any code shows, and `GET /api/mesh` on both paired boards
+    still lists the old opera and its members; after the leave the join
+    runs to its code (before F136 the join ran and the old members stayed
+    listed, never heard, counting against the eight slots).
+  - Artifact: `docs/audit/repro/F136/join-refused/`.
+- [ ] **Two Canaries read each other CONNECTED within seconds of pairing, and the COMPLETE copies stop**
+  - Setup: two PlatformIO canaries on the same Wi-Fi channel, serial on
+    both, the second never in an opera.
+  - Repro: pair them (`pair/start`, `pair/join`, `pair/confirm` on both);
+    watch `GET /api/mesh/peers` on each and the initiator's serial for its
+    COMPLETE sends. Then reboot the joiner.
+  - Expected: within a few seconds of the confirm each side lists the other
+    CONNECTED with a `last_seen_sec` of a few seconds (before F162:
+    OFFLINE, "never", until some opera frame), and the initiator's COMPLETE
+    copies stop after the joiner's heartbeat (before: 149 copies over five
+    minutes). After the reboot the initiator hears the joiner once more at
+    the joiner's first loop pass when the router is on the softAP's channel
+    1, and not when it is not (F320, open).
+  - Artifact: `docs/audit/repro/F162/paired-heartbeat/`.
+- [ ] **The peers list is the session's, without flash encryption**
+  - Setup: a PlatformIO canary in an opera, flashed without flash
+    encryption.
+  - Repro: `GET /api/mesh/peers` and `GET /api/mesh`.
+  - Expected: `200` with one row per member the session holds, and
+    `peers_total` equal to the row count (before F199: `500` `load_failed`
+    on such a board, and rows read from NVS that could disagree with the
+    count).
+  - Artifact: `docs/audit/repro/F199/peers-from-session/`.
+- [ ] **The kernel wizard's timeout says what its last read found**
+  - Setup: Home Assistant with the add-on; two PlatformIO canaries, one
+    slow to finish (a weak link to it).
+  - Repro: run "Add another Canary" and let the completion wait run out
+    while one side already reports paired and the other still runs.
+  - Expected: the wizard says the pairing is still finishing and to check
+    both in a minute; nothing is canceled on the side that reports paired
+    (before F215 the timeout canceled from its stale polls and reported a
+    failure). Both read paired a minute later.
+  - Artifact: `docs/audit/repro/F215/timeout-read/`.
+
 ## The per-entry log acknowledge on both trees, the kernel wizard's Back during a start (F214, F217) — on-device verification
 
 Code: the `POST /api/logs/*` registration and `log_ack_seq_from_uri()` /
@@ -2070,6 +2130,35 @@ device.
     network and the join failed.
   - Artifact: `docs/audit/repro/F262/control-byte-ssid/`.
 
+## Scout proximity pairing refuses the fleet's own adverts (F36) — on-device verification
+
+Code: `ble_scout_advert_kind.h` (pure; byte-identical in
+`firmware/canary/lib/securacv_ble_scan/src/` and the canary-wap sketch
+folder, held by `check_ble_scan_sync.sh`), the `offerable` flag of
+`ble_scout_on_advert()` in `ble_scout.cpp`, and both trees' scan callbacks
+in `ble_scout_nimble.cpp`. Host-tested (`test_ble_scout_pairing.cpp`:
+strong presence-beacon and Chirp adverts from unpaired advertisers never
+pair while near misses and adverts with no manufacturer data still do; both
+scan callbacks held to one manufacturer-data read); the `[env:full]` and
+canary-wap compiles are CI's; not run on a device. Owner: U1.
+
+- [ ] **A neighboring Canary's presence beacon or Chirp cannot win the pairing window; a tag still can**
+  - Setup: a canary `[env:full]` build with the Scout enabled, the API
+    token; a second Canary advertising its presence beacon (and, a canary-wap
+    with Chirp on, a Chirp) within a few centimeters; a BLE tag with a fixed
+    address out of range; phones with Bluetooth off.
+  - Repro: `curl -X POST http://canary.local/api/scout/pair/start -H
+    "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d
+    '{"label": "shelf"}'`; poll `GET /api/scout/pair/status` through the
+    window. Then arm again with the tag held against the Canary.
+  - Expected: the first window ends `"state":"expired"` with no `hashed_id`
+    and no pairing line on serial (before F36 the neighboring Canary's
+    advert paired within a second of arming); the second ends
+    `"state":"paired"` with the tag's `hashed_id` and the label, and
+    `GET /api/scout` lists it. Record whether the second Canary's adverts
+    reach the Scout at pairing strength at all (the open half of F36).
+  - Artifact: `docs/audit/repro/F36/fleet-advert-refused/`.
+
 ## One event-id space (F46) — on-device verification
 
 Code: `firmware/common/csi/src/csi_event.cpp` (one allocator, ids taken at
@@ -2202,10 +2291,13 @@ device. Owner: U1.
   - Setup: a canary-wap on this firmware, dashboard open, on a board with
     no stored presence threshold (no `cp.mt`, `cp.at` or `cp.bt` row in
     the `csi` namespace): never calibrated, no Tuning Lab threshold
-    change, per-row reset, "Reset all" or bundle import. Each of those
-    stores the thresholds, and a stored threshold wins over the preset and
-    the sensitivity (at boot and at once, before F93 as after it), so on
-    such a board this row cannot pass. Erase NVS first when unsure.
+    change, no bundle import. Each of those stores the thresholds, and a
+    stored threshold wins over the preset and the sensitivity (at boot and
+    at once, before F93 as after it), so on such a board this row cannot
+    pass until the rows are gone: since F127 the Tuning Lab's per-row reset
+    and "Reset all" remove them (each POSTs `null`, which the device
+    clears), so one "Reset all" returns the board to the preset and this
+    row can pass after it. Erase NVS first when unsure.
   - Repro: set the preset to "sensitive" (or the sensitivity slider to
     100); `POST /api/reboot`; when it is back, make a small motion in
     front of it (a hand wave at a few meters) within the first minute.
@@ -2216,12 +2308,15 @@ device. Owner: U1.
   - Artifact: `docs/audit/repro/F93/preset-after-reboot/`.
 - [ ] **A stored threshold still wins over the preset after a reboot**
   - Setup: the board from the row above, then a calibration applied
-    (`POST /api/csi/calibrate/apply`) or the Tuning Lab's "Reset all".
+    (`POST /api/csi/calibrate/apply`) or a bundle loaded in the Tuning Lab
+    (not "Reset all": since F127 it stores nothing and returns the board to
+    the preset, the F166 section's last row).
   - Repro: set the preset to "sensitive"; reboot; repeat the small motion.
-  - Expected: the board reads it by the stored thresholds (after "Reset
-    all", the balanced 35 / 75 / 30: the motion that read `subtle` above
-    stays `empty`), while `GET /api/settings` still reports
-    `"preset": "sensitive"`. Host-pinned by
+  - Expected: the board reads it by the stored thresholds, the ones
+    `GET /api/csi/calibrate/status` reports as `"current"` with
+    `"current_source":"stored"` (so the motion that read `subtle` above
+    reads by them, not by "sensitive"), while `GET /api/settings` still
+    reports `"preset": "sensitive"`. Host-pinned by
     `test_a_stored_threshold_wins_over_the_saved_preset`
     (`test_wap_module_boot.cpp`). Not an F93 change; recorded so a
     calibrated board is not read as F93 failing.
@@ -2508,6 +2603,22 @@ not run on a device. Owner: U1.
     `"current":{"motion":25,"active":60,"breathing":20}` with
     `"current_source":"stored"`. Before, the load stored 35 / 75 / 30.
   - Artifact: `docs/audit/repro/F166/tuning-lab-values/`.
+- [ ] **A Tuning Lab reset returns the board to the preset (F127)**
+  - Setup: the board from the row above after the calibration was applied
+    (`"current_source":"stored"`), the Tuning Lab open, the preset set to
+    "sensitive".
+  - Repro: press the motion threshold row's reset; read
+    `GET /api/csi/calibrate/status` and `GET /api/tune/coefficients`. Then
+    "Reset all to defaults"; read both again; reboot; read the status once
+    more.
+  - Expected: after the row's reset the status reports the preset's motion
+    threshold (25) beside the stored active and breathing ones; after
+    "Reset all" it reports `"current":{"motion":25,"active":60,"breathing":20}`
+    with `"current_source":"preset"`, the Lab's rows show those as their
+    `"value"`, and the reboot changes nothing. Before F127 each reset stored
+    the row's default (the balanced 35 / 75 / 30) as a row, so the status
+    stayed `"stored"` and a later preset changed nothing.
+  - Artifact: `docs/audit/repro/F166/tuning-lab-reset/`.
 
 ## canary-wap receipt address, port 80's redirect and the dashboard's recovery kit (F255, F257) — on-device verification
 
@@ -2544,16 +2655,26 @@ to https. The rows below use https; on an http-only build (or one whose
     `curl -si http://canary-<suffix>.local/settings` and `curl -si
     http://<the WAP's home-network address>/settings`. On the phone, short-tap
     BOOT and fetch `https://192.168.4.1/api/provisioning-receipt`, then
-    `http://192.168.4.1/settings` with redirects shown. Repeat the laptop's
-    four requests after the AP dropped.
+    `http://192.168.4.1/settings` with redirects shown. On the laptop, also
+    `curl -si -H "Host: evil.example" http://<the WAP's home-network
+    address>/settings` and `curl -si "http://<the WAP's home-network
+    address>/$(printf 'a%.0s' $(seq 300))"`. Repeat the laptop's four
+    requests after the AP dropped.
   - Expected: both laptop receipts carry `"base_url":
     "https://canary-<suffix>.local"` (before F255 both named `192.168.4.1`)
-    and the certificate's SHA-256 equals `tls_cert_fp`; both port-80 answers
-    are `301` with `Location: https://canary-<suffix>.local/settings`
-    (before, `https://192.168.4.1/settings`, and `https://0.0.0.0/settings`
-    once the AP dropped on core 3.x); the phone's receipt and redirect name
-    `192.168.4.1`. Nothing read after the AP dropped names `192.168.4.1` or
-    `0.0.0.0`.
+    and the certificate's SHA-256 equals `tls_cert_fp`; the `.local`
+    request's port-80 answer is `301` with `Location:
+    https://canary-<suffix>.local/settings` and the typed-address request's
+    is `301` with `Location: https://<the WAP's home-network
+    address>/settings` (since 2026-10-19, the post-#1802 verification: #1802
+    sent both to the `.local` name, and before F255 both went to
+    `https://192.168.4.1/settings`, `https://0.0.0.0/settings` once the AP
+    dropped on core 3.x); the foreign-Host request is `301` to
+    `https://canary-<suffix>.local/settings` (the Host refused, never
+    forwarded) and the 300-byte URI is `301` to
+    `https://<the WAP's home-network address>/` (the root, not a cut URI);
+    the phone's receipt and redirect name `192.168.4.1`. Nothing read after
+    the AP dropped names `192.168.4.1` or `0.0.0.0`.
   - Artifact: `docs/audit/repro/F255/receipt-authority/`.
 - [ ] **The dashboard offers the recovery kit, signed out (BOOT tap) and signed in (Settings), and the kit pairs the iPhone**
   - Setup: a canary-wap set up through the Bluetooth setup door (so its

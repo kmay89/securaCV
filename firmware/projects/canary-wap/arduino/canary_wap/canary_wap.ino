@@ -8775,21 +8775,30 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
-// The Location names the WAP the way the receipt's base_url does
-// (receipt_authority.h): a caller on the setup network keeps the SoftAP
-// address, anyone else gets the .local name. It used to be WiFi.softAPIP()
-// for everyone, so http://canary-<suffix>.local/ typed on the home network
-// went to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
-// which the home network cannot reach.
+// The Location names the WAP where this caller reached it
+// (receipt_authority.h, redirect_location()): the request's Host when it is
+// an IP literal or one of the device's own names — a browser that typed the
+// device's address on a PC or phone with no mDNS keeps it, as does one that
+// typed canary-<suffix>.local or canary.local; a port is dropped — else the
+// address the receipt's base_url would name for this reach: a caller on the
+// setup network gets the SoftAP address, anyone else the .local name. Any
+// other Host (a foreign name, a byte outside the alphabet, one too long for
+// the buffer) is refused, never forwarded. It used to be WiFi.softAPIP() for
+// everyone, so http://canary-<suffix>.local/ typed on the home network went
+// to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
+// which the home network cannot reach; then the device's own names for
+// everyone (#1802), so a typed IP went to a .local name a browser without
+// mDNS cannot resolve. A URI the 256-byte Location cannot hold is not cut (a
+// cut URI redirects to the wrong page): the root instead.
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char authority[80];
-  if (receipt_authority::write(authority, sizeof(authority),
-                               request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
+  char host[96] = {0};
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) host[0] = '\0';
+  char location[256];
+  if (receipt_authority::redirect_location(location, sizeof(location), host, req->uri,
+                                           request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_sendstr(req, "No address to redirect to.");
   }
-  char location[128];
-  snprintf(location, sizeof(location), "https://%s%s", authority, req->uri);
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
