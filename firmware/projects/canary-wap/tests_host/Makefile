@@ -581,6 +581,9 @@ SCOOKIE_SRC     = test_session_cookie.cpp
 SCOOKIE_UI_INC  = test_session_cookie_ui.inc
 SCOOKIE_CSI_INC = test_session_cookie_csi.inc
 SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
+# The cuts' list for run-arduino-globals (main's CUT_INCS, #1833); a no-op
+# where the list is not yet read.
+CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
 
 $(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
 	awk -v 'sigs=static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {' \
