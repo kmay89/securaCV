@@ -250,7 +250,7 @@ static int test_a_closed_bundle_commits_once() {
 // csi_event_find() (what the canary-wap's egress logs on its card) see it.
 // Its ring row ends at the close and starts duration_sec before it: here the
 // gap close two minutes after the last refresh, so it starts two minutes
-// after the bundle opened. Fails on the library before F77, where a closed
+// after the bundle opened (the triaged rule; see the note in the test). Fails on the library before F77, where a closed
 // bundle never reached the ring.
 static int test_a_closed_bundle_reaches_the_ring() {
   fresh();
@@ -267,7 +267,10 @@ static int test_a_closed_bundle_reaches_the_ring() {
   CHECK(rec.bundled_count == row->bundled && rec.values.duration_sec == 300);
   CHECK(rec.last_seen_ms == row->at_ms);                  // the close
   CHECK(rec.first_seen_ms == row->at_ms - 300u * 1000u);  // the close less the span
-  CHECK(rec.first_seen_ms > opened);                      // by the quiet gap: not the opening
+  // Not the opening (here two minutes after it, by the quiet gap): the
+  // triaged rule, a known limit of F77, not a property to keep. The bundler
+  // knows the opening, and no surface serializes the ring row's first seen
+  // yet, so a later fix may stamp it; nothing here holds it either way.
 
   csi_event_record_t recent[16];
   const size_t n = csi_event_recent(recent, 16);

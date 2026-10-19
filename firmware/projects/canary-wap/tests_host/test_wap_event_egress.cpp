@@ -846,12 +846,20 @@ static void test_failed_append_in_an_outage_keeps_the_backlog_owed() {
  * past it would cover the card rows that follow. The gap is natural: a card
  * that mounts late, and ambient spikes during the outage, which take ids
  * but never reach the egress. Until sweep F77 a closed bundle was such a
- * row too; it is a card row now, so the walk sends it after the RAM row and
- * writes its ceiling first, F47's trade (a reboot then can skip up to
- * kStride card rows, the bundle among them: test_held_row_with_the_link_up_
- * skips_at_most_a_stride's bound), and that is what its variant holds. */
+ * row too, and the variant with one is kept to show what changed for it:
+ * it is a card row now, so it does write a ceiling. The walk reaches it
+ * while the RAM row's publish waits, writes its ceiling (kStride ids past
+ * it, F47's cadence) before the send, and the send waits behind the RAM
+ * row. The link drops, three more rows land on the card, and the reboot
+ * reads all four as delivered: the bundle and the three are skipped, none
+ * refused. Before F77 the bundle waited in RAM with no ceiling, the reboot
+ * lost it alone, and the three arrived. That is F47's trade for any card
+ * row walked in that window (test_held_row_with_the_link_up_skips_at_most_
+ * a_stride's bound), so the variant pins the loss exactly (F77's review:
+ * the bound alone could not fail on four rows). */
 static void test_row_behind_a_failed_flush_writes_no_ceiling() {
-  printf("-- a row behind a RAM row whose flush failed, a stride of ids later, writes no ceiling\n");
+  printf("-- a row behind a RAM row whose flush failed, a stride of ids later, writes no ceiling"
+         " (a card row behind it does, F47)\n");
   for (int bundle = 0; bundle < 2; ++bundle) {
     fresh_device();
     SD.present = false;            // power cycle; the card has not mounted yet
@@ -891,9 +899,12 @@ static void test_row_behind_a_failed_flush_writes_no_ceiling() {
     } else {
       std::vector<uint32_t> card = {r};
       card.insert(card.end(), ids.begin(), ids.end());
-      CHECK(card_rows_delivered(card) + csi_event_id_floor::kStride >= card.size() &&
-                W.ha.refused.empty() && rising(W.wire),
-            "the bundle and the card rows after it: at most kStride skipped (F47's trade)");
+      size_t on_card = 0;
+      for (uint32_t id : card) on_card += card_lines_for(id);
+      CHECK(on_card == card.size() && nvs_get(csi_mqtt::NVS_KEY_DELIVERED) > ids.back(),
+            "the bundle and the three are on the card, under the ceiling the walk wrote for it");
+      CHECK(card_rows_delivered(card) == 0 && W.wire.empty() && W.ha.refused.empty(),
+            "so the reboot skips all four as delivered, none refused (F47's trade, since F77)");
     }
   }
 }
