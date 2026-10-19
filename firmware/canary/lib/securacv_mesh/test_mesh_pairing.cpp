@@ -1905,6 +1905,216 @@ void test_a_role_free_confirm_fails_closed() {
   std::printf("PASS test_a_role_free_confirm_fails_closed  (either side, either order)\n");
 }
 
+/* The joiner's own CONFIRM, sent back to it from the initiator's address
+ * before the COMPLETE comes, ends the joiner's pairing, and only the
+ * joiner's: the initiator holds the joiner's genuine CONFIRM, so it still
+ * completes (SEND_COMPLETE, NOTIFY_PAIRED, the opera_secret sealed), and
+ * the joiner, its key wiped, drops the COMPLETE and every copy. That is
+ * what a wrong hash sent to the joiner in the same slot has done since F97;
+ * the reflection gives a radio nothing it did not have. Until F94 the
+ * joiner took its own CONFIRM as the initiator's and both sides paired.
+ * Both orders. Fails on the code before F94 (the joiner moves on and
+ * pairs), and with a joiner that drops a CONFIRM equal to its own role's
+ * hash instead of failing on it. */
+void test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing() {
+  const uint8_t zero[mesh_pairing::SESSION_KEY_LEN] = {0};
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    Pair p;
+    pair_to_code(p);
+    mesh_pairing::Action a;
+    if (!joiner_first) {
+      a = mesh_pairing::confirm_code(p.ci, 50);
+      InFlight cfi; must(action_to_inflight(a, &cfi));
+      assert(deliver(p.cj, p.mac_i, cfi, 55).type == mesh_pairing::ActionType::NONE);
+    }
+    a = mesh_pairing::confirm_code(p.cj, 60);
+    InFlight cfj; must(action_to_inflight(a, &cfj));
+
+    /* Reflected to the joiner first, from the initiator's address. */
+    a = deliver(p.cj, p.mac_i, cfj, 65);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+    assert(a.fail_reason == mesh_pairing::FailReason::BAD_CONFIRM);
+    assert(p.cj.state == mesh_pairing::State::FAILED);
+    assert(std::memcmp(p.cj.session_key, zero, sizeof(zero)) == 0);
+
+    /* The genuine CONFIRM reaches the initiator, which completes. */
+    a = deliver(p.ci, p.mac_j, cfj, 70);
+    if (joiner_first) {
+      assert(a.type == mesh_pairing::ActionType::NONE && p.ci.peer_confirmed);
+      a = mesh_pairing::confirm_code(p.ci, 80);
+    }
+    assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+    InFlight lead, cp;
+    must(leading_confirm_to_inflight(a, &lead));
+    must(action_to_inflight(a, &cp));
+    assert(mesh_pairing::tick(p.ci, 90).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+    assert(p.ci.state == mesh_pairing::State::PAIRED);
+
+    /* The joiner drops the CONFIRM in front, the COMPLETE and each copy. */
+    assert(deliver(p.cj, p.mac_i, lead, 95).type == mesh_pairing::ActionType::NONE);
+    assert(deliver(p.cj, p.mac_i, cp, 96).type == mesh_pairing::ActionType::NONE);
+    int copies = 0;
+    for (uint32_t t = 100; t < 100 + 4 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+      a = mesh_pairing::tick(p.ci, t);
+      if (a.type != mesh_pairing::ActionType::SEND_COMPLETE) continue;
+      ++copies;
+      InFlight c; must(action_to_inflight(a, &c));
+      assert(c.bytes == cp.bytes);
+      assert(deliver(p.cj, p.mac_i, c, t).type == mesh_pairing::ActionType::NONE);
+    }
+    assert(copies > 0);
+    assert(p.cj.state == mesh_pairing::State::FAILED && !p.cj.opera_secret_present);
+    uint8_t got[mesh_crypto::OPERA_SECRET_LEN];
+    assert(!mesh_pairing::consume_opera_secret(p.cj, got));
+  }
+  std::printf("PASS test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing  (both orders)\n");
+}
+
+/* Two initiators relayed into one session key: a radio hands each one a
+ * DISCOVER with the joiner's role, forged from the other's address, and
+ * relabels each one's OFFER an ACCEPT to the other (PairAcceptPayload is
+ * PairOfferPayload). Both then show the same code. Each expects the
+ * joiner's role's hash and gets the initiator's, so each fails
+ * (BAD_CONFIRM) and neither seals the opera_secret. Until F94 each took the
+ * other's CONFIRM, sealed its secret to it and reported PAIRED, holding as
+ * a member whatever long-term key the forged DISCOVER named. Both orders of
+ * the second owner's confirm. Fails on the code before F94. */
+void test_two_relayed_initiators_refuse_each_others_confirm() {
+  for (int b_confirms_late = 0; b_confirms_late < 2; ++b_confirms_late) {
+    const uint8_t mac_a[6] = {0x24, 0x0A, 0xC4, 0x00, 0x94, 0x0A};
+    const uint8_t mac_b[6] = {0x24, 0x0A, 0xC4, 0x00, 0x94, 0x0B};
+    uint8_t pub_a[32], priv_a[32], pub_b[32], priv_b[32];
+    assert(mesh_crypto::ed25519_generate_keypair(pub_a, priv_a));
+    assert(mesh_crypto::ed25519_generate_keypair(pub_b, priv_b));
+    uint8_t sa[mesh_crypto::OPERA_SECRET_LEN], sb[mesh_crypto::OPERA_SECRET_LEN];
+    for (size_t i = 0; i < sizeof(sa); ++i) {
+      sa[i] = (uint8_t)(0xA0 ^ i);
+      sb[i] = (uint8_t)(0xB0 ^ i);
+    }
+    mesh_pairing::PairingContext ca, cb;
+    mesh_pairing::context_init(ca);
+    mesh_pairing::context_init(cb);
+    assert(mesh_pairing::start_initiator(ca, pub_a, priv_a, sa, "A", 10).type ==
+           mesh_pairing::ActionType::BROADCAST_DISCOVER);
+    assert(mesh_pairing::start_initiator(cb, pub_b, priv_b, sb, "B", 10).type ==
+           mesh_pairing::ActionType::BROADCAST_DISCOVER);
+
+    auto forged_discover = [](const uint8_t pub[32]) {
+      mesh_pairing::PairDiscoverPayload d{};
+      std::memcpy(d.pubkey, pub, 32);
+      d.role = mesh_pairing::ROLE_JOINER;
+      InFlight f;
+      f.type = mesh_pairing::MsgType::DISCOVER;
+      const uint8_t* b = reinterpret_cast<const uint8_t*>(&d);
+      f.bytes.assign(b, b + sizeof(d));
+      return f;
+    };
+    mesh_pairing::Action a = deliver(ca, mac_b, forged_discover(pub_b), 20);
+    assert(a.type == mesh_pairing::ActionType::SEND_OFFER);
+    InFlight oa; must(action_to_inflight(a, &oa));
+    a = deliver(cb, mac_a, forged_discover(pub_a), 20);
+    assert(a.type == mesh_pairing::ActionType::SEND_OFFER);
+    InFlight ob; must(action_to_inflight(a, &ob));
+    oa.type = mesh_pairing::MsgType::ACCEPT;
+    ob.type = mesh_pairing::MsgType::ACCEPT;
+    a = deliver(cb, mac_a, oa, 30);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+    const uint32_t code_b = a.confirmation_code;
+    a = deliver(ca, mac_b, ob, 30);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_CODE_READY);
+    assert(a.confirmation_code == code_b);       /* one key, one code on both screens */
+
+    a = mesh_pairing::confirm_code(ca, 40);
+    InFlight fa; must(action_to_inflight(a, &fa));
+    assert(fa.type == mesh_pairing::MsgType::CONFIRM);
+    InFlight fb;
+    if (!b_confirms_late) {
+      a = mesh_pairing::confirm_code(cb, 40);
+      must(action_to_inflight(a, &fb));
+    }
+    a = deliver(cb, mac_a, fa, 50);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+    assert(a.fail_reason == mesh_pairing::FailReason::BAD_CONFIRM);
+    if (b_confirms_late) {
+      /* B's owner confirms after B ended: nothing is sent. */
+      assert(mesh_pairing::confirm_code(cb, 55).type == mesh_pairing::ActionType::NONE);
+    } else {
+      a = deliver(ca, mac_b, fb, 50);
+      assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+      assert(a.fail_reason == mesh_pairing::FailReason::BAD_CONFIRM);
+      assert(ca.state == mesh_pairing::State::FAILED);
+    }
+    assert(cb.state == mesh_pairing::State::FAILED);
+    for (uint32_t t = 60; t < 60 + 4 * mesh_pairing::COMPLETE_RESEND_INTERVAL_MS; t += 100) {
+      const mesh_pairing::Action ta = mesh_pairing::tick(ca, t);
+      assert(ta.type != mesh_pairing::ActionType::SEND_COMPLETE &&
+             ta.type != mesh_pairing::ActionType::NOTIFY_PAIRED);
+      assert(mesh_pairing::tick(cb, t).type == mesh_pairing::ActionType::NONE);
+    }
+    assert(ca.state != mesh_pairing::State::PAIRED && cb.state != mesh_pairing::State::PAIRED);
+  }
+  std::printf("PASS test_two_relayed_initiators_refuse_each_others_confirm\n");
+}
+
+/* The joiner's re-send (F117) between two updated devices: the joiner's
+ * owner confirms first and its CONFIRM is lost on the air; the initiator's
+ * owner confirms, and its CONFIRM moves the joiner to AWAITING_COMPLETE;
+ * CONFIRM_RESEND_FIRST_MS later the joiner sends its CONFIRM again, for its
+ * own role, and the updated initiator answers it with the COMPLETE. So the
+ * re-send, written for firmware before F97 (which since F94 pairs with
+ * nothing here), is also loss handling between updated devices. Fails with
+ * the re-send built for the partner's role (the initiator then fails
+ * BAD_CONFIRM) and with no re-send (both sides time out). */
+void test_the_joiners_resend_recovers_its_lost_confirm() {
+  Pair p;
+  pair_to_code(p);
+  mesh_pairing::Action a = mesh_pairing::confirm_code(p.cj, 50);
+  InFlight cfj; must(action_to_inflight(a, &cfj));   /* lost: never delivered */
+  a = mesh_pairing::confirm_code(p.ci, 1000);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight cfi; must(action_to_inflight(a, &cfi));
+  assert(deliver(p.cj, p.mac_i, cfi, 1010).type == mesh_pairing::ActionType::NONE);
+  assert(p.cj.state == mesh_pairing::State::AWAITING_COMPLETE);
+  a = mesh_pairing::tick(p.cj, 1010 + mesh_pairing::CONFIRM_RESEND_FIRST_MS);
+  assert(a.type == mesh_pairing::ActionType::SEND_CONFIRM);
+  InFlight again; must(action_to_inflight(a, &again));
+  assert(again.bytes == cfj.bytes && again.bytes == role_hash(p.cj, mesh_pairing::ROLE_JOINER));
+  a = deliver(p.ci, p.mac_j, again, 2020);
+  assert(a.type == mesh_pairing::ActionType::SEND_COMPLETE);
+  InFlight lead, cp;
+  must(leading_confirm_to_inflight(a, &lead));
+  must(action_to_inflight(a, &cp));
+  assert(deliver(p.cj, p.mac_i, lead, 2030).type == mesh_pairing::ActionType::NONE);
+  assert(deliver(p.cj, p.mac_i, cp, 2040).type == mesh_pairing::ActionType::NOTIFY_PAIRED);
+  expect_both_paired(p, 2050);
+  std::printf("PASS test_the_joiners_resend_recovers_its_lost_confirm\n");
+}
+
+/* A context with no role (start_* always sets one, so no reachable state
+ * has none) checks no CONFIRM: every hash fails, all zero, either role's,
+ * and the role-free one firmware before F94 sends. Fails with the hash
+ * function's false return ignored (the all-zero hash then matches), with
+ * ROLE_NONE's partner taken as the initiator (the initiator's hash then
+ * matches), and on the code before F94 (the role-free hash matches). */
+void test_a_side_with_no_role_refuses_every_confirm() {
+  for (int which = 0; which < 4; ++which) {
+    Pair p;
+    pair_to_code(p);
+    InFlight f;
+    f.type = mesh_pairing::MsgType::CONFIRM;
+    f.bytes.assign(sizeof(mesh_pairing::PairConfirmPayload), 0);
+    if (which == 1) f.bytes = role_hash(p.ci, mesh_pairing::ROLE_INITIATOR);
+    if (which == 2) f.bytes = role_hash(p.ci, mesh_pairing::ROLE_JOINER);
+    if (which == 3) pre_f94_confirmation_hash(p.ci.session_key, p.ci.confirmation_code, f.bytes.data());
+    p.ci.role = mesh_pairing::ROLE_NONE;
+    const mesh_pairing::Action a = deliver(p.ci, p.mac_j, f, 50);
+    assert(a.type == mesh_pairing::ActionType::NOTIFY_FAILED);
+    assert(a.fail_reason == mesh_pairing::FailReason::BAD_CONFIRM);
+    assert(p.ci.state == mesh_pairing::State::FAILED && !p.ci.peer_confirmed);
+  }
+  std::printf("PASS test_a_side_with_no_role_refuses_every_confirm\n");
+}
+
 /* ── F135 — cancel() leaves an ended pairing alone ────────────────────────
  *
  * Until F135 cancel() failed every state but IDLE. A cancel that landed
@@ -2097,6 +2307,10 @@ int main() {
   test_each_side_sends_its_own_roles_confirm();
   test_a_reflected_confirm_ends_the_pairing();
   test_a_role_free_confirm_fails_closed();
+  test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing();
+  test_two_relayed_initiators_refuse_each_others_confirm();
+  test_the_joiners_resend_recovers_its_lost_confirm();
+  test_a_side_with_no_role_refuses_every_confirm();
   test_a_cancel_after_the_complete_leaves_the_pairing_paired();
   test_a_cancel_on_a_failed_pairing_reports_nothing_again();
   test_a_cancel_with_nothing_running_does_nothing();
