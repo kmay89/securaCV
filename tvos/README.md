@@ -102,7 +102,8 @@ detail screen also says when its key was born, in the device's own words
 (`born_day` / `born_exact`) and the phone's labels: "Born <day>" only when
 the device says the day is exact, "First dated <day>" when it met a clock
 later than it was made, and nothing when it cannot say. The day is a UTC
-day, shown as one.
+day, shown as one. Only a Canary that answers for itself sends it today; the
+kernel's and a display's aggregated fleet do not relay it.
 
 ## Layout
 
