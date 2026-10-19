@@ -333,9 +333,10 @@ pub fn check_not_rollback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::admin::{sign_cli, sign_holder_es256};
-    use crate::roster::tests::{ed_admin, phone};
+    use crate::admin::{sign_cli, sign_fido2_admin, sign_holder_es256, sign_holder_fido2};
+    use crate::roster::tests::{ed_admin, fido2, phone};
     use crate::roster::CredentialClass;
+    use crate::verify::{FLAG_UP, FLAG_UV};
 
     const NOW: u64 = 1_800_000_000;
 
@@ -438,6 +439,42 @@ mod tests {
         let other = p256::ecdsa::SigningKey::from_slice(&[0x32; 32]).unwrap();
         let bad = sign_holder_es256(&other, &[0x10; 16], &n.digest().unwrap());
         assert!(check_change(&r, &n, &[], Some(&bad), live(false)).is_err());
+    }
+
+    #[test]
+    fn fido2_member_revokes_itself_with_an_up_assertion() {
+        // Spec §5.2, the "member revoking itself, fido2-es256" row.
+        const RP: &str = "hk-member.example";
+        let mut r = three_admins();
+        r.members
+            .push(fido2(0x12, 0x33, CredentialClass::Intent, RP));
+        r.sort();
+        let mut n = r.successor().unwrap();
+        n.members.retain(|m| m.handle != [0x12; 16]);
+        assert_eq!(classify(&r, &n).unwrap(), ChangeKind::RevokeMembers);
+        let d = n.digest().unwrap();
+        let fk = p256::ecdsa::SigningKey::from_slice(&[0x33; 32]).unwrap();
+        let up = sign_holder_fido2(&fk, &[0x12; 16], RP, FLAG_UP, &d);
+        assert_eq!(
+            check_change(&r, &n, &[], Some(&up), live(false)).unwrap(),
+            ChangeKind::RevokeMembers
+        );
+        // Without UP, under another rp, over the admin domain, or from the
+        // phone member's key: refused.
+        let phone_key = p256::ecdsa::SigningKey::from_slice(&[0x31; 32]).unwrap();
+        for bad in [
+            sign_holder_fido2(&fk, &[0x12; 16], RP, 0, &d),
+            sign_holder_fido2(&fk, &[0x12; 16], "other.example", FLAG_UP, &d),
+            sign_fido2_admin(&fk, &[0x12; 16], RP, FLAG_UP | FLAG_UV, &d),
+            sign_holder_fido2(&phone_key, &[0x12; 16], RP, FLAG_UP, &d),
+        ] {
+            assert!(check_change(&r, &n, &[], Some(&bad), live(false)).is_err());
+        }
+        // The assertion revokes its own member only, not the phone.
+        let mut other = r.successor().unwrap();
+        other.members.retain(|m| m.handle != [0x10; 16]);
+        let proof = sign_holder_fido2(&fk, &[0x12; 16], RP, FLAG_UP, &other.digest().unwrap());
+        assert!(check_change(&r, &other, &[], Some(&proof), live(false)).is_err());
     }
 
     #[test]

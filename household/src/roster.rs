@@ -703,6 +703,20 @@ pub(crate) mod tests {
         }
     }
 
+    /// A FIDO2 member (`fido2-es256`) under `rp_id`, keyed from `seed`.
+    pub fn fido2(handle: u8, seed: u8, class: CredentialClass, rp_id: &str) -> MemberEntry {
+        MemberEntry {
+            handle: [handle; 16],
+            kind: MemberKind::Fido2,
+            class,
+            alg: MemberAlg::Fido2Es256,
+            public_key: Some(p256_pub(seed)),
+            rp_id: Some(rp_id.into()),
+            credential_id: Some(vec![handle; 8]),
+            not_after: None,
+        }
+    }
+
     fn sample() -> Roster {
         let mut r = Roster::genesis([0xaa; 16], vec![ed_admin(1, 1), ed_admin(2, 2)], 2).unwrap();
         r.members.push(phone(0x10, 0x31, CredentialClass::Intent));

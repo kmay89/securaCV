@@ -232,6 +232,25 @@ pub fn sign_holder_es256(
     }
 }
 
+/// Sign a holder revocation proof as a FIDO2 member (software stand-in for
+/// an authenticator): an assertion with
+/// `clientDataHash = SHA-256("securacv-hk-revoke-v1\0" ‖ digest)`.
+pub fn sign_holder_fido2(
+    key: &p256::ecdsa::SigningKey,
+    handle: &Handle,
+    rp_id: &str,
+    flags: u8,
+    digest: &[u8; 32],
+) -> Approval {
+    let cdh: [u8; 32] = Sha256::digest(revoke_preimage(digest)).into();
+    let (ad, sig) = soft_fido2_assert(key, rp_id, flags, &cdh);
+    Approval {
+        handle: hex::encode(handle),
+        sig: hex::encode(&sig),
+        authenticator_data: Some(hex::encode(&ad)),
+    }
+}
+
 /// Hub roster signature over a digest.
 pub fn hub_sign(key: &ed25519_dalek::SigningKey, digest: &[u8; 32]) -> [u8; 64] {
     key.sign(&hub_preimage(digest)).to_bytes()
@@ -251,8 +270,11 @@ pub fn hub_verify(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roster::tests::{ed_admin, p256_pub};
+    use crate::roster::tests::{ed_admin, fido2, p256_pub, phone};
+    use crate::roster::CredentialClass;
     use crate::verify::{FLAG_UP, FLAG_UV};
+
+    const MEMBER_RP: &str = "hk-member.example";
 
     fn ed_key(seed: u8) -> ed25519_dalek::SigningKey {
         ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
@@ -347,6 +369,66 @@ mod tests {
         // A holder proof is not an admin approval even from the same key.
         let holder = sign_holder_es256(&p_key(2), &e.handle, &D);
         assert!(!verify_approval(&e, &D, &holder));
+    }
+
+    #[test]
+    fn es256_holder_proof_verifies_only_its_member_over_the_revoke_domain() {
+        let m = phone(0x10, 0x31, CredentialClass::Intent);
+        let ok = sign_holder_es256(&p_key(0x31), &m.handle, &D);
+        assert!(verify_holder_proof(&m, &D, &ok));
+        assert!(!verify_holder_proof(&m, &[0u8; 32], &ok), "wrong digest");
+        let other = sign_holder_es256(&p_key(0x32), &m.handle, &D);
+        assert!(!verify_holder_proof(&m, &D, &other), "someone else's key");
+        let mut renamed = ok.clone();
+        renamed.handle = hex::encode(&[0x11; 16]);
+        assert!(!verify_holder_proof(&m, &D, &renamed), "another handle");
+        // An admin approval from the same key is not a holder proof.
+        let admin_domain = sign_enclave(&p_key(0x31), &m.handle, &D);
+        assert!(!verify_holder_proof(&m, &D, &admin_domain));
+        // Nor is an assertion: an es256 member presents no authenticator data.
+        let asserted = sign_holder_fido2(&p_key(0x31), &m.handle, MEMBER_RP, FLAG_UP, &D);
+        assert!(!verify_holder_proof(&m, &D, &asserted));
+    }
+
+    #[test]
+    fn fido2_holder_proof_needs_up_its_rp_and_the_revoke_domain() {
+        // Spec §5.2, "member revoking itself, fido2-es256": an assertion
+        // with UP over the revoke domain; UV is allowed, not required.
+        let m = fido2(0x12, 0x33, CredentialClass::Intent, MEMBER_RP);
+        let up = sign_holder_fido2(&p_key(0x33), &m.handle, MEMBER_RP, FLAG_UP, &D);
+        assert!(
+            verify_holder_proof(&m, &D, &up),
+            "UP-only assertion refused"
+        );
+        let up_uv = sign_holder_fido2(&p_key(0x33), &m.handle, MEMBER_RP, FLAG_UP | FLAG_UV, &D);
+        assert!(verify_holder_proof(&m, &D, &up_uv), "UV may be set");
+        for flags in [0, FLAG_UV] {
+            let no_up = sign_holder_fido2(&p_key(0x33), &m.handle, MEMBER_RP, flags, &D);
+            assert!(
+                !verify_holder_proof(&m, &D, &no_up),
+                "flags {flags:#x} accepted without UP"
+            );
+        }
+        let wrong_rp = sign_holder_fido2(&p_key(0x33), &m.handle, "other.example", FLAG_UP, &D);
+        assert!(!verify_holder_proof(&m, &D, &wrong_rp));
+        // An assertion over the admin domain (what a FIDO2 admin signs) is
+        // not a holder proof, even from this key under this rp.
+        let admin_domain =
+            sign_fido2_admin(&p_key(0x33), &m.handle, MEMBER_RP, FLAG_UP | FLAG_UV, &D);
+        assert!(!verify_holder_proof(&m, &D, &admin_domain));
+        // Nor is a bare es256 signature over the revoke preimage: a FIDO2
+        // member presents an assertion.
+        let bare = sign_holder_es256(&p_key(0x33), &m.handle, &D);
+        assert!(!verify_holder_proof(&m, &D, &bare));
+        // Someone else's key; the wrong digest.
+        let other = sign_holder_fido2(&p_key(0x34), &m.handle, MEMBER_RP, FLAG_UP, &D);
+        assert!(!verify_holder_proof(&m, &D, &other));
+        assert!(!verify_holder_proof(&m, &[0u8; 32], &up));
+        // And a holder proof is not an admin approval, had the same key been
+        // enrolled as a FIDO2 admin under the same rp.
+        let mut as_admin = fido_admin(0x12, 0x33);
+        as_admin.rp_id = Some(MEMBER_RP.into());
+        assert!(!verify_approval(&as_admin, &D, &up_uv));
     }
 
     #[test]
