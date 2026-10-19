@@ -695,13 +695,22 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   the same before and after F97). Since F94, on both trees, each CONFIRM
   is bound to its sender's role (spec §5.3) and each side checks its
   partner's, so a reflected CONFIRM is a wrong hash from the partner's
-  address and ends the pairing, with nothing added, sealed or sent. That
-  ending is no new power: any radio could already end a pairing with a
-  wrong hash from the partner's address. It is a wire change that fails
-  closed: a device on firmware before F94 and an updated one each refuse
-  the other's CONFIRM, and an initiator on firmware before F94 still takes
-  its own reflected CONFIRM until it is updated. Host-tested on both trees
-  (the reflection, the role-free CONFIRM, both roles, both orders), not
+  address and ends the receiving side's pairing. On the initiator nothing
+  is added, sealed or sent. On the joiner only the joiner's pairing ends:
+  its initiator, holding the genuine CONFIRM, still adds it and seals the
+  `opera_secret`, and the joiner drops the COMPLETE (canary-wap logs, after
+  2 minutes, that the COMPLETE was never answered). That ending is no new
+  power: any radio could already end a pairing, or cause that same
+  one-sided ending, with a wrong hash from the partner's address. Two
+  initiators relayed into one session key (a forged joiner-role DISCOVER
+  each, each OFFER relabeled an ACCEPT) now refuse each other's CONFIRM,
+  where each used to add the other. It is a wire change that fails
+  closed: between a device on firmware before F94 and an updated one,
+  whichever reads the other's CONFIRM first refuses it and the other waits
+  out the pairing timeout, so neither completes; and an initiator on
+  firmware before F94 still takes its own reflected CONFIRM until it is
+  updated. Host-tested on both trees (the reflection on each side, two
+  relayed initiators, the role-free CONFIRM, both roles, both orders), not
   bench-tested; the hash still covers only the ephemeral exchange (F69,
   F115, below). Since F73 a pairing whose partner the device cannot hold (a
   deny-listed key, a full opera, an address another member holds) fails
@@ -887,8 +896,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     completes in both orders (host-probed against the pre-F97 library);
     the copies carry the hash its first CONFIRM already put on the air.
     Since F94 neither pre-F97 mix pairs at all: every pairing with firmware
-    before F94 fails closed at the CONFIRM (above), and the reflection
-    above ends the pairing instead of completing it.
+    before F94 fails closed at the CONFIRM (above), and the initiator's
+    reflected CONFIRM above ends the pairing instead of completing it.
   - *Opera sends to members only.* Until F101 every opera sender (tamper
     alert, beacon event, channel lock, hub election, LEAVE, rekey OFFER)
     went to every address in the transport table, which, while a pairing
@@ -960,15 +969,16 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     only after its own owner confirmed; so, until F94, the reflection above
     ended in a pairing when the joiner's owner confirmed within the window,
     and left the initiator holding a member that never joined when that
-    owner did not (since F94 it ends the pairing before anything is
-    sealed). An initiator on firmware before F134 keeps the old harm. The
-    cost, until F162: this tree's members sent nothing on a timer, so the
-    copies usually ran their whole window, at most 149 copies of two
-    frames. Since F162 a member sends one signed HEARTBEAT right after it
-    pairs, so the joiner's ends the initiator's copies within one pass; they
-    run on only while the first COMPLETE is lost (until the joiner opens a
-    copy and its heartbeat follows) or when that heartbeat cannot reach the
-    initiator (F320), and their whole window only then.
+    owner did not (since F94 the initiator's reflected CONFIRM ends the
+    pairing before anything is sealed). An initiator on firmware before
+    F134 keeps the old harm. The cost, until F162: this tree's members sent
+    nothing on a timer, so the copies usually ran their whole window, at
+    most 149 copies of two frames. Since F162 a member sends one signed
+    HEARTBEAT right after it pairs, so the joiner's ends the initiator's
+    copies within one pass; they run on only while the first COMPLETE is
+    lost (until the joiner opens a copy and its heartbeat follows) or when
+    that heartbeat cannot reach the initiator (F320), and their whole window
+    only then.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or

@@ -174,8 +174,9 @@ inline ConfirmSender partner_of(ConfirmSender s) {
  * joiner's: the initiator added the joiner, sealed the opera_secret to it
  * and reported success, though the joiner's owner never confirmed
  * (host-probed in F75's review). A device on firmware before F94 sends the
- * role-free hash, so it and an updated device refuse each other's CONFIRM
- * and neither completes. */
+ * role-free hash, so between it and an updated device whichever reads the
+ * other's CONFIRM first refuses it, the other waits out the pairing
+ * timeout, and neither completes. */
 inline void confirm_hash(ConfirmSender sender, const uint8_t session_key[KEY_LEN], uint32_t code,
                          uint8_t out[mesh_crypto::SHA256_OUT_LEN]) {
   uint8_t in[KEY_LEN + 4];

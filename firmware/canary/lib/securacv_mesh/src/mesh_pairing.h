@@ -125,12 +125,17 @@ enum Role : uint8_t {
  * address passed it off as the joiner's: the initiator sealed the
  * opera_secret, reported PAIRED and held a member whose owner never
  * confirmed (host-probed, the same before and after F97). Now a reflected
- * CONFIRM is a wrong hash like any other and ends the pairing, which a
- * radio sending any wrong hash from the partner's address could already
- * do. A device on firmware before F94 sends and expects the role-free
- * hash, so it and an updated device each refuse the other's CONFIRM
- * (BAD_CONFIRM), in either order, and neither completes: a wire change
- * that fails closed.
+ * CONFIRM is a wrong hash like any other and ends the receiving side's
+ * pairing, which a radio sending any wrong hash from the partner's address
+ * could already do. Reflected to a joiner, it ends only the joiner's: its
+ * initiator, holding the genuine CONFIRM, still completes, as it does when
+ * any wrong hash reaches the joiner. Two initiators relayed into one
+ * session key refuse each other's CONFIRM too (each expects the joiner's
+ * role). A device on firmware before F94 sends and expects the role-free
+ * hash, so between it and an updated device whichever side reads the
+ * other's CONFIRM first refuses it (BAD_CONFIRM on an updated one), the
+ * other waits out the pairing timeout, and neither completes: a wire
+ * change that fails closed.
  *
  * `code` is included in the hash (rather than just the session_key) so
  * an attacker who knows the session_key alone — e.g. an honest middlebox
@@ -304,16 +309,21 @@ static_assert(sizeof(PairCompletePayload) ==
  *   (compute_confirmation_hash), and each side checks its partner's role.
  *   A device on firmware before F94 sends and expects the role-free hash,
  *   so between it and an updated device each CONFIRM is a wrong hash, from
- *   the partner's address: the side that reads one fails (an updated one
- *   with BAD_CONFIRM), in either order and whichever side is older, and
- *   neither initiator seals the opera_secret, since each needs a CONFIRM
- *   the other never sends. (An initiator on firmware before F94 still takes
- *   its own CONFIRM reflected to it; only updating it closes that.) Firmware
- *   before F97 is firmware before F94, so the two mixes above no longer
- *   pair at all: they fail closed instead. The leading CONFIRM and the
- *   joiner's re-send stay, and the tests that model those older ordering
- *   rules on today's hash stay green, but no device on the firmware they
- *   were written for completes a pairing with this one.
+ *   the partner's address: the side that reads one first fails (an
+ *   updated one with BAD_CONFIRM), in either order and whichever side is
+ *   older, the other waits out PAIRING_TIMEOUT_MS (an updated one then
+ *   reports TIMEOUT), and neither initiator seals the opera_secret, since
+ *   each needs a CONFIRM the other never sends. (An initiator on firmware
+ *   before F94 still takes its own CONFIRM reflected to it; only updating
+ *   it closes that.) Firmware before F97 is firmware before F94, so the
+ *   two mixes above no longer pair at all: they fail closed instead. The
+ *   leading CONFIRM and the joiner's re-send stay, and the tests that
+ *   model those older ordering rules on today's hash stay green, but no
+ *   device on the firmware they were written for completes a pairing with
+ *   this one. The re-send is loss handling between updated devices too:
+ *   when the joiner's owner confirmed first and that CONFIRM was lost, its
+ *   copy is what reaches the initiator and brings the COMPLETE
+ *   (test_the_joiners_resend_recovers_its_lost_confirm).
  *
  *   A lost COMPLETE (F134, canary-wap's F100 shape): nothing on the wire
  *   acknowledges a COMPLETE, and the initiator reports PAIRED once it sent

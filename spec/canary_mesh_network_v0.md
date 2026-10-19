@@ -599,14 +599,35 @@ F97).
 Both trees since F94 (host-tested, not bench-verified): each CONFIRM is
 bound to its sender's role (§5.3). A side sends the hash for its own role
 and checks its partner's, so its own CONFIRM sent back to it, from the
-partner's address, is a wrong hash and ends the pairing, as any wrong hash
-from there already did; nothing is added, sealed or sent (canary-wap logs
-the failure; the PlatformIO tree reports `bad_confirm`). A device on
-firmware before F94 sends the role-free hash, so between it and an updated
-device each side fails the other's CONFIRM, in either order, and neither
-completes: the change fails closed, and both devices of a pairing need the
-update. An initiator on firmware before F94 still takes its own CONFIRM
-reflected to it; only updating that device closes it.
+partner's address, is a wrong hash and ends that side's pairing, as any
+wrong hash from there already did (canary-wap logs the failure; the
+PlatformIO tree reports `bad_confirm`). Reflected to the initiator, it ends
+the pairing with nothing added, sealed or sent. Reflected to the joiner, it
+ends only the joiner's pairing: an initiator that holds, or then gets, the
+joiner's genuine CONFIRM still adds the joiner, seals the `opera_secret` and
+reports success, and the joiner, its pairing gone, drops the COMPLETE and
+every resend (canary-wap logs after 2 minutes that its COMPLETE was never
+answered; the PlatformIO tree sends its copies for the whole pairing
+timeout and does not log the end). A wrong hash sent to the joiner in that
+slot has done the same since F75 on canary-wap and F97 on the PlatformIO
+tree, so a radio gains nothing it did not have; before F94 the joiner took
+the reflection as the initiator's CONFIRM, and the pairing completed. Two
+initiators relayed into one session key (each handed a DISCOVER with the
+joiner's role, forged from the other's address, and each one's OFFER
+relabeled an ACCEPT to the other, so both show one code) now refuse each
+other's CONFIRM, since each expects the joiner's role; before F94 each took
+the other's, sealed its `opera_secret` to it and added it as a member.
+
+A device on firmware before F94 sends and expects the role-free hash, so
+between it and an updated device whichever side reads the other's CONFIRM
+first fails it (an updated PlatformIO side with `bad_confirm`, an updated
+canary-wap side with the log line above), and the other side, updated or
+not, waits out its pairing timeout (the PlatformIO tree then reports
+`timeout`; canary-wap ends after 2 minutes and logs nothing). Neither
+completes and no COMPLETE is sealed: the change fails closed, and both
+devices of a pairing need the update. An initiator on firmware before F94
+still takes its own CONFIRM reflected to it; only updating that device
+closes it.
 
 PlatformIO tree (F97, host-tested, not bench-verified): the same rules.
 Until F97 `either_handle_confirm` acted only in `AWAITING_CONFIRM_PEER`,
@@ -656,7 +677,13 @@ updated initiator sends its COMPLETE right
 behind its CONFIRM, so between two updated devices the joiner sends its
 CONFIRM once, as before (host-probed, both orders, the owners' confirms 0 s
 to 4 minutes apart); a copy that did go out would reach an initiator already
-done, which drops it. (Since F134 the initiator sends its own COMPLETE
+done, which drops it. Between two updated devices the re-send is loss
+handling as well: when the joiner's owner confirmed first and that CONFIRM
+was lost on the air, the copy is the one that reaches the initiator, which
+answers it with the COMPLETE, and without it both sides time out
+(host-tested). In the other order a lost joiner CONFIRM still ends at the
+timeout: a joiner that read the initiator's CONFIRM before its own owner
+confirmed arms no re-send. (Since F134 the initiator sends its own COMPLETE
 again until it hears the joiner, below.)
 
 A device that cannot hold its partner fails the pairing: a deny-listed key
@@ -771,8 +798,8 @@ CONFIRM, DISCOVER, OFFER, ACCEPT and COMPLETE frames). Until F94 the copies
 had a side effect on the reflection above: a joiner whose owner confirmed
 after the initiator completed on its own reflected CONFIRM, inside the
 window, took a copy and joined, and one whose owner never confirmed left
-the initiator holding a member that never joined; since F94 the reflection
-ends the pairing before anything is sealed. An initiator on
+the initiator holding a member that never joined; since F94 the initiator's
+reflected CONFIRM ends the pairing before anything is sealed. An initiator on
 firmware before F134 still loses its joiner to a lost COMPLETE: the joiner
 cannot repair that.
 
@@ -801,9 +828,10 @@ confirm_domain(joiner)    = "securacv:pair:confirm:join:v1"
 **The CONFIRM hash (F94; both trees, host-tested, not bench-verified,
 awaiting maintainer crypto review).** `PAIR_CONFIRM` carries
 `confirm_hash(sender)`, where `code_u32_le` is `display_code` as four
-little-endian bytes. Each side sends it for its own role, once its owner
-confirms, and checks the partner's role's hash; a mismatch from the
-partner's address ends the pairing. Until F94 the hash was
+little-endian bytes. A side that sends a CONFIRM sends it for its own role
+(canary-wap's initiator sends none when the joiner confirmed first, §5.2),
+and each side checks the partner's role's hash; a mismatch from the
+partner's address ends that side's pairing. Until F94 the hash was
 `SHA-256("securacv:pair:confirm:v0" || pairing_session_key || code_u32_le)`
 in both directions, the same 32 bytes from either side, so a CONFIRM
 reflected to its own sender passed for its partner's (§5.2). The three
@@ -2131,8 +2159,10 @@ An implementation conforms to this specification if it:
   review**; sweep F94): in both trees each `PAIR_CONFIRM` carries a hash
   under its sender's role's domain (`securacv:pair:confirm:init:v1`,
   `securacv:pair:confirm:join:v1`; §5.3), and each side checks its
-  partner's, so a CONFIRM reflected to the device that sent it ends the
-  pairing instead of completing it (§5.2). A wire change: a device on
+  partner's, so a CONFIRM reflected to the device that sent it ends that
+  device's pairing instead of counting as its partner's (on the joiner, its
+  initiator still completes, as a wrong hash there already made it), and
+  two initiators relayed into one key refuse each other (§5.2). A wire change: a device on
   firmware before F94 fails closed with an updated one, in either order and
   either role, so every device that pairs must be updated; the 6-digit code
   is unchanged.
