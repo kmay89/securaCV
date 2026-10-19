@@ -44,7 +44,15 @@
 //     test_session_cookie.cpp drives handle_ui's mint);
 //   - a wrong claim burns the claim (as before); a header that is not
 //     "Bearer " is no bearer;
-//   - the receipt's bearer check neither advances nor clears the lockout;
+//   - the receipt's bearer is under every admin route's lockout (F289's
+//     follow-up; before, its compare recorded nothing, so the receipt was
+//     the one route where guessing the token cost nothing): a wrong or
+//     malformed header is one strike and still gets the 403, a right one
+//     clears the count; while the backoff runs no bearer is compared, a
+//     bearer gets the 429 with Retry-After and a bare poll the 403 its tap
+//     wait reads; the receipt's guesses lock the QR and the QR's lock the
+//     receipt; and the lockout never reaches the BOOT tap or the claim,
+//     which serve a stale bearer, inside the backoff or out of it;
 //   - the pairing QR on a cookie alone: 401 with the WWW-Authenticate
 //     challenge, no SVG, no token in the answer, no lockout strike (before:
 //     the SVG with the token); on a cookie beside a wrong bearer: 403 and a
@@ -484,39 +492,175 @@ void test_receipt_wrong_claim_burns_it() {
 }
 
 void test_receipt_bearer_shapes() {
-  reset_device();
-  // A lowercase scheme, a Basic header, an empty bearer: no bearer.
+  // A lowercase scheme, a Basic header, an empty bearer, a header too long
+  // for the buffer: no bearer, and each one strike (the shapes a guesser
+  // sends; api_auth_check_bearer counts them the same). Each from a clean
+  // count, so none arrives inside the backoff the one before armed.
   for (const std::string& raw : {std::string("bearer ") + kToken, std::string("Basic ") + kToken, std::string("Bearer "),
-                                std::string("Token ") + kToken}) {
+                                std::string("Token ") + kToken, std::string("Bearer ") + std::string(200, 'x')}) {
+    reset_device();
     Req q;
     q.authorization(raw);
     CHECK_MSG(receipt(q) == 0, "accepted as a bearer: " + raw);
     check_gate_refusal(q.r);
+    CHECK_MSG(g_auth.consecutive_failures == 1, "not a strike: " + raw);
   }
   // Whitespace around the token is trimmed, as api_auth_check trims it.
+  reset_device();
   Req padded;
   padded.authorization(std::string("Bearer   ") + kToken + "  ");
   CHECK(receipt(padded) == 1);
   CHECK(g_served.back() == receipt_authority::Grant::BEARER);
-  // A header too long for the buffer is no bearer.
-  Req huge;
-  huge.authorization(std::string("Bearer ") + std::string(200, 'x'));
-  CHECK(receipt(huge) == 0);
 }
 
-void test_receipt_bearer_check_touches_no_lockout() {
-  reset_device();
-  g_auth.consecutive_failures = 3;
+// A backoff running now: `failures` strikes, the last one just sent.
+void arm_lockout(uint8_t failures) {
+  g_auth.consecutive_failures = failures;
   g_auth.last_failure_ms = millis();
   g_auth.lockout_until_ms = millis() + 8000;
+}
+
+void check_lockout_refusal(const httpd_req_t& r) {
+  CHECK(r.status == "429 Too Many Requests");
+  CHECK(!header(r, "Retry-After").empty());
+  CHECK(r.resp.find("\"error\":\"too_many_requests\"") != std::string::npos);
+  CHECK(!carries_secret(r));
+  CHECK(!has_header(r, "Set-Cookie"));
+}
+
+// F289's follow-up: before, the receipt's bearer compare recorded nothing,
+// so a guesser could try tokens here at full speed while every other route
+// that reads the bearer backed them off.
+void test_receipt_wrong_bearer_is_a_strike() {
+  reset_device();
   Req wrong;
   wrong.bearer(kWrong);
   CHECK(receipt(wrong) == 0);
-  CHECK(g_auth.consecutive_failures == 3);   // not advanced
+  check_gate_refusal(wrong.r);   // the guess that arms the backoff: the 403 any wrong token gets
+  CHECK_MSG(g_auth.consecutive_failures == 1, "a wrong bearer on the receipt was not a strike");
+  CHECK(g_auth.total_failures == 1);
+  // A request with no Authorization header carries no guess: no strike,
+  // the cookie beside it or not (auth_logic.h).
+  reset_device();
+  mint_session();
+  Req bare;
+  CHECK(receipt(bare) == 0);
+  Req cookie_only;
+  cookie_only.cookie();
+  CHECK(receipt(cookie_only) == 0);
+  CHECK(g_auth.consecutive_failures == 0);
+  CHECK(g_auth.total_failures == 0);
+}
+
+void test_receipt_right_bearer_clears_the_count() {
+  reset_device();
+  g_auth.consecutive_failures = 2;
+  g_auth.last_failure_ms = millis();
+  g_auth.lockout_until_ms = millis();   // the backoff just passed
   Req right;
   right.bearer(kToken);
   CHECK(receipt(right) == 1);
-  CHECK(g_auth.consecutive_failures == 3);   // not cleared either: this check records nothing
+  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK_MSG(g_auth.consecutive_failures == 0, "a right bearer on the receipt left the count standing");
+  CHECK(g_auth.total_successes == 1);
+}
+
+void test_receipt_lockout_holds_the_bearer() {
+  // The backoff running: no bearer is compared. The right token gets the
+  // lockout's 429, as on the QR and every admin route; so does a guess,
+  // which records nothing more (api_auth_check_bearer counts none inside
+  // the backoff either).
+  reset_device();
+  arm_lockout(3);
+  Req right;
+  right.bearer(kToken);
+  CHECK_MSG(receipt(right) == 0, "the receipt compared a bearer inside the backoff");
+  check_lockout_refusal(right.r);
+  Req wrong;
+  wrong.bearer(kWrong);
+  CHECK(receipt(wrong) == 0);
+  check_lockout_refusal(wrong.r);
+  CHECK(g_auth.consecutive_failures == 3);
+  CHECK(g_auth.total_successes == 0);
+  // A poll with no bearer is not held: the 403 with gate_ttl_seconds the
+  // dashboard's BOOT-tap wait reads, the cookie beside it or not.
+  mint_session();
+  Req bare;
+  CHECK(receipt(bare) == 0);
+  check_gate_refusal(bare.r);
+  Req cookie_only;
+  cookie_only.cookie();
+  CHECK(receipt(cookie_only) == 0);
+  check_gate_refusal(cookie_only.r);
+  CHECK(g_auth.consecutive_failures == 3);
+  // The backoff passes: the right token serves again, and clears the count.
+  stub_grant::now_ms += 8001;
+  Req later;
+  later.bearer(kToken);
+  CHECK(receipt(later) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(g_auth.consecutive_failures == 0);
+}
+
+void test_receipt_arming_guess_then_backoff() {
+  reset_device();
+  Req first;
+  first.bearer(kWrong);
+  CHECK(receipt(first) == 0);
+  check_gate_refusal(first.r);   // 403: this guess armed the backoff
+  CHECK(g_auth.consecutive_failures == 1);
+  Req second;
+  second.bearer(kWrong);
+  CHECK(receipt(second) == 0);
+  check_lockout_refusal(second.r);   // inside it: 429, not compared, no strike
+  CHECK(g_auth.consecutive_failures == 1);
+  stub_grant::now_ms += AUTH_LOCKOUT_BASE_MS + 1;
+  Req third;
+  third.bearer(kWrong);
+  CHECK(receipt(third) == 0);
+  check_gate_refusal(third.r);   // after it: compared, a strike, the 403
+  CHECK(g_auth.consecutive_failures == 2);
+}
+
+void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
+  // A page holding a stale token, the backoff running (a guesser on the
+  // network, or the page's own earlier tries): the owner's tap serves it.
+  reset_device();
+  arm_lockout(5);
+  open_tap();
+  Req stale;
+  stale.bearer(kWrong);
+  CHECK_MSG(receipt(stale) == 1, "the lockout held the owner's BOOT tap");
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!tap_open());
+  CHECK(has_header(stale.r, "Set-Cookie"));
+  CHECK(g_auth.consecutive_failures == 5);   // the tap clears no count
+  // The right token inside the backoff, a tap open: served, as the tap (no
+  // bearer is compared while it runs).
+  reset_device();
+  arm_lockout(5);
+  open_tap();
+  Req right;
+  right.bearer(kToken);
+  CHECK(receipt(right) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  // The setup-door claim, a stale bearer beside it, the backoff running.
+  reset_device();
+  arm_lockout(5);
+  mint_claim();
+  Req claim;
+  claim.bearer(kWrong).query(std::string("claim=") + g_improv_claim.hex);
+  CHECK_MSG(receipt(claim) == 1, "the lockout held the setup door's claim");
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!claim_pending());
+  // Outside a backoff: the stale bearer is a strike, and the tap serves it.
+  reset_device();
+  open_tap();
+  Req fresh;
+  fresh.bearer(kWrong);
+  CHECK_MSG(receipt(fresh) == 1, "a stale bearer kept the tap from serving");
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(g_auth.consecutive_failures == 1);
 }
 
 // ── the pairing QR ───────────────────────────────────────────────────────────
@@ -619,6 +763,38 @@ void test_qr_lockout_is_every_admin_routes() {
   CHECK(qr(later) == 1);
 }
 
+// One lockout for both routes: guesses on the receipt hold the QR's right
+// token, and guesses on the QR hold the receipt's.
+void test_receipt_and_qr_share_the_lockout() {
+  reset_device();
+  for (int i = 0; i < 5; ++i) {
+    stub_grant::now_ms += 400000;   // past AUTH_LOCKOUT_MAX_MS, inside nothing
+    g_auth.last_failure_ms = millis() - 1;
+    Req q;
+    q.bearer(kWrong);
+    CHECK(receipt(q) == 0);
+    check_gate_refusal(q.r);
+  }
+  CHECK(g_auth.consecutive_failures == 5);
+  Req on_qr;
+  on_qr.bearer(kToken);
+  CHECK_MSG(qr(on_qr) == 0, "five guesses on the receipt left the QR open");
+  CHECK(on_qr.r.status == "429 Too Many Requests");
+
+  reset_device();
+  for (int i = 0; i < 5; ++i) {
+    stub_grant::now_ms += 400000;
+    g_auth.last_failure_ms = millis() - 1;
+    Req q;
+    q.bearer(kWrong);
+    CHECK(qr(q) == 0);
+  }
+  Req on_receipt;
+  on_receipt.bearer(kToken);
+  CHECK_MSG(receipt(on_receipt) == 0, "five guesses on the QR left the receipt's bearer open");
+  check_lockout_refusal(on_receipt.r);
+}
+
 // ── api_auth.h's contract ────────────────────────────────────────────────────
 
 void test_api_auth_contract() {
@@ -632,6 +808,11 @@ void test_api_auth_contract() {
   CHECK(!api_auth_bearer_valid(&cookie_only.r, kToken));    // the bearer-only checks never do
   CHECK(!api_auth_check_bearer(&cookie_only.r, kToken));
   CHECK(cookie_only.r.status == "401 Unauthorized");
+  Req cookie_grant;
+  cookie_grant.cookie();
+  CHECK(!api_auth_bearer_grant(&cookie_grant.r, kToken));   // the receipt's grant never takes it either
+  CHECK(cookie_grant.r.sends == 0);                          // and sends nothing
+  CHECK(!api_auth_bearer_held(&cookie_grant.r));
 
   Req bearer;
   bearer.bearer(kToken);
@@ -761,7 +942,8 @@ void test_sketch_text() {
   // cookie bridge; the pairing QR's names only the bearer-only gate.
   const std::string receipt_fn = function_text(lines, "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {");
   CHECK(!receipt_fn.empty());
-  CHECK(has(receipt_fn, "api_auth_bearer_valid(req, g_device.api_token_str)"));
+  CHECK(has(receipt_fn, "api_auth_bearer_grant(req, g_device.api_token_str)"));
+  CHECK(has(receipt_fn, "api_auth_bearer_held(req)"));
   CHECK_MSG(!has(receipt_fn, "api_auth_check_optional("), "the receipt takes the cookie again");
   CHECK_MSG(!has(receipt_fn, "api_auth_check("), "the receipt takes the cookie again");
   CHECK(!has(receipt_fn, "api_auth_check_or_query("));
@@ -790,7 +972,7 @@ void test_sketch_text() {
   // banner, or one of the two HTTP writers.
   static const char* const kShapes[] = {
       "api_auth_check(", "api_auth_check_or_query(", "api_auth_check_optional(", "api_auth_check_bearer(",
-      "api_auth_bearer_valid(",                                   // compared, never written
+      "api_auth_bearer_valid(", "api_auth_bearer_grant(",         // compared, never written
       "::register_routes(", "csi_integration::init(",            // handed to a module's gate
       "nvs_load_token(", "nvs_store_token(", "derive_api_token(", "derive_ap_password(",
       "strlen(g_device.ap_password)", "snprintf(out_password",    // key management
@@ -832,12 +1014,17 @@ int main() {
   test_receipt_cookie_secure_over_https_only();
   test_receipt_wrong_claim_burns_it();
   test_receipt_bearer_shapes();
-  test_receipt_bearer_check_touches_no_lockout();
+  test_receipt_wrong_bearer_is_a_strike();
+  test_receipt_right_bearer_clears_the_count();
+  test_receipt_lockout_holds_the_bearer();
+  test_receipt_arming_guess_then_backoff();
+  test_receipt_lockout_never_holds_the_tap_or_the_claim();
   test_qr_cookie_alone_is_refused();
   test_qr_cookie_beside_wrong_bearer_is_refused();
   test_qr_bearer_serves();
   test_qr_no_credential_is_401_without_strike();
   test_qr_lockout_is_every_admin_routes();
+  test_receipt_and_qr_share_the_lockout();
   test_api_auth_contract();
   test_sketch_text();
 
