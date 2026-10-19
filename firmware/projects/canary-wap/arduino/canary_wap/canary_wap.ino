@@ -3570,9 +3570,9 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 //     (sweep F289's residual): the request arrived on g_https_server, as the
 //     flagship asks it (req->handle against its HTTPS server,
 //     securacv_network.cpp). Once that server is up every route is
-//     registered on it alone and port 80 only redirects
-//     (handle_https_redirect), so the browser then never sends the cookie in
-//     the clear. Not g_tls_enabled: that is set before the server starts and
+//     registered on it alone, and port 80 keeps only the captive probes,
+//     /api/fleet and the redirect (handle_https_redirect), none of which
+//     reads the cookie, so the browser then never sends it in the clear. Not g_tls_enabled: that is set before the server starts and
 //     a build without esp_https_server.h never starts one. On a plain-HTTP
 //     answer (the first-boot SoftAP setup, which runs HTTP-only so captive
 //     sheets render, or a unit whose HTTPS start failed) Secure is left off:
@@ -8716,8 +8716,11 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    The bearer is under every admin route's lockout (F289's follow-up):
   //    a wrong one is a strike, and while the backoff runs none is compared
   //    (the 429 below, when the claim and the tap do not serve). The lockout
-  //    never reaches the claim or the tap, so a page with a stale token, or
-  //    a guesser on the network, cannot keep the owner's hand from working.
+  //    never gates the claim or the tap: a page with a stale token, or a
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
+  //    (The lockout is all this decides. Any host on the network can still
+  //    spend a pending claim with one wrong ?claim=, or take an open tap by
+  //    asking first; both predate F289 and are the ledger's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);

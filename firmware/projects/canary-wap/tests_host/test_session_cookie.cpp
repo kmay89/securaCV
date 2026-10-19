@@ -93,8 +93,9 @@ constexpr size_t SESSION_TOK_HEX_LEN = 64;
 struct { uint32_t http_requests = 0; } g_health;
 
 // Two servers, as start_http_server() makes them: with HTTPS up, every route
-// is on g_https_server and port 80 (g_http_server) only redirects; on a
-// plain-HTTP boot g_https_server stays nullptr. Any two distinct addresses
+// is on g_https_server and port 80 (g_http_server) keeps only the captive
+// probes, /api/fleet and the redirect, none of which reads the cookie; on
+// a plain-HTTP boot g_https_server stays nullptr. Any two distinct addresses
 // stand in for the handles.
 static int g_http_server_obj = 0;
 static int g_https_server_obj = 0;
