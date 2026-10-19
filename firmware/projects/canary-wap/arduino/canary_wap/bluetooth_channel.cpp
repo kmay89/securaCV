@@ -353,6 +353,10 @@ static bool disconnect();
 static bool remove_paired_device(const uint8_t* address, Refusal* refusal);
 static bool clear_all_paired_devices(Refusal* refusal);
 static bool forget_bond(const NimBLEAddress& identity);
+static void keep_for_retry(const ble_addr_t& identity);
+static void drop_kept(const ble_addr_t& identity);
+static void retry_kept_bonds(uint32_t now);
+static void refuse_unauthenticated_links();
 static bool set_device_trusted(const uint8_t* address, bool trusted);
 static bool set_device_blocked(const uint8_t* address, bool blocked);
 static bool set_settings(const BluetoothSettings& settings);
@@ -501,6 +505,22 @@ static bool owner_pairing_open() {
   return g_settings.enabled && g_settings.allow_pairing &&
          (g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED);
 }
+// Whether a Numeric Comparison may ask the owner (the review of F191): the
+// same pairing mode, or a comparison of it already asking (the phone tried
+// again, and its new digits replace the old). Before, a comparison asked
+// whenever Bluetooth was on: with no pairing mode it read PAIR_CONFIRMING
+// until a pairing timeout that ran from a stale start (logged Pairing
+// timeout), and within a minute of one (the owner's own completed pairing
+// included) a stranger's digits waited for the owner's confirm, which then
+// bonded and listed that phone with allow_pairing off. Outside it the loop
+// task answers no at once (apply_confirm_passkey()), counted with the
+// passkeys shown nowhere. The loop task's alone: the NimBLE host task only
+// posts the comparison.
+static bool owner_comparison_open() {
+  return g_settings.enabled && g_settings.allow_pairing &&
+         (g_pairing.state == PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED ||
+          g_pairing.state == PAIR_CONFIRMING);
+}
 // Added to a refused passkey (sweep F191): no passkey a phone can type is
 // that large. NimBLE-Arduino 2.3.8 and 2.5.0's ble_sm_inject_io() refuse a
 // passkey above 999999 (BLE_HS_EINVAL, ble_sm.c), so no key is set, the
@@ -515,14 +535,18 @@ static const uint32_t PASSKEY_REFUSED = 1000000;
 // unlisted, where Remove (it takes a listed address) cannot reach it, and
 // three such bonds refused the owner's next pairing (F189 refuses a new
 // pairing on a full store) with nothing on the dashboard to say why. F191
-// deletes such a bond as it is made; one an older firmware already stored
-// is not deleted on its own (a list save that failed would make an owner's
-// own bond read unlisted), but GET /api/bluetooth counts it beside the list
-// (bond_store) and the health log names the lockout (refresh_bond_store()),
-// and Clear all (DELETE /api/bluetooth/paired/all) deletes every bond the
-// stack keeps, listed or not. The loop task's: re-read from the store when
-// something changed it (g_bond_store_dirty: the hand-over, a bond made or
-// deleted, Remove, Clear all), as the status is published.
+// deletes such a bond as it is reported (or from the stack's record of its
+// link when the report never arrived, refuse_unauthenticated_links(); a
+// bond the stack refused to delete is asked again, retry_kept_bonds()); a
+// reboot before the loop task saw it, or one an older firmware already
+// stored, is not deleted on its own (a list save that failed would make an
+// owner's own bond read unlisted), but GET /api/bluetooth counts it beside
+// the list (bond_store) and the health log names the lockout
+// (refresh_bond_store()), and Clear all (DELETE /api/bluetooth/paired/all)
+// deletes every bond the stack keeps, listed or not. The loop task's:
+// re-read from the store when something changed it (g_bond_store_dirty: the
+// hand-over, a bond made or deleted, Remove, Clear all, a pairing the full
+// store refused, a dropped link event), as the status is published.
 #ifdef CONFIG_BT_NIMBLE_MAX_BONDS
 static const uint8_t BOND_STORE_CAPACITY = CONFIG_BT_NIMBLE_MAX_BONDS;   // nimconfig.h's; no WAP build sets it
 #else
@@ -530,8 +554,31 @@ static const uint8_t BOND_STORE_CAPACITY = 3;   // nimconfig.h's default
 #endif
 static uint8_t g_bonds_held = 0;
 static uint8_t g_bonds_unlisted = 0;
+// Marked wherever the store may have moved. Several marks overlap on
+// purpose (a list save marks it, and so does the forget_bond() that comes
+// before most saves; apply_auth_complete() marks it before either), so a
+// mark removed alone fails no host test: each is defense in depth for a
+// path that may stop going through the other. The refusals and the
+// reconcile mark it too (the review of F209): a pairing refused at a full
+// store, and a link event the queue dropped (a bond reported in it), are
+// the moments the count must not be stale.
 static bool g_bond_store_dirty = true;
 static bool g_bond_lockout_logged = false;
+
+// Unauthenticated bonds the stack kept when F191 asked it to delete them
+// (forget_bond() answered false: another task restarted the advertiser or
+// a scan in the delete's window), by identity (the review of F191). Each is
+// retried with the radio quiet once a minute (retry_kept_bonds(), update())
+// until it is gone; one an authenticated bond was reported for since (the
+// phone paired again, with the owner) is the owner's, and is not retried,
+// and none is once a link event was dropped (that report may have been in
+// it). Before, nothing asked again until that phone came back, and a reboot
+// in between left the next boot's rebuild (a list never saved by identity)
+// listing it. The loop task's.
+static const uint32_t KEPT_BOND_RETRY_MS = 60000;
+static ble_addr_t g_kept_bonds[BOND_STORE_CAPACITY];
+static uint8_t g_kept_bond_count = 0;
+static uint32_t g_kept_bond_tried_ms = 0;
 // The loop task's: the count of a link's dropped events reconcile_link()
 // last answered (sweep F169).
 static uint32_t g_link_drops_reconciled = 0;
@@ -917,6 +964,10 @@ static void apply_auth_complete(const Event& e) {
       g_connection.security = link.bonded ? SEC_BONDED : SEC_AUTHENTICATED;
     }
     if (link.bonded) {
+      // An authenticated bond under an identity whose unauthenticated one the
+      // stack kept (the review of F191): the phone paired again, with the
+      // owner; that bond is not retried away.
+      drop_kept(link.id_address);
 
       // Add to paired devices, by the identity address the bond is keyed by
       // (sweep F172): the over-the-air address of a phone using resolvable
@@ -997,9 +1048,21 @@ static void apply_auth_complete(const Event& e) {
     }
     log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
                forgotten ? "BLE pairing refused: an unauthenticated bond was deleted and its link dropped"
-                         : "BLE pairing refused: an unauthenticated bond was kept by the stack (Clear all deletes it); its link dropped",
+                         : "BLE pairing refused: an unauthenticated bond was kept by the stack (retried each minute; Clear all deletes it); its link dropped",
                nullptr);
-    if (recorded) {
+    if (forgotten) {
+      // A listed phone that paired again by Just Works (the review of F191):
+      // NimBLE-Arduino's repeat-pairing handler deleted its old bond before
+      // this one was made, so its entry names no bond now. Dropped and saved
+      // here, as the next boot's drop_entries_without_bond() would.
+      drop_entries_without_bond();
+    } else {
+      keep_for_retry(link.id_address);
+    }
+    // The owner's pairing mode goes on (the review of F191): this bond was
+    // never the owner's pairing (that one is authenticated), and ending the
+    // mode here let a stranger on the recorded link end it at will.
+    if (recorded && g_pairing.state != PAIR_INITIATED && g_pairing.state != PAIR_PIN_DISPLAYED) {
       g_pairing.state = PAIR_FAILED;
       if (g_pair_callback) {
         g_pair_callback(&g_pairing);
@@ -1049,6 +1112,15 @@ static void apply_confirm_passkey(const Event& e) {
     NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn, false);
     delete e.u.passkey.conn;
     log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE pairing refused: Bluetooth is off", nullptr);
+    return;
+  }
+  // Outside the owner's pairing mode, or with new pairings off (the review
+  // of F191): answered no now, its copy deleted, its digits shown nowhere,
+  // and counted with the passkeys refused (update(), at most once a minute).
+  if (!owner_comparison_open()) {
+    NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn, false);
+    delete e.u.passkey.conn;
+    g_passkey_refused_count++;
     return;
   }
   // The event's copy is the loop task's now. One left from an earlier
@@ -1123,6 +1195,10 @@ static void apply_activity(const Event& e) {
 // authentication's does.
 static void apply_store_full(const Event& e) {
   g_store_full_count++;
+  // The refusal is the stack saying its store is full (the review of F209):
+  // the count GET /api/bluetooth shows, and the lockout line, read it again
+  // now, whatever left the count stale (a bond reported in a dropped event).
+  g_bond_store_dirty = true;
   if (g_connection.connected && g_connection_handle == e.u.store.conn_handle &&
       g_pairing.state != PAIR_NONE && g_pairing.state != PAIR_COMPLETE) {
     g_pairing.state = PAIR_FAILED;
@@ -1155,6 +1231,12 @@ static void reconcile_link() {
   const uint32_t dropped = g_events.dropped_reserved();
   if (dropped == g_link_drops_reconciled) return;
   g_link_drops_reconciled = dropped;
+  // A dropped event may have reported a bond (the review of F209): the
+  // store is read again for the status. And it may have been an
+  // authenticated pairing of an identity whose unauthenticated bond the
+  // stack kept (the review of F191): no kept bond is retried from here on.
+  g_bond_store_dirty = true;
+  g_kept_bond_count = 0;
   if (g_server == nullptr) return;
   if (g_connection.connected) {
     const NimBLEConnInfo live = g_server->getPeerInfoByHandle(g_connection_handle);
@@ -1178,6 +1260,28 @@ static void reconcile_link() {
       apply_connect(link_event(BT_EV_CONNECT, live));
       break;
     }
+  }
+  // A bond whose report was dropped (the review of F191).
+  refuse_unauthenticated_links();
+}
+
+// Every live link the stack holds bonded but not authenticated, whose bond
+// the store still holds (the review of F191): refused as F191 refuses one
+// on its report (apply_auth_complete(): the bond deleted with the radio
+// quiet, the link dropped), from the stack's own record of the link. Its
+// report never reached this task: a full queue dropped it
+// (reconcile_link()), or it reached the dispatcher before the channel was
+// its pairing owner (adopt_init_result()). Before, the link was healed and
+// the bond stayed, unlisted, until that phone came back. A link whose bond
+// is gone already (refused on its report, its end not here yet) is passed
+// over, so a report that does arrive later finds nothing left to do twice.
+static void refuse_unauthenticated_links() {
+  if (g_server == nullptr) return;
+  for (const uint16_t handle : g_server->getPeerDevices()) {
+    NimBLEConnInfo live = g_server->getPeerInfoByHandle(handle);
+    if (live.getConnHandle() != handle || !live.isBonded() || live.isAuthenticated()) continue;
+    if (!NimBLEDevice::isBonded(live.getIdAddress())) continue;
+    apply_auth_complete(link_event(BT_EV_AUTH_COMPLETE, live));
   }
 }
 
@@ -1927,6 +2031,9 @@ static void adopt_init_result() {
   // again, from this task, while on FULL the bring-up worker's Opera init
   // calls it on its own (the F167 review).
   ble_server_dispatch::set_owner(ble_server_dispatch::kPairing, &g_server_callbacks);
+  // A Just Works bond made before that (the review of F191): its report
+  // reached the dispatcher with no pairing owner and went nowhere.
+  refuse_unauthenticated_links();
 
   // Auto-start advertising if enabled. NOTE: init() is only ever called
   // AFTER the provisioning join window has cleared (the loop's
@@ -2517,6 +2624,56 @@ static bool forget_bond(const NimBLEAddress& identity) {
   restore_radio(q);
   g_bond_store_dirty = true;   // F209
   return deleted || !NimBLEDevice::isBonded(identity);
+}
+
+// The unauthenticated bonds the stack kept (the review of F191): see
+// g_kept_bonds. A full list keeps the ones it has (the store holds no more
+// bonds than it has slots). The first retry is a minute after the first
+// kept bond.
+static void keep_for_retry(const ble_addr_t& identity) {
+  for (uint8_t i = 0; i < g_kept_bond_count; i++) {
+    if (memcmp(&g_kept_bonds[i], &identity, sizeof identity) == 0) return;
+  }
+  if (g_kept_bond_count >= BOND_STORE_CAPACITY) return;
+  if (g_kept_bond_count == 0) g_kept_bond_tried_ms = millis();
+  g_kept_bonds[g_kept_bond_count++] = identity;
+}
+
+static void drop_kept(const ble_addr_t& identity) {
+  uint8_t keep = 0;
+  for (uint8_t i = 0; i < g_kept_bond_count; i++) {
+    if (memcmp(&g_kept_bonds[i], &identity, sizeof identity) != 0) g_kept_bonds[keep++] = g_kept_bonds[i];
+  }
+  g_kept_bond_count = keep;
+}
+
+// update()'s, with the stack up and Bluetooth on: once a minute, each kept
+// bond still in the store is deleted with the radio quiet, as F191 asked
+// first; one the stack keeps again waits for the next minute. The bond
+// under a kept identity is still the unauthenticated one: a later pairing
+// of that identity is reported (Just Works: refused again; with the owner:
+// drop_kept()), and a report the queue dropped ends every retry
+// (reconcile_link()). A listed entry it leaves without a bond (a listed
+// phone that paired again by Just Works) goes as apply_auth_complete()'s
+// does.
+static void retry_kept_bonds(uint32_t now) {
+  if (g_kept_bond_count == 0 || now - g_kept_bond_tried_ms < KEPT_BOND_RETRY_MS) return;
+  g_kept_bond_tried_ms = now;
+  uint8_t keep = 0;
+  bool deleted = false;
+  for (uint8_t i = 0; i < g_kept_bond_count; i++) {
+    const NimBLEAddress identity(g_kept_bonds[i]);
+    if (!NimBLEDevice::isBonded(identity)) continue;   // gone already (Clear all, Remove)
+    if (forget_bond(identity)) {
+      log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 "BLE unauthenticated bond the stack kept: deleted on a retry", nullptr);
+      deleted = true;
+      continue;
+    }
+    g_kept_bonds[keep++] = g_kept_bonds[i];
+  }
+  g_kept_bond_count = keep;
+  if (deleted) drop_entries_without_bond();
 }
 
 static bool remove_paired_device(const uint8_t* address, Refusal* refusal) {
@@ -3138,6 +3295,9 @@ void update() {
 
   // Check scan timeout
   handle_scan_timeout();
+
+  // An unauthenticated bond the stack kept, asked again (the review of F191).
+  retry_kept_bonds(now);
 
   // Check pairing timeout
   if (g_pairing.state != PAIR_NONE && g_pairing.state != PAIR_COMPLETE) {

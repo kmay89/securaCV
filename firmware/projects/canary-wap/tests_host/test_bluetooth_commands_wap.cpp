@@ -441,6 +441,8 @@ void boot(bool bring_up = true, bool wipe = true) {
   bc::g_bonds_unlisted = 0;
   bc::g_bond_store_dirty = true;
   bc::g_bond_lockout_logged = false;
+  bc::g_kept_bond_count = 0;               // F191's review: no kept bond to retry
+  bc::g_kept_bond_tried_ms = 0;
   bc::g_status_view = decltype(bc::g_status_view)();       // nothing published yet
   bc::g_scan_view = decltype(bc::g_scan_view)();
   bc::g_paired_view = decltype(bc::g_paired_view)();
@@ -1319,8 +1321,11 @@ void test_a_pairing_ends_with_its_link() {
 // B's stack asks its own Numeric Comparison while the loop task is
 // applying B's link (so B's passkey waits for the next pass). The owner's
 // confirm of A's six digits, drained in that same pass, must not answer
-// yes on the handle B now holds: B's digits were never shown. They are, on
-// the next pass, and the owner's confirm of them goes to B.
+// yes on the handle B now holds: B's digits were never shown. Nor are they
+// on the next pass: A's lost link failed the owner's pairing mode, so B's
+// comparison is answered no there (the review of F191: none asks the owner
+// outside pairing mode). The owner taps Pair again, B asks again, and the
+// owner's confirm of B's digits goes to B.
 NimBLEConnInfo g_phone_b;
 bool g_b_asks_on_connect = false;
 void b_asks_when_it_connects(const bc::ConnectionInfo*, bool connected) {
@@ -1346,15 +1351,21 @@ void test_a_reused_handle_never_takes_the_old_yes() {
   CHECK(r.wait == lcr::Wait::kDone && !r.r.ok);
   CHECK(host_sim::passkey_answers.empty());
   CHECK(bc::g_connection.connected && bc::g_connection_handle == 7);
-  loop_pass();                                              // B's own digits
+  loop_pass();                                              // B's own digits, outside pairing mode
+  CHECK(bc::g_pairing.state == bc::PAIR_FAILED && bc::g_pending_pair_info == nullptr);
+  CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
+  CHECK(host_sim::passkey_answers[0].handle == 7 && host_sim::passkey_answers[0].task == "loop");
+  bc::set_connection_callback(nullptr);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  on_nimble([] { host_sim::server->callbacks()->onConfirmPassKey(g_phone_b, 999999); });
+  loop_pass();                                              // asked again, inside pairing mode
   CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pairing.pin_code == 999999);
   CHECK(bc::g_pending_pair_info != nullptr && bc::g_pending_pair_info->getAddress() == g_phone_b.getAddress());
-  bc::set_connection_callback(nullptr);
   c.pin = 999999;
   r = rest(c);
   CHECK(r.wait == lcr::Wait::kDone && r.r.ok);
-  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::passkey_answers[0].accept);
-  CHECK(host_sim::passkey_answers[0].handle == 7 && host_sim::passkey_answers[0].task == "loop");
+  CHECK(host_sim::passkey_answers.size() == 2 && host_sim::passkey_answers[1].accept);
+  CHECK(host_sim::passkey_answers[1].handle == 7 && host_sim::passkey_answers[1].task == "loop");
   CHECK(host_sim::conn_heap == 0);
   std::printf("PASS a_reused_handle_never_takes_the_old_yes\n");
 }
@@ -3603,7 +3614,9 @@ void test_no_pairing_owner_fails_closed() {
   CHECK(ble_opera::getConnectionsTotal() == opera_total + 1);
   uint32_t shown = 0;
   on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
-  CHECK(shown != 123456 && shown < 1000000);
+  // Past what ble_sm_inject_io() takes (the review of F191): no six digits
+  // a guess could match.
+  CHECK(shown != 123456 && shown >= 1000000 && shown < 2000000);
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 246810); });
   CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
   CHECK(host_sim::passkey_answers[0].task == "nimble" && host_sim::passkey_answers[0].handle == 5);
@@ -5200,7 +5213,7 @@ void test_a_passkey_outside_pairing_mode_is_shown_nowhere() {
 const char* const kUnauthDeleted =
     "BLE pairing refused: an unauthenticated bond was deleted and its link dropped";
 const char* const kUnauthKept =
-    "BLE pairing refused: an unauthenticated bond was kept by the stack (Clear all deletes it); its link dropped";
+    "BLE pairing refused: an unauthenticated bond was kept by the stack (retried each minute; Clear all deletes it); its link dropped";
 const char* const kLockout =
     "BLE bond store full with bonds the paired list does not show: new pairings are refused until Clear all";
 
@@ -5234,8 +5247,9 @@ bool just_works_through_stack(NimBLEConnInfo& phone, bool irk) {
 // deletes it as it is reported, with the radio quiet as Remove does (here
 // the phone hands over its IRK and the presence scan runs: a bare
 // deleteBond() is refused BLE_HS_EBUSY), and drops its link by its handle;
-// nothing is listed or saved, the owner's pairing reads failed, and the
-// health log says so without the phone's address. A link encrypted by Just
+// nothing is listed or saved, the owner's pairing mode goes on (the review
+// of F191: a stranger's Just Works bond on the recorded link ended it), and
+// the health log says so without the phone's address. A link encrypted by Just
 // Works with no bond (the setup door's profile keeps none) keeps its link
 // and logs the failed pairing as before; an authenticated bond is listed as
 // before. And when the stack keeps the bond after all (another task
@@ -5255,7 +5269,7 @@ void test_an_unauthenticated_bond_is_deleted_and_its_link_dropped() {
   CHECK(std::count(host_sim::server->disconnected.begin(), host_sim::server->disconnected.end(), 91) == 1);
   CHECK(host_sim::server->ended_by_unpair.size() == 1 && host_sim::server->ended_by_unpair[0] == 91);
   CHECK(bc::g_paired_count == 0 && host_sim::main_nvs.count("bt_paired") == 0);
-  CHECK(bc::g_pairing.state == bc::PAIR_FAILED);
+  CHECK(bc::g_pairing.state == bc::PAIR_INITIATED && bc::g_owner_pairing_open);
   CHECK(health_says(kUnauthDeleted) == 1 && health_level(kUnauthDeleted) == SCV_LOG_WARNING);
   CHECK(health_says("New device paired") == 0 && health_says("Pairing failed") == 0);
   CHECK(!health_names(identity.toString()) && !health_names(phone.getAddress().toString()));
