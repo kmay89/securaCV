@@ -439,11 +439,36 @@ token, takes the bearer alone the same way; and a `POST /api/mqtt/config`
 that moves the broker (host, port, TLS mode or CA) while keeping the stored
 broker password — no `password` in the body — takes the bearer too, or the
 password typed again, so the session cannot send that password to a host it
-names (`403 password_needed`). Host-tested in
+names (`403 password_needed`). The receipt's row 2 is also under the lockout
+every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
+follow-up): a wrong or malformed bearer is one strike, the right one clears
+the count, and while the backoff runs no bearer is compared, so a request
+that brings one gets `429` with `Retry-After` when the claim and the tap do
+not serve it. The lockout never gates rows 3 and 4: a page holding a stale
+token, or a backoff a guesser armed, is still served by the claim or a BOOT
+tap. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
 the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
+
+What the lockout does not decide, and what stays open (all of it predates
+F289's follow-up; it is the ledger's, not a claim of this design):
+
+- **The backoff is one per device, not one per caller.** A host on the
+  network that sends one wrong bearer whenever the backoff is not running
+  keeps row 2 answering `429` for everyone, the owner's right token
+  included, as it can on every admin route that takes the bearer. Rows 3
+  and 4 still serve: the dashboard's BOOT-tap wait sends no `Authorization`
+  header, and a stale one beside the tap or the claim is served anyway.
+- **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
+  spent, match or not, so one wrong guess from a host on the network burns
+  a pending setup-door claim, and the phone that provisioned over the door
+  then needs the BOOT tap.
+- **Row 4 is spent by whoever asks first.** The tap has one consumer: a
+  request from any host on the network inside its 30 s, a wrong bearer
+  included, is served the receipt and spends the tap, and the owner's own
+  request after it is refused.
 
 ---
 
@@ -690,7 +715,11 @@ wizard's words; one signed in with its token saves it from **Settings**,
 session cookie (the landing page's, or a tap's or a claim's once the page
 has been reloaded without its token) is refused there and sent back to the
 sign-in, whose BOOT tap offers the kit (F289: the receipt's bearer grant is
-the header alone, never the cookie). A kit saved on the setup network names the
+the header alone, never the cookie; the sign-in then says the session does
+not cover this, not that a token it never sent was wrong). The session
+cookie a tap or a claim sets is `Secure` when the answer goes out over
+HTTPS, and not on the first-boot SoftAP's plain-HTTP setup, where a browser
+would drop it. A kit saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -871,6 +900,16 @@ cannot speak to.
             place of the cookie, `200` (the GET answers that host with
             `password_set: true`) — a real move, since the stored host is
             the first new one by then (F289, the third road).
+- [ ] With the WAP joined to the home Wi-Fi, wrong bearers on
+      `GET /api/provisioning-receipt` arm the same backoff as the admin
+      routes: once it runs, the right token is `429` with `Retry-After` on
+      the receipt and on `GET /api/pairing-qr`, a short BOOT tap inside that
+      backoff still serves the receipt, and the right token serves again
+      once the backoff ends (F289's follow-up).
+- [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
+      link and a BOOT-tap receipt send carries `Secure`; on the first-boot
+      SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none
+      and the browser keeps it (F289's follow-up).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at

@@ -75,6 +75,18 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
         /// Detection confidence — kept only when it is a percentage (1–100),
         /// the same fold as the phone's decoder.
         var seeingScore: Int? = nil
+        /// When this device's KEY was born, in days since the Unix epoch (a
+        /// UTC day with no time of day) — the device's own `born_day`, a fact
+        /// about the Canary rather than about whoever paired it. Nil when it
+        /// did not say, or said a day no Canary can stamp (outside
+        /// `bornDayWindow`), and nil draws no line at all.
+        var bornDay: Int? = nil
+        /// The device's own `born_exact`: true when `bornDay` really is the
+        /// day the key was born, false when it is the day the device was
+        /// first DATED (it met a clock later than it was made). Nil — the
+        /// device sent no flag — reads as not exact, because the flag exists
+        /// to hold a claim back. A flag with no day means nothing.
+        var bornExact: Bool? = nil
         /// WHICH SOURCE reported this row — the polled address, stamped by
         /// the model after decode (never a wire field). It exists because a
         /// name is not an identity: two units on older firmware both call
@@ -142,6 +154,29 @@ struct FleetSnapshot: Decodable, Equatable, Sendable {
             case "2+": return 2
             default: return nil
             }
+        }
+
+        /// The days a Canary can call its birth day: from the firmware's clock
+        /// floor (2025-01-01, `kClockFloor` in
+        /// firmware/common/identity/birth_day.h — below it the clock is the
+        /// boot epoch showing through) to the last day a 32-bit Unix clock
+        /// names (2106-02-07). The same window as witness-core's
+        /// `BORN_DAY_MIN...BORN_DAY_MAX`, which hands this decoder its bytes;
+        /// the contract vectors pin both edges for both readers.
+        static let bornDayWindow = 20_089...49_710
+
+        /// Midnight UTC of the born day: the day boundary the firmware
+        /// stamped, never a time of day.
+        var bornOn: Date? {
+            bornDay.map { Date(timeIntervalSince1970: TimeInterval($0) * 86_400) }
+        }
+
+        /// "Born" only when the device said its day is exact, "First dated"
+        /// for a day without that, nil without a day. The same three cases,
+        /// in the same words, as the phone's BirthCertificateCard.
+        var bornLabel: String? {
+            guard bornDay != nil else { return nil }
+            return bornExact == true ? "Born" : "First dated"
         }
 
         /// The coarse device family, decoded with the shared tolerant decoder
@@ -256,12 +291,15 @@ extension FleetSnapshot {
     /// present-tense words on the wire, and a remembered "someone present"
     /// from a source that stopped answering is exactly the stale claim the
     /// contract says must omit rather than lie. Durable facts (board, hub
-    /// standing, the chain word) stay.
+    /// standing, the chain word, the birth day) stay: a key's birth day is
+    /// written once on the device and never restated, so a remembered one is
+    /// still true.
     func withEveryDeviceOffline() -> FleetSnapshot {
         FleetSnapshot(kernel: kernel, verifiedThrough: nil,
                       devices: devices.map { device in
                           Device(name: device.name, online: false, chain: device.chain,
                                  product: device.product, hw: device.hw, hub: device.hub,
+                                 bornDay: device.bornDay, bornExact: device.bornExact,
                                  sourceHint: device.sourceHint)
                       })
     }
@@ -283,6 +321,8 @@ extension FleetSnapshot.Device {
         case name, online, chain, product, hw, hub
         case presence, occupants, breathing, seeing
         case seeingScore = "seeing_score"
+        case bornDay = "born_day"
+        case bornExact = "born_exact"
     }
 
     init(from decoder: Decoder) throws {
@@ -322,6 +362,18 @@ extension FleetSnapshot.Device {
         // (unscored) rather than rendered as a confidence — the phone's rule.
         let score = (try? c.decodeIfPresent(Int.self, forKey: .seeingScore)) ?? nil
         seeingScore = ((score ?? 0) > 0 && (score ?? 0) <= 100) ? score : nil
+        // The birth day: a whole number inside the window a Canary can stamp,
+        // or nil — the firmware's own "never dated" 0, a negative, a fraction,
+        // a string, a day past a 32-bit clock. The same reading as
+        // witness-core's `tolerant_born_day`, so a body that reaches this
+        // decoder without the core (a test, a future path) still agrees with
+        // the contract vectors. A wrong type costs the field, never the row.
+        let day = (try? c.decodeIfPresent(Int.self, forKey: .bornDay)) ?? nil
+        bornDay = day.flatMap { Self.bornDayWindow.contains($0) ? $0 : nil }
+        // Kept only as a boolean, and independently of the day, as the core
+        // carries it: `bornLabel` is what reads a flag with no day as nothing
+        // and a day with no flag as not exact.
+        bornExact = (try? c.decodeIfPresent(Bool.self, forKey: .bornExact)) ?? nil
     }
 }
 

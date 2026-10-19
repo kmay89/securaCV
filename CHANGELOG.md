@@ -1,6 +1,85 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
+
+- **The broker move a session could make with the kept password (sweep F325)
+  is #1835's fix, in the section below;** this branch had a parallel gate and
+  dropped it for #1835's.
+- **canary-wap: the session cookie is `Secure` over HTTPS and read by its
+  whole name (sweep F326, F327).** One writer, `session_cookie_header()`,
+  spells both mints' attributes and adds `Secure` exactly when the answer
+  leaves over the HTTPS server; the first-boot SoftAP's plain-HTTP cookie
+  stays without it, so the browser keeps it. `read_session_cookie_hex()` no
+  longer takes `xcv_session=` or `foo=cv_session=` for the session, and such a
+  cookie in front no longer hides the real one. **Host-tested** (new
+  `test_session_cookie.cpp`, 81 checks, 18 of them failing on #1822's sources;
+  `test_receipt_grant.cpp`'s HTTPS cases); the compile is CI's; not run on a
+  device or in a browser (U1). Filed: F337 (a `Secure` cookie strands a
+  browser if the unit falls back to plain HTTP within its day; the `__Host-`
+  name; HSTS).
+- **canary-wap: a wrong bearer on the provisioning receipt is a strike, as on
+  the pairing QR and the admin routes (sweep F329, F331, F332).** Since #1822 the receipt
+  compared its bearer silently, so guessing the token there cost nothing while
+  the pairing QR and the admin routes backed a guesser off.
+  `api_auth_bearer_grant()` keeps the lockout's accounting: a wrong or
+  malformed bearer is one strike, the right one clears the count, and no
+  bearer is compared while a backoff runs; such a request gets the lockout's
+  `429` with `Retry-After` when the setup-door claim and the BOOT tap do not
+  serve it, and the lockout never holds those two. An empty device token (a
+  unit whose key could not be made) no longer matches a bare `Bearer ` on any
+  `api_auth.h` gate, and the lockout's `Retry-After` can no longer wrap to
+  about 49.7 days when a backoff ends mid-request. **Host-tested**
+  (`test_receipt_grant.cpp`, 536 checks; the sketch before the lockout change
+  fails 51 of them, and the suite fails 34 of 534 on the `api_auth.h` before
+  the empty-token change, F331); the compile is CI's; not run on a device
+  (U1). Filed: F341-F343 (a strike the tap then serves, the claim and the
+  tap spent by whoever asks first, one backoff for every caller).
+- **canary-wap's sign-in names no token a cookie-only page never held (sweep
+  F330).** A browser signed in by its session cookie alone, refused by the
+  recovery-kit save or the pairing QR since #1822, read "Invalid or expired
+  token. Please re-enter."; it now reads "Your session does not cover this, or
+  has ended. Paste the API token, or use BOOT Tap Once.", and a page that sent
+  a token keeps the old line. **Host-tested** in node (`recovery_kit.test.js`,
+  32 tests; 4 fail on the page before); `web_assets_gz.h` regenerated; the
+  ESP32 compile is CI's; not run on a device or in a browser.
+- **The WAP's route check holds every answer that carries a secret to a
+  bearer-only gate (sweep F328).** `check_route_security.py` carries the
+  token, the SoftAP password and the TLS pin up the sketch's call graph to the
+  routes that answer them, and fails a route whose answer is not behind
+  `api_auth_check_bearer()`, `api_auth_bearer_grant()` or the receipt's
+  claim-or-tap refusal, or that names a gate any session passes on the way. In
+  `csi_mqtt.cpp` it holds the stored broker password to the four functions
+  that load, write and use it, and the broker save to #1835's move gate handed
+  a bearer; and it holds each module's copy of the token to its keepers. It
+  fails main before #1835 and #1822 (5 problems each: four on the broker save,
+  which has no move gate there, and the receipt's grant F329 adds) and #1822's
+  parent (15: eight on the two routes F289 closed, the three bearer gates it
+  does not define, and the same four on the broker save), and its 25 planted
+  fixtures each fail for their named reason before the tree is read. A static
+  text check that matches names; it now runs in seconds (`function_body()`
+  caches its blanking). Filed: F338 (the flagship's check has no such rule)
+  and F348.
+- **The docs and the Lab say what was built.** `magic_pairing.md` §3.7 (the
+  receipt's lockout, and what stays open: one backoff per device, the claim
+  and the tap spent by whoever asks first), `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md` (the `Secure` cookie; #1835's broker-move gate, and the
+  spoofing and QR roads it does not cover), both WAP READMEs,
+  `LESSONS_LEARNED.md` (a dated amendment to the F289 entry),
+  `SECURITY-AUDIT.md`, the 2026-07 firmware audit,
+  `canary_settings_access_validation.md` and `PENTEST_SCOPE.md`, none of them
+  stating #1835's gate a second time; two U1 rows in
+  `hardware_verification_checklist.md`'s new "canary-wap: F289's follow-up"
+  section and two in `magic_pairing.md` §9, all unticked. The Lab's WAP page
+  (`gen_wap.py`, `wap.json`) names the MQTT routes' real gate where it said
+  "pairing token". The sweep files F333-F349, among them the hand-ups of the
+  superseded F289 port that still apply to #1822's design (F333, F334, F337,
+  F342 and F344-F347).
+
+One Makefile line lists the new suite's two cuts in `CUT_INCS`, which main's
+`run-arduino-globals` reads since #1833. Nothing here moves the emulator dist
+or a carried Home Assistant file. Host-tested; the ESP32 compiles are CI's;
+nothing ran on a device or in a browser.
 
 ### canary-wap: a dashboard session alone cannot move the broker while keeping the stored MQTT password
 
@@ -321,6 +400,19 @@ All are closed here; none of the code changes is run on a device.
   options is byte-identical under OpenSCAD 2021.01, and only `enclosures.json`
   regenerates. **Host-tested** (Python and node suites, the generator checks);
   nothing printed. C10 stays open. Filed: C21-C24.
+- **Dependency advisories (bullet added 2026-10-19 by #1832's ledger, since
+  #1802 took the bumps without one).** rustls 0.23.46 in the five
+  lockfiles that carry it (the root `Cargo.lock`, `desktop/src-tauri`,
+  `desktop-lab/src-tauri`, `desktop/flash-engine` and `desktop/hub-io`) for
+  RUSTSEC-2026-0346 to -0349; quinn-proto 0.11.19 in the three desktop
+  lockfiles that carry it (`desktop/src-tauri`, `desktop-lab/src-tauri`,
+  `desktop/flash-engine`) for RUSTSEC-2026-0338 to -0342; and for zip's
+  RUSTSEC-2026-0367 to -0369 the root lockfile takes c2pa 0.91.3 and zip
+  9.0.5, while the two Tauri apps' zip 4.6.1, a Windows-only dependency of
+  `tauri-plugin-updater` that only opens an update archive whose minisign
+  signature has verified, is ignored in `.cargo/audit.toml` with `SECURITY.md`
+  Group 4's analysis until an updater 2.x takes zip 9. Lockfile bumps plus
+  that record; `cargo audit` is CI's.
 
 Nothing in wave 19 moves the emulator dist. Two carried Home Assistant files
 change (`sensor.py` and the new `tests/test_last_event_stateless.py`, HA28),

@@ -3558,6 +3558,38 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
   return httpd_resp_send(req, (const char*)gz, gz_len);
 }
 
+// The cv_session cookie's Set-Cookie value, written into `out` (`cap`
+// bytes): the one spelling of its attributes for both places that mint a
+// session (handle_ui's ?cv_pair exchange and the receipt's BOOT-tap or
+// setup-door grant). False, and nothing to send, if it does not fit.
+//   - 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
+//   - HttpOnly: no JS can read the cookie (mitigates XSS exfil).
+//   - SameSite=Strict: cross-origin requests can't carry it (CSRF).
+//   - Path=/: covers /, /tune, /api/*.
+//   - Secure exactly when THIS answer goes out over the HTTPS server
+//     (sweep F289's residual): the request arrived on g_https_server, as the
+//     flagship asks it (req->handle against its HTTPS server,
+//     securacv_network.cpp). Once that server is up every route is
+//     registered on it alone, and port 80 keeps only the captive probes,
+//     /api/fleet and the redirect (handle_https_redirect), none of which
+//     reads the cookie, so the browser then never sends it in the clear. Not g_tls_enabled: that is set before the server starts and
+//     a build without esp_https_server.h never starts one. On a plain-HTTP
+//     answer (the first-boot SoftAP setup, which runs HTTP-only so captive
+//     sheets render, or a unit whose HTTPS start failed) Secure is left off:
+//     a browser drops a Secure cookie an http page sets. (The other way
+//     round has an edge: a browser still holding a Secure cv_session from
+//     an HTTPS visit refuses a same-name cookie from an http page, so a unit
+//     that comes back HTTP-only signs that browser in again only once the
+//     old cookie's 24 h are up, or its site data is cleared.)
+static bool session_cookie_header(httpd_req_t* req, const char* session_hex,
+                                  char* out, size_t cap) {
+  const bool tls = g_https_server != nullptr && req->handle == g_https_server;
+  const int n = snprintf(out, cap,
+      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+      session_hex, tls ? "; Secure" : "");
+  return n > 0 && (size_t)n < cap;
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   // The default route now lands on the headline Sensing dashboard from
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
@@ -3634,15 +3666,10 @@ static esp_err_t handle_ui(httpd_req_t* req) {
     if (httpd_query_key_value(qs, "cv_pair", pair_hex, sizeof(pair_hex)) == ESP_OK
         && csi_integration::pair_token_consume(pair_hex)) {
       char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-      if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
-        // 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
-        // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
-        // SameSite=Strict: cross-origin requests can't carry it (CSRF).
-        // Path=/: covers /, /tune, /api/*.
-        char cookie_hdr[160];
-        snprintf(cookie_hdr, sizeof(cookie_hdr),
-          "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-          session_hex);
+      char cookie_hdr[160];
+      // The cookie's attributes, Secure over HTTPS: session_cookie_header().
+      if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
+          session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
         httpd_resp_set_hdr(req, "Location", "/");
@@ -8664,7 +8691,8 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
   // (firmware/common/network; the sketch keeps the inline copy by
   // convention). The WAP's actual order here: a valid bearer (the header,
-  // never the session cookie) serves (the claim and the tap left alone);
+  // never the session cookie, under the api_auth lockout) serves (the claim
+  // and the tap left alone);
   // else a claim the request presented is
   // SPENT, match or not (a guesser gets one guess per join), and serves on
   // a match, the tap left unspent for the owner's own page load; else the
@@ -8673,9 +8701,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // front of this route there); the WAP sketch has no Host guard on this
   // route and does not ask it.
 
-  // 1. A valid Bearer token always serves (for SAP re-sync). The bearer and
-  //    ONLY the bearer: a real `Authorization: Bearer <token>` header,
-  //    constant-time compared (api_auth_bearer_valid), never the cv_session
+  // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
+  //    the bearer: a real `Authorization: Bearer <token>` header,
+  //    constant-time compared (api_auth_bearer_grant), never the cv_session
   //    cookie (sweep F289). The landing page at / mints that cookie's
   //    session for whoever loads it on the home network — deliberate LAN
   //    posture for the dashboard — so with api_auth_check_optional here any
@@ -8685,7 +8713,16 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    credential (403 physical_confirmation_required; the dashboard's
   //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
   //    one that typed the token sends it as a bearer and is served here.
-  if (api_auth_bearer_valid(req, g_device.api_token_str)) {
+  //    The bearer is under every admin route's lockout (F289's follow-up):
+  //    a wrong one is a strike, and while the backoff runs none is compared
+  //    (the 429 below, when the claim and the tap do not serve). The lockout
+  //    never gates the claim or the tap: a page with a stale token, or a
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
+  //    (The lockout is all this decides. Any host on the network can still
+  //    spend a pending claim with one wrong ?claim=, or take an open tap by
+  //    asking first; both predate F289 and are the ledger's.)
+  const bool bearer_held = api_auth_bearer_held(req);
+  if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
@@ -8718,6 +8755,13 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    atomic step; the BLE OTA break-glass hook competes for the same tap
   //    from another task)
   if (!claim_served && !provisioning_gate_take()) {
+    // A bearer the backoff kept from being compared gets the lockout's own
+    // answer (429, Retry-After), not "press BOOT": a page holding the right
+    // token keeps it (secureFetch drops a token on 403) and retries.
+    if (bearer_held) {
+      api_auth_send_lockout(req);
+      return ESP_OK;
+    }
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
@@ -8742,15 +8786,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The claim matched, or the gate was open (and is now closed) — serve the
   // receipt with the same session cookie either way: the phone that
   // provisioned over the door is as present as the hand on the BOOT button.
+  // The cookie's attributes are handle_ui's (session_cookie_header()):
+  // Secure when this answer goes out over HTTPS, and not on the first-boot
+  // SoftAP's plain-HTTP setup, where the recovery-kit save mints it.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-  if (csi_integration::session_issue(session_hex, sizeof(session_hex))) {
-    char cookie_hdr[160];
-    int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
-      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-      session_hex);
-    if (cookie_len > 0 && (size_t)cookie_len < sizeof(cookie_hdr)) {
-      httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
-    }
+  char cookie_hdr[160];
+  if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
+      session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
   }
   esp_err_t result = send_provisioning_receipt(
       req, claim_served ? receipt_authority::Grant::SETUP_DOOR_CLAIM

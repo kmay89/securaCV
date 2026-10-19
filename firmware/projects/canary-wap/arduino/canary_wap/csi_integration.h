@@ -122,7 +122,10 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * harvestable by anyone on the SoftAP who could view-source on /
  * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
  * SameSite=Strict, so JS can't read them and cross-origin requests
- * can't forge them.
+ * can't forge them, and Secure on an answer from the HTTPS server
+ * (canary_wap.ino session_cookie_header()), so a browser never sends
+ * one to the port-80 redirect in the clear. The header is read by the
+ * cookie's whole name: "xcv_session=" is not this cookie.
  *
  * A session signs a browser into the dashboard and nothing more (sweep
  * F289): the landing page mints one for whoever loads / on the home
@@ -130,8 +133,8 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * The two routes whose answer carries a credential — GET
  * /api/provisioning-receipt (the token, the SoftAP password, the TLS pin)
  * and GET /api/pairing-qr (the token and the pin) — never take it; their
- * bearer grant is the Authorization header alone (api_auth.h's
- * api_auth_bearer_valid / api_auth_check_bearer).
+ * bearer grant is the Authorization header alone, under the one lockout
+ * (api_auth.h's api_auth_bearer_grant / api_auth_check_bearer).
  */
 bool session_validate_cookie(httpd_req_t* req);
 

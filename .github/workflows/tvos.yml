@@ -42,6 +42,10 @@ on:
       # #filePath. scripts/lint_apple_parity.py derives every fixture the
       # Wall's tests read and fails when one is missing from either list.
       - "tests/fixtures/envelope/sealed_log_document_vector.json"
+      # witness-core's fleet_contract test reads the born-day window (the
+      # firmware's clock floor) out of this header, so a change to it must
+      # rerun that test.
+      - "firmware/common/identity/birth_day.h"
       - ".github/workflows/tvos.yml"
   pull_request:
     branches: [main]
@@ -63,6 +67,10 @@ on:
       # #filePath. scripts/lint_apple_parity.py derives every fixture the
       # Wall's tests read and fails when one is missing from either list.
       - "tests/fixtures/envelope/sealed_log_document_vector.json"
+      # witness-core's fleet_contract test reads the born-day window (the
+      # firmware's clock floor) out of this header, so a change to it must
+      # rerun that test.
+      - "firmware/common/identity/birth_day.h"
       - ".github/workflows/tvos.yml"
 
 permissions:

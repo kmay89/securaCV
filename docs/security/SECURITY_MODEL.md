@@ -340,10 +340,15 @@ a scanned hub code re-points the broker with the stored password, in a scan
 window the session can open (it mints the wizard's pair token over
 `GET /api/pair/token`), but only for a code in front of the camera
 (`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
-ledger. The displays treat the
-LAN as their trust boundary by design — no bearer credential at all, a
-per-boot CSRF token that keeps cross-site pages away from writes, and the
-on-glass-only settings above that no network caller can flip.
+ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
+toward the same lockout as the admin routes, and the session cookie itself
+is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever it is set over HTTPS
+(the first-boot setup runs plain HTTP, where a `Secure` cookie would be
+dropped); host-tested, the ESP32 compile is CI's, not bench-tested. The
+displays treat the LAN as their trust boundary by design — no bearer
+credential at all, a per-boot CSRF token that keeps cross-site pages away
+from writes, and the on-glass-only settings above that no network caller
+can flip.
 
 **Encryption in transit is an opt-in, not the default.** The Canary WAP
 serves HTTPS on port 443 with a certificate minted on the device once setup

@@ -16,11 +16,16 @@
 //! * a bare JSON array of devices is also accepted;
 //! * `chain: "unknown"` is an ABSENT claim, not a failure — a display holds no
 //!   witness chain of its own, and painting it as trouble is a lie about every
-//!   display in the fleet.
+//!   display in the fleet;
+//! * `born_day` / `born_exact` (when the device's key was born) are carried
+//!   only when they are a day and a flag the firmware could have written, and
+//!   a malformed one is dropped rather than failing the snapshot: one strange
+//!   row must not blank the television for every device that answered.
 //!
 //! This is coarse presence and health — never secrets, never media.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
 /// A device that omits `online` is NOT claimed present. The phone's decoder
 /// and the Wall's Swift `Device` already defaulted to false ("absent is not a
@@ -28,6 +33,53 @@ use serde::{Deserialize, Serialize};
 /// the two halves of the same app disagreed about the same silent field.
 fn default_online() -> bool {
     false
+}
+
+/// The first day a Canary can call its birth day:
+/// `kClockFloor / kSecondsPerDay` in `firmware/common/identity/birth_day.h`
+/// (2025-01-01). The firmware never stamps a clock reading below that floor
+/// ("the epoch showing through, not a date", its rule 2), so a smaller day on
+/// the wire is not a day any Canary stamped. `tests/fleet_contract.rs` reads
+/// the header and holds this to it.
+pub const BORN_DAY_MIN: u32 = 1_735_689_600 / 86_400;
+
+/// The last day a 32-bit Unix clock can name (2106-02-07). The firmware's day
+/// is `unix_s / 86400` of a `uint32_t` clock, so no Canary can stamp a later
+/// one.
+pub const BORN_DAY_MAX: u32 = u32::MAX / 86_400;
+
+/// Keep `born_day` only when it is a day the firmware could have written: a
+/// JSON number with an integral value inside
+/// [`BORN_DAY_MIN`]`..=`[`BORN_DAY_MAX`]. Anything else (the firmware's own
+/// "never dated" 0, a negative, a fraction, a string, a day past the u32
+/// clock) is dropped to `None`, which every reader renders as "cannot say".
+///
+/// Dropped, never an error: serde fails the WHOLE snapshot on one wrong type,
+/// and the field is optional and newer than most of the fleet. An integral
+/// float (`20673.0`) is accepted because a JavaScript reader cannot tell it
+/// from `20673` after `JSON.parse`, and the readers must agree.
+fn tolerant_born_day<'de, D: Deserializer<'de>>(de: D) -> Result<Option<u32>, D::Error> {
+    let value = Value::deserialize(de)?;
+    let Value::Number(n) = value else {
+        return Ok(None);
+    };
+    let day = match (n.as_u64(), n.as_f64()) {
+        (Some(whole), _) => whole,
+        (None, Some(f)) if f.fract() == 0.0 && f >= 0.0 && f <= f64::from(BORN_DAY_MAX) => f as u64,
+        _ => return Ok(None),
+    };
+    Ok(u32::try_from(day)
+        .ok()
+        .filter(|d| (BORN_DAY_MIN..=BORN_DAY_MAX).contains(d)))
+}
+
+/// Keep `born_exact` only when it is a JSON boolean; anything else is dropped,
+/// and a reader takes a missing flag as NOT exact.
+fn tolerant_bool<'de, D: Deserializer<'de>>(de: D) -> Result<Option<bool>, D::Error> {
+    Ok(match Value::deserialize(de)? {
+        Value::Bool(b) => Some(b),
+        _ => None,
+    })
 }
 
 /// One Canary, as the fleet endpoint describes it.
@@ -81,6 +133,30 @@ pub struct Device {
     /// percentage, exactly as it decides what counts as a known word.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seeing_score: Option<i64>,
+    /// When this device's KEY was born, in days since the Unix epoch (a UTC
+    /// day, no time of day): `fleet_selfreport.h`'s `born_day`. A fact about
+    /// the Canary, not about whoever paired it. `None` when the device did not
+    /// say (it has never met a believable clock, or has no witness key of its
+    /// own, like a display) and when it said something no firmware writes
+    /// (see `tolerant_born_day`).
+    #[serde(
+        default,
+        deserialize_with = "tolerant_born_day",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub born_day: Option<u32>,
+    /// `true` means `born_day` really is the day the key was born. `false`
+    /// means it is the day the device was FIRST DATED (it met a clock later
+    /// than it was made), and a reader must not call it a birthday. Carried
+    /// as sent when it is a boolean, and independently of the day: the reader
+    /// decides, and it reads a missing flag as not exact and a flag with no
+    /// day as nothing at all.
+    #[serde(
+        default,
+        deserialize_with = "tolerant_bool",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub born_exact: Option<bool>,
 }
 
 impl Device {
@@ -266,6 +342,83 @@ mod tests {
             parse_fleet(r#"{"devices":[{"name":"Porch","product":"canary-wap"}]}"#).unwrap();
         assert_eq!(fleet.devices[0].hw, None);
         assert_eq!(fleet.devices[0].hub, None);
+    }
+
+    /// A day and its exactness, verbatim from `fleet_selfreport_build()` (the
+    /// same bytes the iPhone's FleetSelfReportTests.bornBody pins).
+    #[test]
+    fn the_birth_day_survives_the_normalizer() {
+        let fleet = parse_fleet(
+            r#"{"devices":[{"name":"Front Door","online":true,"chain":"ok","product":"canary-wap","chain_height":42,"born_day":20673,"born_exact":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(fleet.devices[0].born_day, Some(20673));
+        assert_eq!(fleet.devices[0].born_exact, Some(true));
+    }
+
+    #[test]
+    fn a_birth_day_no_firmware_writes_is_dropped_not_fatal() {
+        // One strange row must not cost the snapshot: serde would fail the
+        // whole parse on a wrong type, and a failed parse blanks the Wall for
+        // every device that answered. Each of these is "cannot say".
+        for day in [
+            "0",
+            "-1",
+            "20088",
+            "49711",
+            "4294967296",
+            "20673.5",
+            "\"20673\"",
+            "true",
+            "null",
+            "[20673]",
+            "{\"d\":20673}",
+        ] {
+            let body = format!(r#"{{"devices":[{{"name":"A","born_day":{day}}},{{"name":"B"}}]}}"#);
+            let fleet = parse_fleet(&body).unwrap_or_else(|e| panic!("born_day {day}: {e}"));
+            assert_eq!(fleet.devices.len(), 2, "born_day {day} cost a device");
+            assert_eq!(
+                fleet.devices[0].born_day, None,
+                "born_day {day} became a day"
+            );
+        }
+        // The edges of what a Canary can stamp are days, and an integral
+        // float is the same day to every reader (JSON.parse cannot tell).
+        for (raw, want) in [("20089", 20089), ("49710", 49710), ("20673.0", 20673)] {
+            let body = format!(r#"{{"devices":[{{"name":"A","born_day":{raw}}}]}}"#);
+            assert_eq!(
+                parse_fleet(&body).unwrap().devices[0].born_day,
+                Some(want),
+                "{raw}"
+            );
+        }
+        for flag in ["1", "\"true\"", "null", "0"] {
+            let body =
+                format!(r#"{{"devices":[{{"name":"A","born_day":20673,"born_exact":{flag}}}]}}"#);
+            let d = &parse_fleet(&body).unwrap().devices[0];
+            assert_eq!(d.born_day, Some(20673));
+            assert_eq!(d.born_exact, None, "born_exact {flag} is not a boolean");
+        }
+    }
+
+    #[test]
+    fn half_a_birth_pair_crosses_as_sent() {
+        // The firmware writes the two together, but the reader is the one that
+        // decides what half a pair means (a day alone is not exact; a flag
+        // alone qualifies nothing), so neither is invented or dropped here.
+        let fleet = parse_fleet(
+            r#"{"devices":[{"name":"A","born_day":20673},{"name":"B","born_exact":true},{"name":"C"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(fleet.devices[0].born_day, Some(20673));
+        assert_eq!(fleet.devices[0].born_exact, None);
+        assert_eq!(fleet.devices[1].born_day, None);
+        assert_eq!(fleet.devices[1].born_exact, Some(true));
+        assert_eq!(fleet.devices[2].born_day, None);
+        assert_eq!(fleet.devices[2].born_exact, None);
+        // And absent stays absent on the way out to Swift: no key, not a null.
+        let out = serde_json::to_string(&fleet.devices[2]).unwrap();
+        assert!(!out.contains("born"), "{out}");
     }
 
     #[test]

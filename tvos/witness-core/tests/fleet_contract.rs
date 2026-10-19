@@ -170,3 +170,135 @@ fn the_kernel_vector_lists_a_peer_beside_the_kernel_itself() {
         );
     }
 }
+
+/// Days since the Unix epoch to a proleptic Gregorian (year, month, day), the
+/// civil-from-days algorithm. Local to this test on purpose: the crate renders
+/// no dates, and the point here is an independent reading of the day the
+/// vectors' `born[].utc_date` names.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+#[test]
+fn every_born_line_follows_the_normalized_pair() {
+    // `born` is what every reader of these vectors must SAY for each row (the
+    // Wall's DeviceDetailView, the website's tv/app.js and emulator): "Born"
+    // only when the device said its day is exact, "First dated" for a day
+    // without that, and nothing at all without a day. This holds the line to
+    // the normalized pair it is drawn from, so the label and the UTC day
+    // cannot drift from the snapshot that the readers decode.
+    let vectors = load_vectors();
+    let (mut born, mut first_dated, mut silent, mut dropped) = (0usize, 0usize, 0usize, 0usize);
+    for v in &vectors {
+        let name = v["name"].as_str().unwrap_or("?");
+        let rows = v["normalized"]["devices"]
+            .as_array()
+            .expect("normalized has devices");
+        let lines: Vec<Value> = match v.get("born") {
+            Some(Value::Array(lines)) => lines.clone(),
+            Some(other) => panic!("vector {name:?}: `born` must be an array, got {other}"),
+            None => vec![Value::Null; rows.len()],
+        };
+        assert_eq!(
+            lines.len(),
+            rows.len(),
+            "vector {name:?}: one `born` entry per normalized row"
+        );
+        let input: Value = serde_json::from_str(v["input"].as_str().unwrap()).unwrap();
+        let wire_rows: Vec<Value> = match &input {
+            Value::Array(devices) => devices.clone(),
+            _ => input["devices"].as_array().cloned().unwrap_or_default(),
+        };
+        for (i, (row, line)) in rows.iter().zip(&lines).enumerate() {
+            match row.get("born_day").and_then(Value::as_u64) {
+                Some(day) => {
+                    let exact = row.get("born_exact") == Some(&Value::Bool(true));
+                    let want_label = if exact { "Born" } else { "First dated" };
+                    assert_eq!(
+                        line["label"],
+                        want_label,
+                        "vector {name:?} row {i}: born_exact {:?} must read {want_label:?}",
+                        row.get("born_exact")
+                    );
+                    let (y, m, d) = civil_from_days(day as i64);
+                    assert_eq!(
+                        line["utc_date"].as_str(),
+                        Some(format!("{y:04}-{m:02}-{d:02}").as_str()),
+                        "vector {name:?} row {i}: born_day {day} is that UTC day"
+                    );
+                    if exact {
+                        born += 1
+                    } else {
+                        first_dated += 1
+                    }
+                }
+                None => {
+                    assert!(
+                        line.is_null(),
+                        "vector {name:?} row {i}: no day, so no line — absence is \"cannot say\""
+                    );
+                    silent += 1;
+                    if wire_rows.get(i).and_then(|r| r.get("born_day")).is_some() {
+                        dropped += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Each case pinned at least once, so trimming the fixture cannot quietly
+    // leave a reader's branch unexercised.
+    assert!(born >= 2, "no vector pins an exact birth day ({born})");
+    assert!(
+        first_dated >= 2,
+        "no vector pins a first-dated day ({first_dated})"
+    );
+    assert!(silent > 0, "no vector pins a row without a birth day");
+    assert!(
+        dropped >= 6,
+        "too few malformed or out-of-range birth days are pinned ({dropped})"
+    );
+}
+
+#[test]
+fn the_born_day_window_is_the_firmwares() {
+    // BORN_DAY_MIN and BORN_DAY_MAX are not this crate's to choose: they are
+    // the firmware's clock floor and its 32-bit clock, read here from the
+    // header that decides a Canary's birth day.
+    use securacv_witness_core::fleet::{BORN_DAY_MAX, BORN_DAY_MIN};
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../firmware/common/identity/birth_day.h");
+    let header = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+    let constant = |name: &str| -> u64 {
+        let at = header
+            .find(&format!("{name} = "))
+            .unwrap_or_else(|| panic!("{name} is gone from birth_day.h"));
+        header[at + name.len() + 3..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap_or_else(|e| panic!("{name} is not a plain number in birth_day.h: {e}"))
+    };
+    let per_day = constant("kSecondsPerDay");
+    let floor = constant("kClockFloor");
+    assert_eq!(per_day, 86_400);
+    assert_eq!(
+        u64::from(BORN_DAY_MIN),
+        floor / per_day,
+        "the clock floor moved"
+    );
+    assert_eq!(u64::from(BORN_DAY_MAX), u64::from(u32::MAX) / per_day);
+    // And the day the constant names is the date its comment says it is.
+    assert_eq!(civil_from_days(i64::from(BORN_DAY_MIN)), (2025, 1, 1));
+    assert_eq!(civil_from_days(i64::from(BORN_DAY_MAX)), (2106, 2, 7));
+}

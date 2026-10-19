@@ -97,7 +97,13 @@ block, held by `scripts/lint_apple_parity.py`): its figure and product name
 (`FleetFigureBridge`, `DeviceNaming`), and the one-line room and hub
 sentences the watch's rows say too (`Shared/DeviceGlanceCopy`). The hub's
 own first row — the witness kernel — is named and drawn as what it is,
-software, rather than as a device still waiting for its picture.
+software, rather than as a device still waiting for its picture. A device's
+detail screen also says when its key was born, in the device's own words
+(`born_day` / `born_exact`) and the phone's labels: "Born <day>" only when
+the device says the day is exact, "First dated <day>" when it met a clock
+later than it was made, and nothing when it cannot say. The day is a UTC
+day, shown as one. Only a Canary that answers for itself sends it today; the
+kernel's and a display's aggregated fleet do not relay it.
 
 ## Layout
 

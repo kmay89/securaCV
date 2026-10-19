@@ -523,8 +523,9 @@ run: run-receipt-authority
 clean: clean-receipt-authority
 
 # The receipt's and the pairing QR's grants (sweep F289): the REAL api_auth.h
-# and handle_provisioning_receipt(), handle_pairing_qr() and
-# provisioning_gate_take() cut verbatim out of canary_wap.ino
+# and handle_provisioning_receipt(), handle_pairing_qr(),
+# provisioning_gate_take() and session_cookie_header() (the receipt's
+# cookie, Secure over HTTPS only) cut verbatim out of canary_wap.ino
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with headers and a query string) and stand-ins for the two writers, the
 # session mint, the health log and the Wi-Fi facts, beside the sketch's own
@@ -542,7 +543,7 @@ RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool session_cookie_header(|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 # api_auth.h's helpers the two handlers never call (the ?token= gate, the
@@ -562,6 +563,49 @@ clean-receipt-grant:
 
 run: run-receipt-grant
 clean: clean-receipt-grant
+
+# The dashboard's session cookie (sweep F289's residual): handle_ui() and
+# session_cookie_header() cut verbatim out of canary_wap.ino, and
+# read_session_cookie_hex() out of csi_integration.cpp
+# (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
+# with the server it arrived on) and stand-ins for the wizard flag, the
+# pair-token and session stores, the landing page and the gzip writer. The
+# cookie is Secure exactly when its answer leaves over the HTTPS server, never
+# on a plain-HTTP boot (the first-boot SoftAP setup); the reader takes the
+# cookie NAMED cv_session, never "xcv_session=" or a value holding it. It also
+# reads the sketch's text (its path is passed in): the attributes are spelled
+# once, and both Set-Cookie sites send that spelling. The receipt's own mint
+# site is driven in test_receipt_grant.cpp.
+SCOOKIE_BIN     = test_session_cookie
+SCOOKIE_SRC     = test_session_cookie.cpp
+SCOOKIE_UI_INC  = test_session_cookie_ui.inc
+SCOOKIE_CSI_INC = test_session_cookie_csi.inc
+SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
+CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+
+$(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
+	awk -v 'sigs=static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {' \
+	  -f $(SCOOKIE_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(SCOOKIE_CSI_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
+	awk -v 'sigs=bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {' \
+	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
+
+$(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(CXX) $(CXXFLAGS) -Werror \
+	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DSESSION_COOKIE_UI_INC='"$(SCOOKIE_UI_INC)"' \
+	  -DSESSION_COOKIE_CSI_INC='"$(SCOOKIE_CSI_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(SCOOKIE_SRC)
+
+.PHONY: run-session-cookie clean-session-cookie
+run-session-cookie: $(SCOOKIE_BIN)
+	$(call run_marked,$(SCOOKIE_BIN))
+clean-session-cookie:
+	rm -f $(SCOOKIE_BIN) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+
+run: run-session-cookie
+clean: clean-session-cookie
 
 # The writer's bounds (sweep F230): the REAL wap_json_writer.h, identity_json.h
 # and fleet_scan_cache.h, with a string grown where a live global can change

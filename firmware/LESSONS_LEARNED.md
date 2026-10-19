@@ -2524,7 +2524,14 @@
   first grant and the pairing QR take the bearer-only halves; every other
   route keeps the wrappers. The receipt's tap and claim grants are
   unchanged, so a cookie-only browser gets the refusal a bare caller gets
-  and the dashboard's sign-in offers the recovery kit through the tap.
+  and the dashboard's sign-in offers the recovery kit through the tap
+  (amended 2026-10-19: the receipt's first grant is now
+  `api_auth_bearer_grant()`, the same header-only compare under the
+  lockout. The silent `api_auth_bearer_valid()` had made the receipt the
+  one route where a wrong token cost nothing, and a compare that records
+  nothing is a guessing oracle beside a lockout. A wrong bearer is now one
+  strike, and while the backoff runs none is compared (429). The claim and
+  the tap are never held by it).
 - **Regression check:** `tests_host/test_receipt_grant.cpp` (in `make run`)
   runs the real `api_auth.h` and both handlers cut out of the sketch: a
   cookie alone, and beside a wrong bearer, refused on both routes; a
