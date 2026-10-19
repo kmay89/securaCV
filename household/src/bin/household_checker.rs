@@ -404,7 +404,7 @@ struct AdminKeyFile {
 }
 
 fn load_admin_key(p: &Path) -> Result<AdminKey> {
-    let raw = Zeroizing::new(store::read_bounded(p, 4096)?);
+    let raw = store::read_bounded_secret(p, 4096)?;
     let f: AdminKeyFile = serde_json::from_slice(&raw)
         .map_err(|_| Error::Invalid("admin key file does not match the schema"))?;
     if f.alg != "ed25519" || f.kind != "cli" {
@@ -773,7 +773,7 @@ fn cmd_card(a: &Args) -> Result<i32> {
     let (key, generated) = match a.get("key-file") {
         Some(f) => {
             check_key_file(Path::new(f), d.root())?;
-            let raw = Zeroizing::new(store::read_bounded(Path::new(f), 128)?);
+            let raw = store::read_bounded_secret(Path::new(f), 128)?;
             let text =
                 std::str::from_utf8(&raw).map_err(|_| Error::Invalid("key file is not text"))?;
             (hex::decode_secret_array::<16>(text.trim())?, false)
@@ -899,7 +899,7 @@ fn cmd_client_keygen(a: &Args) -> Result<i32> {
 }
 
 fn read_token(a: &Args) -> Result<Zeroizing<String>> {
-    let raw = Zeroizing::new(store::read_bounded(&a.path("token-file")?, 1024)?);
+    let raw = store::read_bounded_secret(&a.path("token-file")?, 1024)?;
     let s = std::str::from_utf8(&raw).map_err(|_| Error::Invalid("token file is not text"))?;
     Ok(Zeroizing::new(s.trim().to_string()))
 }

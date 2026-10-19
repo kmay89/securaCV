@@ -15,8 +15,10 @@
 //! [`Zeroizing`] buffers (and in `ed25519_dalek::SigningKey`, which zeroizes
 //! itself on drop): a key that arrives as hex is decoded by
 //! [`crate::hex::decode_secret_array`] straight into such a buffer, and a
-//! key file is parsed into a typed struct whose secret field is one
-//! ([`deserialize_zeroizing_string`]), never into a `serde_json::Value`.
+//! key file is read into one ([`crate::store::read_bounded_secret`], whose
+//! buffer is allocated once and never grows) and parsed into a typed struct
+//! whose secret field is one ([`deserialize_zeroizing_string`]), never into
+//! a `serde_json::Value`.
 //! File formats:
 //!
 //! ```text

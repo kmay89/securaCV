@@ -100,7 +100,7 @@ impl SoftCredential {
 
     /// Load the key file written by [`keygen`].
     pub fn load(path: &Path, handle: [u8; 16], binding: Binding) -> Result<Self> {
-        let raw = Zeroizing::new(crate::store::read_bounded(path, 4096)?);
+        let raw = crate::store::read_bounded_secret(path, 4096)?;
         let f: KeyFile = serde_json::from_slice(&raw)
             .map_err(|_| Error::Invalid("key file does not match the schema"))?;
         if f.alg != "es256" {

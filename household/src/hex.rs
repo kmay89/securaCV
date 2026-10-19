@@ -7,8 +7,12 @@
 //! A secret (a KEK, a card key, a signing key's scalar) goes through the
 //! `*_secret*` forms: they decode or encode straight into a [`Zeroizing`]
 //! buffer, so no plain heap buffer ever holds the key bytes or their hex on
-//! the way. The plain forms are for public data (handles, digests, public
-//! keys, signatures); [`decode_array`] makes no heap buffer at all.
+//! the way. The same holds one step upstream: a file whose text is a secret
+//! is read by [`crate::store::read_bounded_secret`], into one [`Zeroizing`]
+//! buffer sized by its bound that never grows (a growing read frees each
+//! outgrown copy unwiped). The plain forms are for public data (handles,
+//! digests, public keys, signatures); [`decode_array`] makes no heap buffer
+//! at all.
 
 use crate::{Error, Result};
 use zeroize::Zeroizing;
