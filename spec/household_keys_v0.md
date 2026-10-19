@@ -128,10 +128,16 @@ or republish (a command, a lapse, a roster change that ended `home`, a
 restart, or a republish by §3.3), and whoever reads the statement learns
 that minute (§6.2). The checker keeps `seq` at or above
 `minute(issued_at) << 10`, so restoring its sequence file from a backup
-cannot make it reuse a sequence number. That floor states nothing
-`issued_at` does not already state, but a `seq` above the floor does: on a
-hub clock that never stepped back, `seq` minus the floor is how many
-statements were issued earlier in the same minute.
+cannot make it reuse a sequence number from an earlier minute. It does not
+protect the current minute: a restore and restart in the same wall-clock
+minute as earlier statements, or a clock held or stepped back into that
+minute, issues the floor again. A witness that accepted a higher `seq`
+refuses such a statement (rule 4 of §3.2, `Reject::Seq`) and behaves as
+`away` until the hub's `seq` passes the one it holds, which the next
+minute's floor guarantees: the collision fails safe. That floor states
+nothing `issued_at` does not already state, but a `seq` above the floor
+does: on a hub clock that never stepped back, `seq` minus the floor is how
+many statements were issued earlier in the same minute.
 
 ### 3.2 Verification (witness side)
 
@@ -255,12 +261,14 @@ For cards:
 
 - **Random ID is on**, so the hub cannot tell which card it holds before
   authenticating. It **trial-authenticates the enrolled card keys**, bounded
-  by the roster: v0 allows at most 16 card members, and every tap runs exactly
-  16 attempts, the real keys first in a fresh random order and random dummy
-  keys after them. A card that is not a household card therefore learns
-  nothing about how many cards are enrolled. Someone who relays a genuine
-  household card over many taps can still learn the count from where the
-  attempts stop.
+  by the roster: v0 allows at most 16 card members, and a tap tries the real
+  keys first in a fresh random order, then random dummy keys, up to 16
+  attempts. A tap stops at the first key that authenticates, so a household
+  card sees at most as many attempts as there are enrolled cards and never a
+  dummy one, while anything that is not a household card (an emulator, a
+  skimmer) sees exactly 16 and learns nothing about how many cards are
+  enrolled. Someone who relays a genuine household card over many taps can
+  still learn the count from where the attempts stop.
 - Trial authentication makes failed `AuthenticateEV2First` attempts on
   household cards. Check the card's failed-authentication counter
   configuration before enrolling many cards.
@@ -604,11 +612,14 @@ key.
   per request: no handle, credential id or peer address.
 - **The command line refuses what it does not know.** Every
   `household_checker` command accepts only its own options: an unknown or
-  misspelled one (`--key-fle`, say) is refused with exit status 2, never
-  ignored, and so is an option written as `--name=value`. No error message
-  repeats an option's value or a stray argument, since either may be a key
-  typed in the wrong place. `pair --reset` rewrites the pairing file empty
-  even when it is damaged, so it also repairs one.
+  misspelled one (`--key-fle`, say), or one that another command or another
+  `roster propose` kind takes (`--threshold` on `add-member`), is refused
+  with exit status 2, never ignored, and so is an option written as
+  `--name=value`. No error message repeats an option's value or a stray
+  argument, since either may be a key typed in the wrong place; a stray
+  argument that starts with `--` is named by its position unless some
+  command takes an option of that name. `pair --reset` rewrites the pairing
+  file empty even when it is damaged, so it also repairs one.
 
 ### 6.2 Output seam
 
