@@ -492,9 +492,9 @@ def test_health_and_egress_read_as_the_wap_sent_them(record, monkeypatch):
 
 
 def test_tamper_and_event_id_levels_follow_the_wap(record, monkeypatch):
-    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    wap = _Wap(record, monkeypatch).replay("connect", "running", "tamper")
     events = wap.entity("tamper_events")
-    tamper = _one(record, "running", "tamper")
+    tamper = _one(record, "tamper", "tamper")
     assert events.state == tamper["type"] == "enclosure"
     assert [kind for kind, _ in events.fired] == ["enclosure"]
     assert _value(wap.entity("tamper_enclosure"), "is_on") is True
@@ -645,7 +645,7 @@ def test_discovery_payload_words_match_the_bodies(record):
         cfg["pl"] for cfg in configs.values() if cfg.get("type") == "presence_changed"
     }
     events = [json.loads(b) for b in _bodies(record, _topic(record, "events"))]
-    presence = [e for e in events if e["type"] == "presence"]
+    presence = [e for e in events if e["module"] == "core.presence"]
     assert presence and {e["state"] for e in presence} <= trigger_states
 
 
@@ -791,7 +791,7 @@ def test_every_discovery_entity_finds_its_state_after_a_restart(record):
     "the aggregate Tamper sensor clears on the next health while the lid is open",
 )
 def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch):
-    wap = _Wap(record, monkeypatch).replay("connect", "running", "trouble")
+    wap = _Wap(record, monkeypatch).replay("connect", "running", "tamper", "trouble")
     assert _one(record, "trouble", "health")["enclosure_open"] is True
     assert _value(wap.entity("tamper_enclosure"), "is_on") is True
     assert _value(wap.entity("tamper"), "is_on") is True

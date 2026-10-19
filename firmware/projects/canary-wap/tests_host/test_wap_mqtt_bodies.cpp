@@ -16,7 +16,12 @@
 //                (mains, card in, lid shut), egress, counts and chain
 //                (signed), mesh, chirp, beacon, the update entity's state
 //                and the acoustic snapshot; one committed presence event
-//                (signed) and one tamper bridge publish;
+//                (signed, as core_presence.cpp emits it);
+//   tamper       a lid-open tamper commit, as csi_event_egress::pump()
+//                sends one: the per-kind bridge on the tamper topic, then
+//                the row itself (category anomaly) on events;
+//   backfill     an older presence row the broker never saw, replayed from
+//                the card (`replay` true: the device triggers skip it);
 //   trouble      the same unit on a low battery with the card out, the lid
 //                open, the heap low, the event-id space low, Chirp disabled
 //                and the mesh off the home channel;
@@ -27,14 +32,20 @@
 //
 // Beside the phases, the record carries the last will the client was
 // configured with (what the broker publishes on the device's behalf when it
-// vanishes) and the command topics it subscribed to.
+// vanishes) and the command topics it subscribed to. After the phases, every
+// command payload a discovery config names (the update entity's install, each
+// switch's on and off) is delivered back on its command topic as
+// MQTT_EVENT_DATA, the way Home Assistant sends it, and must latch what the
+// sketch drains (take_pending_install / take_pending_auto /
+// take_pending_mic_mute).
 //
 // Two bodies are not csi_mqtt.cpp's: the update entity's state and the
 // acoustic snapshot are built by the sketch (canary_wap.ino's
 // ota_publish_update_state() and its loop()'s sensing snprintf) and only
 // relayed here, byte for byte. The harness hands over bodies in the sketch's
-// shape (kUpdateState, kSensing below); test_wap_mqtt_contract.py holds
-// their keys to the keys the sketch writes, so the copies cannot drift.
+// shape (kUpdateState, kSensing below), typed here; test_wap_mqtt_contract.py
+// holds their key sets to the keys the sketch writes, so their keys cannot
+// drift (their values are this file's).
 //
 // The signed bodies are signed for real: device_signature.cpp is compiled
 // in (its canonical builders, init and envelope fields), with its three
@@ -58,7 +69,11 @@
 //  3. Each phase published every topic it is meant to, and each non-empty
 //     body on a JSON topic is one strict JSON object (json_strict.h) with no
 //     key twice; the bare-word topics carry their words; the two relayed
-//     bodies arrive byte for byte.
+//     bodies arrive byte for byte; every events body says `replay` false but
+//     the backfilled one; the tamper commit's row is category anomaly.
+//  4. The commands: every command topic subscribed is one a discovery config
+//     names, and each payload word the config names latches its command (a
+//     longer word that starts with it latches nothing).
 //
 // Host-tested only: nothing here ran on a unit or against a broker, and the
 // sketch's Arduino compile is CI's.
@@ -216,6 +231,21 @@ void connect(esp_mqtt_client* c) {
   e.event_id = MQTT_EVENT_CONNECTED;
   e.client = c;
   c->handler(c->handler_args, "MQTT_EVENTS", (int32_t)MQTT_EVENT_CONNECTED, &e);
+}
+
+// An inbound message, as esp_mqtt hands one to the event handler: neither
+// the topic nor the data is NUL-terminated.
+void deliver(esp_mqtt_client* c, const std::string& topic, const std::string& data) {
+  std::vector<char> t(topic.begin(), topic.end());
+  std::vector<char> d(data.begin(), data.end());
+  esp_mqtt_event_t e = {};
+  e.event_id = MQTT_EVENT_DATA;
+  e.client = c;
+  e.topic = t.data();
+  e.topic_len = (int)t.size();
+  e.data = d.empty() ? nullptr : d.data();
+  e.data_len = (int)d.size();
+  c->handler(c->handler_args, "MQTT_EVENTS", (int32_t)MQTT_EVENT_DATA, &e);
 }
 }  // namespace fake
 
@@ -404,16 +434,36 @@ void phase_running() {
   csi_mqtt::publish_update_state(kUpdateState);
   csi_mqtt::publish_sensing(kSensing);
   const csi_event_record_t presence =
-      event_row(0xC0000007u, "core.presence", "presence", CSI_CATEGORY_EVENT, "active", "likely",
-                42, 17, 14);
+      event_row(0xC0000007u, "core.presence", "presence_changed", CSI_CATEGORY_EVENT, "active",
+                "likely", 42, 17, 14);
   check(csi_mqtt::publish_event_row(presence, 1, false) == csi_mqtt::EventSend::kSent,
         "running: the presence event goes out");
-  csi_event_values_t tamper;
-  std::memset(&tamper, 0, sizeof(tamper));
-  tamper.category = CSI_CATEGORY_ANOMALY;
-  std::snprintf(tamper.state_name, sizeof(tamper.state_name), "%s", "enclosure");
-  check(csi_mqtt::publish_tamper_bridge("system.integrity", "tamper", &tamper),
-        "running: the tamper bridge publishes");
+  end_phase();
+}
+
+void phase_tamper() {
+  // tamper_events_module.cpp's emit_kind(): category anomaly, the kind as
+  // the state. csi_event_egress::pump() sends the bridge first, then routes
+  // the row.
+  begin_phase("tamper");
+  csi_event_record_t row = event_row(0xC0000009u, "system.integrity", "tamper",
+                                     CSI_CATEGORY_ANOMALY, "enclosure", "", 0, 0, 0);
+  row.values.duration_sec = 0;
+  check(csi_mqtt::publish_tamper_bridge(row.module_id, row.type_name, &row.values),
+        "tamper: the bridge publishes");
+  check(csi_mqtt::publish_event_row(row, 1, false) == csi_mqtt::EventSend::kSent,
+        "tamper: the row goes out on events");
+  end_phase();
+}
+
+void phase_backfill() {
+  // An older row the broker never saw, from the card: replay true.
+  begin_phase("backfill");
+  const csi_event_record_t old =
+      event_row(0xC0000005u, "core.presence", "presence_changed", CSI_CATEGORY_EVENT, "quiet",
+                "likely", 8, 21, 13);
+  check(csi_mqtt::publish_event_row(old, 1, true) == csi_mqtt::EventSend::kSent,
+        "backfill: the replayed row goes out");
   end_phase();
 }
 
@@ -440,8 +490,8 @@ void phase_unsigned() {
   csi_mqtt::publish_counts(43);
   csi_mqtt::publish_chain(43, g_hash);
   const csi_event_record_t empty =
-      event_row(0xC0000008u, "core.presence", "presence", CSI_CATEGORY_EVENT, "empty", "certain",
-                0, 0, 0);
+      event_row(0xC0000008u, "core.presence", "presence_changed", CSI_CATEGORY_EVENT, "empty",
+                "certain", 0, 0, 0);
   check(csi_mqtt::publish_event_row(empty, 1, false) == csi_mqtt::EventSend::kSent,
         "unsigned: the event goes out unsigned");
   key::signing = true;
@@ -512,7 +562,9 @@ void check_bodies() {
       {"connect", {"status", "update/auto", "mic/state"}},
       {"running",
        {"status", "health", "egress", "counts", "chain", "mesh", "chirp", "beacon",
-        "update/state", "sensing", "events", "tamper"}},
+        "update/state", "sensing", "events"}},
+      {"tamper", {"tamper", "events"}},
+      {"backfill", {"events"}},
       {"trouble", {"status", "health", "egress", "mesh", "chirp", "beacon"}},
       {"unsigned", {"counts", "chain", "events"}},
   };
@@ -572,6 +624,113 @@ void check_bodies() {
           p.topic + ": one strict JSON object: " + p.payload);
     check(!parsed || no_doubled_key(v), p.topic + ": no key twice: " + p.payload);
   }
+
+  // The events bodies: `replay` false on every live row, true on the
+  // backfilled one (the device triggers' gate); the tamper row is anomaly.
+  const Phase* backfill = phase("backfill");
+  const Phase* tamper = phase("tamper");
+  size_t replayed = 0;
+  size_t anomalies = 0;
+  for (size_t i = 0; i < fake::published.size(); ++i) {
+    const fake::Publish& p = fake::published[i];
+    if (p.topic != topic("events")) continue;
+    json_strict::Value v;
+    if (!json_strict::parse(p.payload, &v)) continue;   // failed above
+    const json_strict::Value* replay = v.get("replay");
+    const json_strict::Value* category = v.get("category");
+    const bool in_backfill = backfill != nullptr && i >= backfill->begin && i < backfill->end;
+    check(replay != nullptr && replay->kind == json_strict::Value::Bool && replay->b == in_backfill,
+          std::string("events: replay ") + (in_backfill ? "true" : "false") + ": " + p.payload);
+    if (replay != nullptr && replay->b) ++replayed;
+    const bool in_tamper = tamper != nullptr && i >= tamper->begin && i < tamper->end;
+    const bool anomaly = category != nullptr && category->text == "anomaly";
+    check(anomaly == in_tamper, "events: category anomaly only on the tamper row: " + p.payload);
+    if (anomaly) ++anomalies;
+  }
+  check(replayed == 1 && anomalies == 1, "one replayed row and one anomaly row");
+}
+
+// ── The commands, as Home Assistant sends them ──────────────────────────
+
+// What one delivered word latched: the pending command it set, drained.
+struct Latched {
+  bool install;
+  int automatic;
+  int mic;
+};
+
+Latched drain() {
+  Latched l;
+  l.install = csi_mqtt::take_pending_install();
+  l.automatic = csi_mqtt::take_pending_auto();
+  l.mic = csi_mqtt::take_pending_mic_mute();
+  return l;
+}
+
+std::string text_of(const json_strict::Value& cfg, const char* key, const char* fallback) {
+  const json_strict::Value* v = cfg.get(key);
+  return v != nullptr && v->kind == json_strict::Value::String ? v->text : fallback;
+}
+
+void check_commands() {
+  esp_mqtt_client* client = fake::clients.back();
+  const Latched idle = drain();
+  check(!idle.install && idle.automatic == -1 && idle.mic == -1, "no command pending at the start");
+  const Phase* connect = phase("connect");
+  std::set<std::string> named;
+  size_t words = 0;
+  for (size_t i = connect ? connect->begin : 0; connect != nullptr && i < connect->end; ++i) {
+    const fake::Publish& p = fake::published[i];
+    json_strict::Value cfg;
+    if (!ends_with(p.topic, "/config") || !json_strict::parse(p.payload, &cfg)) continue;
+    const json_strict::Value* cmd = cfg.get("cmd_t");
+    if (cmd == nullptr) continue;
+    named.insert(cmd->text);
+    // homeassistant/<component>/canary_<id>/<object_id>/config
+    const size_t a = p.topic.find('/') + 1;
+    const std::string component = p.topic.substr(a, p.topic.find('/', a) - a);
+    // {word, the latch it must set}: an update's install; a switch's on
+    // (1) and off (0), Home Assistant's "ON" / "OFF" unless the config
+    // names its own.
+    std::vector<std::pair<std::string, int>> sent;
+    if (component == "update") {
+      // No default worth relying on: the config must name its install word.
+      const std::string install = text_of(cfg, "pl_inst", "");
+      check(!install.empty(), p.topic + ": the update config names its install word (pl_inst)");
+      if (!install.empty()) sent.emplace_back(install, 1);
+    } else if (component == "switch") {
+      sent.emplace_back(text_of(cfg, "pl_on", "ON"), 1);
+      sent.emplace_back(text_of(cfg, "pl_off", "OFF"), 0);
+    } else {
+      check(false, p.topic + ": a command on a component the harness does not drive");
+    }
+    for (const auto& w : sent) {
+      ++words;
+      fake::deliver(client, cmd->text, w.first);
+      const Latched got = drain();
+      int latched = -2;
+      if (cmd->text == topic("update/cmd")) {
+        latched = got.install ? 1 : -1;
+      } else if (cmd->text == topic("update/auto/cmd")) {
+        latched = got.automatic;
+      } else if (cmd->text == topic("mic/cmd")) {
+        latched = got.mic;
+      }
+      check(latched == w.second, p.topic + ": '" + w.first + "' on " + cmd->text + " latches " +
+                                     std::to_string(w.second) + " (got " +
+                                     std::to_string(latched) + ")");
+      // The parser wants the whole word: a longer one latches nothing.
+      fake::deliver(client, cmd->text, w.first + "x");
+      const Latched none = drain();
+      check(!none.install && none.automatic == -1 && none.mic == -1,
+            p.topic + ": '" + w.first + "x' latches nothing");
+    }
+  }
+  std::set<std::string> subscribed;
+  for (const auto& s : fake::subscribed) subscribed.insert(s.first);
+  check(named == subscribed, "every command topic subscribed is one a discovery config names");
+  check(words == 5, "the install, the auto-update switch's and the mic switch's words (got " +
+                        std::to_string(words) + ")");
 }
 
 // ── The record, as JSON ─────────────────────────────────────────────────
@@ -582,7 +741,7 @@ std::string quoted(const std::string& s) {
     if (c == '"' || c == '\\') {
       out.push_back('\\');
       out.push_back((char)c);
-    } else if (c < 0x20 || c >= 0x7F) {
+    } else if (c < 0x20 || c == 0x7F) {   // bytes from 0x80 pass through: JSON is UTF-8
       char esc[8];
       std::snprintf(esc, sizeof esc, "\\u%04x", (unsigned)c);
       out += esc;
@@ -634,10 +793,13 @@ int main(int argc, char** argv) {
   boot();
   phase_connect();
   phase_running();
+  phase_tamper();
+  phase_backfill();
   phase_trouble();
   phase_unsigned();
   phase_discovery_removed();
   check_bodies();
+  check_commands();
   if (key::pkey != nullptr) EVP_PKEY_free(key::pkey);
   if (g_failures != 0) {
     std::fprintf(stderr, "%d of %d WAP MQTT body checks FAILED\n", g_failures, g_checks);
