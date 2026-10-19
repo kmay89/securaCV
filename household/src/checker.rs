@@ -171,14 +171,17 @@ impl std::fmt::Debug for Checker {
 }
 
 /// The next `seq`: strictly above the last one, and never below
-/// `minute(issued_at) << 10`, so a restored older `seq.json` cannot make the
-/// hub reuse a sequence number from an earlier minute. It can reuse one from
-/// the current minute: a restore and restart in the minute of earlier
-/// statements, or a clock held or stepped back into it, issues the floor
-/// again (`tests::next_seq_floor_collides_within_the_minute`); a witness
-/// holding the higher `seq` refuses that statement, as `away`, until the
-/// hub's `seq` passes it, which the next minute's floor guarantees while fewer
-/// than 1024 statements were issued in that minute (the floor's spacing) and
+/// `minute(issued_at) << 10`, so on a hub clock that has not stepped back a
+/// restored older `seq.json` cannot make the hub reuse a sequence number from
+/// an earlier minute. It can reuse one from the current minute, and a clock
+/// stepped back together with the file can reuse an earlier minute's: a
+/// restore and restart in the minute of earlier statements, or a clock held or
+/// stepped back into it, issues the floor again
+/// (`tests::next_seq_floor_collides_within_the_minute`); a witness holding
+/// the higher `seq` refuses that statement, as `away`, until the hub's `seq`
+/// passes it: the next minute's floor guarantees that for a same-minute
+/// collision while fewer than 1024 statements were issued in that minute (the
+/// floor's spacing), a clock stepped back N minutes takes N minutes, and
 /// `last + 1` reaches in any case. The
 /// floor carries nothing beyond `issued_at`, which the statement already
 /// states.

@@ -213,7 +213,13 @@ impl Args {
                 && !(name == "physical-confirm"
                     && raw.get(i + 1).is_none_or(|n| n.starts_with("--")));
             if takes_value {
-                let v = raw.get(i + 1).ok_or(format!("--{name} needs a value"))?;
+                // A value never starts with `--`: an option in that place is a
+                // missing value, and the option that follows is parsed on its
+                // own merits next time around, never swallowed as a value.
+                let v = raw
+                    .get(i + 1)
+                    .filter(|n| !n.starts_with("--"))
+                    .ok_or(format!("--{name} needs a value"))?;
                 flags.push((name.to_string(), Some(v.clone())));
                 i += 2;
             } else {

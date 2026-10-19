@@ -810,5 +810,22 @@ fn a_stray_dash_argument_is_never_echoed() {
         .stderr
         .contains("--threshold is not an option of this command"));
     assert!(!o.stderr.contains("zz-value"), "{}", o.stderr);
+    // An allowed option missing its value does not swallow the option that
+    // follows as that value: the parser refuses before any command runs
+    // (exit 2), whether the follower is foreign, a stray key or allowed.
+    for args in [
+        &["pair", "--data-dir", "--threshold"][..],
+        &["pair", "--data-dir", &stray][..],
+        &["card", "provision", "--data-dir", "--key-file", data][..],
+    ] {
+        let o = run(args);
+        assert_eq!(o.code, 2, "{args:?}: {}", o.stderr);
+        assert!(
+            o.stderr.contains("--data-dir needs a value"),
+            "{args:?}: {}",
+            o.stderr
+        );
+        assert!(!o.stderr.contains(&HEX[..8]), "{}", o.stderr);
+    }
     let _ = std::fs::remove_dir_all(&base);
 }

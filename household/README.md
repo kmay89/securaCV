@@ -307,8 +307,9 @@ More subcommands:
 - Every command accepts only its own options. An unknown or misspelled one
   (`--key-fle`, say), or one that another command or another `roster propose`
   kind takes (`--threshold` on `add-member`), is refused with exit status 2,
-  never ignored, and so is an option written as `--name=value`. No error
-  message repeats an option's value or a stray argument: either may be a key
+  never ignored, and so is an option written as `--name=value` or one whose
+  value is missing (the `--option` that follows is never taken as the
+  value). No error message repeats an option's value or a stray argument: either may be a key
   typed in the wrong place. A stray argument that starts with `--` is named
   by its position unless some command takes an option of that name (or it is
   `--key-hex`, named so its refusal can carry the `--key-file` hint).
@@ -356,14 +357,17 @@ essentials:
 - **Statement** (`posture.rs`): `SCVP`, version 1, posture byte, 16-byte
   household, `seq`, `issued_at` (floored to the minute) and `not_after`, then
   an Ed25519 signature over `"securacv-posture-v1\0" ‖ bytes[0..48]`.
-  `seq` never drops below `minute(issued_at) << 10`, so a restored `seq.json`
-  cannot make the hub reuse a sequence number from an earlier minute. Within
-  the current minute it can: a restore and restart in the minute of earlier
-  statements, or a clock held or stepped back into it, reissues the floor,
-  and a witness holding a higher `seq` refuses those statements (behaves as
-  `away`) until the hub's `seq` passes it, which the next minute's floor
-  guarantees while fewer than 1024 statements were issued in the colliding
-  minute (the floor's spacing) and `last + 1` reaches in any case.
+  `seq` never drops below `minute(issued_at) << 10`, so on a hub clock that
+  has not stepped back a restored `seq.json` cannot make the hub reuse a
+  sequence number from an earlier minute. Within the current minute it can,
+  and so can a clock stepped back together with the file: a restore and
+  restart in the minute of earlier statements, or a clock held or stepped
+  back into it, reissues the floor (a clock stepped back further, an earlier
+  minute's), and a witness holding a higher `seq` refuses those statements
+  (behaves as `away`) until the hub's `seq` passes it: the next minute's
+  floor guarantees that for a same-minute collision while fewer than 1024
+  statements were issued in it (the floor's spacing), a clock stepped back N
+  minutes takes N minutes, and `last + 1` reaches in any case.
 - **Challenge message** (`wire.rs`):
   `"securacv-hk-v1\0" ‖ purpose ‖ door_id(16) ‖ be64(epoch) ‖ n_h(32)`.
   **That is 72 bytes**, as the spec (§4.1) states. An earlier draft said 88,

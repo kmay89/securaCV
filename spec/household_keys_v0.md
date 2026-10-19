@@ -127,16 +127,19 @@ time: `issued_at` is the minute of the last posture change, `home` renewal
 or republish (a command, a lapse, a roster change that ended `home`, a
 restart, or a republish by §3.3), and whoever reads the statement learns
 that minute (§6.2). The checker keeps `seq` at or above
-`minute(issued_at) << 10`, so restoring its sequence file from a backup
-cannot make it reuse a sequence number from an earlier minute. It does not
-protect the current minute: a restore and restart in the same wall-clock
-minute as earlier statements, or a clock held or stepped back into that
-minute, issues the floor again. A witness that accepted a higher `seq`
-refuses such a statement (rule 4 of §3.2, `Reject::Seq`) and behaves as
-`away` until the hub's `seq` passes the one it holds, which the next
-minute's floor guarantees while fewer than 1024 statements were issued in the
-colliding minute (the floor's spacing) and `last + 1` reaches in any case:
-the collision fails safe. That floor states
+`minute(issued_at) << 10`, so on a hub clock that has not stepped back,
+restoring its sequence file from a backup cannot make it reuse a sequence
+number from an earlier minute. It does not protect the current minute, nor a
+clock stepped back together with the file: a restore and restart in the same
+wall-clock minute as earlier statements, or a clock held or stepped back into
+that minute, issues the floor again, and a clock stepped back further with an
+older file reissues an earlier minute's floor. A witness that accepted a
+higher `seq` refuses such statements (rule 4 of §3.2, `Reject::Seq`) and
+behaves as `away` until the hub's `seq` passes the one it holds: for a
+same-minute collision the next minute's floor guarantees that while fewer
+than 1024 statements were issued in the colliding minute (the floor's
+spacing), a clock stepped back N minutes takes N minutes, and `last + 1`
+reaches in any case. The collision fails safe. That floor states
 nothing `issued_at` does not already state, but a `seq` above the floor
 does: on a hub clock that never stepped back, `seq` minus the floor is how
 many statements were issued earlier in the same minute.
@@ -617,7 +620,8 @@ key.
   misspelled one (`--key-fle`, say), or one that another command or another
   `roster propose` kind takes (`--threshold` on `add-member`), is refused
   with exit status 2, never ignored, and so is an option written as
-  `--name=value`. No error message repeats an option's value or a stray
+  `--name=value` or one whose value is missing (the `--option` that follows
+  is never taken as the value). No error message repeats an option's value or a stray
   argument, since either may be a key typed in the wrong place; a stray
   argument that starts with `--` is named by its position unless some
   command takes an option of that name (or it is `--key-hex`, named so its
