@@ -51,7 +51,11 @@
  *     just like every other /api/csi/* route. A casual visitor on the
  *     SoftAP can't read the broker password back, can't change the
  *     broker, and can't trigger /test (which would leak the broker
- *     hostname via a connect attempt).
+ *     hostname via a connect attempt). And a dashboard session alone
+ *     cannot move the broker while keeping the stored password (sweep
+ *     F289, the third road: move_needs_password() below) — the password
+ *     the GET keeps write-only must not be read through a broker the
+ *     session names.
  */
 
 #include "csi_mqtt.h"
@@ -2157,6 +2161,62 @@ static bool refuse_too_long(httpd_req_t* req, const char* field, const char* val
   return true;
 }
 
+/* Sweep F289, the third road. authorized() takes the landing page's
+ * cv_session cookie as well as the bearer, and that session is minted for
+ * whoever loads / on the home network — deliberate LAN posture for the
+ * dashboard, which stays; what it buys is narrowed. GET /api/mqtt/config
+ * never answers the password (write-only on the wire, so a session cannot
+ * read the broker credentials back out), but this handler saved whatever
+ * host, port and TLS mode the body named, kept the stored password when the
+ * body carried none, and asked the loop task to re-init: the new client then
+ * sent the stored username and password to the new host (open_client(),
+ * where s_active_cfg.pass becomes the client's password), in plain text when
+ * the body also chose tls_mode 0. So a session alone could read the password
+ * through a broker it named, around the GET's intent.
+ *
+ * The rule: a save by a caller WITHOUT a valid bearer is refused when BOTH
+ * hold —
+ *   (a) the stored password is kept: the body carries no "password" key at
+ *       all, and the stored password is non-empty (a body that carries one,
+ *       new or empty, chose what goes out; a device with no stored password
+ *       has nothing to send);
+ *   (b) the destination moves: after the body is applied and the port and
+ *       prefix backfilled, the host differs from the stored host (bytes), or
+ *       the port differs from the stored port with both read as config_load()
+ *       reads a stored 0 (the default for that TLS mode, so a session's
+ *       "enabled" toggle on a device whose NVS holds port 0 is not refused),
+ *       or the TLS mode differs, or the body carried a "ca" key, set or
+ *       cleared — a CA change moves which peer TLS trusts.
+ * A change of "user", "prefix", "enabled" or "discovery" alone is NOT a move:
+ * the password still goes to the same peer, which already holds it, so a
+ * session may toggle the bridge, rename the topic prefix or change the
+ * username as it always could. A caller with a valid bearer
+ * (api_auth_bearer_valid(): a real Authorization header, constant-time
+ * compared, nothing recorded against the lockout) is never refused by this
+ * rule — it holds the token the GET's write-only password protects. The
+ * refusal saves nothing, requests no re-init and answers 403 with a code the
+ * /mqtt page reads (it shows the reason and puts the cursor in the password
+ * field); the /companion wizard always sends a "password" key, so it is
+ * never refused. Pure, so test_mqtt_reinit.cpp names each clause. */
+static uint16_t port_or_default(const Config& c) {
+  return c.port != 0 ? c.port : (c.tls_mode != 0 ? DEFAULT_PORT_TLS : DEFAULT_PORT);
+}
+
+static bool move_needs_password(const Config& before, const Config& after,
+                                bool password_in_body, bool ca_in_body, bool bearer) {
+  if (bearer) return false;                  /* the token's holder may move it */
+  if (password_in_body) return false;        /* the caller chose what goes out */
+  if (before.pass[0] == '\0') return false;  /* nothing stored, nothing to send */
+  if (strcmp(before.host, after.host) != 0) return true;
+  if (port_or_default(before) != port_or_default(after)) return true;
+  if (before.tls_mode != after.tls_mode) return true;
+  return ca_in_body;
+}
+
+static const char kPasswordNeeded[] =
+    "{\"ok\":false,\"code\":\"password_needed\",\"reason\":\"the broker moved; type the broker "
+    "password again to send it to the new address, or sign in with the API token\"}";
+
 esp_err_t handle_config_post(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -2166,6 +2226,10 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
     return ESP_OK;
   }
+  /* The bearer half of authorized(), once (sweep F289, the third road): a
+   * save that moves the broker and keeps the stored password needs it;
+   * move_needs_password() says when. */
+  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);
 
   /* The body is read whole or refused (sweep F266). The cap covers every
    * field at its limit, a 128-byte password and host among them, and a
@@ -2232,6 +2296,9 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * enabled, leaving everything else alone) work. */
   Config c;
   config_load(&c);
+  /* What NVS holds before any field is applied: move_needs_password()
+   * compares the destination the body leaves against it. */
+  const Config before = c;
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);
   json_extract_bool  (body, "\"discovery\"", &c.discovery);
@@ -2348,12 +2415,26 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
+  bool password_in_body = false;
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
     if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
+    password_in_body = true;
   }
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (c.port == 0)  c.port = c.tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
+
+  /* Sweep F289, the third road (move_needs_password above): a session alone
+   * may not point the stored password at a new peer. ca_changed is "the body
+   * carried a ca key" here — a key that failed the shape check was refused
+   * above. Nothing is saved, no re-init is requested, no secret is in the
+   * answer. */
+  if (move_needs_password(before, c, password_in_body, ca_changed, bearer)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, kPasswordNeeded, -1);
+    return ESP_OK;
+  }
 
   if (!config_save(c) || (ca_changed && !ca_save(cabuf.p))) {
     httpd_resp_set_status(req, "500 Internal Server Error");
@@ -2527,6 +2608,7 @@ f.addEventListener('submit', async (e) => {
   const j = await r.json().catch(() => ({}));
   document.getElementById('status').textContent = ok ? 'Saved.' : ('Save failed. ' + (j.reason || ''));
   document.getElementById('status').className = 'status ' + (ok ? 'good' : 'bad');
+  if (j.code === 'password_needed') password.focus();  /* the broker moved: type it again */
   if (ok) { ca.value = ''; setTimeout(load, 600); }
 });
 document.getElementById('test').addEventListener('click', async () => {

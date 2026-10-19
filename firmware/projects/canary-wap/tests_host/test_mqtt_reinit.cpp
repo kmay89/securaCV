@@ -89,6 +89,7 @@ struct esp_mqtt_client {
   std::string uri;
   std::string will_topic;
   std::string certificate;     // broker.verification.certificate, as configured
+  std::string password;        // credentials.authentication.password, as configured (F289: what a move would send)
   int network_timeout_ms = 0;  // as configured; 0 or less is esp_mqtt's 10 s
   bool connected = false;      // esp_mqtt's own view: CONNECTED until aborted
 };
@@ -227,6 +228,7 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->uri = config->broker.address.uri ? config->broker.address.uri : "";
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
   c->certificate = config->broker.verification.certificate ? config->broker.verification.certificate : "";
+  c->password = config->credentials.authentication.password ? config->credentials.authentication.password : "";
   c->network_timeout_ms = config->network.timeout_ms;
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
@@ -332,8 +334,13 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
 
 // ── What the sketch links in on a device ────────────────────────────────
 
+// The landing page's cv_session cookie, as csi_integration validates it on a
+// device: on every request here unless a test says otherwise (sweep F289:
+// the bearer-only cases turn it off).
+bool g_session_cookie_valid = true;
+
 namespace csi_integration {
-bool session_validate_cookie(httpd_req_t*) { return true; }
+bool session_validate_cookie(httpd_req_t*) { return g_session_cookie_valid; }
 void add_outbound_bytes(uint32_t) {}
 void hex_encode(const uint8_t* in, size_t len, char* out) {
   static const char k[] = "0123456789abcdef";
@@ -462,6 +469,8 @@ void power_cycle() {
   fake::stop_blocks_ms = 0;
   fake::during_client_init = nullptr;
   fake::during_publish = nullptr;
+  csi_mqtt::set_api_token_provider(nullptr);   // no bearer to present (F289 tests register one)
+  g_session_cookie_valid = true;
   (void)csi_mqtt::request_reinit();
   loop_pass();
   run_tasks();
@@ -471,8 +480,9 @@ void power_cycle() {
 
 // A device whose bridge is enabled for `host`, booted: setup() gives the
 // bridge its identity and start_http_server() runs the boot init(), both
-// on the loop task; then the esp_mqtt task connects.
-void boot_with_broker(const char* host, bool connect = true) {
+// on the loop task; then the esp_mqtt task connects. With `pass`, the broker
+// password is on file and the client carries it (sweep F289).
+void boot_with_broker(const char* host, bool connect = true, const char* pass = nullptr) {
   power_cycle();
   fake::reset();
   stub_nvs().clear();
@@ -487,6 +497,7 @@ void boot_with_broker(const char* host, bool connect = true) {
   csi_mqtt::config_load(&c);
   c.enabled = true;
   strcpy(c.host, host);
+  if (pass) strcpy(c.pass, pass);
   CHECK(csi_mqtt::config_save(c));
   csi_mqtt::set_identity(kDeviceId, "2.4.15-wap", "ab");
   CHECK(csi_mqtt::init(kDeviceId, "2.4.15-wap", "ab"));
@@ -551,6 +562,7 @@ struct Wire {
   std::vector<int> plan;
   bool set_len = false;
   size_t content_len = 0;
+  std::map<std::string, std::string> hdrs;   // the request's headers (F289: "Authorization")
 };
 Wire g_wire;
 Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned turn_at,
@@ -559,6 +571,7 @@ Http http(esp_err_t (*handler)(httpd_req_t*), const std::string& body, unsigned 
   h.req.body = body;
   h.req.content_len = g_wire.set_len ? g_wire.content_len : body.size();   // IDF: Content-Length
   h.req.recv_plan = g_wire.plan;
+  h.req.req_hdrs = g_wire.hdrs;
   g_wire = Wire{};
   const uint32_t start = stub_mqtt::now_ms;
   stub_mqtt::on_delay = [&](uint32_t ms) {
@@ -1425,7 +1438,10 @@ void test_the_config_answer_escapes_what_the_page_sent() {
   // its measured length. (Kept under the fields' limits: what config_load()
   // reads back at the limit is F241's.)
   const std::string long_host(120, '\x02'), long_user(60, '\x03');
-  (void)http(csi_mqtt::handle_config_post, "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\"}",
+  // The password said again: this save moves the host with "pw" on file and
+  // the request is a session's (sweep F289, the third road, below).
+  (void)http(csi_mqtt::handle_config_post,
+             "{\"host\":\"" + long_host + "\",\"user\":\"" + long_user + "\",\"password\":\"pw\"}",
              /*turn_at=*/1);
   const ConfigGet gl = get_config();
   CHECK(gl.h.req.resp.size() > 800);
@@ -1914,6 +1930,342 @@ void test_the_settings_page_limits_each_field() {
   std::printf("PASS the_settings_page_limits_each_field\n");
 }
 
+// ── POST /api/mqtt/config: a session alone cannot move the broker and keep
+//    its password (sweep F289, the third road) ─────────────────────────────
+//
+// authorized() takes the landing page's cv_session cookie (every request here
+// carries a valid one unless g_session_cookie_valid says otherwise) or the
+// bearer. GET /api/mqtt/config keeps the password write-only, but the POST
+// saved the host, port and TLS mode a session named, kept the stored password
+// when the body carried none, and the loop task's re-init sent it to the new
+// host — in plain text with tls_mode 0. Now a save without a valid bearer
+// that moves the destination (the host; the port, a stored 0 read as the
+// mode's default; the TLS mode; a "ca" key, set or cleared) while the body
+// carries no "password" key and a password is stored is refused: 403,
+// {"ok":false,"code":"password_needed","reason":...}, nothing saved, no
+// re-init, no secret in the answer (csi_mqtt.cpp's move_needs_password()).
+// A change of user, prefix, enabled or discovery alone is not a move. The
+// handler is the REAL one; the bearer is api_auth.h's real check over the
+// request's Authorization header.
+
+const char* const kToken = "f289-bearer-0123456789abcdef0123456789abcdef";
+const char* test_token() { return kToken; }
+const char* const kStoredPass = "s3cret-br0ker";
+const std::string kPasswordNeeded =
+    "{\"ok\":false,\"code\":\"password_needed\",\"reason\":\"the broker moved; type the broker "
+    "password again to send it to the new address, or sign in with the API token\"}";
+
+// What NVS holds, as config_load() reads it, and the CA beside it.
+struct Stored {
+  std::string host, user, pass, prefix, ca;
+  uint16_t port;
+  uint8_t tls_mode;
+  bool enabled, discovery;
+  bool operator==(const Stored& o) const {
+    return host == o.host && user == o.user && pass == o.pass && prefix == o.prefix && ca == o.ca &&
+           port == o.port && tls_mode == o.tls_mode && enabled == o.enabled && discovery == o.discovery;
+  }
+};
+Stored stored() {
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  return {c.host, c.user, c.pass, c.prefix, stored_ca(), c.port, c.tls_mode, c.enabled, c.discovery};
+}
+
+// A device with the broker password on file, booted and connected to
+// 10.0.0.1 (which holds that password), the token provider registered so a
+// bearer could be presented.
+void boot_with_password() {
+  boot_with_broker("10.0.0.1", /*connect=*/true, kStoredPass);
+  csi_mqtt::set_api_token_provider(test_token);
+  CHECK(fake::last_client()->password == kStoredPass);
+}
+
+// NVS rows written as config_save() writes them, under the booted client.
+void store_u16(const char* key, uint16_t v) {
+  Preferences p;
+  CHECK(p.begin("csi", false));
+  p.putUShort(key, v);
+  p.end();
+}
+void store_tls_mode(uint8_t mode) {
+  Preferences p;
+  CHECK(p.begin("csi", false));
+  p.putUChar(csi_mqtt::NVS_KEY_TLS_MODE, mode);
+  p.putBool(csi_mqtt::NVS_KEY_TLS, mode != 0);
+  p.end();
+}
+
+// The landing page's session alone: the cookie, no Authorization header.
+Http session_post(const std::string& body) {
+  return http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+}
+// The same request with an Authorization header beside the cookie.
+Http bearer_post(const std::string& body, const char* token = kToken) {
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + token;
+  return http(csi_mqtt::handle_config_post, body, /*turn_at=*/1);
+}
+
+// A refusal: 403 with the code and the reason, nothing of the password in
+// the answer, NVS as it was, the open client untouched, and no re-init
+// requested — the handler waited for none (not one delay), and a loop pass
+// with its worker serves none.
+void expect_refused(const Http& h, const Stored& was) {
+  if (h.req.status != "403 Forbidden") {
+    std::printf("FAIL the move answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
+  }
+  CHECK(h.req.status == "403 Forbidden");
+  CHECK(h.req.resp == kPasswordNeeded);
+  CHECK(h.req.type == "application/json");
+  CHECK(h.req.resp.find(kStoredPass) == std::string::npos);
+  CHECK(h.req.resp.find("s3cret") == std::string::npos);
+  CHECK(h.delays == 0);
+  CHECK(stored() == was);
+  reinit_turns();
+  CHECK(fake::count("init") == 0 && fake::count("stop") == 0 && fake::count("destroy") == 0);
+  CHECK(fake::clients.size() == 1 && fake::clients[0]->alive);
+  CHECK(stub_mqtt::tasks_created == 0);
+}
+
+// A save: 200, the old client retired by its worker, and the loop task's
+// re-init opened one client to `uri` carrying `pass` (empty: none).
+void expect_saved(const Http& h, const std::string& uri, const std::string& pass) {
+  if (h.req.status != "200 OK") {
+    std::printf("FAIL the save answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
+  }
+  CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("init", "loop") == 1);
+  CHECK(fake::clients.size() == 2 && !fake::clients[0]->alive);
+  CHECK(fake::last_client()->uri == uri);
+  CHECK(fake::last_client()->password == pass);
+}
+
+// A save after which the bridge opens no client (disabled, or a TLS mode
+// with no CA on file): 200, the old client retired, nothing opened.
+void expect_saved_no_client(const Http& h) {
+  CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("init") == 0);
+  CHECK(fake::clients.size() == 1 && !fake::clients[0]->alive);
+}
+
+// The attack as read from the code: the dashboard's session, a new host,
+// plain text — and the password the GET never answers would have gone there.
+void test_a_session_cannot_move_the_broker_and_keep_its_password() {
+  boot_with_password();
+  const Stored was = stored();
+  CHECK(was.host == "10.0.0.1" && was.pass == kStoredPass && was.tls_mode == 0);
+  expect_refused(session_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0}"), was);
+  expect_refused(session_post("{\"host\":\"10.0.0.66\"}"), was);
+  // The /mqtt page's whole form with a new host (no password typed).
+  expect_refused(session_post("{\"enabled\":true,\"host\":\"10.0.0.66\",\"port\":1883,\"user\":\"\","
+                              "\"prefix\":\"securacv\",\"tls_mode\":0,\"discovery\":true}"),
+                 was);
+  // One byte of host is a move.
+  expect_refused(session_post("{\"host\":\"10.0.0.10\"}"), was);
+  // The GET afterwards still names no password.
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.status == "200 OK");
+  CHECK(get.req.resp.find("\"password_set\":true") != std::string::npos);
+  CHECK(get.req.resp.find(kStoredPass) == std::string::npos);
+  CHECK(get.req.resp.find("\"host\":\"10.0.0.1\"") != std::string::npos);
+  power_cycle();
+  std::printf("PASS a_session_cannot_move_the_broker_and_keep_its_password\n");
+}
+
+void test_a_session_cannot_move_the_port_and_keep_the_password() {
+  boot_with_password();
+  const Stored was = stored();
+  CHECK(was.port == 1883);
+  expect_refused(session_post("{\"port\":1884}"), was);
+  expect_refused(session_post("{\"host\":\"10.0.0.1\",\"port\":8883}"), was);   // the same host
+  expect_refused(session_post("{\"enabled\":true,\"host\":\"10.0.0.1\",\"port\":1884,\"user\":\"\","
+                              "\"prefix\":\"securacv\",\"tls_mode\":0,\"discovery\":true}"),
+                 was);
+  power_cycle();
+  std::printf("PASS a_session_cannot_move_the_port_and_keep_the_password\n");
+}
+
+// Both directions and both spellings: the numeric tls_mode and the legacy
+// "tls" bool older pages send.
+void test_a_session_cannot_change_the_tls_mode_and_keep_the_password() {
+  boot_with_password();
+  const Stored plain = stored();
+  CHECK(plain.tls_mode == 0);
+  expect_refused(session_post("{\"tls_mode\":1}"), plain);
+  expect_refused(session_post("{\"tls\":true}"), plain);
+  // CA mode on file (the row as config_save() writes it; the client stays
+  // the plain one the boot opened): back to plain is a move too.
+  store_tls_mode(1);
+  const Stored ca_mode = stored();
+  CHECK(ca_mode.tls_mode == 1 && ca_mode.pass == kStoredPass && ca_mode.port == 1883);
+  expect_refused(session_post("{\"tls_mode\":0}"), ca_mode);
+  expect_refused(session_post("{\"tls\":false}"), ca_mode);
+  expect_refused(session_post("{\"host\":\"10.0.0.1\",\"port\":1883,\"tls_mode\":0}"), ca_mode);
+  // The same mode said again is not a move.
+  expect_saved_no_client(session_post("{\"tls_mode\":1}"));   // CA mode, no CA: init() refuses
+  CHECK(stored() == ca_mode);
+  power_cycle();
+  std::printf("PASS a_session_cannot_change_the_tls_mode_and_keep_the_password\n");
+}
+
+// A "ca" key, set or cleared, moves which peer TLS trusts.
+void test_a_session_cannot_change_the_ca_and_keep_the_password() {
+  boot_with_password();
+  const Stored none = stored();
+  CHECK(none.ca.empty());
+  const std::string pem = pem_of(400, 'A');
+  expect_refused(session_post("{\"ca\":\"" + json_inside(pem + "\n") + "\"}"), none);
+  expect_refused(session_post("{\"tls_mode\":1,\"ca\":\"" + json_inside(pem + "\n") + "\"}"), none);
+  // A CA on file: clearing it is a move, and so is another CA.
+  CHECK(csi_mqtt::ca_save(pem.c_str()));
+  const Stored with = stored();
+  CHECK(with.ca == pem);
+  expect_refused(session_post("{\"ca\":\"\"}"), with);
+  expect_refused(session_post("{\"ca\":\"" + json_inside(pem_of(400, 'B') + "\n") + "\"}"), with);
+  // A CA that fails the shape check is the 400 it was, ahead of this rule.
+  const Http shape = session_post("{\"ca\":\"not a certificate\"}");
+  CHECK(shape.req.status == "400 Bad Request");
+  CHECK(stored() == with);
+  power_cycle();
+  std::printf("PASS a_session_cannot_change_the_ca_and_keep_the_password\n");
+}
+
+// A body that carries "password" chose what goes out: a new one is saved
+// and goes to the new broker.
+void test_a_session_that_types_the_password_may_move_the_broker() {
+  boot_with_password();
+  expect_saved(session_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0,\"password\":\"n3w-pass\"}"),
+               "mqtt://10.0.0.66:1883", "n3w-pass");
+  Stored now = stored();
+  CHECK(now.host == "10.0.0.66" && now.pass == "n3w-pass");
+  // The stored password typed again is the caller's choice too.
+  boot_with_password();
+  expect_saved(session_post("{\"port\":1884,\"password\":\"" + std::string(kStoredPass) + "\"}"),
+               "mqtt://10.0.0.1:1884", kStoredPass);
+  now = stored();
+  CHECK(now.port == 1884 && now.pass == kStoredPass);
+  power_cycle();
+  std::printf("PASS a_session_that_types_the_password_may_move_the_broker\n");
+}
+
+// An empty "password" clears it: nothing goes to the new broker.
+void test_a_session_that_clears_the_password_may_move_the_broker() {
+  boot_with_password();
+  expect_saved(session_post("{\"host\":\"10.0.0.66\",\"password\":\"\"}"), "mqtt://10.0.0.66:1883", "");
+  const Stored now = stored();
+  CHECK(now.host == "10.0.0.66" && now.pass.empty());
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.resp.find("\"password_set\":false") != std::string::npos);
+  power_cycle();
+  std::printf("PASS a_session_that_clears_the_password_may_move_the_broker\n");
+}
+
+// user, prefix, enabled and discovery alone: the password still goes to the
+// same peer, which already holds it. The page's whole form with the same
+// host, port and mode is the same save it always was.
+void test_a_session_may_change_what_does_not_move_the_broker() {
+  boot_with_password();
+  expect_saved(session_post("{\"enabled\":true,\"host\":\"10.0.0.1\",\"port\":1883,\"user\":\"ada\","
+                            "\"prefix\":\"attic\",\"tls_mode\":0,\"discovery\":false}"),
+               "mqtt://10.0.0.1:1883", kStoredPass);
+  const Stored now = stored();
+  CHECK(now.user == "ada" && now.prefix == "attic" && !now.discovery && now.pass == kStoredPass);
+  CHECK(fake::last_client()->will_topic == std::string("attic/") + kDeviceId + "/status");
+  for (const char* body : {"{\"discovery\":false}", "{\"prefix\":\"loft\"}", "{\"user\":\"bob\"}",
+                           "{\"user\":\"\"}", "{\"enabled\":true}"}) {
+    boot_with_password();
+    expect_saved(session_post(body), "mqtt://10.0.0.1:1883", kStoredPass);
+    CHECK(stored().pass == kStoredPass);
+  }
+  // Switching the bridge off keeps the password on file and opens nothing.
+  boot_with_password();
+  expect_saved_no_client(session_post("{\"enabled\":false}"));
+  CHECK(!stored().enabled && stored().pass == kStoredPass && stored().host == "10.0.0.1");
+  power_cycle();
+  std::printf("PASS a_session_may_change_what_does_not_move_the_broker\n");
+}
+
+// Nothing stored, nothing to send: a session moves the broker as before.
+void test_a_session_may_move_a_broker_with_no_stored_password() {
+  boot_with_broker("10.0.0.1");
+  csi_mqtt::set_api_token_provider(test_token);
+  CHECK(stored().pass.empty() && fake::last_client()->password.empty());
+  expect_saved(session_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0}"), "mqtt://10.0.0.66:1883", "");
+  CHECK(stored().host == "10.0.0.66");
+  boot_with_broker("10.0.0.1");
+  csi_mqtt::set_api_token_provider(test_token);
+  expect_saved(session_post("{\"port\":1884}"), "mqtt://10.0.0.1:1884", "");
+  power_cycle();
+  std::printf("PASS a_session_may_move_a_broker_with_no_stored_password\n");
+}
+
+// The token's holder may move the broker and keep the password: beside the
+// cookie, and alone.
+void test_a_bearer_may_move_the_broker_and_keep_its_password() {
+  boot_with_password();
+  expect_saved(bearer_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0}"), "mqtt://10.0.0.66:1883", kStoredPass);
+  Stored now = stored();
+  CHECK(now.host == "10.0.0.66" && now.pass == kStoredPass);
+  boot_with_password();
+  g_session_cookie_valid = false;   // the bearer alone
+  expect_saved(bearer_post("{\"port\":1884}"), "mqtt://10.0.0.1:1884", kStoredPass);
+  now = stored();
+  CHECK(now.port == 1884 && now.pass == kStoredPass);
+  g_session_cookie_valid = true;
+  power_cycle();
+  std::printf("PASS a_bearer_may_move_the_broker_and_keep_its_password\n");
+}
+
+// A stored port of 0 is the default for the stored TLS mode, as
+// config_load() reads it: the page's form, which sends the port it loaded,
+// and the toggle alone are not moves; another port is.
+void test_a_stored_port_of_zero_is_the_modes_default() {
+  boot_with_password();
+  store_u16(csi_mqtt::NVS_KEY_PORT, 0);
+  CHECK(stored().port == 1883);
+  expect_saved(session_post("{\"enabled\":true,\"port\":1883}"), "mqtt://10.0.0.1:1883", kStoredPass);
+  boot_with_password();
+  store_u16(csi_mqtt::NVS_KEY_PORT, 0);
+  expect_saved(session_post("{\"enabled\":true}"), "mqtt://10.0.0.1:1883", kStoredPass);
+  boot_with_password();
+  store_u16(csi_mqtt::NVS_KEY_PORT, 0);
+  expect_refused(session_post("{\"port\":1884}"), stored());
+  // In CA mode a stored 0 is 8883: saying 8883 is not a move, 1883 is.
+  boot_with_password();
+  store_u16(csi_mqtt::NVS_KEY_PORT, 0);
+  store_tls_mode(1);
+  CHECK(stored().port == 8883 && stored().tls_mode == 1);
+  expect_refused(session_post("{\"port\":1883}"), stored());
+  expect_saved_no_client(session_post("{\"enabled\":true,\"port\":8883}"));   // CA mode, no CA
+  CHECK(stored().port == 8883 && stored().pass == kStoredPass);
+  power_cycle();
+  std::printf("PASS a_stored_port_of_zero_is_the_modes_default\n");
+}
+
+// A wrong bearer beside the cookie is not a bearer: the session's refusal,
+// and api_auth.h's check records nothing. Without the cookie it is the 401
+// it always was — the rule sits behind authorized(), not in front of it.
+void test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer() {
+  boot_with_password();
+  const Stored was = stored();
+  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcdeX"), was);
+  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcde"), was);
+  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", ""), was);
+  g_wire.hdrs["Authorization"] = std::string("Basic ") + kToken;   // another scheme
+  expect_refused(session_post("{\"host\":\"10.0.0.66\"}"), was);
+  // No token registered: no header can be a bearer.
+  csi_mqtt::set_api_token_provider(nullptr);
+  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}"), was);
+  csi_mqtt::set_api_token_provider(test_token);
+  g_session_cookie_valid = false;
+  const Http bare = bearer_post("{\"host\":\"10.0.0.66\"}", "wrong");
+  CHECK(bare.req.status == "401 Unauthorized" && stored() == was);
+  CHECK(fake::count("init") == 0 && fake::clients.size() == 1);
+  g_session_cookie_valid = true;
+  power_cycle();
+  std::printf("PASS a_wrong_bearer_beside_the_cookie_is_not_a_bearer\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -1956,6 +2308,27 @@ const Test kTests[] = {
     {"the_config_post_reads_a_body_that_arrives_in_pieces",
      test_the_config_post_reads_a_body_that_arrives_in_pieces},
     {"the_config_post_refuses_a_body_past_its_cap", test_the_config_post_refuses_a_body_past_its_cap},
+    {"a_session_cannot_move_the_broker_and_keep_its_password",
+     test_a_session_cannot_move_the_broker_and_keep_its_password},
+    {"a_session_cannot_move_the_port_and_keep_the_password",
+     test_a_session_cannot_move_the_port_and_keep_the_password},
+    {"a_session_cannot_change_the_tls_mode_and_keep_the_password",
+     test_a_session_cannot_change_the_tls_mode_and_keep_the_password},
+    {"a_session_cannot_change_the_ca_and_keep_the_password",
+     test_a_session_cannot_change_the_ca_and_keep_the_password},
+    {"a_session_that_types_the_password_may_move_the_broker",
+     test_a_session_that_types_the_password_may_move_the_broker},
+    {"a_session_that_clears_the_password_may_move_the_broker",
+     test_a_session_that_clears_the_password_may_move_the_broker},
+    {"a_session_may_change_what_does_not_move_the_broker",
+     test_a_session_may_change_what_does_not_move_the_broker},
+    {"a_session_may_move_a_broker_with_no_stored_password",
+     test_a_session_may_move_a_broker_with_no_stored_password},
+    {"a_bearer_may_move_the_broker_and_keep_its_password",
+     test_a_bearer_may_move_the_broker_and_keep_its_password},
+    {"a_stored_port_of_zero_is_the_modes_default", test_a_stored_port_of_zero_is_the_modes_default},
+    {"a_wrong_bearer_beside_the_cookie_is_not_a_bearer",
+     test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer},
 };
 
 }  // namespace reinit
