@@ -1229,6 +1229,150 @@ so — see D2 below.)
   Still open and deliberate: the landing page keeps minting a session for
   any LAN host (the dashboard's reads and writes, the audit's MEDIUM), and
   the WAP's receipt still asks no Host question (§3.7).
+  *Amended 2026-10-19 (the merge sweep, F289's third road):* the Done text's
+  "searched for other answers carrying the token or the SoftAP password:
+  none" held, and the broker password had a third road that no answer
+  carries: `POST /api/mqtt/config` took the same session (`authorized()`,
+  cookie or bearer), saved whatever host, port and TLS mode the body named,
+  kept the stored password when the body carried no `password` key, and asked
+  the loop task to re-init — whose new client sent the stored username and
+  password to the host the body named, in plain text with `tls_mode` 0. So a
+  session alone could read the password `GET /api/mqtt/config` keeps
+  write-only through a broker it pointed the device at. Now a save without a
+  valid bearer (`api_auth_bearer_valid()`, computed once up front) is refused
+  when the body carries no `password` key, a password is stored, and the
+  destination moves — the host (bytes), the port (both sides as
+  `config_load()` reads them: it reads a stored 0 as the mode's default and a
+  missing key as 1883, and the body sets a port only in 1..65535, so a session's `enabled` toggle on
+  a device whose NVS holds port 0 is not refused), the TLS mode in either
+  spelling, or a `ca` key, set or cleared; `user`, `prefix`, `enabled` and
+  `discovery` alone are not a
+  move, since the password still goes to the same peer. The refusal is `403`
+  `{"ok":false,"code":"password_needed","reason":...}`, nothing saved, no
+  re-init, no secret in the answer (`csi_mqtt.cpp`'s pure
+  `move_needs_password()`, after the existing 400s); a body that carries
+  `password`, new or empty, chose what goes out, and the `/companion` wizard
+  always sends one. The `/mqtt` page shows the device's reason, as it did,
+  and puts the cursor in the password field. `tests_host/test_mqtt_reinit.cpp`
+  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 2872 checks, 48
+  tests, 623 and 33 before) names each clause: a cookie-only host (a
+  respelling in case, a trailing dot and an emptied host among them), port,
+  TLS-mode (both spellings) and CA move refused with the stored row
+  unchanged, the open client untouched and no re-init; the password typed or
+  cleared, a change that is no move, a device with no stored password, a
+  bearer beside or without the cookie, and a stored port of 0, each served;
+  a wrong bearer beside the cookie refused. With the gate reverted, every
+  refusal test fails on its first `403` check (the move answers `200`). A U1
+  row in `hardware_verification_checklist.md`. Host-tested; not run on a
+  device (U1).
+  *Its review, the same day, found the harm reachable around the gate.*
+  `config_save()` writes the row key by key on the httpd task, and a re-init
+  an earlier save left pending (its retire outlived the handler's 2 s wait:
+  the API lock held across a connect, F106) is served by the loop task at
+  its own time, from NVS as it stands — so a body the gate serves because it
+  names a password left the row, for the span of two writes, holding the new
+  host beside the old password, and a loop pass in that window opened a
+  client carrying the stored password to the new host (reproduced in the
+  harness: a cookie-only `{"host":"10.0.0.66","tls_mode":0,"password":
+  "attacker-chosen"}` with one loop pass after the host write — a client to
+  `10.0.0.66` carrying the stored password, then retired for the client the
+  body asked for, so the row looked clean). Ordering the keys closes that
+  pairing and opens its mirror (the flagship's `write_order` is the same
+  lesson from the other side: a new password beside the old plain mode), so
+  the fix is not an order: `config_save()`, `ca_save()` and `config_clear()`
+  count themselves in progress and finished (`s_config_writers`,
+  `s_config_saves`), the loop task's `open_client()` reads the row and the
+  CA and opens nothing when a save was still in progress at the end of its
+  read or finished since it began (`serve_reinit()` leaves the request for
+  its next pass; the boot `init()` hands it to `loop()`), and the config
+  POST holds the row and the CA in one such scope; `config_save()` promises
+  no key order. And one writer at a time (the PR's Codex review, #1835):
+  two saves on two tasks — the QR scanner's and a session's — could
+  interleave their keys into a row neither wrote, whole in the loop task's
+  eyes once both had finished, the stored password beside the other
+  writer's host; a save now holds a writer lock (a FreeRTOS mutex) across
+  its writes and a second writer waits for it
+  (`two_writers_never_interleave`: a save, a CA save, a clear and a config
+  POST played inside another save's first write each wait — the stub's take
+  answers refused where FreeRTOS blocks — and write nothing; the row is the
+  first writer's whole). Three tests on the real handler, through the NVS stub's
+  hooks: `a_save_in_progress_opens_no_client` (four moves — a new host and
+  port; a TLS-to-plain downgrade with a new host; a plain-to-TLS upgrade
+  with a new host and password, with and without a new CA — each with the
+  loop task's pass after every one of the save's writes: nothing opens, the
+  request waits, the pass after the save opens the caller's client, and the
+  stored password never reached a client for another address or over a
+  plainer transport, nor a new password chosen with TLS the clear),
+  `a_save_inside_the_loop_tasks_read_opens_no_client` (a whole save inside
+  each of `config_load()`'s reads: the same) and
+  `a_boot_under_a_save_asks_the_loop` (`config_save`, `ca_save` and
+  `config_clear` inside the boot's read). With the busy word never spoken
+  (`open_client()` reporting no save it saw), each of the three fails on its
+  first check, with no client opened: the loop task marks the request served
+  from a row a save was still writing (`!reinit_done(pending)`, the first
+  two) and the boot's `init()` returns false instead of handing the open to
+  `loop()` (the third). With the overlap check removed instead, the first
+  fails at the save's FIRST write (the pass after `enabled` opened a client
+  from the half-written row: the old host with the stored password), the
+  second at the first torn read (a client to `10.0.0.66` with the body's
+  password) and the third at the boot (a client opened under the save); with
+  only the in-progress count unchecked, the first fails the same way and the
+  other two pass, since the finished count covers a whole save inside a
+  read. (This round's second review found the sentence here and in
+  LESSONS_LEARNED describing the hand repro — one pass after the host write
+  — as if it were what the test does under the mutant; rewritten from the
+  run.) The review also found `port_or_default()` unreachable with a 0
+  on either side (the gate now compares the ports as `config_load()` read
+  them; the sentence above says where a stored 0 is read), two refusals
+  reading the stored row as an argument beside the request (unspecified
+  order; hoisted), and the "host (bytes)" claim unpinned (the respellings
+  above are now refused in the test).
+  *Two roads this rule does not cover, named so the next sweep need not
+  find them.* The QR hub-provision path (`canary_wap.ino`'s scan result: a
+  scanned SCV1 code carrying a host re-points `host` and `port`, keeps the
+  stored password and TLS mode, saves and asks for the re-init) moves the
+  broker with the stored password and no password typed, and the session
+  reaches it: a scan window opens from the boot auto-scan or from
+  `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair token
+  (`pair_token_valid()`) and not the cookie — but the session buys that
+  token, since `GET /api/pair/token` (`csi_integration.cpp`'s
+  `handle_pair_token`) is gated by `CSI_AUTH_OR_RETURN`, which accepts the
+  `cv_session` cookie before it looks for a bearer. What the session does
+  not hold is the camera: a code must be in front of it
+  (`FEATURE_QR_PROVISION`, off in several profiles), and the scan task's
+  hub-code branch re-checks the pair token only for Wi-Fi-only codes.
+  Accepted as it is — proximity-bound, the display's "it's in the fleet"
+  flow; owed, if it ever opens wider (a code the camera need not see), the
+  same question (a display-minted code could carry the password, or the WAP
+  could refuse a host move with a stored password from a code). (The second
+  review found this paragraph, LESSONS_LEARNED and the CHANGELOG calling the
+  grant "not the session's" / "never the cookie": true of the scan route's
+  own check, not of the chain, whose gate is its token minter's.) And the
+  flagship refuses the same move already, in another
+  shape: `400 password_required_for_new_host` (`mqtt_tls_fields::
+  credential_carry`, since the 2026-09 sweep — any caller, host or port, a
+  case-folded host); the WAP's is `403 password_needed`, for cookie callers
+  only, and counts the TLS mode and the CA as moves, since on its transport
+  they choose the peer. Nothing outside the firmware parses either code.
+  *Its second review, the same day:* besides the two sentences above, it
+  found `SECURITY_MODEL.md`'s broker paragraph stating the WAP's rule in
+  the flagship's paragraph with no device named (false read as the
+  flagship, which has no dashboard session and refuses a host-or-port move
+  from any caller with `400`; now scoped, each device's rule stated), and
+  the refusal tests holding "nothing saved" through `config_load()` alone
+  (a refusal that rewrote the row with the bytes it held, or with a port 0
+  read as the default, read back equal): `Stored` now carries the NVS bytes
+  and the stub's write count (`stub_nvs_writes()`), so two snapshots are
+  equal only if nothing was written between them, and
+  `a_stored_snapshot_sees_a_rewrite_of_the_same_row` guards that guard; the
+  bearer leg (`a_bearer_may_move_the_broker_and_keep_its_password`) covers
+  a TLS-mode and a CA move beside the host and the port; the race tests'
+  scenario table is built on first use (a `pem_of()` CHECK had run at static
+  initialization, counted in every run) and `main()` refuses to start with
+  a check already counted; the three audit docs date the rule to this
+  amendment instead of a branch day; `scripts/tests/test_docs_claims.py`
+  retires the three untrue sentences and holds the pair-token gate and the
+  flagship's rule to the code.
 
 ### Parity & sub-projects
 

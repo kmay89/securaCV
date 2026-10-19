@@ -183,6 +183,16 @@ struct Config {
   bool     discovery;
 };
 
+/* The broker row in NVS, as config_load() reads it back (a stored port of 0
+ * as the default for the stored TLS mode, a missing port as 1883, a missing
+ * prefix as the default).
+ * config_save() writes it key by key on the caller's task, one save at a
+ * time (a second writer waits for the first's lock); the loop task's re-init
+ * opens no client from a row a save (this, ca_save, config_clear) is still
+ * writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep
+ * F289's review), so no client ever carries the stored password to a host
+ * another task's save was still writing, and no row is two saves' keys
+ * interleaved. */
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
 
@@ -608,7 +618,12 @@ void set_api_token_provider(const char* (*fn)());
  * reports the broker's reachability within about 4 s, so the dashboard's
  * "Test connection" button gives a real signal rather than a spinner. The
  * config POST saves, asks for the same re-init and waits up to 2 s for it,
- * so the page's status refresh sees the new client. */
+ * so the page's status refresh sees the new client — unless the request
+ * carries only the cookie, a password is stored, the body has no "password"
+ * key and the broker moves (host, port, TLS mode or CA): then nothing is
+ * saved and the answer is 403 with code "password_needed", until the body
+ * carries the password or the request a real bearer (sweep F289, the third
+ * road; csi_mqtt.cpp's move_needs_password()). */
 esp_err_t handle_config_get(httpd_req_t* req);
 esp_err_t handle_config_post(httpd_req_t* req);
 esp_err_t handle_test(httpd_req_t* req);

@@ -24,7 +24,10 @@
  *     config POST and the test handler run on the httpd task, and a QR
  *     provisioning on the scanner's; they request a re-init instead of
  *     running one, because a re-init retires the client a loop-task publish
- *     may be holding.
+ *     may be holding. And a re-init opens no client from a row a save is
+ *     still writing (open_client's check of s_config_writers and
+ *     s_config_saves): the new client never carries the old password to a
+ *     host another task's save was still writing (sweep F289's review).
  *   - The loop task never stops a client itself. esp_mqtt_client_stop()
  *     takes the client's API lock, which the esp_mqtt task holds across a
  *     whole connect attempt (the network timeout for the TCP/TLS connect,
@@ -51,7 +54,11 @@
  *     just like every other /api/csi/* route. A casual visitor on the
  *     SoftAP can't read the broker password back, can't change the
  *     broker, and can't trigger /test (which would leak the broker
- *     hostname via a connect attempt).
+ *     hostname via a connect attempt). And a dashboard session alone
+ *     cannot move the broker while keeping the stored password (sweep
+ *     F289, the third road: move_needs_password() below) — the password
+ *     the GET keeps write-only must not be read through a broker the
+ *     session names.
  */
 
 #include "csi_mqtt.h"
@@ -74,6 +81,7 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>       /* xTaskCreate: the retiring client's worker */
+#include <freertos/semphr.h>     /* the broker row's writer lock */
 
 extern "C" {
 #include "mqtt_client.h"
@@ -171,6 +179,71 @@ std::atomic<bool>        s_retire_done{false};
  * caller's task (a TLS write under mbedTLS), so the esp_mqtt task's own
  * default stack (CONFIG_MQTT_TASK_STACK_SIZE, 6144) is the measure. */
 constexpr uint32_t       kRetireStackBytes   = 6144;
+/* A settings save in progress, and how many have finished (sweep F289, the
+ * third road's review). config_save(), ca_save() and config_clear() write
+ * the row key by key on the caller's task (the httpd task's config POST, the
+ * QR scanner's provisioning, the loop task's own factory reset), and nothing
+ * stops the loop task from serving a re-init between two of those writes: a
+ * row holding the new host beside the old password, which the new client
+ * would carry to the new host — the password move_needs_password() exists
+ * to keep home — through a re-init an earlier save left pending (its retire
+ * outlived the handler's wait). So open_client() opens nothing from a read
+ * that a save overlapped — one still in progress when the read ends, or
+ * finished since it began (a seqlock: the loop task's re-init never waits —
+ * serve_reinit() leaves the request for its next pass, init() hands it to
+ * loop()). And one writer at a time (#1835's review): two saves on two
+ * tasks could interleave their writes — the scanner's host, then a
+ * session's host and password, then the scanner's password — into a row
+ * neither wrote, whole in the loop task's eyes once both had finished, the
+ * stored password beside the other writer's host. So a save holds
+ * s_config_write_lock across its writes and a second writer waits for it: a
+ * FreeRTOS mutex (priority inheritance), held only across NVS writes and
+ * never across a wait on another task (the config POST's wait for its
+ * re-init comes after its scope closes), so no holder waits on a waiter.
+ * The order of the keys in the row is therefore not what keeps the password
+ * home, and config_save() promises none. */
+std::atomic<uint32_t>    s_config_writers{0};   /* saves in progress: 0 or 1 under the lock */
+std::atomic<uint32_t>    s_config_saves{0};     /* saves finished */
+std::atomic<SemaphoreHandle_t> s_config_write_lock{nullptr};
+/* The writer lock, made on first use by whichever task comes first (a
+ * compare-and-swap: two first-comers keep one mutex and the loser frees its
+ * own); init() asks for it on setup()'s single thread, so on a device no
+ * save races the making. Null only when the heap refused the mutex: then no
+ * save can promise a whole row, and SaveScope refuses it. */
+SemaphoreHandle_t config_write_lock() {
+  SemaphoreHandle_t lock = s_config_write_lock.load(std::memory_order_acquire);
+  if (lock != nullptr) return lock;
+  SemaphoreHandle_t made = xSemaphoreCreateMutex();
+  if (made == nullptr) return nullptr;
+  SemaphoreHandle_t expected = nullptr;
+  if (s_config_write_lock.compare_exchange_strong(expected, made, std::memory_order_acq_rel)) return made;
+  vSemaphoreDelete(made);
+  return expected;
+}
+/* A save: takes the writer lock (waiting out another task's save), counts
+ * itself in progress, and on the way out finished. ok() is false when the
+ * lock could not be had — no mutex (the heap refused it), or a take that
+ * did not block (the host harness's stub answers pdFALSE for a take while
+ * held, where FreeRTOS waits) — and the caller writes nothing. */
+struct SaveScope {
+  SaveScope() {
+    SemaphoreHandle_t lock = config_write_lock();
+    if (lock == nullptr || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) return;
+    held_ = true;
+    s_config_writers.fetch_add(1, std::memory_order_seq_cst);
+  }
+  ~SaveScope() {
+    if (!held_) return;
+    s_config_saves.fetch_add(1, std::memory_order_seq_cst);
+    s_config_writers.fetch_sub(1, std::memory_order_seq_cst);
+    xSemaphoreGive(s_config_write_lock.load(std::memory_order_acquire));
+  }
+  bool ok() const { return held_; }
+  SaveScope(const SaveScope&) = delete;
+  SaveScope& operator=(const SaveScope&) = delete;
+ private:
+  bool held_ = false;
+};
 /* set_update_auto_state() from any task; loop() publishes it. */
 std::atomic<bool>        s_update_auto_dirty{false};
 /* The config POST waits this long for its re-init, so the page's status
@@ -549,7 +622,14 @@ bool config_load(Config* out) {
   return true;
 }
 
-bool config_save(const Config& cfg) {
+namespace {
+/* The writes themselves, key by key on the caller's task, under a SaveScope
+ * the caller holds: the loop task opens no client from the row while that
+ * scope is open or if it closed during its read (open_client). The order of
+ * the keys below is not a safety property. config_save() and ca_save() hold
+ * one scope each; the config POST holds one across both, so the row and the
+ * CA are one save in the loop task's eyes. */
+bool write_row(const Config& cfg) {
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
   prefs.putBool  (NVS_KEY_ENABLED,   cfg.enabled);
@@ -565,11 +645,35 @@ bool config_save(const Config& cfg) {
   return true;
 }
 
+bool write_ca(const char* pem) {
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+  bool ok;
+  if (!pem || !pem[0]) {
+    /* remove() also reports false for a key that never existed — the
+     * readback is the truth. */
+    prefs.remove(NVS_KEY_CA);
+    ok = !prefs.isKey(NVS_KEY_CA);
+  } else {
+    ok = prefs.putString(NVS_KEY_CA, pem) > 0;
+  }
+  prefs.end();
+  return ok;
+}
+}  /* namespace */
+
+bool config_save(const Config& cfg) {
+  SaveScope saving;
+  return saving.ok() && write_row(cfg);
+}
+
 bool config_clear() {
   static const char* const kKeys[] = {
     NVS_KEY_ENABLED, NVS_KEY_HOST, NVS_KEY_PORT, NVS_KEY_USER, NVS_KEY_PASS,
     NVS_KEY_PREFIX, NVS_KEY_TLS, NVS_KEY_TLS_MODE, NVS_KEY_DISCOVERY, NVS_KEY_CA,
   };
+  SaveScope saving;
+  if (!saving.ok()) return false;
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
   bool ok = true;
@@ -584,19 +688,8 @@ bool config_clear() {
 }
 
 bool ca_save(const char* pem) {
-  Preferences prefs;
-  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
-  bool ok;
-  if (!pem || !pem[0]) {
-    /* remove() also reports false for a key that never existed — the
-     * readback is the truth. */
-    prefs.remove(NVS_KEY_CA);
-    ok = !prefs.isKey(NVS_KEY_CA);
-  } else {
-    ok = prefs.putString(NVS_KEY_CA, pem) > 0;
-  }
-  prefs.end();
-  return ok;
+  SaveScope saving;
+  return saving.ok() && write_ca(pem);
 }
 
 namespace {
@@ -649,7 +742,8 @@ namespace {
  * client they name (or none: disabled, no host, a refused TLS mode). The
  * boot init() and every served re-init run it; neither ever stops a client
  * here (a re-init's old one is retire_task's). */
-bool open_client() {
+bool open_client(bool* busy) {
+  *busy = false;
   /* The delivery watermark is not this function's: the egress restores it
    * once per boot (csi_event_egress::begin, from csi_integration::init after
    * the event-id floor), and a re-init keeps it. A re-init that changes the
@@ -657,7 +751,25 @@ bool open_client() {
    * the egress drops what waited for the old broker; the boot's first init
    * only records it. */
   const uint32_t prev_dest = destination_digest(s_active_cfg);
-  if (!config_load(&s_active_cfg)) return false;
+  /* The row, whole or not at all (s_config_writers / s_config_saves): a save
+   * still in progress when the read ends, or finished since it began, opens
+   * nothing this pass — the caller tries again. (One check after the read
+   * covers every overlap: a save that overlapped it is either still open or
+   * has counted itself finished.) The CA is read under the same check, since
+   * a CA move is a save too (ca_save), into the buffer the last client read
+   * from; no client is open here (serve_reinit opens only once the retired
+   * one is destroyed, init() only with none open). */
+  const uint32_t saves = s_config_saves.load(std::memory_order_seq_cst);
+  Config fresh;
+  if (!config_load(&fresh)) return false;
+  ca_load();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  if (s_config_writers.load(std::memory_order_seq_cst) != 0 ||
+      s_config_saves.load(std::memory_order_seq_cst) != saves) {
+    *busy = true;
+    return false;
+  }
+  s_active_cfg = fresh;
   if (s_dest_known && destination_digest(s_active_cfg) != prev_dest) {
     s_dest_epoch.fetch_add(1, std::memory_order_relaxed);
   }
@@ -683,7 +795,6 @@ bool open_client() {
    * session with no verification option returns ESP_ERR_INVALID_STATE —
    * the lab mode could never connect here, and the header's own
    * InsecureUnsupported refusal says so instead of an opaque esp-tls error. */
-  ca_load();
   {
     using namespace canary::net::mqtt_tls;
     Caps caps;
@@ -771,7 +882,9 @@ bool open_client() {
  * after that return at once until the worker says it is gone; then one
  * open_client() serves every request made before it began, because it
  * reads NVS afresh (and keeps the identity set_identity() stored). A
- * request made while it runs waits for the next re-init. */
+ * request made while it runs waits for the next re-init. A row a save is
+ * still writing opens nothing (open_client's busy): the pass after the save
+ * serves the same requests, from the whole row. */
 void serve_reinit() {
   if (!retire_finished()) return;                 /* the old client is still stopping */
   if (s_reinit_wanted.load(std::memory_order_acquire) ==
@@ -783,7 +896,9 @@ void serve_reinit() {
     if (!retire_finished()) return;               /* a later pass opens the new one */
   }
   const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);
-  (void)open_client();
+  bool busy = false;
+  (void)open_client(&busy);
+  if (busy) return;                               /* a save is writing the row: a later pass opens the new one */
   s_reinit_served.store(wanted, std::memory_order_release);
 }
 }  /* namespace */
@@ -792,6 +907,9 @@ bool init(const char* device_id,
           const char* firmware_version,
           const char* public_key_hex) {
   set_identity(device_id, firmware_version, public_key_hex);
+  /* The writer lock, made here on setup()'s thread before any task can save
+   * (a save that came first made it; see config_write_lock). */
+  (void)config_write_lock();
   /* The boot's one call (start_http_server): no health has been built yet,
    * so no egress publish names one. */
   s_health_built = false;
@@ -802,7 +920,15 @@ bool init(const char* device_id,
     (void)request_reinit();
     return true;
   }
-  return open_client();
+  /* A save writing the row as the boot reads it (the QR scanner's task, say)
+   * is the same case: loop()'s first pass opens the new one. */
+  bool busy = false;
+  const bool opened = open_client(&busy);
+  if (busy) {
+    (void)request_reinit();
+    return true;
+  }
+  return opened;
 }
 
 void loop() {
@@ -2157,6 +2283,67 @@ static bool refuse_too_long(httpd_req_t* req, const char* field, const char* val
   return true;
 }
 
+/* Sweep F289, the third road. authorized() takes the landing page's
+ * cv_session cookie as well as the bearer, and that session is minted for
+ * whoever loads / on the home network — deliberate LAN posture for the
+ * dashboard, which stays; what it buys is narrowed. GET /api/mqtt/config
+ * never answers the password (write-only on the wire, so a session cannot
+ * read the broker credentials back out), but this handler saved whatever
+ * host, port and TLS mode the body named, kept the stored password when the
+ * body carried none, and asked the loop task to re-init: the new client then
+ * sent the stored username and password to the new host (open_client(),
+ * where s_active_cfg.pass becomes the client's password), in plain text when
+ * the body also chose tls_mode 0. So a session alone could read the password
+ * through a broker it named, around the GET's intent.
+ *
+ * The rule: a save by a caller WITHOUT a valid bearer is refused when BOTH
+ * hold —
+ *   (a) the stored password is kept: the body carries no "password" key at
+ *       all, and the stored password is non-empty (a body that carries one,
+ *       new or empty, chose what goes out; a device with no stored password
+ *       has nothing to send);
+ *   (b) the destination moves: after the body is applied and the port and
+ *       prefix backfilled, the host differs from the stored host (bytes: a
+ *       respelling in case, or an emptied host, is refused too — the safe
+ *       side, one retype; an empty host opens no client, but clearing it is
+ *       still the operator's move to make with the password or the bearer),
+ *       or the port differs from the stored port (both sides are
+ *       config_load()'s: it reads a stored 0 as the default for the stored
+ *       TLS mode, and the body sets a port only in 1..65535, so neither side
+ *       is 0 here and a session's "enabled" toggle on a device whose NVS
+ *       holds port 0 is not refused), or the TLS mode differs, or the body
+ *       carried a "ca" key, set or cleared — a CA change moves which peer
+ *       TLS trusts. The flagship refuses the same move with
+ *       `400 password_required_for_new_host` (mqtt_tls_fields.h's
+ *       credential_carry: host or port, any caller, a case-folded host);
+ *       this one is 403 for cookie callers only, and counts the TLS mode and
+ *       the CA as moves, since on this transport they choose the peer.
+ * A change of "user", "prefix", "enabled" or "discovery" alone is NOT a move:
+ * the password still goes to the same peer, which already holds it, so a
+ * session may toggle the bridge, rename the topic prefix or change the
+ * username as it always could. A caller with a valid bearer
+ * (api_auth_bearer_valid(): a real Authorization header, constant-time
+ * compared, nothing recorded against the lockout) is never refused by this
+ * rule — it holds the token the GET's write-only password protects. The
+ * refusal saves nothing, requests no re-init and answers 403 with a code the
+ * /mqtt page reads (it shows the reason and puts the cursor in the password
+ * field); the /companion wizard always sends a "password" key, so it is
+ * never refused. Pure, so test_mqtt_reinit.cpp names each clause. */
+static bool move_needs_password(const Config& before, const Config& after,
+                                bool password_in_body, bool ca_in_body, bool bearer) {
+  if (bearer) return false;                  /* the token's holder may move it */
+  if (password_in_body) return false;        /* the caller chose what goes out */
+  if (before.pass[0] == '\0') return false;  /* nothing stored, nothing to send */
+  if (strcmp(before.host, after.host) != 0) return true;
+  if (before.port != after.port) return true;
+  if (before.tls_mode != after.tls_mode) return true;
+  return ca_in_body;
+}
+
+static const char kPasswordNeeded[] =
+    "{\"ok\":false,\"code\":\"password_needed\",\"reason\":\"the broker moved; type the broker "
+    "password again to send it to the new address, or sign in with the API token\"}";
+
 esp_err_t handle_config_post(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
   if (!authorized(req, tok)) {
@@ -2166,6 +2353,10 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
     return ESP_OK;
   }
+  /* The bearer half of authorized(), once (sweep F289, the third road): a
+   * save that moves the broker and keeps the stored password needs it;
+   * move_needs_password() says when. */
+  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);
 
   /* The body is read whole or refused (sweep F266). The cap covers every
    * field at its limit, a 128-byte password and host among them, and a
@@ -2232,6 +2423,9 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * enabled, leaving everything else alone) work. */
   Config c;
   config_load(&c);
+  /* What NVS holds before any field is applied: move_needs_password()
+   * compares the destination the body leaves against it. */
+  const Config before = c;
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);
   json_extract_bool  (body, "\"discovery\"", &c.discovery);
@@ -2348,17 +2542,38 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     if (refuse_too_long(req, "prefix", buf, MAX_PREFIX_LEN)) return ESP_OK;
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
+  bool password_in_body = false;
   if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
     if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
+    password_in_body = true;
   }
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (c.port == 0)  c.port = c.tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
 
-  if (!config_save(c) || (ca_changed && !ca_save(cabuf.p))) {
-    httpd_resp_set_status(req, "500 Internal Server Error");
-    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
+  /* Sweep F289, the third road (move_needs_password above): a session alone
+   * may not point the stored password at a new peer. ca_changed is "the body
+   * carried a ca key" here — a key that failed the shape check was refused
+   * above. Nothing is saved, no re-init is requested, no secret is in the
+   * answer. */
+  if (move_needs_password(before, c, password_in_body, ca_changed, bearer)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, kPasswordNeeded, -1);
     return ESP_OK;
+  }
+
+  {
+    /* One save in the loop task's eyes, and one writer at a time: the row
+     * and the CA land under one scope, so no re-init opens a client to the
+     * new row with the old CA between the two writes, and no other task's
+     * save interleaves its keys with these. */
+    SaveScope saving;
+    if (!saving.ok() || !write_row(c) || (ca_changed && !write_ca(cabuf.p))) {
+      httpd_resp_set_status(req, "500 Internal Server Error");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
+      return ESP_OK;
+    }
   }
 
   /* The new credentials take effect on the loop task, which tears the old
@@ -2527,6 +2742,7 @@ f.addEventListener('submit', async (e) => {
   const j = await r.json().catch(() => ({}));
   document.getElementById('status').textContent = ok ? 'Saved.' : ('Save failed. ' + (j.reason || ''));
   document.getElementById('status').className = 'status ' + (ok ? 'good' : 'bad');
+  if (j.code === 'password_needed') password.focus();  /* the broker moved: type it again */
   if (ok) { ca.value = ''; setTimeout(load, 600); }
 });
 document.getElementById('test').addEventListener('click', async () => {

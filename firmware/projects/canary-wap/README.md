@@ -321,7 +321,7 @@ make help               # Show all targets
 | `/api/fleet` | GET/OPTIONS | The coarse fleet roll-call (name, online, chain verdict); the one `/api/` row here that answers without a token ([`DISCOVERY.md`](../../../tvos/discovery/DISCOVERY.md)) |
 | `/api/identify` | POST | Blink + chirp so you can find the unit (`duration_ms`, default ~15 s) |
 | `/api/pairing-qr` | GET | The pairing receipt as a QR: device id, base URL and token, plus `tls_cert_fp` on a TLS-enabled device |
-| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above) |
+| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above); a save that moves the broker while keeping the stored password takes the bearer or the password typed again (`403 password_needed` from a session alone) |
 | `/api/settings` | GET/POST | Presence preset, sensitivity, pet mode, quiet hours, privacy ceiling, `filter_foreign` and the household time zone ([`csi_developer_api.md`](../../../docs/csi_developer_api.md)) |
 
 The table is the common subset, not the whole surface: the sketch registers
