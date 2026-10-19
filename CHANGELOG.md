@@ -139,10 +139,11 @@
   room: on the AMOLED the bubble had risen up to 51 px into the bird's box,
   and on the 172 px glass under Heirloom 15. The raised bird keeps that seat
   through the wordmark's closing beat (F372). The tail is now square-cornered
-  and turned about its center, so the LVGL 8.4 glass (the watch, the S3
-  nightstand, the touch169, the AMOLED, the nightlight) and the browser
-  emulator draw it for the first time, and on the LVGL 9.5 builds it stands on
-  the bubble's center line instead of 5.5 px left of it. On the round watch,
+  and turned about its center, so the LVGL 8.4 code (the watch, S3
+  nightstand, touch169, AMOLED and nightlight configs, rendered natively)
+  draws it for the first time, and the browser emulator will once CI's
+  pinned-emsdk dist rebuild lands on this branch; on the LVGL 9.5 builds it
+  stands on the bubble's center line instead of 5.5 px left of it. On the round watch,
   which has no room to raise its bird, the newly drawn tail reaches into the
   bird under Heirloom (F371). **Host-tested and rendered natively** through
   LVGL 8.4.0 and 9.5.0 on a 64-bit host, not an ESP32 build; not bench-tested.
@@ -198,19 +199,22 @@
   maintainer: the Vision tab draws none of the camera's four M2 x 6 screws,
   and the Dash case prints no hardware line (C25). No rib changed (C11).
   **Host-tested**; the catalog drift step and `enclosure.yml` have not run on
-  this branch. Filed: C25, C26 (and C12 now counts 8 disagreements, not 12).
+  this branch. Filed: C25, C26 (and C12's title is corrected: 8
+  disagreements today, 12 at `gen_hardware.py`'s first run).
 - **Enclosure knob help, second batch (sweep C10, wave 4: C10c-2).** 133 knobs
   in 19 monorepo-only case files now carry help read off the geometry they
   shape, including 21 boolean options whose help is their label in the Lab
   catalog (they showed bare names such as `opt_btn`). Twelve shared knob lines
-  are split one assignment per line, so the Lab lists 37 knobs it skipped
-  before (and the 1.69 case's computed `skirt_dep`), in three groups it never
-  showed, and `catalog.json`'s `engineering_param_count` moves for seven
-  products. The splits and the boolean labels are maintainer decisions, each
-  in commits of its own (C27). No geometry moved: the CSG of every part is
-  byte-identical. Where the code does not hold what a knob implies, the help
-  says so: the solar relay's 18650 holder height asks for a measurement (at
-  the defaults the cavity is shallower than a fitted cell), seven knobs say no
+  are split one assignment per line, so the Lab lists 38 entries it did not
+  list before (37 knobs it skipped and the 1.69 case's computed `skirt_dep`),
+  10 of them in three groups it never showed (the Hammond plate's Board snap
+  clips, the C3 case's and the vehicle mount's Print tolerances), and
+  `catalog.json`'s `engineering_param_count` moves for seven products. The
+  splits and the boolean labels are maintainer decisions, each in commits of
+  its own (C27). No geometry moved: the CSG of every part is byte-identical.
+  Where the code does not hold what a knob implies, the help says so: the
+  solar relay's 18650 holder height asks for a measurement (at the defaults
+  the cavity is shallower than a fitted cell), seven knobs say no
   geometry reads them, the cable gland's fill says its overfill assert cannot
   fire, and the 7-inch frame's brand-word size says its width estimate reads
   short. **Host-tested**; not printed. Filed: C27-C34.
