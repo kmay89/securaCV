@@ -9,10 +9,56 @@ endpoint (or a resurrected one: three /api/ble routes shipped without
 auth and were only unreachable because they overflowed the handler
 table) cannot silently widen the unauthenticated surface.
 
+It also holds the routes whose answer carries a secret (sweep F289): the
+bearer token, the SoftAP password, the TLS pin, the broker password. The
+landing page at / mints a cv_session (and, during setup, a pair token) for
+any caller that reaches the WAP, on the home network too: the owner's chosen
+LAN posture for the dashboard's own routes. So a session is no proof of
+holding the token, and such a route takes a bearer-only gate
+(api_auth_bearer_valid / api_auth_check_bearer), or the receipt's BOOT tap
+or setup-door claim, never a gate a session passes (ANY_SESSION_GATES and,
+to a fixed point, every function that calls one). What it reads:
+
+  - canary_wap.ino: which functions read a secret (SECRET_READS, the token a
+    gate compares against aside) or are handed one (SECRET_HANDS), carried up
+    the call graph to the route handlers that reach them, stopping at a named
+    device-side use (SECRET_LOCAL_USES). A handler that carries a secret is
+    named in SECRET_ANSWERS with exactly what it carries. Its bearer gate is
+    the whole condition of an `if` whose branch returns, `if (!gate(req,
+    g_device.api_token_str)) return ...;` (a refusal at the top of the body)
+    or `if (gate(...)) { ... return ...; }` (a grant), and each answer site
+    sits after a refusal or inside a grant (OTHER_GRANTS adds the receipt's
+    tap-and-claim refusal, whose flag only the claim's take may set). The
+    handler and the functions it reaches the secret through name no gate in
+    the any-session class, called or not, and hold no goto or preprocessor
+    line.
+  - csi_mqtt.cpp: only BROKER_PASSWORD_USES name the stored broker password,
+    and POST /api/mqtt/config's first write of the row or the CA is preceded
+    by a returning `if` whose whole condition is the move gate
+    (move_needs_password(), #1835), handed a `const bool` declared at the top
+    of the handler whose `&&` terms include a bearer gate's call; neither
+    that condition, nor the bearer, nor the gate's own body names an
+    any-session gate. So a save that moves the kept password takes the
+    bearer header or the password typed again. The route's own session gate
+    for the rest of the save stays: the dashboard's.
+  - Each bearer gate is defined once, in its BEARER_GATES home, and names no
+    any-session gate.
+
+It is a text check, and names are matched by spelling: a helper or a local
+named like a gate in the class fails it, and a secret reached through a name
+it does not know (a copy in a global, a member under another name, a whole
+struct handed out, a module's own copy of the token, a gate called through
+an object or a pointer) passes it. Whether a gate decides right, whether the
+receipt's tap and claim are right, and what the move gate counts as a move
+are the host suites' (test_receipt_grant, test_receipt_authority,
+test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
+run: a clean sketch that passes and nineteen plants that each fail it.
+
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
 """
 
+import functools
 import re
 import sys
 from pathlib import Path
@@ -98,6 +144,102 @@ SELF_GATING_HANDLERS = {
     "handle_tune_page": "session-cookie check, 302 to / when absent",
     "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
 }
+
+
+# ── Routes whose answer carries a secret (sweep F289) ─────────────────────
+#
+# The gates that take only a real `Authorization: Bearer` header, each with
+# the one file that defines it: a second definition by the same name (a
+# module's own api_auth_bearer_valid over the cookie) would stand in unseen.
+BEARER_GATES = {
+    "api_auth_bearer_valid": "api_auth.h",  # silent: the receipt's first grant
+    "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
+}
+# The gates a landing-page caller passes: the cv_session cookie, every gate
+# that takes it or a Bearer header, and the pair token the landing hands out
+# during setup. The class is these and, to a fixed point, every function and
+# macro in the sketch that names one (any_session_gates()), so a wrapper is
+# in it by what it calls; qr_scan_request_allowed() and
+# wifi_change_authorize() are, for example.
+ANY_SESSION_GATES = (
+    "cv_session_validate",      # the cookie (api_auth.h's weak hook)
+    "session_validate_cookie",  # csi_integration's cookie check
+    "api_auth_check",           # cookie OR Bearer
+    "api_auth_check_optional",  # its silent variant
+    "api_auth_check_or_query",  # + ?token= for <img> tags
+    "CSI_AUTH_OR_RETURN",       # csi_integration's macro
+    "authorized",               # csi_mqtt's cookie OR Bearer
+    "auth_gated",               # the module trampolines (bt_/bcn_/plain)
+    "pair_token_valid",         # the landing's setup pair token
+    "pair_token_consume",
+)
+
+# The secrets, as canary_wap.ino reads them: a member of that name on any
+# object, or the pin's global. An emptiness test of the pin is not a read.
+SECRET_READS = {
+    "token": re.compile(r"(?:\.|->)\s*api_token_str\b"),
+    "ap": re.compile(r"(?:\.|->)\s*ap_password\b"),
+    "pin": re.compile(r"\bg_tls_cert_fp_hex\b(?!\s*\[\s*0\s*\])"),
+}
+SECRET_NAMES = {"token": "the bearer token", "ap": "the SoftAP password", "pin": "the TLS pin"}
+# The token a gate, or a module's init, is handed to compare against (what
+# a module then does with its copy is not this rule's).
+TOKEN_COMPARED = re.compile(
+    r"\b(?:api_auth_check|api_auth_check_optional|api_auth_check_or_query|api_auth_check_bearer"
+    r"|api_auth_bearer_valid|\w+::register_routes|csi_integration::init)\s*\(\s*\w+\s*,"
+    r"\s*g_device\s*\.\s*api_token_str\s*\)")
+# Functions whose call hands their caller a secret, in an out-buffer.
+SECRET_HANDS = {
+    "derive_api_token": "token",
+    "derive_ap_password": "ap",
+    "resolve_ap_password": "ap",
+}
+# Functions that read a secret and use it on the device, neither answering
+# it nor handing it on (so no writable char or byte buffer parameter and no
+# char pointer returned): the carry up to the routes that call them stops
+# here. Only the ones a route reaches need naming.
+SECRET_LOCAL_USES = {
+    "wifi_raise_ap": "re-raises the SoftAP with its own password, wiped after",
+    "wifi_init_provisioning": "raises the first-boot SoftAP with its own password",
+}
+# The route handlers whose answer carries a secret: what it carries, and why.
+SECRET_ANSWERS = {
+    "handle_pairing_qr": (
+        "token pin", "the pairing QR: the token, and the pin on a TLS device"),
+    "handle_provisioning_receipt": (
+        "token ap pin", "the receipt (the recovery kit), through send_provisioning_receipt()"),
+}
+# A refusal an answer may also stand after, on grants that are not
+# credential gates: the receipt's BOOT tap (provisioning_gate_take()) and its
+# setup-door claim, whose flag only the claim's take may set ("writes"; one
+# ending in `(` is that call, then `;`). test_receipt_grant drives both.
+OTHER_GRANTS = {
+    "handle_provisioning_receipt": {
+        "refusal": "!claim_served && !provisioning_gate_take()",
+        "flag": "claim_served",
+        "writes": ("bool claim_served = false;",
+                   "claim_served = canary::net::claim_ticket::take("),
+    },
+}
+
+# csi_mqtt.cpp's stored broker password: the functions that name the member
+# (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
+# /api/mqtt/config, behind a session, answers only whether one is set.
+BROKER_PASSWORD = re.compile(r"(?:\.|->)\s*pass\b(?!\s*\[\s*0\s*\])")
+BROKER_PASSWORD_USES = {
+    "config_load": "reads it from NVS into the caller's Config",
+    "write_row": "writes it to NVS, inside its caller's SaveScope",
+    "open_client": "hands it to the MQTT client, for the broker it was saved with",
+    "handle_config_post": "takes a typed one, or keeps the stored one behind the move gate",
+}
+# The route that may send the kept broker password somewhere new (sweep
+# F289, the third road, #1835): its handler, the writes a moved password must
+# not reach before the move gate has refused, and the move gate, whose
+# bearer argument is a `const bool` the handler computes once from a bearer
+# gate (the bearer half of authorized()).
+BROKER_REPOINT = {"handler": "handle_config_post",
+                  "writes": ("write_row", "write_ca", "config_save", "ca_save"),
+                  "gate": "move_needs_password"}
 
 
 def strip_comments(text: str) -> str:
@@ -219,7 +361,7 @@ def function_body(source: str, name: str):
     comes from the real `source` (offsets align — blanking is length-
     preserving) so the auth-marker scan sees the true handler text.
     """
-    blanked = blank_string_contents(source)
+    blanked = _blank(source)  # cached: one blank per file, not per lookup
     m = re.search(
         r"esp_err_t\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", blanked)
     if not m:
@@ -270,14 +412,764 @@ def _assert_parser_robust() -> None:
     assert b2 is not None and "api_auth_check(" in b2, "char-literal brace desync"
 
 
+# ── The secret rule (sweep F289) ──────────────────────────────────────────
+
+# A function head: a return type, the name, parameters with balanced
+# parentheses (one level, for a function-pointer parameter), then `{`. The
+# balance keeps the last line of a multi-line call (`  s, sizeof(s)) {`)
+# from reading as a head.
+_HEAD = (r"(?!(?:if|for|while|switch|return|else|do|case|catch)\b)[A-Za-z_][\w:<>\*&\s,]*?"
+         r"\b([A-Za-z_]\w*)\s*\(([^;{}()]*(?:\([^;{}()]*\)[^;{}()]*)*)\)\s*(?:const\s*)?\{")
+_FUNC_HEAD = re.compile(r"^" + _HEAD, re.M)
+_ANY_FUNC_HEAD = re.compile(r"^[ \t]*" + _HEAD, re.M)
+_DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)((?:[^\n]*\\\n)*[^\n]*)", re.M)
+_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+# A parameter a secret could be handed out through: a writable char or byte
+# buffer (char* out, uint8_t buf[], char& c).
+_BUFFER_PARAM = re.compile(r"\b(?:char|uint8_t|unsigned\s+char|int8_t)\b[^,]*[\*\[&]")
+# The declarations outside every function of canary_wap.ino that name a
+# secret, whitespace folded. Anything else there fails.
+OUTSIDE_FUNCTION_LINES = (
+    "static char g_tls_cert_fp_hex[65] = {0};",
+    "static bool resolve_ap_password(char* out_password, size_t out_len);",
+)
+
+
+@functools.lru_cache(maxsize=None)
+def _blank(text: str) -> str:
+    return blank_string_contents(text)
+
+
+@functools.lru_cache(maxsize=None)
+def functions(text: str, indented: bool = False) -> tuple:
+    """(name, params, head start, body start, body end) for every function
+    defined in `text` (comment-stripped): heads at column 0, or at any
+    indentation with `indented` (namespaced and member code). Braces are
+    matched over the string-blanked view; the body runs from just past the
+    head's `{` to its closing `}`."""
+    blanked = _blank(text)
+    out = []
+    for m in (_ANY_FUNC_HEAD if indented else _FUNC_HEAD).finditer(blanked):
+        depth, i = 1, m.end()
+        while i < len(blanked) and depth:
+            if blanked[i] == "{":
+                depth += 1
+            elif blanked[i] == "}":
+                depth -= 1
+            i += 1
+        out.append((m.group(1), m.group(2), m.start(), m.end(), i - 1))
+    return tuple(out)
+
+
+def _names(code: str) -> set:
+    """Every identifier `code` (string-blanked) names, called or not, other
+    than a member (`x.name`, `x->name`): an object's field or method is not
+    the free function of that name."""
+    return set(re.findall(r"(?<![\w.])[A-Za-z_]\w*", re.sub(r"(?:\.|->)\s*", ".", code)))
+
+
+def blank_raw_strings(text: str) -> str:
+    """The contents of every raw string literal (R"delim( ... )delim") as
+    spaces, newlines kept, so its HTML and JavaScript read as no code. Run
+    before strip_comments(): it does not know the raw form, and a `//` in an
+    https:// URL would read as a comment opener."""
+    def blank(m):
+        inner = re.sub(r"[^\n]", " ", m.group(2))
+        return m.group(0)[:m.start(2) - m.start()] + inner + m.group(0)[m.end(2) - m.start():]
+    return re.sub(r'R"([^()\\\s"]{0,16})\((.*?)\)\1"', blank, text, flags=re.S)
+
+
+def _line(text: str, pos: int) -> int:
+    return text.count("\n", 0, pos) + 1
+
+
+def _inside(pos: int, spans) -> bool:
+    return any(a <= pos < b for a, b in spans)
+
+
+def _close(code: str, i: int) -> int:
+    """The index of the bracket closing the one at code[i], or -1."""
+    pair = {"(": ")", "{": "}"}[code[i]]
+    depth = 0
+    for j in range(i, len(code)):
+        if code[j] == code[i]:
+            depth += 1
+        elif code[j] == pair:
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def _statement_end(code: str, k: int) -> int:
+    """The `;` ending the statement that starts at `k`, outside brackets."""
+    depth = 0
+    for j in range(k, len(code)):
+        if code[j] in "([{":
+            depth += 1
+        elif code[j] in ")]}":
+            depth -= 1
+            if depth < 0:
+                return -1
+        elif code[j] == ";" and depth == 0:
+            return j
+    return -1
+
+
+def _branch(code: str, k: int):
+    """The branch of an `if` whose condition closed just before `k`: (start,
+    end, whether it returns). A branch returns when it is a `return`
+    statement, or a block whose last statement is one."""
+    while k < len(code) and code[k].isspace():
+        k += 1
+    if k < len(code) and code[k] == "{":
+        end = _close(code, k)
+        if end < 0:
+            return k, len(code), False
+        inner = code[k + 1:end].rstrip()
+        depth, j = 0, len(inner) - 2
+        while j >= 0:  # back to the start of the last statement
+            if inner[j] in ")]":
+                depth += 1
+            elif inner[j] in "([":
+                depth -= 1
+            elif inner[j] in ";{}" and depth == 0:
+                break
+            j -= 1
+        last = inner[j + 1:]
+        return k, end + 1, inner.endswith(";") and re.match(r"\s*return\b", last) is not None
+    end = _statement_end(code, k)
+    if end < 0:
+        return k, len(code), False
+    return k, end + 1, re.match(r"return\b", code[k:end]) is not None
+
+
+def _ifs(code: str) -> list:
+    """(position, condition, condition span, branch span, returns) for every
+    `if` in `code` (string-blanked)."""
+    out = []
+    for m in re.finditer(r"\bif\s*\(", code):
+        close = _close(code, m.end() - 1)
+        if close < 0:
+            continue
+        start, end, returns = _branch(code, close + 1)
+        out.append((m.start(), code[m.end():close], (m.end(), close), (start, end), returns))
+    return out
+
+
+def _depth(code: str, pos: int) -> int:
+    return code.count("{", 0, pos) - code.count("}", 0, pos)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _terms(cond: str, op: str) -> list:
+    """`cond` split on `op` (`&&`, `||`) outside parentheses."""
+    out, depth, start, i = [], 0, 0, 0
+    while i < len(cond):
+        if cond[i] == "(":
+            depth += 1
+        elif cond[i] == ")":
+            depth -= 1
+        elif depth == 0 and cond.startswith(op, i):
+            out.append(cond[start:i])
+            start = i + len(op)
+            i += len(op)
+            continue
+        i += 1
+    return out + [cond[start:]]
+
+
+def _secret_list(secrets) -> str:
+    return ", ".join(SECRET_NAMES[s] for s in sorted(secrets))
+
+
+def _called(code: str) -> set:
+    """Every free function `code` (string-blanked) calls: `name(` or
+    `name<...>(`, a member's call aside."""
+    code = re.sub(r"(?:\.|->)\s*", ".", code)
+    found = {m.group(1) for m in re.finditer(r"(?<![\w.])([A-Za-z_]\w*)\s*\(", code)}
+    found |= {m.group(1) for m in re.finditer(r"(?<![\w.])([A-Za-z_]\w*)\s*<[^;(){}<>]*>\s*\(",
+                                              code)}
+    return found
+
+
+def any_session_gates(sources: dict) -> set:
+    """ANY_SESSION_GATES and, to a fixed point, every function (at any
+    indentation) in `sources` whose body calls one and every macro whose body
+    names one. A bearer gate is never added: bearer_gate_problems() holds
+    that it names none. A function that only names a handler (a route
+    table's initializer) is not a wrapper of it."""
+    reaches = {}
+    for text in sources.values():
+        blanked = _blank(text)
+        for name, _p, _h, b, e in functions(text, indented=True):
+            reaches.setdefault(name, set()).update(_called(blanked[b:e]))
+        for m in _DEFINE.finditer(blanked):
+            reaches.setdefault(m.group(1), set()).update(_names(m.group(2)))
+    members = set(ANY_SESSION_GATES)
+    while True:
+        grown = {n for n, ids in reaches.items()
+                 if n not in members and n not in BEARER_GATES and ids & members}
+        if not grown:
+            return members
+        members |= grown
+
+
+def bearer_gate_problems(sources: dict, any_session: set) -> list:
+    """Each bearer gate is defined once, in its BEARER_GATES home, and names
+    no gate in the any-session class."""
+    problems = []
+    for gate, home in sorted(BEARER_GATES.items()):
+        defs = [(fname, b, e) for fname, text in sorted(sources.items())
+                for name, _p, _h, b, e in functions(text, indented=True) if name == gate]
+        files = [fname for fname, _b, _e in defs]
+        if files != [home]:
+            where = ", ".join(files) or "no file the check reads"
+            problems.append(f"{gate}() is defined in {where}; a bearer gate is defined once, "
+                            f"in {home}")
+        for fname, b, e in defs:
+            body = _blank(sources[fname])[b:e]
+            took = sorted(_names(body) & any_session)
+            if took:
+                problems.append(f"{fname}: {gate}() names {', '.join(took)}, a gate a landing-page "
+                                f"caller passes: a bearer gate takes the Authorization header only")
+    return problems
+
+
+def secret_carriers(ino: str, hands: dict, local: dict):
+    """(reads, carried, calls) for canary_wap.ino's column-0 functions: the
+    secrets each body reads (SECRET_READS, the compared token aside; a call
+    of a `hands` function), the secrets it carries (those, and what each
+    function it calls carries; a `local` function's carry stops at it), and
+    the names it calls."""
+    blanked = _blank(ino)
+    reads, calls = {}, {}
+    for name, _p, _h, b, e in functions(ino):
+        body = blanked[b:e]
+        called = _called(body)
+        got = {s for s, rx in SECRET_READS.items() if rx.search(TOKEN_COMPARED.sub("", body))}
+        got |= {hands[h] for h in called & set(hands) if h != name}
+        reads.setdefault(name, set()).update(got)
+        calls.setdefault(name, set()).update(called)
+    carried = {n: set(s) for n, s in reads.items()}
+    changed = True
+    while changed:
+        changed = False
+        for name, called in calls.items():
+            for g in called - {name}:
+                if g in carried and g not in local and not carried[g] <= carried[name]:
+                    carried[name] |= carried[g]
+                    changed = True
+    return reads, carried, calls
+
+
+def _answer_sites(code: str, carriers: set, hands: dict, self_name: str) -> list:
+    """(position, what) for each place `code` (a body, string-blanked)
+    reaches a secret: a read, or a call of a function that carries one."""
+    compared = [(m.start(), m.end()) for m in TOKEN_COMPARED.finditer(code)]
+    sites = [(m.start(), SECRET_NAMES[s]) for s, rx in SECRET_READS.items()
+             for m in rx.finditer(code) if not _inside(m.start(), compared)]
+    free_call = re.compile(r"(?<![\w.])(?<!->)([A-Za-z_]\w*)\s*\(")  # a member's call aside
+    sites += [(m.start(), m.group(1) + "()") for m in free_call.finditer(code)
+              if m.group(1) != self_name and (m.group(1) in carriers or m.group(1) in hands)]
+    return sorted(sites)
+
+
+def _flag_problems(handler: str, code: str, entry: dict, at) -> list:
+    """The grant flag is read only as a condition and written only by the
+    entry's "writes"."""
+    flag, problems = entry["flag"], []
+    for m in re.finditer(r"\b" + re.escape(flag) + r"\b", code):
+        before, after = code[:m.start()].rstrip(), code[m.end():].lstrip()
+        if re.match(r"(?:&&|\|\||\?|\)|==|!=)", after) and not re.search(r"(?<!&)&$", before):
+            continue  # !flag &&, if (flag), flag ? ...: a read
+        start = max(code.rfind(c, 0, m.start()) for c in ";{}") + 1
+        end = _statement_end(code, start)
+        stmt = " ".join(code[start:end + 1].split()) if end >= 0 else ""
+        ok = False
+        for allowed in entry["writes"]:
+            if not allowed.endswith("("):
+                ok = ok or stmt == allowed
+            elif stmt.startswith(allowed):
+                call_close = _close(stmt, len(allowed) - 1)
+                ok = ok or (call_close >= 0 and stmt[call_close + 1:] == ";")
+        if not ok:
+            writes = " / ".join(repr(w) for w in entry["writes"])
+            problems.append(f"canary_wap.ino:{at(m.start())}: {handler}() names {flag} other than "
+                            f"as a condition or in {writes}: only the grant may set the flag its "
+                            f"refusal trusts")
+    return problems
+
+
+def secret_answer_problems(sources: dict, handlers: set, any_session: set,
+                           answers: dict, local: dict, hands: dict, grants: dict) -> list:
+    """The routes whose answer carries a secret, over canary_wap.ino."""
+    ino = sources.get("canary_wap.ino", "")
+    blanked = _blank(ino)
+    funcs = functions(ino)
+    bodies = {name: (b, e) for name, _p, _h, b, e in funcs}
+    reads, carried, calls = secret_carriers(ino, hands, local)
+    carriers = {n for n, s in carried.items() if s and n not in local}
+    problems = []
+
+    # Nothing outside a function names a secret but its declaration.
+    spans = [(h, e) for _n, _p, h, _b, e in funcs]
+    outside = [m.start() for rx in SECRET_READS.values() for m in rx.finditer(blanked)]
+    outside += [m.start() for m in _CALL.finditer(blanked) if m.group(1) in hands]
+    for pos in sorted(p for p in outside if not _inside(p, spans)):
+        line = " ".join(ino.splitlines()[_line(blanked, pos) - 1].split())
+        if line not in OUTSIDE_FUNCTION_LINES:
+            problems.append(f"canary_wap.ino:{_line(blanked, pos)}: a secret named outside every "
+                            f"function ({line[:80]!r}): the check reads secrets per function")
+
+    for name in sorted(hands):
+        if name not in bodies:
+            problems.append(f"SECRET_HANDS names {name}(), which canary_wap.ino does not define")
+    for name, why in sorted(local.items()):
+        if name not in bodies or not reads.get(name):
+            problems.append(f"SECRET_LOCAL_USES names {name}(), which reads no secret: remove it")
+            continue
+        head_start, params = next((h, p) for n, p, h, _b, _e in funcs if n == name)
+        writable = [p.strip() for p in params.split(",")
+                    if _BUFFER_PARAM.search(p) and not p.strip().startswith("const")]
+        if writable or re.match(r"[^(]*\bchar\s*\*", blanked[head_start:bodies[name][0]]):
+            problems.append(f"{name}() reads {_secret_list(reads[name])} and could hand it to its "
+                            f"caller ({', '.join(writable) or 'it returns a char pointer'}): it is "
+                            f"not a SECRET_LOCAL_USES entry ({why})")
+        if name in handlers:
+            problems.append(f"{name}() is a route handler, so it answers: not a local use")
+
+    # What each route carries, wherever its handler is defined: a handler
+    # outside canary_wap.ino reaches the secrets by calling a carrier there.
+    elsewhere = {}
+    for fname, text in sources.items():
+        if fname != "canary_wap.ino":
+            for name, _p, _h, b, e in functions(text, indented=True):
+                elsewhere.setdefault(name, set()).update(_called(_blank(text)[b:e]))
+    carrying = {}
+    for h in sorted(handlers):
+        got = set(carried.get(h, ())) if h not in local else set()
+        called = elsewhere.get(h, set())
+        got |= {s for g in called & carriers for s in carried[g]}
+        got |= {hands[g] for g in called & set(hands)}
+        if got:
+            carrying[h] = got
+    for h, got in sorted(carrying.items()):
+        if h not in answers:
+            problems.append(f"route handler {h}() answers {_secret_list(got)} and is not in "
+                            f"SECRET_ANSWERS: name it there, behind a bearer-only gate")
+    for h, (named, _why) in sorted(answers.items()):
+        if h not in handlers:
+            problems.append(f"SECRET_ANSWERS names {h}(), which is no registered route handler")
+            continue
+        if set(named.split()) != carrying.get(h, set()):
+            has = _secret_list(carrying.get(h, ())) or "no secret"
+            problems.append(f"{h}() carries {has}; its SECRET_ANSWERS entry says "
+                            f"{_secret_list(named.split())}")
+        if h not in bodies:
+            problems.append(f"{h}() is not defined at column 0 in canary_wap.ino, where the check "
+                            f"reads an answer's gate")
+            continue
+        problems += _answer_gate_problems(h, blanked, bodies, calls, carriers, any_session,
+                                          hands, grants)
+    return problems
+
+
+def _answer_gate_problems(h, blanked, bodies, calls, carriers, any_session, hands, grants):
+    """One answer's gate: a bearer refusal or grant as the whole condition of
+    a returning `if`, each answer site after a refusal or inside a grant, and
+    no gate a session passes in the handler or on its way to the secret."""
+    b, e = bodies[h]
+    code = blanked[b:e]
+
+    def at(pos):
+        return _line(blanked, b + pos)
+
+    problems = []
+    path, queue = {h}, [h]  # the handler and the functions it reaches the secret through
+    while queue:
+        for g in sorted(calls.get(queue.pop(), set()) & carriers - path):
+            path.add(g)
+            queue.append(g)
+    for fn in sorted(path):
+        fb, fe = bodies[fn]
+        who = f"{h}() answers a secret and" if fn == h else f"{fn}(), on the way to {h}()'s secret,"
+        took = sorted(_names(blanked[fb:fe]) & any_session - path)
+        if took:
+            problems.append(f"{who} names {', '.join(took)}, a gate a landing-page caller "
+                            f"passes: a secret's answer takes the bearer header (BEARER_GATES), "
+                            f"never a session")
+        if re.search(r"\bgoto\b", blanked[fb:fe]):
+            problems.append(f"{who} holds a goto, which can jump past its gate")
+        if re.search(r"^[ \t]*#", blanked[fb:fe], re.M):
+            problems.append(f"{who} holds a preprocessor line: the check reads one text, not "
+                            f"each build's")
+
+    gate = re.compile(r"\s*(!\s*)?(" + "|".join(map(re.escape, BEARER_GATES)) +
+                      r")\s*\(\s*req\s*,\s*g_device\s*\.\s*api_token_str\s*\)\s*")
+    other = grants.get(h)
+    refusals, granted, gate_conds = [], [], []
+    for pos, cond, cspan, bspan, returns in _ifs(code):
+        g = gate.fullmatch(cond)
+        if g:
+            gate_conds.append(cspan)
+        elif not (other and _squash(cond) == _squash(other["refusal"])):
+            continue
+        if not returns:
+            continue
+        if g and not g.group(1):
+            granted.append(bspan)
+        elif _depth(code, pos) == 0:
+            refusals.append(bspan[1])
+    for m in re.finditer(r"\b(" + "|".join(map(re.escape, BEARER_GATES)) + r")\s*\(", code):
+        if not _inside(m.start(), gate_conds):
+            problems.append(f"canary_wap.ino:{at(m.start())}: {h}() calls {m.group(1)}() other "
+                            f"than as the whole condition of an if, `if (!{m.group(1)}(req, "
+                            f"g_device.api_token_str)) return ...;` or `if ({m.group(1)}(...)) "
+                            f"{{ ... return ...; }}`")
+    if not gate_conds:
+        problems.append(f"{h}() answers a secret and has no bearer gate (BEARER_GATES) as the "
+                        f"whole condition of an if")
+    if other:
+        problems += _flag_problems(h, code, other, at)
+    first = min(refusals, default=None)
+    for pos, what in _answer_sites(code, carriers, hands, h):
+        if (first is None or pos < first) and not _inside(pos, granted):
+            problems.append(f"canary_wap.ino:{at(pos)}: {h}() reaches {what} before any refusal "
+                            f"and outside every grant: a secret's answer stands after `if "
+                            f"(!<bearer gate>(...)) return` or inside `if (<bearer gate>(...)) "
+                            f"{{ ... return; }}`")
+    return problems
+
+
+def broker_password_problems(sources: dict, handlers: set, any_session: set,
+                             uses: dict) -> list:
+    """csi_mqtt.cpp's stored broker password: named only by `uses`, and the
+    save that may move it behind the move gate, handed the bearer."""
+    text = sources.get("csi_mqtt.cpp")
+    if text is None:
+        return ["csi_mqtt.cpp not found: the broker-password rule reads it"]
+    blanked = _blank(text)
+    funcs = functions(text)
+    problems, named = [], set()
+    for name, _p, _h, b, e in funcs:
+        if BROKER_PASSWORD.search(blanked[b:e]):
+            named.add(name)
+    spans = [(h, e) for _n, _p, h, _b, e in funcs]
+    for m in BROKER_PASSWORD.finditer(blanked):
+        if not _inside(m.start(), spans):
+            problems.append(f"csi_mqtt.cpp:{_line(blanked, m.start())}: the broker password named "
+                            f"outside every function the check reads")
+    for name in sorted(named - set(uses)):
+        problems.append(f"csi_mqtt.cpp: {name}() names the stored broker password and is not in "
+                        f"BROKER_PASSWORD_USES (a GET answers only whether one is set)")
+    for name in sorted(set(uses) - named):
+        problems.append(f"BROKER_PASSWORD_USES names {name}(), which names no broker password")
+    for name in sorted(named & handlers - {BROKER_REPOINT["handler"]}):
+        problems.append(f"csi_mqtt.cpp: route handler {name}() names the stored broker password")
+
+    h, gate_fn = BROKER_REPOINT["handler"], BROKER_REPOINT["gate"]
+    found = [(b, e) for name, _p, _h, b, e in funcs if name == h]
+    if h not in handlers or not found:
+        return problems + [f"csi_mqtt.cpp: {h}() is not a registered route handler defined at "
+                           f"column 0; BROKER_REPOINT reads its move gate"]
+    b, e = found[0]
+    code = blanked[b:e]
+
+    def at(pos):
+        return _line(blanked, b + pos)
+
+    writes = "|".join(map(re.escape, BROKER_REPOINT["writes"]))
+    first = re.search(r"(?<![\w.])(" + writes + r")\s*\(", code)
+    if first is None:
+        return problems + [f"csi_mqtt.cpp: {h}() calls none of "
+                           f"{', '.join(w + '()' for w in BROKER_REPOINT['writes'])}; "
+                           f"BROKER_REPOINT names the writes a moved password must not reach"]
+    # The move gate: defined once at column 0, deciding on what it is handed.
+    defs = [(gb, ge) for name, _p, _h, gb, ge in funcs if name == gate_fn]
+    if len(defs) != 1:
+        problems.append(f"csi_mqtt.cpp: {gate_fn}() is defined {len(defs)} times at column 0; "
+                        f"BROKER_REPOINT reads one move gate")
+    for gb, ge in defs:
+        took = sorted(_names(blanked[gb:ge]) & any_session)
+        if took:
+            problems.append(f"csi_mqtt.cpp: {gate_fn}() names {', '.join(took)}, a gate a "
+                            f"landing-page caller passes: the move gate decides on the bearer "
+                            f"it is handed")
+    whole = re.compile(r"\s*" + re.escape(gate_fn) + r"\s*\(([^()]*)\)\s*")
+    gate_bearer = re.compile(r"\s*(?:" + "|".join(map(re.escape, BEARER_GATES)) +
+                             r")\s*\([^()]*\)\s*")
+    gated = False
+    for pos, cond, _c, _b, returns in _ifs(code):
+        if not re.search(r"(?<![\w.])" + re.escape(gate_fn) + r"\s*\(", cond):
+            continue
+        took = sorted(_names(cond) & any_session)
+        call = whole.fullmatch(cond)
+        if took:
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}()'s move gate names "
+                            f"{', '.join(took)}, a gate a landing-page caller passes")
+            continue
+        if call is None:
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}()'s move gate is not the whole "
+                            f"condition of its if: `if ({gate_fn}(..., bearer)) {{ ... return "
+                            f"...; }}`")
+            continue
+        if pos > first.start() or _depth(code, pos) != 0 or not returns:
+            continue  # no gate before the write: said below
+        # The bearer it is handed: a `const bool` declared once, at the top
+        # of the handler before the gate, one `||` term whose `&&` terms
+        # include a bearer gate's call, naming no gate a session passes.
+        bearers = []
+        for arg in (a.strip() for a in _terms(call.group(1), ",")):
+            if not re.fullmatch(r"[A-Za-z_]\w*", arg):
+                continue
+            decls = list(re.finditer(r"\bconst\s+bool\s+" + arg + r"\s*=([^;]*);", code))
+            if len(decls) != 1 or decls[0].start() > pos or _depth(code, decls[0].start()) != 0:
+                continue
+            init = decls[0].group(1)
+            took = sorted(_names(init) & any_session)
+            if took:
+                problems.append(f"csi_mqtt.cpp:{at(decls[0].start())}: {h}() hands {gate_fn}() a "
+                                f"bearer that names {', '.join(took)}, a gate a landing-page "
+                                f"caller passes")
+                bearers.append(None)
+                continue
+            terms = _terms(init, "&&") if len(_terms(init, "||")) == 1 else []
+            if any(gate_bearer.fullmatch(t) for t in terms):
+                bearers.append(arg)
+        if not bearers:
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}() hands {gate_fn}() no bearer: one "
+                            f"argument is a `const bool` declared at the top of the handler "
+                            f"before the gate, `... && <bearer gate>(req, tok)` (BEARER_GATES)")
+        elif None not in bearers:
+            gated = True
+    if not gated:
+        problems.append(f"csi_mqtt.cpp: {h}() reaches {first.group(1)}() with no move gate before "
+                        f"it: a top-level `if ({gate_fn}(..., bearer)) {{ ... return ...; }}`, "
+                        f"the bearer from a bearer gate (BEARER_GATES), so a save that moves the "
+                        f"kept password takes the bearer header or the password typed")
+    return problems
+
+
+def secret_rule_problems(sources: dict, handlers: set, answers=None, local=None, hands=None,
+                         grants=None, broker_uses=None) -> list:
+    """The whole secret rule over `sources` (file name -> comment-stripped
+    text) and the registered handler names; the tables default to the ones
+    above (the fixtures pass their own)."""
+    any_session = any_session_gates(sources)
+    return (bearer_gate_problems(sources, any_session)
+            + secret_answer_problems(
+                sources, handlers, any_session,
+                SECRET_ANSWERS if answers is None else answers,
+                SECRET_LOCAL_USES if local is None else local,
+                SECRET_HANDS if hands is None else hands,
+                OTHER_GRANTS if grants is None else grants)
+            + broker_password_problems(
+                sources, handlers, any_session,
+                BROKER_PASSWORD_USES if broker_uses is None else broker_uses))
+
+
+def handler_names(routes) -> set:
+    """The function each registration names: `ns::fn` by fn, a trampoline
+    `auth_gated<fn>` by fn."""
+    out = set()
+    for _uri, _method, handler, _fname in routes:
+        inner = re.search(r"<\s*([\w:]+)\s*>", handler)
+        out.add((inner.group(1) if inner else handler).split("::")[-1])
+    return out
+
+
+# The secret rule's fixtures: a small sketch that passes, and plants that
+# each fail it for the reason named.
+_FIX_API_AUTH = (
+    "extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));\n"
+    "static bool api_auth_check_bearer(httpd_req_t* req, const char* t) {\n"
+    "  return t && header_matches(req, t);\n"
+    "}\n"
+    "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
+    "  return t && header_matches(req, t);\n"
+    "}\n"
+    "static bool api_auth_check(httpd_req_t* req, const char* t) {\n"
+    "  if (cv_session_validate && cv_session_validate(req)) return true;\n"
+    "  return api_auth_check_bearer(req, t);\n"
+    "}\n"
+)
+_FIX_INO = (
+    "static DeviceIdentity g_device;\n"
+    "static void send_kit(httpd_req_t* req) {\n"
+    "  httpd_resp_sendstr(req, g_device.ap_password);\n"
+    "}\n"
+    "static esp_err_t handle_qr(httpd_req_t* req) {\n"
+    "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+    "  return httpd_resp_sendstr(req, g_device.api_token_str);\n"
+    "}\n"
+    "static esp_err_t handle_kit(httpd_req_t* req) {\n"
+    "  if (api_auth_bearer_valid(req, g_device.api_token_str)) {\n"
+    "    send_kit(req);\n"
+    "    return ESP_OK;\n"
+    "  }\n"
+    "  bool claimed = false;\n"
+    "  claimed = claim_take(presented);\n"
+    "  if (!claimed && !gate_take()) {\n"
+    "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
+    "  }\n"
+    "  send_kit(req);\n"
+    "  return ESP_OK;\n"
+    "}\n"
+    "static esp_err_t handle_status(httpd_req_t* req) {\n"
+    "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+    "  return httpd_resp_sendstr(req, \"{}\");\n"
+    "}\n"
+)
+_FIX_MQTT = (
+    "static bool authorized(httpd_req_t* req, const char* t) {\n"
+    "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t);\n"
+    "}\n"
+    "bool write_row(const Config& cfg) { return prefs.putString(\"p\", cfg.pass) > 0; }\n"
+    "static bool move_needs_password(const Config& before, const Config& after, bool typed,\n"
+    "                                bool bearer) {\n"
+    "  if (bearer) return false;\n"
+    "  if (typed) return false;\n"
+    "  return before.pass[0] != '\\0' && strcmp(before.host, after.host) != 0;\n"
+    "}\n"
+    "esp_err_t handle_config_get(httpd_req_t* req) {\n"
+    "  if (!authorized(req, tok)) return ESP_OK;\n"
+    "  Config c;\n"
+    "  return httpd_resp_sendstr(req, c.pass[0] ? \"set\" : \"none\");\n"
+    "}\n"
+    "esp_err_t handle_config_post(httpd_req_t* req) {\n"
+    "  if (!authorized(req, tok)) return ESP_OK;\n"
+    "  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);\n"
+    "  Config c;\n"
+    "  const Config before = c;\n"
+    "  if (typed) strncpy(c.pass, buf, 128);\n"
+    "  if (move_needs_password(before, c, typed, bearer)) {\n"
+    "    httpd_resp_set_status(req, \"403 Forbidden\");\n"
+    "    return ESP_OK;\n"
+    "  }\n"
+    "  if (!write_row(c)) return ESP_OK;\n"
+    "  return ESP_OK;\n"
+    "}\n"
+)
+_FIX_TABLES = {
+    "answers": {"handle_qr": ("token", "fixture"), "handle_kit": ("ap", "fixture")},
+    "local": {},
+    "hands": {},
+    "grants": {"handle_kit": {"refusal": "!claimed && !gate_take()", "flag": "claimed",
+                              "writes": ("bool claimed = false;", "claimed = claim_take(")}},
+    "broker_uses": {"write_row": "fixture", "handle_config_post": "fixture"},
+}
+_FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
+                 "handle_config_post"}
+# (what the plant is, file, text replaced, replacement, a word the failure names)
+_FIX_PLANTS = (
+    ("the QR behind a gate a session passes", "canary_wap.ino",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  return httpd_resp_sendstr(req, g_device.api_token_str);",
+     "if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  return httpd_resp_sendstr(req, g_device.api_token_str);", "names api_auth_check,"),
+    ("the kit's grant also taking the cookie", "canary_wap.ino",
+     "if (api_auth_bearer_valid(req, g_device.api_token_str)) {",
+     "if (api_auth_bearer_valid(req, g_device.api_token_str) || cv_session_validate(req)) {",
+     "names cv_session_validate,"),
+    ("the QR answering above its refusal", "canary_wap.ino",
+     "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  return httpd_resp_sendstr(req, g_device.api_token_str);",
+     "  httpd_resp_sendstr(req, g_device.api_token_str);\n"
+     "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  return ESP_OK;", "before any refusal"),
+    ("a refusal that does not return", "canary_wap.ino",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str)) log_refusal(req);",
+     "before any refusal"),
+    ("a gate result stored and tested later", "canary_wap.ino",
+     "if (api_auth_bearer_valid(req, g_device.api_token_str)) {",
+     "bool ok = api_auth_bearer_valid(req, g_device.api_token_str);\n  if (ok) {",
+     "whole condition"),
+    ("a new route that reaches the kit behind a session", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");", "  send_kit(req);\n  return ESP_OK;",
+     "not in SECRET_ANSWERS"),
+    ("a session wrapper on the way to the secret", "canary_wap.ino",
+     "static void send_kit(httpd_req_t* req) {\n",
+     "static bool signed_in(httpd_req_t* r) { return cv_session_validate(r); }\n"
+     "static void send_kit(httpd_req_t* req) {\n  if (!signed_in(req)) return;\n",
+     "names signed_in,"),
+    ("the claim flag set by hand", "canary_wap.ino",
+     "  claimed = claim_take(presented);\n", "  claimed = true;\n", "claimed"),
+    ("a second api_auth_bearer_valid over the cookie", "csi_integration.cpp", "",
+     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
+     "  return t && cv_session_validate(req);\n}\n", "defined in"),
+    ("the bearer gate taking the cookie", "api_auth.h",
+     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
+     "  return t && header_matches(req, t);",
+     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
+     "  return cv_session_validate(req) || header_matches(req, t);",
+     "api_auth_bearer_valid() names cv_session_validate"),
+    ("the move gate's bearer taking a session", "csi_mqtt.cpp",
+     "&& api_auth_bearer_valid(req, tok);", "&& authorized(req, tok);",
+     "a bearer that names authorized"),
+    ("the move gate's bearer also taking the cookie", "csi_mqtt.cpp",
+     "&& api_auth_bearer_valid(req, tok);",
+     "&& (api_auth_bearer_valid(req, tok) || authorized(req, tok));",
+     "a bearer that names authorized"),
+    ("the move gate also letting a session through", "csi_mqtt.cpp",
+     "if (move_needs_password(before, c, typed, bearer)) {",
+     "if (move_needs_password(before, c, typed, bearer) && !authorized(req, tok)) {",
+     "move gate names authorized"),
+    ("a dead move gate", "csi_mqtt.cpp",
+     "if (move_needs_password(", "if (false && move_needs_password(", "not the whole condition"),
+    ("the move gate handed no bearer", "csi_mqtt.cpp",
+     "typed, bearer)) {", "typed, true)) {", "no bearer"),
+    ("the move gate asking a session itself", "csi_mqtt.cpp",
+     "  if (bearer) return false;\n",
+     "  if (bearer || csi_integration::session_validate_cookie(nullptr)) return false;\n",
+     "move_needs_password() names session_validate_cookie"),
+    ("the broker save above its move gate", "csi_mqtt.cpp",
+     "  if (move_needs_password(",
+     "  if (!write_row(c)) return ESP_OK;\n  if (move_needs_password(", "no move gate before it"),
+    ("a move gate that does not return", "csi_mqtt.cpp",
+     "    httpd_resp_set_status(req, \"403 Forbidden\");\n    return ESP_OK;\n",
+     "    httpd_resp_set_status(req, \"403 Forbidden\");\n", "no move gate before it"),
+    ("the GET answering the broker password", "csi_mqtt.cpp",
+     "c.pass[0] ? \"set\" : \"none\"", "c.pass", "handle_config_get"),
+)
+
+
+def _fixture_sources() -> dict:
+    return {"api_auth.h": _FIX_API_AUTH, "canary_wap.ino": _FIX_INO,
+            "csi_integration.cpp": "", "csi_mqtt.cpp": _FIX_MQTT}
+
+
+def _assert_secret_rules() -> None:
+    """Each plant fails the secret rule for its reason; the clean fixture
+    passes it. Runs every time, before the tree."""
+    clean = secret_rule_problems(_fixture_sources(), _FIX_HANDLERS, **_FIX_TABLES)
+    assert clean == [], "the secret rule's clean fixture fails: " + "; ".join(clean)
+    for what, fname, old, new, word in _FIX_PLANTS:
+        sources = _fixture_sources()
+        assert old in sources[fname], f"fixture plant {what!r}: its text is not in {fname}"
+        sources[fname] = sources[fname].replace(old, new, 1) if old else sources[fname] + new
+        got = secret_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+        assert any(word in p for p in got), (
+            f"the secret rule passed a plant ({what}): expected a problem naming {word!r}, "
+            f"got {got!r}")
+
+
 def main() -> int:
     _assert_parser_robust()
+    _assert_secret_rules()
     sources = {}
+    secret_sources = {}  # the same, raw strings blanked first (the secret rule)
     for path in sorted(SKETCH.glob("*.h")) + sorted(SKETCH.glob("*.cpp")) + sorted(
             SKETCH.glob("*.ino")):
         if path.name == "web_assets_gz.h":
             continue  # generated byte arrays
-        sources[path.name] = strip_comments(path.read_text(errors="replace"))
+        raw = path.read_text(errors="replace")
+        sources[path.name] = strip_comments(raw)
+        secret_sources[path.name] = strip_comments(blank_raw_strings(raw))
 
     routes = []  # (uri, method, handler_expr, file)
 
@@ -354,6 +1246,8 @@ def main() -> int:
             failures.append(f"{method} {uri}: handler {handler} "
                             f"({fname}) has NO credential gate and is not "
                             f"on the public allowlist")
+
+    failures += secret_rule_problems(secret_sources, handler_names(routes))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):
