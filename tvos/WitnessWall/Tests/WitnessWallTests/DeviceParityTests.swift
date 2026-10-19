@@ -224,6 +224,124 @@ final class DeviceParityTests: XCTestCase {
                        "the durable facts still draw the device")
     }
 
+    // MARK: - the birth day
+
+    /// Verbatim `fleet_selfreport_build()` output for a Canary that met a clock
+    /// the evening it was set up — the same literal as the iPhone's
+    /// FleetSelfReportTests.bornBody and the first birth-day contract vector.
+    private let bornJSON = #"""
+    {"kernel":"Front Door","verified_through":"now","devices":[{"name":"Front Door","online":true,"chain":"ok","product":"canary-wap","chain_height":42,"born_day":20673,"born_exact":true}]}
+    """#
+
+    /// And one that sat on a shelf first (FleetSelfReportTests.firstDatedBody).
+    private let firstDatedJSON = #"""
+    {"kernel":"Shed","verified_through":"now","devices":[{"name":"Shed","online":true,"chain":"ok","product":"canary-wap","chain_height":7,"born_day":20666,"born_exact":false}]}
+    """#
+
+    private static let en = Locale(identifier: "en_US")
+
+    /// The UTC calendar day of a born day, read independently of the Wall's
+    /// formatter: a born day is a UTC day, so a TV west of Greenwich must not
+    /// show the day before.
+    private func utcDay(_ date: Date) -> String {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        let c = utc.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// "Born" is the device's word, and only when the device says the day is
+    /// exact.
+    func testAnExactBirthDayReadsBorn() throws {
+        let d = try device(from: bornJSON)
+        XCTAssertEqual(d.bornDay, 20673)
+        XCTAssertEqual(d.bornExact, true)
+        XCTAssertEqual(d.bornLabel, "Born")
+        XCTAssertEqual(utcDay(try XCTUnwrap(d.bornOn)), "2026-08-08")
+        XCTAssertEqual(d.wallBornLine(locale: Self.en), "Born Aug 8, 2026")
+        XCTAssertNil(d.wallBornNote, "an exact day needs no explanation")
+    }
+
+    /// A day learned late is shown — it bounds the device's age — but never
+    /// called a birthday.
+    func testAFirstDatedDayIsNeverCalledABirthday() throws {
+        let d = try device(from: firstDatedJSON)
+        XCTAssertEqual(d.bornDay, 20666)
+        XCTAssertEqual(d.bornExact, false)
+        XCTAssertEqual(d.bornLabel, "First dated")
+        XCTAssertEqual(d.wallBornLine(locale: Self.en), "First dated Aug 1, 2026")
+        XCTAssertNotNil(d.wallBornNote, "the label says why it is not 'Born'")
+    }
+
+    /// A device that has never met a clock (or a display, which has no key of
+    /// its own) sends neither key, and the Wall draws no line at all — never
+    /// the epoch.
+    func testNoBirthDayDrawsNothing() throws {
+        let d = try device(from: displayJSON)
+        XCTAssertNil(d.bornDay)
+        XCTAssertNil(d.bornExact)
+        XCTAssertNil(d.bornLabel)
+        XCTAssertNil(d.wallBornLine())
+        XCTAssertNil(d.wallBornNote)
+    }
+
+    /// The birth day is written once on the device and never restated, so a
+    /// source that went dark keeps it with the other durable facts.
+    func testABirthDaySurvivesTheSourceGoingDark() throws {
+        let snapshot = try JSONDecoder().decode(FleetSnapshot.self, from: Data(bornJSON.utf8))
+        let remembered = snapshot.withEveryDeviceOffline().devices[0]
+        XCTAssertFalse(remembered.online)
+        XCTAssertEqual(remembered.bornDay, 20673)
+        XCTAssertEqual(remembered.bornExact, true)
+    }
+
+    /// witness-core's fleet contract vectors, which carry a `born` line per
+    /// row (the label and the UTC day, or null). The Wall decodes the core's
+    /// `normalized` snapshot in production, so that is replayed first; the
+    /// raw `input` goes through this decoder's own backstop and must reach
+    /// the same birth day — the window edges and the malformed rows included.
+    func testEveryContractVectorsBornLineReadsTheSameHere() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // WitnessWallTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // WitnessWall
+            .deletingLastPathComponent()   // tvos
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("tvos/witness-core/tests/fixtures/fleet_contract_vectors.json")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path),
+                          "repo checkout not visible from the test host; " +
+                          "witness-core's fleet_contract test remains the gate for these vectors")
+        let file = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let vectors = try XCTUnwrap(file["vectors"] as? [[String: Any]])
+        var lines = 0
+        for vector in vectors {
+            let name = vector["name"] as? String ?? "?"
+            let normalized = try XCTUnwrap(vector["normalized"])
+            let snapshot = try JSONDecoder().decode(
+                FleetSnapshot.self, from: JSONSerialization.data(withJSONObject: normalized))
+            let born = vector["born"] as? [Any] ?? Array(repeating: NSNull(), count: snapshot.devices.count)
+            XCTAssertEqual(born.count, snapshot.devices.count, "\(name): one born entry per row")
+            for (i, d) in snapshot.devices.enumerated() where i < born.count {
+                if let want = born[i] as? [String: String] {
+                    XCTAssertEqual(d.bornLabel, want["label"], "\(name) row \(i): label")
+                    XCTAssertEqual(d.bornOn.map { self.utcDay($0) }, want["utc_date"], "\(name) row \(i): UTC day")
+                    lines += 1
+                } else {
+                    XCTAssertNil(d.wallBornLine(), "\(name) row \(i): no day, so no line")
+                }
+            }
+            // The backstop: the raw bytes, decoded here without the core.
+            guard let input = (vector["input"] as? String)?.data(using: .utf8),
+                  (try? JSONSerialization.jsonObject(with: input)) is [String: Any] else { continue }
+            let raw = try JSONDecoder().decode(FleetSnapshot.self, from: input)
+            XCTAssertEqual(raw.devices.map(\.bornDay), snapshot.devices.map(\.bornDay),
+                           "\(name): this decoder and the core disagree about a birth day")
+            XCTAssertEqual(raw.devices.map(\.bornExact), snapshot.devices.map(\.bornExact),
+                           "\(name): this decoder and the core disagree about born_exact")
+        }
+        XCTAssertGreaterThanOrEqual(lines, 4, "the vectors should pin Born and First dated lines")
+    }
+
     // MARK: - the fleet-level verdict
 
     /// The count under the fleet name must not treat a chainless display as a
