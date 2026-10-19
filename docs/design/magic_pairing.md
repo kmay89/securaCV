@@ -83,13 +83,15 @@ While the door is **shut** (the steady state of every owned Canary):
   WAP the pairing channel answers as before (its Opera scan response, its
   bonded services, which refuse an unauthenticated key). A phone that pairs
   with that channel anyway by Just Works (one with no display or no yes/no,
-  which NimBLE's tables pair with no owner to ask) **keeps no bond**: the WAP
-  deletes it as it is made and drops the link (F191), so such bonds can no
-  longer fill the 3-bond store against the owner (F209). A keyboard-only
-  phone, which pairs by Passkey Entry, is shown no passkey outside the
-  owner's pairing mode (Pair in the web UI), and NimBLE is handed one it
-  refuses, so that pairing cannot complete; the digits never reach the
-  health log.
+  which NimBLE's tables pair with no owner to ask) **has its bond deleted as
+  it is reported** and its link dropped (F191; when the report never reached
+  the channel, from the stack's record of the link; the health log names the
+  rare bond the stack keeps, which the WAP asks again each minute), so such
+  bonds no longer fill the 3-bond store against the owner (F209). A
+  keyboard-only phone, which pairs by Passkey Entry, is shown no passkey
+  outside the owner's pairing mode (Pair in the web UI), and NimBLE is handed
+  one it refuses, so that pairing cannot complete; a phone that compares six
+  digits is answered no outside it; the digits never reach the health log.
 - A standard Improv client that reaches the service reads **awaiting
   authorization** (`0x01`) on the state characteristic. A `WIFI_SETTINGS`
   write earns `NotAuthorized` (`0x04`) and starts nothing.
@@ -273,8 +275,9 @@ The byte vectors are pinned on both ends by
   yields is unauthenticated, and the console, OTA, witness-export and bonded
   provisioning characteristics (`READ_AUTHEN` / `WRITE_AUTHEN`) refuse it.
   The door's profile keeps no bond; outside it, a Just Works pairing that
-  bonds anyway has its bond deleted and its link dropped by the pairing
-  channel (`apply_auth_complete()`, F191).
+  bonds anyway has its bond deleted as it is reported and its link dropped
+  by the pairing channel (`apply_auth_complete()`, F191, or
+  `refuse_unauthenticated_links()` when the report never came).
 
 ### 3.5 The claim ticket (WAP)
 

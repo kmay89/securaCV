@@ -1594,11 +1594,17 @@ that finds NimBLE's bond store full, and a bond or CCCD record with no
 room, and never deletes a bond to make room;
 `apply_auth_complete()` lists a phone only when the store kept its bond,
 and deletes a bond that is not authenticated (a Just Works pairing no owner
-asked for) with the radio quiet and drops its link, F191; a passkey for the
+asked for) with the radio quiet and drops its link, F191, leaving the
+owner's pairing state as it is; `refuse_unauthenticated_links()` does the
+same from the stack's record of a live link whose report never came (a
+dropped event, the pre-owner window), and `retry_kept_bonds()` asks again
+each minute for a bond the stack kept, F191's review; a passkey for the
 phone to type is shown only inside the owner's pairing mode, and outside it
-NimBLE is handed one above 999999, which it refuses, F191; no pairing digits
-reach the health log; GET /api/bluetooth counts the bond store beside the
-list, `bond_store`, and the health log names a store full of unlisted bonds,
+NimBLE is handed one above 999999, which it refuses, F191, and a Numeric
+Comparison outside it is answered no at once, F191's review; no pairing
+digits reach the health log; GET /api/bluetooth counts the bond store
+beside the list, `bond_store`, read again at a refused pairing and a
+dropped event, and the health log names a store full of unlisted bonds,
 F209; the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
@@ -1613,8 +1619,9 @@ NimBLE init; before it, and while another bring-up runs, they answer 503,
 `send_boot_bring_up_pending()` / `send_bring_up_refused()`: "still
 starting" once the sketch has started its boot bring-up,
 `bluetooth_channel::boot_bring_up_started()`, set by
-`bringup_worker_started()` as the gate opens, "has not started yet" only
-before that, and in safe mode, which the sketch marks with
+`bringup_worker_started()` as the gate opens, "not ready yet; try again"
+only before that (it promised a start until F259's review), and in safe
+mode, which the sketch marks with
 `bluetooth_channel::skip_boot_bring_up_for_safe_mode()`, that Bluetooth
 stays off; a stack a tap brings up after the boot bring-up left it down
 carries none of the worker's services, which the worker reports with
@@ -1719,28 +1726,43 @@ Owner: U1.
   - Repro: (a) as "No Input No Output" (then "Display Only"), connect and
     bond; read `GET /api/bluetooth` and `GET /api/bluetooth/paired`; repeat
     three times, then pair a phone the normal way (Pair, confirm the six
-    digits). (b) As "Keyboard Only", connect and bond with pairing mode off;
+    digits); once more as "No Input No Output" with pairing mode started
+    first. (b) As "Keyboard Only", connect and bond with pairing mode off;
     then start pairing mode and bond again; read `GET /api/bluetooth` while
-    the phone asks for the digits, and `GET /api/logs`. (c) On the updated
-    device, read `GET /api/bluetooth` after boot, then Clear all.
-  - Expected: (a) each Just Works link drops within a second of its bond
-    (the phone's pairing fails or the link ends), the health log has `BLE
-    pairing refused: an unauthenticated bond was deleted and its link
-    dropped`, nothing is listed, `bond_store` reads `held` 0 and `unlisted`
-    0, and the normal pairing after the three succeeds and is listed (before
-    F191 the three bonds stayed, unlisted, and the fourth pairing was
-    refused with `BLE pairing refused: the bond store is full`). (b) with
+    the phone asks for the digits, and `GET /api/logs`. (b2) With the
+    phone's default IO capability (a display with a yes/no), connect and
+    bond with pairing mode off, then again a minute after a completed
+    pairing, and once in pairing mode with `allow_pairing` turned off. (c)
+    On the updated device, read `GET /api/bluetooth` after boot, then Clear
+    all.
+  - Expected: (a) each Just Works link drops within a second of its bond (the
+    phone's pairing fails or the link ends), the health log has `BLE pairing
+    refused: an unauthenticated bond was deleted and its link dropped`,
+    nothing is listed, `bond_store` reads `held` 0 and `unlisted` 0, and the
+    normal pairing after the three succeeds and is listed (before F191 the
+    three bonds stayed, unlisted, and the fourth pairing was refused with `BLE
+    pairing refused: the bond store is full`); the one in pairing mode leaves
+    the web UI in pairing mode (until F191's review it read failed and ended
+    it); if a line reads `...kept by the stack (retried each minute; Clear all
+    deletes it)...`, a minute later the log has `BLE unauthenticated bond the
+    stack kept: deleted on a retry` and `bond_store` reads 0 again. (b) with
     pairing mode off the phone asks for digits the WAP shows nowhere (no PIN
     box, no `pin` in `GET /api/bluetooth`), the pairing fails on the phone
     within about 30 s whatever is typed, and the health log has `BLE pairing
-    passkey not shown: no pairing mode (Pair in the web UI first)`; in
-    pairing mode the PIN box shows six digits, typing them bonds and lists
-    the phone, and the health log's `Pairing PIN displayed` line carries no
-    digits (before F191 the digits showed and were logged in or out of
-    pairing mode). (c) `bond_store` counts the old bonds as `unlisted` and,
-    when they fill the store, the health log has `BLE bond store full with
-    bonds the paired list does not show: new pairings are refused until Clear
-    all`; nothing is deleted until Clear all, which empties the store.
+    passkey not shown: no pairing mode (Pair in the web UI first)`; in pairing
+    mode the PIN box shows six digits, typing them bonds and lists the phone,
+    and the health log's `Pairing PIN displayed` line carries no digits
+    (before F191 the digits showed and were logged in or out of pairing mode).
+    (b2) each of the three comparisons is refused on the phone at once, the
+    web UI shows no digits and no confirm, `GET /api/bluetooth` has no `pin`,
+    and the health log counts it in the `not shown` line (until F191's review
+    the digits waited for a confirm, and one within a minute of a completed
+    pairing, once confirmed, bonded and listed the phone even with
+    `allow_pairing` off). (c)
+    `bond_store` counts the old bonds as `unlisted` and, when they fill the
+    store, the health log has `BLE bond store full with bonds the paired list
+    does not show: new pairings are refused until Clear all`; nothing is
+    deleted until Clear all, which empties the store.
   - Artifact: `docs/audit/repro/F191/no-owner-no-bond/`.
 - [ ] **The REST answers are whole**
   - Setup: the FULL build; a device name of 32 characters with quotes and
@@ -1782,8 +1804,10 @@ Owner: U1.
     /api/bluetooth/disable` and a reboot); and once with `{"auto_advertise":
     true}` alone in the join window.
   - Expected: (a) before `Initializing Bluetooth Low Energy` (the gate
-    shut) each tap answers 503 `Bluetooth has not started yet; it starts
-    once Wi-Fi setup is done or within five minutes (never in safe mode)`;
+    shut) each tap answers 503 `Bluetooth is not ready yet; try again once
+    Wi-Fi setup is done or within five minutes (never in safe mode)` (until
+    F259's review it said Bluetooth "starts", which a device saved off,
+    where the boot bring-up leaves Bluetooth off, never did);
     from the gate's opening, a moment before that line, until `[OK]
     Bluetooth initialized` (the worker's init running) 503 `Bluetooth is
     still starting; try again in a moment`; the web UI alerts each text.
