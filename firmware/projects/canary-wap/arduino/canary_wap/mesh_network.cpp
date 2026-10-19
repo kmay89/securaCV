@@ -1654,7 +1654,12 @@ static void initiator_complete() {
 }
 
 // This side's role, as the CONFIRM hash names its sender (F94). Only a
-// running pairing asks (MESH_PAIRING_CONFIRM, whose role is set).
+// running pairing asks (MESH_PAIRING_CONFIRM, whose role is set): that
+// state is entered only from PAIRING_INIT or PAIRING_JOIN, which
+// start_pairing_initiator/joiner set with the role, and every other wipe
+// of g_pairing (cancel_pairing, either side's completion) leaves the
+// pairing states. So PAIR_ROLE_NONE never reaches here, and its JOINER
+// mapping is never used.
 static mesh_pair_crypto::ConfirmSender confirm_sender(PairingRole role) {
   return role == PAIR_ROLE_INITIATOR ? mesh_pair_crypto::ConfirmSender::INITIATOR
                                      : mesh_pair_crypto::ConfirmSender::JOINER;
