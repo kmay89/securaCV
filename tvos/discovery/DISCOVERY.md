@@ -62,8 +62,12 @@ GET /api/fleet        →  200 application/json
   "Born <day>" only when `born_exact` is `true`, "First dated <day>" for a
   day without that (a missing flag is not exact), and nothing without a day.
   `fleet_contract_vectors.json` pins all of it, with the line each reader
-  must render (`born`). `chain_height` is still not part of the normalized
-  shape; the Wall ignores it.
+  must render (`born`). Only a Canary that answers `/api/fleet` for itself
+  sends the pair today: the kernel's aggregated document (`FleetRow` in
+  `src/fleet_peers.rs`) and a display's peer rows (`glass_web.cpp`) carry no
+  birth day, so a fleet read through a hub or a display shows none.
+  `chain_height` is still not part of the normalized shape; the Wall
+  ignores it.
 - **Optional wellbeing keys** (a row may carry them; most rows never will):
   `presence` (`"clear"`/`"present"`), `occupants` (`"0"`/`"1"`/`"2+"`),
   `breathing` (`true`/`false` — a breathing lock held or lapsed), and
