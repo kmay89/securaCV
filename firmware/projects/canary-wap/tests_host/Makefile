@@ -581,8 +581,6 @@ SCOOKIE_SRC     = test_session_cookie.cpp
 SCOOKIE_UI_INC  = test_session_cookie_ui.inc
 SCOOKIE_CSI_INC = test_session_cookie_csi.inc
 SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
-# The cuts' list for run-arduino-globals (main's CUT_INCS, #1833); a no-op
-# where the list is not yet read.
 CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
 
 $(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
@@ -1425,9 +1423,6 @@ clean: clean-ble-provision
 # config POST's body read whole through http_body_reader.h (sweep F266), the
 # stub's httpd_req_recv() handing it over in short reads, and the settings
 # read without an error line on a namespace the bridge never wrote (F267).
-# And a save that keeps the stored broker password and moves it (a new host,
-# port, user, TLS mode or CA) takes only the bearer token through the real
-# api_auth.h, never a dashboard session alone (sweep F289).
 MQTT_REINIT_BIN = test_mqtt_reinit
 MQTT_REINIT_SRC = test_mqtt_reinit.cpp
 ifeq ($(shell uname -s),Linux)

@@ -127,6 +127,57 @@ BANNED = (
      "CI compiles only dev and full of the four FEATURE_HTTPS builds "
      "(firmware/flavors.json canary build_envs); dev_ha and usb-onboard "
      "inherit the flag from dev and no workflow builds them"),
+    # Retired by the second review of F289's third road: the WAP's rule,
+    # stated in the flagship's broker paragraph with no device named.
+    ("A dashboard session alone cannot re-point the bridge at another host, "
+     "port, TLS mode or CA while keeping the stored password; that save needs "
+     "the bearer or the password typed again (sweep F289).",
+     "the flagship has no dashboard session and refuses a host-or-port move "
+     "from any caller with 400 password_required_for_new_host "
+     "(mqtt_tls_fields::credential_carry; a TLS-mode or CA change alone is "
+     "not a move there); the WAP's 403 password_needed is for the session "
+     "alone and counts the TLS mode and the CA as moves — each device's rule "
+     "is stated under its own name"),
+)
+
+# Sentences retired from documents the gate above does not scan whole (the
+# sweep ledger quotes retired claims on purpose, as what was retired), each
+# scanned for its own sentence only: (file, needle, what is true instead).
+RETIRED_IN = (
+    # F289's second review: the ledger and LESSONS_LEARNED described the
+    # hand repro (one loop pass after the host write) as what the race test
+    # does under the busy-word mutant.
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "With the busy word never spoken, the first fails at the host write "
+     "with the stored password on a client for `10.0.0.66`.",
+     "with *busy never set, each race test fails on its first check with no "
+     "client opened (the request marked served from a half-written row; "
+     "init() returning false); with the overlap check removed the first "
+     "fails at the save's first write"),
+    ("firmware/LESSONS_LEARNED.md",
+     "with the busy word never spoken the first fails at the host write "
+     "with the stored password on a client for the new host.",
+     "the same: no client is opened under that mutant; the loop task marks "
+     "the request served and the boot's init() returns false"),
+    # The QR hub-provision road's grant called "not the session's": the scan
+    # route takes the pair token, and GET /api/pair/token mints that token
+    # for the cookie (CSI_AUTH_OR_RETURN takes the session before the bearer).
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "but its grant is not the session's: a scan window opens from the boot "
+     "auto-scan or from `POST /api/wifi/qr-scan`, which takes the wizard's "
+     "one-shot pair token (`pair_token_valid()`), never the cookie",
+     "the session buys the pair token over GET /api/pair/token; the camera "
+     "is what it does not hold"),
+    ("firmware/LESSONS_LEARNED.md",
+     "Its grant is not the session's: the scan window opens from the boot "
+     "auto-scan or from `POST /api/wifi/qr-scan` behind the wizard's one-shot "
+     "pair token (`pair_token_valid()`)",
+     "the same"),
+    ("CHANGELOG.md",
+     "behind the pair token and a code in front of the camera, not the "
+     "session",
+     "behind the pair token, which the session can mint, and a code in front "
+     "of the camera, which it cannot"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -155,6 +206,25 @@ MUST_PASS = [
     "CI compiles `dev` and `full`; `dev_ha` and `usb-onboard` inherit the "
     "flag from `dev` and no workflow builds them; none of the four has run "
     "on hardware",
+    # The scoped prose that replaced the unscoped broker-move sentence.
+    "On the WAP, the same save from the dashboard session alone is refused "
+    "`403 password_needed` when it moves the host, port, TLS mode or CA; the "
+    "bearer, or the password typed again, moves it (sweep F289).",
+]
+# The replacements of the RETIRED_IN sentences, which share most of their
+# words with what they replaced.
+MUST_PASS_IN = [
+    "With the busy word never spoken (`open_client()` reporting no save it "
+    "saw), each of the three fails on its first check, with no client opened",
+    "with the busy word never spoken each of the three fails on its first "
+    "check (the loop task marks the request served from a row a save was "
+    "still writing",
+    "and the session reaches it: a scan window opens from the boot auto-scan "
+    "or from `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair "
+    "token (`pair_token_valid()`) and not the cookie — but the session buys "
+    "that token",
+    "behind the pair token, which the session can mint (`GET /api/pair/token` "
+    "takes the cookie), and a code in front of the camera, which it cannot",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -179,6 +249,29 @@ MUST_FAIL = [
     "whoever can load `GET /` or `/setup`. That token is a defense against",
     "`/api/status` `tls_mode_reason`. Those builds are compiled by CI and have\n"
     "never run on hardware. The flagship's release images (`release`,",
+    "clear like the rest of the device API. A dashboard session alone cannot\n"
+    "re-point the bridge at another host, port, TLS mode or CA while keeping the\n"
+    "stored password; that save needs the bearer or the password typed again\n"
+    "(sweep F289). This is compile-tested, host-tested, not yet bench-tested.",
+]
+# And the RETIRED_IN sentences as they stood, wrapped.
+MUST_FAIL_IN = [
+    "  `config_clear` inside the boot's read). With the busy word never spoken,\n"
+    "  the first fails at the host write with the stored password on a client for\n"
+    "  `10.0.0.66`. The review also found `port_or_default()` unreachable with a 0",
+    "  hooks; with the busy word never spoken the first fails at the host write\n"
+    "  with the stored password on a client for the new host. Rule: when a",
+    "  broker with the stored password and no password typed — but its grant is\n"
+    "  not the session's: a scan window opens from the boot auto-scan or from\n"
+    "  `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair token\n"
+    "  (`pair_token_valid()`), never the cookie, and a code must be in front of",
+    "  stored password and no password typed. Its grant is not the session's:\n"
+    "  the scan window opens from the boot auto-scan or from\n"
+    "  `POST /api/wifi/qr-scan` behind the wizard's one-shot pair token\n"
+    "  (`pair_token_valid()`), and a code must be in front of the camera",
+    "  still re-points the broker with the stored password — behind the pair\n"
+    "  token and a code in front of the camera, not the session; named in the\n"
+    "  ledger.",
 ]
 
 
@@ -190,6 +283,20 @@ def normalized(text: str) -> str:
 def offenders_in(text: str) -> list[str]:
     flat = normalized(text)
     return [needle for needle, _why in BANNED if needle in flat]
+
+
+def retired_in_offenders(text: str) -> list[str]:
+    flat = normalized(text)
+    return [needle for _rel, needle, _why in RETIRED_IN if needle in flat]
+
+
+def scan_retired_in(root: Path = REPO) -> dict[str, list[str]]:
+    """{relative path: [its own retired sentences found]} over RETIRED_IN."""
+    found: dict[str, list[str]] = {}
+    for rel, needle, _why in RETIRED_IN:
+        if needle in normalized((root / rel).read_text(encoding="utf-8")):
+            found.setdefault(rel, []).append(needle)
+    return found
 
 
 def scan(root: Path = REPO) -> dict[str, list[str]]:
@@ -222,6 +329,22 @@ class TheGuardItself(unittest.TestCase):
             with self.subTest(s=s):
                 self.assertNotEqual(offenders_in(s), [], "the ban lost its teeth")
 
+    def test_every_scoped_needle_is_a_sentence_with_a_reason(self):
+        for rel, needle, why in RETIRED_IN:
+            with self.subTest(needle=needle):
+                self.assertTrue((REPO / rel).is_file(), f"{rel} moved — update RETIRED_IN")
+                self.assertGreaterEqual(len(needle.split()), 2)
+                self.assertEqual(needle, normalized(needle).strip())
+                self.assertTrue(why)
+
+    def test_scoped_replacements_pass_and_retired_forms_fail(self):
+        for s in MUST_PASS_IN:
+            with self.subTest(s=s):
+                self.assertEqual(retired_in_offenders(s), [])
+        for s in MUST_FAIL_IN:
+            with self.subTest(s=s):
+                self.assertNotEqual(retired_in_offenders(s), [], "the ban lost its teeth")
+
 
 class TheDocuments(unittest.TestCase):
     def test_every_scanned_file_exists(self):
@@ -237,6 +360,80 @@ class TheDocuments(unittest.TestCase):
             "a retired security claim is back; each row of BANNED says what "
             "shipped instead:\n" + "\n".join(lines),
         )
+
+    def test_no_retired_sentence_survives_where_it_stood(self):
+        found = scan_retired_in()
+        lines = [f"  {rel}: {hits}" for rel, hits in sorted(found.items())]
+        self.assertEqual(
+            found, {},
+            "a sentence retired for being untrue is back in the file it stood "
+            "in; each row of RETIRED_IN says what is true instead:\n" + "\n".join(lines),
+        )
+
+
+# What the rewritten sentences claim of the code, held to the code: the
+# ledger is what the next sweep reads, so a claim it makes about a gate must
+# stay the gate's.
+WAP = REPO / "firmware/projects/canary-wap/arduino/canary_wap"
+FLAGSHIP_NET = REPO / "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
+FLAGSHIP_TLS = REPO / "firmware/canary/lib/securacv_mqtt/src/mqtt_tls_fields.h"
+
+
+def body_after(text: str, start: str, end_pattern: str) -> str:
+    """The text from `start` to the next match of `end_pattern` after it."""
+    i = text.index(start)
+    m = re.compile(end_pattern).search(text, i + len(start))
+    return text[i:m.start()] if m else text[i:]
+
+
+class TheClaimsHoldToTheCode(unittest.TestCase):
+    def test_the_session_buys_the_pair_token_and_the_scan_route_takes_it(self):
+        csi = (WAP / "csi_integration.cpp").read_text(encoding="utf-8")
+        # GET /api/pair/token is handle_pair_token, whose first statement is
+        # the session-or-bearer macro ...
+        self.assertIn('.uri = "/api/pair/token", .method = HTTP_GET, .handler = handle_pair_token', csi)
+        handler = body_after(csi, "esp_err_t handle_pair_token(httpd_req_t* req) {", r"\n}\n")
+        first = [ln.strip() for ln in handler.splitlines()[1:] if ln.strip()][0]
+        self.assertEqual(first, "CSI_AUTH_OR_RETURN(req);")
+        # ... and that macro takes the cookie before it looks for a bearer.
+        macro = body_after(csi, "#define CSI_AUTH_OR_RETURN(req)", r"\n\n")
+        cookie = macro.index("cv_session_validate((req))")
+        bearer = macro.index("api_auth_check_optional((req), g_api_token)")
+        self.assertLess(cookie, bearer)
+        # POST /api/wifi/qr-scan takes that token and no cookie of its own.
+        ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
+        self.assertIn('.uri = "/api/wifi/qr-scan", .method = HTTP_POST,   .handler = handle_qr_scan_start', ino)
+        start = body_after(ino, "static esp_err_t handle_qr_scan_start(httpd_req_t* req) {", r"\nstatic esp_err_t ")
+        self.assertIn("csi_integration::pair_token_valid(token)", start)
+        for cookie_gate in ("cv_session_validate", "session_validate_cookie", "CSI_AUTH_OR_RETURN"):
+            self.assertNotIn(cookie_gate, start)
+        # The scan task's hub-code branch re-points the broker with the stored
+        # password and re-checks the token only for a Wi-Fi-only code.
+        self.assertIn("prov.wifi_only && !g_qr_auto_scan &&\n"
+                      "                   !csi_integration::pair_token_valid(g_qr_scan_token)", ino)
+        hub = body_after(ino, "if (!prov.wifi_only && prov.host[0]) {", r"\n          }\n")
+        self.assertIn("strlcpy(mc.host, prov.host, sizeof(mc.host));", hub)
+        self.assertIn("mc.port = prov.port;", hub)
+        self.assertIn("csi_mqtt::config_save(mc)", hub)
+        self.assertIn("csi_mqtt::request_reinit()", hub)
+        self.assertNotIn("mc.pass", hub)
+
+    def test_the_flagship_rule_is_host_or_port_from_any_caller(self):
+        net = FLAGSHIP_NET.read_text(encoding="utf-8")
+        for word in ("cv_session", "session_validate_cookie", "Set-Cookie"):
+            self.assertNotIn(word, net, "the flagship grew a dashboard session; re-read SECURITY_MODEL's broker paragraph")
+        self.assertIn("tf::Verdict::PasswordRequiredForNewHost", net)
+        tls = FLAGSHIP_TLS.read_text(encoding="utf-8")
+        self.assertIn("inline CredentialCarry credential_carry(const char* stored_host, uint16_t stored_port, bool stored_pass,\n"
+                      "                                        const char* new_host, uint16_t new_port, bool pass_given)", tls)
+        self.assertIn("const bool same_endpoint = !fresh && same_broker_host(stored_host, new_host) && stored_port == new_port;", tls)
+        self.assertIn("c.refuse = !fresh && stored_pass && !pass_given;", tls)
+        # And the WAP's counts the TLS mode and the CA, for the session alone.
+        wap = (WAP / "csi_mqtt.cpp").read_text(encoding="utf-8")
+        gate = body_after(wap, "static bool move_needs_password(const Config& before, const Config& after,", r"\n}\n")
+        self.assertIn("if (bearer) return false;", gate)
+        self.assertIn("if (before.tls_mode != after.tls_mode) return true;", gate)
+        self.assertIn("return ca_in_body;", gate)
 
 
 if __name__ == "__main__":

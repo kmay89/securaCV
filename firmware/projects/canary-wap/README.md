@@ -321,7 +321,7 @@ make help               # Show all targets
 | `/api/fleet` | GET/OPTIONS | The coarse fleet roll-call (name, online, chain verdict); the one `/api/` row here that answers without a token ([`DISCOVERY.md`](../../../tvos/discovery/DISCOVERY.md)) |
 | `/api/identify` | POST | Blink + chirp so you can find the unit (`duration_ms`, default ~15 s) |
 | `/api/pairing-qr` | GET | The pairing receipt as a QR: device id, base URL and token, plus `tls_cert_fp` on a TLS-enabled device |
-| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above) |
+| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above); a save that moves the broker while keeping the stored password takes the bearer or the password typed again (`403 password_needed` from a session alone) |
 | `/api/settings` | GET/POST | Presence preset, sensitivity, pet mode, quiet hours, privacy ceiling, `filter_foreign` and the household time zone ([`csi_developer_api.md`](../../../docs/csi_developer_api.md)) |
 
 The table is the common subset, not the whole surface: the sketch registers
@@ -335,12 +335,10 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie, with two exceptions that
-take the bearer header alone, because the landing page mints that session for
-any host on the home network: `/api/pairing-qr` (it carries the token), and a
-`/api/mqtt/config` save that keeps the stored broker password while changing
-the broker host, port, user, encryption or CA (a session gets `403
-password_needed`, and typing the password again is the way past it).
+as a bearer header or the dashboard's session cookie, with one exception that
+takes the bearer header alone, because the landing page mints that session for
+any host on the home network: `/api/pairing-qr` (it carries the token). The
+`/api/mqtt/config` row names the one save the session alone cannot make.
 
 ```json
 {

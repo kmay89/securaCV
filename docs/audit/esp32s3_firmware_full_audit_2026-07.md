@@ -124,15 +124,16 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   `GET /api/provisioning-receipt` (the bearer token, the SoftAP password, the TLS pin) and
   `GET /api/pairing-qr` (the token), so any LAN host could read the token with no BOOT tap; since
   sweep F289 both routes take the `Authorization: Bearer` header alone (`api_auth_bearer_valid`,
-  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. See
-  `docs/audit/repo_todo_sweep_2026-09.md` F289. Its follow-up: the receipt's
-  bearer grant counts a wrong token toward the lockout
-  (`api_auth_bearer_grant`), and a `POST /api/mqtt/config` that keeps the
-  stored broker password while changing where it goes takes the bearer, so
-  the session can no longer send that password to a broker of its choosing
-  through that route. Still open: the camera's QR provisioning re-point
-  (`qr_scan_task_fn`) keeps the stored user and password when a scanned SCV1
-  code moves the broker host. Also host-tested only.)*
+  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. And since sweep F289's
+  third road the session cannot re-point the MQTT bridge at a new host, port, TLS mode or CA over
+  `POST /api/mqtt/config` while keeping the stored broker password — the save answers
+  `403 password_needed` until the password is typed or a bearer sent — so the password the config
+  GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
+  QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
+  the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
+  the camera. F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
+  toward the lockout (`api_auth_bearer_grant`), also host-tested only. See
+  `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the

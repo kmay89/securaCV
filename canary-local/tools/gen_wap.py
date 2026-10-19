@@ -337,7 +337,8 @@ ROUTES = [
      "desc": "pre-flight checks (Wi-Fi/Camera/Bluetooth/SD/Microphone/GPIO)", "auth": "open (setup)"},
     {"method": "GET/POST", "path": "/api/mqtt/config", "kind": "json",
      "desc": "optional Home Assistant broker host/port/user/pass",
-     "auth": "session cookie or bearer; a save that moves the saved password: bearer"},
+     "auth": "session cookie or bearer; a broker move that keeps the saved password: "
+             "bearer, or the password typed again"},
     {"method": "POST", "path": "/api/mqtt/test", "kind": "json", "desc": "test the broker connection",
      "auth": "session cookie or bearer"},
 ]

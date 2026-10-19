@@ -34,29 +34,32 @@ to a fixed point, every function that calls one). What it reads:
     the any-session class, called or not, and hold no goto or preprocessor
     line.
   - csi_mqtt.cpp: only BROKER_PASSWORD_USES name the stored broker password,
-    and POST /api/mqtt/config's save is preceded by a returning `if` that
-    refuses on `!<bearer gate>(...)` and names no any-session gate, so a
-    save that moves the kept password takes the bearer header. The route's
-    own session gate for the rest of the save stays: the dashboard's.
+    and POST /api/mqtt/config's first write of the row or the CA is preceded
+    by a returning `if` whose whole condition is the move gate
+    (move_needs_password(), #1835), handed a `const bool` declared at the top
+    of the handler whose `&&` terms include a bearer gate's call; neither
+    that condition, nor the bearer, nor the gate's own body names an
+    any-session gate. So a save that moves the kept password takes the
+    bearer header or the password typed again. The route's own session gate
+    for the rest of the save stays: the dashboard's.
   - Each bearer gate is defined once, in its BEARER_GATES home, and names no
-    any-session gate; a wrapper of one (csi_mqtt's bearer_authorized) is a
-    single `return` whose `&&` terms include the api_auth.h gate's call.
+    any-session gate.
   - The modules' own copies of the token (csi_integration's g_api_token,
     csi_mqtt's provider, each register_routes module's auth_token_storage()):
     named only by the functions and macros MODULE_TOKEN_COPIES lets keep it,
     and in csi_mqtt's handlers only read into a local that is handed to a
-    gate and nothing else. Every module canary_wap.ino hands the token to
-    has an entry.
+    gate, or tested against nullptr, and nothing else. Every module
+    canary_wap.ino hands the token to has an entry.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
 it does not know (a copy in a global, a member under another name, a whole
 struct handed out, a copy a module's keeper passes on, a gate called through
 an object or a pointer) passes it. Whether a gate decides right, whether the
-receipt's tap and claim are right, and what the broker condition moves are
-the host suites' (test_receipt_grant, test_receipt_authority,
+receipt's tap and claim are right, and what the move gate counts as a move
+are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and twenty-one plants that each fail it.
+run: a clean sketch that passes and twenty-five plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -160,7 +163,6 @@ BEARER_GATES = {
     "api_auth_bearer_valid": "api_auth.h",  # silent, records nothing
     "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
     "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
-    "bearer_authorized": "csi_mqtt.cpp",    # api_auth_bearer_valid, no empty token
 }
 # The gates a landing-page caller passes: the cv_session cookie, every gate
 # that takes it or a Bearer header, and the pair token the landing hands to
@@ -237,13 +239,18 @@ OTHER_GRANTS = {
 BROKER_PASSWORD = re.compile(r"(?:\.|->)\s*pass\b(?!\s*\[\s*0\s*\])")
 BROKER_PASSWORD_USES = {
     "config_load": "reads it from NVS into the caller's Config",
-    "config_save": "writes it to NVS",
+    "write_row": "writes it to NVS, inside its caller's SaveScope",
     "open_client": "hands it to the MQTT client, for the broker it was saved with",
-    "handle_config_post": "takes a typed one, or keeps the stored one behind the re-point gate",
+    "handle_config_post": "takes a typed one, or keeps the stored one behind the move gate",
 }
-# The route that may send the kept broker password somewhere new, and the
-# call a moved password must not reach without a bearer gate refusing first.
-BROKER_REPOINT = {"handler": "handle_config_post", "save": "config_save"}
+# The route that may send the kept broker password somewhere new (sweep
+# F289, the third road, #1835): its handler, the writes a moved password must
+# not reach before the move gate has refused, and the move gate, whose
+# bearer argument is a `const bool` the handler computes once from a bearer
+# gate (the bearer half of authorized()).
+BROKER_REPOINT = {"handler": "handle_config_post",
+                  "writes": ("write_row", "write_ca", "config_save", "ca_save"),
+                  "gate": "move_needs_password"}
 
 # The modules' own copies of the bearer token: what csi_integration::init()
 # and each ns::register_routes(server, token) keep of the token canary_wap.ino
@@ -656,10 +663,8 @@ def any_session_gates(sources: dict) -> set:
 
 def bearer_gate_problems(sources: dict, any_session: set) -> list:
     """Each bearer gate is defined once, in its BEARER_GATES home, and names
-    no gate in the any-session class. One outside api_auth.h is a wrapper: a
-    single `return` whose `&&` terms include an api_auth.h gate's call."""
+    no gate in the any-session class."""
     problems = []
-    api_auth_gates = "|".join(g for g, home in BEARER_GATES.items() if home == "api_auth.h")
     for gate, home in sorted(BEARER_GATES.items()):
         defs = [(fname, b, e) for fname, text in sorted(sources.items())
                 for name, _p, _h, b, e in functions(text, indented=True) if name == gate]
@@ -674,17 +679,6 @@ def bearer_gate_problems(sources: dict, any_session: set) -> list:
             if took:
                 problems.append(f"{fname}: {gate}() names {', '.join(took)}, a gate a landing-page "
                                 f"caller passes: a bearer gate takes the Authorization header only")
-            if home == "api_auth.h":
-                continue
-            # A wrapper: `return a && ... && api_auth_bearer_valid(...);`, nothing else.
-            ret = re.fullmatch(r"\s*return\b([^;?]*);\s*", body)
-            one_term = ret is not None and len(_terms(ret.group(1), "||")) == 1
-            terms = _terms(ret.group(1), "&&") if one_term else []
-            if not any(re.fullmatch(r"\s*(?:" + api_auth_gates + r")\s*\([^()]*\)\s*", t)
-                       for t in terms):
-                problems.append(f"{fname}: {gate}() is not one `return a && ... && "
-                                f"api_auth_bearer_valid(...);`: a wrapper of a bearer gate is true "
-                                f"only when the gate is")
     return problems
 
 
@@ -897,7 +891,7 @@ def _answer_gate_problems(h, blanked, bodies, calls, carriers, any_session, hand
 def broker_password_problems(sources: dict, handlers: set, any_session: set,
                              uses: dict) -> list:
     """csi_mqtt.cpp's stored broker password: named only by `uses`, and the
-    save that may move it behind a returning bearer refusal."""
+    save that may move it behind the move gate, handed the bearer."""
     text = sources.get("csi_mqtt.cpp")
     if text is None:
         return ["csi_mqtt.cpp not found: the broker-password rule reads it"]
@@ -920,35 +914,86 @@ def broker_password_problems(sources: dict, handlers: set, any_session: set,
     for name in sorted(named & handlers - {BROKER_REPOINT["handler"]}):
         problems.append(f"csi_mqtt.cpp: route handler {name}() names the stored broker password")
 
-    h, save = BROKER_REPOINT["handler"], BROKER_REPOINT["save"]
+    h, gate_fn = BROKER_REPOINT["handler"], BROKER_REPOINT["gate"]
     found = [(b, e) for name, _p, _h, b, e in funcs if name == h]
     if h not in handlers or not found:
         return problems + [f"csi_mqtt.cpp: {h}() is not a registered route handler defined at "
-                           f"column 0; BROKER_REPOINT reads its re-point gate"]
+                           f"column 0; BROKER_REPOINT reads its move gate"]
     b, e = found[0]
     code = blanked[b:e]
-    saved = re.search(r"\b" + re.escape(save) + r"\s*\(", code)
-    if saved is None:
-        return problems + [f"csi_mqtt.cpp: {h}() calls no {save}(); BROKER_REPOINT names the "
-                           f"call a moved password must not reach"]
-    gate = re.compile(r"\s*!\s*(?:" + "|".join(map(re.escape, BEARER_GATES)) + r")\s*\([^()]*\)\s*")
+
+    def at(pos):
+        return _line(blanked, b + pos)
+
+    writes = "|".join(map(re.escape, BROKER_REPOINT["writes"]))
+    first = re.search(r"(?<![\w.])(" + writes + r")\s*\(", code)
+    if first is None:
+        return problems + [f"csi_mqtt.cpp: {h}() calls none of "
+                           f"{', '.join(w + '()' for w in BROKER_REPOINT['writes'])}; "
+                           f"BROKER_REPOINT names the writes a moved password must not reach"]
+    # The move gate: defined once at column 0, deciding on what it is handed.
+    defs = [(gb, ge) for name, _p, _h, gb, ge in funcs if name == gate_fn]
+    if len(defs) != 1:
+        problems.append(f"csi_mqtt.cpp: {gate_fn}() is defined {len(defs)} times at column 0; "
+                        f"BROKER_REPOINT reads one move gate")
+    for gb, ge in defs:
+        took = sorted(_names(blanked[gb:ge]) & any_session)
+        if took:
+            problems.append(f"csi_mqtt.cpp: {gate_fn}() names {', '.join(took)}, a gate a "
+                            f"landing-page caller passes: the move gate decides on the bearer "
+                            f"it is handed")
+    whole = re.compile(r"\s*" + re.escape(gate_fn) + r"\s*\(([^()]*)\)\s*")
+    gate_bearer = re.compile(r"\s*(?:" + "|".join(map(re.escape, BEARER_GATES)) +
+                             r")\s*\([^()]*\)\s*")
     gated = False
     for pos, cond, _c, _b, returns in _ifs(code):
-        if pos > saved.start() or _depth(code, pos) != 0 or not returns:
-            continue
-        if not any(gate.fullmatch(t) for t in _terms(cond, "&&")):
+        if not re.search(r"(?<![\w.])" + re.escape(gate_fn) + r"\s*\(", cond):
             continue
         took = sorted(_names(cond) & any_session)
+        call = whole.fullmatch(cond)
         if took:
-            problems.append(f"csi_mqtt.cpp:{_line(blanked, b + pos)}: {h}()'s re-point gate names "
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}()'s move gate names "
                             f"{', '.join(took)}, a gate a landing-page caller passes")
-        else:
+            continue
+        if call is None:
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}()'s move gate is not the whole "
+                            f"condition of its if: `if ({gate_fn}(..., bearer)) {{ ... return "
+                            f"...; }}`")
+            continue
+        if pos > first.start() or _depth(code, pos) != 0 or not returns:
+            continue  # no gate before the write: said below
+        # The bearer it is handed: a `const bool` declared once, at the top
+        # of the handler before the gate, one `||` term whose `&&` terms
+        # include a bearer gate's call, naming no gate a session passes.
+        bearers = []
+        for arg in (a.strip() for a in _terms(call.group(1), ",")):
+            if not re.fullmatch(r"[A-Za-z_]\w*", arg):
+                continue
+            decls = list(re.finditer(r"\bconst\s+bool\s+" + arg + r"\s*=([^;]*);", code))
+            if len(decls) != 1 or decls[0].start() > pos or _depth(code, decls[0].start()) != 0:
+                continue
+            init = decls[0].group(1)
+            took = sorted(_names(init) & any_session)
+            if took:
+                problems.append(f"csi_mqtt.cpp:{at(decls[0].start())}: {h}() hands {gate_fn}() a "
+                                f"bearer that names {', '.join(took)}, a gate a landing-page "
+                                f"caller passes")
+                bearers.append(None)
+                continue
+            terms = _terms(init, "&&") if len(_terms(init, "||")) == 1 else []
+            if any(gate_bearer.fullmatch(t) for t in terms):
+                bearers.append(arg)
+        if not bearers:
+            problems.append(f"csi_mqtt.cpp:{at(pos)}: {h}() hands {gate_fn}() no bearer: one "
+                            f"argument is a `const bool` declared at the top of the handler "
+                            f"before the gate, `... && <bearer gate>(req, tok)` (BEARER_GATES)")
+        elif None not in bearers:
             gated = True
     if not gated:
-        problems.append(f"csi_mqtt.cpp: {h}() reaches {save}() with no re-point gate before it: a "
-                        f"top-level `if (... && !<bearer gate>(req, tok)) {{ ... return ...; }}` "
-                        f"(BEARER_GATES), so a save that moves the kept password takes the "
-                        f"bearer header")
+        problems.append(f"csi_mqtt.cpp: {h}() reaches {first.group(1)}() with no move gate before "
+                        f"it: a top-level `if ({gate_fn}(..., bearer)) {{ ... return ...; }}`, "
+                        f"the bearer from a bearer gate (BEARER_GATES), so a save that moves the "
+                        f"kept password takes the bearer header or the password typed")
     return problems
 
 
@@ -1003,11 +1048,14 @@ def module_token_problems(sources: dict, any_session: set, copies: dict) -> list
                 if u.start() < decl_end and blanked.rfind("\n", 0, b + u.start()) == blanked.rfind(
                         "\n", 0, at):
                     continue  # the declaration itself
+                if re.match(r"\s*[!=]=\s*nullptr\b", body[u.end():]):
+                    continue  # a null test (#1835's bearer: tok != nullptr && ...) hands nothing on
                 head = body[:u.start()]
                 call = re.search(r"\b(?:" + gates + r")\s*\(\s*\w+\s*,\s*$", head)
                 if call is None or not re.match(r"\s*\)", body[u.end():]):
                     problems.append(f"{fname}:{_line(blanked, b + u.start())}: {name}() uses `{tok}`, "
-                                    f"its copy of the token, other than as a gate's token argument")
+                                    f"its copy of the token, other than as a gate's token argument "
+                                    f"or in a null test")
         for name in sorted(named - set(entry["keep"]) - set(entry["read"])):
             problems.append(f"{fname}: {name}() names its module's copy of the token and is not in "
                             f"MODULE_TOKEN_COPIES (a route that names it can answer it)")
@@ -1118,10 +1166,13 @@ _FIX_MQTT = (
     "static bool authorized(httpd_req_t* req, const char* t) {\n"
     "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t);\n"
     "}\n"
-    "static bool bearer_authorized(httpd_req_t* req, const char* t) {\n"
-    "  return t != nullptr && t[0] != '\\0' && api_auth_bearer_valid(req, t);\n"
+    "bool write_row(const Config& cfg) { return prefs.putString(\"p\", cfg.pass) > 0; }\n"
+    "static bool move_needs_password(const Config& before, const Config& after, bool typed,\n"
+    "                                bool bearer) {\n"
+    "  if (bearer) return false;\n"
+    "  if (typed) return false;\n"
+    "  return before.pass[0] != '\\0' && strcmp(before.host, after.host) != 0;\n"
     "}\n"
-    "bool config_save(const Config& cfg) { return prefs.putString(\"p\", cfg.pass) > 0; }\n"
     "esp_err_t handle_config_get(httpd_req_t* req) {\n"
     "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
     "  if (!authorized(req, tok)) return ESP_OK;\n"
@@ -1129,14 +1180,17 @@ _FIX_MQTT = (
     "  return httpd_resp_sendstr(req, c.pass[0] ? \"set\" : \"none\");\n"
     "}\n"
     "esp_err_t handle_config_post(httpd_req_t* req) {\n"
+    "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
     "  if (!authorized(req, tok)) return ESP_OK;\n"
+    "  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);\n"
     "  Config c;\n"
-    "  if (sent) strncpy(c.pass, buf, 128);\n"
-    "  if (moves && !sent && c.pass[0] != '\\0' && !bearer_authorized(req, tok)) {\n"
-    "    wipe(&c, sizeof(c));\n"
+    "  const Config before = c;\n"
+    "  if (typed) strncpy(c.pass, buf, 128);\n"
+    "  if (move_needs_password(before, c, typed, bearer)) {\n"
+    "    httpd_resp_set_status(req, \"403 Forbidden\");\n"
     "    return ESP_OK;\n"
     "  }\n"
-    "  if (!config_save(c)) return ESP_OK;\n"
+    "  if (!write_row(c)) return ESP_OK;\n"
     "  return ESP_OK;\n"
     "}\n"
 )
@@ -1146,13 +1200,13 @@ _FIX_TABLES = {
     "hands": {},
     "grants": {"handle_kit": {"refusal": "!claimed && !gate_take()", "flag": "claimed",
                               "writes": ("bool claimed = false;", "claimed = claim_take(")}},
-    "broker_uses": {"config_save": "fixture", "handle_config_post": "fixture"},
+    "broker_uses": {"write_row": "fixture", "handle_config_post": "fixture"},
     "token_copies": {
         "csi_integration.cpp": {"copy": r"\bg_api_token\b", "keep": ("CSI_AUTH_OR_RETURN", "init"),
                                 "decl": ("const char* g_api_token = nullptr;",), "read": ()},
         "csi_mqtt.cpp": {"copy": r"\bs_api_token_provider\b", "keep": ("set_api_token_provider",),
                          "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
-                         "read": ("handle_config_get",)},
+                         "read": ("handle_config_get", "handle_config_post")},
     },
 }
 _FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
@@ -1205,21 +1259,31 @@ _FIX_PLANTS = (
      "  if (auth_is_locked_out()) return false;\n",
      "  if (cv_session_validate(req)) return true;\n  if (auth_is_locked_out()) return false;\n",
      "api_auth_bearer_grant() names cv_session_validate"),
-    ("the broker re-point gate taking a session", "csi_mqtt.cpp",
-     "&& !bearer_authorized(req, tok)) {", "&& !authorized(req, tok)) {", "re-point gate"),
-    ("the broker re-point gate also letting a session through", "csi_mqtt.cpp",
-     "&& !bearer_authorized(req, tok)) {",
-     "&& !bearer_authorized(req, tok) && !authorized(req, tok)) {", "gate names authorized"),
-    ("the broker save above its re-point gate", "csi_mqtt.cpp",
-     "  if (moves && !sent",
-     "  if (!config_save(c)) return ESP_OK;\n  if (moves && !sent", "re-point gate"),
-    ("a re-point gate that does not return", "csi_mqtt.cpp",
-     "    wipe(&c, sizeof(c));\n    return ESP_OK;\n", "    wipe(&c, sizeof(c));\n",
-     "re-point gate"),
-    ("bearer_authorized taking the cookie", "csi_mqtt.cpp",
-     "&& api_auth_bearer_valid(req, t);",
-     "&& (api_auth_bearer_valid(req, t) || authorized(req, t));",
-     "bearer_authorized() names authorized"),
+    ("the move gate's bearer taking a session", "csi_mqtt.cpp",
+     "&& api_auth_bearer_valid(req, tok);", "&& authorized(req, tok);",
+     "a bearer that names authorized"),
+    ("the move gate's bearer also taking the cookie", "csi_mqtt.cpp",
+     "&& api_auth_bearer_valid(req, tok);",
+     "&& (api_auth_bearer_valid(req, tok) || authorized(req, tok));",
+     "a bearer that names authorized"),
+    ("the move gate also letting a session through", "csi_mqtt.cpp",
+     "if (move_needs_password(before, c, typed, bearer)) {",
+     "if (move_needs_password(before, c, typed, bearer) && !authorized(req, tok)) {",
+     "move gate names authorized"),
+    ("a dead move gate", "csi_mqtt.cpp",
+     "if (move_needs_password(", "if (false && move_needs_password(", "not the whole condition"),
+    ("the move gate handed no bearer", "csi_mqtt.cpp",
+     "typed, bearer)) {", "typed, true)) {", "no bearer"),
+    ("the move gate asking a session itself", "csi_mqtt.cpp",
+     "  if (bearer) return false;\n",
+     "  if (bearer || csi_integration::session_validate_cookie(nullptr)) return false;\n",
+     "move_needs_password() names session_validate_cookie"),
+    ("the broker save above its move gate", "csi_mqtt.cpp",
+     "  if (move_needs_password(",
+     "  if (!write_row(c)) return ESP_OK;\n  if (move_needs_password(", "no move gate before it"),
+    ("a move gate that does not return", "csi_mqtt.cpp",
+     "    httpd_resp_set_status(req, \"403 Forbidden\");\n    return ESP_OK;\n",
+     "    httpd_resp_set_status(req, \"403 Forbidden\");\n", "no move gate before it"),
     ("the GET answering the broker password", "csi_mqtt.cpp",
      "c.pass[0] ? \"set\" : \"none\"", "c.pass", "handle_config_get"),
     ("a module route answering its copy of the token", "csi_integration.cpp",
@@ -1229,6 +1293,9 @@ _FIX_PLANTS = (
      "  if (!authorized(req, tok)) return ESP_OK;\n  Config c;\n  return",
      "  if (!authorized(req, tok)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
      "  Config c;\n  return", "other than as a gate's token argument"),
+    ("a module handler reading the token it tests for null", "csi_mqtt.cpp",
+     "tok != nullptr && api_auth_bearer_valid(req, tok);",
+     "tok[0] != '\\0' && api_auth_bearer_valid(req, tok);", "or in a null test"),
     ("the module's copy named outside every function", "csi_integration.cpp",
      "bool init(", "const char* g_leak = g_api_token;\nbool init(", "outside every function"),
     ("the token handed to a module whose copy is not listed", "canary_wap.ino",

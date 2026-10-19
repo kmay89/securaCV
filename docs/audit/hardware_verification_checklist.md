@@ -2712,7 +2712,9 @@ gate in `canary_wap.ino`. Host-tested (`tests_host/test_receipt_grant.cpp`:
 the REAL `api_auth.h` and both handlers cut out of the sketch; a cookie
 alone, and beside a wrong bearer, refused on both routes; a bearer, the
 BOOT tap and the setup-door claim served); the compile is CI's; not run on
-a device. Owner: U1.
+a device. Owner: U1. The broker-move step: `move_needs_password()` in
+`csi_mqtt.cpp`, host-tested in `tests_host/test_mqtt_reinit.cpp` (the REAL
+handler; every refusal test fails with the gate reverted).
 
 - [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
@@ -2749,55 +2751,55 @@ a device. Owner: U1.
     tap's window, is `200`: the tap serves whatever cookie rides beside it,
     and is spent.
   - Artifact: `docs/audit/repro/F289/receipt-grant/`.
+- [ ] **A dashboard session cannot point the MQTT bridge at a new broker while keeping the stored password; the password typed, or a bearer, can**
+  - Setup: the same canary-wap signed in as above, a broker saved on its
+    `/mqtt` page with a username and a password (`GET /api/mqtt/config`
+    answers `password_set: true`), the cookie's value `<hex>`, the API
+    token, and two addresses `<new>` and `<new2>` on the LAN that are not
+    the broker.
+  - Repro: `curl -sk -w '\n%{http_code}\n' -H "Cookie: cv_session=<hex>" -H
+    'content-type: application/json' -d '{"host":"<new>","tls_mode":0}'
+    https://canary-<suffix>.local/api/mqtt/config`; then `curl -sk -H
+    "Cookie: cv_session=<hex>" https://canary-<suffix>.local/api/mqtt/config`;
+    then the first request again with `,"password":"<the broker password>"`
+    added inside the body; then the first request with `"host":"<new2>"` in
+    place of `<new>` (no password in the body) and `-H "Authorization:
+    Bearer <token>"` in place of the cookie — a real move, since the stored
+    host is `<new>` by then; setting it back on `/mqtt` without the password
+    would itself be the refusal under test. In the browser: on `/mqtt`,
+    change only the broker host and press **Save**; then type the password
+    and press **Save** again.
+  - Expected: the cookie's move is `403` with the body
+    `{"ok":false,"code":"password_needed","reason":...}` naming no password,
+    and the GET still answers the old host with `password_set: true` (before
+    this change the save was `200` and the device connected to `<new>` with
+    the stored username and password, in plain text); the move with the
+    password typed is `200` and the GET answers `<new>`; the bearer's move
+    to `<new2>` is `200` and the GET answers `<new2>` with
+    `password_set: true` (the stored password followed the bearer's move, as
+    it may). On `/mqtt` the status line reads "Save failed. the broker
+    moved; type the broker password again to send it to the new address, or
+    sign in with the API token" and the cursor is in the password field; the
+    second save reads "Saved.". To put the broker back afterwards, save its
+    host with the password typed or with the bearer: a cookie-only save of
+    the old host is the same `403`.
+  - Artifact: `docs/audit/repro/F289/broker-move/`.
 
-## canary-wap: F289's follow-up — the broker move, the Secure cookie, the receipt's lockout — on-device verification
+## canary-wap: F289's follow-up — the Secure cookie, the receipt's lockout — on-device verification
 
-Code: `handle_config_post()` and `bearer_authorized()` in `csi_mqtt.cpp`
-(and `MQTT_UI_HTML`'s submit handler there); `session_cookie_header()` and
+The broker move is the section above's last row (#1835's gate); this
+follow-up (#1832) adds none of its own. Code: `session_cookie_header()` and
 `handle_provisioning_receipt()` in `canary_wap.ino`;
 `read_session_cookie_hex()` in `csi_integration.cpp`;
 `api_auth_bearer_grant()`, `api_auth_bearer_held()` and
 `api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`.
-Host-tested (`tests_host/test_mqtt_reinit.cpp` over the real `csi_mqtt.cpp`
-and `api_auth.h`: a session that moves the kept password refused and no
-client handed it, the ordinary saves served, the bearer served;
-`tests_host/test_session_cookie.cpp`: the cookie's attributes over HTTPS and
-plain HTTP, and the whole-name read; `tests_host/test_receipt_grant.cpp`: a
-wrong bearer one strike, the backoff's 429, the tap and the claim never held;
-`recovery_kit.test.js`: the sign-in's copy); `check_route_security.py`
-holds every answer that carries a secret to a bearer-only gate; the compile
-is CI's; nothing here ran on a device or in a browser. Owner: U1.
-
-- [ ] **A dashboard session cannot send the stored broker password to a new broker; the bearer can; the ordinary saves still work**
-  - Setup: a canary-wap on this firmware joined to the home Wi-Fi with its
-    MQTT bridge saved against a broker that needs a user and password
-    (plain mode), a laptop on the home network, `nc`, `curl`, the API token
-    from a recovery kit, and a `cv_session` value `<hex>` minted through the
-    landing page's **Open dashboard** link (as in the section above).
-  - Repro: on the laptop run `nc -l 1884` (start it again before each
-    step that expects a connection). Then `curl -sk -H "Cookie:
-    cv_session=<hex>" -H 'Content-Type: application/json' -d
-    '{"host":"<laptop-ip>","port":1884}'
-    https://canary-<suffix>.local/api/mqtt/config`; the same with
-    `{"user":"other"}`, with `{"tls_mode":1}` and with `{"ca":""}`; then
-    `{"prefix":"securacv2"}` on the cookie. Then the first body with `-H
-    "Authorization: Bearer <token>"` in place of the cookie. Put the bridge
-    back on the real broker with its password (any caller that sends the
-    password may), then send the first body on the cookie with
-    `"password":"typed-pw"` added. In the dashboard's `/mqtt` page on the
-    cookie, change the host and press Save. Last, put the bridge back on
-    the real broker with its password.
-  - Expected: each of the first four is `403` with
-    `{"ok":false,"error":"password_needed","reason":"..."}`, `nc` prints
-    nothing and `GET /api/mqtt/config` still names the real broker; the
-    prefix-only save is `200` and the bridge stays connected; the bearer's
-    save is `200` and `nc` receives a CONNECT carrying the stored user and
-    password (the token's holder may move it); the cookie's save that sends
-    a password is `200` and `nc` receives `typed-pw`, a password its sender
-    already knew. The `/mqtt` page shows "Save failed." with the reason and
-    puts the cursor in the password field. Before this change the cookie's
-    first save was `200` and `nc` received the stored password.
-  - Artifact: `docs/audit/repro/F289/broker-move/`.
+Host-tested (`tests_host/test_session_cookie.cpp`: the cookie's attributes
+over HTTPS and plain HTTP, and the whole-name read;
+`tests_host/test_receipt_grant.cpp`: a wrong bearer one strike, the
+backoff's 429, the tap and the claim never held; `recovery_kit.test.js`: the
+sign-in's copy); `check_route_security.py` holds every answer that carries a
+secret to a bearer-only gate; the compile is CI's; nothing here ran on a
+device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS

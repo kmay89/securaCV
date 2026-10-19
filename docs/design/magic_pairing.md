@@ -435,15 +435,20 @@ row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 `cv_session` cookie (sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
 dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
-token, takes the bearer alone the same way. Row 2 is also under the
-lockout every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`,
-F289's follow-up): a wrong or malformed bearer is one strike, the right one
-clears the count, and while the backoff runs no bearer is compared, so a
-request that brings one gets `429` with `Retry-After` when the claim and the
-tap do not serve it. The lockout never gates rows 3 and 4: a page holding
-a stale token, or a backoff a guesser armed, is still served by the claim or
-a BOOT tap. Host-tested in
-`firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`. Adding
+token, takes the bearer alone the same way; and a `POST /api/mqtt/config`
+that moves the broker (host, port, TLS mode or CA) while keeping the stored
+broker password — no `password` in the body — takes the bearer too, or the
+password typed again, so the session cannot send that password to a host it
+names (`403 password_needed`). The receipt's row 2 is also under the lockout
+every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
+follow-up): a wrong or malformed bearer is one strike, the right one clears
+the count, and while the backoff runs no bearer is compared, so a request
+that brings one gets `429` with `Retry-After` when the claim and the tap do
+not serve it. The lockout never gates rows 3 and 4: a page holding a stale
+token, or a backoff a guesser armed, is still served by the claim or a BOOT
+tap. Host-tested in
+`firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
+the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
 
@@ -885,6 +890,16 @@ cannot speak to.
       neither body naming the token or the AP password; the same two
       requests with `Authorization: Bearer <token>` serve; `/api/status` on
       the cookie still serves (F289).
+      - [ ] The same cookie on `POST /api/mqtt/config` with a body naming a
+            new `host` and no `password`, a broker password saved: `403`,
+            the body `{"ok":false,"code":"password_needed",...}` naming no
+            password, and `GET /api/mqtt/config` still answering the old
+            host; the same body with the password typed `200` (the GET
+            answers the new host); then a body naming a second new host
+            and no `password`, with `Authorization: Bearer <token>` in
+            place of the cookie, `200` (the GET answers that host with
+            `password_set: true`) — a real move, since the stored host is
+            the first new one by then (F289, the third road).
 - [ ] With the WAP joined to the home Wi-Fi, wrong bearers on
       `GET /api/provisioning-receipt` arm the same backoff as the admin
       routes: once it runs, the right token is `429` with `Retry-After` on

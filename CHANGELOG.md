@@ -1,25 +1,11 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: a dashboard session cannot send the stored broker password elsewhere, the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
+### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
-- **canary-wap: a dashboard session can no longer send the stored MQTT broker
-  password to a broker of its choosing (sweep F325).** The landing page mints
-  a 24-hour `cv_session` for any host on the home network, and `POST
-  /api/mqtt/config` takes it; a save with no `"password"` kept the stored one
-  while it moved the host, port, user, TLS mode or CA, so the next connect
-  handed the stored user and password to the caller's broker (the host test's
-  fake client recorded it on #1822's head). Such a save now needs the
-  `Authorization: Bearer` header (`bearer_authorized()`, never the cookie); a
-  session gets `403 password_needed` with a reason before anything is saved,
-  and the `/mqtt` page shows it and moves focus to the password field. A save
-  that keeps the broker, one that sends a password and the first save are
-  unchanged, and the setup wizard always sends one. **Host-tested**
-  (`test_mqtt_reinit.cpp`, 877 checks in 37 tests, on the real `csi_mqtt.cpp`
-  and `api_auth.h`; `wizard_logic.test.js`, 38 tests); the ESP32 compile is
-  CI's; not run on a device (U1). Still open: a QR code held to the camera
-  moves the broker and keeps the password (F333), and a host that answers for
-  the broker's address on a plain link receives it with no save at all (F334).
+- **The broker move a session could make with the kept password (sweep F325)
+  is #1835's fix, in the section below;** this branch had a parallel gate and
+  dropped it for #1835's.
 - **canary-wap: the session cookie is `Secure` over HTTPS and read by its
   whole name (sweep F326, F327).** One writer, `session_cookie_header()`,
   spells both mints' attributes and adds `Secure` exactly when the answer
@@ -45,10 +31,10 @@
   `api_auth.h` gate, and the lockout's `Retry-After` can no longer wrap to
   about 49.7 days when a backoff ends mid-request. **Host-tested**
   (`test_receipt_grant.cpp`, 536 checks; the sketch before the lockout change
-  fails 36, the `api_auth.h` before the empty-token change 34); the compile is
-  CI's; not run on a device (U1). Filed: F341-F343 (a strike the tap then
-  serves, the claim and the tap spent by whoever asks first, one backoff for
-  every caller).
+  fails 51 of them, and the suite fails 34 of 534 on the `api_auth.h` before
+  the empty-token change, F331); the compile is CI's; not run on a device
+  (U1). Filed: F341-F343 (a strike the tap then serves, the claim and the
+  tap spent by whoever asks first, one backoff for every caller).
 - **canary-wap's sign-in names no token a cookie-only page never held (sweep
   F330).** A browser signed in by its session cookie alone, refused by the
   recovery-kit save or the pairing QR since #1822, read "Invalid or expired
@@ -64,24 +50,26 @@
   `api_auth_check_bearer()`, `api_auth_bearer_grant()` or the receipt's
   claim-or-tap refusal, or that names a gate any session passes on the way. In
   `csi_mqtt.cpp` it holds the stored broker password to the four functions
-  that load, save and use it, and the broker save to its bearer refusal; and
-  it holds each module's copy of the token to its keepers. It fails #1822's
-  parent (13 problems: eight on the pairing QR and the receipt, the broker
-  save, and four bearer gates it does not define) and #1822 itself (3: the
-  broker save above, and the gates F325 and F329 add, defined nowhere there),
-  and its 21 planted fixtures each fail for their named reason before
-  the tree is read. A static text check that matches names; it now runs in
-  seconds (`function_body()` caches its blanking). Filed: F338 (the flagship's
-  check has no such rule) and F348.
+  that load, write and use it, and the broker save to #1835's move gate handed
+  a bearer; and it holds each module's copy of the token to its keepers. It
+  fails main before #1835 and #1822 (5 problems each: four on the broker save,
+  which has no move gate there, and the receipt's grant F329 adds) and #1822's
+  parent (15: eight on the two routes F289 closed, the three bearer gates it
+  does not define, and the same four on the broker save), and its 25 planted
+  fixtures each fail for their named reason before the tree is read. A static
+  text check that matches names; it now runs in seconds (`function_body()`
+  caches its blanking). Filed: F338 (the flagship's check has no such rule)
+  and F348.
 - **The docs and the Lab say what was built.** `magic_pairing.md` §3.7 (the
   receipt's lockout, and what stays open: one backoff per device, the claim
   and the tap spent by whoever asks first), `SECURITY_MODEL.md`,
-  `THREAT_MODEL.md` (the `Secure` cookie; the broker-move gate, and the
+  `THREAT_MODEL.md` (the `Secure` cookie; #1835's broker-move gate, and the
   spoofing and QR roads it does not cover), both WAP READMEs,
-  `LESSONS_LEARNED.md` (a dated amendment to the F289 entry and a new entry on
-  the broker re-point), `SECURITY-AUDIT.md`, the 2026-07 firmware audit,
-  `canary_settings_access_validation.md` and `PENTEST_SCOPE.md`; three U1 rows
-  in `hardware_verification_checklist.md`'s new "canary-wap: F289's follow-up"
+  `LESSONS_LEARNED.md` (a dated amendment to the F289 entry),
+  `SECURITY-AUDIT.md`, the 2026-07 firmware audit,
+  `canary_settings_access_validation.md` and `PENTEST_SCOPE.md`, none of them
+  stating #1835's gate a second time; two U1 rows in
+  `hardware_verification_checklist.md`'s new "canary-wap: F289's follow-up"
   section and two in `magic_pairing.md` §9, all unticked. The Lab's WAP page
   (`gen_wap.py`, `wap.json`) names the MQTT routes' real gate where it said
   "pairing token". The sweep files F333-F349, among them the hand-ups of the
@@ -92,6 +80,55 @@ One Makefile line lists the new suite's two cuts in `CUT_INCS`, which main's
 `run-arduino-globals` reads since #1833. Nothing here moves the emulator dist
 or a carried Home Assistant file. Host-tested; the ESP32 compiles are CI's;
 nothing ran on a device or in a browser.
+
+### canary-wap: a dashboard session alone cannot move the broker while keeping the stored MQTT password
+
+- **canary-wap: `POST /api/mqtt/config` from a session alone is refused when
+  it moves the broker and keeps the stored password (sweep F289, the third
+  road).** The route takes the landing page's 24-hour `cv_session` cookie or
+  the bearer, and `GET /api/mqtt/config` keeps the password write-only — but
+  the POST saved whatever host, port and TLS mode the body named, kept the
+  stored password when the body carried none, and the loop task's re-init
+  sent the stored username and password to the new host, in plain text with
+  `tls_mode` 0, so any host on the home network could read the broker
+  password through a broker it named (read from the code, not run). Now a
+  save without a valid `Authorization: Bearer` header is refused — `403`,
+  `code` `password_needed`, nothing saved, no re-init — when the body
+  carries no `password` key, a password is stored, and the destination
+  moves: the host (bytes — a respelling in case is a move), the port (both
+  sides as `config_load()` read them: a stored 0 is the mode's default), the
+  TLS mode in either spelling, or a `ca` key set or cleared. A change of
+  user, prefix, enabled or discovery alone is not a move; a body that
+  carries `password`, new or empty, is saved as before; a bearer is never
+  refused; the `/companion` wizard always sends a password and is unchanged.
+  The `/mqtt` page shows the device's reason and puts the cursor in the
+  password field. Its review found the harm reachable around the gate: the
+  save writes NVS key by key, and a re-init an earlier save left pending
+  could open a client from the half-written row — the new host beside the
+  old password. Now a save counts itself in progress and finished, and the
+  loop task opens no client from a read a save overlapped; the next pass
+  reads the whole row. And one writer at a time (the PR's Codex review):
+  a save on another task waits for the first's lock instead of
+  interleaving its keys into a row neither wrote. The flagship refuses the
+  same move as
+  `400 password_required_for_new_host`; the WAP's `403` differs in shape
+  because its cookie callers are the class in question, and the TLS mode
+  and the CA count as moves on its transport. The QR hub-provision path
+  still re-points the broker with the stored password — behind the pair
+  token, which the session can mint (`GET /api/pair/token` takes the
+  cookie), and a code in front of the camera, which it cannot; named in
+  the ledger. The refusal tests hold NVS byte for byte with the stub's
+  write count, the bearer leg covers a TLS-mode and a CA move, and
+  `scripts/tests/test_docs_claims.py` retires three sentences this
+  change's reviews found untrue (the busy-word mutant's failure, the QR
+  road's grant, the WAP's rule read as the flagship's) and holds the
+  pair-token gate and the flagship's rule to the code. **Host-tested**
+  (`test_mqtt_reinit.cpp`, 2872 checks on the real
+  handler, 623 before; every refusal test fails with the gate reverted, and
+  the three race tests — the loop task's pass after every write of a save,
+  a whole save inside every read, each writer under the boot — fail with
+  the busy word never spoken); the ESP32 compile is CI's; not run on a
+  device (U1).
 
 ### Post-#1802 verification: the WAP's port 80 keeps a typed address, a setup-door claim keeps its `.local` name with the STA down, the globals check takes every cut it reads, and thirteen passages say what landed
 
