@@ -2840,9 +2840,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ═══════════════════════════════════════════════════════════════
     let apiToken = null;
 
+    // A refusal names what the page sent. A token it held: refused. No
+    // token, only the session cookie the page resumed on load: that session
+    // does not cover the route, or it has ended. The device answers a
+    // session alone 403 on the recovery kit and 401 on the pairing QR
+    // (sweep F289), and 401 on any route once the session has ended, so
+    // "Invalid or expired token" would name a token the page never had.
     async function secureFetch(endpoint, options = {}) {
       const headers = options.headers || {};
-      if (apiToken) {
+      const sentToken = !!apiToken;
+      if (sentToken) {
         headers['Authorization'] = 'Bearer ' + apiToken;
       }
       options.headers = headers;
@@ -2850,7 +2857,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const resp = await fetch(API_BASE + endpoint, options);
         if (resp.status === 401 || resp.status === 403) {
           apiToken = null;
-          showAuthModal('Invalid or expired token. Please re-enter.');
+          showAuthModal(sentToken
+            ? 'Invalid or expired token. Please re-enter.'
+            : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
           throw new Error('auth_required');
         }
         if (resp.status === 429) {

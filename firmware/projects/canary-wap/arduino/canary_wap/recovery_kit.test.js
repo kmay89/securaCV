@@ -26,7 +26,12 @@
 //     takes the header alone — which is the refused case below); a refused
 //     session brings the sign-in back and saves nothing;
 //   * the wizard's close-out saves through the same builder, and its saved
-//     line names that Settings path, which exists.
+//     line names that Settings path, which exists;
+//   * secureFetch's sign-in names what the page sent (sweep F289's
+//     follow-up): a refused token is "Invalid or expired token", but a
+//     refusal of a page that holds no token (the kit's 403 or the pairing
+//     QR's 401 on a cookie session, or a session that has ended) says the
+//     session does not cover it, never a token the page never had.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -146,10 +151,11 @@ const DASH_IDS = ['authStatus', 'authOverlay', 'recoveryKitCard', 'recoveryKitDo
 // RECOVERY_KIT block, secureFetch, the auth modal, requestFromDevice, the
 // three offer functions and the Settings save, run against a device that
 // answers the receipt route from `answers` (the last one repeats; `more()`
-// queues the next sign-in's answers) and every other route 200. Its
+// queues the next sign-in's answers), each route in `routes` (url → answer)
+// as given, and every other route 200. Its
 // startDashboard() makes the dashboard's own first requests through the same
 // fetch, so a test that says "the Save added no request" means the Save.
-function dashboard(answers) {
+function dashboard(answers, routes = {}) {
   const src = read(UI);
   const code = [
     kitBlock(src, 'web_ui.h'),
@@ -163,7 +169,7 @@ function dashboard(answers) {
     uiFunction(src, 'saveRecoveryKit'),
     uiFunction(src, 'saveRecoveryKitFromSettings', true),
     uiFunction(src, 'requestFromDevice', true),
-    ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, saveRecoveryKitFromSettings,',
+    ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, saveRecoveryKitFromSettings, secureFetch,',
     '    kitText: () => recoveryKitText, token: () => apiToken, setToken: (t) => { apiToken = t; } })',
   ].join('\n');
   const win = fakeWindow(DASH_IDS, src);
@@ -182,6 +188,11 @@ function dashboard(answers) {
     setTimeout: (fn, ms) => { win.timers.push(ms); fn(); },
     fetch: async (url, opts) => {
       asked.push({ url, opts });
+      if (routes[url]) {
+        const r = routes[url];
+        return { status: r.status, ok: r.status >= 200 && r.status < 300,
+                 json: async () => JSON.parse(r.body), text: async () => r.body };
+      }
       if (url !== '/api/provisioning-receipt') {
         return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' };
       }
@@ -423,6 +434,7 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     assert.equal(d.win.els.settingsKitDone.style.display, 'none');
     assert.equal(d.win.els.settingsKitErr.style.display, 'block');
     assert.match(d.win.els.settingsKitErr.textContent, /Sign in again first/);
+    assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL, 'the sign-in names no token the page never had');
   });
 
   it('an answer that is not a receipt saves nothing and says so', async () => {
@@ -449,6 +461,57 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     assert.match(fn, /RecoveryKit\.save\(window, await resp\.text\(\)\)/);
     assert.match(fn, /secureFetch\('\/api\/provisioning-receipt', \{ cache: 'no-store' \}\)/);
     assert.doesNotMatch(fn, /new Blob|createObjectURL|\.download\s*=|method:/);
+  });
+});
+
+// secureFetch's sign-in line for a refusal, by what the page sent.
+const TOKEN_REFUSAL = 'Invalid or expired token. Please re-enter.';
+const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.';
+const QR_401 = { status: 401, body: '{"error":"unauthorized","hint":"Include \'Authorization: Bearer cv_...\' header"}' };
+
+describe("secureFetch's sign-in names what the page sent (sweep F289's follow-up)", () => {
+  it('a cookie session refused on the recovery kit (403): the session does not cover it, no token named', async () => {
+    const d = dashboard([GATE_403]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.asked[0].opts.headers.Authorization, undefined, 'the page held no token');
+    assert.equal(d.win.els.authOverlay.classList.hidden, false);
+    assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL);
+    assert.doesNotMatch(d.win.els.authStatus.textContent, /token\. Please re-enter/);
+    assert.equal(d.win.els.authStatus.className, 'auth-status error');
+  });
+
+  it('a cookie session refused on the pairing QR (401): the same line', async () => {
+    const d = dashboard([GATE_403], { '/api/pairing-qr': QR_401 });
+    await assert.rejects(d.api.secureFetch('/api/pairing-qr', {}), /auth_required/);
+    assert.equal(d.asked[0].opts.headers.Authorization, undefined);
+    assert.equal(d.win.els.authOverlay.classList.hidden, false);
+    assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL);
+  });
+
+  it('a token the page held and the device refused: "Invalid or expired token", and the token is dropped', async () => {
+    for (const [route, answer] of [['/api/provisioning-receipt', GATE_403], ['/api/pairing-qr', QR_401],
+                                   ['/api/status', { status: 403, body: '{"error":"forbidden"}' }]]) {
+      const d = dashboard([answer], { [route]: answer });
+      d.api.setToken(FIELDS.token);
+      await assert.rejects(d.api.secureFetch(route, {}), /auth_required/);
+      assert.equal(d.asked[0].opts.headers.Authorization, 'Bearer ' + FIELDS.token, route);
+      assert.equal(d.win.els.authStatus.textContent, TOKEN_REFUSAL, route);
+      assert.equal(d.api.token(), null, route);
+      // The next refusal finds no token in the page, and says so.
+      await assert.rejects(d.api.secureFetch(route, {}), /auth_required/);
+      assert.equal(d.asked[1].opts.headers.Authorization, undefined, route);
+      assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL, route);
+    }
+  });
+
+  it('the lockout (429) still reads as the lockout, the token kept', async () => {
+    const locked = { status: 429, body: '{"error":"too_many_requests","retry_after_s":9}' };
+    const d = dashboard([locked]);
+    d.api.setToken(FIELDS.token);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.win.els.authStatus.textContent, 'Too many failed attempts. Retry in 9 seconds.');
+    assert.equal(d.api.token(), FIELDS.token, 'a 429 drops no token');
+    assert.match(d.win.els.settingsKitErr.textContent, /Sign in again first/);
   });
 });
 
