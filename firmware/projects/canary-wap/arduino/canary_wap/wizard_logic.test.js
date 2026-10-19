@@ -236,8 +236,16 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
   it('the recovery-kit save issues a session cookie that /api/status accepts', () => {
     const ino = fs.readFileSync(INO, 'utf8');
     const receipt = ino.split('static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {')[1].split('\n}\n')[0];
-    assert.match(receipt, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400"/);
+    // The cookie's attributes are spelled once, in session_cookie_header()
+    // (sweep F289's residual): Secure only on an answer from the HTTPS
+    // server, so the wizard's recovery-kit save, which runs on the first
+    // boot's plain-HTTP SoftAP, still gets a cookie the browser keeps
+    // (tests_host/test_session_cookie.cpp and test_receipt_grant.cpp drive it).
+    assert.match(receipt, /session_cookie_header\(req, session_hex, cookie_hdr, sizeof\(cookie_hdr\)\)/);
     assert.match(receipt, /httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\)/);
+    const writer = ino.split('static bool session_cookie_header(')[1].split('\n}\n')[0];
+    assert.match(writer, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*session_hex, tls \? "; Secure" : ""\)/);
+    assert.match(writer, /const bool tls = g_https_server != nullptr && req->handle == g_https_server;/);
     assert.match(ino, /static esp_err_t handle_status_auth\(httpd_req_t\* req\) \{\n  if \(!api_auth_check\(req, g_device\.api_token_str\)\) return ESP_OK;/);
     const auth = fs.readFileSync(path.join(__dirname, 'api_auth.h'), 'utf8');
     const check = auth.split('static bool api_auth_check(httpd_req_t* req, const char* expected_token) {')[1];

@@ -16,8 +16,9 @@
 // unchanged, and the dashboard's own routes still take the cookie.
 //
 // This runs the REAL api_auth.h and the handlers cut verbatim out of
-// canary_wap.ino (handle_provisioning_receipt, handle_pairing_qr and the
-// gate they spend, provisioning_gate_take; firmware/tests_host/
+// canary_wap.ino (handle_provisioning_receipt, handle_pairing_qr, the gate
+// they spend, provisioning_gate_take, and the cookie writer the receipt
+// sends, session_cookie_header; firmware/tests_host/
 // cut_functions.awk) over stubs/receipt_grant (a request with headers and a
 // query string, a response the test reads) and stand-ins for what else they
 // call: the receipt writer (recording the grant that admitted the request
@@ -36,6 +37,11 @@
 //     cookie alone refused on the next request;
 //   - on a cookie beside a claim: the receipt as the claim, the tap unspent;
 //   - a bare request on an open tap: the receipt and a Set-Cookie, as before;
+//     the cookie Secure when the answer leaves over the HTTPS server (the tap
+//     and the claim alike), never on a plain-HTTP boot, where the first-boot
+//     SoftAP setup's recovery-kit save mints it (sweep F289's residual; the
+//     writer, session_cookie_header(), is cut with the handlers, and
+//     test_session_cookie.cpp drives handle_ui's mint);
 //   - a wrong claim burns the claim (as before); a header that is not
 //     "Bearer " is no bearer;
 //   - the receipt's bearer check neither advances nor clears the lockout;
@@ -137,6 +143,12 @@ struct {
 } g_device;
 static bool g_tls_enabled = false;
 static char g_tls_cert_fp_hex[65] = {0};
+// The servers, as start_http_server() makes them (session_cookie_header()
+// reads the HTTPS one): nullptr on a plain-HTTP boot. Any two distinct
+// addresses stand in for the handles.
+static int g_http_server_obj = 0;
+static int g_https_server_obj = 0;
+static httpd_handle_t g_https_server = nullptr;
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
 static uint32_t g_improv_claim_spent_at_ms = 0;
 
@@ -217,6 +229,7 @@ void reset_device() {
   std::snprintf(g_device.ap_password, sizeof(g_device.ap_password), "%s", kApPass);
   g_tls_enabled = false;
   g_tls_cert_fp_hex[0] = '\0';
+  g_https_server = nullptr;
   WiFi = FakeWiFi{};
   g_provisioning_gate_opened_at = 0;
   canary::net::claim_ticket::wipe(g_improv_claim);
@@ -253,6 +266,12 @@ struct Req {
     r.query = q;
     return *this;
   }
+  // The server the request arrived on (default: the plain one).
+  Req& on(httpd_handle_t server) {
+    r.handle = server;
+    return *this;
+  }
+  Req() { r.handle = &g_http_server_obj; }
 };
 
 void open_tap() { g_provisioning_gate_opened_at = millis(); }
@@ -395,6 +414,59 @@ void test_receipt_bare_tap_unchanged() {
   Req none;
   CHECK(receipt(none) == 0);
   check_gate_refusal(none.r);
+}
+
+// The receipt's session cookie: Secure exactly when this answer leaves over
+// the HTTPS server (sweep F289's residual). Before, it never was.
+void test_receipt_cookie_secure_over_https_only() {
+  const std::string attrs = "; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400";
+  // The first-boot SoftAP setup runs HTTP-only (no HTTPS server): the
+  // recovery-kit save's tap mints the cookie without Secure, which an http
+  // page could not set.
+  reset_device();
+  open_tap();
+  Req http;
+  CHECK(receipt(http) == 1);
+  const std::string plain = header(http.r, "Set-Cookie");
+  CHECK(plain.find("cv_session=") == 0);
+  CHECK_MSG(plain.size() > attrs.size() && plain.compare(plain.size() - attrs.size(), attrs.size(), attrs) == 0,
+            "the plain-HTTP cookie was '" + plain + "'");
+  CHECK(plain.find("Secure") == std::string::npos);
+  // HTTPS up, the tap over it: Secure, after every attribute it had.
+  reset_device();
+  g_https_server = &g_https_server_obj;
+  open_tap();
+  Req tap;
+  tap.on(g_https_server);
+  CHECK(receipt(tap) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  const std::string tls = header(tap.r, "Set-Cookie");
+  CHECK_MSG(tls.size() > 8 && tls.find(attrs + "; Secure") != std::string::npos &&
+                tls.compare(tls.size() - 8, 8, "; Secure") == 0,
+            "the HTTPS tap's cookie was '" + tls + "'");
+  // The setup-door claim over it: the same cookie.
+  reset_device();
+  g_https_server = &g_https_server_obj;
+  mint_claim();
+  Req claim;
+  claim.on(g_https_server).query(std::string("claim=") + g_improv_claim.hex);
+  CHECK(receipt(claim) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(header(claim.r, "Set-Cookie").find(attrs + "; Secure") != std::string::npos);
+  // HTTPS up, but this answer on the plain server: no Secure.
+  reset_device();
+  g_https_server = &g_https_server_obj;
+  open_tap();
+  Req port80;
+  CHECK(receipt(port80) == 1);
+  CHECK(header(port80.r, "Set-Cookie").find("Secure") == std::string::npos);
+  // A refusal over HTTPS sets no cookie at all.
+  reset_device();
+  g_https_server = &g_https_server_obj;
+  Req refused;
+  refused.on(g_https_server);
+  CHECK(receipt(refused) == 0);
+  check_gate_refusal(refused.r);
 }
 
 void test_receipt_wrong_claim_burns_it() {
@@ -757,6 +829,7 @@ int main() {
   test_receipt_cookie_beside_tap_is_the_tap();
   test_receipt_cookie_beside_claim_is_the_claim();
   test_receipt_bare_tap_unchanged();
+  test_receipt_cookie_secure_over_https_only();
   test_receipt_wrong_claim_burns_it();
   test_receipt_bearer_shapes();
   test_receipt_bearer_check_touches_no_lockout();
