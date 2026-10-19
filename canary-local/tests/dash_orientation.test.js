@@ -2,20 +2,31 @@
 // turn it wears (F245), pinned to the firmware sources.
 //
 // lvgl_port_set_rotation() refuses a turn on a glass with no turn buffer and
-// the glass stays landscape (F205), its face too (F223). The owner's choice
-// stays saved; what the glass and the app are told follows the turn worn,
-// through one pure header, firmware/projects/canary-display/include/canary/
-// ui/orientation_page.h. tests_host holds that header: test_display_settings
-// over every saved/worn pair, test_lvgl_port_turn fed from the real
-// lvgl_port.cpp with its turn buffer granted and refused. settings_ui.cpp and
-// glass_web.cpp compile on no host, so these read their source. What can rot:
-//   · the Orientation page checks the saved turn again, or keeps
-//     one footer whatever the glass wears                      → "page"
-//   · the root row names the saved turn again                  → "root row"
+// the glass stays landscape (F205), its face too (F223), and says so
+// (lvgl_port_turn_refused()). The owner's choice stays saved; what the glass
+// and the app are told follows the turn worn, through one pure header,
+// firmware/projects/canary-display/include/canary/ui/orientation_page.h. A
+// saved turn the render has not handed to the port yet differs from the turn
+// worn too, so a refusal is the port's word, never the difference alone.
+// tests_host holds that header: test_display_settings over every saved/worn
+// pair with and without the port's word, test_lvgl_port_turn fed from the
+// real lvgl_port.cpp with its turn buffer granted and refused, and a phone
+// write not yet applied. settings_ui.cpp and glass_web.cpp compile on no
+// host, so these read their source. What can rot:
+//   · the Orientation page checks the saved turn again, keeps
+//     one footer whatever the glass wears, or stops asking the
+//     port whether it refused                                  → "page"
+//   · the root row names the saved turn again, or its buffer
+//     shrinks below the header's cap                           → "root row"
 //   · a new read of the saved rotation shows it on the glass   → "saved reads"
-//   · the GET drops orientation_worn, serves it from the store,
-//     or stops serving the saved choice as orientation         → "GET"
-//   · the header grows a dependency the host cannot build      → "header"
+//   · the GET drops orientation_worn or orientation_refused,
+//     serves either from the store, or stops serving the saved
+//     choice as orientation                                    → "GET"
+//   · the port stops recording the refusal it makes            → "port"
+//   · the header grows a dependency the host cannot build, or
+//     calls a difference a refusal again                       → "header"
+//   · the glass copy lint stops reading the header that now
+//     holds the page's words                                   → "copy lint"
 //   · the host tests stop reading the header the way the page
 //     does, or fall out of the suite's run                     → "host tests"
 // Node only; reads source text.
@@ -30,6 +41,8 @@ const read = (rel) => readFileSync(join(PROJ, rel), "utf8");
 const SETTINGS_UI = read("src/ui/settings_ui.cpp");
 const GLASS_WEB = read("src/net/glass_web.cpp");
 const HEADER = read("include/canary/ui/orientation_page.h");
+const PORT = read("src/ui/lvgl_port.cpp");
+const PORT_H = read("include/canary/ui/lvgl_port.h");
 
 // Walk C source a character at a time, string and character literals whole:
 // `visit(i, c, inLiteral)` sees each character; it returns the index to
@@ -109,13 +122,14 @@ function callArgs(src, at, fn) {
 
 const SAVED_READ = /(?:settings\(\)|\bgs)\.rotation\b/g;
 const WORN = "lvgl_port_rotation()";
+const REFUSED = "lvgl_port_turn_refused()";
 
 test("page (F245): Settings > Orientation checks the turn worn and says when the saved one was refused", () => {
   assert.match(SETTINGS_UI, /^#include "canary\/ui\/orientation_page\.h"/m,
     "settings_ui.cpp includes orientation_page.h");
   const page = norm(body(SETTINGS_UI, /^void build_display\(\) /m));
-  assert.ok(page.includes(`const OrientationState os = orientation_state(settings().rotation, ${WORN});`),
-    `build_display() builds its state from the saved rotation and ${WORN}: ${page}`);
+  assert.ok(page.includes(`const OrientationState os = orientation_state(settings().rotation, ${WORN}, ${REFUSED});`),
+    `build_display() builds its state from the saved rotation, ${WORN} and ${REFUSED}: ${page}`);
   assert.ok(page.includes("for (uint8_t rot : kOrientationRows) row_check(orientation_label(rot), nullptr, " +
       "orientation_row_checked(os, rot), ID_OPT_BASE + rot);"),
     `each of the four rows is checked by orientation_row_checked: ${page}`);
@@ -137,8 +151,11 @@ test("root row (F245): the Orientation row names the turn worn", () => {
   assert.strictEqual(root.indexOf('row_nav("Orientation"', at + 1), -1, "one Orientation row");
   const args = callArgs(root, at, "row_nav");
   assert.deepStrictEqual(args, ['"Orientation"',
-    `orientation_row_value(orientation_state(gs.rotation, ${WORN}), rn, sizeof(rn))`, "ID_ROW_DISPLAY"],
-  "the row's value is orientation_row_value of the saved rotation and the turn worn");
+    `orientation_row_value(orientation_state(gs.rotation, ${WORN}, ${REFUSED}), rn, sizeof(rn))`, "ID_ROW_DISPLAY"],
+  "the row's value is orientation_row_value of the saved rotation, the turn worn and the port's word");
+  const decl = root.slice(0, at).match(/char rn\[([^\]]*)\];/g) || [];
+  assert.deepStrictEqual(decl.slice(-1), ["char rn[kOrientationValueCap];"],
+    "the row's value buffer is the header's cap, which every rotation name is held to");
 });
 
 test("saved reads (F245): settings_ui.cpp reads the saved rotation only to store it, hand it to the port, or set it beside the turn worn", () => {
@@ -146,8 +163,8 @@ test("saved reads (F245): settings_ui.cpp reads the saved rotation only to store
   const contexts = [];
   for (const m of src.matchAll(SAVED_READ)) {
     const before = src.slice(Math.max(0, m.index - 40), m.index);
-    const after = src.slice(m.index + m[0].length, m.index + m[0].length + 40);
-    if (/orientation_state\($/.test(before) && after.startsWith(`, ${WORN})`)) contexts.push("orientation_state");
+    const after = src.slice(m.index + m[0].length, m.index + m[0].length + 80);
+    if (/orientation_state\($/.test(before) && after.startsWith(`, ${WORN}, ${REFUSED})`)) contexts.push("orientation_state");
     else if (/lvgl_port_set_rotation\($/.test(before) && after.startsWith(")")) contexts.push("lvgl_port_set_rotation");
     else if (after.startsWith(" = (uint8_t)(id - ID_OPT_BASE);")) contexts.push("store the tapped row");
     else contexts.push(`UNEXPECTED: …${before}${m[0]}${after}…`);
@@ -161,26 +178,32 @@ test("saved reads (F245): settings_ui.cpp reads the saved rotation only to store
   ], "every read of the saved rotation in settings_ui.cpp");
 });
 
-test("GET (F245): the dash's /api/settings serves the saved choice as orientation and the turn worn as orientation_worn", () => {
+test("GET (F245): the dash's /api/settings serves the saved choice as orientation, the turn worn as orientation_worn and the port's refusal as orientation_refused", () => {
   assert.match(GLASS_WEB,
     /#ifdef CD_FLAVOR_DASH\n(?:\/\/[^\n]*\n)*#include "canary\/ui\/lvgl_port\.h"[^\n]*\n#include "canary\/ui\/orientation_page\.h"[^\n]*\n#endif/,
     "glass_web.cpp includes lvgl_port.h and orientation_page.h for the dash");
   const get = norm(body(GLASS_WEB, /^void handle_settings_get\(\) /m));
   assert.ok(get.includes("const canary::ui::OrientationState os = canary::ui::orientation_state(gs.rotation, " +
-      `canary::ui::${WORN});`), "the GET builds the same state the page reads");
+      `canary::ui::${WORN}, canary::ui::${REFUSED});`), "the GET builds the same state the page reads");
   const at = get.indexOf('\\"orientation_worn\\"');
   assert.ok(at >= 0, "the GET serves orientation_worn");
   assert.strictEqual(GLASS_WEB.split('\\"orientation_worn\\"').length, 2, "orientation_worn is served once, by the dash");
+  assert.strictEqual(GLASS_WEB.split('\\"orientation_refused\\"').length, 2,
+    "orientation_refused is served once, by the dash");
   const args = callArgs(get, get.lastIndexOf("snprintf(", at), "snprintf");
-  assert.match(args[2], /^",\\"orientation\\":%u,\\"orientation_worn\\":%u,/, `the two keys lead the call: ${args[2]}`);
-  assert.deepStrictEqual(args.slice(3, 5), ["os.saved", "os.worn"],
-    "orientation is the saved choice and orientation_worn the turn worn");
+  // The format is adjacent literals, which C joins: join them the same way.
+  args[2] = args[2].replace(/(?<!\\)"\s*"/g, "");
+  assert.match(args[2], /^",\\"orientation\\":%u,\\"orientation_worn\\":%u,\\"orientation_refused\\":%u,/,
+    `the three keys lead the call: ${args[2]}`);
+  assert.deepStrictEqual(args.slice(3, 6), ["os.saved", "os.worn", "os.refused() ? 1u : 0u"],
+    "orientation is the saved choice, orientation_worn the turn worn, orientation_refused the rule's refusal");
   // Besides that state, only /api/set's setter touches the saved rotation.
   const src = norm(GLASS_WEB);
   const contexts = [...src.matchAll(SAVED_READ)].map((m) => {
     const before = src.slice(Math.max(0, m.index - 60), m.index);
-    const after = src.slice(m.index + m[0].length, m.index + m[0].length + 60);
-    if (/canary::ui::orientation_state\($/.test(before) && after.startsWith(`, canary::ui::${WORN});`))
+    const after = src.slice(m.index + m[0].length, m.index + m[0].length + 100);
+    if (/canary::ui::orientation_state\($/.test(before) &&
+        after.startsWith(`, canary::ui::${WORN}, canary::ui::${REFUSED});`))
       return "orientation_state";
     if (/else if \(k == "orientation" && v >= 0 && v <= 3\) $/.test(before) && after.startsWith(" = (uint8_t)v;"))
       return "/api/set stores it";
@@ -190,14 +213,51 @@ test("GET (F245): the dash's /api/settings serves the saved choice as orientatio
     "every read of the saved rotation in glass_web.cpp");
 });
 
+test("port (F245): lvgl_port.cpp records the refusal it makes, and only the LVGL 9 dash glass makes one", () => {
+  assert.match(PORT_H, /^bool lvgl_port_turn_refused\(\);$/m, "lvgl_port.h declares lvgl_port_turn_refused()");
+  const set = norm(body(PORT, /^void lvgl_port_set_rotation\(uint8_t rot\) /m));
+  const v9 = "#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9 ";
+  assert.ok(set.startsWith(`{ rot &= 3; ${v9}s_turn_refused = (rot != 0 && !s_turn_buf); ` +
+      "if (s_turn_refused) { canary::log_line(") && set.includes("rot = 0; } #endif s_rot = rot;"),
+  `the refusal branch is the recorded refusal, set on every call before the turn is worn: ${set}`);
+  assert.strictEqual((set.match(/\bs_turn_refused\b/g) || []).length, 2, "set_rotation writes the refusal once and reads it once");
+  const get = norm(body(PORT, /^bool lvgl_port_turn_refused\(\) /m));
+  assert.strictEqual(get, `{ ${v9}return s_turn_refused; #else return false; #endif }`,
+    "the getter answers the recorded refusal on the LVGL 9 dash and false everywhere else");
+  assert.strictEqual((norm(PORT).match(/\bs_turn_refused\b/g) || []).length, 4,
+    "s_turn_refused is declared once, set and read in set_rotation, and returned by the getter: nothing else writes it");
+});
+
 test("header (F245): orientation_page.h stays pure and the check sits on the turn worn", () => {
   const includes = HEADER.split("\n").filter((l) => l.startsWith("#include")).map((l) => l.replace(/\s*\/\/.*$/, ""));
   assert.deepStrictEqual(includes, ["#include <stddef.h>", "#include <stdint.h>", "#include <stdio.h>",
     '#include "canary/glass_settings.h"'], "no LVGL, no Arduino: the host builds it");
   const h = norm(HEADER);
-  assert.ok(h.includes("bool refused() const { return saved != worn; }"), "refused is saved against worn");
+  assert.ok(h.includes("bool refused() const { return port_refused && saved != worn; }"),
+    "refused is the port's word and the saved turn not worn, never the difference alone");
+  assert.ok(h.includes("inline OrientationState orientation_state(uint8_t saved, uint8_t worn, bool port_refused) {") &&
+      h.includes("s.port_refused = port_refused;"), "the state keeps the port's word");
   assert.ok(h.includes("return s.worn == (uint8_t)(rot & 3);"), "the check is the turn worn");
   assert.ok(h.includes("canary::glass::rotation_name(s.worn)"), "the root row names the turn worn");
+});
+
+test("copy lint (F245): microcopy_lint.sh reads the header that holds the Orientation page's words", () => {
+  const lint = readFileSync(join(__dirname, "../../firmware/scripts/microcopy_lint.sh"), "utf8");
+  const list = /^GLASS_SOURCES=\(\n([\s\S]*?)^\)$/m.exec(lint);
+  assert.ok(list, "microcopy_lint.sh has its GLASS_SOURCES list");
+  const entries = list[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  assert.ok(entries.includes('"$GLASS_ROOT/include/canary/ui/orientation_page.h"'),
+    `the glass plain-words and glyph audits read orientation_page.h: ${entries.join(" ")}`);
+  assert.ok(entries.includes('"$GLASS_ROOT/src/ui/settings_ui.cpp"'), "…beside settings_ui.cpp, which draws them");
+  const exempt = /case "\$f" in ([^)]*)\) continue ;; esac/.exec(lint);
+  assert.ok(exempt && !/orientation_page|\*\/include\//.test(exempt[1]),
+    `the glyph audit does not exempt the header: ${exempt && exempt[1]}`);
+  // The words the audits need to see are the header's literals, not ones
+  // assembled out of their sight.
+  for (const words of ['"Not enough memory to turn this glass, so it stays %s. "',
+    '"A restart tries the saved turn again: %s."', '"The layout follows the turn."', '"Portrait, Flipped"']) {
+    assert.ok(HEADER.includes(words), `the header spells ${words} as a literal`);
+  }
 });
 
 test("host tests (F245): both suites read the header as the page does, and both run", () => {
@@ -223,11 +283,17 @@ test("host tests (F245): both suites read the header as the page does, and both 
 
   const turn = read("tests_host/test_lvgl_port_turn.cpp");
   const page = norm(body(turn, /^static void check_orientation_page\(/m));
-  assert.ok(page.includes(`orientation_state(canary::glass::settings().rotation, ${WORN});`),
+  assert.ok(page.includes(`orientation_state(canary::glass::settings().rotation, ${WORN}, ${REFUSED});`),
     "test_lvgl_port_turn reads the state from the saved rotation and the port, as build_display() does");
   assert.match(norm(body(turn, /^static void check_face\(/m)),
-    /lvgl_port_set_rotation\(canary::glass::settings\(\)\.rotation\);.*check_orientation_page\(tag, rot, turns \? rot : \(uint8_t\)ROT_LANDSCAPE\);/,
-    "every boot check_face plays reads the page after main.cpp's boot call");
+    /lvgl_port_set_rotation\(canary::glass::settings\(\)\.rotation\);.*check_orientation_page\(tag, rot, turns \? rot : \(uint8_t\)ROT_LANDSCAPE, !turns && rot != ROT_LANDSCAPE\);/,
+    "every boot check_face plays reads the page after the boot call main.cpp makes, replayed");
+  const pending = norm(body(turn, /^static void test_pending_phone_write\(/m));
+  assert.match(pending,
+    /g_saved\.rotation = ROT_PORTRAIT; check_orientation_page\("granted glass, Portrait stored, not yet worn", ROT_PORTRAIT, ROT_LANDSCAPE, false\);/,
+    "a stored turn not yet handed to a glass that turns is read as not refused");
+  assert.match(norm(body(turn, /^int main\(\) /m)), /test_pending_phone_write\(\);/,
+    "test_lvgl_port_turn's main runs the pending phone write");
   assert.match(norm(body(turn, /^static void test_face_follows_the_worn_turn\(/m)),
     /check_face\("PSRAM turn buffer refused", false\);.*check_face\("fallback glass, turn buffer refused by both heaps", false\);/,
     "the refusing glasses are among them");

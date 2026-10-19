@@ -36,6 +36,9 @@ on:
       - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
+      # dash_orientation.test.js holds the glass copy lint to the header that
+      # carries the Orientation page's words (F245)
+      - "firmware/scripts/microcopy_lint.sh"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/xiao-esp32c6-mr60/**"
@@ -268,6 +271,9 @@ on:
       - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
+      # dash_orientation.test.js holds the glass copy lint to the header that
+      # carries the Orientation page's words (F245)
+      - "firmware/scripts/microcopy_lint.sh"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/xiao-esp32c6-mr60/**"
