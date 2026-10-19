@@ -63,6 +63,23 @@ if (tv && stage) {
   let aptKnocking = false;
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // When a live device's KEY was born, from its own /api/fleet row (securaCV
+  // tvos/discovery/DISCOVERY.md): "Born <day>" only when the device says the
+  // day is exact (`born_exact`), "First dated <day>" for a day without that,
+  // '' when it cannot say. `born_day` counts days since the Unix epoch (a UTC
+  // day), and only a day a Canary could stamp counts — its clock floor
+  // (2025-01-01) through the last day a 32-bit clock names (2106-02-07) — so
+  // the firmware's "never dated" 0 never reads as 1970. Self-contained on
+  // purpose: tests/tv-wall.test.mjs (and securaCV's vendored-copy test) lift
+  // this function out and replay the fleet contract vectors' `born` lines
+  // through it beside tv/app.js's bornLine.
+  function bornLine(row, locale) {
+    const day = row && row.born_day;
+    if (typeof day !== 'number' || !Number.isInteger(day) || day < 20089 || day > 49710) return '';
+    const date = new Date(day * 86400000).toLocaleDateString(locale,
+      { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
+    return (row.born_exact === true ? 'Born ' : 'First dated ') + date;
+  }
   function homeFleet() { return liveFleet ? liveFleet.map((d) => ({ n: d.name, off: d.online === false })) : homeTiles; }
   // For a business the real Canaries ARE the zones — when a live fleet is
   // connected, the Board's tiles and zone chips show it (offline = attention).
@@ -336,7 +353,7 @@ if (tv && stage) {
     else if (a === 'ackall') { bizEvents.forEach((e) => { e.acked = true; }); render(); showToast('All events acknowledged'); }
     else if (a === 'ack') { const id = +current.getAttribute('data-id'); if (bizEvents[id]) bizEvents[id].acked = true; render(); showToast('Event acknowledged'); }
     else if (a === 'incident-review') { showToast('Dispute pack ready · signed timeline + sealed clip · checkable offline ✓'); }
-    else if (a === 'tile') { showToast(current.getAttribute('data-name') + ' · online · chain intact'); }
+    else if (a === 'tile') { const n = current.getAttribute('data-name'), row = liveFleet && liveFleet.find((d) => d.name === n); showToast(n + ' · online · chain intact' + (row && row.born ? ' · ' + row.born : '')); }
     else if (a === 'event') { showToast('Event sealed · chain intact ✓'); }
     else if (a === 'watch') { homeMode = 'watching'; render(); showToast('Now playing · your fleet keeps witnessing'); }
     else if (a === 'stopwatch') { homeMode = 'wall'; render(); showToast('Back to the Witness Wall'); }
@@ -435,7 +452,7 @@ if (tv && stage) {
     if (!devs.length) return;
     // Only `name` is required; a silent `online` is NOT a presence claim (securaCV
     // tvos/discovery/DISCOVERY.md, fleet_contract_vectors.json) — the tile reads offline.
-    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online === true }));
+    liveFleet = devs.map((x) => ({ name: String(x.name || x.id || x.hostname || 'Canary').slice(0, 40), online: x.online === true, born: bornLine(x) }));
     liveHost = 'your LAN';
     setLive(true, liveHost);
     if (highlight) justAppeared = String(highlight).slice(0, 40);
@@ -450,7 +467,7 @@ if (tv && stage) {
     goLiveBtn = $('goLiveBtn'), flashBtn = $('flashBtn'), cpStatus = $('cpStatus'), cpDevices = $('cpDevices'), cpJson = $('cpJson'), liveDot = $('liveDot'), liveText = $('liveText');
   function setStatus(msg, cls) { if (!cpStatus) return; cpStatus.textContent = msg; cpStatus.className = 'cp-status' + (cls ? ' ' + cls : ''); }
   function setLive(on, host) { if (!liveDot) return; liveDot.className = 'live-dot ' + (on ? 'live' : 'demo'); liveText.textContent = on ? ('Live — ' + (liveFleet ? liveFleet.length : 0) + ' Canaries from ' + host) : 'Demo fleet — not connected to a kernel'; }
-  function renderDevices() { if (!cpDevices) return; cpDevices.innerHTML = liveFleet ? liveFleet.map((d) => `<span class="dv${d.online ? '' : ' off'}"><span class="d"></span>${esc(d.name)}${d.online ? '' : ' · offline'}</span>`).join('') : ''; }
+  function renderDevices() { if (!cpDevices) return; cpDevices.innerHTML = liveFleet ? liveFleet.map((d) => `<span class="dv${d.online ? '' : ' off'}"><span class="d"></span>${esc(d.name)}${d.online ? '' : ' · offline'}${d.born ? ' · ' + esc(d.born) : ''}</span>`).join('') : ''; }
   function showJson(data) { if (!cpJson) return; if (data) { cpJson.innerHTML = highlightJSON(data); cpJson.classList.add('show'); } else { cpJson.classList.remove('show'); cpJson.textContent = ''; } }
 
   let pollT = null, lastNames = null;
@@ -490,7 +507,7 @@ if (tv && stage) {
       const devices = Array.isArray(data) ? data : (data.devices || data.canaries || data.fleet || []);
       if (!devices.length) throw new Error('kernel returned no devices');
       // Same contract as tv/app.js parseFleet: a silent `online` is not presence.
-      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online === true }));
+      liveFleet = devices.map((d) => ({ name: d.name || d.id || d.hostname || 'Canary', online: d.online === true, born: bornLine(d) }));
       liveHost = shown; setLive(true, shown); render(); renderDevices(); showJson(data);
       setStatus('Connected — ' + liveFleet.length + ' Canaries from ' + shown + '. They drive the fleet above now.', 'ok');
       lastNames = liveFleet.map((d) => d.name); startPoll(url);

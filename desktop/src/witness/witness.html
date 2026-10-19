@@ -191,7 +191,7 @@
 
     .foot-cta { text-align: center; padding: 30px 0 8px; }
     .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 12px; font-size: 15px; font-weight: 600; padding: 12px 20px; border: 1px solid var(--border-strong); color: var(--text); background: var(--surface); }
-    .btn.primary { background: var(--brand); color: #fff; border-color: transparent; } .btn.primary:hover { background: var(--brand-dark); }
+    .btn.primary { background: var(--brand); color: var(--on-brand, #fff); border-color: transparent; } .btn.primary:hover { background: var(--brand-dark); }
     .disclaimer { text-align: center; font-size: 13px; color: var(--text-muted); max-width: 62ch; margin: 18px auto 0; }
     .tm-note { text-align: center; font-size: 12px; line-height: 1.55; color: var(--text-muted); max-width: 74ch; margin: 14px auto 0; }
     .live-line { margin: 12px auto 0; font-family: var(--mono); font-size: 12.5px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 8px; }
@@ -205,7 +205,7 @@
     .connect-panel .cp-sub { font-size: 13.5px; color: var(--text-secondary); max-width: 68ch; margin-top: 6px; }
     .cp-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
     .cp-row input { flex: 1; min-width: 240px; font-family: var(--mono); font-size: 13px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); background: var(--bg); }
-    .cp-btn { background: var(--brand); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+    .cp-btn { background: var(--brand); color: var(--on-brand, #fff); border: 0; border-radius: 10px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
     .cp-btn:hover { background: var(--brand-dark); }
     .cp-btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }
     .cp-btn.golive { background: #16a34a; animation: golivepulse 1.6s ease-in-out infinite; }
@@ -264,7 +264,7 @@
     .seg-group { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 10px; overflow: hidden; }
     .sg { background: var(--surface); border: 0; border-right: 1px solid var(--border); padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--text-secondary); font-family: 'Inter', system-ui, sans-serif; }
     .sg:last-child { border-right: 0; }
-    .sg[data-on="1"] { background: var(--brand); color: #fff; font-weight: 600; }
+    .sg[data-on="1"] { background: var(--brand); color: var(--on-brand, #fff); font-weight: 600; }
     .ap-test { margin-left: auto; background: var(--text); color: var(--bg); border: 0; border-radius: 10px; padding: 9px 15px; font-size: 13px; font-weight: 600; cursor: pointer; }
     .ap-test:hover { opacity: .9; }
 
@@ -526,7 +526,7 @@
       <pre class="codeblock" id="cpJson" aria-label="Fleet response"></pre>
       <details>
         <summary>Why can't it just find them automatically?</summary>
-        <p>Browsers deliberately can't do mDNS/Bonjour discovery or scan your network, and a page served over <code>https://</code> can't reach a device that only speaks <code>http://</code> on your LAN (mixed-content is blocked). So real discovery works when: your kernel exposes a CORS-enabled endpoint over <code>https</code>, or you open this page on the same LAN over <code>http</code>, or you run the SecuraCV desktop app, which does the mDNS discovery natively and bridges it to the UI. When a kernel answers, your real fleet — names and online state — replaces the demo data here; the chain chip stays the emulator's placeholder. The real Wall at <a href="https://securacv.com/tv/">/tv</a> shows a verdict only when a hub serves an evidence envelope, which no shipping hub or Canary does today — against every real source it is presence-only and says so. On a Home Assistant add-on hub, enable the 8799 host port in the add-on's Network settings first (it ships disabled) and type <code>http://&lt;hub&gt;:8799</code> — with the port.</p>
+        <p>Browsers deliberately can't do mDNS/Bonjour discovery or scan your network, and a page served over <code>https://</code> can't reach a device that only speaks <code>http://</code> on your LAN (mixed-content is blocked). So real discovery works when: your kernel exposes a CORS-enabled endpoint over <code>https</code>, or you open this page on the same LAN over <code>http</code>, or you run the SecuraCV desktop app, which does the mDNS discovery natively and bridges it to the UI. When a kernel answers, your real fleet — names, online state and, where a device reports it, the day its key was born (“Born” only when the device says the day is exact, “First dated” otherwise) — replaces the demo data here; the chain chip stays the emulator's placeholder. The real Wall at <a href="https://securacv.com/tv/">/tv</a> shows a verdict only when a hub serves an evidence envelope, which no shipping hub or Canary does today — against every real source it is presence-only and says so. On a Home Assistant add-on hub, enable the 8799 host port in the add-on's Network settings first (it ships disabled) and type <code>http://&lt;hub&gt;:8799</code> — with the port.</p>
       </details>
     </section>
 
