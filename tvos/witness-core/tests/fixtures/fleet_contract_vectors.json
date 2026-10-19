@@ -6,7 +6,10 @@
     "it. tvos/witness-core/tests/fleet_contract.rs reads this file. The contract doc",
     "changes first, then this file, then the code — never the other way around.",
     "The first vector pins the one default the doc and both decoders used to disagree",
-    "on: a device that omits `online` is NOT claimed present (`online: false`)."
+    "on: a device that omits `online` is NOT claimed present (`online: false`).",
+    "A vector may also carry `born`: per normalized row, the birth-day line every reader",
+    "renders ({label, utc_date}) or null for none. A vector without it draws no line on",
+    "any row. Born appears only when born_exact is true; a day without that is First dated."
   ],
   "vectors": [
     {
@@ -99,6 +102,90 @@
           { "name": "Bedroom", "online": true, "chain": "ok", "product": "canary-sense", "presence": "present", "occupants": "1", "breathing": true }
         ]
       }
+    },
+    {
+      "name": "a Canary born the evening it was set up: its day and the word Born (fleet_selfreport_build, verbatim — the iPhone's FleetSelfReportTests.bornBody)",
+      "_note": "born_day is days since the Unix epoch, a UTC day with no time of day (firmware/common/identity/birth_day.h); born_exact true means the device met a clock while its key was still fresh. `born` says what every reader must render for each row: the label and the UTC calendar day, or null for no line at all.",
+      "input": "{\"kernel\":\"Front Door\",\"verified_through\":\"now\",\"devices\":[{\"name\":\"Front Door\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-wap\",\"chain_height\":42,\"born_day\":20673,\"born_exact\":true}]}",
+      "normalized": {
+        "kernel": "Front Door",
+        "verified_through": "now",
+        "devices": [
+          { "name": "Front Door", "online": true, "chain": "ok", "product": "canary-wap", "born_day": 20673, "born_exact": true }
+        ]
+      },
+      "born": [
+        { "label": "Born", "utc_date": "2026-08-08" }
+      ]
+    },
+    {
+      "name": "a Canary that met a clock late says First dated, never Born (fleet_selfreport_build, verbatim — the iPhone's FleetSelfReportTests.firstDatedBody)",
+      "_note": "A Canary that sat on a shelf before it ever saw a network records the day it was first DATED and says so with born_exact false. Same kind of number, a different claim: a reader that dropped the flag would promote a week on a shelf into a birthday.",
+      "input": "{\"kernel\":\"Shed\",\"verified_through\":\"now\",\"devices\":[{\"name\":\"Shed\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-wap\",\"chain_height\":7,\"born_day\":20666,\"born_exact\":false}]}",
+      "normalized": {
+        "kernel": "Shed",
+        "verified_through": "now",
+        "devices": [
+          { "name": "Shed", "online": true, "chain": "ok", "product": "canary-wap", "born_day": 20666, "born_exact": false }
+        ]
+      },
+      "born": [
+        { "label": "First dated", "utc_date": "2026-08-01" }
+      ]
+    },
+    {
+      "name": "no birth day, or half a pair: absence is 'cannot say', a day without its flag is not a birthday, and a flag without a day dates nothing",
+      "_note": "The firmware writes born_day and born_exact together or not at all, so the second and third rows come from no firmware this repo builds. The normalizer carries each half as sent and the reader decides: a missing flag reads as not exact (the flag exists to hold a claim back), and a flag with no day draws nothing.",
+      "input": "{\"devices\":[{\"name\":\"Porch\",\"online\":true,\"chain\":\"ok\",\"product\":\"canary-wap\"},{\"name\":\"Attic\",\"born_day\":20673},{\"name\":\"Loft\",\"born_exact\":true}]}",
+      "normalized": {
+        "devices": [
+          { "name": "Porch", "online": true, "chain": "ok", "product": "canary-wap" },
+          { "name": "Attic", "online": false, "born_day": 20673 },
+          { "name": "Loft", "online": false, "born_exact": true }
+        ]
+      },
+      "born": [
+        null,
+        { "label": "First dated", "utc_date": "2026-08-08" },
+        null
+      ]
+    },
+    {
+      "name": "a birth day of the wrong type is dropped, never fatal: the row and the rest of the snapshot survive",
+      "_note": "A string, a fraction, a null, an array or an object is not a day, and anything but true/false is not the flag. Each is dropped to absent rather than failing the parse, because a failed parse loses the WHOLE snapshot and one strange row would blank the Wall for every device that answered.",
+      "input": "{\"devices\":[{\"name\":\"A\",\"online\":true,\"born_day\":\"20673\",\"born_exact\":\"true\"},{\"name\":\"B\",\"online\":true,\"born_day\":20673.5,\"born_exact\":1},{\"name\":\"C\",\"online\":true,\"born_day\":null,\"born_exact\":null},{\"name\":\"D\",\"online\":true,\"born_day\":[20673],\"born_exact\":{}}]}",
+      "normalized": {
+        "devices": [
+          { "name": "A", "online": true },
+          { "name": "B", "online": true },
+          { "name": "C", "online": true },
+          { "name": "D", "online": true }
+        ]
+      },
+      "born": [null, null, null, null]
+    },
+    {
+      "name": "a day no Canary can stamp is not a date: 0 is the firmware's own 'never dated', and the window runs from its clock floor (2025-01-01) to the last day a 32-bit clock names (2106-02-07)",
+      "_note": "The firmware stamps only a believable clock (kClockFloor in birth_day.h: day 20089) and its clock is a uint32_t count of seconds (at most day 49710), so a day outside 20089..=49710 came from no Canary. The day is dropped and the flag beside it crosses alone, which a reader renders as nothing. The two edges themselves are days.",
+      "input": "{\"devices\":[{\"name\":\"E\",\"online\":true,\"born_day\":0,\"born_exact\":true},{\"name\":\"F\",\"online\":true,\"born_day\":-1,\"born_exact\":false},{\"name\":\"G\",\"online\":true,\"born_day\":20088,\"born_exact\":true},{\"name\":\"H\",\"online\":true,\"born_day\":49711,\"born_exact\":true},{\"name\":\"I\",\"online\":true,\"born_day\":20089,\"born_exact\":true},{\"name\":\"J\",\"online\":true,\"born_day\":49710,\"born_exact\":false}]}",
+      "normalized": {
+        "devices": [
+          { "name": "E", "online": true, "born_exact": true },
+          { "name": "F", "online": true, "born_exact": false },
+          { "name": "G", "online": true, "born_exact": true },
+          { "name": "H", "online": true, "born_exact": true },
+          { "name": "I", "online": true, "born_day": 20089, "born_exact": true },
+          { "name": "J", "online": true, "born_day": 49710, "born_exact": false }
+        ]
+      },
+      "born": [
+        null,
+        null,
+        null,
+        null,
+        { "label": "Born", "utc_date": "2025-01-01" },
+        { "label": "First dated", "utc_date": "2106-02-07" }
+      ]
     }
   ]
 }
