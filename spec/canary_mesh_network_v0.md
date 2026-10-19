@@ -609,8 +609,8 @@ reports success, and the joiner, its pairing gone, drops the COMPLETE and
 every resend (canary-wap logs after 2 minutes that its COMPLETE was never
 answered; the PlatformIO tree sends its copies for the whole pairing
 timeout and does not log the end). A wrong hash sent to the joiner in that
-slot has done the same since F75 on canary-wap and F97 on the PlatformIO
-tree, so a radio gains nothing it did not have; before F94 the joiner took
+slot already did the same on both trees (host-probed on the code before
+F94), so a radio gains nothing it did not have; before F94 the joiner took
 the reflection as the initiator's CONFIRM, and the pairing completed. Two
 initiators relayed into one session key (each handed a DISCOVER with the
 joiner's role, forged from the other's address, and each one's OFFER

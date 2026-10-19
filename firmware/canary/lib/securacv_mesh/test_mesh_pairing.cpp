@@ -1910,8 +1910,8 @@ void test_a_role_free_confirm_fails_closed() {
  * joiner's: the initiator holds the joiner's genuine CONFIRM, so it still
  * completes (SEND_COMPLETE, NOTIFY_PAIRED, the opera_secret sealed), and
  * the joiner, its key wiped, drops the COMPLETE and every copy. That is
- * what a wrong hash sent to the joiner in the same slot has done since F97;
- * the reflection gives a radio nothing it did not have. Until F94 the
+ * what a wrong hash sent to the joiner in the same slot already did before
+ * F94; the reflection gives a radio nothing it did not have. Until F94 the
  * joiner took its own CONFIRM as the initiator's and both sides paired.
  * Both orders. Fails on the code before F94 (the joiner moves on and
  * pairs), and with a joiner that drops a CONFIRM equal to its own role's

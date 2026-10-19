@@ -1278,7 +1278,7 @@ void test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing() {
   // sends the COMPLETE and reports success; the joiner, its pairing gone,
   // drops the COMPLETE and every resend, and after 2 minutes the initiator
   // logs that its COMPLETE was never answered. A wrong hash sent to the
-  // joiner in the same slot has done that since F75, so the reflection
+  // joiner in the same slot already did that before F94, so the reflection
   // gives a radio nothing it did not have. Until F94 the joiner took its
   // own CONFIRM as the initiator's and both sides completed. Both orders.
   // Fails on the code before F94, and with a joiner that drops a CONFIRM
