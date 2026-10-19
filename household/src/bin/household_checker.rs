@@ -29,9 +29,11 @@
 //! or write the caller's own key file: an admin key, a client key, a bearer
 //! token).
 //!
-//! Every command accepts only its own options: an unknown or misspelled one
-//! is refused, never ignored, and no error message repeats an option's
-//! value.
+//! Every command accepts only its own options ([`COMMANDS`]): an unknown or
+//! misspelled one, or one that another command or `roster propose` kind
+//! takes, is refused, never ignored. No error message repeats an option's
+//! value, and an option's name only when some command takes it
+//! ([`known_option`]).
 //!
 //! Nothing this program logs names a handle, a credential id or a tap.
 
@@ -54,26 +56,157 @@ use zeroize::Zeroizing;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8787";
 
+/// Each command's words and the options it accepts, and nothing else. The
+/// `roster propose` kinds take different options, so each kind is its own
+/// row: `--threshold` on `add-member` is refused like `--key-fle`, not
+/// ignored.
+const COMMANDS: &[(&[&str], &[&str])] = &[
+    (&["init"], &["data-dir", "kek"]),
+    (&["admin-keygen"], &["out"]),
+    (
+        &["roster", "genesis"],
+        &[
+            "data-dir",
+            "kek",
+            "admin-key",
+            "threshold",
+            "physical-confirm",
+        ],
+    ),
+    (&["roster", "show"], &["data-dir"]),
+    (&["roster", "pending"], &["data-dir"]),
+    (
+        &["roster", "propose", "add-member"],
+        &[
+            "data-dir",
+            "kind",
+            "class",
+            "public-key",
+            "rp-id",
+            "credential-id",
+            "not-after",
+        ],
+    ),
+    (&["roster", "propose", "revoke"], &["data-dir", "handle"]),
+    (
+        &["roster", "propose", "add-admin"],
+        &[
+            "data-dir",
+            "handle",
+            "public-key",
+            "alg",
+            "kind",
+            "rp-id",
+            "credential-id",
+        ],
+    ),
+    (
+        &["roster", "propose", "remove-admin"],
+        &["data-dir", "handle"],
+    ),
+    (
+        &["roster", "propose", "set-threshold"],
+        &["data-dir", "threshold"],
+    ),
+    (
+        &["roster", "approve"],
+        &[
+            "data-dir",
+            "proposal",
+            "admin-key",
+            "approval-file",
+            "holder-proof-file",
+        ],
+    ),
+    (
+        &["roster", "apply"],
+        &["data-dir", "kek", "proposal", "physical-confirm"],
+    ),
+    (
+        &["card", "provision"],
+        &["data-dir", "kek", "handle", "key-file", "replace"],
+    ),
+    (&["card", "prune"], &["data-dir", "kek"]),
+    (&["pair"], &["data-dir", "reset"]),
+    (
+        &["serve"],
+        &["data-dir", "kek", "bind", "allow-lan-plaintext", "home-ttl"],
+    ),
+    (&["client", "keygen"], &["out"]),
+    (
+        &["client", "command"],
+        &[
+            "key",
+            "handle",
+            "token-file",
+            "purpose",
+            "addr",
+            "fido2-rp-id",
+            "uv",
+        ],
+    ),
+    (&["client", "posture"], &["token-file", "addr"]),
+];
+
+const PROPOSAL_KINDS: &str = "add-member|revoke|add-admin|remove-admin|set-threshold";
+
+/// The options the command named by `words` accepts; `None` for words that
+/// name no command.
+fn allowed_options(words: &[&str]) -> Option<&'static [&'static str]> {
+    COMMANDS
+        .iter()
+        .find(|(w, _)| *w == words)
+        .map(|(_, opts)| *opts)
+}
+
+/// Whether some command takes `--name` (or it is `key-hex`, which an earlier
+/// draft took and whose refusal carries a hint). These are the only option
+/// names an error message may repeat: anything else may be a key, a token
+/// or a handle typed with a leading `--`, and is named by its position.
+fn known_option(name: &str) -> bool {
+    name == "key-hex" || COMMANDS.iter().any(|(_, opts)| opts.contains(&name))
+}
+
 struct Args {
     flags: Vec<(String, Option<String>)>,
 }
 
 impl Args {
-    fn parse(raw: &[String]) -> std::result::Result<Args, String> {
+    /// Parse `raw` against the command's own options: an option outside
+    /// `allowed` is refused here, before any command runs.
+    fn parse(raw: &[String], allowed: &[&str]) -> std::result::Result<Args, String> {
         let mut flags = Vec::new();
         let mut i = 0;
         while i < raw.len() {
             let a = &raw[i];
             // Never echo an argument: it may be a key typed in the wrong place.
-            let Some(name) = a.strip_prefix("--") else {
+            let Some(rest) = a.strip_prefix("--") else {
                 return Err(format!(
                     "argument {} is not an option (options start with --)",
                     i + 1
                 ));
             };
-            if let Some((flag, _)) = name.split_once('=') {
+            let (name, with_eq) = match rest.split_once('=') {
+                Some((n, _)) => (n, true),
+                None => (rest, false),
+            };
+            if !allowed.contains(&name) {
+                if !known_option(name) {
+                    return Err(format!(
+                        "argument {} is not an option of this command",
+                        i + 1
+                    ));
+                }
+                let hint = if name == "key-hex" {
+                    " (a key on the command line lands in shell history: put it in a file and pass --key-file)"
+                } else {
+                    ""
+                };
+                return Err(format!("--{name} is not an option of this command{hint}"));
+            }
+            if with_eq {
                 return Err(format!(
-                    "--{flag}: give an option's value as the next argument, not after '='"
+                    "--{name}: give an option's value as the next argument, not after '='"
                 ));
             }
             let takes_value = !matches!(name, "allow-lan-plaintext" | "uv" | "reset" | "replace")
@@ -145,74 +278,26 @@ fn main() {
         (raw[..split].iter().collect(), raw[split..].iter().collect())
     };
     let rest: Vec<String> = rest.into_iter().cloned().collect();
-    let args = match Args::parse(&rest) {
+    let words: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+    // The command's own options are known before any option is read, so a
+    // stray one is refused by the parser and nothing runs. (The words are
+    // never echoed either: one may be a key typed in the wrong place.)
+    let Some(allowed) = allowed_options(&words) else {
+        match words.as_slice() {
+            ["roster", "propose", ..] => eprintln!(
+                "household_checker: roster propose takes one of {PROPOSAL_KINDS} (see the README)"
+            ),
+            _ => eprintln!("household_checker: {}", usage()),
+        }
+        std::process::exit(2);
+    };
+    let args = match Args::parse(&rest, allowed) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("household_checker: {e}");
             std::process::exit(2);
         }
     };
-    let words: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
-    let allowed: &[&str] = match words.as_slice() {
-        ["init"] => &["data-dir", "kek"],
-        ["admin-keygen"] | ["client", "keygen"] => &["out"],
-        ["roster", "genesis"] => &[
-            "data-dir",
-            "kek",
-            "admin-key",
-            "threshold",
-            "physical-confirm",
-        ],
-        ["roster", "show"] | ["roster", "pending"] => &["data-dir"],
-        ["roster", "propose", _] => &[
-            "data-dir",
-            "kind",
-            "class",
-            "public-key",
-            "rp-id",
-            "credential-id",
-            "not-after",
-            "handle",
-            "alg",
-            "threshold",
-        ],
-        ["roster", "approve"] => &[
-            "data-dir",
-            "proposal",
-            "admin-key",
-            "approval-file",
-            "holder-proof-file",
-        ],
-        ["roster", "apply"] => &["data-dir", "kek", "proposal", "physical-confirm"],
-        ["card", "provision"] => &["data-dir", "kek", "handle", "key-file", "replace"],
-        ["card", "prune"] => &["data-dir", "kek"],
-        ["pair"] => &["data-dir", "reset"],
-        ["serve"] => &["data-dir", "kek", "bind", "allow-lan-plaintext", "home-ttl"],
-        ["client", "command"] => &[
-            "key",
-            "handle",
-            "token-file",
-            "purpose",
-            "addr",
-            "fido2-rp-id",
-            "uv",
-        ],
-        ["client", "posture"] => &["token-file", "addr"],
-        _ => &[],
-    };
-    if let Some((bad, _)) = args
-        .flags
-        .iter()
-        .find(|(k, _)| !allowed.contains(&k.as_str()))
-    {
-        let hint = if bad == "key-hex" {
-            " (a key on the command line lands in shell history: put it in a file and pass --key-file)"
-        } else {
-            ""
-        };
-        eprintln!("household_checker: --{bad} is not an option of this command{hint}");
-        std::process::exit(2);
-    }
     let r = match words.as_slice() {
         ["init"] => cmd_init(&args),
         ["admin-keygen"] => cmd_admin_keygen(&args),
@@ -286,10 +371,11 @@ fn cmd_admin_keygen(a: &Args) -> Result<i32> {
     let secret = Zeroizing::new(rng::array::<32>()?);
     let sk = ed25519_dalek::SigningKey::from_bytes(&secret);
     let handle: [u8; 16] = rng::array()?;
+    let secret_hex = hex::encode_secret(&secret[..]);
     let body = Zeroizing::new(format!(
         "{{\"alg\":\"ed25519\",\"kind\":\"cli\",\"handle\":\"{}\",\"secret_key\":\"{}\"}}\n",
         hex::encode(&handle),
-        hex::encode(&secret[..])
+        secret_hex.as_str()
     ));
     store::write_atomic(&out, body.as_bytes())?;
     println!(
@@ -305,25 +391,29 @@ struct AdminKey {
     key: ed25519_dalek::SigningKey,
 }
 
+/// The file `admin-keygen` writes. Its secret lands in a [`Zeroizing`]
+/// buffer as it is parsed, never in a `serde_json::Value`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdminKeyFile {
+    alg: String,
+    kind: String,
+    handle: String,
+    #[serde(deserialize_with = "secrets::deserialize_zeroizing_string")]
+    secret_key: Zeroizing<String>,
+}
+
 fn load_admin_key(p: &Path) -> Result<AdminKey> {
     let raw = Zeroizing::new(store::read_bounded(p, 4096)?);
-    let v: Value =
-        serde_json::from_slice(&raw).map_err(|_| Error::Invalid("admin key file is not JSON"))?;
-    if v["alg"] != "ed25519" || v["kind"] != "cli" {
+    let f: AdminKeyFile = serde_json::from_slice(&raw)
+        .map_err(|_| Error::Invalid("admin key file does not match the schema"))?;
+    if f.alg != "ed25519" || f.kind != "cli" {
         return Err(Error::Invalid(
             "only ed25519/cli admin key files are supported by this CLI",
         ));
     }
-    let handle = hex::decode_array(
-        v["handle"]
-            .as_str()
-            .ok_or(Error::Invalid("admin key file has no handle"))?,
-    )?;
-    let s = Zeroizing::new(hex::decode_array::<32>(
-        v["secret_key"]
-            .as_str()
-            .ok_or(Error::Invalid("admin key file has no secret_key"))?,
-    )?);
+    let handle = hex::decode_array(&f.handle)?;
+    let s = hex::decode_secret_array::<32>(&f.secret_key)?;
     Ok(AdminKey {
         handle,
         key: ed25519_dalek::SigningKey::from_bytes(&s),
@@ -686,7 +776,7 @@ fn cmd_card(a: &Args) -> Result<i32> {
             let raw = Zeroizing::new(store::read_bounded(Path::new(f), 128)?);
             let text =
                 std::str::from_utf8(&raw).map_err(|_| Error::Invalid("key file is not text"))?;
-            (Zeroizing::new(hex::decode_array::<16>(text.trim())?), false)
+            (hex::decode_secret_array::<16>(text.trim())?, false)
         }
         None => (Zeroizing::new(rng::array::<16>()?), true),
     };
@@ -700,9 +790,11 @@ fn cmd_card(a: &Args) -> Result<i32> {
     store::write_atomic(&d.cards_path(), &cards.seal(&kek, &d.household()?)?)?;
     if generated {
         // Shown once, so it can be written to the card with NFC tooling (not
-        // part of v0). It never touches a log.
-        let shown = Zeroizing::new(hex::encode(&key[..]));
-        println!("{}", json!({"card_key": shown.as_str()}));
+        // part of v0). It never touches a log, and the line is built in a
+        // buffer that is wiped, not in a `serde_json::Value`.
+        let shown = hex::encode_secret(&key[..]);
+        let line = Zeroizing::new(format!("{{\"card_key\":\"{}\"}}", shown.as_str()));
+        println!("{}", line.as_str());
     }
     Ok(0)
 }

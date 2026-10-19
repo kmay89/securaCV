@@ -13,7 +13,11 @@
 //! key-encryption key (KEK) that is **not** in the data directory:
 //! [`load_kek`] refuses a KEK path inside it. Plaintext keys live only in
 //! [`Zeroizing`] buffers (and in `ed25519_dalek::SigningKey`, which zeroizes
-//! itself on drop). File formats:
+//! itself on drop): a key that arrives as hex is decoded by
+//! [`crate::hex::decode_secret_array`] straight into such a buffer, and a
+//! key file is parsed into a typed struct whose secret field is one
+//! ([`deserialize_zeroizing_string`]), never into a `serde_json::Value`.
+//! File formats:
 //!
 //! ```text
 //! cards.sealed     "SCVK" ‖ 0x01 ‖ nonce(24) ‖ XChaCha20-Poly1305(k, nonce, aad, plaintext)
@@ -50,6 +54,16 @@ const HUB_INFO: &[u8] = b"securacv-hk-hub-keys-v1";
 /// Largest sealed file accepted.
 pub const MAX_SEALED_BYTES: usize = 64 * 1024;
 
+/// A serde `deserialize_with` for a secret string field (the hex key in an
+/// admin or client key file): the string lands in a [`Zeroizing`] buffer as
+/// it is parsed, so the typed key-file struct never holds it in a plain
+/// `String`, and no `serde_json::Value` is built for it.
+pub fn deserialize_zeroizing_string<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Zeroizing<String>, D::Error> {
+    <String as serde::Deserialize>::deserialize(d).map(Zeroizing::new)
+}
+
 /// The key-encryption key.
 pub struct Kek(Zeroizing<[u8; 32]>);
 
@@ -78,7 +92,7 @@ impl Kek {
 
     /// The KEK as 64 lowercase hex characters (for writing the KEK file).
     pub fn to_hex(&self) -> Zeroizing<String> {
-        Zeroizing::new(crate::hex::encode(&self.0[..]))
+        crate::hex::encode_secret(&self.0[..])
     }
 
     fn aead(&self, household: &[u8; 16], info: &[u8]) -> XChaCha20Poly1305 {
@@ -252,7 +266,7 @@ pub fn load_kek(path: &Path, data_dir: &Path) -> Result<Kek> {
     }
     let raw = Zeroizing::new(std::fs::read(path).map_err(Error::io("read the KEK file"))?);
     let text = std::str::from_utf8(&raw).map_err(|_| Error::Invalid("KEK file is not text"))?;
-    let bytes = Zeroizing::new(crate::hex::decode_array::<32>(text.trim_end())?);
+    let bytes = crate::hex::decode_secret_array::<32>(text.trim_end())?;
     Ok(Kek::from_bytes(*bytes))
 }
 
