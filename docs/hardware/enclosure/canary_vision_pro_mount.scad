@@ -48,7 +48,7 @@ mag_t = 3.0;    // magnet pocket depth into the front face, so the disc glues in
 
 /* [Plate] */
 plate_w = 50.0;    // plate width (X) — the keyhole pair, 2 x kh_x + kh_head_d across, must fit inside it (asserted)
-plate_h = 64.0;    // plate height (Y) — the keyhole row must stay inside its top half (asserted); the tripod hole and the magnet pocket sit 16 below the center
+plate_h = 64.0;    // plate height (Y) — the keyhole row must stay clear of the top edge (asserted); the tripod hole and the magnet pocket sit 16 below the center
 plate_t = 7.0;     // plate thickness — more than the keyhole pocket depth, and than the tripod counterbore + 1.5 (both asserted); the magnet pocket is cut into its front face
 plate_r = 4.0;     // corner rounding
 

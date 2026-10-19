@@ -753,7 +753,7 @@ loc_rib_ys = [-2.0, 12.0];   // clear of the ears, the pillars and the corners
    change that was not already happening.
    A ring's width IS its narrowest feature, which is why a ring survives at a
    size where type would not. 1.6 is four beads at a 0.4 nozzle. */
-egg_ring = true;     // white ring inlaid round the egg hanger on the lid's back (a keyhole back only)
+egg_ring = true;     // white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)
 egg_ring_w = 1.6;    // the white shell, hugging the opening
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
@@ -819,7 +819,7 @@ mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
 opt_vent = true;     // heat slots up both side walls behind the light band — a chimney when the case hangs
 vent_n = 6;          // slots per side wall — 12 in all, a column not a band
 vent_pitch = 4.0;    // tightened from 5.0 so six fit under the corner radius
-vent_w = 1.4;        // slot width along the side wall (Y) — each slot is cut through both ±X walls from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end
+vent_w = 1.4;        // slot width along the side wall (Y) — vent_n slots up each ±X wall, mirrored, from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end
 
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
    symmetric pattern: the USB-end pair sits wide, the far pair inboard. The

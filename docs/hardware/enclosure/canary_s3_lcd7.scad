@@ -613,7 +613,7 @@ vent_beat_shift = 1;  // stations the pattern rotates per row.
 badge_column = true;  // false = let the grille back into the badge's half
 
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
-vent_top_n = 14;          // exhaust slot count through the top (+Y) wall of the two-piece build's back (part="back"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted)
+vent_top_n = 14;          // exhaust slot count through the top (+Y) wall of the two-piece build's back (part="back"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted). Legacy two-piece build only: part="frame" does not read it
 vent_bottom = true;      // INTAKE — slots through the bottom (−Y) wall, placed
                          // outboard of the connector channel so they stay open
 vent_bottom_n = 5;       // per side
@@ -1060,7 +1060,7 @@ label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // floor, sitting above the swap, prints in the body
                      // color — the words show through. Exact swap heights
                      // are echoed at render time.
-label_font  = "Liberation Sans:style=Bold";  // the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates bold caps at 0.392 x size per letter whatever font is set
+label_font  = "Liberation Sans:style=Bold";  // the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates each word's half-width at 0.392 x size per letter whatever font is set
 
 /* [Print colors — the AMS palette] */
 // ════════════════════════════════════════════════════════════════════════════
@@ -1496,7 +1496,7 @@ port_scoop_d  = 7.0;   // dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint
 // an accent filament in one click — see bambu_p2s_bringup.md §7b′.
 edge_text_l = "SECURACV";  // front-view left of the port
 edge_text_r = "CANARY";    // front-view right
-edge_text_size = 7.0;   // brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their width is estimated at 0.392 x this per letter and must fit between the port's flange and the wall's flat span (asserted)
+edge_text_size = 7.0;   // brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their half-width is estimated at 0.392 x this per letter (a full width of 0.784 x this per letter), which reads short of the cut words (SECURACV at 7 inks 58.7 mm wide against 43.9 estimated), and the estimate must fit between the port's flange and the wall's flat span (asserted)
 edge_lbl_depth = 1.0;   // deboss depth into the frame_wall skin (web asserted)
 edge_vent_n = 16;       // shadow gills: count
 edge_vent_pitch = 8.0; // shadow gills: pitch

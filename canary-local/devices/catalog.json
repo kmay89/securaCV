@@ -209,7 +209,7 @@
     {
      "id": "egg_ring",
      "type": "bool",
-     "label": "white ring inlaid round the egg hanger on the lid's back (a keyhole back only)",
+     "label": "white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1190,7 +1190,7 @@
     {
      "id": "collar_on",
      "type": "bool",
-     "label": "drop collar: a ring reaching in from the plug-end wall round the plug's shell, so a drop on the plug bears on the case and not on the solder joints",
+     "label": "drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints",
      "consequence": "",
      "audience": "user",
      "default": true

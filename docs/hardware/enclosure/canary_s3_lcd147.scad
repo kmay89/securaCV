@@ -203,7 +203,7 @@ usb_clear = 0.35;  // per-side clearance around the shell in its opening
 usb_relief = 0.5;  // relief step depth on the outer face around the opening — bounded by the wall above and below the plug
 
 /* [Drop collar] — the reason this case exists in one piece */
-collar_on = true;  // drop collar: a ring reaching in from the plug-end wall round the plug's shell, so a drop on the plug bears on the case and not on the solder joints
+collar_on = true;  // drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints
 collar_t = 2.6;    // ring thickness around the shell at its root
 collar_l = 3.4;    // how far the ring reaches ALONG the plug from the wall
 collar_gap = 0.25; // ring-to-shell gap: small enough to bottom out early,

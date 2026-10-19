@@ -7426,7 +7426,7 @@
       {
        "name": "corner_r",
        "default": "3.0",
-       "comment": "outer corner radius of the shell — core_corner_r(); the cavity's corners are this less the wall (core_cav_r), and the plate's bore follows them"
+       "comment": "outer corner radius of the shell — core_corner_r(); the cavity's corners are this less the wall, floored at core_min_web() (core_cav_r), which the defaults hit, and the plate's bore follows them"
       },
       {
        "name": "tol_slide",
@@ -9403,7 +9403,7 @@
       {
        "name": "cg_fill",
        "default": "0.90",
-       "comment": "the bush's fill of its cavity once squeezed — the O-ring rule's 90 % ceiling; it sets the bush's free length (cg_bush_l), and an overfill is refused (asserted)"
+       "comment": "the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)"
       },
       {
        "name": "cg_bush_l",
@@ -10926,7 +10926,7 @@
       {
        "name": "collar_on",
        "default": "true",
-       "comment": "drop collar: a ring reaching in from the plug-end wall round the plug's shell, so a drop on the plug bears on the case and not on the solder joints"
+       "comment": "drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints"
       },
       {
        "name": "collar_t",
@@ -12598,7 +12598,7 @@
       {
        "name": "egg_ring",
        "default": "true",
-       "comment": "white ring inlaid round the egg hanger on the lid's back (a keyhole back only)"
+       "comment": "white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)"
       },
       {
        "name": "egg_ring_w",
@@ -12660,7 +12660,7 @@
       {
        "name": "vent_w",
        "default": "1.4",
-       "comment": "slot width along the side wall (Y) — each slot is cut through both ±X walls from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end"
+       "comment": "slot width along the side wall (Y) — vent_n slots up each ±X wall, mirrored, from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end"
       }
      ]
     },
@@ -13528,7 +13528,7 @@
       {
        "name": "vent_top_n",
        "default": "14",
-       "comment": "exhaust slot count through the top (+Y) wall of the two-piece build's back (part=\"back\"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted)"
+       "comment": "exhaust slot count through the top (+Y) wall of the two-piece build's back (part=\"back\"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted). Legacy two-piece build only: part=\"frame\" does not read it"
       },
       {
        "name": "vent_bottom",
@@ -14073,7 +14073,7 @@
       {
        "name": "label_font",
        "default": "Liberation Sans:style=Bold",
-       "comment": "the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates bold caps at 0.392 x size per letter whatever font is set"
+       "comment": "the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates each word's half-width at 0.392 x size per letter whatever font is set"
       }
      ]
     },
@@ -14400,7 +14400,7 @@
       {
        "name": "edge_text_size",
        "default": "7.0",
-       "comment": "brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their width is estimated at 0.392 x this per letter and must fit between the port's flange and the wall's flat span (asserted)"
+       "comment": "brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their half-width is estimated at 0.392 x this per letter (a full width of 0.784 x this per letter), which reads short of the cut words (SECURACV at 7 inks 58.7 mm wide against 43.9 estimated), and the estimate must fit between the port's flange and the wall's flat span (asserted)"
       },
       {
        "name": "edge_lbl_depth",
@@ -16123,7 +16123,7 @@
       {
        "name": "plate_h",
        "default": "64.0",
-       "comment": "plate height (Y) — the keyhole row must stay inside its top half (asserted); the tripod hole and the magnet pocket sit 16 below the center"
+       "comment": "plate height (Y) — the keyhole row must stay clear of the top edge (asserted); the tripod hole and the magnet pocket sit 16 below the center"
       },
       {
        "name": "plate_t",

@@ -75,7 +75,7 @@ cg_gap    = 0.2;                            // cap floor clear of the barb tip
 cg_cav_l  = cg_top + cg_gap - cg_seat_z;    // 5.2: seat to the cap floor
 cg_a_free = PI/4*(cg_bush_od*cg_bush_od - cg_bush_id*cg_bush_id);
 cg_a_room = PI/4*(cg_bore*cg_bore - cg_cable*cg_cable);
-cg_fill   = 0.90;                           // the bush's fill of its cavity once squeezed — the O-ring rule's 90 % ceiling; it sets the bush's free length (cg_bush_l), and an overfill is refused (asserted)
+cg_fill   = 0.90;                           // the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)
 cg_bush_l = cg_fill * cg_cav_l * cg_a_room / cg_a_free; // 3.71 free -> 4.68 squeezed in 5.2
 // cap: a floor that bears on the bush's end (its hole passes the cable, not
 // the bush), a groove that houses the barb, and a lip below it that snaps

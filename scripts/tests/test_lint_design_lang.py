@@ -72,8 +72,12 @@ class HelpLines(_Case):
     def test_the_169_skirt_wall_keeps_its_own_help(self):
         # `skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed
         # back_stack` passed the rule above (skirt_dep is computed, so not a
-        # knob) and handed skirt_dep's help to skirt_wall in the builder and
-        # the Lab (C10c-2). Split, each line says its own fact.
+        # knob), and gen_builder_manifest.parse_scad gave skirt_dep's help to
+        # skirt_wall. No surface showed it: the Lab's parser skipped the
+        # two-assignment line whole, and the web builder does not offer this
+        # case. But the lint and HELP_DEBT read that parser, so they counted
+        # skirt_wall as helped. Split (C10c-2), each line says its own fact;
+        # test_enclosure_parsers.py holds what the Lab now lists.
         groups = L.gen_builder_manifest.parse_scad(L.ENC / "canary_s3_touch169.scad")
         knobs = {p["name"]: p for g in groups for p in g["params"]}
         desc = knobs["skirt_wall"].get("desc", "")
