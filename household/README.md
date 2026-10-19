@@ -310,7 +310,8 @@ More subcommands:
   never ignored, and so is an option written as `--name=value`. No error
   message repeats an option's value or a stray argument: either may be a key
   typed in the wrong place. A stray argument that starts with `--` is named
-  by its position unless some command takes an option of that name.
+  by its position unless some command takes an option of that name (or it is
+  `--key-hex`, named so its refusal can carry the `--key-file` hint).
 
 ### The output seam
 
@@ -361,7 +362,8 @@ essentials:
   statements, or a clock held or stepped back into it, reissues the floor,
   and a witness holding a higher `seq` refuses those statements (behaves as
   `away`) until the hub's `seq` passes it, which the next minute's floor
-  guarantees.
+  guarantees while fewer than 1024 statements were issued in the colliding
+  minute (the floor's spacing) and `last + 1` reaches in any case.
 - **Challenge message** (`wire.rs`):
   `"securacv-hk-v1\0" ‖ purpose ‖ door_id(16) ‖ be64(epoch) ‖ n_h(32)`.
   **That is 72 bytes**, as the spec (§4.1) states. An earlier draft said 88,

@@ -92,9 +92,9 @@ fn serve(data: &Path, kek: &Path) -> Serve {
         .unwrap();
     let mut out = child.stdout.take().unwrap();
     let stdout_rest = std::thread::spawn(move || {
-        let mut all = String::new();
-        let _ = out.read_to_string(&mut all);
-        all
+        let mut all = Vec::new();
+        let _ = out.read_to_end(&mut all);
+        String::from_utf8_lossy(&all).into_owned()
     });
     let mut r = BufReader::new(child.stderr.take().unwrap());
     let mut first = String::new();
@@ -106,9 +106,9 @@ fn serve(data: &Path, kek: &Path) -> Serve {
         .and_then(|p| p.parse().ok())
         .unwrap_or_else(|| panic!("no port in: {first}"));
     let stderr_rest = std::thread::spawn(move || {
-        let mut rest = first;
-        let _ = r.read_to_string(&mut rest);
-        rest
+        let mut rest = Vec::new();
+        let _ = r.read_to_end(&mut rest);
+        first + &String::from_utf8_lossy(&rest)
     });
     Serve {
         child,

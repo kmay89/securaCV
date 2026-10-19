@@ -134,7 +134,9 @@ minute as earlier statements, or a clock held or stepped back into that
 minute, issues the floor again. A witness that accepted a higher `seq`
 refuses such a statement (rule 4 of §3.2, `Reject::Seq`) and behaves as
 `away` until the hub's `seq` passes the one it holds, which the next
-minute's floor guarantees: the collision fails safe. That floor states
+minute's floor guarantees while fewer than 1024 statements were issued in the
+colliding minute (the floor's spacing) and `last + 1` reaches in any case:
+the collision fails safe. That floor states
 nothing `issued_at` does not already state, but a `seq` above the floor
 does: on a hub clock that never stepped back, `seq` minus the floor is how
 many statements were issued earlier in the same minute.
@@ -618,7 +620,8 @@ key.
   `--name=value`. No error message repeats an option's value or a stray
   argument, since either may be a key typed in the wrong place; a stray
   argument that starts with `--` is named by its position unless some
-  command takes an option of that name. `pair --reset` rewrites the pairing
+  command takes an option of that name (or it is `--key-hex`, named so its
+  refusal can carry the `--key-file` hint). `pair --reset` rewrites the pairing
   file empty even when it is damaged, so it also repairs one.
 
 ### 6.2 Output seam

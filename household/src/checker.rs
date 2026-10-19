@@ -177,7 +177,9 @@ impl std::fmt::Debug for Checker {
 /// statements, or a clock held or stepped back into it, issues the floor
 /// again (`tests::next_seq_floor_collides_within_the_minute`); a witness
 /// holding the higher `seq` refuses that statement, as `away`, until the
-/// hub's `seq` passes it, which the next minute's floor guarantees. The
+/// hub's `seq` passes it, which the next minute's floor guarantees while fewer
+/// than 1024 statements were issued in that minute (the floor's spacing) and
+/// `last + 1` reaches in any case. The
 /// floor carries nothing beyond `issued_at`, which the statement already
 /// states.
 pub fn next_seq(last: u64, issued_at: u64) -> u64 {
