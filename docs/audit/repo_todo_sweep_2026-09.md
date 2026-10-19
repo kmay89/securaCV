@@ -1241,10 +1241,12 @@ so — see D2 below.)
   write-only through a broker it pointed the device at. Now a save without a
   valid bearer (`api_auth_bearer_valid()`, computed once up front) is refused
   when the body carries no `password` key, a password is stored, and the
-  destination moves — the host (bytes), the port (a stored 0 read as the
-  mode's default on both sides, so a session's `enabled` toggle on such a
-  device is not refused), the TLS mode in either spelling, or a `ca` key, set
-  or cleared; `user`, `prefix`, `enabled` and `discovery` alone are not a
+  destination moves — the host (bytes), the port (both sides as
+  `config_load()` reads them: it reads a stored 0 as the mode's default, and
+  the body sets a port only in 1..65535, so a session's `enabled` toggle on
+  a device whose NVS holds port 0 is not refused), the TLS mode in either
+  spelling, or a `ca` key, set or cleared; `user`, `prefix`, `enabled` and
+  `discovery` alone are not a
   move, since the password still goes to the same peer. The refusal is `403`
   `{"ok":false,"code":"password_needed","reason":...}`, nothing saved, no
   re-init, no secret in the answer (`csi_mqtt.cpp`'s pure
@@ -1252,8 +1254,9 @@ so — see D2 below.)
   `password`, new or empty, chose what goes out, and the `/companion` wizard
   always sends one. The `/mqtt` page shows the device's reason, as it did,
   and puts the cursor in the password field. `tests_host/test_mqtt_reinit.cpp`
-  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 1183 checks, 44
-  tests, 623 and 33 before) names each clause: a cookie-only host, port,
+  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 2808 checks, 47
+  tests, 623 and 33 before) names each clause: a cookie-only host (a
+  respelling in case, a trailing dot and an emptied host among them), port,
   TLS-mode (both spellings) and CA move refused with the stored row
   unchanged, the open client untouched and no re-init; the password typed or
   cleared, a change that is no move, a device with no stored password, a
@@ -1262,6 +1265,64 @@ so — see D2 below.)
   refusal test fails on its first `403` check (the move answers `200`). A U1
   row in `hardware_verification_checklist.md`. Host-tested; not run on a
   device (U1).
+  *Its review, the same day, found the harm reachable around the gate.*
+  `config_save()` writes the row key by key on the httpd task, and a re-init
+  an earlier save left pending (its retire outlived the handler's 2 s wait:
+  the API lock held across a connect, F106) is served by the loop task at
+  its own time, from NVS as it stands — so a body the gate serves because it
+  names a password left the row, for the span of two writes, holding the new
+  host beside the old password, and a loop pass in that window opened a
+  client carrying the stored password to the new host (reproduced in the
+  harness: a cookie-only `{"host":"10.0.0.66","tls_mode":0,"password":
+  "attacker-chosen"}` with one loop pass after the host write — a client to
+  `10.0.0.66` carrying the stored password, then retired for the client the
+  body asked for, so the row looked clean). Ordering the keys closes that
+  pairing and opens its mirror (the flagship's `write_order` is the same
+  lesson from the other side: a new password beside the old plain mode), so
+  the fix is not an order: `config_save()`, `ca_save()` and `config_clear()`
+  count themselves in progress and finished (`s_config_writers`,
+  `s_config_saves`), the loop task's `open_client()` reads the row and the
+  CA and opens nothing when a save was still in progress at the end of its
+  read or finished since it began (`serve_reinit()` leaves the request for
+  its next pass; the boot `init()` hands it to `loop()`), and the config
+  POST holds the row and the CA in one such scope; `config_save()` promises
+  no key order. Three tests on the real handler, through the NVS stub's
+  hooks: `a_save_in_progress_opens_no_client` (four moves — a new host and
+  port; a TLS-to-plain downgrade with a new host; a plain-to-TLS upgrade
+  with a new host and password, with and without a new CA — each with the
+  loop task's pass after every one of the save's writes: nothing opens, the
+  request waits, the pass after the save opens the caller's client, and the
+  stored password never reached a client for another address or over a
+  plainer transport, nor a new password chosen with TLS the clear),
+  `a_save_inside_the_loop_tasks_read_opens_no_client` (a whole save inside
+  each of `config_load()`'s reads: the same) and
+  `a_boot_under_a_save_asks_the_loop` (`config_save`, `ca_save` and
+  `config_clear` inside the boot's read). With the busy word never spoken,
+  the first fails at the host write with the stored password on a client for
+  `10.0.0.66`. The review also found `port_or_default()` unreachable with a 0
+  on either side (the gate now compares the ports as `config_load()` read
+  them; the sentence above says where a stored 0 is read), two refusals
+  reading the stored row as an argument beside the request (unspecified
+  order; hoisted), and the "host (bytes)" claim unpinned (the respellings
+  above are now refused in the test).
+  *Two roads this rule does not cover, named so the next sweep need not
+  find them.* The QR hub-provision path (`canary_wap.ino`'s scan result: a
+  scanned SCV1 code carrying a host re-points `host` and `port`, keeps the
+  stored password and TLS mode, saves and asks for the re-init) moves the
+  broker with the stored password and no password typed — but its grant is
+  not the session's: a scan window opens from the boot auto-scan or from
+  `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair token
+  (`pair_token_valid()`), never the cookie, and a code must be in front of
+  the camera (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
+  it is — proximity-bound, the display's "it's in the fleet" flow; owed, if
+  it ever opens wider, the same question (a display-minted code could carry
+  the password, or the WAP could refuse a host move with a stored password
+  from a code). And the flagship refuses the same move already, in another
+  shape: `400 password_required_for_new_host` (`mqtt_tls_fields::
+  credential_carry`, since the 2026-09 sweep — any caller, host or port, a
+  case-folded host); the WAP's is `403 password_needed`, for cookie callers
+  only, and counts the TLS mode and the CA as moves, since on its transport
+  they choose the peer. Nothing outside the firmware parses either code.
 
 ### Parity & sub-projects
 

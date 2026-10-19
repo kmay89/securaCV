@@ -865,9 +865,12 @@ cannot speak to.
             new `host` and no `password`, a broker password saved: `403`,
             the body `{"ok":false,"code":"password_needed",...}` naming no
             password, and `GET /api/mqtt/config` still answering the old
-            host; the same body with the password typed, and the same body
-            with `Authorization: Bearer <token>` in place of the cookie,
-            each `200` (F289, the third road).
+            host; the same body with the password typed `200` (the GET
+            answers the new host); then a body naming a second new host
+            and no `password`, with `Authorization: Bearer <token>` in
+            place of the cookie, `200` (the GET answers that host with
+            `password_set: true`) — a real move, since the stored host is
+            the first new one by then (F289, the third road).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at

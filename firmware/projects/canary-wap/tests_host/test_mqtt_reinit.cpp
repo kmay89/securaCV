@@ -463,6 +463,8 @@ void run_tasks();
 // is csi_mqtt.cpp's), so whatever client the last test left is retired
 // through the bridge's own path, with the bridge switched off.
 void power_cycle() {
+  stub_nvs_on_put = nullptr;                          // the race tests' hooks (F289)
+  stub_nvs_on_get = nullptr;
   stub_nvs().clear();                                 // disabled
   stub_mqtt::on_delay = nullptr;
   stub_mqtt::fail_task_create = 0;
@@ -482,7 +484,9 @@ void power_cycle() {
 // bridge its identity and start_http_server() runs the boot init(), both
 // on the loop task; then the esp_mqtt task connects. With `pass`, the broker
 // password is on file and the client carries it (sweep F289).
-void boot_with_broker(const char* host, bool connect = true, const char* pass = nullptr) {
+// A device with nothing booted yet: the last test's client retired, the
+// fake, the NVS and the task stubs cleared, the loop-pass clock reset.
+void reset_device() {
   power_cycle();
   fake::reset();
   stub_nvs().clear();
@@ -493,6 +497,10 @@ void boot_with_broker(const char* host, bool connect = true, const char* pass = 
   stub_mqtt::fail_task_create = 0;
   g_longest_loop_pass_ms = 0;
   g_loop_passes = 0;
+}
+
+void boot_with_broker(const char* host, bool connect = true, const char* pass = nullptr) {
+  reset_device();
   csi_mqtt::Config c;
   csi_mqtt::config_load(&c);
   c.enabled = true;
@@ -2062,12 +2070,26 @@ void test_a_session_cannot_move_the_broker_and_keep_its_password() {
                  was);
   // One byte of host is a move.
   expect_refused(session_post("{\"host\":\"10.0.0.10\"}"), was);
+  // An emptied host is one too: it would open no client, but clearing the
+  // broker is the operator's move to make (the safe side, one retype).
+  expect_refused(session_post("{\"host\":\"\"}"), was);
   // The GET afterwards still names no password.
   const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
   CHECK(get.req.status == "200 OK");
   CHECK(get.req.resp.find("\"password_set\":true") != std::string::npos);
   CHECK(get.req.resp.find(kStoredPass) == std::string::npos);
   CHECK(get.req.resp.find("\"host\":\"10.0.0.1\"") != std::string::npos);
+  // The host compares as bytes: a respelling in case, or a trailing dot, is
+  // a move — refused rather than reasoned about (DNS and mDNS fold case,
+  // IPv6 is hex; the refusal costs one retype and is the safe side).
+  boot_with_broker("Broker.local", /*connect=*/true, kStoredPass);
+  csi_mqtt::set_api_token_provider(test_token);
+  const Stored named = stored();
+  CHECK(named.host == "Broker.local" && named.pass == kStoredPass);
+  expect_refused(session_post("{\"host\":\"broker.local\"}"), named);
+  expect_refused(session_post("{\"host\":\"BROKER.LOCAL\"}"), named);
+  expect_refused(session_post("{\"host\":\"Broker.local.\"}"), named);
+  expect_saved(session_post("{\"host\":\"Broker.local\"}"), "mqtt://Broker.local:1883", kStoredPass);
   power_cycle();
   std::printf("PASS a_session_cannot_move_the_broker_and_keep_its_password\n");
 }
@@ -2216,9 +2238,15 @@ void test_a_bearer_may_move_the_broker_and_keep_its_password() {
   std::printf("PASS a_bearer_may_move_the_broker_and_keep_its_password\n");
 }
 
-// A stored port of 0 is the default for the stored TLS mode, as
-// config_load() reads it: the page's form, which sends the port it loaded,
-// and the toggle alone are not moves; another port is.
+// A stored port of 0 is the default for the stored TLS mode. That is
+// config_load()'s reading, not the gate's: the gate compares the port
+// config_load() read with the one the body left (set only in 1..65535, else
+// the loaded one), so neither side is ever 0 there. What this pins is the
+// behavior: on a device whose NVS holds port 0, the page's form (which sends
+// the port it loaded) and the toggle alone are not moves; another port is.
+// `was` is taken before each request, as every refusal here does: the order
+// of two arguments' evaluation is unspecified, and an inline stored() could
+// read the row after the request.
 void test_a_stored_port_of_zero_is_the_modes_default() {
   boot_with_password();
   store_u16(csi_mqtt::NVS_KEY_PORT, 0);
@@ -2229,22 +2257,28 @@ void test_a_stored_port_of_zero_is_the_modes_default() {
   expect_saved(session_post("{\"enabled\":true}"), "mqtt://10.0.0.1:1883", kStoredPass);
   boot_with_password();
   store_u16(csi_mqtt::NVS_KEY_PORT, 0);
-  expect_refused(session_post("{\"port\":1884}"), stored());
+  const Stored zero_plain = stored();
+  CHECK(zero_plain.port == 1883);
+  expect_refused(session_post("{\"port\":1884}"), zero_plain);
   // In CA mode a stored 0 is 8883: saying 8883 is not a move, 1883 is.
   boot_with_password();
   store_u16(csi_mqtt::NVS_KEY_PORT, 0);
   store_tls_mode(1);
-  CHECK(stored().port == 8883 && stored().tls_mode == 1);
-  expect_refused(session_post("{\"port\":1883}"), stored());
+  const Stored zero_ca = stored();
+  CHECK(zero_ca.port == 8883 && zero_ca.tls_mode == 1);
+  expect_refused(session_post("{\"port\":1883}"), zero_ca);
   expect_saved_no_client(session_post("{\"enabled\":true,\"port\":8883}"));   // CA mode, no CA
   CHECK(stored().port == 8883 && stored().pass == kStoredPass);
   power_cycle();
   std::printf("PASS a_stored_port_of_zero_is_the_modes_default\n");
 }
 
-// A wrong bearer beside the cookie is not a bearer: the session's refusal,
-// and api_auth.h's check records nothing. Without the cookie it is the 401
-// it always was — the rule sits behind authorized(), not in front of it.
+// A wrong bearer beside the cookie is not a bearer: the session's refusal.
+// (By api_auth.h's construction nothing is recorded against the lockout —
+// api_auth_bearer_valid() never touches it — but the lockout is the
+// header's own static and nothing here holds it.) Without the cookie it is
+// the 401 it always was — the rule sits behind authorized(), not in front
+// of it.
 void test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer() {
   boot_with_password();
   const Stored was = stored();
@@ -2264,6 +2298,267 @@ void test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer() {
   g_session_cookie_valid = true;
   power_cycle();
   std::printf("PASS a_wrong_bearer_beside_the_cookie_is_not_a_bearer\n");
+}
+
+// ── A save and a re-init at the same time (sweep F289, the review) ───────
+//
+// config_save() writes the row key by key on the httpd task, and a re-init an
+// earlier save left pending (its retire outlived the handler's 2 s wait: the
+// API lock held across a connect, as a_stop_that_blocks_never_holds_the_loop
+// models it) is served by the loop task at its own time. Before this, a loop
+// pass between the host write and the password write opened a client to the
+// NEW host carrying the OLD password — the secret move_needs_password()
+// keeps home, out through a body the rule serves because it named a
+// password. Now open_client() reads the row only when no save is in
+// progress and opens nothing when one began, or finished, during its read;
+// the pass after the save opens the caller's client from the whole row.
+// stubs/mqtt's NVS hooks put the loop task's pass between any two of a
+// save's writes (stub_nvs_on_put), and a whole save inside any of the loop
+// task's reads (stub_nvs_on_get).
+
+// Among the clients made since `from`: the stored password went nowhere but
+// the stored host and port, over nothing plainer than the stored transport;
+// a new password the body chose with TLS never went in the clear.
+void expect_password_stayed_home(size_t from, const std::string& stored_uri,
+                                 const std::string& new_pass, bool new_tls) {
+  for (size_t i = from; i < fake::clients.size(); ++i) {
+    const esp_mqtt_client* c = fake::clients[i];
+    if (c->password == kStoredPass && c->uri != stored_uri) {
+      std::printf("FAIL client %zu carries the stored password to %s (its home is %s)\n", i + 1,
+                  c->uri.c_str(), stored_uri.c_str());
+    }
+    CHECK(!(c->password == kStoredPass && c->uri != stored_uri));
+    if (new_tls && c->password == new_pass) CHECK(c->uri.rfind("mqtts://", 0) == 0);
+  }
+}
+
+// A re-init left pending by a save whose retire outlived the handler's wait:
+// the handler answered 200 with the request unserved, the old client is
+// detached and destroyed, and the next loop pass would open the new one.
+// Returns the number of the handler's request: the one after a probe made
+// here (the request counter is the bridge's, across every test), which the
+// same pass serves.
+uint32_t leave_reinit_pending() {
+  const uint32_t pending = csi_mqtt::request_reinit() + 1;
+  fake::stop_blocks_ms = 9940;
+  const Http h = session_post("{\"user\":\"ada\"}");
+  fake::stop_blocks_ms = 0;
+  CHECK(h.req.status == "200 OK");
+  CHECK(fake::count("destroy", "mqtt_retire") == 1 && fake::count("init") == 0);
+  CHECK(!csi_mqtt::reinit_done(pending) && !csi_mqtt::connected());
+  return pending;
+}
+
+// A device with the stored password on file and a client open, and a save
+// that moves the broker naming a password (so the rule serves it).
+struct MoveScenario {
+  const char* name;
+  void (*boot)();                // leaves the device booted, a client open
+  const char* stored_uri;        // the stored password's home
+  std::string body;
+  const char* new_uri;           // the client the whole row opens
+  const char* new_pass;
+  bool new_tls;
+};
+void boot_plain() { boot_with_password(); }
+// CA mode with a CA on file and the client re-opened over TLS.
+void boot_tls() {
+  boot_with_password();
+  store_tls_mode(1);
+  CHECK(csi_mqtt::ca_save(pem_of(400, 'A').c_str()));
+  const uint32_t r = csi_mqtt::request_reinit();
+  reinit_turns();
+  CHECK(csi_mqtt::reinit_done(r));
+  CHECK(fake::clients.size() == 2 && fake::last_client()->uri == "mqtts://10.0.0.1:1883");
+  CHECK(fake::last_client()->password == kStoredPass);
+  fake::calls.clear();
+}
+// Plain, with a CA already on file for the upgrade to use.
+void boot_plain_with_ca() {
+  boot_with_password();
+  CHECK(csi_mqtt::ca_save(pem_of(400, 'A').c_str()));
+}
+const MoveScenario kMoves[] = {
+    {"plain: a new host and port, the attacker's password", boot_plain, "mqtt://10.0.0.1:1883",
+     "{\"host\":\"10.0.0.66\",\"port\":1884,\"tls_mode\":0,\"user\":\"mallory\",\"password\":\"attacker-chosen\"}",
+     "mqtt://10.0.0.66:1884", "attacker-chosen", false},
+    {"TLS: a downgrade to plain and a new host", boot_tls, "mqtts://10.0.0.1:1883",
+     "{\"host\":\"10.0.0.66\",\"tls_mode\":0,\"password\":\"attacker-chosen\"}",
+     "mqtt://10.0.0.66:1883", "attacker-chosen", false},
+    {"plain: an upgrade to TLS and a new host, a new password", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
+     "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"password\":\"n3w-pass\"}",
+     "mqtts://10.0.0.66:1883", "n3w-pass", true},
+    {"plain: an upgrade to TLS with a new CA and a new host", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
+     "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"ca\":\"" + json_inside(pem_of(400, 'B') + "\n") +
+         "\",\"password\":\"n3w-pass\"}",
+     "mqtts://10.0.0.66:1883", "n3w-pass", true},
+};
+
+// The loop task's pass between two of a save's writes opens nothing and
+// leaves the pending request; the pass after the save opens the caller's
+// client. Every write of the save (the row's nine, and the CA's) gets the
+// pass after it, each on a fresh device.
+void test_a_save_in_progress_opens_no_client() {
+  for (const MoveScenario& m : kMoves) {
+    for (unsigned at = 1;; ++at) {
+      m.boot();
+      const size_t from = fake::clients.size();
+      const uint32_t pending = leave_reinit_pending();
+      unsigned puts = 0;
+      bool fired = false;
+      stub_nvs_on_put = [&](const char*) {
+        if (++puts != at) return;
+        fired = true;
+        const size_t before = fake::clients.size();
+        loop_pass();
+        run_tasks();
+        if (fake::clients.size() != before) {
+          std::printf("FAIL %s: the loop pass after write %u opened a client: %s password=%s\n", m.name, at,
+                      fake::last_client()->uri.c_str(), fake::last_client()->password.c_str());
+        }
+        CHECK(fake::clients.size() == before);          // nothing from a half-written row
+        CHECK(!csi_mqtt::reinit_done(pending));         // the request waits for a later pass
+      };
+      const Http h = session_post(m.body);
+      stub_nvs_on_put = nullptr;
+      if (!fired) {
+        CHECK(at > 9);                                   // past the save's last write
+        break;
+      }
+      if (h.req.status != "200 OK") {
+        std::printf("FAIL %s: the move answered %s %s\n", m.name, h.req.status.c_str(), h.req.resp.c_str());
+      }
+      CHECK(h.req.status == "200 OK" && h.req.resp == "{\"ok\":true}");
+      CHECK(csi_mqtt::reinit_done(pending) && csi_mqtt::reinit_done(pending + 1));   // and the move's own
+      CHECK(fake::clients.size() == from + 1 && fake::count("init", "loop") == 1);
+      CHECK(fake::last_client()->uri == m.new_uri && fake::last_client()->password == m.new_pass);
+      if (m.body.find("\"ca\"") != std::string::npos) CHECK(fake::last_client()->certificate == pem_of(400, 'B') + "\n");
+      expect_password_stayed_home(from, m.stored_uri, m.new_pass, m.new_tls);
+      CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);
+    }
+    std::printf("  %s: every write\n", m.name);
+  }
+  power_cycle();
+  std::printf("PASS a_save_in_progress_opens_no_client\n");
+}
+
+// A whole save inside the loop task's read of the row (the httpd task's,
+// while the loop task serves a re-init on the other core): the read opens
+// nothing, and the next pass opens the caller's client from the whole row.
+// Every key config_load() reads gets the save after it.
+void test_a_save_inside_the_loop_tasks_read_opens_no_client() {
+  static const char* const kReads[] = {
+      csi_mqtt::NVS_KEY_ENABLED, csi_mqtt::NVS_KEY_PORT,   csi_mqtt::NVS_KEY_TLS,
+      csi_mqtt::NVS_KEY_TLS_MODE, csi_mqtt::NVS_KEY_DISCOVERY, csi_mqtt::NVS_KEY_HOST,
+      csi_mqtt::NVS_KEY_USER,    csi_mqtt::NVS_KEY_PASS,   csi_mqtt::NVS_KEY_PREFIX,
+  };
+  for (const MoveScenario& m : kMoves) {
+    for (const char* key : kReads) {
+      m.boot();
+      const size_t from = fake::clients.size();
+      // A re-init pending with the old client gone: the next pass reads.
+      const uint32_t pending = csi_mqtt::request_reinit();
+      loop_pass();
+      run_tasks();
+      CHECK(!csi_mqtt::reinit_done(pending) && !csi_mqtt::connected());
+      bool fired = false;
+      Http move;
+      stub_nvs_on_get = [&](const char* k) {
+        if (fired || strcmp(k, key) != 0) return;
+        fired = true;                   // inert from here (never reset from inside itself)
+        // The handler's whole run, no loop pass in it (turn_at 0): it saves,
+        // asks, waits out its 2 s and answers; the save stands.
+        move = http(csi_mqtt::handle_config_post, m.body, /*turn_at=*/0);
+      };
+      // The pass's own time is what it took less the handler's run inside it
+      // (the model's construction: on a device the two are on their own
+      // tasks, and the pass skips the open — it waits for nothing).
+      const uint32_t pass_start = stub_mqtt::now_ms;
+      loop_pass();
+      const uint32_t pass_ms = stub_mqtt::now_ms - pass_start;
+      stub_nvs_on_get = nullptr;
+      CHECK(fired);
+      CHECK(move.req.status == "200 OK" && move.req.resp == "{\"ok\":true}");
+      CHECK(pass_ms >= move.took_ms && pass_ms - move.took_ms < kLoopPassBudgetMs);
+      if (fake::clients.size() != from) {
+        std::printf("FAIL %s: the read torn after %s opened a client: %s password=%s\n", m.name, key,
+                    fake::last_client()->uri.c_str(), fake::last_client()->password.c_str());
+      }
+      CHECK(fake::clients.size() == from);               // nothing from a torn read
+      CHECK(!csi_mqtt::reinit_done(pending));            // the request waits
+      g_longest_loop_pass_ms = 0;
+      loop_pass();                                       // the whole row
+      CHECK(csi_mqtt::reinit_done(pending) && csi_mqtt::reinit_done(pending + 1));   // and the handler's
+      CHECK(fake::clients.size() == from + 1 && fake::count("init", "loop") == 1);
+      CHECK(fake::last_client()->uri == m.new_uri && fake::last_client()->password == m.new_pass);
+      expect_password_stayed_home(from, m.stored_uri, m.new_pass, m.new_tls);
+      CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);
+    }
+    std::printf("  %s: every read\n", m.name);
+  }
+  power_cycle();
+  std::printf("PASS a_save_inside_the_loop_tasks_read_opens_no_client\n");
+}
+
+// The boot's init() under another task's save (the QR scanner's
+// provisioning, say): it opens nothing and hands the open to loop(), whose
+// first pass opens the client from the whole row. Each writer is a save in
+// the read's eyes: config_save(), ca_save() and config_clear().
+void boot_under(const char* what, uint8_t tls_mode, const std::function<void()>& save,
+                const std::string& uri_after, const std::string& pass_after, const std::string& ca_after) {
+  reset_device();
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  c.enabled = true;
+  c.tls_mode = tls_mode;
+  strcpy(c.host, "10.0.0.1");
+  strcpy(c.pass, kStoredPass);
+  CHECK(csi_mqtt::config_save(c));
+  csi_mqtt::set_identity(kDeviceId, "2.4.15-wap", "ab");
+  // A probe: the number before the one init() will ask for.
+  const uint32_t probe = csi_mqtt::request_reinit();
+  bool fired = false;
+  stub_nvs_on_get = [&](const char* key) {
+    if (fired || strcmp(key, csi_mqtt::NVS_KEY_HOST) != 0) return;
+    fired = true;                       // inert from here
+    save();
+  };
+  CHECK(csi_mqtt::init(kDeviceId, "2.4.15-wap", "ab"));
+  stub_nvs_on_get = nullptr;
+  if (!fake::clients.empty()) {
+    std::printf("FAIL %s: the boot opened a client under the save: %s\n", what, fake::last_client()->uri.c_str());
+  }
+  CHECK(fired && fake::clients.empty() && fake::count("init") == 0);
+  CHECK(!csi_mqtt::reinit_done(probe + 1));
+  loop_pass();
+  CHECK(csi_mqtt::reinit_done(probe + 1));
+  if (uri_after.empty()) {
+    CHECK(fake::clients.empty());
+  } else {
+    CHECK(fake::clients.size() == 1 && fake::count("init", "loop") == 1);
+    CHECK(fake::last_client()->uri == uri_after && fake::last_client()->password == pass_after);
+    CHECK(fake::last_client()->certificate == ca_after);
+  }
+  CHECK(g_longest_loop_pass_ms < kLoopPassBudgetMs);
+  std::printf("  %s\n", what);
+}
+void test_a_boot_under_a_save_asks_the_loop() {
+  const std::string pem = pem_of(400, 'A');
+  // The row re-pointed (the QR path's save).
+  boot_under("config_save", 0, [] {
+    csi_mqtt::Config q;
+    CHECK(csi_mqtt::config_load(&q));
+    strcpy(q.host, "10.0.0.7");
+    q.port = 1884;
+    CHECK(csi_mqtt::config_save(q));
+  }, "mqtt://10.0.0.7:1884", kStoredPass, "");
+  // The CA landing on a row in CA mode (init() would refuse the mode without it).
+  boot_under("ca_save", 1, [&] { CHECK(csi_mqtt::ca_save(pem.c_str())); }, "mqtts://10.0.0.1:1883",
+             kStoredPass, pem);
+  // The row cleared (the factory reset's share): the whole row is no row.
+  boot_under("config_clear", 0, [] { CHECK(csi_mqtt::config_clear()); }, "", "", "");
+  power_cycle();
+  std::printf("PASS a_boot_under_a_save_asks_the_loop\n");
 }
 
 struct Test {
@@ -2327,6 +2622,10 @@ const Test kTests[] = {
     {"a_bearer_may_move_the_broker_and_keep_its_password",
      test_a_bearer_may_move_the_broker_and_keep_its_password},
     {"a_stored_port_of_zero_is_the_modes_default", test_a_stored_port_of_zero_is_the_modes_default},
+    {"a_save_in_progress_opens_no_client", test_a_save_in_progress_opens_no_client},
+    {"a_save_inside_the_loop_tasks_read_opens_no_client",
+     test_a_save_inside_the_loop_tasks_read_opens_no_client},
+    {"a_boot_under_a_save_asks_the_loop", test_a_boot_under_a_save_asks_the_loop},
     {"a_wrong_bearer_beside_the_cookie_is_not_a_bearer",
      test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer},
 };

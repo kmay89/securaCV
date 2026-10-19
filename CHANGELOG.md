@@ -16,15 +16,30 @@
   save without a valid `Authorization: Bearer` header is refused — `403`,
   `code` `password_needed`, nothing saved, no re-init — when the body
   carries no `password` key, a password is stored, and the destination
-  moves: the host, the port (a stored 0 read as the mode's default), the TLS
-  mode in either spelling, or a `ca` key set or cleared. A change of user,
-  prefix, enabled or discovery alone is not a move; a body that carries
-  `password`, new or empty, is saved as before; a bearer is never refused;
-  the `/companion` wizard always sends a password and is unchanged. The
-  `/mqtt` page shows the device's reason and puts the cursor in the password
-  field. **Host-tested** (`test_mqtt_reinit.cpp`, 1183 checks on the real
-  handler, 623 before; every refusal test fails with the gate reverted); the
-  ESP32 compile is CI's; not run on a device (U1).
+  moves: the host (bytes — a respelling in case is a move), the port (both
+  sides as `config_load()` read them: a stored 0 is the mode's default), the
+  TLS mode in either spelling, or a `ca` key set or cleared. A change of
+  user, prefix, enabled or discovery alone is not a move; a body that
+  carries `password`, new or empty, is saved as before; a bearer is never
+  refused; the `/companion` wizard always sends a password and is unchanged.
+  The `/mqtt` page shows the device's reason and puts the cursor in the
+  password field. Its review found the harm reachable around the gate: the
+  save writes NVS key by key, and a re-init an earlier save left pending
+  could open a client from the half-written row — the new host beside the
+  old password. Now a save counts itself in progress and finished, and the
+  loop task opens no client from a read a save overlapped; the next pass
+  reads the whole row. The flagship refuses the same move as
+  `400 password_required_for_new_host`; the WAP's `403` differs in shape
+  because its cookie callers are the class in question, and the TLS mode
+  and the CA count as moves on its transport. The QR hub-provision path
+  still re-points the broker with the stored password — behind the pair
+  token and a code in front of the camera, not the session; named in the
+  ledger. **Host-tested** (`test_mqtt_reinit.cpp`, 2808 checks on the real
+  handler, 623 before; every refusal test fails with the gate reverted, and
+  the three race tests — the loop task's pass after every write of a save,
+  a whole save inside every read, each writer under the boot — fail with
+  the busy word never spoken); the ESP32 compile is CI's; not run on a
+  device (U1).
 
 ### Post-#1802 verification: the WAP's port 80 keeps a typed address, a setup-door claim keeps its `.local` name with the STA down, the globals check takes every cut it reads, and thirteen passages say what landed
 

@@ -2751,27 +2751,34 @@ handler; every refusal test fails with the gate reverted).
   - Setup: the same canary-wap signed in as above, a broker saved on its
     `/mqtt` page with a username and a password (`GET /api/mqtt/config`
     answers `password_set: true`), the cookie's value `<hex>`, the API
-    token, and a second address `<new>` on the LAN that is not the broker.
+    token, and two addresses `<new>` and `<new2>` on the LAN that are not
+    the broker.
   - Repro: `curl -sk -w '\n%{http_code}\n' -H "Cookie: cv_session=<hex>" -H
     'content-type: application/json' -d '{"host":"<new>","tls_mode":0}'
     https://canary-<suffix>.local/api/mqtt/config`; then `curl -sk -H
     "Cookie: cv_session=<hex>" https://canary-<suffix>.local/api/mqtt/config`;
     then the first request again with `,"password":"<the broker password>"`
-    added inside the body; then, after setting the host back on `/mqtt`, the
-    first request again with `-H "Authorization: Bearer <token>"` in place of
-    the cookie. In the browser: on `/mqtt`, change only the broker host and
-    press **Save**; then type the password and press **Save** again.
+    added inside the body; then the first request with `"host":"<new2>"` in
+    place of `<new>` (no password in the body) and `-H "Authorization:
+    Bearer <token>"` in place of the cookie — a real move, since the stored
+    host is `<new>` by then; setting it back on `/mqtt` without the password
+    would itself be the refusal under test. In the browser: on `/mqtt`,
+    change only the broker host and press **Save**; then type the password
+    and press **Save** again.
   - Expected: the cookie's move is `403` with the body
     `{"ok":false,"code":"password_needed","reason":...}` naming no password,
     and the GET still answers the old host with `password_set: true` (before
     this change the save was `200` and the device connected to `<new>` with
     the stored username and password, in plain text); the move with the
-    password typed is `200` and the GET answers `<new>`; the move with the
-    bearer is `200` and the GET answers `<new>` with `password_set: true`. On
-    `/mqtt` the status line reads "Save failed. the broker moved; type the
-    broker password again to send it to the new address, or sign in with the
-    API token" and the cursor is in the password field; the second save
-    reads "Saved.".
+    password typed is `200` and the GET answers `<new>`; the bearer's move
+    to `<new2>` is `200` and the GET answers `<new2>` with
+    `password_set: true` (the stored password followed the bearer's move, as
+    it may). On `/mqtt` the status line reads "Save failed. the broker
+    moved; type the broker password again to send it to the new address, or
+    sign in with the API token" and the cursor is in the password field; the
+    second save reads "Saved.". To put the broker back afterwards, save its
+    host with the password typed or with the bearer: a cookie-only save of
+    the old host is the same `403`.
   - Artifact: `docs/audit/repro/F289/broker-move/`.
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification

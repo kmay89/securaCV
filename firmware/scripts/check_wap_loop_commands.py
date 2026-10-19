@@ -118,8 +118,11 @@ MQTT (F106):
      `csi_event_egress::pump(`.
    - `serve_reinit()` returns while `retire_finished()` is false, both before
      it looks at the requests and after `detach_client()`; reads
-     `s_reinit_wanted` into `wanted` after that, then runs `open_client()`,
-     then `s_reinit_served.store(wanted`.
+     `s_reinit_wanted` into `wanted` after that, then runs
+     `open_client(&busy)` once, returns if it reported a save in progress
+     (`if (busy) return;` — sweep F289's review: nothing opens from a row
+     another task is still writing, and the request waits for the next
+     pass), then `s_reinit_served.store(wanted`.
    - `request_reinit()` only bumps `s_reinit_wanted`.
    - The esp_mqtt event handler returns first for a client that is not
      `s_client` (`e->client != s_client.load(`), subscribes on `e->client`
@@ -751,7 +754,7 @@ SIG_EVENT_HANDLER = r"\bvoid\s+mqtt_event_handler\s*\([^)]*\)"
 SIG_CONFIG_POST = r"\besp_err_t\s+handle_config_post\s*\([^)]*\)"
 SIG_TEST = r"\besp_err_t\s+handle_test\s*\([^)]*\)"
 SIG_SERVE = r"\bvoid\s+serve_reinit\s*\(\s*\)"
-SIG_OPEN = r"\bbool\s+open_client\s*\(\s*\)"
+SIG_OPEN = r"\bbool\s+open_client\s*\(\s*bool\s*\*\s*busy\s*\)"
 SIG_RETIRE_FINISHED = r"\bbool\s+retire_finished\s*\(\s*\)"
 SIG_INO_LOOP = r"\bvoid\s+loop\s*\(\s*\)"
 SIG_SETUP = r"\bvoid\s+setup\s*\(\s*\)"
@@ -1155,16 +1158,19 @@ def check_mqtt_reinit(mqtt: str, errors: list[str]) -> None:
         at_detach = s.find("detach_client();")
         second_guard = s.find("if(!retire_finished())return;", at_detach) if at_detach >= 0 else -1
         at_capture = s.rfind("constuint32_twanted=s_reinit_wanted.load(")
-        at_open = s.find("open_client();")
+        at_open = s.find("open_client(&busy);")
+        at_busy = s.find("if(busy)return;")
         at_served = s.find("s_reinit_served.store(wanted")
         ok = (0 <= first_guard < at_wanted_cmp and first_guard < at_detach < second_guard < at_capture
-              < at_open < at_served and s.count("open_client(") == 1)
+              < at_open < at_busy < at_served and s.count("open_client(") == 1)
         if not ok:
             errors.append(f"{MQTT_CPP}: serve_reinit() must wait for a retiring client without "
                           "blocking (`if (!retire_finished()) return;` first, and again after "
                           "detach_client()), then read `const uint32_t wanted = s_reinit_wanted.load(` "
                           "(a request made before the open's NVS read is the open's), run "
-                          "open_client() once, then `s_reinit_served.store(wanted` (F106)")
+                          "open_client(&busy) once, return on `if (busy) return;` (a save was writing "
+                          "the row: nothing opened, the request waits — F289's review), then "
+                          "`s_reinit_served.store(wanted` (F106)")
     loop = body_of(code, SIG_MQTT_LOOP, f"{MQTT_CPP}: csi_mqtt::loop()", errors)
     if loop is not None:
         s = squash(loop)
@@ -4060,6 +4066,8 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on("mqtt", SIG_SERVE, r"if\s*\(!retire_finished\(\)\)\s*return;", "")),
     ("serve_reinit() marks every request so far served (the review's MQ2)",
      on("mqtt", SIG_SERVE, r"s_reinit_served\.store\(wanted,", "s_reinit_served.store(s_reinit_wanted.load(),")),
+    ("serve_reinit() marks a request served that a save kept from opening (F289's review)",
+     on("mqtt", SIG_SERVE, r"\n[ \t]*if\s*\(busy\)\s*return;[^\n]*", "")),
     ("serve_reinit() reads the requests before it detaches",
      lambda s: on("mqtt", SIG_SERVE, r"(\n[ \t]*if\s*\(s_client\.load\()",
                   r"\n  const uint32_t wanted = s_reinit_wanted.load(std::memory_order_acquire);\1")(

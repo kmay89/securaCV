@@ -2543,17 +2543,59 @@
   minted without leaves through a side effect as readily as through an
   answer. The fix is the same one-check-two-classes split, applied to the
   write: a save without a valid bearer (`api_auth_bearer_valid()`) that
-  moves the broker — host, port read as `config_load()` reads a stored 0,
-  TLS mode, or a `ca` key — while the body carries no `password` key and
-  one is stored is refused (`403 password_needed`, nothing saved, no
-  re-init); a body that carries the password chose what goes out, and
-  user, prefix, enabled and discovery alone move nothing. Regression test:
-  `tests_host/test_mqtt_reinit.cpp`'s eleven `a_session_*`, `a_bearer_*`,
-  `a_stored_port_*` and `a_wrong_bearer_*` tests run the REAL
-  `csi_mqtt.cpp` over the real `api_auth.h` check; with the gate reverted
-  every refusal test fails on its first `403` check. Rule for the next
-  route: before a route saves anything a stored secret will be sent to,
-  ask the same question of the credential it accepts.
+  moves the broker — host (bytes), port (both sides as `config_load()` read
+  them: a stored 0 is the mode's default there), TLS mode, or a `ca` key —
+  while the body carries no `password` key and one is stored is refused
+  (`403 password_needed`, nothing saved, no re-init); a body that carries
+  the password chose what goes out, and user, prefix, enabled and
+  discovery alone move nothing. The flagship's `handle_mqtt_config` refuses
+  the same move as `400 password_required_for_new_host`
+  (`mqtt_tls_fields::credential_carry`: any caller, host or port); the
+  WAP's shape differs because its cookie callers are the class in question
+  and, on esp_mqtt, the TLS mode and the CA choose the peer too.
+  Regression test: `tests_host/test_mqtt_reinit.cpp`'s eleven
+  `a_session_*`, `a_bearer_*`, `a_stored_port_*` and `a_wrong_bearer_*`
+  tests run the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; with
+  the gate reverted every refusal test fails on its first `403` check. Rule
+  for the next route: before a route saves anything a stored secret will be
+  sent to, ask the same question of the credential it accepts.
+- **And the write itself is a road, 2026-10-19 (that fix's review):** a
+  gate in front of a save is only as good as the row the save leaves while
+  it is being written. `config_save()` writes NVS key by key on the httpd
+  task; the loop task's re-init reads the row at its own time, and a
+  re-init an earlier save left pending (its retire outlived the handler's
+  2 s wait — the API lock held across a connect, F106) is served whenever
+  the loop gets to it. So a body the gate serves because it names a
+  password left the row, for the span of two writes, holding the new host
+  beside the old password — and a loop pass in that window opened a client
+  carrying the stored password to the new host, then retired it for the
+  client the body asked for, so the row looked clean afterwards. Ordering
+  the keys closes that pairing and opens its mirror (the flagship's
+  `write_order` is the same lesson from the other side: a new password
+  beside the old plain mode), so the fix is not an order. `config_save()`,
+  `ca_save()` and `config_clear()` count themselves in progress and
+  finished, and the loop task's `open_client()` opens nothing from a read a
+  save overlapped — the next pass reads the whole row (a seqlock; no task
+  waits). Regression test: `a_save_in_progress_opens_no_client` (the loop
+  task's pass after every one of a save's writes, four moves),
+  `a_save_inside_the_loop_tasks_read_opens_no_client` (a whole save inside
+  every one of the loop task's reads) and `a_boot_under_a_save_asks_the_loop`
+  (each writer inside the boot's read), through `stubs/mqtt/Preferences.h`'s
+  hooks; with the busy word never spoken the first fails at the host write
+  with the stored password on a client for the new host. Rule: when a
+  secret's safety depends on which row another task reads, the row must be
+  readable whole or not at all — not written in a careful order.
+- **The road this rule leaves open, named:** the QR hub-provision path
+  (`canary_wap.ino`'s scan result: a scanned SCV1 code with a host re-points
+  `host` and `port`, keeps the stored password and TLS mode, saves and asks
+  for the re-init) is the remaining writer that moves the broker with the
+  stored password and no password typed. Its grant is not the session's:
+  the scan window opens from the boot auto-scan or from
+  `POST /api/wifi/qr-scan` behind the wizard's one-shot pair token
+  (`pair_token_valid()`), and a code must be in front of the camera
+  (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
+  proximity-bound; the ledger's F289 amendment says what it is owed if that
+  ever widens.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
