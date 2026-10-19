@@ -536,8 +536,9 @@ uint64_t saved_rx_counter(Device& d) {
   return ctr;
 }
 
-// POST /api/reboot and the safe-mode retry run the pre-reboot hook on the
-// HTTP server's task. The replay save reads the peer table and writes
+// The safe-mode retry runs the pre-reboot hook on the HTTP server's task
+// (POST /api/reboot did too, until sweep F92 moved its restart to the loop
+// task). The replay save reads the peer table and writes
 // through the mesh's one g_prefs handle, which update() uses on the loop
 // task, so from there it is a MESH_CMD_SAVE_REPLAY the loop task runs (the
 // F96 review found the hook calling save_replay_counters() in place). On

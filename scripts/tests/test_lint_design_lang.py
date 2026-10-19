@@ -69,6 +69,21 @@ class HelpLines(_Case):
         p = self.scad('/* [B] */\nvm_l = 40.0;  vm_w = brd_w("grove_v2");   // Grove Vision AI V2\n')
         self.assertEqual(L.lint_help_lines(p)[0], [])
 
+    def test_the_169_skirt_wall_keeps_its_own_help(self):
+        # `skirt_wall = 1.6; skirt_dep = back_stack;   // must not exceed
+        # back_stack` passed the rule above (skirt_dep is computed, so not a
+        # knob), and gen_builder_manifest.parse_scad gave skirt_dep's help to
+        # skirt_wall. No surface showed it: the Lab's parser skipped the
+        # two-assignment line whole, and the web builder does not offer this
+        # case. But the lint and HELP_DEBT read that parser, so they counted
+        # skirt_wall as helped. Split (C10c-2), each line says its own fact;
+        # test_enclosure_parsers.py holds what the Lab now lists.
+        groups = L.gen_builder_manifest.parse_scad(L.ENC / "canary_s3_touch169.scad")
+        knobs = {p["name"]: p for g in groups for p in g["params"]}
+        desc = knobs["skirt_wall"].get("desc", "")
+        self.assertIn("skirt", desc)
+        self.assertNotIn("back_stack", desc)
+
     def test_debt_entry_is_reported_seen_not_failed(self):
         p = self.scad('/* [B] */\nlob_d = 9.0;  lob_o = 3.0;   // lobe Ø / offset\n')
         problems, seen = L.lint_help_lines(p, {("canary_probe.scad", "lob_d")})
@@ -191,10 +206,36 @@ def knobs_without_help(path: Path) -> list[str]:
 # (gen_enclosures.py reads one assignment per line), which moves the catalog's
 # engineering_param_count; field_case's bez_on is a catalog option whose help
 # would become its label.
+# C10c-2 took the next monorepo-only cases (not the four carried ones, combo,
+# fit_coupon, dash_display and watch_station, nor the released four): every
+# numeric or text knob has help read off the geometry that uses it,
+# and their shared lines are split one knob per line, each with its own help
+# (that split moved catalog.json's engineering_param_count for seven products,
+# +36 in all), and their boolean options have help too, which is also their
+# catalog label (21 labels moved from the bare knob name). They hold at zero.
 HELP_DEBT = {
     "canary_bench_fixture.scad": 7,    # clip_w..clip_clear, tol_slide, tol_press (two shared lines)
+    "canary_c3_lcd147.scad": 0,
+    "canary_c6_display.scad": 0,
+    "canary_dock.scad": 0,
     "canary_field_case.scad": 23,      # 22 on eight shared lines, and bez_on
+    "canary_hammond_chassis.scad": 0,
+    "canary_hub_din.scad": 0,
+    "canary_inserts.scad": 0,
     "canary_jbox.scad": 12,            # lip_h/lip_t, screw_*, tol_slide/tol_hole, clip_*
+    "canary_mount_adapters.scad": 0,
+    "canary_outlet_cradle.scad": 0,
+    "canary_relay_solar.scad": 0,
+    "canary_s3_lcd147.scad": 0,
+    "canary_s3_lcd7.scad": 0,
+    "canary_s3_touch169.scad": 0,
+    "canary_sense_gang.scad": 0,
+    "canary_sense_stand.scad": 0,
+    "canary_shop_tools.scad": 0,
+    "canary_sign.scad": 0,
+    "canary_vehicle_mount.scad": 0,
+    "canary_vision_pro_mount.scad": 0,
+    "canary_wear_clip.scad": 0,
 }
 
 

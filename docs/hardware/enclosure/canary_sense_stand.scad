@@ -55,13 +55,13 @@ bal_n    = 4;        // pocket count on a ring
 bal_r    = 28.0;     // pocket ring radius
 
 /* [Hinge head] — GoPro-compatible three prongs (mates the Canary two-prong) */
-prong_t     = 3.0;
-prong_pitch = 6.35;
-fin_r       = 7.5;
-hinge_bolt_d = 5.0;
-hinge_teeth = true;
-teeth_n     = 24;
-teeth_h     = 0.6;
+prong_t     = 3.0;   // fin thickness (GoPro standard) — the head's three fins are each this thick, on prong_pitch centers
+prong_pitch = 6.35;  // fin center spacing (GoPro standard) — the outer fins sit this far either side of the center one, and the case's two prongs fit the gaps between
+fin_r       = 7.5;   // fin end radius round the bolt axis — each fin is hulled from a 2 x this wide root on the stalk top up to this radius at the axis, and the detent pockets reach out to this - 0.5
+hinge_bolt_d = 5.0;  // hinge bolt Ø (M5 at the default); its teardrop bore is cut 0.4 over, through all three fins
+hinge_teeth = true;  // radial detent pockets in the head's outer fins for the case's teeth; false = smooth faces
+teeth_n     = 24;    // castellation steps round the hinge, a pocket on every other one: the head detents every 720 / teeth_n degrees. Keep it even and equal to the case's teeth_n
+teeth_h     = 0.6;   // the case's detent tooth height — the pockets in the outer fins' inner faces are cut this + 0.15 deep and 0.12 oversize
 
 /* [Print tolerances] */
 tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib

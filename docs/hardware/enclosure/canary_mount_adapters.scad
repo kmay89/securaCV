@@ -31,21 +31,21 @@ screw_d = 4.2;       // wall screws (#8 / M4), counterbored
 
 /* [Magnet plate] */
 mag_d = 20.0;        // magnet pocket diameter (Ø20 x 3 neodymium discs)
-mag_t = 3.0;
+mag_t = 3.0;         // magnet thickness — the pockets are cut this deep from the back, and the magnet plate is this + 3.0 thick so a 3.0 floor stays between each pocket and stud
 mag_n = 2;           // two Ø20 pockets fit the 56 mm plate (four overlapped into one
                      // slot); glue the magnets in — the open backs alone don't retain them
 
 /* [Pole plate] */
-strap_w = 9.0;
-strap_t = 2.2;
+strap_w = 9.0;       // strap channel width — one channel straight across the pole plate's back, centered between the studs
+strap_t = 2.2;       // strap channel depth into the pole plate's back — the plate is at least this + 1.2 + the counterbore thick, so the center screw's head bears on plastic (asserted)
 
 /* [Template] */
 cable_oval = true;   // mark the doorbell/relay-style cable oval too
 
 /* [Print tolerances] */
-tol_slide = 0.20;
-tol_press = 0.10;
-tol_hole  = 0.30;
+tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it
+tol_press = 0.10;  // press fit per side on the magnet pockets (Ø mag_d + 2 x this) — catalog default, core_tol_press()
+tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the wall-screw holes are screw_d as drawn)
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

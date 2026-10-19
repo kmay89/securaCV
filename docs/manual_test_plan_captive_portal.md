@@ -27,7 +27,8 @@ exercise.
   clear so the supplicant's probe succeeds. So a browser pointed at
   `canary.local` / `192.168.4.1` lands on `http://` → 301 → `https://`, and
   the first visit shows a self-signed-cert warning that the tester accepts.
-  (`wap_server.h`: `HTTPS_PORT = 443`, `HTTP_PORT = 80` → "redirect to HTTPS".)
+  (`canary_wap.ino`'s `start_http_server()`: the TLS server on 443, and the
+  port-80 server beside it that 301-redirects the rest to HTTPS.)
 - **Per-platform connectivity probes** (always on plain HTTP, port 80, **not**
   redirected):
   - Apple `/hotspot-detect.html`, `/library/test/success.html` → instruction

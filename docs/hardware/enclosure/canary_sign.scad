@@ -19,13 +19,13 @@ use <canary_rib_lib.scad>    // plate_ribs — the optional back section
 part = "sign";       // ["sign"]
 
 /* [Plate] */
-sign_w = 110.0;
-sign_h = 70.0;
-sign_t = 3.0;
-edge_ch = 1.0;
+sign_w = 110.0;      // plate width (X) — the border groove runs 4 to 5.5 in from each edge, the corner screws sit 7 in, and the text gets this - 13 of room (the default lines are asserted to fit it)
+sign_h = 70.0;       // plate height (Y) — the border groove runs 4 to 5.5 in from each edge and the corner screws sit 7 in; the three lines stay at +14, 0 and -12 from the center whatever this is
+sign_t = 3.0;        // plate thickness — the text, the 0.5-deep border groove and the countersinks are cut down from its face, and a countersink deeper than this is refused (asserted)
+edge_ch = 1.0;       // 45° chamfer round the face's edge: the face is this smaller on every side than the plate
 screw_d = 4.2;       // countersunk corners; or use VHB and set screws=false
 cs_head_d = 8.2;     // #8 82° flat-head Ø — the seat's rim at the face, so the head lands flush
-screws  = true;
+screws  = true;      // four corner holes with 82° countersinks for #8 flat heads (false for a VHB mount)
 back_ribs = false;   // rib_lib loop + two cross ribs on the BACK (rib_h tall): a 110 x 70 x 3 sheet stays
                      // flat and the screws pull on a frame, not a plate. The sign then exports FACE-DOWN
                      // (the text becomes first-layer voids — the catalog's crisp deboss). Leave OFF for a
@@ -33,15 +33,15 @@ back_ribs = false;   // rib_lib loop + two cross ribs on the BACK (rib_h tall): 
 rib_h   = 2.0;       // back rib height  // [1:0.5:6]
 
 /* [Text] — up to three lines */
-line1 = "PRIVACY WITNESS";
-line2 = "presence sensing in use";
-line3 = "no video is recorded or stored";
+line1 = "PRIVACY WITNESS";  // line 1, in font_b at size1, 14 above the center — the default string's measured width is asserted inside the groove; a custom one is only estimated, with a NOTE
+line2 = "presence sensing in use";  // line 2, in font_r at size2, on the center line — checked like line 1
+line3 = "no video is recorded or stored";  // line 3, in font_r at size3, 12 below the center — checked like line 1
 size1 = 7.5;         // line 1 cap size — 8.0 measured 98.68 wide and touched the border groove (inner edge ±49.5)
 size2 = 5.2;         // line 2 size — matches line 3
 size3 = 5.2;         // line 3 size — 5.5 measured 97.79 wide, 0.55 off the groove
-text_depth = 0.8;
-font_b = "Liberation Sans:style=Bold";
-font_r = "Liberation Sans";
+text_depth = 0.8;    // deboss depth of all three lines into the face
+font_b = "Liberation Sans:style=Bold";  // line 1's font (an OpenSCAD font name) — the width check uses the default line's Liberation Sans measurement whatever font is set
+font_r = "Liberation Sans";  // lines 2 and 3's font (an OpenSCAD font name) — the width check uses the default lines' Liberation Sans measurements whatever font is set
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

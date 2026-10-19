@@ -196,9 +196,26 @@ to a state within two minutes joins the bundle still open for it, so a
 row's span can take in a brief other state. The row carries every
 observation it collapsed (`bundled`, the same count live, from the offline
 queue and in a replay, at least 1 for a row committed directly) and the
-span from the first to the last (`duration_sec`). A bundle still open at a
-reboot or a power cut is never committed; `system.integrity` closes its own
-key the moment it emits for that reason, so a tamper commits at once. Both
+span from the first to the last (`duration_sec`). Since sweep F77 a closed
+bundle enters the in-memory event ring like any committed row (so
+`/api/events/today`, the daily summary and the canary-wap's card see it),
+its ring row ending at the close and starting `duration_sec` before it; the
+events body's `timestamp` stays the close. A planned restart commits every
+open bundle first, drains the events egress for up to a second, and then
+persists the witness chain head the flushed rows advanced (sweep F92): on
+the canary `POST /api/reboot`, the serial `x` and setup's restart once
+Wi-Fi joins; on the canary-wap `POST /api/reboot`, which now restarts on
+the main loop's task as the canary's does, and the provisioning grace
+reboot. A row that cannot go within that second (no link and no card, or a
+card that has not mounted yet) is lost as before. Rows on the card stay
+owed across the restart, except up to ten ids (the delivery ceiling's
+stride, sweep F47) that a backfill walk in progress had already covered. A
+factory reset, the power policy's low-battery deep sleep (its wake is a
+reset), the setup wizard's idle restart, the canary-wap's safe-mode
+auto-recovery and its retry, and the OTA, BLE OTA and USB-drive restarts do
+not flush, and a power cut or a crash still loses every open bundle;
+`system.integrity` closes its own key the moment it emits for that reason,
+so a tamper commits at once. Both
 trees close bundles the same way, once per main loop (`csi_bundler_tick`);
 until sweep F81 the canary base closed every bundle after each CSI window,
 so each of its observations was a row of its own, committed within a
@@ -301,8 +318,14 @@ those bodies `"replay":true`. On the canary base
   on its account. Past the 45 s the card is given up: the waiting rows go,
   and rows on a card that comes back later are never sent (the backfill
   starts past them, and no counter shows them). An ambient row
-  (`wifi.channel_activity`, "live UI only") is never held: one that cannot
-  go at once is dropped and counted. RAM does not survive a reboot, and a
+  (`wifi.channel_activity`'s `channel_active`, "live UI only") never gets
+  this far: the commit hook drops every one after its privacy gate,
+  counted, so it reaches neither the card nor the `events` topic, and so
+  never the hold (sweep F105; before it, ambient rows were logged and
+  published like any other, and only one that had to wait was dropped;
+  an ambient line an older firmware left on the card is passed over by the
+  backfill, counted in `planner.unsendable`).
+  The in-memory ring keeps it. RAM does not survive a reboot, and a
   broker change drops what waits (owed to neither broker, as the offline
   queue's flush).
   So on a canary with an SD slot but no usable card (none in, another
@@ -344,7 +367,11 @@ those bodies `"replay":true`. On the canary base
     stuck). The row is on neither the card nor the wire.
   - `held_dropped`: rows the RAM hold dropped to make room, oldest first,
     and, on the canary, rows that had to wait while the hold had no memory.
-  - `ambient_dropped`: ambient rows that had to wait (they are never held).
+  - `ambient_dropped`: ambient rows the commit hook dropped: every one,
+    since none goes to the card or the broker (sweep F105; until then it
+    counted only those that would have had to wait, which were never held).
+    It grows by up to one per `wifi.channel_activity` cooldown (5 s), and is
+    not a loss.
   - `unsent_dropped`: rows no card kept that were lost at the hand-over to
     the MQTT layer: it refused them (an offline queue with no memory, or one
     full of tamper alerts while the broker is unreachable) and nothing kept
@@ -370,8 +397,9 @@ those bodies `"replay":true`. On the canary base
     card that opens with nothing owed on it is not walked, so its lines are
     not counted.
   - `planner.unsendable`: card lines the backfill could never send: a body
-    that would not build, and on the canary-wap a dismissal line (never
-    replayed).
+    that would not build, an ambient line an older firmware logged before
+    sweep F105 (never replayed), and on the canary-wap a dismissal line
+    (never replayed).
   - `planner.truncated_unsent`: retention cuts of the log that dropped rows
     still waiting.
   - `planner.read_giveups`: walks abandoned after repeated failed card reads.
@@ -404,19 +432,29 @@ differs from the canary base in five ways:
 - it has no MQTT offline queue. Rows its card does not keep wait in RAM
   instead (8 rows, the oldest dropped first) while anything older waits or
   the broker is unreachable, and go out in id order with the card's rows.
-  These are closed bundles (presence, `system.integrity` tampers), which
-  never reach its card (sweep F77), every row when there is no card or the
-  card is not open, and a row whose card append failed. "Anything older"
+  These are every row when there is no card or the card is not open, and a
+  row whose card append failed. Closed bundles (presence, `system.integrity`
+  tampers) were among them until sweep F77 put them in the ring: now its
+  card keeps them like any other row, the backfill replays them after an
+  outage or a reboot, and the boot reload restores them to the Today sheet
+  (before, a reboot, or more than eight of them waiting, lost them). A card
+  adopted after the boot's first rows committed (a slow mount; on a crash
+  boot `system.integrity`'s boot row commits on the first loop pass) is
+  reloaded beneath them, so they stay the newest; past 32 such rows
+  (`CSI_EVENT_INJECT_BENEATH_MAX`) the reload reads nothing (F77's review:
+  before it, one such row stopped the reload).
+  "Anything older"
   includes a card that is not open but may hold older rows: from boot until
   its log first opens (a slow card mounts after boot), and after it closes
   with rows still waiting (an SD error's remount), for at most 45 s; past
   that the RAM rows go, and rows on a card that comes back later are never
-  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") is never
-  held: one that cannot go out at once is dropped and counted. RAM does not
-  survive a reboot. The canary base holds the same rows the same way (its
-  card keeps closed bundles, so those are not among them), but once nothing
-  older waits and no card is open its offline queue takes them while the
-  broker is unreachable;
+  sent (no counter shows them). An ambient row (`wifi.channel_activity`, "live UI only") never
+  reaches the queue, so never the card, the broker or the hold: the commit
+  hook drops every one, counted (sweep F105); the ring, the
+  `/api/csi/stream` snapshot and the Today sheet still show it. RAM does
+  not survive a reboot. The canary base holds the same rows the same way,
+  but once nothing older waits and no card is open its offline queue takes
+  them while the broker is unreachable;
 - it writes no owner file and leaves a card that has one alone;
 - the tamper-topic bridge publishes when the loop task takes the row from
   the queue, before the row itself, whatever the backfill is doing;
@@ -448,8 +486,13 @@ RAM, up to eight, until it can; a reboot drops it.
 ### `POST /api/events/dismiss`
 
 Tells the ring "the user marked this row as 'that was nothing.'" Local-only.
-The originating module's `on_event_dismissed()` runs and may nudge its own
-thresholds. Nothing leaves the device.
+The first dismiss of a row runs the originating module's
+`on_event_dismissed()` (when this boot emitted the row), which may nudge its
+own thresholds; dismissing the same row again changes nothing. Since sweep
+F77 closed bundles are ring rows, so a dismissed `core.presence` or
+`core.breathing` row raises that module's thresholds one point each, in
+RAM until the module's next `init()` (F77's review made the nudge once per
+row). Nothing leaves the device.
 
 ```bash
 curl -X POST http://canary.local/api/events/dismiss \

@@ -17,13 +17,13 @@ part = "insert_guide";   // ["insert_guide","button_ring"]
 
 /* [Insert guide] — matches screw_insert-mode posts */
 post_d   = 6.7;      // fattened post OD (insert_d 3.5 + 2.4 wall = 5.9; WAP pd max(5, 5.9))
-insert_d = 3.5;
-guide_h  = 12.0;
+insert_d = 3.5;      // heat-set insert OD — the guide bore above the post pocket is this + 0.4, so the insert and the iron tip go in square
+guide_h  = 12.0;     // guide height — the post pocket takes its first 6.0, the guide bore runs from 5.9 to the top, and a Ø4 side window 7 up shows the insert seat
 
 /* [Button ring] — matches the doorbell bezel seat */
 bez_d = 16.5;        // bezel seat diameter
 btn_d = 12.0;        // button body diameter
-ring_t = 0.8;
+ring_t = 0.8;        // accent ring thickness — it sits in the bezel seat under the button's flange
 
 /* [Print tolerances] */
 tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib

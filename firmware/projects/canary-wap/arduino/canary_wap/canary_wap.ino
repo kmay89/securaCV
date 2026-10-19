@@ -4812,15 +4812,52 @@ static esp_err_t handle_export(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
+// Raised by handle_reboot on the HTTP task, read by loop(), which restarts
+// (sweep F92). The only cross-task state of the planned restart.
+static bool g_reboot_requested = false;
+
+// Every planned restart the loop task takes, first (sweep F92): a CSI
+// bundle lives in RAM until it closes, up to ten minutes, and the events
+// egress commits through a queue and a RAM hold the restart would wipe. So
+// every open bundle commits now (its witness record with it, on this task)
+// and the egress drains to the card and the broker, bounded by
+// csi_event_egress::kRestartBudgetMs (about a second) inside the loop task's
+// 8 s watchdog, reset first. The chain head reaches NVS only every
+// SD_PERSIST_INTERVAL records, so each caller persists it right after, before
+// the restart. Unchanged, so the open bundles are lost as before: the
+// factory reset's release (its broker settings go; a credentials reset keeps
+// the chain and the card), the power policy's low-battery deep sleep below
+// (its wake is a reset; CSI is off from battery saver on, so bundles have
+// mostly closed), and the restarts outside this file: hardware_state.h's
+// safe-mode auto-recovery (safe_mode_update(), on this task, with CSI
+// running) and its retry (the httpd task), the setup wizard's idle restart,
+// and the OTA, BLE OTA and USB-drive restarts. check_wap_event_egress.py
+// rule 13 holds every ESP.restart() and deep sleep in this file to one or
+// the other.
+static void flush_events_before_restart() {
+  #if FEATURE_WATCHDOG
+  esp_task_wdt_reset();
+  #endif
+  (void)csi_event_egress::flush_for_restart(csi_event_egress::kRestartBudgetMs);
+}
+
+// The planned restart, loop task only: the open CSI rows, then the chain
+// head (the same single-entry blob as every other persist, after the rows
+// the flush witnessed) and the mesh replay counters, then the restart.
+// POST /api/reboot ends here, through g_reboot_requested.
+static void planned_restart_now() {
+  flush_events_before_restart();
+  persist_chain_state();
+  pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
+  if (hook) hook();
+  delay(500);
+  ESP.restart();
+}
+
 static esp_err_t handle_reboot(httpd_req_t* req) {
   g_health.http_requests++;
   
   log_health(SCV_LOG_NOTICE, SCV_CAT_USER, "Reboot requested", nullptr);
-  
-  // Persist state — the same single-entry blob as every other persist. The
-  // old inline seq/chain pair here ran on the httpd task and could
-  // interleave with the loop's persist between its two entries.
-  persist_chain_state();
   
   JsonDocument doc;
   doc["ok"] = true;
@@ -4830,10 +4867,12 @@ static esp_err_t handle_reboot(httpd_req_t* req) {
   serializeJson(doc, response);
   http_send_json(req, response.c_str());
   
-  pre_reboot_fn hook = __atomic_load_n(&g_pre_reboot_hook, __ATOMIC_ACQUIRE);
-  if (hook) hook();
-  delay(500);
-  ESP.restart();
+  // The restart is the loop task's (sweep F92), as on the canary: it commits
+  // the open CSI bundles and drains the events egress (the egress's pump and
+  // the bundler run on that task), then persists the chain, runs the
+  // pre-reboot hook and restarts. This task only raises the request, after
+  // the reply has gone. It used to persist, run the hook and restart here.
+  __atomic_store_n(&g_reboot_requested, true, __ATOMIC_RELEASE);
   return ESP_OK;
 }
 
@@ -12444,6 +12483,12 @@ void setup() {
     log_phase_heap("network");
   } else {
     Serial.println("[--] Bluetooth/BLE init skipped (safe mode)");
+    // No boot bring-up on this boot, so its end is never marked: a tap
+    // that needs the stack is told Bluetooth stays off in safe mode
+    // (sweep F259), not that it starts within five minutes.
+    #if FEATURE_BLUETOOTH
+    bluetooth_channel::skip_boot_bring_up_for_safe_mode();
+    #endif
   }
   #endif
 
@@ -12826,6 +12871,9 @@ static void ble_bringup_task(void*) {
                                &g_device.seq)) {
             Serial.println("[OK] BLE GATT status service registered");
             log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr);
+            // The channel says which of the worker's services are on its
+            // server (sweep F260): a later bring-up by a tap has none.
+            bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_STATUS);
           } else {
             Serial.println("[--] BLE GATT status service init failed");
           }
@@ -12856,6 +12904,10 @@ static void ble_bringup_task(void*) {
       Serial.println("[OK] BLE Discovery initialized");
       log_health(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE Discovery initialized", nullptr);
       g_ble_mgr_result = 1;   // lifecycle emit + radio start happen on the loop
+      #if FEATURE_BLUETOOTH
+      // Opera's, Chirp's and Nearby's are on the server (sweep F260).
+      bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_DISCOVERY);
+      #endif
     } else {
       Serial.println("[--] BLE Discovery initialization failed — operating without BLE discovery");
       log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH, "BLE Discovery init failed", nullptr);
@@ -13186,6 +13238,8 @@ void loop() {
     } else {
       __atomic_store_n(&g_setup_grace_reboot_at_ms, 0u, __ATOMIC_RELEASE);
       Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
+      flush_events_before_restart();
+      persist_chain_state();   // the head the flushed bundles advanced
       delay(500);
       ESP.restart();
     }
@@ -13465,9 +13519,10 @@ void loop() {
       // start_http_server(), which runs only if start_wifi_ap() succeeded,
       // and until init has restored the event-id floor and the privacy
       // ceiling (csi_event_log::arm_load) the call does nothing and does
-      // not latch. Once armed it runs once per boot, and it reads nothing
-      // once a live event has committed (csi_event_inject would refuse every
-      // row), so a late card adds nothing out of order.
+      // not latch. Once armed it runs once per boot. A late card's rows go
+      // beneath the live events already committed (csi_event_inject), so it
+      // adds nothing out of order, and past CSI_EVENT_INJECT_BENEATH_MAX of
+      // them it reads nothing (sweep F77's review).
       (void)csi_event_log::load_into_ring();
       witness_recover_from_sd();  // NVS may lag the card's chain tail
       log_health(SCV_LOG_INFO, SCV_CAT_STORAGE, "SD card mounted", nullptr);
@@ -13784,6 +13839,12 @@ void loop() {
   // plus three cadence-gated publishers for the topics HA expects.
   // Schemas locked against custom_components/securacv/sensor.py.
   csi_mqtt::loop();
+  // POST /api/reboot, deferred here from the HTTP task (handle_reboot):
+  // the open CSI rows, the chain and the restart run on this task (F92).
+  if (__atomic_load_n(&g_reboot_requested, __ATOMIC_ACQUIRE)) {
+    Serial.println("[OK] Rebooting (POST /api/reboot)...");
+    planned_restart_now();
+  }
 #if defined(FEATURE_MDNS_BROKER_GOSSIP) && FEATURE_MDNS_BROKER_GOSSIP
   // Keep the fleet's broker referral honest: re-sync the _securacv._tcp
   // broker/bport TXT on every MQTT link transition — connect advertises the

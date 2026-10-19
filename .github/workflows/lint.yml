@@ -153,6 +153,17 @@ jobs:
         #    because they used to skip without it, and this job never had it:
         #    the discovery test holds every binary sensor the Vision, Sense and
         #    Sentinel announce to a payload HA matches (sweep HA25).
+        #  • The canary-wap's discovery templates
+        #    (test_ha_discovery_wap_render.py) — rendered the same way on the
+        #    bodies the real csi_mqtt.cpp publishes: it builds the WAP's MQTT
+        #    harness (tests_host/test_wap_mqtt_bodies.cpp) with make and g++
+        #    (both on the image, with OpenSSL's headers) and runs it, so a
+        #    template that renders the wrong word, an inverted Online or a
+        #    trigger that fires on a replayed row fails here (sweep F34).
+        #    SECURACV_WAP_HARNESS=require makes a harness that cannot build a
+        #    failure instead of a skip.
+        env:
+          SECURACV_WAP_HARNESS: require
         run: |
           python3 -m pip install --quiet pyyaml 'cyclonedx-python-lib[json-validation]==11.12.0' 'jinja2==3.1.6'
           python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v

@@ -285,11 +285,30 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
   - [x] Payload schemas on the Home Assistant side:
         `custom_components/securacv/tests/test_mqtt_payload_hardening.py`
         (18 cases, stubbed HA).
-  - [ ] **Open, its own change:** a firmware-side fixture — the WAP
-        `csi_mqtt.cpp` discovery / retained payload templates extracted into a
-        pytest fixture checked against the HA parsers; and QoS written down as
-        the delivery bound (QoS 0 everywhere today). Reconnect behavior is
-        bench (U1).
+  - [x] A firmware-side fixture, from the real `csi_mqtt.cpp` (2026-10):
+        `tests_host/test_wap_mqtt_bodies.cpp` runs it over a fake esp_mqtt
+        client through a unit's life (connect burst, healthy loop, a tamper
+        commit, a backfill replay, a unit in trouble, unsigned early-boot
+        bodies, discovery removed), its signed bodies signed on the repo's
+        test key, delivers each discovery command word back and checks it
+        latches, and prints what it recorded (`--json`). The sketch's two
+        relayed bodies (update state, acoustic snapshot) are typed in its
+        shape and key-checked against `canary_wap.ino`.
+        `custom_components/securacv/tests/test_wap_mqtt_contract.py` builds
+        it with make (no committed fixture to go stale), replays the record
+        into the integration set up against an emulated broker, and holds
+        the integration's readers and the discovery configs' topics, keys
+        and words to the bodies;
+        `scripts/tests/test_ha_discovery_wap_render.py` (lint.yml) renders
+        every discovery template on the bodies the way Home Assistant does
+        (jinja2 at its pin) and holds what each entity and trigger shows.
+        QoS is written down as the delivery bound: every publish QoS 0 (at
+        most once), the last will QoS 1 and retained, the command topics
+        subscribed at QoS 1; state retained, events and tamper not.
+        Host-tested only: Home Assistant itself does not run in either lane.
+        What it found wrong today is written down as strict xfails (and one
+        expectedFailure) in the tests.
+  - [ ] Reconnect behavior on a live broker — bench (**U1**).
 
 - [ ] **Operational failover behavior**
   - [ ] Confirm local witness recording continues when the broker is down —

@@ -539,12 +539,16 @@ if __name__ == "__main__":
 # Same philosophy as the enclosure catalog: parse the sources maintainers
 # already edit (docs/hardware/bom_*.csv, the enclosure README's Assembly
 # sections, sbom/README.md), emit JSON, drift-gate in CI. The page can
-# then say "how to build it" without a second copy that rots.
+# then say "how to build it" without a second copy that rots. One input is
+# itself generated: docs/hardware/enclosure/hardware.json, the hardware each
+# committed preset's own HARDWARE echo counts (gen_hardware.py, which
+# scripts/regen_cad.py runs before this file for exactly that reason).
 # ═════════════════════════════════════════════════════════════════════════
 import csv  # noqa: E402  (section-local import, kept beside the generator it serves)
 
 BUILD_JSON = REPO / "canary-local/devices/build.json"
 HW = REPO / "docs/hardware"
+HARDWARE_JSON = ENC / "hardware.json"
 
 BOM_MAP = [
     # (csv, device_id, refdes_prefix or None). A prefix keeps rows whose
@@ -762,6 +766,59 @@ def parse_assembly(md):
     return out
 
 
+# What build.json carries of each hardware.json set: which render it is (the
+# case file and the -D selectors gen_hardware.py cut it with), the counted
+# items the case's HARDWARE echo lists, and its lid rib where the set is one
+# of the preset sets that record it. The BOM join (`bom`, `bom_drift`) stays
+# in hardware.json: it is gen_hardware.py's finding for the CSV's owner, not
+# hardware a builder needs.
+HARDWARE_SET_KEYS = ("case", "scad", "overrides", "items")
+HARDWARE_ITEM_KEYS = ("qty", "kind", "spec", "text")
+
+
+def carry_hardware(devices: dict) -> dict:
+    """Each set of HARDWARE_JSON -> {device: {"source", "sets"}}, in the
+    file's own set order. Refuses what it cannot carry whole: a set
+    for a device build.json has no entry for (no BOM_MAP row and no README
+    §Assembly block: no card to show it on), a set or item missing a field, a
+    count that is not a whole positive number — a carry that dropped one
+    silently would show a builder fewer screws than the CAD cuts holes for."""
+    src = HARDWARE_JSON.relative_to(REPO).as_posix()
+    try:
+        hw = json.loads(HARDWARE_JSON.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SystemExit(f"build.json: {src} is missing — run "
+                         "docs/hardware/enclosure/gen_hardware.py first") from None
+    sets = hw.get("sets")
+    if not isinstance(sets, dict) or not sets:
+        raise SystemExit(f"build.json: {src} has no sets")
+    out: dict = {}
+    for set_id, s in sets.items():
+        dev = s.get("device")
+        if dev not in devices:
+            raise SystemExit(f"build.json: {src} set {set_id!r} names device {dev!r}, "
+                             "which build.json has no entry for (no BOM_MAP row, no "
+                             "README §Assembly block) — no card to carry it to")
+        missing = [k for k in HARDWARE_SET_KEYS if k not in s]
+        if missing or not isinstance(s["items"], list) or not s["items"]:
+            raise SystemExit(f"build.json: {src} set {set_id!r} lacks "
+                             f"{missing or ['items']} — regenerate it with gen_hardware.py")
+        items = []
+        for it in s["items"]:
+            gap = [k for k in HARDWARE_ITEM_KEYS if k not in it]
+            qty = it.get("qty")
+            if gap or isinstance(qty, bool) or not isinstance(qty, int) or qty < 1:
+                raise SystemExit(f"build.json: {src} set {set_id!r} item {it!r} "
+                                 f"is not a counted item ({gap or 'qty'})")
+            items.append({k: it[k] for k in HARDWARE_ITEM_KEYS})
+        carried = {k: s[k] for k in HARDWARE_SET_KEYS[:-1]}
+        carried["items"] = items
+        if s.get("lid_rib") is not None:
+            carried["lid_rib"] = s["lid_rib"]
+        out.setdefault(dev, {"source": src, "sets": {}})["sets"][set_id] = carried
+    return out
+
+
 SBOM_INFO = {
     "note": "Software Bill of Materials: CycloneDX 1.5 JSON. The firmware SBOM "
             "(the ESP32 stack: Arduino cores, PlatformIO platforms, first-party "
@@ -801,6 +858,10 @@ def build_main():
         devices.setdefault(dev_id, {})["bom"] = bom
     for d, a in assembly.items():
         devices.setdefault(d, {})["assembly"] = a
+    # Each device's printable sets, as the CAD counts their hardware — the
+    # Lab's Assemble tab is held to these (tests/assembly.test.js).
+    for d, h in carry_hardware(devices).items():
+        devices[d]["hardware"] = h
     data = {
         "generated_by": "canary-local/tools/gen_enclosures.py",
         "sbom": SBOM_INFO,
@@ -813,8 +874,9 @@ def build_main():
         "devices": devices,
     }
     BUILD_JSON.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    n_sets = sum(len(d["hardware"]["sets"]) for d in devices.values() if "hardware" in d)
     print(f"OK build.json: {len(devices)} devices, "
-          f"assembly for {sorted(assembly)}")
+          f"assembly for {sorted(assembly)}, {n_sets} hardware sets")
 
 
 build_main()

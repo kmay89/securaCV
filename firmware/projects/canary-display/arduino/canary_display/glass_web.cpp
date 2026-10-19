@@ -30,6 +30,11 @@
 #include "wx_direct.h"
 #endif
 #include "glass_settings.h"
+#ifdef CD_FLAVOR_DASH
+// The dash's GET serves the turn the glass wears beside the saved one (F245).
+#include "lvgl_port.h"         // lvgl_port_rotation(): the turn worn
+#include "orientation_page.h"  // the saved/worn rule the glass shows
+#endif
 #include "runtime_config.h"
 #include "version.h"
 #include "log.h"
@@ -420,12 +425,29 @@ void handle_settings_get() {
   // scene catalog keeps) — so a new Character or clock face shows up on the
   // phone with no app update. `orientation` mirrors the on-glass editor for
   // the same reason; it shares the nightlight's key on purpose (one word,
-  // one meaning, and the two flavors never serve it twice).
+  // one meaning, and the two flavors never serve it twice). It is the SAVED
+  // choice, the value /api/set writes back. `orientation_worn` is the turn
+  // the glass wears (lvgl_port_rotation()) and `orientation_refused` (0/1)
+  // whether the port refused the saved choice: a glass with no turn buffer
+  // refuses a turn and stays landscape, keeping the choice for a later
+  // start (orientation_page.h, F245). The two turns also differ, with
+  // `orientation_refused` 0, for a moment after a phone write: it lands in
+  // the store first and main.cpp's render turns the glass on its next pass
+  // (within a second), so a GET in between sees the old turn worn. A client
+  // says "could not turn" from `orientation_refused`, never from the two
+  // turns differing.
+  // Read on the loop task like everything else here (handleClient), so the
+  // read races nothing.
+  const canary::ui::OrientationState os = canary::ui::orientation_state(
+      gs.rotation, canary::ui::lvgl_port_rotation(),
+      canary::ui::lvgl_port_turn_refused());
   o += (size_t)snprintf(
       body + o, sizeof(body) - o,
-      ",\"orientation\":%u,\"character\":%u,\"clock_style\":%u,"
+      ",\"orientation\":%u,\"orientation_worn\":%u,"
+      "\"orientation_refused\":%u,\"character\":%u,\"clock_style\":%u,"
       "\"characters\":[",
-      gs.rotation, gs.character, gs.clock_style);
+      os.saved, os.worn, os.refused() ? 1u : 0u, gs.character,
+      gs.clock_style);
   for (uint8_t i = 0; i < canary::ui::character_count() && o < sizeof(body);
        i++) {
     o += (size_t)snprintf(

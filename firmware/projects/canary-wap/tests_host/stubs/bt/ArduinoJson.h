@@ -433,6 +433,15 @@ class JsonArray {
   explicit JsonArray(host_json::Node* n) : n_(n) {}
   template <typename T>
   T add();
+  // ArduinoJson 7.4.1's add(value): the value appended, a string or a number
+  // (GET /api/bluetooth's services_missing, sweep F260).
+  template <typename T>
+  bool add(const T& v) {
+    if (!n_ || n_->kind != host_json::Node::kArray) return false;
+    n_->items.emplace_back(new host_json::Node);
+    host_json::assign(n_->items.back().get(), v);
+    return true;
+  }
 
  private:
   host_json::Node* n_ = nullptr;

@@ -10,9 +10,10 @@
 // reassigned array, an extra compile flag), and the pinned source lists
 // below change with build.sh's. With LAB_CORES=native it also builds both
 // cores and drives each next to its committed dist, call for call, on the
-// scenarios below: a difference names a stale dist, or a place where the
-// native build and the wasm one differ (another compiler, a 64-bit ABI).
-// Agreement covers the calls those scenarios make, not every input.
+// scenarios in native/scenarios.js: a difference names a stale dist, or a
+// place where the native build and the wasm one differ (another compiler, a
+// 64-bit ABI). Agreement covers the calls those scenarios make, not every
+// input. CI runs it both ways (sweep A50).
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -212,6 +213,7 @@ const FAKE_PLAN = { name: "fake-core", sources: [], runtime: ["ccall", "cwrap"],
   { name: "die", ret: "void", kind: "v", params: [] },
   { name: "noise", ret: "int", kind: "n", params: [] },
   { name: "spin", ret: "void", kind: "v", params: [] },
+  { name: "slow", ret: "int", kind: "n", params: ["int"] },
 ] };
 const fakeCore = () => cores.instance({ plan: FAKE_PLAN, bin: process.execPath, args: [join(__dirname, "native/fake_core.js")] });
 
@@ -227,6 +229,37 @@ test("the pipe answers synchronously, with the i32s a wasm call would pass", () 
   assert.throws(() => m.cwrap("num", "string", ["number"]), /returns int, not a C string/);
   assert.throws(() => m.cwrap("gone", "number", []), /no export gone/);
   assert.throws(() => m.cwrap("num", "number", ["string"]), /passes number arguments only, not string/);
+});
+
+// The worker stores an answer's state and then wakes the waiting thread, so
+// that thread can see the state, return, and be waiting on its next call by
+// the time the wake-up lands (a worker descheduled between the two, under
+// load). The next call must not take that stray wake-up as its own answer:
+// before the fix it read the last answer's text again and threw it as an
+// error (sweep A50: under the path-filter recorder on a loaded machine, the
+// probes' stand-in test failed with "=p 55a721141700", a pointer reply
+// thrown by the window read after it). Here a second thread wakes the
+// waiting thread every 10 ms through a slow call, as a late wake-up would.
+test("a stray wake-up while a call waits is not read as its answer (the late-notify race)", async () => {
+  const { Worker } = require("node:worker_threads");
+  const m = fakeCore();
+  const num = m.cwrap("num", "number", ["number"]);
+  assert.strictEqual(num(41), 41, "a first answer, so the reply slot holds one");
+  const stop = new Int32Array(new SharedArrayBuffer(4));
+  const waker = new Worker(`
+    const { workerData } = require("node:worker_threads");
+    const ctl = new Int32Array(workerData.sab, 0, 2);
+    const stop = new Int32Array(workerData.stop);
+    while (!Atomics.load(stop, 0)) { Atomics.notify(ctl, 0); Atomics.wait(stop, 0, 0, 10); }
+  `, { eval: true, workerData: { sab: cores.channel().ctl.buffer, stop: stop.buffer } });
+  try {
+    await new Promise((ok) => waker.once("online", ok));
+    assert.strictEqual(m.cwrap("slow", "number", ["number"])(7), 7, "the slow call's own answer, after every wake-up");
+    assert.strictEqual(num(8), 8, "and the call after it");
+  } finally {
+    Atomics.store(stop, 0, 1);
+    await waker.terminate();
+  }
 });
 
 // What the dist's cwrap and ccall hand back for a "boolean" return, read off
@@ -587,150 +620,77 @@ test("CI runs each core probe on the dist, then on this tree's sources even afte
   }
 });
 
+// And the logic job runs this file twice (sweep A50): in the dist step, where
+// it compiles nothing and the parity scenarios below skip, and under
+// LAB_CORES=native in a step of its own, straight after the native page
+// tests, whenever the dist step ran. Its own step, so its red (the first call
+// where the native build and the committed dist differ) is not read as the
+// native page tests' (the sources pass the page tests). The step is read as
+// the runner reads it (native/ci_steps.js): a comment that says
+// "LAB_CORES: native", a "|| true" after the command, a continue-on-error or
+// a missing recorder line each fail here.
+test("CI runs this file under LAB_CORES=native in its own step, after the native page tests, even after a red dist step", () => {
+  const ci = require("./native/ci_steps.js");
+  const { steps } = ci.job("logic-tests");
+  const runs = (st, file) => (st.run || "").split("\n").includes(`node --test canary-local/tests/${file}`);
+  const dist = steps.findIndex((st) => st.keys.id === "dist-node-tests");
+  assert.ok(dist >= 0 && runs(steps[dist], "native_cores.test.js"), "the dist step runs this file in its default mode");
+  assert.ok(!steps[dist].env.LAB_CORES, "the dist step runs it on the committed dist");
+  const pages = steps.findIndex((st) => st.env.LAB_CORES === "native" && runs(st, "vision.test.js"));
+  assert.ok(pages > dist, "the native page-test step follows the dist step");
+  assert.ok(!runs(steps[pages], "native_cores.test.js"), "the native page-test step keeps its own meaning");
+  const mine = steps.filter((st) => st.env.LAB_CORES === "native" && (st.run || "").includes("native_cores.test.js"));
+  assert.strictEqual(mine.length, 1, "one step runs this file under LAB_CORES=native");
+  const step = mine[0];
+  assert.strictEqual(steps.indexOf(step), pages + 1, "it is the step after the native page tests");
+  assert.strictEqual(step.run, "node --test canary-local/tests/native_cores.test.js", "it runs this file alone, and its exit status is the step's");
+  assert.strictEqual(step.keys.if, ci.RAN, "it runs whenever the dist step ran, red or green");
+  assert.ok(!("continue-on-error" in step.keys), "its red stays red (no continue-on-error)");
+  assert.deepStrictEqual(Object.keys(step.keys).sort(), ["env", "if", "name", "run"], "the step is its name, if:, env and command, nothing else");
+  assert.deepStrictEqual(step.env, { LAB_CORES: "native", ...ci.RECORDER },
+    "LAB_CORES=native and the path-filter recorder's three lines (the dist step also records this file, so the gate cannot tell an unarmed step)");
+  assert.match(step.name, /red = the dist is stale/, "its name says what its red means");
+});
+
 // ── LAB_CORES=native only: the native core next to its committed dist ──────
 
 const native = { skip: cores.mode() !== "native" && "LAB_CORES=native only (builds with g++)" };
-
-function lcg(seed) {
-  let s = seed >>> 0;
-  return (n) => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s % n;
-  };
-}
+const scenarios = require("./native/scenarios.js");
+const { lcg } = scenarios;
 
 const STALE = "differs from the committed dist: if this tree changed the core's sources, the dist is stale " +
   "(Actions -> \"Rebuild emulator dist (pinned emsdk)\"); if not, the native build and the wasm one disagree " +
   "on this input (another compiler, a 64-bit ABI: see tests/native/README.md)";
 
-test("native vision core = committed dist, tick for tick (LAB_CORES=native)", native, async () => {
-  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),
-    cores.coreFactory("canary-vision-core")()]);
-  const [d, n] = pair.map((m) => ({
-    contract: m.cwrap("vision_emu_contract_json", "string", []),
-    reset: m.cwrap("vision_emu_reset", null, []),
-    config: m.cwrap("vision_emu_set_config", null, ["number", "number", "number", "number"]),
-    begin: m.cwrap("vision_emu_begin_frame", null, []),
-    push: m.cwrap("vision_emu_push_box", "number", Array(6).fill("number")),
-    tick: m.cwrap("vision_emu_tick_json", "string", ["number"]),
-  }));
+// Each scenario lives in native/scenarios.js, where cores_wasm32.test.js
+// (sweep A58) runs the same calls between a wasm32-wasi clang build and the
+// g++ one; here the pair is the committed dist and the native build.
+async function distAndNative(name) {
+  const pair = await Promise.all([require(join(ROOT, "emulator/dist", name + ".js"))(), cores.coreFactory(name)()]);
   assert.ok(pair[1].nativeCore, "the second core is the native one");
-  d.reset(); n.reset();
-  assert.strictEqual(n.contract(), d.contract(), "contract " + STALE);
-  const r = lcg(1762);
-  let t = 0;
-  for (let i = 0; i < 3000; i++) {
-    if (r(200) === 0) {
-      // out-of-range values on purpose: the clamps are the firmware's
-      const cfg = [r(300) - 20, r(300) - 20, r(40000), r(120000)];
-      d.config(...cfg); n.config(...cfg);
-      assert.strictEqual(n.contract(), d.contract(), `contract after set_config(${cfg}) ` + STALE);
-    }
-    d.begin(); n.begin();
-    for (let b = r(40) < 30 ? r(3) : r(36); b > 0; b--) {
-      const box = [r(700) - 50, r(500) - 50, r(400), r(500), r(110), r(3)];
-      assert.strictEqual(n.push(...box), d.push(...box), "push_box " + STALE);
-    }
-    t += 50 + r(400);
-    const want = d.tick(t);
-    assert.strictEqual(n.tick(t), want, `tick ${i} at ${t} ms ` + STALE);
-  }
+  return pair;
+}
+
+test("native vision core = committed dist, tick for tick (LAB_CORES=native)", native, async () => {
+  scenarios.visionTicks(...(await distAndNative("canary-vision-core")), STALE);
 });
 
 // Sweep A42: boxes far outside the frame, where the pipeline's int and long
-// arithmetic used to overflow (the center x + w/2, the cell px * cols, the
-// area (long)w*h on wasm32's 32-bit long, and area * 100). The native build
-// is 64-bit g++ and the dist wasm32 clang, so before A42 the same box read
-// proximity "near" here and "unknown" there, and landed in different cells.
-// The sources now take each of those in int64_t, where no int box overflows,
-// so the two builds must agree on every one of these boxes, value for value.
-// Each frame holds one extreme box, or two (so the occupied-cell mask sees
-// both), and the clock runs on, so the FSM sees them as a visit too. Like
-// the scenario above it is opt-in, and no CI job runs this file under
-// LAB_CORES=native; vision.test.js's A42 test is the CI gate on the dist,
-// and vision_wasm32.test.js (sweep A49) shows the 32-bit long half from the
-// sources, in a clang wasm32 build of the pipeline beside a g++ one.
+// arithmetic used to overflow. The native build is 64-bit g++ and the dist
+// wasm32 clang, so before A42 the same box read proximity "near" here and
+// "unknown" there, and landed in different cells; the sources now take each
+// of those in int64_t, so the two must agree on every one of these boxes.
+// CI runs this file under LAB_CORES=native in its own step (sweep A50), so a
+// stale or divergent dist goes red at its first differing call;
+// vision.test.js's A42 test is the gate on the dist's arithmetic itself, and
+// vision_wasm32.test.js (A49) and cores_wasm32.test.js (A58) show the 32-bit
+// long half from the sources, before any rebuild.
 test("native vision core = committed dist on out-of-range boxes (LAB_CORES=native)", native, async () => {
-  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-vision-core.js"))(),
-    cores.coreFactory("canary-vision-core")()]);
-  const [d, n] = pair.map((m) => ({
-    reset: m.cwrap("vision_emu_reset", null, []),
-    config: m.cwrap("vision_emu_set_config", null, ["number", "number", "number", "number"]),
-    begin: m.cwrap("vision_emu_begin_frame", null, []),
-    push: m.cwrap("vision_emu_push_box", "number", Array(6).fill("number")),
-    tick: m.cwrap("vision_emu_tick_json", "string", ["number"]),
-  }));
-  assert.ok(pair[1].nativeCore, "the second core is the native one");
-  d.reset(); n.reset();
-  d.config(0, 50, 1500, 10000); n.config(0, 50, 1500, 10000);
-  const V = [-2147483648, -2000000000, -1, 0, 240, 50000, 2000000000, 2147483647];
-  let t = 0, frames = 0;
-  const frame = (boxes) => {
-    d.begin(); n.begin();
-    for (const b of boxes) assert.strictEqual(n.push(...b, 90, 0), d.push(...b, 90, 0), "push_box " + STALE);
-    t += 100;
-    const want = d.tick(t);
-    assert.strictEqual(n.tick(t), want, `boxes ${JSON.stringify(boxes)} at ${t} ms ` + STALE);
-    frames++;
-    return JSON.parse(want);
-  };
-  for (const x of V) for (const y of V) for (const w of V) for (const h of V) frame([[x, y, w, h]]);
-  const r = lcg(42);
-  for (let i = 0; i < 1000; i++) {
-    const pick = () => V[r(V.length)];
-    frame([[pick(), pick(), pick(), pick()], [pick(), pick(), pick(), pick()]]);
-  }
-  // The sweep item's box, two billion pixels wide from the frame's corner:
-  // near, in the last column, on both builds.
-  const wide = frame([[0, 0, 2000000000, 70]]).sample;
-  assert.deepStrictEqual([wide.proximity, wide.posture, wide.voxel.r, wide.voxel.c], ["near", "horizontal", 0, 2]);
-  assert.strictEqual(frames, V.length ** 4 + 1000 + 1);
+  scenarios.visionExtremes(...(await distAndNative("canary-vision-core")), STALE);
 });
 
 test("native audio core = committed dist, frame for frame (LAB_CORES=native)", native, async () => {
-  const pair = await Promise.all([require(join(ROOT, "emulator/dist/canary-wap-audio.js"))(),
-    cores.coreFactory("canary-wap-audio")()]);
-  const [d, n] = pair.map((m) => ({
-    m,
-    contract: m.cwrap("audio_emu_contract_json", "string", []),
-    reset: m.cwrap("audio_emu_reset", null, []),
-    samples: m.cwrap("audio_emu_frame_samples", "number", []),
-    ptr: m.cwrap("audio_emu_frame_ptr", "number", []),
-    thresholds: m.cwrap("audio_emu_set_thresholds", "number", ["number", "number"]),
-    proc: m.cwrap("audio_emu_process_frame", "string", []),
-  }));
-  assert.ok(pair[1].nativeCore, "the second core is the native one");
-  d.reset(); n.reset();
-  assert.strictEqual(n.contract(), d.contract(), "contract " + STALE);
-  const N = d.samples();
-  assert.strictEqual(n.samples(), N);
-  const r = lcg(4040);
-  let ph = 0;
-  // a T3 cadence, a T4 cadence, an off-band rhythm and noise, in turns
-  const plan = [];
-  for (let k = 0; k < 3; k++) for (const [hz, f] of [[3400, 25], [0, 25], [3400, 25], [0, 25], [3400, 25], [0, 90]]) plan.push([hz, f]);
-  for (let k = 0; k < 2; k++) for (let b = 0; b < 4; b++) plan.push([3400, 5], [0, 5]);
-  plan.push([0, 300], [300, 25], [0, 25], [-1, 60], [3400, 200], [0, 60]);
-  let frame = 0;
-  for (const [hz, frames] of plan) {
-    for (let f = 0; f < frames; f++, frame++) {
-      if (r(400) === 0) {
-        const th = [r(3000), r(2000)];
-        assert.strictEqual(n.thresholds(...th), d.thresholds(...th), "set_thresholds " + STALE);
-      }
-      const pcm = new Int16Array(N);
-      for (let i = 0; i < N; i++) {
-        if (hz < 0) { pcm[i] = r(20000) - 10000; continue; }
-        if (hz === 0) { pcm[i] = r(64) - 32; continue; }
-        ph += (2 * Math.PI * hz) / 16000;
-        if (ph > 2 * Math.PI) ph -= 2 * Math.PI;
-        pcm[i] = Math.round(8000 * Math.sin(ph));
-      }
-      for (const c of [d, n]) new Int16Array(c.m.HEAP16.buffer, c.ptr(), N).set(pcm);
-      const want = d.proc();
-      assert.strictEqual(n.proc(), want, `frame ${frame} (${hz} Hz) ` + STALE);
-    }
-  }
+  scenarios.audioFrames(...(await distAndNative("canary-wap-audio")), STALE);
 });
 
 // What the browser probes run under LAB_CORES=native: the stand-in, in its

@@ -70,8 +70,9 @@ Mesh (F96):
    409 `mesh_busy` and a 503 `mesh_timeout` go out with their own lines.
    `mesh_network::save_replay_counters(` (the peer table and the one
    `g_prefs` handle) is called only from the sketch's `loop()`; the
-   pre-reboot hook, which POST /api/reboot and the safe-mode retry run on
-   the httpd task, calls `mesh_network::save_replay_counters_before_reboot(`,
+   pre-reboot hook, which the safe-mode retry runs on the httpd task (and
+   POST /api/reboot on the loop task, since sweep F92), calls
+   `mesh_network::save_replay_counters_before_reboot(`,
    which saves in place only on the loop task (`xTaskGetCurrentTaskHandle()`
    against the one `init()` recorded) and otherwise hands
    `MESH_CMD_SAVE_REPLAY` to `submit(`.
@@ -189,34 +190,41 @@ C3. Each changing handler (`CHIRP_HANDLERS`, `BT_HANDLERS`) calls the
     whose boot bring-up failed or the heap guard refused. That was the
     advertise and pair handlers' case on a device saved on (the default)
     until F235: they brought the stack up only when the published setting
-    said off, so every tap answered a failed start. The advertise and pair
-    handlers (`BT_BOOT_WAIT_HANDLERS`) first leave the stack to the sketch's
-    boot bring-up until it is over (the F235 review: the sketch defers it out
-    of the provisioning join window and skips it in safe mode, and the
-    firmware's other NimBLE init callers run inside it, the worker's
-    ble_manager::init() on FULL and the Scout's at finalize, so a tap there
-    undid the deferral and could run NimBLE's init beside theirs): their
-    first statement is `if (waits_for_boot_bring_up()) { return
-    send_boot_bring_up_pending(req); }`, then the bring-up guard.
-    `waits_for_boot_bring_up()` is exactly `return
+    said off, so every tap answered a failed start. The enable, advertise and
+    pair handlers (`BT_BOOT_WAIT_HANDLERS`) first leave the stack to the
+    sketch's boot bring-up until it is over (the F235 review for advertise
+    and pair; F259 for enable, and whatever the saved setting: the sketch
+    defers the bring-up out of the provisioning join window and skips it in
+    safe mode, and the firmware's other NimBLE init callers run inside it,
+    the worker's ble_manager::init() on FULL and the Scout's at finalize, so
+    a tap there undid the deferral and could run NimBLE's init beside
+    theirs, the worker's own init() then losing its latch): their first
+    statement is `if (waits_for_boot_bring_up()) { return
+    send_boot_bring_up_pending(req); }`, then the bring-up guard, and the
+    settings POST's "enabled": true branch says the same right before its
+    own bring-up guard (BV1). `waits_for_boot_bring_up()` is exactly `return
     !bluetooth_channel::is_initialized() &&
-    !bluetooth_channel::boot_bring_up_tried() &&
-    bluetooth_channel::read_enabled();` (saved off, a tap brings the stack up
-    as before F235, as Enable does), called once by each of those two and by
-    nothing else; `send_boot_bring_up_pending()` is exactly a 503 with
-    `bring_up_starting_error()` once `boot_bring_up_started()` says the
-    sketch has started its boot bring-up or `bring_up_starting()` says a
-    bring-up runs, else `boot_bring_up_pending_error()` (wave 16's verify:
-    after the worker's init() was refused, and before the finalize stage, a
-    tap was told Bluetooth had not started yet, with Wi-Fi setup done and
-    the refusal recorded). In `bluetooth_channel.cpp`,
+    !bluetooth_channel::boot_bring_up_tried();` (F259 dropped `&&
+    bluetooth_channel::read_enabled()`: the worker runs init() whatever the
+    setting, so a device saved off waits like one saved on), called once by
+    each of those four and by nothing else; `send_boot_bring_up_pending()`
+    is exactly a 503 with `boot_bring_up_skipped_error()` when the sketch
+    skipped its boot bring-up (safe mode, F259: the tap was told Bluetooth
+    would start within five minutes), `bring_up_starting_error()` once
+    `boot_bring_up_started()` says the sketch has started its boot bring-up
+    or `bring_up_starting()` says a bring-up runs, else
+    `boot_bring_up_pending_error()` (wave 16's verify: after the worker's
+    init() was refused, and before the finalize stage, a tap was told
+    Bluetooth had not started yet, with Wi-Fi setup done and the refusal
+    recorded). In `bluetooth_channel.cpp`,
     `boot_bring_up_started()` is exactly the acquire load of
     `g_boot_bring_up_started`, whose one release store is
     `bringup_worker_started()`'s (BV7 holds that body), and nothing else
     names it;
     `boot_bring_up_tried()` is exactly the acquire load of
-    `g_boot_bring_up_tried` and `boot_bring_up_finished()` exactly its
-    release store, and nothing else names the flag (BV7 holds the sketch's
+    `g_boot_bring_up_tried` and `boot_bring_up_finished()` exactly
+    `g_boot_stack_up = is_initialized();` (F260, BV10) and then its release
+    store, and nothing else names the flag (BV7 holds the sketch's
     two calls of the setter: last in its finalize stage, after the Scout's
     init, and where the worker could not be created). `bring_up()` is
     exactly `return bluetooth_channel::is_initialized() ||
@@ -382,8 +390,8 @@ M1. `open_client()` sets `cfg.network.timeout_ms = (int)kNetworkTimeoutMs;`
     same.
 
 Bluetooth settings, events, views and bring-up (F144, F143, F138, F171,
-F167, F189, F196, F210): rules of their own, in their own block below
-(`check_bluetooth_views`, `BV_MUTATIONS`).
+F167, F189, F196, F210, F191, F209, F259, F260): rules of their own, in
+their own block below (`check_bluetooth_views`, `BV_MUTATIONS`).
 
 BV1. A settings POST that turns Bluetooth on does it the way
      POST /api/bluetooth/enable does (F144). `handle_bluetooth_settings_set`
@@ -394,7 +402,11 @@ BV1. A settings POST that turns Bluetooth on does it the way
      a bring-up that left the stack down), and answers a command refused for a stack
      that is not up with the init error, right after the not-run guard
      (`if (r.refusal == bluetooth_channel::BT_REFUSED_NOT_ENABLED) { return
-     send_bt_error(req, ...`). In `bluetooth_channel.cpp`, `set_settings()`
+     send_bt_error(req, ...`). Right before that bring-up it leaves the stack
+     to the sketch's boot bring-up, as Enable does (F259: `if
+     ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled
+     && waits_for_boot_bring_up()) { return send_boot_bring_up_pending(req);
+     }`, once). In `bluetooth_channel.cpp`, `set_settings()`
      reads `const bool was_enabled = g_settings.enabled;` before it assigns
      `g_settings = settings;` and names no `is_enabled(`: the reader returns
      the value just assigned, which is how both of its branches were dead.
@@ -404,8 +416,9 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      `onPassKeyDisplay`, `onConfirmPassKey`, `onWrite`, `onRead`,
      `onResult`, `onScanEnd`) and the helpers they build their events with
      (`make_event`, `link_event`, `post_event`) name none of `BT_LIVE_STATE`
-     and no other file global but the queue (`post_event`'s `g_events`) and
-     the data hook (`onWrite`'s `g_data_callback`), name nothing qualified
+     and no other file global but the queue (`post_event`'s `g_events`),
+     the data hook (`onWrite`'s `g_data_callback`) and, since F191,
+     `onPassKeyDisplay`'s passkey gate (`g_owner_pairing_open`, BV9), name nothing qualified
      `bluetooth_channel::`, call no `log_health(` and no `ble_*::` module,
      and call no function of the file but those helpers and
      `detect_device_type` (which reads only the advertisement). `onWrite`,
@@ -420,7 +433,9 @@ BV2. The NimBLE host task's callbacks touch none of the channel's state
      (only `consume` runs it), and each `apply_<event>()` only from
      `apply_event()`, but `apply_connect()` and `apply_disconnect()`, which
      `reconcile_link()` calls too (F169: after a link's event was dropped,
-     the loop task ends or records the link from the stack's own record).
+     the loop task ends or records the link from the stack's own record),
+     and `apply_auth_complete()`, which `refuse_unauthenticated_links()`
+     calls too (F191's review, BV9).
      `reconcile_link();` is `update()`'s, once, between the consume and the
      drain, and nobody else calls it. What a full queue does (a link's
      events kept, the drops logged by kind, a passkey failed closed, the
@@ -671,6 +686,116 @@ BV8. Whether Bluetooth is on, as another task reads it (F210). The Start
      under TSAN, are `test_bluetooth_commands_wap.cpp`'s
      (`the_handlers_read_enabled_from_the_view`,
      `threads_bring_up_loop_and_reads`).
+
+BV9. No pairing completes, and no bond stays, without the owner (F191,
+     F209). A keyboard-only phone pairs by Passkey Entry (it types the six
+     digits this device shows), and the digits reached the dashboard's PIN
+     box and the health log in or out of pairing mode; a DisplayOnly or
+     NoInputNoOutput phone pairs by Just Works, and NimBLE kept its
+     unauthenticated bond, unlisted, in the 3-bond store, where three of them
+     refused the owner. In `bluetooth_channel.cpp`: `PASSKEY_REFUSED` is
+     defined once, at least 1000000 (past what NimBLE's
+     `ble_sm_inject_io()` takes); `onPassKeyDisplay()` adds it to its six
+     random digits, before it posts them, exactly when `if
+     (!__atomic_load_n(&g_owner_pairing_open, __ATOMIC_ACQUIRE))`, and
+     returns that passkey; `owner_pairing_open()` is exactly `return
+     g_settings.enabled && g_settings.allow_pairing && (g_pairing.state ==
+     PAIR_INITIATED || g_pairing.state == PAIR_PIN_DISPLAYED);`,
+     `publish_views()` stores it into the gate once (release), and nothing
+     else names the gate; `apply_passkey_display()` starts `if
+     (e.u.passkey.pin >= PASSKEY_REFUSED || !owner_pairing_open()) {
+     g_passkey_refused_count++; return; }`; no `log_health(` of the file
+     names a pairing's digits (`pin`, `pin_*`, `*_pin`, `passkey*`,
+     `numcmp`: the log is durable). `apply_auth_complete()` answers a bond
+     that is not authenticated in one `} else if (link.bonded) {` branch,
+     after the authenticated block, with `forget_bond(NimBLEAddress(
+     link.id_address))` (the radio quiet, as Remove) and
+     `g_server->disconnect(link.handle);`, calls no bare `deleteBond(` or
+     `ble_gap_unpair*(`, and forgets nothing in the authenticated block. The
+     bond store's count beside the list (F209): `refresh_bond_store()` is
+     called only by `publish_status_view()`, once, and the counts
+     (`g_bonds_held`, `g_bonds_unlisted`) are named only by those two. That
+     a refused passkey is shown nowhere and an unauthenticated bond goes,
+     over a stand-in that models the bond store and the busy guard, is
+     `test_bluetooth_commands_wap.cpp`'s
+     (`a_passkey_outside_pairing_mode_is_shown_nowhere`,
+     `an_unauthenticated_bond_is_deleted_and_its_link_dropped`,
+     `unlisted_bonds_no_longer_lock_the_owner_out`,
+     `the_bond_store_shows_beside_the_list`); that NimBLE refuses the
+     out-of-range passkey and times the pairing out is read from its source
+     (2.3.8 and 2.5.0), not run.
+     And the roads F191's and F209's review found (in
+     `bluetooth_channel.cpp` unless named): `owner_comparison_open()` is
+     exactly `return g_settings.enabled && g_settings.allow_pairing &&
+     (g_pairing.state == PAIR_INITIATED || g_pairing.state ==
+     PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING);`, and
+     `apply_confirm_passkey()` answers no with `if
+     (!owner_comparison_open()) { NimBLEDevice::injectConfirmPasskey(
+     *e.u.passkey.conn, false); delete e.u.passkey.conn;
+     g_passkey_refused_count++; return; }` before it takes the pending copy
+     (a Numeric Comparison asked the owner with no pairing mode); the
+     unauthenticated branch drops the link as `if (g_server) {
+     g_server->disconnect(link.handle); }`, on no other condition and by
+     no other handle, names no `g_pairing` (that bond was never the owner's
+     pairing), says `drop_entries_without_bond();` and
+     `keep_for_retry(link.id_address);`, and the authenticated block says
+     `drop_kept(link.id_address);`; `refuse_unauthenticated_links()` skips
+     exactly a link that is not the stack's, not bonded, authenticated, or
+     whose bond is gone, and applies the rest as their report
+     (`apply_auth_complete(link_event(BT_EV_AUTH_COMPLETE, live));`), and
+     is called once by `reconcile_link()` and once by `adopt_init_result()`
+     after its `set_owner(`; `retry_kept_bonds(now);` is `update()`'s,
+     once, and `reconcile_link()` ends every retry (`g_kept_bond_count =
+     0;`), the kept list named only by `keep_for_retry()`, `drop_kept()`,
+     `retry_kept_bonds()` and `reconcile_link()`; `apply_store_full()` and
+     `reconcile_link()` each mark the store dirty (`g_bond_store_dirty =
+     true;`); `ble_server_dispatch.h`'s `onPassKeyDisplay()` with no
+     pairing owner returns `1000000u + esp_random() % 1000000;` (past what
+     NimBLE takes); and no file of the sketch calls `setSecurityPasskey(`:
+     NimBLE-Arduino calls `onPassKeyDisplay()` only while the static
+     passkey is its default 123456 (NimBLEServer.cpp, 2.3.8 and 2.5.0), so
+     one would hand every Passkey Entry that key, in or out of pairing
+     mode, and the stand-in does not model it. Held over the stand-in by
+     `a_comparison_outside_pairing_mode_asks_nobody`,
+     `a_just_works_bond_beside_the_recorded_link_drops_its_own`,
+     `a_bond_whose_report_never_came_goes_from_the_stacks_record`,
+     `a_bond_the_stack_kept_is_asked_again_each_minute`,
+     `the_bond_count_follows_a_dropped_report_and_a_refused_pairing` and
+     `a_listed_phone_that_pairs_again_by_just_works_leaves_the_list`.
+
+BV10. Safe mode says so, and a late bring-up says what it left out (F259,
+     F260). `canary_wap.ino`'s `setup()` says
+     `bluetooth_channel::skip_boot_bring_up_for_safe_mode();` once, a
+     statement of the `else` of its Bluetooth gate (`if (!in_safe_mode) {
+     g_ble_discovery_ready = true; ...`) under `#if FEATURE_BLUETOOTH` alone
+     (a safe-mode boot never marks its bring-up over, and a tap was told
+     Bluetooth would start within five minutes); its `ble_bringup_task()`
+     says `bluetooth_channel::boot_service_registered(
+     bluetooth_channel::BT_BOOT_SVC_STATUS);` once, a statement of the block
+     `if (ble_status::init(...)) {` runs, and `...BT_BOOT_SVC_DISCOVERY);`
+     once, a statement of the block `if (ble_manager::init(...)) {` runs,
+     under `#if FEATURE_BLUETOOTH` alone; no other file calls either. In
+     `bluetooth_channel.cpp`: `skip_boot_bring_up_for_safe_mode()` and
+     `boot_bring_up_skipped()` are exactly the release store and the acquire
+     load of `g_boot_bring_up_skipped`, `boot_service_registered()` exactly
+     `__atomic_fetch_or(&g_boot_services_registered, service,
+     __ATOMIC_RELEASE);` and `late_bring_up()` exactly `return g_initialized
+     && boot_bring_up_tried() && !g_boot_stack_up;`, and the three flags are
+     named only by their own functions (`g_boot_services_registered` also by
+     `boot_services_missing()`, `g_boot_stack_up` by C3's
+     `boot_bring_up_finished()`); `BOOT_SERVICES` is built from the macros
+     the worker's registrations compile under (`FEATURE_BLE_STATUS`,
+     `FEATURE_BLE`); `note_late_bring_up()` is called once, by
+     `adopt_init_result()` (the loop task adopts a stack once per boot), and
+     registers or starts nothing (the worker's services on a server that
+     already started are F167's case). What a late bring-up reports, the
+     boot's own bring-up in either order of the finalize stage and the
+     adoption, and a tap that waits in every window, are
+     `test_bluetooth_commands_wap.cpp`'s
+     (`a_late_bring_up_says_what_it_left_out`,
+     `every_tap_waits_for_the_boot_bring_up`,
+     `the_worker_never_meets_a_taps_bring_up`); the sketch is not compiled on
+     the host, so this rule holds its marks.
 
 ## It proves it bites
 
@@ -1425,20 +1550,29 @@ BT_BRING_UP_GUARD = "if(!bring_up()){returnsend_bring_up_refused(req,"
 # firmware's other NimBLE init callers run inside it: the worker's
 # ble_manager::init() on FULL, the Scout's at finalize). Their first
 # statement is this guard, then the bring-up guard.
-BT_BOOT_WAIT_HANDLERS = ("handle_bluetooth_advertise_start", "handle_bluetooth_pair_start")
+# Sweep F259: Enable too, and whatever the saved setting (a device saved off
+# brought the stack up at once, and Enable never waited); the settings POST
+# waits in its "enabled": true branch (BT_SETTINGS_BOOT_WAIT, BV1).
+BT_BOOT_WAIT_HANDLERS = ("handle_bluetooth_enable", "handle_bluetooth_advertise_start",
+                         "handle_bluetooth_pair_start")
 BT_BOOT_WAIT_GUARD = "if(waits_for_boot_bring_up()){returnsend_boot_bring_up_pending(req);}"
+BT_BOOT_WAIT_CALLERS = BT_BOOT_WAIT_HANDLERS + ("handle_bluetooth_settings_set",)
 SIG_WAITS_FOR_BOOT = r"\binline\s+bool\s+waits_for_boot_bring_up\s*\(\s*\)"
-BT_WAITS_FOR_BOOT_BODY = ("return!bluetooth_channel::is_initialized()&&!bluetooth_channel::boot_bring_up_tried()"
-                          "&&bluetooth_channel::read_enabled();")
+BT_WAITS_FOR_BOOT_BODY = "return!bluetooth_channel::is_initialized()&&!bluetooth_channel::boot_bring_up_tried();"
 SIG_SEND_BOOT_PENDING = r"\binline\s+esp_err_t\s+send_boot_bring_up_pending\s*\([^)]*\)"
 BT_BOOT_PENDING_BODY = ("httpd_resp_set_status(req,http_status_line(503));"
-                        "returnsend_error(req,bluetooth_channel::boot_bring_up_started()"
+                        "returnsend_error(req,bluetooth_channel::boot_bring_up_skipped()"
+                        "?bluetooth_channel::boot_bring_up_skipped_error()"
+                        ":bluetooth_channel::boot_bring_up_started()"
                         "||bluetooth_channel::bring_up_starting()"
                         "?bluetooth_channel::bring_up_starting_error()"
                         ":bluetooth_channel::boot_bring_up_pending_error());")
 SIG_BT_BOOT_TRIED = r"\bbool\s+boot_bring_up_tried\s*\(\s*\)"
 BT_BOOT_TRIED_BODY = "return__atomic_load_n(&g_boot_bring_up_tried,__ATOMIC_ACQUIRE);"
 BT_BOOT_TRIED_STORE = "__atomic_store_n(&g_boot_bring_up_tried,true,__ATOMIC_RELEASE);"
+# Sweep F260: the end also records whether the boot bring-up left the stack
+# up, before the release (a later bring-up is then a tap's).
+BT_BOOT_FINISHED_BODY = "g_boot_stack_up=is_initialized();" + BT_BOOT_TRIED_STORE
 SIG_BT_BOOT_FINISHED = r"\bvoid\s+boot_bring_up_finished\s*\(\s*\)"
 # Wave 16's verify: the boot bring-up has started (bringup_worker_started(),
 # the gate open), any task's read; from there until it is over a tap is told
@@ -1812,23 +1946,28 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
     body = body_of(code, SIG_WAITS_FOR_BOOT, f"{BT_API}: waits_for_boot_bring_up()", errors)
     if body is not None and squash(body) != BT_WAITS_FOR_BOOT_BODY:
         errors.append(f"{BT_API}: waits_for_boot_bring_up() must be exactly `return "
-                      "!bluetooth_channel::is_initialized() && !bluetooth_channel::boot_bring_up_tried() && "
-                      "bluetooth_channel::read_enabled();` — the stack down, the sketch's boot bring-up not "
-                      "over (it defers it out of the join window and skips it in safe mode), and "
-                      "Bluetooth saved on, so that bring-up will bring it up (F235's review)")
+                      "!bluetooth_channel::is_initialized() && !bluetooth_channel::boot_bring_up_tried();` "
+                      "— the stack down and the sketch's boot bring-up not over (it defers it out of the "
+                      "join window and skips it in safe mode), whatever the saved setting: the worker "
+                      "runs init() either way (F235's review; F259 dropped read_enabled(), which let a "
+                      "device saved off bring NimBLE up inside the window)")
     body = body_of(code, SIG_SEND_BOOT_PENDING, f"{BT_API}: send_boot_bring_up_pending()", errors)
     if body is not None and squash(body) != BT_BOOT_PENDING_BODY:
         errors.append(f"{BT_API}: send_boot_bring_up_pending() must answer 503 with "
-                      "bluetooth_channel::bring_up_starting_error() once boot_bring_up_started() says the "
-                      "sketch has started its boot bring-up or bring_up_starting() says a bring-up runs, and "
-                      "boot_bring_up_pending_error() otherwise, exactly (F235's review; wave 16's verify: "
-                      "after the worker's init() was refused a tap was told Bluetooth had not started yet)")
+                      "bluetooth_channel::boot_bring_up_skipped_error() when the sketch skipped its boot "
+                      "bring-up (safe mode, F259), bluetooth_channel::bring_up_starting_error() once "
+                      "boot_bring_up_started() says the sketch has started it or bring_up_starting() says a "
+                      "bring-up runs, and boot_bring_up_pending_error() otherwise, exactly (F235's review; "
+                      "wave 16's verify: after the worker's init() was refused a tap was told Bluetooth had "
+                      "not started yet)")
     calls = [m for m in re.finditer(r"(?<![\w:.>])waits_for_boot_bring_up\s*\(", code)
              if not re.search(r"\bbool$", code[:m.start()].rstrip())]
     where = sorted(enclosing_function(spans, m.start()) or "file scope" for m in calls)
-    if where != sorted(BT_BOOT_WAIT_HANDLERS):
+    if where != sorted(BT_BOOT_WAIT_CALLERS):
         errors.append(f"{BT_API}: waits_for_boot_bring_up() is called by {', '.join(where) or 'nothing'} — "
-                      f"exactly once each by {', '.join(BT_BOOT_WAIT_HANDLERS)}, first (F235's review)")
+                      f"exactly once each by {', '.join(BT_BOOT_WAIT_HANDLERS)}, first, and by "
+                      "handle_bluetooth_settings_set's \"enabled\": true branch, before its bring-up "
+                      "(F235's review; F259)")
     cpp = blank_comments_and_strings(cpp_src)
     body = body_of(cpp, SIG_BT_BOOT_TRIED, f"{BT_CPP}: boot_bring_up_tried()", errors)
     if body is not None and squash(body) != BT_BOOT_TRIED_BODY:
@@ -1836,10 +1975,11 @@ def check_bluetooth_bring_up(api_src: str, cpp_src: str, errors: list[str],
                       "__atomic_load_n(&g_boot_bring_up_tried, __ATOMIC_ACQUIRE);` — any task asks it "
                       "(F235's review)")
     body = body_of(cpp, SIG_BT_BOOT_FINISHED, f"{BT_CPP}: boot_bring_up_finished()", errors)
-    if body is not None and squash(body) != BT_BOOT_TRIED_STORE:
-        errors.append(f"{BT_CPP}: boot_bring_up_finished() must be exactly `__atomic_store_n("
-                      "&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);` — the release a tap's acquire in "
-                      "boot_bring_up_tried() pairs with (F235's review)")
+    if body is not None and squash(body) != BT_BOOT_FINISHED_BODY:
+        errors.append(f"{BT_CPP}: boot_bring_up_finished() must be exactly `g_boot_stack_up = "
+                      "is_initialized(); __atomic_store_n(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE);` "
+                      "— whether the boot left the stack up (a later bring-up is a tap's, F260), then the "
+                      "release a tap's acquire in boot_bring_up_tried() pairs with (F235's review)")
     body = body_of(cpp, SIG_BT_BOOT_STARTED, f"{BT_CPP}: boot_bring_up_started()", errors)
     if body is not None and squash(body) != BT_BOOT_STARTED_BODY:
         errors.append(f"{BT_CPP}: boot_bring_up_started() must be exactly `return "
@@ -2549,6 +2689,9 @@ SIG_BT_SET_SETTINGS = r"\bstatic\s+bool\s+set_settings\s*\([^)]*\)"
 # Bluetooth on (squashed text).
 BV1_BRING_UP = ("if((cmd.set_mask&bluetooth_channel::BT_SET_ENABLED)&&settings.enabled&&!bring_up())"
                 "{returnsend_bring_up_refused(req,")
+# Sweep F259: and right before it, the wait for the boot bring-up, as Enable's.
+BT_SETTINGS_BOOT_WAIT = ("if((cmd.set_mask&bluetooth_channel::BT_SET_ENABLED)&&settings.enabled"
+                         "&&waits_for_boot_bring_up()){returnsend_boot_bring_up_pending(req);}")
 BV1_REFUSED = "if(r.refusal==bluetooth_channel::BT_REFUSED_NOT_ENABLED){returnsend_bt_error(req,"
 
 
@@ -2566,6 +2709,11 @@ def check_bluetooth_settings_enable(api_src: str, cpp_src: str, errors: list[str
                           f"submits when the POST turns Bluetooth on (`{BV1_BRING_UP} ...`): a command "
                           "never runs init(), so the enable would be refused on a device whose stack "
                           "is down (F144)")
+        if s.count(BT_SETTINGS_BOOT_WAIT) != 1 or s.find(BT_SETTINGS_BOOT_WAIT + BV1_BRING_UP) < 0:
+            errors.append(f"{BT_API}: handle_bluetooth_settings_set() must leave the stack to the sketch's "
+                          f"boot bring-up first when the POST turns Bluetooth on (`{BT_SETTINGS_BOOT_WAIT}` "
+                          "right before its bring-up): it brought NimBLE up inside the join window, in safe "
+                          "mode and beside the boot worker's init() (F259)")
         if after_guard < 0 or not s[after_guard:].startswith(BV1_REFUSED):
             errors.append(f"{BT_API}: handle_bluetooth_settings_set() must answer a refused enable with "
                           f"`{BV1_REFUSED} ...` right after its not-run guard — nothing was applied, "
@@ -2599,7 +2747,10 @@ BT_EVENT_APPLIERS = ("apply_connect", "apply_disconnect", "apply_auth_complete",
 # dropped, the loop task asks the stack and applies what the lost event
 # would have).
 BT_EVENT_APPLIER_CALLERS = {"apply_connect": ("apply_event", "reconcile_link"),
-                            "apply_disconnect": ("apply_event", "reconcile_link")}
+                            "apply_disconnect": ("apply_event", "reconcile_link"),
+                            # F191's review: a Just Works bond whose report never
+                            # came, refused from the stack's record (BV9)
+                            "apply_auth_complete": ("apply_event", "refuse_unauthenticated_links")}
 # The channel's state: the loop task's (update(), its commands and the
 # events it applies). A callback on the NimBLE host task names none of it.
 BT_LIVE_STATE = ("g_state", "g_settings", "g_initialized", "g_connection", "g_pairing",
@@ -2617,7 +2768,9 @@ CALL_RE = r"(?<![\w:.>])([A-Za-z_]\w*)\s*\("
 # (post_event's) and the data hook (onWrite's, which runs on the NimBLE host
 # task with the written bytes). Any other g_ name is the loop task's or the
 # bring-up's (g_init_fail_reason, g_local_address, the views, ...).
-BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite",)}
+BT_CALLBACK_GLOBALS = {"g_events": ("post_event",), "g_data_callback": ("onWrite",),
+                       # F191: the passkey gate the loop task publishes (BV9)
+                       "g_owner_pairing_open": ("onPassKeyDisplay",)}
 # What a callback hands the loop task, by kind: GATT activity and scan
 # results are posted under EVENT_LOSSY_LIMIT (a burst of them never takes
 # the room a link's events are kept), a link's own at the full limit.
@@ -2718,7 +2871,8 @@ BT_GET_ROUTES = (("handle_bluetooth_status", "read_status"),
                  ("handle_bluetooth_paired_list", "read_paired"),
                  ("handle_bluetooth_settings_get", "read_settings"))
 BT_GET_PURE = ("state_name", "format_address", "estimate_distance_m", "distance_label",
-               "device_type_name", "security_level_name", "pairing_state_name", "init_fail_reason")
+               "device_type_name", "security_level_name", "pairing_state_name", "init_fail_reason",
+               "boot_service_name")   # F260: a BootService bit's name
 # Who may touch each published view, in bluetooth_channel.cpp.
 BT_VIEW_CALLS = (
     (r"(?<![\w:.>])publish_views\s*\(", ("update", "run_command"), "publish_views(",
@@ -2737,12 +2891,14 @@ BT_VIEW_CALLS = (
 SIG_BT_RUN_COMMAND = r"\bstatic\s+Result\s+run_command\s*\([^)]*\)"
 BT_READERS = ("read_status", "read_settings", "read_scan", "read_paired", "read_enabled")
 # The JSON each GET route sends: `<object>.<key>` for every literal key it
-# sets (doc is the top level; conn, pair, stats and dev are its objects).
+# sets (doc is the top level; conn, pair, stats, store and dev are its objects).
 BT_GET_KEYS = {
     "handle_bluetooth_status": {
         "doc": ("state", "enabled", "advertising", "init_fail_reason", "scanning", "connected",
                 "device_name", "local_address", "tx_power", "mtu", "battery_pct", "paired_count",
-                "scanned_count", "connection", "pairing", "stats"),
+                "scanned_count", "bond_store", "late_bring_up", "services_missing", "connection",
+                "pairing", "stats"),
+        "store": ("held", "capacity", "unlisted"),   # F209: NimBLE's bond store beside the list
         "conn": ("address", "name", "rssi", "distance_m", "distance_label", "security",
                  "connected_sec", "bytes_sent", "bytes_received"),
         "pair": ("state", "pin", "peer_address", "peer_name"),
@@ -3821,12 +3977,383 @@ def check_bluetooth_enabled_read(files: dict[str, str], errors: list[str]) -> No
                           "bluetooth_channel::read_enabled(), the published settings (F210)")
 
 
+# BV9 (F191, F209): no pairing completes, and no bond stays, without the owner.
+SIG_BT_PASSKEY_DISPLAY = r"\buint32_t\s+onPassKeyDisplay\s*\(\s*\)\s*override"
+SIG_BT_APPLY_PASSKEY = r"\bstatic\s+void\s+apply_passkey_display\s*\([^)]*\)"
+SIG_BT_OWNER_PAIRING_OPEN = r"\bstatic\s+bool\s+owner_pairing_open\s*\(\s*\)"
+SIG_BT_PUBLISH_VIEWS = r"\bstatic\s+void\s+publish_views\s*\(\s*\)"
+BT_PASSKEY_GATE = "if(!__atomic_load_n(&g_owner_pairing_open,__ATOMIC_ACQUIRE)){passkey+=PASSKEY_REFUSED;}"
+BT_PASSKEY_POST = "Evente=make_event(BT_EV_PASSKEY_DISPLAY);"
+BT_OWNER_PAIRING_OPEN_BODY = ("returng_settings.enabled&&g_settings.allow_pairing&&"
+                              "(g_pairing.state==PAIR_INITIATED||g_pairing.state==PAIR_PIN_DISPLAYED);")
+BT_OWNER_PAIRING_PUBLISH = "__atomic_store_n(&g_owner_pairing_open,owner_pairing_open(),__ATOMIC_RELEASE);"
+BT_APPLY_PASSKEY_GATE = "if(e.u.passkey.pin>=PASSKEY_REFUSED||!owner_pairing_open()){g_passkey_refused_count++;return;}"
+# Who names the passkey gate's flag: its writer (publish_views(), the loop
+# task) and its reader (onPassKeyDisplay(), the NimBLE host task).
+BT_OWNER_PAIRING_NAMERS = ("publish_views", "onPassKeyDisplay")
+# A pairing's digits, as an identifier names them (blanked code: the
+# literals are gone, so a message saying "PIN" is not one).
+BT_DIGITS_NAME = r"\b(?:pin|pin_\w+|\w+_pin|passkey\w*|\w+_passkey|numcmp)\b"
+BT_UNAUTH_BRANCH = "}elseif(link.bonded){"
+BT_UNAUTH_FORGET = "forget_bond(NimBLEAddress(link.id_address))"
+BT_UNAUTH_DROP = "g_server->disconnect(link.handle);"
+SIG_BT_REFRESH_BONDS = r"\bstatic\s+void\s+refresh_bond_store\s*\(\s*\)"
+SIG_BT_PUBLISH_STATUS = r"\bstatic\s+void\s+publish_status_view\s*\(\s*\)"
+# The bond store's counts (F209): written by the one function that reads the
+# store, read by the status view's builder.
+BT_BOND_COUNTS = ("g_bonds_held", "g_bonds_unlisted")
+# The roads F191's and F209's review found.
+SIG_BT_COMPARISON_OPEN = r"\bstatic\s+bool\s+owner_comparison_open\s*\(\s*\)"
+BT_COMPARISON_OPEN_BODY = ("returng_settings.enabled&&g_settings.allow_pairing&&(g_pairing.state==PAIR_INITIATED||"
+                           "g_pairing.state==PAIR_PIN_DISPLAYED||g_pairing.state==PAIR_CONFIRMING);")
+SIG_BT_CONFIRM_PASSKEY_APPLY = r"\bstatic\s+void\s+apply_confirm_passkey\s*\([^)]*\)"
+BT_COMPARISON_GATE = ("if(!owner_comparison_open()){NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn,false);"
+                      "deletee.u.passkey.conn;g_passkey_refused_count++;return;}")
+BT_PENDING_TAKE = "g_pending_pair_info=e.u.passkey.conn;"
+BT_UNAUTH_DROP_WHOLE = "if(g_server){g_server->disconnect(link.handle);}"
+BT_UNAUTH_KEEP = "keep_for_retry(link.id_address);"
+BT_UNAUTH_DROP_ENTRIES = "drop_entries_without_bond();"
+BT_AUTH_DROP_KEPT = "drop_kept(link.id_address);"
+SIG_BT_REFUSE_LINKS = r"\bstatic\s+void\s+refuse_unauthenticated_links\s*\(\s*\)"
+BT_REFUSE_LINKS_TEST = ("if(live.getConnHandle()!=handle||!live.isBonded()||live.isAuthenticated())continue;"
+                        "if(!NimBLEDevice::isBonded(live.getIdAddress()))continue;"
+                        "apply_auth_complete(link_event(BT_EV_AUTH_COMPLETE,live));")
+BT_REFUSE_LINKS_CALLERS = ("reconcile_link", "adopt_init_result")
+SIG_BT_STORE_FULL = r"\bstatic\s+void\s+apply_store_full\s*\([^)]*\)"
+SIG_BT_RECONCILE_LINK = r"\bstatic\s+void\s+reconcile_link\s*\(\s*\)"
+BT_DIRTY_MARK = "g_bond_store_dirty=true;"
+BT_KEPT_CLEAR = "g_kept_bond_count=0;"
+BT_KEPT_NAMERS = ("keep_for_retry", "drop_kept", "retry_kept_bonds", "reconcile_link")
+BT_DISPATCH_NO_OWNER_PASSKEY = "return1000000u+esp_random()%1000000;"
+SIG_DISPATCH_PASSKEY = r"\buint32_t\s+onPassKeyDisplay\s*\(\s*\)\s*override"
+
+
+def check_bluetooth_owner_pairing(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV9 (F191, F209): a passkey is shown only inside the owner's
+    pairing mode, and NimBLE is handed one it cannot use outside it; no
+    pairing digits reach the health log; a bond that is not authenticated is
+    deleted with the radio quiet and its link dropped; the bond store's count
+    beside the list is the loop task's, read by the status view."""
+    code = blank_comments_and_strings(files[BT_CPP])
+    spans = named_bodies(code)
+    m = re.search(r"\bstatic\s+const\s+uint32_t\s+PASSKEY_REFUSED\s*=\s*(\d+)\s*;", code)
+    if m is None or int(m.group(1)) < 1000000 or len(re.findall(r"\bPASSKEY_REFUSED\s*=", code)) != 1:
+        errors.append(f"{BT_CPP}: PASSKEY_REFUSED must be defined once, `static const uint32_t PASSKEY_REFUSED "
+                      "= <at least 1000000>;` — added to a refused passkey, it puts it past what "
+                      "ble_sm_inject_io() takes (999999), so NimBLE sets no key (F191)")
+    shown = body_of(code, SIG_BT_PASSKEY_DISPLAY, f"{BT_CPP}: ServerCallbacks::onPassKeyDisplay()", errors)
+    if shown is not None:
+        sq = squash(shown)
+        gate, post = sq.find(BT_PASSKEY_GATE), sq.find(BT_PASSKEY_POST)
+        mod = sq.find("passkey%=1000000;")
+        if sq.count(BT_PASSKEY_GATE) != 1 or not (0 <= mod < gate < post) or \
+                not sq.endswith("returnpasskey;") or sq.count("return") != 1:
+            errors.append(f"{BT_CPP}: onPassKeyDisplay() must refuse, after its six random digits and "
+                          f"before it posts them, with `{BT_PASSKEY_GATE}`, and return that passkey — "
+                          "outside the owner's pairing mode NimBLE must get a passkey it cannot use, so "
+                          "the pairing cannot complete for whoever reads the digits (F191)")
+    body = body_of(code, SIG_BT_OWNER_PAIRING_OPEN, f"{BT_CPP}: owner_pairing_open()", errors)
+    if body is not None and squash(body) != BT_OWNER_PAIRING_OPEN_BODY:
+        errors.append(f"{BT_CPP}: owner_pairing_open() must be exactly `return g_settings.enabled && "
+                      "g_settings.allow_pairing && (g_pairing.state == PAIR_INITIATED || g_pairing.state == "
+                      "PAIR_PIN_DISPLAYED);` — the owner's pairing mode, Bluetooth on, new pairings "
+                      "allowed, no Numeric Comparison pending (F191)")
+    body = body_of(code, SIG_BT_PUBLISH_VIEWS, f"{BT_CPP}: publish_views()", errors)
+    if body is not None and squash(body).count(BT_OWNER_PAIRING_PUBLISH) != 1:
+        errors.append(f"{BT_CPP}: publish_views() must hand the passkey gate to the NimBLE host task, "
+                      f"`{BT_OWNER_PAIRING_PUBLISH}`, once — a pairing mode a command starts or ends "
+                      "reaches onPassKeyDisplay() before the command's handler answers (F191)")
+    for hit in re.finditer(r"\bg_owner_pairing_open\b", code):
+        where = enclosing_function(spans, hit.start())
+        if where is not None and where not in BT_OWNER_PAIRING_NAMERS:
+            errors.append(f"{BT_CPP}: {where}() names g_owner_pairing_open — publish_views() stores it "
+                          "(release) and onPassKeyDisplay() reads it (acquire), nothing else (F191)")
+            break
+    body = body_of(code, SIG_BT_APPLY_PASSKEY, f"{BT_CPP}: apply_passkey_display()", errors)
+    if body is not None and not squash(body).startswith(BT_APPLY_PASSKEY_GATE):
+        errors.append(f"{BT_CPP}: apply_passkey_display() must start `{BT_APPLY_PASSKEY_GATE}` — a passkey "
+                      "the host task refused, or one whose pairing mode ended before this pass, is shown "
+                      "nowhere: not in the dashboard's PIN box, not in the status (F191)")
+    for call in re.finditer(r"(?<![\w:.>])log_health\s*\(", code):
+        close = matching_paren(code, call.end() - 1)
+        args = code[call.end():close] if close > 0 else ""
+        named = re.search(BT_DIGITS_NAME, args)
+        if named:
+            where = enclosing_function(spans, call.start())
+            errors.append(f"{BT_CPP}: {where or 'file scope'}() logs `{named.group(0)}` — no pairing digits "
+                          "reach the health log: it is durable (the SD card's /HEALTH, the BLE log "
+                          "export), and its reader could complete a Passkey Entry (F191)")
+            break
+    auth = body_of(code, SIG_BT_AUTH_COMPLETE, f"{BT_CPP}: apply_auth_complete()", errors)
+    if auth is not None:
+        sq = squash(auth)
+        at = sq.find(BT_UNAUTH_BRANCH)
+        branch = sq[at:] if at >= 0 else ""
+        branch = branch[:branch.find("}else{")] if "}else{" in branch else branch
+        authed = sq[:at] if at >= 0 else sq
+        if sq.count(BT_UNAUTH_BRANCH) != 1 or not sq.startswith("constLinkEvent&link=e.u.link;") or \
+                BT_UNAUTH_FORGET not in branch or BT_UNAUTH_DROP not in branch or \
+                re.search(r"\bdeleteBond\s*\(|\bble_gap_unpair\w*\s*\(", auth) or "forget_bond(" in authed:
+            errors.append(f"{BT_CPP}: apply_auth_complete() must answer a bond that is not authenticated "
+                          f"(`{BT_UNAUTH_BRANCH}` after the authenticated block) with "
+                          f"`{BT_UNAUTH_FORGET}` (the radio quiet, as Remove does: a bare deleteBond() is "
+                          f"refused busy for a bond with the phone's IRK) and `{BT_UNAUTH_DROP}`, and take no "
+                          "authenticated bond: a Just Works bond no owner asked for held a slot of the "
+                          "3-bond store, and three of them refused the owner (F191, F209)")
+    for hit in re.finditer(r"(?<![\w:.>])refresh_bond_store\s*\(", code):
+        where = enclosing_function(spans, hit.start())
+        if where is not None and where != "publish_status_view":
+            errors.append(f"{BT_CPP}: {where}() calls refresh_bond_store() — the status view's builder "
+                          "reads the store, on the loop task, as it publishes (F209)")
+            break
+    for name in BT_BOND_COUNTS:
+        for hit in re.finditer(r"\b" + name + r"\b", code):
+            where = enclosing_function(spans, hit.start())
+            if where not in (None, "refresh_bond_store", "publish_status_view"):
+                errors.append(f"{BT_CPP}: {where}() names {name} — refresh_bond_store() counts the store "
+                              "and publish_status_view() shows the count; a reader on another task reads "
+                              "the published status (F209)")
+                break
+    builder = body_of(code, SIG_BT_PUBLISH_STATUS, f"{BT_CPP}: publish_status_view()", errors)
+    if builder is not None and squash(builder).count("refresh_bond_store();") != 1:
+        errors.append(f"{BT_CPP}: publish_status_view() must call refresh_bond_store() once, with the stack "
+                      "up — the count GET /api/bluetooth shows beside the list (F209)")
+    check_bluetooth_owner_pairing_review(files, code, spans, errors)
+
+
+def check_bluetooth_owner_pairing_review(files: dict[str, str], code: str, spans: list, errors: list[str]) -> None:
+    """Rule BV9's second half: the roads F191's and F209's review found."""
+    body = body_of(code, SIG_BT_COMPARISON_OPEN, f"{BT_CPP}: owner_comparison_open()", errors)
+    if body is not None and squash(body) != BT_COMPARISON_OPEN_BODY:
+        errors.append(f"{BT_CPP}: owner_comparison_open() must be exactly `return g_settings.enabled && "
+                      "g_settings.allow_pairing && (g_pairing.state == PAIR_INITIATED || g_pairing.state == "
+                      "PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING);` — a Numeric Comparison asks "
+                      "the owner only inside pairing mode, with new pairings allowed (F191's review)")
+    body = body_of(code, SIG_BT_CONFIRM_PASSKEY_APPLY, f"{BT_CPP}: apply_confirm_passkey()", errors)
+    if body is not None:
+        sq = squash(body)
+        gate, take = sq.find(BT_COMPARISON_GATE), sq.find(BT_PENDING_TAKE)
+        if sq.count(BT_COMPARISON_GATE) != 1 or not (0 <= gate < take):
+            errors.append(f"{BT_CPP}: apply_confirm_passkey() must answer no, before it takes the pending copy, "
+                          f"with `{BT_COMPARISON_GATE}` — outside pairing mode a stranger's comparison waited "
+                          "for the owner's confirm, which bonded and listed it with new pairings off (F191's review)")
+    auth = body_of(code, SIG_BT_AUTH_COMPLETE, f"{BT_CPP}: apply_auth_complete()", errors)
+    if auth is not None:
+        sq = squash(auth)
+        at = sq.find(BT_UNAUTH_BRANCH)
+        open_at = at + len(BT_UNAUTH_BRANCH) - 1
+        end = close_brace(sq, open_at) if at >= 0 else -1
+        branch = sq[open_at + 1:end] if end > 0 else ""   # the whole branch, its inner blocks too
+        authed = sq[:at] if at >= 0 else sq
+        drops = re.findall(r"g_server->disconnect\(", branch)
+        if branch.count(BT_UNAUTH_DROP_WHOLE) != 1 or len(drops) != 1 or "g_pairing" in branch or \
+                BT_UNAUTH_KEEP not in branch or BT_UNAUTH_DROP_ENTRIES not in branch or \
+                authed.count(BT_AUTH_DROP_KEPT) != 1:
+            errors.append(f"{BT_CPP}: apply_auth_complete()'s unauthenticated branch must drop the link as "
+                          f"`{BT_UNAUTH_DROP_WHOLE}` (on no other condition, by no other handle: a stranger beside "
+                          "the recorded link stayed connected, or the owner's link went), name no g_pairing (that "
+                          f"bond was never the owner's pairing), say `{BT_UNAUTH_DROP_ENTRIES}` and "
+                          f"`{BT_UNAUTH_KEEP}`, and the authenticated block `{BT_AUTH_DROP_KEPT}` (F191's review)")
+    body = body_of(code, SIG_BT_REFUSE_LINKS, f"{BT_CPP}: refuse_unauthenticated_links()", errors)
+    if body is not None and squash(body).count(BT_REFUSE_LINKS_TEST) != 1:
+        errors.append(f"{BT_CPP}: refuse_unauthenticated_links() must skip exactly a link that is not the stack's, "
+                      "not bonded, authenticated, or whose bond is gone, and apply the rest as their report, "
+                      f"`{BT_REFUSE_LINKS_TEST}` — a bond whose report never came is refused as F191 refuses one, "
+                      "and nothing else is applied (F191's review)")
+    calls = [enclosing_function(spans, m.start())
+             for m in re.finditer(r"(?<![\w:.>])refuse_unauthenticated_links\s*\(", code)]
+    calls = sorted(c for c in calls if c is not None)
+    adopt = body_of(code, SIG_BT_ADOPT, f"{BT_CPP}: adopt_init_result()", errors)
+    adopt_sq = squash(adopt) if adopt is not None else ""
+    owner_at = adopt_sq.find("ble_server_dispatch::set_owner(")
+    refuse_at = adopt_sq.find("refuse_unauthenticated_links();")
+    if calls != sorted(BT_REFUSE_LINKS_CALLERS) or not (0 <= owner_at < refuse_at):
+        errors.append(f"{BT_CPP}: refuse_unauthenticated_links() is called by {calls} — once by reconcile_link() "
+                      "(a report the full queue dropped) and once by adopt_init_result() after its set_owner( (a "
+                      "report that reached the dispatcher before the channel owned it) (F191's review)")
+    calls = [enclosing_function(spans, m.start()) for m in re.finditer(r"(?<![\w:.>])retry_kept_bonds\s*\(", code)]
+    update = body_of(code, SIG_UPDATE, f"{BT_CPP}: update()", errors)
+    if [c for c in calls if c is not None] != ["update"] or update is None or \
+            squash(update).count("retry_kept_bonds(now);") != 1:
+        errors.append(f"{BT_CPP}: retry_kept_bonds(now); must be update()'s, once — a bond the stack kept is asked "
+                      "again each minute (F191's review)")
+    for sig, what, want in ((SIG_BT_STORE_FULL, "apply_store_full()", (BT_DIRTY_MARK,)),
+                            (SIG_BT_RECONCILE_LINK, "reconcile_link()", (BT_DIRTY_MARK, BT_KEPT_CLEAR))):
+        body = body_of(code, sig, f"{BT_CPP}: {what}", errors)
+        if body is not None and any(w not in squash(body) for w in want):
+            errors.append(f"{BT_CPP}: {what} must say {' and '.join('`' + w + '`' for w in want)} — the bond count "
+                          "is read again when the full store refuses a pairing or a link event was dropped, and a "
+                          "dropped event ends every kept bond's retry (its report may have been an owner's "
+                          "pairing) (F209's and F191's review)")
+    for name in ("g_kept_bonds", "g_kept_bond_count"):
+        for hit in re.finditer(r"\b" + name + r"\b", code):
+            where = enclosing_function(spans, hit.start())
+            if where is not None and where not in BT_KEPT_NAMERS:
+                errors.append(f"{BT_CPP}: {where}() names {name} — only {', '.join(BT_KEPT_NAMERS)} may (F191's "
+                              "review)")
+                break
+    dispatch = files.get(BT_DISPATCH_H)
+    if dispatch is not None:
+        body = body_of(blank_comments_and_strings(dispatch), SIG_DISPATCH_PASSKEY,
+                       f"{BT_DISPATCH_H}: Dispatcher::onPassKeyDisplay()", errors)
+        if body is not None and not squash(body).endswith(BT_DISPATCH_NO_OWNER_PASSKEY):
+            errors.append(f"{BT_DISPATCH_H}: Dispatcher::onPassKeyDisplay() with no pairing owner must return "
+                          "`1000000u + esp_random() % 1000000;` — six digits nobody is shown are still six digits "
+                          "a guess can match; past 999999 NimBLE sets no key (F191's review)")
+    for path, src in files.items():
+        if re.search(r"(?<![\w])setSecurityPasskey\s*\(", blank_comments_and_strings(src)):
+            errors.append(f"{path}: calls setSecurityPasskey( — NimBLE-Arduino calls onPassKeyDisplay() only while "
+                          "the static passkey is its default 123456 (NimBLEServer.cpp, 2.3.8 and 2.5.0), so a static "
+                          "passkey is handed to every Passkey Entry, in or out of the owner's pairing mode, and F191's "
+                          "refusal never runs (F191's review)")
+            break
+
+
+# BV10 (F259, F260): safe mode says so; a late bring-up says what it left out.
+SIG_BT_SKIP_BOOT = r"\bvoid\s+skip_boot_bring_up_for_safe_mode\s*\(\s*\)"
+SIG_BT_BOOT_SKIPPED = r"\bbool\s+boot_bring_up_skipped\s*\(\s*\)"
+BT_SKIP_STORE = "__atomic_store_n(&g_boot_bring_up_skipped,true,__ATOMIC_RELEASE);"
+BT_SKIPPED_LOAD = "return__atomic_load_n(&g_boot_bring_up_skipped,__ATOMIC_ACQUIRE);"
+SIG_BT_SERVICE_REGISTERED = r"\bvoid\s+boot_service_registered\s*\(\s*uint8_t\s+\w+\s*\)"
+BT_SERVICE_REGISTERED_BODY = "__atomic_fetch_or(&g_boot_services_registered,service,__ATOMIC_RELEASE);"
+SIG_BT_LATE = r"\bstatic\s+bool\s+late_bring_up\s*\(\s*\)"
+BT_LATE_BODY = "returng_initialized&&boot_bring_up_tried()&&!g_boot_stack_up;"
+SIG_BT_NOTE_LATE = r"\bstatic\s+void\s+note_late_bring_up\s*\(\s*\)"
+# What this build's worker registers, from the macros its blocks compile under.
+BT_BOOT_SERVICES_DEF = ("staticconstuint8_tBOOT_SERVICES="
+                        "#ifdefined(FEATURE_BLE_STATUS)&&FEATURE_BLE_STATUSBT_BOOT_SVC_STATUS|#endif"
+                        "#ifdefined(FEATURE_BLE)&&FEATURE_BLEBT_BOOT_SVC_DISCOVERY|#endif0;")
+# Who names each flag of the late bring-up's.
+BT_LATE_NAMERS = {"g_boot_bring_up_skipped": ("skip_boot_bring_up_for_safe_mode", "boot_bring_up_skipped"),
+                  "g_boot_services_registered": ("boot_service_registered", "boot_services_missing"),
+                  "g_boot_stack_up": ("boot_bring_up_finished", "late_bring_up")}
+INO_SKIP = "bluetooth_channel::skip_boot_bring_up_for_safe_mode();"
+INO_SAFE_GATE = r"\bif\s*\(\s*!\s*in_safe_mode\s*\)\s*\{\s*g_ble_discovery_ready\s*="
+# The worker's two registrations, each in the true block of the init that
+# registered it: (the if's condition head, the statement, a FEATURE_BLUETOOTH
+# guard needed inside that block).
+INO_REGISTRATIONS = (
+    (r"\bif\s*\(\s*ble_status\s*::\s*init\s*\(",
+     "bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_STATUS);", False),
+    (r"\bif\s*\(\s*ble_manager\s*::\s*init\s*\(",
+     "bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_DISCOVERY);", True),
+)
+
+
+def stmt_re(stmt: str) -> str:
+    """A regex for the squashed statement `stmt`, any whitespace between tokens."""
+    return r"\s*".join(re.escape(tok) for tok in re.findall(r"\w+|[^\w\s]", stmt))
+
+
+def true_block(code: str, head: re.Match) -> tuple[int, int] | None:
+    """The `{ ... }` an `if (` whose condition starts at `head` runs when
+    true, as (just after its `{`, its `}`), or None."""
+    paren = code.find("(", head.start())
+    close = matching_paren(code, paren)
+    if close < 0:
+        return None
+    after = code[close + 1:].lstrip()
+    if not after.startswith("{"):
+        return None
+    open_at = close + 1 + (len(code[close + 1:]) - len(after))
+    end = close_brace(code, open_at)
+    return None if end < 0 else (open_at + 1, end)
+
+
+def check_bluetooth_late_bring_up(files: dict[str, str], errors: list[str]) -> None:
+    """Rule BV10 (F259, F260): a safe-mode boot marks its bring-up skipped,
+    so a tap is told Bluetooth stays off; the sketch's worker reports each
+    service it registered, and a bring-up the worker did not perform says
+    which are missing, registering none on a server that already started."""
+    code = blank_comments_and_strings(files[BT_CPP])
+    spans = named_bodies(code)
+    for sig, want, what in ((SIG_BT_SKIP_BOOT, BT_SKIP_STORE, "skip_boot_bring_up_for_safe_mode()"),
+                            (SIG_BT_BOOT_SKIPPED, BT_SKIPPED_LOAD, "boot_bring_up_skipped()"),
+                            (SIG_BT_SERVICE_REGISTERED, BT_SERVICE_REGISTERED_BODY, "boot_service_registered()"),
+                            (SIG_BT_LATE, BT_LATE_BODY, "late_bring_up()")):
+        body = body_of(code, sig, f"{BT_CPP}: {what}", errors)
+        if body is not None and squash(body) != want:
+            errors.append(f"{BT_CPP}: {what} must be exactly `{want}` — any task's flag, or the loop task's "
+                          "reading of what the boot bring-up left (F259, F260)")
+    for name, allowed in BT_LATE_NAMERS.items():
+        for hit in re.finditer(r"\b" + name + r"\b", code):
+            where = enclosing_function(spans, hit.start())
+            if where is not None and where not in allowed:
+                errors.append(f"{BT_CPP}: {where}() names {name} — only {', '.join(allowed)} may (F259, F260)")
+                break
+    if squash(code).count(BT_BOOT_SERVICES_DEF) != 1:
+        errors.append(f"{BT_CPP}: BOOT_SERVICES must be built from the macros the sketch's worker compiles "
+                      "its registrations under (FEATURE_BLE_STATUS for ble_status, FEATURE_BLE for "
+                      "ble_manager's) — a service the worker registers that the channel does not expect is "
+                      "never reported missing (F260)")
+    calls = [enclosing_function(spans, m.start()) for m in re.finditer(r"(?<![\w:.>])note_late_bring_up\s*\(", code)]
+    if [c for c in calls if c is not None] != ["adopt_init_result"]:
+        errors.append(f"{BT_CPP}: note_late_bring_up() is called by {calls} — once, by adopt_init_result(): the "
+                      "loop task adopts a stack once per boot, so a late bring-up says what it left out once (F260)")
+    note = body_of(code, SIG_BT_NOTE_LATE, f"{BT_CPP}: note_late_bring_up()", errors)
+    if note is not None and re.search(r"\bcreateService\s*\(|(?<![\w.>])\w*::\s*init\s*\(|\bstart\s*\(", note):
+        errors.append(f"{BT_CPP}: note_late_bring_up() registers or starts something — a late bring-up says "
+                      "what it left out; nothing registers the worker's services on a server that already "
+                      "started (F167's case, F260)")
+    ino = blank_comments_and_strings(files.get(INO, ""))
+    for path, src in files.items():
+        if path in (INO, BT_CPP):
+            continue
+        hit = re.search(r"\b(skip_boot_bring_up_for_safe_mode|boot_service_registered)\s*\(",
+                        blank_comments_and_strings(src))
+        if hit and not path.endswith("bluetooth_channel.h"):
+            errors.append(f"{path}: calls {hit.group(1)}() — the sketch's setup() and boot worker do, in "
+                          "canary_wap.ino, and nothing else (F259, F260)")
+    setup = the_body(ino, SIG_SETUP, f"{INO}: setup()", errors)
+    if setup is not None:
+        body = ino[setup[0]:setup[1]]
+        hits = list(re.finditer(stmt_re(INO_SKIP), body))
+        gate = re.search(INO_SAFE_GATE, body)
+        ok = False
+        if len(hits) == 1 and gate is not None:
+            blk = true_block(body, gate)
+            rest = body[blk[1] + 1:] if blk else ""
+            other = re.match(r"\s*else\s*\{", rest)
+            if blk and other:
+                start = blk[1] + 1 + other.end()
+                end = close_brace(body, start - 1)
+                pos = hits[0].start()
+                guards = pp_guards(body, start, pos)
+                ok = start <= pos < end and guards == ("if FEATURE_BLUETOOTH",) and \
+                    unconditional_in(body, start, pos) is None
+        if not ok:
+            errors.append(f"{INO}: setup() must say `{INO_SKIP}` once, a statement of the `else` of its "
+                          "Bluetooth gate (`if (!in_safe_mode) { g_ble_discovery_ready = true; ...`) under `#if "
+                          "FEATURE_BLUETOOTH` alone — a safe-mode boot never marks its bring-up over, and "
+                          "without it a tap is told Bluetooth starts within five minutes (F259)")
+    worker = the_body(ino, SIG_BT_BRINGUP_TASK, f"{INO}: ble_bringup_task()", errors)
+    if worker is not None:
+        body = ino[worker[0]:worker[1]]
+        for head_re, stmt, guarded in INO_REGISTRATIONS:
+            hits = list(re.finditer(stmt_re(stmt), ino))
+            head = re.search(head_re, body)
+            blk = true_block(body, head) if head else None
+            ok = len(hits) == 1 and blk is not None
+            if ok:
+                pos = hits[0].start() - worker[0]
+                guards = pp_guards(body, blk[0], pos)
+                ok = blk[0] <= pos < blk[1] and unconditional_in(body, blk[0], pos) is None and \
+                    guards == (("if FEATURE_BLUETOOTH",) if guarded else ())
+            if not ok:
+                errors.append(f"{INO}: ble_bringup_task() must say `{stmt}` once, a statement of the block "
+                              f"that runs when its init succeeded{' (under #if FEATURE_BLUETOOTH alone)' if guarded else ''}"
+                              " — the channel reports a service missing until the worker says it is on the "
+                              "server (F260)")
+
+
 def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
-    """Rules BV1..BV8 and BD1: the Bluetooth channel's settings enable (F144),
+    """Rules BV1..BV10 and BD1: the Bluetooth channel's settings enable (F144),
     the NimBLE host task's events (F143), the status routes' reads (F138),
     the server callbacks' one dispatcher (F171), the bring-up's hand-over
-    and its worker (F167), the bond store (F189), the answers' lengths (F196)
-    and whether Bluetooth is on as another task reads it (F210)."""
+    and its worker (F167), the bond store (F189), the answers' lengths (F196),
+    whether Bluetooth is on as another task reads it (F210), no pairing or
+    bond without the owner (F191, F209), and what safe mode and a late
+    bring-up say (F259, F260)."""
     if BT_API not in files or BT_CPP not in files:
         errors.append(f"{SKETCH}: the Bluetooth channel's sources ({BT_API}, {BT_CPP}) are missing")
         return
@@ -3839,6 +4366,8 @@ def check_bluetooth_views(files: dict[str, str], errors: list[str]) -> None:
     check_bluetooth_answer_lengths(files[BT_API], errors)
     check_bluetooth_bringup_worker(files, errors)
     check_bluetooth_enabled_read(files, errors)
+    check_bluetooth_owner_pairing(files, errors)
+    check_bluetooth_late_bring_up(files, errors)
 
 
 def check(ino: str, mesh_h: str, mesh_cpp: str, mqtt: str, others: dict[str, str]) -> list[str]:
@@ -4326,15 +4855,47 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the advertise handler answers the boot wait as a refusal",
      on_other(BT_API, api_handler("handle_bluetooth_advertise_start"),
               r"return\s+send_boot_bring_up_pending\(req\);", "return send_bring_up_refused(req, \"x\");")),
-    ("waits_for_boot_bring_up() waits on a device saved off too",
-     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"\s*&&\s*bluetooth_channel::read_enabled\(\)", "")),
+    ("waits_for_boot_bring_up() lets a device saved off bring the stack up early again (F259)",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"(!bluetooth_channel::boot_bring_up_tried\(\))",
+              r"\1 && bluetooth_channel::read_enabled()")),
     ("waits_for_boot_bring_up() waits whether or not the boot bring-up is over",
-     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"!bluetooth_channel::boot_bring_up_tried\(\)\s*&&\s*", "")),
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"\s*&&\s*!bluetooth_channel::boot_bring_up_tried\(\)", "")),
     ("waits_for_boot_bring_up() waits with the stack up",
      on_other(BT_API, SIG_WAITS_FOR_BOOT, r"!bluetooth_channel::is_initialized\(\)\s*&&\s*", "")),
-    ("waits_for_boot_bring_up() reads the loop task's flag in place",
-     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"bluetooth_channel::read_enabled\(\)",
-              "bluetooth_channel::read_settings().enabled")),
+    ("waits_for_boot_bring_up() waits only while the worker has not started (F259)",
+     on_other(BT_API, SIG_WAITS_FOR_BOOT, r"!bluetooth_channel::boot_bring_up_tried\(\)",
+              "!bluetooth_channel::boot_bring_up_started()")),
+    # Sweep F259: Enable and the settings POST turning Bluetooth on wait too,
+    # and safe mode says so.
+    ("the enable handler brings the stack up before the sketch's boot bring-up (F259)",
+     on_other(BT_API, api_handler("handle_bluetooth_enable"),
+              r"if\s*\(waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")),
+    ("the enable handler waits for the boot bring-up after its own bring-up (F259)",
+     lambda s: on_other(BT_API, api_handler("handle_bluetooth_enable"),
+                        r"(if\s*\(!bring_up\(\)\)\s*\{[^}]*\})",
+                        r"\1\n  if (waits_for_boot_bring_up()) { return send_boot_bring_up_pending(req); }")(
+         on_other(BT_API, api_handler("handle_bluetooth_enable"),
+                  r"if\s*\(waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")(s))),
+    ("the settings POST brings the stack up before the sketch's boot bring-up (F259)",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"if\s*\(\(cmd\.set_mask\s*&\s*bluetooth_channel::BT_SET_ENABLED\)\s*&&\s*settings\.enabled"
+              r"\s*&&\s*waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")),
+    ("the settings POST waits after its bring-up (F259)",
+     lambda s: on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+                        r"(if\s*\(\(cmd\.set_mask[^{]*!bring_up\(\)\)\s*\{[^}]*\})",
+                        r"\1\n  if ((cmd.set_mask & bluetooth_channel::BT_SET_ENABLED) && settings.enabled && "
+                        r"waits_for_boot_bring_up()) { return send_boot_bring_up_pending(req); }")(
+         on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+                  r"if\s*\(\(cmd\.set_mask\s*&\s*bluetooth_channel::BT_SET_ENABLED\)\s*&&\s*settings\.enabled"
+                  r"\s*&&\s*waits_for_boot_bring_up\(\)\)\s*\{[^}]*\}\s*", "")(s))),
+    ("the settings POST waits whatever it names (F259)",
+     on_other(BT_API, api_handler("handle_bluetooth_settings_set"),
+              r"\(cmd\.set_mask\s*&\s*bluetooth_channel::BT_SET_ENABLED\)\s*&&\s*settings\.enabled"
+              r"\s*&&\s*(waits_for_boot_bring_up\(\))", r"\1")),
+    ("send_boot_bring_up_pending() promises five minutes in safe mode (F259)",
+     on_other(BT_API, SIG_SEND_BOOT_PENDING,
+              r"bluetooth_channel::boot_bring_up_skipped\(\)\s*\?\s*bluetooth_channel::boot_bring_up_skipped_error\(\)"
+              r"\s*:\s*", "")),
     ("send_boot_bring_up_pending() answers 200",
      on_other(BT_API, SIG_SEND_BOOT_PENDING, r"httpd_resp_set_status\(req,\s*http_status_line\(503\)\);", "")),
     ("send_boot_bring_up_pending() never says still starting",
@@ -4715,7 +5276,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, SIG_CHIRP_INIT, r"g_nearby_view\.attach\(&g_view_tables->nearby\)",
               "g_nearby_view.attach(&g_view_tables->scratch.nearby)")),
     ("chirp update() re-attaches the recent view",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 g_recent_view.attach(nullptr);")),
     # Rule CV5: every change to the tables is marked for the view.
     ("a chirp frame no longer marks the tables",
@@ -4726,7 +5287,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, r"\bstatic\s+void\s+send_presence\s*\(\s*\)", r"(ChirpHeader\*\s+hdr\s*=)",
               r"g_recent_chirp_count = 0; \1")),
     ("chirp update() handles a presence frame itself",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 handle_presence(nullptr, 0, 0);")),
     # Rule CV6: the routes answer the keys they always did.
     ("the Chirp status route renames recent_chirps",
@@ -4848,7 +5409,7 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_CPP, r"\bconst\s+char\s*\*\s*cannot_send_reason\s*\([^)]*\)",
               r"if\s*\(v\.cooldown_remaining_ms\s*>\s*0\)", "if (v.state == CHIRP_COOLDOWN)")),
     ("update() ends a cooldown state after its drain again",
-     on_other(CHIRP_CPP, SIG_UPDATE, r"(reset_cooldown_if_stale\(\);)",
+     on_other(CHIRP_CPP, SIG_UPDATE, r"(uint32_t now = millis\(\);)",
               r"\1 if (g_state == CHIRP_COOLDOWN && get_cooldown_remaining_ms() == 0) set_state(CHIRP_ACTIVE);")),
     ("the recent route shows dismissed chirps (h06)",
      on_other(CHIRP_API, api_handler("handle_chirp_recent"), r"\n[ \t]*if\s*\(chirps\[i\]\.dismissed\)\s*continue;",
@@ -5300,6 +5861,211 @@ BV_MUTATIONS += [
      raw_other(f"{SKETCH}/selftest_api.h", "any_active = any_active || bluetooth_channel::is_advertising();",
                "any_active = any_active || bluetooth_channel::is_advertising() || "
                "bluetooth_channel::is_enabled();")),
+]
+# Rule BV9 (F191, F209): no pairing completes, and no bond stays, without the owner.
+SIG_BT_START_PAIRING = r"\bstatic\s+bool\s+start_pairing\s*\(\s*\)"
+SIG_BT_CONFIRM_PASSKEY = r"\bstatic\s+void\s+apply_confirm_passkey\s*\([^)]*\)"
+SIG_BT_READ_STATUS = r"\bvoid\s+read_status\s*\(\s*BluetoothStatus\s*\*\s*out\s*\)"
+BV_MUTATIONS += [
+    ("onPassKeyDisplay() hands NimBLE a usable passkey outside pairing mode",
+     on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"passkey \+= PASSKEY_REFUSED;", "")),
+    ("onPassKeyDisplay() reads the gate relaxed",
+     on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"&g_owner_pairing_open, __ATOMIC_ACQUIRE",
+              "&g_owner_pairing_open, __ATOMIC_RELAXED")),
+    ("onPassKeyDisplay() refuses after it posted the digits",
+     lambda s: on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY, r"(\(void\)post_event\(e\);)",
+                        r"\1 if (!__atomic_load_n(&g_owner_pairing_open, __ATOMIC_ACQUIRE)) "
+                        r"{ passkey += PASSKEY_REFUSED; }")(
+         on_other(BT_CPP, SIG_BT_PASSKEY_DISPLAY,
+                  r"if \(!__atomic_load_n\(&g_owner_pairing_open, __ATOMIC_ACQUIRE\)\) \{\s*"
+                  r"passkey \+= PASSKEY_REFUSED;\s*\}", "")(s))),
+    ("a refused passkey stays in NimBLE's range",
+     raw_other(BT_CPP, "static const uint32_t PASSKEY_REFUSED = 1000000;",
+               "static const uint32_t PASSKEY_REFUSED = 0;")),
+    ("the passkey gate is open while a Numeric Comparison waits",
+     on_other(BT_CPP, SIG_BT_OWNER_PAIRING_OPEN, r"g_pairing\.state == PAIR_PIN_DISPLAYED\)",
+              "g_pairing.state == PAIR_PIN_DISPLAYED || g_pairing.state == PAIR_CONFIRMING)")),
+    ("the passkey gate ignores allow_pairing",
+     on_other(BT_CPP, SIG_BT_OWNER_PAIRING_OPEN, r"g_settings\.allow_pairing &&\s*", "")),
+    ("publish_views() never hands the gate over",
+     on_other(BT_CPP, SIG_BT_PUBLISH_VIEWS,
+              r"__atomic_store_n\(&g_owner_pairing_open, owner_pairing_open\(\), __ATOMIC_RELEASE\);", "")),
+    ("pairing mode opens the gate itself",
+     on_other(BT_CPP, SIG_BT_START_PAIRING, r"(g_pairing\.state = PAIR_INITIATED;)",
+              r"\1 __atomic_store_n(&g_owner_pairing_open, true, __ATOMIC_RELEASE);")),
+    ("the loop task shows a passkey the host task refused",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r"e\.u\.passkey\.pin >= PASSKEY_REFUSED \|\| ", "")),
+    ("the loop task shows a passkey outside pairing mode",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r" \|\| !owner_pairing_open\(\)", "")),
+    ("the passkey's digits go to the health log again",
+     on_other(BT_CPP, SIG_BT_APPLY_PASSKEY, r"\"Pairing PIN displayed\", nullptr\)",
+              '"Pairing PIN displayed", String(e.u.passkey.pin).c_str())')),
+    ("the Numeric Comparison's digits go to the health log again",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY, r"(\"BLE pairing PIN — awaiting user confirmation\"), nullptr\)",
+              r'\1, pin_str)')),
+    ("an unauthenticated bond is kept, its link up",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"\} else if \(link\.bonded\) \{", "} else if (false) {")),
+    ("an unauthenticated bond is deleted with the radio busy",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"forget_bond\(NimBLEAddress\(link\.id_address\)\)",
+              "NimBLEDevice::deleteBond(NimBLEAddress(link.id_address))")),
+    ("an unauthenticated bond's link stays up",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"g_server->disconnect\(link\.handle\);", "(void)link.handle;")),
+    ("an authenticated bond is forgotten too",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"(if \(link\.authenticated\) \{)",
+              r"\1 (void)forget_bond(NimBLEAddress(link.id_address));")),
+    ("the bond store is counted off the status view",
+     on_other(BT_CPP, SIG_UPDATE, r"(g_events\.consume\(apply_event\);)", r"\1 refresh_bond_store();")),
+    ("the status view never counts the bond store",
+     on_other(BT_CPP, SIG_BT_PUBLISH_STATUS, r"refresh_bond_store\(\);", "")),
+    ("a reader on the httpd task reads the bond count in place",
+     on_other(BT_CPP, SIG_BT_READ_STATUS, r"(\*out = v\.status;)", r"\1 out->bonds_held = g_bonds_held;")),
+]
+# Rule BV9's second half: the roads F191's and F209's review found.
+SIG_BT_RETRY_KEPT = r"\bstatic\s+void\s+retry_kept_bonds\s*\([^)]*\)"
+BV_MUTATIONS += [
+    ("a comparison asks the owner after a completed pairing",
+     on_other(BT_CPP, SIG_BT_COMPARISON_OPEN, r"g_pairing\.state == PAIR_CONFIRMING\)",
+              "g_pairing.state == PAIR_CONFIRMING || g_pairing.state == PAIR_COMPLETE)")),
+    ("a comparison asks the owner with new pairings off",
+     on_other(BT_CPP, SIG_BT_COMPARISON_OPEN, r"g_settings\.allow_pairing &&\s*", "")),
+    ("a comparison outside pairing mode asks the owner",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+              r"if \(!owner_comparison_open\(\)\) \{.*?return;\s*\}", "")),
+    ("a comparison outside pairing mode waits instead of a no",
+     on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+              r"(if \(!owner_comparison_open\(\)\) \{)\s*NimBLEDevice::injectConfirmPasskey\(\*e\.u\.passkey\.conn, false\);",
+              r"\1")),
+    ("a comparison is refused only after the pending copy is taken",
+     lambda s: on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY, r"(g_pending_pair_active = true;)",
+                        r"\1 if (!owner_comparison_open()) { NimBLEDevice::injectConfirmPasskey(*e.u.passkey.conn, "
+                        r"false); delete e.u.passkey.conn; g_passkey_refused_count++; return; }")(
+         on_other(BT_CPP, SIG_BT_CONFIRM_PASSKEY_APPLY,
+                  r"if \(!owner_comparison_open\(\)\) \{.*?return;\s*\}", "")(s))),
+    ("an unauthenticated bond's link is dropped only when recorded",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"if \(g_server\) \{(\s*g_server->disconnect\(link\.handle\);)",
+              r"if (g_server && recorded) {\1")),
+    ("an unauthenticated bond drops the recorded link instead of its own",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"g_server->disconnect\(link\.handle\);",
+              "g_server->disconnect(g_connection_handle);")),
+    ("an unauthenticated bond fails the owner's pairing again",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"(keep_for_retry\(link\.id_address\);\s*\})",
+              r"\1 if (recorded) { g_pairing.state = PAIR_FAILED; }")),
+    ("a bond the stack kept is never retried",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"keep_for_retry\(link\.id_address\);", "(void)0;")),
+    ("a listed phone's Just Works re-pair keeps its bondless entry",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"drop_entries_without_bond\(\);", "(void)0;")),
+    ("an owner's re-pair of a kept identity is retried away",
+     on_other(BT_CPP, SIG_BT_AUTH_COMPLETE, r"drop_kept\(link\.id_address\);", "")),
+    ("the reconcile refuses an authenticated link too",
+     on_other(BT_CPP, SIG_BT_REFUSE_LINKS, r" \|\| live\.isAuthenticated\(\)", "")),
+    ("the reconcile refuses a link whose bond is gone again",
+     on_other(BT_CPP, SIG_BT_REFUSE_LINKS, r"if \(!NimBLEDevice::isBonded\(live\.getIdAddress\(\)\)\) continue;", "")),
+    ("the reconcile never refuses a dropped report's bond",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"refuse_unauthenticated_links\(\);", "")),
+    ("the adoption never refuses a pre-owner bond",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"refuse_unauthenticated_links\(\);", "")),
+    ("the adoption refuses before the channel owns the callbacks",
+     lambda s: on_other(BT_CPP, SIG_BT_ADOPT, r"(ble_server_dispatch::set_owner\()", r"refuse_unauthenticated_links(); \1")(
+         on_other(BT_CPP, SIG_BT_ADOPT, r"refuse_unauthenticated_links\(\);", "")(s))),
+    ("update() never retries a kept bond",
+     on_other(BT_CPP, SIG_UPDATE, r"retry_kept_bonds\(now\);", "")),
+    ("a kept bond is retried by the reconcile too",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"(g_kept_bond_count = 0;)", r"\1 retry_kept_bonds(millis());")),
+    ("a dropped event leaves the kept bonds retried",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"g_kept_bond_count = 0;", "")),
+    ("the reconcile leaves the bond count stale",
+     on_other(BT_CPP, SIG_BT_RECONCILE_LINK, r"g_bond_store_dirty = true;", "")),
+    ("a refused pairing leaves the bond count stale",
+     on_other(BT_CPP, SIG_BT_STORE_FULL, r"g_bond_store_dirty = true;", "")),
+    ("the kept list is cleared from outside its owners",
+     on_other(BT_CPP, SIG_BT_START_PAIRING, r"(g_pairing\.state = PAIR_INITIATED;)", r"\1 g_kept_bond_count = 0;")),
+    ("the dispatcher hands NimBLE six digits with no pairing owner",
+     on_other(BT_DISPATCH_H, SIG_DISPATCH_PASSKEY, r"return 1000000u \+ esp_random\(\) % 1000000;",
+              "return esp_random() % 1000000;")),
+    ("the channel sets a static passkey",
+     on_other(BT_CPP, SIG_BT_PUBLISH_VIEWS, r"(publish_status_view\(\);)", r"NimBLEDevice::setSecurityPasskey(123456); \1")),
+    ("the sketch sets a static passkey",
+     on("ino", SIG_SETUP, r"(bluetooth_channel::skip_boot_bring_up_for_safe_mode\(\);)",
+        r"\1 NimBLEDevice::setSecurityPasskey(246810);")),
+]
+# Rule BV10 (F259, F260): safe mode says so; a late bring-up says what it left out.
+BV_MUTATIONS += [
+    ("setup() never marks a safe-mode boot's bring-up skipped",
+     on("ino", SIG_SETUP, r"bluetooth_channel::skip_boot_bring_up_for_safe_mode\(\);", "")),
+    ("setup() marks the bring-up skipped on a normal boot",
+     lambda s: on("ino", SIG_SETUP, r"(g_ble_discovery_ready\s*=\s*true;)",
+                  r"\1\n    bluetooth_channel::skip_boot_bring_up_for_safe_mode();")(
+         on("ino", SIG_SETUP, r"bluetooth_channel::skip_boot_bring_up_for_safe_mode\(\);", "")(s))),
+    ("setup() marks the skip under FEATURE_BLE",
+     on("ino", SIG_SETUP, r"#if FEATURE_BLUETOOTH(\s*bluetooth_channel::skip_boot_bring_up_for_safe_mode)",
+        r"#if FEATURE_BLE\1")),
+    ("setup() marks the skip under a condition",
+     on("ino", SIG_SETUP, r"(bluetooth_channel::skip_boot_bring_up_for_safe_mode\(\);)",
+        r"if (g_hw.safe_mode) \1")),
+    ("skip_boot_bring_up_for_safe_mode() stores relaxed",
+     on_other(BT_CPP, SIG_BT_SKIP_BOOT, r"__ATOMIC_RELEASE", "__ATOMIC_RELAXED")),
+    ("boot_bring_up_skipped() reads relaxed",
+     on_other(BT_CPP, SIG_BT_BOOT_SKIPPED, r"__ATOMIC_ACQUIRE", "__ATOMIC_RELAXED")),
+    ("the worker's end clears the safe-mode mark",
+     on_other(BT_CPP, SIG_BT_WORKER_FINISHED, r"(g_bringup_worker_running = false;)",
+              r"\1\n  __atomic_store_n(&g_boot_bring_up_skipped, false, __ATOMIC_RELEASE);")),
+    ("another file marks the bring-up skipped",
+     raw_other(f"{SKETCH}/selftest_api.h", "any_active = any_active || bluetooth_channel::is_advertising();",
+               "any_active = any_active || bluetooth_channel::is_advertising();\n"
+               "  bluetooth_channel::skip_boot_bring_up_for_safe_mode();")),
+    ("the worker never reports ble_status",
+     on("ino", SIG_BT_BRINGUP_TASK,
+        r"bluetooth_channel::boot_service_registered\(bluetooth_channel::BT_BOOT_SVC_STATUS\);", "")),
+    ("the worker reports ble_status before it registered",
+     lambda s: on("ino", SIG_BT_BRINGUP_TASK, r"(if \(ble_status::init\()",
+                  r"bluetooth_channel::boot_service_registered(bluetooth_channel::BT_BOOT_SVC_STATUS);\n          \1")(
+         on("ino", SIG_BT_BRINGUP_TASK,
+            r"bluetooth_channel::boot_service_registered\(bluetooth_channel::BT_BOOT_SVC_STATUS\);", "")(s))),
+    ("the worker reports ble_discovery when ble_manager failed",
+     lambda s: on("ino", SIG_BT_BRINGUP_TASK, r"(g_ble_mgr_result = -1;)",
+                  r"\1\n      #if FEATURE_BLUETOOTH\n      bluetooth_channel::boot_service_registered("
+                  r"bluetooth_channel::BT_BOOT_SVC_DISCOVERY);\n      #endif")(
+         on("ino", SIG_BT_BRINGUP_TASK,
+            r"bluetooth_channel::boot_service_registered\(bluetooth_channel::BT_BOOT_SVC_DISCOVERY\);", "")(s))),
+    ("the worker reports ble_discovery outside FEATURE_BLUETOOTH",
+     on("ino", SIG_BT_BRINGUP_TASK,
+        r"#if FEATURE_BLUETOOTH(\s*//[^\n]*\n\s*bluetooth_channel::boot_service_registered\(bluetooth_channel::BT_BOOT_SVC_DISCOVERY\);)"
+        r"\s*#endif", r"\1")),
+    ("the worker reports ble_status under a condition",
+     on("ino", SIG_BT_BRINGUP_TASK,
+        r"(bluetooth_channel::boot_service_registered\(bluetooth_channel::BT_BOOT_SVC_STATUS\);)",
+        r"if (ble_server) \1")),
+    ("boot_service_registered() reports relaxed",
+     on_other(BT_CPP, SIG_BT_SERVICE_REGISTERED, r"__ATOMIC_RELEASE", "__ATOMIC_RELAXED")),
+    ("boot_service_registered() overwrites the services already reported",
+     on_other(BT_CPP, SIG_BT_SERVICE_REGISTERED, r"__atomic_fetch_or\(&g_boot_services_registered, service, __ATOMIC_RELEASE\);",
+              "__atomic_store_n(&g_boot_services_registered, service, __ATOMIC_RELEASE);")),
+    ("the channel does not expect ble_manager's services on FULL",
+     raw_other(BT_CPP, "#if defined(FEATURE_BLE) && FEATURE_BLE\n    BT_BOOT_SVC_DISCOVERY |\n#endif\n", "")),
+    ("a late bring-up is read from the clock of the worker, not the stack the boot left",
+     on_other(BT_CPP, SIG_BT_LATE, r"\s*&&\s*!g_boot_stack_up", "")),
+    ("boot_bring_up_finished() records nothing of the stack",
+     on_other(BT_CPP, SIG_BT_BOOT_FINISHED, r"g_boot_stack_up = is_initialized\(\);[^\n]*", "")),
+    ("boot_bring_up_finished() records the stack after its release",
+     lambda s: on_other(BT_CPP, SIG_BT_BOOT_FINISHED, r"(__atomic_store_n\(&g_boot_bring_up_tried, true, __ATOMIC_RELEASE\);)",
+                        r"\1 g_boot_stack_up = is_initialized();")(
+         on_other(BT_CPP, SIG_BT_BOOT_FINISHED, r"g_boot_stack_up = is_initialized\(\);[^\n]*", "")(s))),
+    ("adopt_init_result() reads the boot's stack itself",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"(note_late_bring_up\(\);)", r"g_boot_stack_up = true; \1")),
+    ("a late bring-up registers ble_status's service on the running server",
+     on_other(BT_CPP, SIG_BT_NOTE_LATE, r"(if \(missing == 0\) return;)",
+              r"\1 if (g_server) (void)g_server->createService(SERVICE_UUID);")),
+    ("a late bring-up says so every pass",
+     on_other(BT_CPP, SIG_UPDATE, r"(g_events\.consume\(apply_event\);)", r"note_late_bring_up(); \1")),
+    ("a late bring-up says nothing",
+     on_other(BT_CPP, SIG_BT_ADOPT, r"\n[ \t]*note_late_bring_up\(\);", "")),
+    ("GET /api/bluetooth drops services_missing",
+     on_other(BT_API, api_handler("handle_bluetooth_status"),
+              r"JsonArray missing = doc\[\"services_missing\"\]\.to<JsonArray>\(\);",
+              "JsonArray missing = doc[\"missing\"].to<JsonArray>();")),
+    ("GET /api/bluetooth reads the worker's report in place",
+     on_other(BT_API, api_handler("handle_bluetooth_status"), r"(doc\[\"late_bring_up\"\] = status\.late_bring_up;)",
+              r"\1 (void)bluetooth_channel::boot_bring_up_skipped();")),
 ]
 MUTATIONS += BV_MUTATIONS
 

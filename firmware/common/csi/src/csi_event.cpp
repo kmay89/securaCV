@@ -148,10 +148,17 @@ namespace {
  * against dram0_0_seg. Mirrors handle_events_today() in csi_integration.cpp. */
 csi_event_record_t* g_ring = nullptr;
 size_t              g_ring_head = 0;   /* next write slot */
-/* Set by the first live commit (persist_to_ring). From then on
- * csi_event_inject refuses: an earlier boot's rows injected after a live
- * row would sit ahead of it in the ring's recency order. */
+/* Set by the first live commit (persist_to_ring). From then on an earlier
+ * boot's row that csi_event_inject takes goes beneath the live rows, not at
+ * the head, or it would sit ahead of them in the ring's recency order (sweep
+ * F77's review: a card adopted after the first loop pass, which on a crash
+ * boot has committed system.integrity's boot row). g_ring_live_count is how
+ * many rows this boot has persisted (they are the ring's newest, capped at
+ * the ring's size); g_ring_first_live_id the id of the first of them, so
+ * every live id is at or above it. */
 bool                g_ring_has_live = false;
+size_t              g_ring_live_count = 0;
+uint32_t            g_ring_first_live_id = 0;
 
 constexpr size_t kRingBytes =
     (size_t)CSI_EVENT_RING_CAP * sizeof(csi_event_record_t);
@@ -431,19 +438,26 @@ void flush_quiet_summary_() {
   (void)csi_event_emit("meta.quiet_hours", "held_summary", &v);
 }
 
+/* The ring row of a commit. Every committed row has one (sweep F77: closed
+ * bundles too). It ends at the commit and starts `span_ms` before it: 0 for
+ * a direct commit, a closed bundle's duration (its first observation to its
+ * last, csi_bundler.cpp span_seconds()) for a bundle, so a bundle's row
+ * spans the observations it collapsed. Wraps with millis(), as every
+ * monotonic stamp here does. */
 void persist_to_ring(uint32_t                  event_id,
                      const char*               module_id,
                      const char*               type_name,
                      csi_event_category_t      category,
                      csi_privacy_class_t       privacy,
-                     const csi_event_values_t* values) {
+                     const csi_event_values_t* values,
+                     uint32_t                  span_ms) {
   RingLock _lock;
   if (!ring_ensure()) return;
   csi_event_record_t* rec = &g_ring[g_ring_head];
   memset(rec, 0, sizeof(*rec));
   rec->event_id      = event_id;
-  rec->first_seen_ms = csi_event_now_ms();
-  rec->last_seen_ms  = rec->first_seen_ms;
+  rec->last_seen_ms  = csi_event_now_ms();
+  rec->first_seen_ms = rec->last_seen_ms - span_ms;
   rec->category      = category;
   rec->privacy       = privacy;
   rec->bundled_count = values->bundled_count;
@@ -453,29 +467,33 @@ void persist_to_ring(uint32_t                  event_id,
   rec->module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
   rec->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
+  if (!g_ring_has_live) g_ring_first_live_id = event_id;
+  if (g_ring_live_count < CSI_EVENT_RING_CAP) ++g_ring_live_count;
   g_ring_has_live = true;
 }
 
 /* Commit one row (backlog F46): take its id from the one allocator and run
  * the commit hooks, under the commit lock, so ids reach the hooks in the
  * order they were taken whichever task commits. Both commit paths come
- * here: emit()'s direct commit (ambient and stateless rows, which also land
- * in the ring) and a bundle's close (csi_event_commit_bundle_, called by
- * csi_bundler.cpp from the copy it made under its slot lock). P0 and
+ * here: emit()'s direct commit (ambient and stateless rows) and a bundle's
+ * close (csi_event_commit_bundle_, called by csi_bundler.cpp from the copy
+ * it made under its slot lock), and both land in the ring before the hooks
+ * run (sweep F77; `span_ms` is persist_to_ring()'s), so a host's
+ * csi_event_on_committed() finds every row with csi_event_find(). P0 and
  * qualifying P1 rows go to the witness chain; P2 stays local; ambient rows
  * never persist. Returns the id. */
 uint32_t commit_row(const char*               module_id,
                     const char*               type_name,
                     csi_privacy_class_t       privacy,
                     const csi_event_values_t* v,
-                    bool                      to_ring) {
+                    uint32_t                  span_ms) {
   CommitLock _commit;
   const uint32_t event_id = allocate_event_id();
   if (privacy <= CSI_PRIVACY_P1 && v->category != CSI_CATEGORY_AMBIENT) {
     (void)csi_event_commit_witness(event_id, module_id, type_name,
                                    v->category, v);
   }
-  if (to_ring) persist_to_ring(event_id, module_id, type_name, v->category, privacy, v);
+  persist_to_ring(event_id, module_id, type_name, v->category, privacy, v, span_ms);
   csi_module_record_emission_(event_id, module_id);
   /* Stream callback (host-provided). */
   csi_event_on_committed(event_id, module_id, type_name,
@@ -673,19 +691,24 @@ uint32_t csi_event_emit(const char*               module_id,
   }
 
   /* outcome == CSI_BUNDLER_COMMIT: this emit is a pass-through (ambient or
-   * stateless) and is committed here, into the ring too. */
-  return commit_row(module_id, type_name, decl->privacy, &v, /*to_ring=*/true);
+   * stateless) and is committed here, into the ring at this instant. */
+  return commit_row(module_id, type_name, decl->privacy, &v, /*span_ms=*/0);
 }
 
 /* A closed bundle, from the copy csi_bundler.cpp made under its slot lock.
- * Internal to the CSI library (declared in csi_bundler.cpp). Closed bundles
- * do not enter the ring (unchanged by F46). */
+ * Internal to the CSI library (declared in csi_bundler.cpp). It enters the
+ * ring like any committed row (sweep F77), its row ending at the close and
+ * starting duration_sec before it. Until F77 it did not, so a closed
+ * presence or tamper row left /api/events/today the moment its bundle
+ * closed, was never on the canary-wap's card, and the daily summary never
+ * counted it. */
 uint32_t csi_event_commit_bundle_(const char*               module_id,
                                   const char*               type_name,
                                   csi_privacy_class_t       privacy,
                                   const csi_event_values_t* values) {
   if (!module_id || !type_name || !values) return 0;
-  return commit_row(module_id, type_name, privacy, values, /*to_ring=*/false);
+  return commit_row(module_id, type_name, privacy, values,
+                    /*span_ms=*/(uint32_t)values->duration_sec * 1000u);
 }
 
 void csi_event_flush_bundles(void) {
@@ -722,11 +745,13 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
 bool csi_event_dismiss(uint32_t event_id) {
   if (event_id == 0) return false;
   bool found = false;
+  bool first = false;
   {
     RingLock _lock;
     if (!g_ring) return false;   /* never allocated ⇒ nothing to dismiss */
     for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
       if (g_ring[i].event_id == event_id) {
+        first = g_ring[i].values.dismissed == 0;
         g_ring[i].values.dismissed = 1;
         g_ring[i].values.present_fields |= CSI_FIELD_DISMISSED;
         found = true;
@@ -736,8 +761,12 @@ bool csi_event_dismiss(uint32_t event_id) {
   }
   /* csi_module_dispatch_dismiss() is invoked outside the ring lock so the
    * module callback can't accidentally re-enter the ring (e.g. via emit()) and
-   * deadlock against the same non-recursive mutex. */
-  if (found) csi_module_dispatch_dismiss(event_id);
+   * deadlock against the same non-recursive mutex. Only the first dismiss of
+   * a row reaches its module: core.presence and core.breathing raise their
+   * thresholds a point per call, and since sweep F77 their closed bundles
+   * are ring rows, so a second press of "That was nothing" or a client's
+   * retry would nudge them again (F77's review). */
+  if (first) csi_module_dispatch_dismiss(event_id);
   return found;
 }
 
@@ -794,15 +823,38 @@ bool csi_event_inject(const csi_event_record_t* rec) {
    * dismiss by that id would reach the restored row instead (F46). */
   if (rec->event_id >= csi_event_id_floor::kHandleBase
       && rec->event_id < csi_event_id_floor::kIdSpaceBase) return false;
-  /* Recency order: nothing older may land ahead of a live row. */
-  if (g_ring_has_live) return false;
+  /* Recency order: nothing older may land ahead of a live row. Once this
+   * boot has persisted one, the row goes beneath them all: it must be older
+   * than every one (ids rise in commit order), and there must be few enough
+   * to lift (CSI_EVENT_INJECT_BENEATH_MAX), since each row injected moves
+   * them one slot. */
+  size_t lift = 0;
+  if (g_ring_has_live) {
+    if (rec->event_id >= g_ring_first_live_id) return false;
+    if (g_ring_live_count > CSI_EVENT_INJECT_BENEATH_MAX) return false;
+    lift = g_ring_live_count;
+  }
   if (!ring_ensure()) return false;
   for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
     if (g_ring[i].event_id == rec->event_id) return false;   /* duplicate */
   }
-  g_ring[g_ring_head] = clean;
+  /* The live rows sit in the `lift` slots below the head: each moves up one,
+   * the newest first, into the head slot (the ring's oldest row, which any
+   * write evicts), and the row takes the slot freed beneath them. */
+  size_t at = g_ring_head;
+  for (size_t k = 0; k < lift; ++k) {
+    const size_t from = (g_ring_head + CSI_EVENT_RING_CAP - 1 - k) % CSI_EVENT_RING_CAP;
+    g_ring[(from + 1) % CSI_EVENT_RING_CAP] = g_ring[from];
+    at = from;
+  }
+  g_ring[at] = clean;
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
   return true;
+}
+
+bool csi_event_inject_open(void) {
+  RingLock _lock;
+  return !g_ring_has_live || g_ring_live_count <= CSI_EVENT_INJECT_BENEATH_MAX;
 }
 
 void csi_event_test_reset(void) {
@@ -810,6 +862,8 @@ void csi_event_test_reset(void) {
   if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
   g_ring_has_live = false;
+  g_ring_live_count = 0;
+  g_ring_first_live_id = 0;
   g_next_event_id = csi_event_id_floor::kIdSpaceBase;
   g_privacy_ceiling = CSI_PRIVACY_P0;
   memset(g_counters, 0, sizeof(g_counters));

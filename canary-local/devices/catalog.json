@@ -156,7 +156,7 @@
     {
      "id": "opt_btn",
      "type": "bool",
-     "label": "opt_btn",
+     "label": "BOOT/RST press pads in the two side walls: flexure paddles cut free of the wall, printed in place (false = plain walls)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -164,7 +164,7 @@
     {
      "id": "light_seam",
      "type": "bool",
-     "label": "light_seam",
+     "label": "the white light band through the bezel wall, its own part (\"light\") in the light filament",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -193,7 +193,7 @@
     {
      "id": "pry_notch",
      "type": "bool",
-     "label": "pry_notch",
+     "label": "fingernail scallop in the bezel's top (+Y) rim, to start the lid off",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -201,7 +201,7 @@
     {
      "id": "loc_rib",
      "type": "bool",
-     "label": "loc_rib",
+     "label": "two locating ribs on each side wall that take the board's float out (loc_clear tunes the fit)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -209,7 +209,7 @@
     {
      "id": "egg_ring",
      "type": "bool",
-     "label": "egg_ring",
+     "label": "white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -217,13 +217,13 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "opt_vent",
+     "label": "heat slots up both side walls behind the light band — a chimney when the case hangs",
      "consequence": "",
      "audience": "user",
      "default": true
     }
    ],
-   "engineering_param_count": 176,
+   "engineering_param_count": 182,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -285,7 +285,7 @@
     {
      "id": "opt_btn",
      "type": "bool",
-     "label": "opt_btn",
+     "label": "BOOT/RST access holes in the two side walls, over the channels the back-mounted switches slide down",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -301,7 +301,7 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "opt_vent",
+     "label": "heat slots in both side walls and a grille in the back plate",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -315,7 +315,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 88,
+   "engineering_param_count": 92,
    "alternatives": [
     "s3_touch169",
     "watch_station"
@@ -756,7 +756,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 26,
+   "engineering_param_count": 31,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -803,7 +803,7 @@
     {
      "id": "din",
      "type": "bool",
-     "label": "din",
+     "label": "the DIN-rail clip: its four M3 seats through the tray floor and part \"clip\" (false = no clip; the tray screws flat)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1073,7 +1073,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "opt_seal",
+     "label": "sealed build: a TPU gasket (part \"gasket\") in the ledge groove, an O-ring under every plate screw head and, with seal_mid_posts, mid posts holding each clamp span to 40 mm",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1127,7 +1127,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 100,
+   "engineering_param_count": 107,
    "alternatives": [
     "field_case",
     "hammond_chassis"
@@ -1190,7 +1190,7 @@
     {
      "id": "collar_on",
      "type": "bool",
-     "label": "collar_on",
+     "label": "drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1198,7 +1198,7 @@
     {
      "id": "opt_btn",
      "type": "bool",
-     "label": "opt_btn",
+     "label": "BOOT/RST access holes (pen-tip size) in the two side walls near the plug end",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1222,7 +1222,7 @@
     {
      "id": "light_seam",
      "type": "bool",
-     "label": "light_seam",
+     "label": "light seam: a slot through both long walls at the LCD/PCB gap, filled with the white light pipe when light_band is on",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1238,7 +1238,7 @@
     {
      "id": "mark_show",
      "type": "bool",
-     "label": "mark_show",
+     "label": "the Canary mark debossed into the back and filled in yellow (the bird lockup, or the wordmark where the bird does not fit)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1679,7 +1679,7 @@
     {
      "id": "opt_usb",
      "type": "bool",
-     "label": "opt_usb",
+     "label": "USB-C overmold channel through the bottom (-Y) wall, the Type-C spec's largest overmold, so any compliant cable seats and latches",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1687,7 +1687,7 @@
     {
      "id": "opt_btn",
      "type": "bool",
-     "label": "opt_btn",
+     "label": "PWR/BOOT/RST access holes in the top (+Y) wall",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1695,7 +1695,7 @@
     {
      "id": "opt_side",
      "type": "bool",
-     "label": "opt_side",
+     "label": "battery/RTC/pin cluster slot in the right (+X) wall, behind the PCB",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1711,7 +1711,7 @@
     {
      "id": "opt_vent",
      "type": "bool",
-     "label": "opt_vent",
+     "label": "heat slots low on both side walls and a grille in the back plate",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -1727,13 +1727,13 @@
     {
      "id": "opt_stand",
      "type": "bool",
-     "label": "opt_stand",
+     "label": "lay the desk stand out with the other parts in the default view and check it for tip-over (part = \"stand\" renders it alone either way)",
      "consequence": "",
      "audience": "user",
      "default": true
     }
    ],
-   "engineering_param_count": 94,
+   "engineering_param_count": 100,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -2061,7 +2061,7 @@
     {
      "id": "hinge_teeth",
      "type": "bool",
-     "label": "hinge_teeth",
+     "label": "radial detent pockets in the head's outer fins for the case's teeth; false = smooth faces",
      "consequence": "",
      "audience": "engineering",
      "default": true
@@ -2148,7 +2148,7 @@
     {
      "id": "screws",
      "type": "bool",
-     "label": "screws",
+     "label": "four corner holes with 82° countersinks for #8 flat heads (false for a VHB mount)",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2249,7 +2249,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 19,
+   "engineering_param_count": 26,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3331,7 +3331,7 @@
     "molle"
    ],
    "options": [],
-   "engineering_param_count": 15,
+   "engineering_param_count": 18,
    "alternatives": [],
    "remix_of": null,
    "counts": {

@@ -42,7 +42,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 |---|---|---|---|---|---|
 | 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
-| 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
+| 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/canary_wap.ino` peek handlers (`handle_peek_start()`, `peek_stream_task()`) | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
 | 5 | Full web UI tabs (Peek/Logs filtering/Chain/Export) | ⚠️ partial | `canary_wap/web_ui.h` (large PROGMEM) | High (need to split/componentize, not copy verbatim — existing is oversize) | Low |
 | 6 | Mesh network (Opera / ESP-NOW) body | ⚠️ header only in canary lib | `canary_wap/mesh_network.{h,cpp}` (+ now-fixed RSSI wiring) | Medium | Medium (MAC hygiene, peer pairing state) |
