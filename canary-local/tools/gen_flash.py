@@ -1373,25 +1373,54 @@ LESSONS = [
 # the firmware tree (config.h / detect_config.h / registry.json / the lab's
 # own drift-gated vision.json), never typed here and hoped true.
 
+# A C/C++ comment, or a string or character literal, which can hold `//` or
+# `/*` without opening a comment (the Vision's project config.h carries an
+# OTA URL). Scanned left to right, so whichever opens first wins.
+C_COMMENT_OR_LITERAL = re.compile(
+    r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|/\*.*?\*/|//[^\n]*', re.S)
+
+
+def strip_c_comments(text: str) -> str:
+    """`text` with every comment blanked and every literal kept. A block
+    comment keeps its newlines, so a line number still names its line."""
+    def blank(m: re.Match) -> str:
+        token = m.group(0)
+        if token[0] in "\"'":
+            return token
+        return "\n" * token.count("\n") or " "
+    return C_COMMENT_OR_LITERAL.sub(blank, text)
+
+
 def read_const(path: Path, name: str) -> int:
     """Read `#define NAME value` or `constexpr T NAME = value;` as an int.
 
-    The value must be a plain decimal literal (a U/L suffix allowed) that ends
-    the #define's line or the constexpr's statement, a comment after it
-    allowed. Anything else is refused rather than read: the first number of
-    an expression such as `30u * 1000u` is not the value, and reading it would
-    put a wrong default in the catalog with --check green."""
-    text = read(path)
-    m = re.search(rf"#define[ \t]+{name}[ \t]+(?P<define>[^\n]*)"
-                  rf"|constexpr\s+\w+\s+{name}\s*=\s*(?P<constexpr>[^;]*);", text)
-    if not m:
-        die(f"constant {name} not found in {path.relative_to(REPO)}")
+    Comments are not code, so a commented-out definition is not read. The
+    name must be defined exactly once: two definitions (an `#if`/`#else`
+    pair, an `#undef` and a redefinition) leave the preprocessor to pick
+    one, which a regex cannot do. The value must be a plain decimal literal
+    (a U/L suffix allowed, no leading zero, which C reads as octal) that
+    ends the #define's line or the constexpr's statement. Anything else is
+    refused rather than read: the first number of an expression such as
+    `30u * 1000u`, or `070` read as 70 when it compiles as 56, would put a
+    wrong default in the catalog with --check green."""
+    text = strip_c_comments(read(path))
+    rel = path.relative_to(REPO)
+    found = list(re.finditer(rf"#define[ \t]+{name}[ \t]+(?P<define>[^\n]*)"
+                             rf"|constexpr\s+\w+\s+{name}\s*=\s*(?P<constexpr>[^;]*);", text))
+    if not found:
+        die(f"constant {name} not found in {rel}")
+    if len(found) > 1:
+        lines = ", ".join(str(text.count("\n", 0, m.start()) + 1) for m in found)
+        die(f"constant {name} is defined {len(found)} times in {rel} (lines {lines}); which "
+            "one compiles is the preprocessor's call, so refusing to pick one")
+    m = found[0]
     raw = m.group("define") if m.group("define") is not None else m.group("constexpr")
-    value = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S).strip()
-    literal = re.fullmatch(r"(\d+)[uUlL]*", value)
+    value = raw.strip()
+    literal = re.fullmatch(r"(0|[1-9][0-9]*)[uUlL]*", value)
     if not literal:
-        die(f"constant {name} in {path.relative_to(REPO)} is `{value}`, not a plain integer "
-            "literal; refusing to read a number out of it")
+        octal = " (a leading 0 is octal in C and C++)" if re.fullmatch(r"0[0-9]+[uUlL]*", value) else ""
+        die(f"constant {name} in {rel} is `{value}`, not a plain integer literal{octal}; "
+            "refusing to read a number out of it")
     return int(literal.group(1))
 
 
@@ -1409,7 +1438,8 @@ def product_role(pid: str) -> str:
 
 
 # The project config owns the four first-boot seeds detect_config.cpp loads
-# (sweep F182); the flavor config under firmware/configs/ no longer copies them.
+# (sweep F313, F182's follow-up); the flavor config under firmware/configs/ no
+# longer copies them.
 VISION_CONFIG_H = REPO / "firmware/projects/canary-vision/include/canary/config.h"
 VISION_BOUNDS = REPO / "firmware/projects/canary-vision/include/canary/detect_config.h"
 VISION_LAB = CANARY_LOCAL / "devices/vision.json"

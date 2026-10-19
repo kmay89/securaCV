@@ -4,17 +4,20 @@
 read_const() is how the flasher catalog takes its numbers out of the firmware
 tree: the Vision's detection defaults and bounds, the Sense's reflexes and
 their bounds. It used to take the first run of digits after the name, so an
-expression read as its first number: `30u * 1000u` came out as 30 and
-`0x10` as 0, a wrong default in flash.json with `--check` green. It now reads
-a plain decimal literal (U/L suffixes and a trailing comment allowed) that
-ends the #define's line or the constexpr's statement, and refuses anything
-else by name, file and the text it found.
+expression read as its first number: `30u * 1000u` came out as 30, `0x10`
+as 0 and the octal `070` as 70 (it compiles as 56), and the first textual
+match won, so a commented-out or `#if`-ed-out definition above the live one
+was the one read: each a wrong default in flash.json with `--check` green.
+It now reads past comments (not past the strings that can hold `//`), takes
+a name defined exactly once, and reads a plain decimal literal (U/L suffixes
+allowed, no leading zero) that ends the #define's line or the constexpr's
+statement. Anything else is refused by name, file and the text it found.
 
 The Vision's four detection defaults are read from the project config.h
 (firmware/projects/canary-vision/include/canary/config.h), the first-boot
 seeds detect_config.cpp loads, and nothing under firmware/configs/
 canary-vision/ is read: the flavor file's copies of them are gone (sweep
-F182's follow-up). VisionDefaults holds which files vision_detect_block()
+F313, F182's follow-up). VisionDefaults holds which files vision_detect_block()
 reads, and that its defaults follow an edited project config.h.
 
     python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
@@ -68,10 +71,13 @@ class ReadConst(unittest.TestCase):
             "static constexpr uint32_t LOST_TIMEOUT_MS = 1500;\n"
             "constexpr uint8_t  DETECT_SCORE_MIN_LO   = 0;\n"
             "inline constexpr uint32_t SENSE_DEBOUNCE_MS_HI = 3000UL;\n"
-            "static constexpr uint32_t SPLIT_MS =\n    /* seeded */ 2500;\n")
+            "static constexpr uint32_t SPLIT_MS =\n    /* seeded */ 2500;\n"
+            "static constexpr uint32_t HOLD_MS = 2500 /* first\n   boot */;\n"
+            "#define CS_RANGE_NEAR_CM 120 /* cm,\n   a block comment that runs on */\n")
         want = {"CS_PRESENT_DEBOUNCE_MS": 300, "CS_BREATH_MAX_BPM": 30, "WATCHDOG_MS": 1500,
                 "SCORE_MIN": 70, "LOST_TIMEOUT_MS": 1500, "DETECT_SCORE_MIN_LO": 0,
-                "SENSE_DEBOUNCE_MS_HI": 3000, "SPLIT_MS": 2500}
+                "SENSE_DEBOUNCE_MS_HI": 3000, "SPLIT_MS": 2500, "HOLD_MS": 2500,
+                "CS_RANGE_NEAR_CM": 120}
         self.assertEqual({n: self.read(text, n) for n in want}, want)
 
     def test_an_expression_is_refused_not_read_as_its_first_number(self):
@@ -83,12 +89,52 @@ class ReadConst(unittest.TestCase):
             ("#define DETECT_MASK 0x10\n", "DETECT_MASK"),
             ("static constexpr int SCORE_MIN = 70.5;\n", "SCORE_MIN"),
             ("#define HELD_MS 1500 \\\n  + 10\n", "HELD_MS"),
+            # A leading zero is octal in C and C++: 070 compiles as 56.
+            ("static constexpr int SCORE_MIN = 070;\n", "SCORE_MIN"),
+            ("#define CS_RANGE_NEAR_CM 0100\n", "CS_RANGE_NEAR_CM"),
         ]
         for text, name in cases:
             with self.subTest(text=text):
                 said = self.refused(text, name)
                 self.assertIn(name, said)
                 self.assertIn("not a plain integer literal", said)
+
+    def test_a_leading_zero_is_named_as_octal(self):
+        said = self.refused("static constexpr int SCORE_MIN = 070;\n", "SCORE_MIN")
+        self.assertIn("octal", said)
+
+    def test_a_commented_out_definition_is_not_read(self):
+        # Before, the first textual match won: 60 and 80 here.
+        text = ("// was: static constexpr int SCORE_MIN = 60;\n"
+                "static constexpr int SCORE_MIN = 70;\n"
+                "/* the old room:\n#define CS_RANGE_NEAR_CM 80\n*/\n"
+                "#define CS_RANGE_NEAR_CM 120\n")
+        self.assertEqual(self.read(text, "SCORE_MIN"), 70)
+        self.assertEqual(self.read(text, "CS_RANGE_NEAR_CM"), 120)
+
+    def test_a_constant_defined_twice_is_refused(self):
+        # Which definition compiles is the preprocessor's call, not a regex's:
+        # before, the first one was read (50, 1500), with --check green.
+        cases = [
+            ("#if VARIANT\nstatic constexpr int SCORE_MIN = 50;\n#else\n"
+             "static constexpr int SCORE_MIN = 70;\n#endif\n", "SCORE_MIN", "lines 2, 4"),
+            ("#define CS_CLEAR_TIMEOUT_MS 1500\n#undef CS_CLEAR_TIMEOUT_MS\n"
+             "#define CS_CLEAR_TIMEOUT_MS 2000\n", "CS_CLEAR_TIMEOUT_MS", "lines 1, 3"),
+        ]
+        for text, name, lines in cases:
+            with self.subTest(name=name):
+                said = self.refused(text, name)
+                self.assertIn(f"{name} is defined 2 times", said)
+                self.assertIn(lines, said)
+
+    def test_comment_markers_inside_a_string_are_not_comments(self):
+        # The project config.h carries an OTA URL; a string's `//` or `/*`
+        # must not swallow the definitions after it.
+        text = ('#define OTA_URL "https://example.invalid/manifest.json"\n'
+                '#define LOG_GLOB "logs/*"\n'
+                "static constexpr char QUOTE = '\"';\n"
+                "static constexpr int SCORE_MIN = 70;  // ends */ here\n")
+        self.assertEqual(self.read(text, "SCORE_MIN"), 70)
 
     def test_a_missing_or_valueless_constant_is_refused(self):
         self.assertIn("not found", self.refused("#define OTHER 5\n", "WANTED"))
