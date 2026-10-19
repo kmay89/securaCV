@@ -2113,7 +2113,7 @@ so — see D2 below.)
   copies of the real inputs, and thirteen mutations of the checker each fail a
   case. `ENTERPRISE_READINESS_TODO.md`'s box is ticked.
   Found here: A102 (the tract model is not hashed at load).
-  *Partly done (#1832), the MQTT contract fixture:*
+  *Partly done (#1836), the MQTT contract fixture:*
   `firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp` (`make
   run-wap-mqtt-bodies`, in `run`; 356 checks) runs the real `csi_mqtt.cpp`
   over stubs/mqtt and a fake esp_mqtt client through a unit's life (the
@@ -2179,7 +2179,7 @@ so — see D2 below.)
   presence snapshot topic for those configs (canary-sense's `state` pattern),
   or document the gap. Pinned by
   `custom_components/securacv/tests/test_wap_mqtt_contract.py::test_every_discovery_entity_finds_its_state_after_a_restart`
-  (strict xfail). Found by F34's contract fixture (#1832).
+  (strict xfail). Found by F34's contract fixture (#1836).
 - [ ] **F368 [code] A canary-wap's Signal Strength reads 0 dBm after every
   MQTT connect.** The connect burst's retained status (csi_mqtt.cpp's
   MQTT_EVENT_CONNECTED handler) is {"online":true,"device_type":"canary-wap"},
@@ -2192,7 +2192,7 @@ so — see D2 below.)
   Pinned by
   `scripts/tests/test_ha_discovery_wap_render.py::test_signal_strength_keeps_its_reading_across_a_connect`
   (expectedFailure) and `DEFAULTED_GAPS` in `test_wap_mqtt_contract.py`. Found
-  by F34's contract fixture (#1832).
+  by F34's contract fixture (#1836).
 - [x] **F35 [code] Build the timeline history bridge (F26 stage 2).** The
   loop-task SD read bridge `docs/design/witness_history_bridge.md` specifies
   over F26's walker: one outstanding request (a second gets
@@ -2353,7 +2353,7 @@ so — see D2 below.)
   those sensors still clear at the next publish. The MQTT-discovery triggers
   clause of F29 was not attempted. Bench (U1): a lid opening and an SD pull
   held across two publishes.
-  *Since F34's contract fixture (#1832):* the record reproduces the open call
+  *Since F34's contract fixture (#1836):* the record reproduces the open call
   (the aggregate Tamper sensor clears on the WAP's next health while the lid
   is open), pinned in `test_wap_mqtt_contract.py` as a strict xfail; the
   levels the WAP health lacks are still the maintainer's call.
@@ -2555,7 +2555,7 @@ so — see D2 below.)
   (`test_csi_daily_summary.cpp` and `test_wap_daily_summary.cpp` pin `a0 q0
   x0` after a day of presence changes, which this item would update), and its
   note reaches no published surface (F219).
-  *Done (#1832), as the default decision:* closed bundles enter the ring on
+  *Done (#1836), as the default decision:* closed bundles enter the ring on
   both trees. `csi_event_commit_bundle_()` commits through `commit_row()` with
   a ring row like every other commit (the `to_ring` flag is gone;
   `persist_to_ring()` takes the row's span), ending at the close and starting
@@ -2685,7 +2685,7 @@ so — see D2 below.)
   canary-wap's egress now drops a held row at or below the watermark
   (`State::front_delivered()`), as the canary's does; two
   `test_wap_event_egress` scenarios fail on the code before.
-  *Since F77 (#1832):* the residual for closed bundles (never on the card, so
+  *Since F77 (#1836):* the residual for closed bundles (never on the card, so
   a reboot or more than eight waiting lost them) is closed with a card in:
   closed bundles are card rows. With no card, or one not open yet, a closed
   bundle waits in the RAM hold like any row.
@@ -3302,7 +3302,7 @@ so — see D2 below.)
   replayed on both. Decide whether ambient rows go to the
   card and the broker; if not, filter them in both egresses, which also keeps
   the canary-wap's 16-row commit queue far from full. Found by F78 (#1762).
-  *Done (#1832), as the default decision:* ambient rows reach neither the card
+  *Done (#1836), as the default decision:* ambient rows reach neither the card
   nor the `events` topic, on either tree. Both events egresses' commit hooks
   drop every `CSI_CATEGORY_AMBIENT` row after the privacy gate and before the
   egress queue (the canary's `csi_event_on_committed()`; the canary-wap's
@@ -3688,7 +3688,7 @@ so — see D2 below.)
   *Since F93 (#1762):* a cooldown the canary-wap's Tuning Lab stored (30 to
   3600 s) applies from boot too, and one under two minutes lets a repeat merge
   into the open bundle; at the 600 s default nothing merges, as above.
-  *Since F92 (#1832):* a planned restart commits the open anomaly row first
+  *Since F92 (#1836):* a planned restart commits the open anomaly row first
   (up to a second); a crash or power cut inside the two minutes still loses
   it, and the restarts F355 lists still do.
 - [x] **F92 [code+decision] An open bundle dies with a reboot.** Bundles live
@@ -3704,7 +3704,7 @@ so — see D2 below.)
   *Since F103 and F104 (#1762):* a restart also loses the rows waiting in
   either egress's RAM hold (up to eight), on the canary as on the canary-wap,
   so a flush before a planned restart would need that hold drained too.
-  *Done (#1832), as the default decision:* every planned restart the loop task
+  *Done (#1836), as the default decision:* every planned restart the loop task
   takes commits the open bundles, drains the egress and persists the chain
   head first, bounded. `csi_event_egress_flush_for_restart(budget)` (canary)
   and `csi_event_egress::flush_for_restart(budget)` (canary-wap) call
@@ -3769,7 +3769,7 @@ so — see D2 below.)
   the libraries and `hardware_state.h`), or stays as it is and is said so in
   the setup and power docs. `check_event_egress_order.py` rule 10 and
   `check_wap_event_egress.py` rule 13 hold the two sleeps by their gates, so a
-  new restart or sleep in either file must choose. Found doing F92 (#1832).
+  new restart or sleep in either file must choose. Found doing F92 (#1836).
 - [x] **F93 [code] Neither tree calls a CSI module's `init()` at boot.**
   `csi_module_register()` only records the module. The canary's
   `securacv_csi_modules_init()` never calls `init`, and the canary-wap calls
@@ -3960,7 +3960,7 @@ so — see D2 below.)
   minutes per state, which needs F77's bundles, or a `duration_sec` sum) and
   where a reader sees it (a wire field, Home Assistant attributes, the Today
   sheet). Found by F121 (#1762).
-  *Since F77 (#1832):* closed bundles reach the ring, so the counts are of
+  *Since F77 (#1836):* closed bundles reach the ring, so the counts are of
   bundles (a state held for three hours is about 18 rows);
   `test_csi_daily_summary.cpp` and `test_wap_daily_summary.cpp` pin `a0 q8 x0`
   for the day that read `a0 q0 x0`, and no published surface carries the note
@@ -5102,7 +5102,7 @@ so — see D2 below.)
   `the_joiner_takes_a_complete_only_after_its_owner_confirms`, which since the
   F97 review also delivers the CONFIRM sent in front of it). Spec §5.2 and
   THREAT_MODEL say so. Still open.
-  *Done (#1832):* the CONFIRM hash names its sender's role on both trees:
+  *Done (#1836):* the CONFIRM hash names its sender's role on both trees:
   SHA-256(domain || session_key || code_u32_le) under
   `securacv:pair:confirm:init:v1` for the initiator's CONFIRM and
   `securacv:pair:confirm:join:v1` for the joiner's (PIO
@@ -5169,7 +5169,7 @@ so — see D2 below.)
   maintainer to confirm, as F33. Host-tested only; the `[env:full]` and
   Arduino compiles are CI's; not bench-tested (U1). Found here: F356-F360.
 - [ ] **F356 [decision] Ship F94's role-bound CONFIRM ahead of pairing v1, or
-  fold it into v1.** F94 (#1832) is a wire break of its own: pairing firmware
+  fold it into v1.** F94 (#1836) is a wire break of its own: pairing firmware
   before it cannot pair with firmware after it, on either tree. Pairing v1 is
   a second break on both trees: F69's long-term keys bound into the code and
   CONFIRM, or a transcript signed with them, and F115's commitment to one
@@ -5178,9 +5178,9 @@ so — see D2 below.)
   until v1 ships. Either way v1 can keep F94's two domains
   (`securacv:pair:confirm:init:v1`, `securacv:pair:confirm:join:v1`) and their
   pinned vectors, or take new ones. Crypto review: maintainer to confirm.
-  Found by F94 (#1832).
+  Found by F94 (#1836).
 - [ ] **F357 [decision] Fail or drop a joiner's own CONFIRM reflected to it.**
-  Since F94 (#1832) a joiner that reads a CONFIRM equal to its own role's
+  Since F94 (#1836) a joiner that reads a CONFIRM equal to its own role's
   hash, from the initiator's address, ends its pairing (`bad_confirm`), while
   its initiator, holding the genuine CONFIRM, completes and holds a member
   that never joined; a wrong hash sent to the joiner in that slot already
@@ -5191,10 +5191,10 @@ so — see D2 below.)
   radio that can send any other wrong hash in the same slot.
   `test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing` (both
   trees' tests) pins the current choice and fails under the other. Found by
-  F94's protocol review (#1832).
+  F94's protocol review (#1836).
 - [ ] **F358 [code] The PlatformIO web UI gives the wrong advice when a
   pairing fails between firmware from before and after F94.** Since F94
-  (#1832) such a pairing ends with `bad_confirm` on the side that reads the
+  (#1836) such a pairing ends with `bad_confirm` on the side that reads the
   other's CONFIRM first and with `timeout` on the other.
   `securacv_webui.cpp`'s `pairingFailText` says, for `bad_confirm`, to check
   that both screens show the same code and try again, and, for `timeout`, that
@@ -5205,21 +5205,21 @@ so — see D2 below.)
   match/ and /timed out/. canary-wap has no failure reason on its pairing
   surface; since F94 its health log names the likely cause on the side that
   reads the CONFIRM, and nothing on the side that times out (F359). Found by
-  F94 (#1832).
+  F94 (#1836).
 - [ ] **F359 [code] canary-wap ends a pairing at its 2-minute timeout without
   a log line.** `update()`'s pairing-timeout check in `mesh_network.cpp` calls
   `cancel_pairing()`, whose callback reports only `(PAIR_ROLE_NONE, 0,
   false)`, and the sketch never sets a mesh pairing callback, so the owner
-  sees only a pairing that stopped. Since F94 (#1832) that is how the updated
+  sees only a pairing that stopped. Since F94 (#1836) that is how the updated
   side of a mixed-firmware pairing ends when its owner confirmed first: the
   older side read its CONFIRM and failed. Log the timeout, and when this
   side's owner had confirmed, say the partner may run older pairing firmware;
-  pin it in `test_mesh_liveness_wap`. Found by F94's protocol review (#1832).
+  pin it in `test_mesh_liveness_wap`. Found by F94's protocol review (#1836).
 - [ ] **F360 [decision] Keep or remove the PlatformIO tree's leading CONFIRM
   now that F94 leaves it no firmware to serve.** Every COMPLETE, and every
   F134 copy, carries the initiator's CONFIRM in front of it (F97). It was
   written for a joiner on firmware before F97, which is also before F94 and
-  since F94 (#1832) fails closed at the CONFIRM; an updated joiner does not
+  since F94 (#1836) fails closed at the CONFIRM; an updated joiner does not
   need it, and a lost first COMPLETE is recovered by the F134 copies in both
   orders (host-probed in review). The joiner's bounded CONFIRM re-send (F117),
   the other pre-F97 path, is also loss handling between updated devices and
@@ -5230,7 +5230,7 @@ so — see D2 below.)
   keep the leading CONFIRM, or remove it, the pre-F97 joiner models in
   `test_mesh_pairing` and `test_mesh_session`, and the frame it adds to every
   COMPLETE and copy; `mesh_pairing.h` ("Firmware before F94") and spec §5.2
-  state where both paths stand now. Found by F94 (#1832).
+  state where both paths stand now. Found by F94 (#1836).
 - [ ] **F115 [code+decision] The 6-digit pairing code has no commitment, so a
   relay that swaps both ephemeral keys can grind it.** Nothing commits either
   side's ephemeral before the other side's is sent. The relay answers the
@@ -6210,7 +6210,7 @@ so — see D2 below.)
   pairing mode, and by keeping the digits out of the health log. From NimBLE
   2.3.8 source and the host harness; not probed. Found by F171's security
   review (#1762).
-  *Done (#1832):* the premise held. `apply_auth_complete()` now answers a bond
+  *Done (#1836):* the premise held. `apply_auth_complete()` now answers a bond
   that is not authenticated (a Just Works pairing no owner asked for) by
   deleting it through `forget_bond()`, with the radio quiet as Remove does (a
   bare `deleteBond()` is refused busy for a bond carrying the phone's IRK),
@@ -6298,7 +6298,7 @@ so — see D2 below.)
   quiet as Remove does), or let a full store evict only a bond the list does
   not hold, or show the store's count beside the list. From code and the host
   harness; not probed. Found by F189 (#1762).
-  *Done (#1832):* the premise held, and F191 closes it:
+  *Done (#1836):* the premise held, and F191 closes it:
   `apply_auth_complete()` deletes each new unauthenticated bond it is told of,
   and the reconcile and the adoption each one whose report never came, so
   three strangers' Just Works pairings no longer fill the store against the
@@ -6521,7 +6521,7 @@ so — see D2 below.)
   the host harness (`the_worker_never_meets_a_taps_bring_up` plays the race
   for a Start Advertising tap without the wait); not probed on a device. Found
   by F235's review (#1802).
-  *Done (#1832):* the premise held. `waits_for_boot_bring_up()` no longer
+  *Done (#1836):* the premise held. `waits_for_boot_bring_up()` no longer
   reads the saved setting (the worker runs `init()` whatever it says), and
   Enable and the settings POST's `"enabled": true` branch answer
   `send_boot_bring_up_pending()`'s 503 before any bring-up, as Start
@@ -6559,7 +6559,7 @@ so — see D2 below.)
   channel runs the sketch's registrations after any bring-up, or a late
   bring-up says what it left out. From code; not probed. Found by F235
   (#1802).
-  *Done (#1832):* the premise held. (a) is closed by F259: no tap brings the
+  *Done (#1836):* the premise held. (a) is closed by F259: no tap brings the
   stack up before `boot_bring_up_finished()`, which runs after the worker. (b)
   A late bring-up says what it left out and registers nothing on the running
   server: the sketch's worker reports each service it registered
@@ -6578,7 +6578,7 @@ so — see D2 below.)
   can still fill a server `ble_manager` made (F351). Host-tested; the Arduino
   and PlatformIO compiles are CI's; not bench-tested (U1: the F260 row).
 - [ ] **F350 [code] canary-wap dashboard: show the Bluetooth bond store and a
-  late bring-up.** Since #1832 GET /api/bluetooth carries `bond_store`
+  late bring-up.** Since #1836 GET /api/bluetooth carries `bond_store`
   (`held`, `capacity`, `unlisted`, F209), `late_bring_up` and
   `services_missing` (F260), but `web_ui.h`'s Bluetooth card renders none of
   them (left out while `web_ui.h` was another package's), so an owner whose
@@ -6587,7 +6587,7 @@ so — see D2 below.)
   list and the card's subtitle, with a pointer to Clear all when unlisted
   bonds fill the store, test them in `web_ui_logic.test.js`, and add their
   reads to `check_wap_loop_commands.py`'s `BT_JS_READS`. From code. Found by
-  F209 and F260's fix (#1832).
+  F209 and F260's fix (#1836).
 - [ ] **F351 [code+decision] canary-wap Bluetooth: on FULL a late tap's
   `init()` can fill a server `ble_manager` made and started.** When the
   worker's `bluetooth_channel::init()` is refused, the worker goes on to
@@ -6603,9 +6603,9 @@ so — see D2 below.)
   services). Decide whether the channel refuses a late `init()` on a server it
   did not create, or the worker skips ble_manager when the channel's `init()`
   was refused. From code (`ble_manager.h`:106-143, `ble_opera.h`:274); not
-  probed. Found by F260 (#1832).
+  probed. Found by F260 (#1836).
 - [ ] **F352 [decision] canary-wap Bluetooth: a refused or canceled pairing's
-  link stays up, and Cancel does not cancel a shown passkey.** Since #1832 a
+  link stays up, and Cancel does not cancel a shown passkey.** Since #1836 a
   passkey outside the owner's pairing mode is refused by handing NimBLE a
   passkey it cannot use (F191), but `onPassKeyDisplay()` names no link, so the
   stranger's link stays until NimBLE's 30 s pairing timeout and then until the
@@ -6624,9 +6624,9 @@ so — see D2 below.)
   running beside an unauthenticated link, and an authenticated bond reported
   outside pairing mode is listed, logged or refused. From code and
   NimBLE-Arduino 2.3.8 source; not probed. Found by F191 and its review
-  (#1832).
+  (#1836).
 - [ ] **F353 [code+decision] canary-wap Bluetooth: a Just Works bond that
-  escapes F191's delete is listed by the next boot's rebuild.** Since #1832
+  escapes F191's delete is listed by the next boot's rebuild.** Since #1836
   the channel deletes an unauthenticated bond as it is reported, from the
   stack's record when the report never came, and again each minute when the
   stack keeps it, but a few roads still leave one in NimBLE's store: the
@@ -6644,7 +6644,7 @@ so — see D2 below.)
   and whether a kept bond's identity is remembered across a reboot (NVS) or
   its record read so the retry need not stop at a dropped event. From code and
   the host harness (the review's probes ATK6b, ATK8, ATK10); not bench-tested.
-  Found by the review of F191 (#1832).
+  Found by the review of F191 (#1836).
 - [ ] **F354 [decision] canary-wap Bluetooth: a radio sending a listed phone's
   identity address deletes its bond.** NimBLE-Arduino's server answers
   `BLE_GAP_EVENT_REPEAT_PAIRING` itself (NimBLEServer.cpp, 2.5.0 :608-626;
@@ -6653,7 +6653,7 @@ so — see D2 below.)
   (`ble_store_util_delete_peer()`) and lets the pairing go on. A phone's
   identity address is usually its public Bluetooth address, which any radio
   can send, so a stranger who has heard it may delete the owner's bond with
-  one pairing attempt, in or out of pairing mode; since #1832 the Just Works
+  one pairing attempt, in or out of pairing mode; since #1836 the Just Works
   bond that attempt makes is deleted too and the listed entry dropped with it
   (F191's review), so the owner's phone must pair again (no stranger's bond is
   kept). Whether a phone's own controller then refuses the stranger's address,
@@ -6661,7 +6661,7 @@ so — see D2 below.)
   answers repeat pairing itself (a GAP event listener ahead of the library's,
   refusing it outside the owner's pairing mode), or the owner is told when a
   listed phone's bond was replaced. From code (NimBLE-Arduino source, scratch
-  clone); not probed. Found by the review of F191 (#1832).
+  clone); not probed. Found by the review of F191 (#1836).
 - [x] **F287 [code] check_wap_loop_commands.py: BV7, BV4 and C3 pass mutants
   that bring F235's races back.** BV7 counts the sketch's two
   `boot_bring_up_finished()` calls and their order on the squashed bodies, and
@@ -6994,7 +6994,7 @@ so — see D2 below.)
   means and whether the tiers survive a re-enable and a reboot (a new session
   is a new identity on the wire; the tiers are local). From code. Found by
   F178 (#1762).
-  *Done (#1832):* the premise held, with the lines moved by wave 18's F269 and
+  *Done (#1836):* the premise held, with the lines moved by wave 18's F269 and
   F270 (`reset_cooldown_if_stale()` at chirp_channel.cpp:495, `enable()`'s
   zeroing at :1433, the first send's stamp at :1748). Spec 2.5.4's words
   decide it: the reset counts from the last send. `expire_stale_tiers()`
@@ -7038,7 +7038,7 @@ so — see D2 below.)
   `is_muted()` is false at once, `handle_witness()` takes the chirps the owner
   muted, and the next pass ends the mute. Comparing elapsed time with the
   mute's length, as the send cooldown's timer does (`cooldown_left_ms()`),
-  fixes it. From code. Found by F193 (#1832).
+  fixes it. From code. Found by F193 (#1836).
 - [ ] **F362 [decision] Chirp spec 2.5.4's "4-5 chirps per day" and 2.5.8's
   "~5/day" are not what the cooldown tiers allow.** Spec 2.5.4's design list
   says "Max 4-5 chirps per day per device" and 2.5.8's threat table says
@@ -7052,7 +7052,7 @@ so — see D2 below.)
   to meet them (a longer top tier, or a daily cap), which would change the
   canary-wap's COOLDOWN_TIER_* constants,
   `test_chirp_protocol_invariants.cpp`'s pins of them and that test's counts.
-  From the spec and code. Found by F193 (#1832).
+  From the spec and code. Found by F193 (#1836).
 - [ ] **F363 [code] canary-wap Chirp's presence beacon tells neighbors how
   long ago the previous session chirped.** `send_presence()` sets
   `last_chirp_age_min` from `g_last_chirp_sent_ms`, which only a reboot clears
@@ -7065,7 +7065,7 @@ so — see D2 below.)
   sessions on the wire, against 2.3's "Identity discarded when chirp channel
   disabled" and 6.4's "Cannot track chirp history across sessions". Counting
   the age from this session's own sends (255 before its first) fixes it. From
-  code and the host harness. Found by F193's review (#1832).
+  code and the host harness. Found by F193's review (#1836).
 - [ ] **F364 [decision] canary-wap Chirp's `chirp sent` health line keeps a
   lasting record of the owner's chirps on the SD card.** `send_chirp()` logs
   `chirp sent: <template text> (<urgency>, tier N)` at INFO, the default store
@@ -7080,7 +7080,7 @@ so — see D2 below.)
   such a proof. Spec 2.5.4 now says the line reaches the card. Decide whether
   it drops the template text, moves below the default threshold, stays out of
   the SD tier, or stays as a deliberate local record that 6.4 then names. From
-  code. Found by F193's fix pass (#1832).
+  code. Found by F193's fix pass (#1836).
 - [x] **F194 [code] canary-wap Chirp's presence beacon says "not listening"
   while the send cooldown runs.** `send_presence()` sets `listening` from what
   the state reads as, and an active channel in its cooldown reads
@@ -10184,7 +10184,7 @@ so — see D2 below.)
   move the list into a doc; if `send_json_error()` stays, spell it with
   `wap_json_writer.h` before anything calls it. From code. Found by F237, with
   F227's hand-up on `send_json_error()` merged in (#1802).
-  *Done (#1832):* deleted. `wap_server.cpp` is gone, and its unescaped
+  *Done (#1836):* deleted. `wap_server.cpp` is gone, and its unescaped
   `send_json_error()` with it. `wap_server.h` keeps only the route list (still
   held two ways to the route table, F237) and the transport bullets: no
   declarations, no includes, no constants. Two things read those constants:
@@ -10241,7 +10241,7 @@ so — see D2 below.)
   (`components/esp_https_server/src/https_server.c`, v4.4.7 :250 and v5.1.4
   :337; `HTTPD_SSL_CONFIG_DEFAULT()`'s `port_secure = 443` in
   `esp_https_server.h`, v4.4.7 :135 and v5.1.4 :162); not run on a device.
-  Found by F277 (#1832).
+  Found by F277 (#1836).
 - [ ] **F366 [code] `gen_wap.py` types the WAP page's mDNS service ports.**
   `canary-local/tools/gen_wap.py` writes `mdns_services` with port 80 for
   `_http._tcp` and `_securacv._tcp` as literals. Nothing reads the sketch's
@@ -10251,7 +10251,7 @@ so — see D2 below.)
   closed for the AP channel, client cap and server ports. Read both from the
   sketch, refusing any spelling the generator cannot read and any two starts
   that disagree, and add a scratch-copy case to `test_gen_wap_ap_facts.py`.
-  From code. Found by the review of F277 (#1832).
+  From code. Found by the review of F277 (#1836).
 - [x] **F278 [code] Both dashboards' Export fails after a good export.**
   canary-wap's `POST /api/export` writes an export file to the SD card
   (`/EXPORT/bundle_<ms>.json`) and answers `download_url`
@@ -11080,7 +11080,7 @@ so — see D2 below.)
   below the drawn bird. `test_splash_layout` and `test_splash_scenes` print
   these and do not hold them. Seat the bird from the tallest bubble where the
   canvas has room, or give the AMOLED its own seats. Found by F88 (#1762).
-  *Done (#1832):* the first meeting's bird sits clear of its speech bubble,
+  *Done (#1836):* the first meeting's bird sits clear of its speech bubble,
   and of the tail on it, wherever the canvas has room. `splash.cpp` measures
   the tallest bubble the meeting will show before it seats the bird (every
   line of `story::kHello`, the unit's pseudonym in place, laid out by LVGL in
@@ -11186,7 +11186,7 @@ so — see D2 below.)
   AMOLED (seat the bird from the tallest bubble), which would settle both.
   `test_splash_layout` and `test_splash_scenes` print it. Found by F160
   (#1762).
-  *Done (#1832), settled by F159's choice:* the 172 px glass seats its
+  *Done (#1836), settled by F159's choice:* the 172 px glass seats its
   first-meeting bird from its tallest bubble. Under Heirloom with the
   widest-lettered pseudonym (the 112 px bubble) the bird rises 27 px, to y 31
   (its hop to y 15), with "2222..." (94 px) 18, and at the default type 14, on
@@ -11332,7 +11332,7 @@ so — see D2 below.)
   same 12 px object, keeps it green; a tail built as another widget would also
   have to change the test's `find_parts`. LVGL 8.4's side is not rendered
   there.
-  *Done (#1832):* the tail is drawn on both LVGL majors, on the same 12 px
+  *Done (#1836):* the tail is drawn on both LVGL majors, on the same 12 px
   object with the smallest change: `splash.cpp` turns a square with no radius
   about its center (`splash_layout.h`'s `kTailPivot`, 6 px). A square covers
   its transform layer, so LVGL 8.4 asks for no alpha layer and draws it on
@@ -11389,9 +11389,9 @@ so — see D2 below.)
   the bubble, not 10), or seat its bubble lower where the disc's chord allows.
   The test prints it; `test_splash_layout` and `glass_splash_test.cpp` pin the
   watch as one of the two canvases not clear of the tail. Rendered natively,
-  not on a watch. Found by F185 (#1832).
+  not on a watch. Found by F185 (#1836).
 - [ ] **F372 [decision] The first meeting's raised bird stays raised through
-  the wordmark beat.** Since F159 (#1832) the first meeting's bird rises clear
+  the wordmark beat.** Since F159 (#1836) the first meeting's bird rises clear
   of its tallest bubble, and `splash.cpp` keeps it there when the bubble bows
   out and the wordmark takes its 900 ms beat. In native LVGL 8.4 renders
   (`glass_splash_test.cpp` prints it on every play) the bird's ink now ends 69
@@ -11401,7 +11401,7 @@ so — see D2 below.)
   kept 60 to 67 on every portrait canvas and 67 to 70 on the dash; the round
   watch and the landscape nightlight, which do not rise, keep theirs. Accept
   it, or settle the bird back to its family's seat as the bubble bows out (an
-  animated drop over the beat). Found by F159's review (#1832).
+  animated drop over the beat). Found by F159's review (#1836).
 - [ ] **F373 [code] The 172 px glass's splash wordmark reaches both edges
   under Heirloom.** On the 172x320 nightstand the splash's "SecuraCV"
   wordmark, in Heirloom's title face with 2 px letter spacing, is as wide as
@@ -11412,7 +11412,7 @@ so — see D2 below.)
   default type (12 to 161) and every other 8.4 canvas keep it inside, nothing
   holds the wordmark's box, and the C6 nightstand's lean ladder was not
   rendered. Fit it to the canvas (a smaller face, or no letter spacing where
-  it would not fit) and hold its ink on the glass. Found by F183 (#1832).
+  it would not fit) and hold its ink on the glass. Found by F183 (#1836).
 - [x] **F204 [code] No emulator flavor builds the nightlight.**
   `canary-local/emulator/build.sh` builds the watch, dash, nightstand,
   touch169 and amoled241 glasses; none defines `CD_NIGHTLIGHT`, so the
@@ -11875,7 +11875,7 @@ so — see D2 below.)
   the port wore (`lvgl_port_rotation()`), then hold it with a host test of the
   Display page with the turn buffer refused. From code. Found by F223's review
   (#1762).
-  *Done (#1832):* the saved choice is kept in NVS, not overwritten with the
+  *Done (#1836):* the saved choice is kept in NVS, not overwritten with the
   turn worn, so a refusal at one start does not lose the owner's setting, and
   what the glass shows follows the turn it actually wears. `lvgl_port.cpp` now
   records its own refusal (`lvgl_port_turn_refused()`: the last turn asked had
@@ -11927,7 +11927,7 @@ so — see D2 below.)
   Orientation page keeps its old check until the next navigation. The reset
   path in `settings_ui.cpp` already re-measures the canvas for exactly this
   reason (the review comment on its re-measure). From code, not run. Found by
-  F245 (#1832).
+  F245 (#1836).
 - [x] **F246 [code] `splash.cpp`'s speech-bubble tail is not rendered through
   the real LVGL 9.5.** `glass_turn_lvgl9.sh` draws the tail's styles (12 px,
   radius 2, border 1, turned 450) and holds a 145 px diamond hung from the
@@ -12698,7 +12698,7 @@ so — see D2 below.)
   verification). Dist: no deleted macro was read, so no
   compiled byte moves. Host-tested; the ESP32 compiles are CI's; not
   bench-tested. Found here: F313.
-  *Since F313 (#1832):* `gen_flash.py` reads the four detection defaults from
+  *Since F313 (#1836):* `gen_flash.py` reads the four detection defaults from
   the project config, and the flavor file holds one seed,
   `CONFIG_DEVICE_TYPE`, which the fleet figures read; the five seeds above are
   the file as #1802 left it.
@@ -12716,7 +12716,7 @@ so — see D2 below.)
   the rest, and rewrite the test's seed list to match. `flash.json` and
   `figures.json` must not move. Wave 18's `gen_flash.py` changes (A86) are on
   #1802, so nothing blocks it. Found by F182 (#1802).
-  *Done (#1832):* `canary-local/tools/gen_flash.py`'s `vision_detect_block`
+  *Done (#1836):* `canary-local/tools/gen_flash.py`'s `vision_detect_block`
   reads `PERSON_TARGET`, `SCORE_MIN`, `LOST_TIMEOUT_MS` and `DWELL_START_MS`
   from `firmware/projects/canary-vision/include/canary/config.h`
   (`VISION_CONFIG_H`). These are the constants `detect_config.cpp` loads, and
@@ -12775,7 +12775,7 @@ so — see D2 below.)
   and `vision.test.js` (:88-93) stay green on the wrong number. Make both read
   the way `read_const` does: comments stripped (string literals respected), a
   whole-word name defined exactly once, a plain decimal literal with no
-  leading zero, and a refusal otherwise. Found by F313 (#1832).
+  leading zero, and a refusal otherwise. Found by F313 (#1836).
 - [ ] **F374 [code] `test_fleet_selfreport.cpp`'s birth-day comment is off by
   a day.** `firmware/tests_host/test_fleet_selfreport.cpp:238` reads
   `d.born_day = 20673; // 2026-08-07`, but day 20673 is 2026-08-08 UTC, the
@@ -14860,7 +14860,7 @@ so — see D2 below.)
   red in a second place until CI's dist rebuild, as `vision.test.js` already
   does. Decide whether that second red is worth it, and if so add the file to
   the step. Found by A42's review (#1762).
-  *Done (#1832):* the premise held: `canary-local.yml` ran
+  *Done (#1836):* the premise held: `canary-local.yml` ran
   `native_cores.test.js` only in the dist step, where its parity scenarios
   skip, and its `LAB_CORES=native` step ran only `vision.test.js`,
   `eyes.test.js` and `audio.test.js`. Decided yes: the file now runs a second
@@ -15087,7 +15087,7 @@ so — see D2 below.)
   wasm32 and run `native_cores.test.js`'s call-for-call scenarios between that
   build and the g++ one on every PR, with no emsdk. Decide whether the 32-bit
   check should cover whole cores, and at what CI cost. Found by A49 (#1762).
-  *Done (#1832):* the premise held: `vision_wasm32.test.js` builds
+  *Done (#1836):* the premise held: `vision_wasm32.test.js` builds
   `detection_pipeline.h` alone, freestanding. (The audio core's `millis()`
   returns `unsigned long` in
   `canary-local/emulator/audio/audio_core_bindings.cpp`, against the WAP's
@@ -15466,7 +15466,7 @@ so — see D2 below.)
   inner edge. Hold the same ceilings on the drawn glass and drop the "F155,
   open" wording. Found by F155 (#1802).
 - [ ] **A112 [code] No browser probe reads the splash's tail.** Since F185
-  (#1832) every display flavor draws the speech bubble's tail, and the native
+  (#1836) every display flavor draws the speech bubble's tail, and the native
   renders read it off the frame (`glass_splash_test.cpp` on LVGL 8.4, in every
   8.4 build's config and the emulator's dash; `glass_splash_lvgl9_test.cpp` on
   9.5), but the emulator's probes (`onboard_probe.mjs`'s splash reads,
@@ -15474,7 +15474,7 @@ so — see D2 below.)
   dist that drew no tail, or drew it off the bubble's center line or into the
   bird, would pass them. A read of the tail's ink around its box, the way the
   native tests take it (the frame with and without the tail), would hold the
-  dist to it. Found by F185 (#1832).
+  dist to it. Found by F185 (#1836).
 - [x] **A64 [code] `glass_turn_test.cpp` does not read the turn the HAL
   announces.** `canary-local/emulator/test/glass_turn_test.cpp` counts
   `js_display_ready` calls, but its stand-in drops the fourth argument, so the
@@ -15880,9 +15880,10 @@ so — see D2 below.)
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, which
   `scripts/carry_to_site.py` carries into the website's tests, so it lands as
   one cross-repo change.
-  *Done (#1832, the monorepo half, 9514c694 through f48a8d18, nine commits;
-  the website half is `kmay89/securacv_website` wip/w24-a72-site, 57b564d
-  through 49f3ae8, four commits, not yet merged):* witness-core's `Device` (`tvos/witness-core/src/fleet.rs`) now
+  *Done (#1832, the monorepo half, 9514c694 through f48a8d18, nine commits,
+  merged as 500f63b6; the website half, `kmay89/securacv_website`
+  wip/w24-a72-site, 57b564d through 49f3ae8, four commits, follows as a site
+  PR now that #1832 has merged):* witness-core's `Device` (`tvos/witness-core/src/fleet.rs`) now
   carries `born_day` and `born_exact`. `born_day` is kept only when it is an
   integral day a Canary can stamp: `BORN_DAY_MIN` 20089 (`kClockFloor` / 86400
   in `firmware/common/identity/birth_day.h`, 2025-01-01) through
@@ -15933,14 +15934,15 @@ so — see D2 below.)
   and fmt, the kernel's two-row vector test, `canary_local.test.js` and
   `desktop_parity.test.js` here, and the website's suite (768) and its night
   contrast pass on the site branch; nothing ran on a TV.
-  *Merge order (load-bearing):* the website half must merge after #1832, and
-  before the website's next scheduled carry runs; never merge only the
-  website. If it merges first, `update-everything.yml`'s weekly carry from
-  securaCV main reverts the website's
-  `tests/fixtures/fleet_contract_vectors.json` to the 8-vector file,
-  `tests/tv-wall.test.mjs` goes red, and that carry's PR would delete the
-  birth-day vectors. If a carry PR shows up while the website PR is still
-  open, merge the website PR first; the carry's vector bytes then match. The
+  *Merge order (load-bearing):* the website half had to merge after #1832,
+  and #1832 has merged (500f63b6), so its site PR can merge now, ahead of the
+  website's next scheduled carry. Had it merged first,
+  `update-everything.yml`'s weekly carry from securaCV main would have
+  reverted the website's `tests/fixtures/fleet_contract_vectors.json` to the
+  8-vector file, `tests/tv-wall.test.mjs` would have gone red, and that
+  carry's PR would have deleted the birth-day vectors. If a carry PR shows up
+  while the website PR is still open, merge the website PR first; the carry's
+  vector bytes then match. The
   vendored `PROVENANCE.txt` here also pins site files that exist only on that
   branch (`witness-wall.html` fa9aa3dd..., `js/tv-emulator.js` 1757f54b...),
   and no monorepo CI checks them against the site. Found here: A113, A114,
@@ -16040,7 +16042,7 @@ so — see D2 below.)
   here; not on a phone (two section 9 rows in `magic_pairing.md`).
 - [ ] **A111 [code] The phone's Orientation picker shows only the saved
   turn.** The dash's `GET /api/settings` now serves `orientation_worn` and
-  `orientation_refused` beside `orientation` (F245, #1832), but
+  `orientation_refused` beside `orientation` (F245, #1836), but
   `ios/Sources/SecuraCV/Transport/GlassSettings.swift` decodes only
   `orientation`, so a glass that refused a turn still reads as turned on the
   phone. Reading `orientation_refused` (absent from older firmware: treat as
@@ -16049,7 +16051,7 @@ so — see D2 below.)
   differing from `orientation`: `GlassSettingsSheet.swift` posts one key and
   re-reads at once, which usually lands in the second before the render loop
   wears the turn, when the two differ on a healthy glass. Swift builds are
-  CI's. Found by F245 (#1832).
+  CI's. Found by F245 (#1836).
 - [x] **A88 [code] The iPhone keeps a stale `.local` recovery kit instead of
   moving it onto the WAP it found.** `PairView.pair(from:)` runs
   `decoded.rebased(onto: discovered)` only for the same device, and
@@ -17097,7 +17099,7 @@ so — see D2 below.)
   event.py); do the same for Last Event and the two projected sensors. Pinned
   by
   `custom_components/securacv/tests/test_wap_mqtt_contract.py::test_the_first_event_is_shown_by_the_entity_it_creates`
-  (strict xfail). Found by F34's contract fixture (#1832).
+  (strict xfail). Found by F34's contract fixture (#1836).
 - [ ] **HA45 [code+decision] A canary-wap's device page in the SecuraCV
   integration shows no firmware version.** `_async_device_status_received`
   (__init__.py) takes `sw_version` from the `status` topic only. A
@@ -17106,7 +17108,7 @@ so — see D2 below.)
   Either the WAP adds it to its status (csi_mqtt::publish_status and the
   connect burst), or the integration reads it from health. Pinned by
   `test_wap_mqtt_contract.py::test_the_device_shows_the_firmware_the_wap_reports`
-  (strict xfail). Found by F34's contract fixture (#1832).
+  (strict xfail). Found by F34's contract fixture (#1836).
 - [ ] **HA46 [code+decision] Integration entities a canary-wap gets and feeds
   nothing.** Mesh Connected (binary_sensor.py) reads `peer_count`, `peers`,
   `sent`, `received` and `relayed`, which no firmware publishes: the WAP's
@@ -17125,7 +17127,7 @@ so — see D2 below.)
   WAP's fields. Pinned by
   `test_wap_mqtt_contract.py::test_an_entity_a_wap_gets_moves_with_what_it_sends`
   (seven strict xfails; not creating the entity for a WAP resolves its case).
-  Found by F34's contract fixture (#1832).
+  Found by F34's contract fixture (#1836).
 - [ ] **HA47 [decision] A canary-wap's presence never asserts the HomeKit
   Motion and Occupancy sensors.** Both are created for a WAP from its events
   topic. But `HOMEKIT_EVENT_SIGNALS` (const.py, generated from
@@ -17137,7 +17139,7 @@ so — see D2 below.)
   homekit.rs move together. Pinned by
   `test_wap_mqtt_contract.py::test_a_wap_presence_event_asserts_motion_and_occupancy`
   (two strict xfails; not creating them for a WAP also resolves it). Found by
-  F34's contract fixture (#1832).
+  F34's contract fixture (#1836).
 - [ ] **HA48 [code] A canary-wap's Memory Critical tamper sensor never turns
   on.** binary_sensor.py's tamper-type sensor reads the health's `free_heap`
   (default 100000) for TAMPER_MEMORY; a canary-wap's health carries
@@ -17146,7 +17148,7 @@ so — see D2 below.)
   while Memory Critical stays off. Read it through memory_free_bytes(). Pinned
   by
   `test_wap_mqtt_contract.py::test_memory_critical_turns_on_when_the_wap_is_low_on_memory`
-  (strict xfail). Found by F34's contract fixture (#1832).
+  (strict xfail). Found by F34's contract fixture (#1836).
 - [x] **HA30 [code] `docs/homeassistant_setup.md`'s Template Sensor example
   reads an entity no publisher creates.** It reads
   `sensor.pwk_boundary_crossing_count`; the kernel bridge makes
@@ -18226,7 +18228,7 @@ major, by theme") — work its themes, then tick here.
   `--check`. The call is C11 (evidence recorded, no rib changed — maintainer
   to confirm). Also still open here: carrying per-set hardware into
   `build.json`, with a third `assembly.test.js` leg.
-  *Done (#1832):* the build-sets half landed.
+  *Done (#1836):* the build-sets half landed.
   `canary-local/tools/gen_enclosures.py` carries each `hardware.json` set (its
   case, scad, -D selectors, counted items and, on the eight preset sets, its
   lid rib) into `build.json` under `devices[<slug>].hardware`, an additive key
@@ -18408,7 +18410,7 @@ major, by theme") — work its themes, then tick here.
   file's `part` selector, which the house leaves bare; without the selectors
   the three files had 32/20/17 knobs without help.
 
-  *Wave 4 (#1832):*
+  *Wave 4 (#1836):*
   - Help for the next monorepo-only cases (C10c-2): in 19 case files (the C3
     pocket case, the solar relay, the sign, the vehicle mount, the Hammond
     plate, the wear clip, the Sense bedside stand and gang plate, the inserts,
@@ -18485,7 +18487,7 @@ major, by theme") — work its themes, then tick here.
   `engineering_param_count`, which is the decision.
   `scripts/tests/test_enclosure_parsers.py` would grow a knob-set comparison
   once the parsers agree. Found by C10a and C10c-1 (#1802).
-  *Since C10c-2 (#1832):* 37 of those shared-line knobs (C10's wave 4: eleven
+  *Since C10c-2 (#1836):* 37 of those shared-line knobs (C10's wave 4: eleven
   lines in seven cases and the 1.69 case's `skirt_wall`) sit on their own
   lines, so the Lab lists them and the builder's and the Lab's lists agree on
   them; the rest of the first difference, and the other two, are unchanged.
@@ -18515,7 +18517,7 @@ major, by theme") — work its themes, then tick here.
   and the full note as the first row inside the details. Found by C10a's
   review (#1802).
 - [ ] **C27 [decision] Confirm or revert C10c-2's two decision commits.** Wave
-  4 of C10 (#1832) carries two commits the package marked as maintainer
+  4 of C10 (#1836) carries two commits the package marked as maintainer
   decisions, each droppable alone. (1) The shared-line splits: e29b9282, here
   222f6827 (eleven lines in seven cases, 36 knobs, three read by nothing),
   with 33433c38, here efb87fbd (the 1.69 case's `skirt_wall` / `skirt_dep`
@@ -18530,7 +18532,7 @@ major, by theme") — work its themes, then tick here.
   regenerate `enclosures.json` and `catalog.json` (`gen_enclosures.py`).
   C10c-1's handed-up patch for the field case, the J-box and the bench fixture
   (help for 42 knobs, `bez_on` among them, and the J-box `opt_weep` label) is
-  the same decision and waits on this one. Found by C10c-2 (#1832).
+  the same decision and waits on this one. Found by C10c-2 (#1836).
 - [ ] **C28 [code+decision] The solar relay's cavity is shallower than a
   fitted 18650.** `canary_relay_solar.scad` sizes the cavity as `cav_d =
   max(standoff_h + pcb_t + lb_stack, bh_h) + 1.5`, which is 17.7 at the
@@ -18541,8 +18543,8 @@ major, by theme") — work its themes, then tick here.
   and an 18650 is 18 mm across, so a fitted holder stands at least 18 mm off
   the plate, into the face's underside. Measure a holder with its cell, then
   grow the default or the cavity formula, and re-check the posts, the roof
-  screws' pilots and the fit-check. Since #1832 (C10c-2) the help asks for the
-  measurement; the geometry is unchanged. Found by C10c-2 (#1832).
+  screws' pilots and the fit-check. Since #1836 (C10c-2) the help asks for the
+  measurement; the geometry is unchanged. Found by C10c-2 (#1836).
 - [ ] **C29 [decision] Seven knobs no geometry reads are still offered.**
   `canary_sense_gang.scad`'s `board_clear` (the carrier is located by rails
   and clips), `canary_mount_adapters.scad`'s `tol_slide` and `tol_hole` (its
@@ -18550,10 +18552,10 @@ major, by theme") — work its themes, then tick here.
   `tol_slide` and `tol_press`, `canary_s3_lcd147.scad`'s `tol_hole` (the case
   has no screws) and `canary_c6_display.scad`'s `snap_n` (the nubs are always
   two per side wall) are literal knobs, so the OpenSCAD Customizer and the Lab
-  list them, and turning them does nothing. Since #1832 (C10c-2) their help
+  list them, and turning them does nothing. Since #1836 (C10c-2) their help
   says so. For each, either remove it, which moves `catalog.json`'s
   `engineering_param_count`, or wire it where a fit needs it, which is a
-  geometry change with previews. Found by C10c-2 (#1832).
+  geometry change with previews. Found by C10c-2 (#1836).
 - [ ] **C30 [code] The paper templates retype other cases' numbers.**
   `canary_templates_2d.scad`'s [Bracket] and [Doorbell] knobs are hand copies
   ('mirror canary_vision_enclosure bracket defaults', 'mirror
@@ -18565,10 +18567,10 @@ major, by theme") — work its themes, then tick here.
   the values through `use <>` (the outlet cradle's `target_gap()` pattern), or
   hold them to their sources with a check, then split and help the lines. The
   file is in `lint_design_lang.py`'s SKIP list as not a case, so C10c-2 left
-  it out. Found by C10c-2 (#1832).
+  it out. Found by C10c-2 (#1836).
 - [ ] **C31 [code] The released doorbell and Vision have knobs without help
   again.** C10 gave every knob in the released four help except the option
-  selectors. At #1832's head, `canary_vision_doorbell.scad` has
+  selectors. At #1836's head, `canary_vision_doorbell.scad` has
   `svc_pip_depth` (:390), `ant_rib_d` (:472) and `spk_post_dy` (:669) without
   help (added by the doorbell v0.8/v0.9 work), and
   `canary_vision_enclosure.scad` has `span_max` (:436). Both files are
@@ -18576,7 +18578,7 @@ major, by theme") — work its themes, then tick here.
   --site` carry, the website's builder-facts pins and `builder_manifest.json`.
   Add the released four to `test_lint_design_lang.py`'s `HELP_DEBT` at zero in
   the same change, so a new released knob cannot land without help. Found by
-  C10c-2 (#1832).
+  C10c-2 (#1836).
 - [ ] **C32 [code] The third lint rule passes a help written for a computed
   neighbor.** `lint_help_lines()` counts only the knobs
   `gen_builder_manifest.parse_scad` keeps, so `skirt_wall = 1.6; skirt_dep =
@@ -18585,11 +18587,11 @@ major, by theme") — work its themes, then tick here.
   and `HELP_DEBT` counted `skirt_wall` as helped (no surface showed it: the
   Lab's parser skips a two-assignment line, and the builder does not offer
   that case). `test_computed_neighbor_does_not_count` keeps that pass on
-  purpose. #1832 (C10c-2) split the one such line in the tree (a scan of
+  purpose. #1836 (C10c-2) split the one such line in the tree (a scan of
   every case file found no other). A rule that refuses a trailing help on
   any line holding a knob and a second assignment would catch the next one
   at no cost to the tree today, but it reverses that test's decision. Found
-  by C10c-2 (#1832).
+  by C10c-2 (#1836).
 - [ ] **C33 [code] The 7-inch frame's brand-word width estimate reads about 25
   % short.** `canary_s3_lcd7.scad` sizes the bottom-wall words with
   `vword_half = 0.392 x edge_text_size x letters` (:2137), from '0.70 em x
@@ -18603,9 +18605,9 @@ major, by theme") — work its themes, then tick here.
   C10c-2 review's CGAL intersection with the scoop was empty, and `port_lbl_a`
   ships empty. Calibrate the factor against a measured render (a DXF of the
   default words) or carry measured widths, and fix the :1968 comment, which
-  calls 0.392 the advance where `_lbl_w` doubles it. Since #1832 (C10c-2) the
+  calls 0.392 the advance where `_lbl_w` doubles it. Since #1836 (C10c-2) the
   `edge_text_size` help says the estimate reads short. Found by the C10c-2
-  review (#1832).
+  review (#1836).
 - [ ] **C34 [code] The cable gland's overfill assert is a tautology.**
   `canary_inserts.scad` derives `cg_bush_l` from `cg_fill` (:79), then asserts
   `cg_bush_l * cg_a_free <= cg_fill * cg_cav_l * cg_a_room` (:91), which holds
@@ -18613,8 +18615,8 @@ major, by theme") — work its themes, then tick here.
   ceiling, and only the rise-out assert (:93; `(cg_top - cg_seat_z) /
   cg_cav_l`, about 0.96 at the defaults) refuses more. Assert against the
   rule's constant (`cg_fill <= 0.90`) instead; that is a geometry-gate change
-  with a re-render of the gland parts. Since #1832 (C10c-2) the `cg_fill` help
-  says nothing holds the ceiling. Found by the C10c-2 review (#1832).
+  with a re-render of the gland parts. Since #1836 (C10c-2) the `cg_fill` help
+  says nothing holds the ceiling. Found by the C10c-2 review (#1836).
 - [ ] **C11 [decision] Raise the lid ribs, or leave them** (C3's rib half; the
   audit's "Ribs proportioned backwards"). The evidence is recorded and no rib
   changed: `DESIGN_RULES.md` §11's "Lid rib proportions" table gives the
@@ -18646,7 +18648,7 @@ major, by theme") — work its themes, then tick here.
   and shrinks `KNOWN_DRIFT`, whose `--check` fails when a listed entry stops
   happening. Same pass: `bom_canary_display.csv`'s D-ENC1 still describes the
   Dash back's retired keyholes and M4 pair.
-  *Update (#1832):* `hardware.json` `bom_drift` lists 8 today. SCR5 is no
+  *Update (#1836):* `hardware.json` `bom_drift` lists 8 today. SCR5 is no
   longer short (18, the doorbell's 12+4+2 echoed screws); INS1 is the one
   short quantity left (5 against the 13 inserts set `doorbell+inserts`
   echoes); the other seven are unbilled: the #6 bracket wall screws of the
@@ -18655,7 +18657,7 @@ major, by theme") — work its themes, then tick here.
   wall screws.
 - [ ] **C25 [code+decision] The Assemble tab's two fastener gaps.**
   `canary-local/tests/assembly.test.js` lists them in its shrink-only
-  `FASTENER_GAPS` (#1832, beside C12). (1) The Vision tab seats the OV5647 on
+  `FASTENER_GAPS` (#1836, beside C12). (1) The Vision tab seats the OV5647 on
   the front's posts but draws none of the four M2 pan x 6 self-tap screws
   `canary_vision_enclosure.scad` echoes for it (set `vision.xiao_indoor`): add
   a camera-screw part posed from the camera posts in
@@ -18665,16 +18667,16 @@ major, by theme") — work its themes, then tick here.
   the Dash tab drives: give the case an `hw_echo()` and `gen_hardware.py` a
   set (with a JOIN against `bom_canary_display.csv`'s D- rows), or decide the
   in-development case stays uncounted. Each fix shrinks `FASTENER_GAPS`, and
-  the test fails until it does. Found by C3 (#1832).
+  the test fails until it does. Found by C3 (#1836).
 - [ ] **C26 [code] The Sense and Vision Assemble-tab screws name no BOM
   RefDes.** Their `screws` parts in `canary-local/devices/assembly.json` carry
   no `ref`, so `assembly.test.js`'s "part quantities match the BOM" leg never
-  checks them (the CAD leg from #1832 now does). The Sense's four match
+  checks them (the CAD leg from #1836 now does). The Sense's four match
   `bom_canary_sense.csv` SCR3 (4, M2 pan 8 mm) and can carry it. The Vision's
   sit in SCR5's mixed row, which bills the Vision case and the doorbell in one
   quantity (18, the doorbell's 12+4+2); the BOM leg's equality cannot compare
   a per-device part against it until that row is split per product or the leg
-  learns a per-device share. Found by C3's review (#1832).
+  learns a per-device share. Found by C3's review (#1836).
 - [x] **C19 [code] The WAP BOM's GNSS row names a flag the WAP does not
   have.** `docs/hardware/bom_canary_wap.csv` M1's note ends `FEATURE_GNSS`, a
   canary-tree flag; the WAP sketch opens its GNSS UART in every profile and
@@ -18992,7 +18994,7 @@ major, by theme") — work its themes, then tick here.
   more, so on the watch a press wakes the glass and a hold acknowledges (A83's
   bench note now says so). Make the comment say what the firmware does. A
   comment only. Found by A83 (#1802).
-- [ ] **D15 [code] CLAUDE.md leaves out three things #1832 added.** Nothing it
+- [ ] **D15 [code] CLAUDE.md leaves out three things #1836 added.** Nothing it
   says is wrong; each sentence predates the change. (1) "A stale dist no
   longer stops you proving the sources." says `native_cores.test.js` drives
   each native core next to its dist, but not that the page logic job now runs
@@ -19007,7 +19009,7 @@ major, by theme") — work its themes, then tick here.
   `CORES_WASM32=require` (A58). (3) The CAD order's `gen_enclosures.py` line
   does not say `build.json` carries `hardware.json`'s sets, which is why it
   runs after `gen_hardware.py` (C3). The packages handed up the exact wording.
-  Found by A50, A58 and C3 (#1832).
+  Found by A50, A58 and C3 (#1836).
 
 ---
 
@@ -19406,7 +19408,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `desktop-hub-core.yml`, `desktop-lab-check.yml`, `ram_audit.yml`, and every
   job that relies on the image's `jq`, `gh` or `xvfb`. Each pin's reason
   comment says to revisit before 24.04 retires. Found by CI11 (#1802).
-  *Since A58 (#1832):* `canary-local.yml`'s page logic job also installs a
+  *Since A58 (#1836):* `canary-local.yml`'s page logic job also installs a
   WASI sysroot for the image's clang through
   `.github/actions/setup-wasi-sysroot` (`clang-major: "18"`) and pins
   `WASM32_CLANGXX=clang++-18` for `cores_wasm32.test.js`: the input, the pin

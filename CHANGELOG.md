@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap keeps Bluetooth bonds and shown passkeys to its owner, keeps ambient rows off the card and the broker, puts closed bundles in the event ring and commits them before a planned restart, binds a pairing CONFIRM to its sender's role, resets Chirp's cooldown only after a quiet day and drops its stub server; an MQTT contract fixture holds the WAP to Home Assistant, the flasher reads the Vision's detection defaults where the firmware does, the dash says which way it is really turned, the splash bird clears its bubble and the tail is drawn on LVGL 8.4, CI holds the native and wasm32 cores to the sources, `build.json` carries each set's hardware, 133 more enclosure knobs get help, and the Witness Wall shows a device's birth day (#1832, wave 20)
+### canary-wap keeps Bluetooth bonds and shown passkeys to its owner, keeps ambient rows off the card and the broker, puts closed bundles in the event ring and commits them before a planned restart, binds a pairing CONFIRM to its sender's role, resets Chirp's cooldown only after a quiet day and drops its stub server; an MQTT contract fixture holds the WAP to Home Assistant, the flasher reads the Vision's detection defaults where the firmware does, the dash says which way it is really turned, the splash bird clears its bubble and the tail is drawn on LVGL 8.4, CI holds the native and wasm32 cores to the sources, `build.json` carries each set's hardware, 133 more enclosure knobs get help, and the Witness Wall shows a device's birth day (#1836, wave 20)
 
 - **canary-wap Bluetooth: no bond and no shown passkey without the owner, and
   every tap waits for the boot bring-up (sweep F191, F209, F259, F260).** A
@@ -218,7 +218,8 @@
   geometry reads them, the cable gland's fill says its overfill assert cannot
   fire, and the 7-inch frame's brand-word size says its width estimate reads
   short. **Host-tested**; not printed. Filed: C27-C34.
-- **The Witness Wall shows a device's birth day (sweep A72).** witness-core's
+- **The Witness Wall shows a device's birth day (sweep A72; its code merged
+  in #1832, and #1836's ledger ticks it).** witness-core's
   fleet normalizer carries `born_day` and `born_exact`, keeping a day only
   inside the window a Canary can stamp (2025-01-01 to 2106-02-07) and a flag
   only when it is a boolean, so a bad value drops to absent instead of failing
@@ -232,14 +233,15 @@
   vendored-copy replay, the website's suite on its branch); the Swift is
   compile-tested by CI only once `tvos.yml` runs, and is not compiled here;
   nothing ran on a TV. **Merge order:** the website half
-  (`kmay89/securacv_website` wip/w24-a72-site) must merge after #1832, and
-  before the website's next scheduled carry, or the weekly carry reverts its
-  vectors and its `tv-wall` test goes red. Filed: A113, A114, F374, W40, W41.
+  (`kmay89/securacv_website` wip/w24-a72-site) had to merge after #1832, and
+  follows as a site PR now that #1832 has merged; if the website's next
+  scheduled carry opens its PR first, merge the site PR before it. Filed:
+  A113, A114, F374, W40, W41.
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
 - **The broker move a session could make with the kept password (sweep F325)
-  is #1835's fix, in the section below;** this branch had a parallel gate and
+  is #1835's fix, in the section below;** #1832 had a parallel gate and
   dropped it for #1835's.
 - **canary-wap: the session cookie is `Secure` over HTTPS and read by its
   whole name (sweep F326, F327).** One writer, `session_cookie_header()`,
@@ -580,7 +582,7 @@ All are closed here; none of the code changes is run on a device.
   read; the project's own headers own those values. The package had removed
   eighteen, but `gen_figures.mjs` reads `CONFIG_DEVICE_TYPE` by pattern, so
   the Vision boards dropped out of `figures.json`; integration put it back
-  (f5d0afac), and the flavor file held five seeds until F313 (#1832)
+  (f5d0afac), and the flavor file held five seeds until F313 (#1836)
   repointed `gen_flash.py` and left one, the device type, which
   `test_vision_flavor_config_readers.py` holds to its project constant while
   counting pattern readers. **Host-tested** (`firmware/tests_host`, both
