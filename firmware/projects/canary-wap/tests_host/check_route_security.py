@@ -15,7 +15,7 @@ landing page at / mints a cv_session (and, during setup, a pair token) for
 any caller that reaches the WAP, on the home network too: the owner's chosen
 LAN posture for the dashboard's own routes. So a session is no proof of
 holding the token, and such a route takes a bearer-only gate
-(api_auth_bearer_valid / api_auth_check_bearer), or the receipt's BOOT tap
+(api_auth_bearer_grant / api_auth_check_bearer), or the receipt's BOOT tap
 or setup-door claim, never a gate a session passes (ANY_SESSION_GATES and,
 to a fixed point, every function that calls one). What it reads:
 
@@ -49,7 +49,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the broker condition moves are
 the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and sixteen plants that each fail it.
+run: a clean sketch that passes and seventeen plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -71,9 +71,10 @@ AUTH_MARKERS = (
                                   # pairing QR, whose answer carries the token)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # silent variant (caller enforces)
-    "api_auth_bearer_valid(",     # silent Bearer-only variant (F289: the
-                                  # receipt's first grant; the tap and the
-                                  # claim are the handler's own)
+    "api_auth_bearer_valid(",     # silent Bearer-only variant (F289)
+    "api_auth_bearer_grant(",     # the same under the lockout, nothing sent
+                                  # (F289: the receipt's first grant; the tap
+                                  # and the claim are the handler's own)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
     "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
@@ -149,7 +150,8 @@ SELF_GATING_HANDLERS = {
 # the one file that defines it: a second definition by the same name (a
 # module's own api_auth_bearer_valid over the cookie) would stand in unseen.
 BEARER_GATES = {
-    "api_auth_bearer_valid": "api_auth.h",  # silent: the receipt's first grant
+    "api_auth_bearer_valid": "api_auth.h",  # silent, records nothing
+    "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
     "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
     "bearer_authorized": "csi_mqtt.cpp",    # api_auth_bearer_valid, no empty token
 }
@@ -184,7 +186,8 @@ SECRET_NAMES = {"token": "the bearer token", "ap": "the SoftAP password", "pin":
 # a module then does with its copy is not this rule's).
 TOKEN_COMPARED = re.compile(
     r"\b(?:api_auth_check|api_auth_check_optional|api_auth_check_or_query|api_auth_check_bearer"
-    r"|api_auth_bearer_valid|\w+::register_routes|csi_integration::init)\s*\(\s*\w+\s*,"
+    r"|api_auth_bearer_valid|api_auth_bearer_grant|\w+::register_routes|csi_integration::init)"
+    r"\s*\(\s*\w+\s*,"
     r"\s*g_device\s*\.\s*api_token_str\s*\)")
 # Functions whose call hands their caller a secret, in an out-buffer.
 SECRET_HANDS = {
@@ -947,6 +950,10 @@ _FIX_API_AUTH = (
     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
     "  return t && header_matches(req, t);\n"
     "}\n"
+    "static bool api_auth_bearer_grant(httpd_req_t* req, const char* t) {\n"
+    "  if (auth_is_locked_out()) return false;\n"
+    "  return api_auth_bearer_valid(req, t);\n"
+    "}\n"
     "static bool api_auth_check(httpd_req_t* req, const char* t) {\n"
     "  if (cv_session_validate && cv_session_validate(req)) return true;\n"
     "  return api_auth_check_bearer(req, t);\n"
@@ -962,7 +969,7 @@ _FIX_INO = (
     "  return httpd_resp_sendstr(req, g_device.api_token_str);\n"
     "}\n"
     "static esp_err_t handle_kit(httpd_req_t* req) {\n"
-    "  if (api_auth_bearer_valid(req, g_device.api_token_str)) {\n"
+    "  if (api_auth_bearer_grant(req, g_device.api_token_str)) {\n"
     "    send_kit(req);\n"
     "    return ESP_OK;\n"
     "  }\n"
@@ -1022,8 +1029,8 @@ _FIX_PLANTS = (
      "if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
      "  return httpd_resp_sendstr(req, g_device.api_token_str);", "names api_auth_check,"),
     ("the kit's grant also taking the cookie", "canary_wap.ino",
-     "if (api_auth_bearer_valid(req, g_device.api_token_str)) {",
-     "if (api_auth_bearer_valid(req, g_device.api_token_str) || cv_session_validate(req)) {",
+     "if (api_auth_bearer_grant(req, g_device.api_token_str)) {",
+     "if (api_auth_bearer_grant(req, g_device.api_token_str) || cv_session_validate(req)) {",
      "names cv_session_validate,"),
     ("the QR answering above its refusal", "canary_wap.ino",
      "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
@@ -1036,8 +1043,8 @@ _FIX_PLANTS = (
      "if (!api_auth_check_bearer(req, g_device.api_token_str)) log_refusal(req);",
      "before any refusal"),
     ("a gate result stored and tested later", "canary_wap.ino",
-     "if (api_auth_bearer_valid(req, g_device.api_token_str)) {",
-     "bool ok = api_auth_bearer_valid(req, g_device.api_token_str);\n  if (ok) {",
+     "if (api_auth_bearer_grant(req, g_device.api_token_str)) {",
+     "bool ok = api_auth_bearer_grant(req, g_device.api_token_str);\n  if (ok) {",
      "whole condition"),
     ("a new route that reaches the kit behind a session", "canary_wap.ino",
      "  return httpd_resp_sendstr(req, \"{}\");", "  send_kit(req);\n  return ESP_OK;",
@@ -1058,6 +1065,10 @@ _FIX_PLANTS = (
      "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
      "  return cv_session_validate(req) || header_matches(req, t);",
      "api_auth_bearer_valid() names cv_session_validate"),
+    ("the receipt's lockout grant taking the cookie", "api_auth.h",
+     "  if (auth_is_locked_out()) return false;\n",
+     "  if (cv_session_validate(req)) return true;\n  if (auth_is_locked_out()) return false;\n",
+     "api_auth_bearer_grant() names cv_session_validate"),
     ("the broker re-point gate taking a session", "csi_mqtt.cpp",
      "&& !bearer_authorized(req, tok)) {", "&& !authorized(req, tok)) {", "re-point gate"),
     ("the broker re-point gate also letting a session through", "csi_mqtt.cpp",

@@ -8691,7 +8691,8 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
   // (firmware/common/network; the sketch keeps the inline copy by
   // convention). The WAP's actual order here: a valid bearer (the header,
-  // never the session cookie) serves (the claim and the tap left alone);
+  // never the session cookie, under the api_auth lockout) serves (the claim
+  // and the tap left alone);
   // else a claim the request presented is
   // SPENT, match or not (a guesser gets one guess per join), and serves on
   // a match, the tap left unspent for the owner's own page load; else the
@@ -8700,9 +8701,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // front of this route there); the WAP sketch has no Host guard on this
   // route and does not ask it.
 
-  // 1. A valid Bearer token always serves (for SAP re-sync). The bearer and
-  //    ONLY the bearer: a real `Authorization: Bearer <token>` header,
-  //    constant-time compared (api_auth_bearer_valid), never the cv_session
+  // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
+  //    the bearer: a real `Authorization: Bearer <token>` header,
+  //    constant-time compared (api_auth_bearer_grant), never the cv_session
   //    cookie (sweep F289). The landing page at / mints that cookie's
   //    session for whoever loads it on the home network — deliberate LAN
   //    posture for the dashboard — so with api_auth_check_optional here any
@@ -8712,7 +8713,13 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    credential (403 physical_confirmation_required; the dashboard's
   //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
   //    one that typed the token sends it as a bearer and is served here.
-  if (api_auth_bearer_valid(req, g_device.api_token_str)) {
+  //    The bearer is under every admin route's lockout (F289's follow-up):
+  //    a wrong one is a strike, and while the backoff runs none is compared
+  //    (the 429 below, when the claim and the tap do not serve). The lockout
+  //    never reaches the claim or the tap, so a page with a stale token, or
+  //    a guesser on the network, cannot keep the owner's hand from working.
+  const bool bearer_held = api_auth_bearer_held(req);
+  if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
@@ -8745,6 +8752,13 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    atomic step; the BLE OTA break-glass hook competes for the same tap
   //    from another task)
   if (!claim_served && !provisioning_gate_take()) {
+    // A bearer the backoff kept from being compared gets the lockout's own
+    // answer (429, Retry-After), not "press BOOT": a page holding the right
+    // token keeps it (secureFetch drops a token on 403) and retries.
+    if (bearer_held) {
+      api_auth_send_lockout(req);
+      return ESP_OK;
+    }
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
