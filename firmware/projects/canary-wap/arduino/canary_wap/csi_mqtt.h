@@ -186,11 +186,13 @@ struct Config {
 /* The broker row in NVS, as config_load() reads it back (a stored port of 0
  * as the default for the stored TLS mode, a missing port as 1883, a missing
  * prefix as the default).
- * config_save() writes it key by key on the caller's task; the loop task's
- * re-init opens no client from a row a save (this, ca_save, config_clear) is
- * still writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep
+ * config_save() writes it key by key on the caller's task, one save at a
+ * time (a second writer waits for the first's lock); the loop task's re-init
+ * opens no client from a row a save (this, ca_save, config_clear) is still
+ * writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep
  * F289's review), so no client ever carries the stored password to a host
- * another task's save was still writing. */
+ * another task's save was still writing, and no row is two saves' keys
+ * interleaved. */
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
 

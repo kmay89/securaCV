@@ -81,6 +81,7 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>       /* xTaskCreate: the retiring client's worker */
+#include <freertos/semphr.h>     /* the broker row's writer lock */
 
 extern "C" {
 #include "mqtt_client.h"
@@ -181,27 +182,67 @@ constexpr uint32_t       kRetireStackBytes   = 6144;
 /* A settings save in progress, and how many have finished (sweep F289, the
  * third road's review). config_save(), ca_save() and config_clear() write
  * the row key by key on the caller's task (the httpd task's config POST, the
- * QR scanner's provisioning), and nothing stops the loop task from serving a
- * re-init between two of those writes: a row holding the new host beside the
- * old password, which the new client would carry to the new host — the
- * password move_needs_password() exists to keep home — through a re-init an
- * earlier save left pending (its retire outlived the handler's wait). So
- * open_client() opens nothing from a read that a save overlapped — one still
- * in progress when the read ends, or finished since it began (a seqlock: the
- * writers never wait, and the loop task never waits — serve_reinit() leaves
- * the request for its next pass, init() hands it to loop()). The order of the
- * keys in the row is therefore not what keeps the password home, and
- * config_save() promises none. */
-std::atomic<uint32_t>    s_config_writers{0};   /* saves in progress */
+ * QR scanner's provisioning, the loop task's own factory reset), and nothing
+ * stops the loop task from serving a re-init between two of those writes: a
+ * row holding the new host beside the old password, which the new client
+ * would carry to the new host — the password move_needs_password() exists
+ * to keep home — through a re-init an earlier save left pending (its retire
+ * outlived the handler's wait). So open_client() opens nothing from a read
+ * that a save overlapped — one still in progress when the read ends, or
+ * finished since it began (a seqlock: the loop task's re-init never waits —
+ * serve_reinit() leaves the request for its next pass, init() hands it to
+ * loop()). And one writer at a time (#1835's review): two saves on two
+ * tasks could interleave their writes — the scanner's host, then a
+ * session's host and password, then the scanner's password — into a row
+ * neither wrote, whole in the loop task's eyes once both had finished, the
+ * stored password beside the other writer's host. So a save holds
+ * s_config_write_lock across its writes and a second writer waits for it: a
+ * FreeRTOS mutex (priority inheritance), held only across NVS writes and
+ * never across a wait on another task (the config POST's wait for its
+ * re-init comes after its scope closes), so no holder waits on a waiter.
+ * The order of the keys in the row is therefore not what keeps the password
+ * home, and config_save() promises none. */
+std::atomic<uint32_t>    s_config_writers{0};   /* saves in progress: 0 or 1 under the lock */
 std::atomic<uint32_t>    s_config_saves{0};     /* saves finished */
+std::atomic<SemaphoreHandle_t> s_config_write_lock{nullptr};
+/* The writer lock, made on first use by whichever task comes first (a
+ * compare-and-swap: two first-comers keep one mutex and the loser frees its
+ * own); init() asks for it on setup()'s single thread, so on a device no
+ * save races the making. Null only when the heap refused the mutex: then no
+ * save can promise a whole row, and SaveScope refuses it. */
+SemaphoreHandle_t config_write_lock() {
+  SemaphoreHandle_t lock = s_config_write_lock.load(std::memory_order_acquire);
+  if (lock != nullptr) return lock;
+  SemaphoreHandle_t made = xSemaphoreCreateMutex();
+  if (made == nullptr) return nullptr;
+  SemaphoreHandle_t expected = nullptr;
+  if (s_config_write_lock.compare_exchange_strong(expected, made, std::memory_order_acq_rel)) return made;
+  vSemaphoreDelete(made);
+  return expected;
+}
+/* A save: takes the writer lock (waiting out another task's save), counts
+ * itself in progress, and on the way out finished. ok() is false when the
+ * lock could not be had — no mutex (the heap refused it), or a take that
+ * did not block (the host harness's stub answers pdFALSE for a take while
+ * held, where FreeRTOS waits) — and the caller writes nothing. */
 struct SaveScope {
-  SaveScope()  { s_config_writers.fetch_add(1, std::memory_order_seq_cst); }
+  SaveScope() {
+    SemaphoreHandle_t lock = config_write_lock();
+    if (lock == nullptr || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) return;
+    held_ = true;
+    s_config_writers.fetch_add(1, std::memory_order_seq_cst);
+  }
   ~SaveScope() {
+    if (!held_) return;
     s_config_saves.fetch_add(1, std::memory_order_seq_cst);
     s_config_writers.fetch_sub(1, std::memory_order_seq_cst);
+    xSemaphoreGive(s_config_write_lock.load(std::memory_order_acquire));
   }
+  bool ok() const { return held_; }
   SaveScope(const SaveScope&) = delete;
   SaveScope& operator=(const SaveScope&) = delete;
+ private:
+  bool held_ = false;
 };
 /* set_update_auto_state() from any task; loop() publishes it. */
 std::atomic<bool>        s_update_auto_dirty{false};
@@ -623,7 +664,7 @@ bool write_ca(const char* pem) {
 
 bool config_save(const Config& cfg) {
   SaveScope saving;
-  return write_row(cfg);
+  return saving.ok() && write_row(cfg);
 }
 
 bool config_clear() {
@@ -632,6 +673,7 @@ bool config_clear() {
     NVS_KEY_PREFIX, NVS_KEY_TLS, NVS_KEY_TLS_MODE, NVS_KEY_DISCOVERY, NVS_KEY_CA,
   };
   SaveScope saving;
+  if (!saving.ok()) return false;
   Preferences prefs;
   if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
   bool ok = true;
@@ -647,7 +689,7 @@ bool config_clear() {
 
 bool ca_save(const char* pem) {
   SaveScope saving;
-  return write_ca(pem);
+  return saving.ok() && write_ca(pem);
 }
 
 namespace {
@@ -865,6 +907,9 @@ bool init(const char* device_id,
           const char* firmware_version,
           const char* public_key_hex) {
   set_identity(device_id, firmware_version, public_key_hex);
+  /* The writer lock, made here on setup()'s thread before any task can save
+   * (a save that came first made it; see config_write_lock). */
+  (void)config_write_lock();
   /* The boot's one call (start_http_server): no health has been built yet,
    * so no egress publish names one. */
   s_health_built = false;
@@ -2519,11 +2564,12 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   }
 
   {
-    /* One save in the loop task's eyes: the row and the CA land under one
-     * scope, so no re-init opens a client to the new row with the old CA
-     * between the two writes. */
+    /* One save in the loop task's eyes, and one writer at a time: the row
+     * and the CA land under one scope, so no re-init opens a client to the
+     * new row with the old CA between the two writes, and no other task's
+     * save interleaves its keys with these. */
     SaveScope saving;
-    if (!write_row(c) || (ca_changed && !write_ca(cabuf.p))) {
+    if (!saving.ok() || !write_row(c) || (ca_changed && !write_ca(cabuf.p))) {
       httpd_resp_set_status(req, "500 Internal Server Error");
       httpd_resp_send(req, "{\"ok\":false,\"reason\":\"nvs unavailable\"}", -1);
       return ESP_OK;

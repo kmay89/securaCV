@@ -28,7 +28,10 @@
   could open a client from the half-written row — the new host beside the
   old password. Now a save counts itself in progress and finished, and the
   loop task opens no client from a read a save overlapped; the next pass
-  reads the whole row. The flagship refuses the same move as
+  reads the whole row. And one writer at a time (the PR's Codex review):
+  a save on another task waits for the first's lock instead of
+  interleaving its keys into a row neither wrote. The flagship refuses the
+  same move as
   `400 password_required_for_new_host`; the WAP's `403` differs in shape
   because its cookie callers are the class in question, and the TLS mode
   and the CA count as moves on its transport. The QR hub-provision path

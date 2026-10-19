@@ -1286,7 +1286,16 @@ so — see D2 below.)
   read or finished since it began (`serve_reinit()` leaves the request for
   its next pass; the boot `init()` hands it to `loop()`), and the config
   POST holds the row and the CA in one such scope; `config_save()` promises
-  no key order. Three tests on the real handler, through the NVS stub's
+  no key order. And one writer at a time (the PR's Codex review, #1835):
+  two saves on two tasks — the QR scanner's and a session's — could
+  interleave their keys into a row neither wrote, whole in the loop task's
+  eyes once both had finished, the stored password beside the other
+  writer's host; a save now holds a writer lock (a FreeRTOS mutex) across
+  its writes and a second writer waits for it
+  (`two_writers_never_interleave`: a save, a CA save, a clear and a config
+  POST played inside another save's first write each wait — the stub's take
+  answers refused where FreeRTOS blocks — and write nothing; the row is the
+  first writer's whole). Three tests on the real handler, through the NVS stub's
   hooks: `a_save_in_progress_opens_no_client` (four moves — a new host and
   port; a TLS-to-plain downgrade with a new host; a plain-to-TLS upgrade
   with a new host and password, with and without a new CA — each with the

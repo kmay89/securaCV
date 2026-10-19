@@ -57,6 +57,7 @@
 #include <Preferences.h>   // stubs/mqtt: the NVS
 
 #include <freertos/task.h>  // stubs/mqtt: created tasks wait for their turn
+#include <freertos/semphr.h>  // stubs/mqtt: the broker row's writer lock, a flag
 
 #include "csi_event_egress.h"
 #include "csi_integration.h"
@@ -2622,6 +2623,55 @@ void test_a_boot_under_a_save_asks_the_loop() {
   std::printf("PASS a_boot_under_a_save_asks_the_loop\n");
 }
 
+// Two writers never interleave (#1835's review): a save on another task
+// inside this save's writes waits for the writer lock — in this one-thread
+// harness the stub's take answers pdFALSE where FreeRTOS would block, and
+// SaveScope then writes nothing — so the row is one writer's whole: here the
+// QR scanner's new hub with the stored password, never that password beside
+// a session's host. The config POST under another save is refused the same
+// way (500, nothing written). The lock is free again once the save is done.
+void test_two_writers_never_interleave() {
+  boot_with_password();
+  const Stored was = stored();
+  const unsigned contended0 = stub_mqtt::mutex_contended;
+  csi_mqtt::Config scanner;
+  CHECK(csi_mqtt::config_load(&scanner));
+  std::snprintf(scanner.host, sizeof scanner.host, "%s", "10.0.0.9");   // the scanner's hub; password kept
+  scanner.port = 1884;
+  unsigned puts = 0;
+  unsigned inner_refused = 0;
+  std::string post_status;
+  stub_nvs_on_put = [&](const char*) {
+    if (++puts != 1) return;                            // inside the save's first write
+    CHECK(stub_mqtt::mutex_held);
+    const unsigned writes = stub_nvs_writes();
+    csi_mqtt::Config theirs = scanner;
+    std::snprintf(theirs.host, sizeof theirs.host, "%s", "10.0.0.66");
+    std::snprintf(theirs.pass, sizeof theirs.pass, "%s", "attacker-chosen");
+    if (!csi_mqtt::config_save(theirs)) ++inner_refused;
+    if (!csi_mqtt::ca_save(pem_of(400, 'B').c_str())) ++inner_refused;
+    if (!csi_mqtt::config_clear()) ++inner_refused;
+    const Http h = session_post("{\"host\":\"10.0.0.66\",\"password\":\"attacker-chosen\"}");
+    post_status = h.req.status;
+    CHECK(h.req.resp == "{\"ok\":false,\"reason\":\"nvs unavailable\"}");
+    CHECK(stub_nvs_writes() == writes);                 // nothing written under another save
+    CHECK(stub_mqtt::mutex_held);                       // still this save's
+  };
+  CHECK(csi_mqtt::config_save(scanner));
+  stub_nvs_on_put = nullptr;
+  CHECK(puts >= 9);                                     // the hook ran inside the row's writes
+  CHECK(inner_refused == 3);
+  CHECK(post_status == "500 Internal Server Error");
+  CHECK(stub_mqtt::mutex_contended == contended0 + 4);  // three saves and the POST each waited
+  CHECK(!stub_mqtt::mutex_held);                        // and the lock is free again
+  const Stored now = stored();
+  CHECK(now.host == "10.0.0.9" && now.port == 1884 && now.pass == was.pass);   // the scanner's row, whole
+  CHECK(now.user == was.user && now.tls_mode == was.tls_mode && now.ca == was.ca);
+  CHECK(csi_mqtt::config_save(scanner));                // a save after it is served
+  CHECK(stub_mqtt::mutex_contended == contended0 + 4);
+  CHECK(!stub_mqtt::mutex_held);
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2689,6 +2739,7 @@ const Test kTests[] = {
     {"a_save_inside_the_loop_tasks_read_opens_no_client",
      test_a_save_inside_the_loop_tasks_read_opens_no_client},
     {"a_boot_under_a_save_asks_the_loop", test_a_boot_under_a_save_asks_the_loop},
+    {"two_writers_never_interleave", test_two_writers_never_interleave},
     {"a_wrong_bearer_beside_the_cookie_is_not_a_bearer",
      test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer},
 };

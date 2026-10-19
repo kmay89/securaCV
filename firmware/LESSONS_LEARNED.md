@@ -2590,6 +2590,18 @@
   the host write, as the test's failure; rewritten from the run). Rule: when a
   secret's safety depends on which row another task reads, the row must be
   readable whole or not at all — not written in a careful order.
+- **And two writers, 2026-10-19 (#1835's Codex review):** the count above
+  keeps the loop task out of a half-written row, not one writer out of
+  another's: the QR scanner's save and a session's could interleave their
+  keys into a row neither wrote, whole once both had finished, the stored
+  password beside the other's host. A save now holds a writer lock (a
+  FreeRTOS mutex, held only across the NVS writes, never across a wait on
+  another task) and a second writer waits; `two_writers_never_interleave`
+  plays a save, a CA save, a clear and the config POST inside another save's
+  first write and holds that each waited and wrote nothing. Rule: a
+  multi-key row has two readers to keep out, the task that reads it whole
+  and the task that writes it next; a seqlock covers the first, only a lock
+  the second.
 - **The road this rule leaves open, named:** the QR hub-provision path
   (`canary_wap.ino`'s scan result: a scanned SCV1 code with a host re-points
   `host` and `port`, keeps the stored password and TLS mode, saves and asks
