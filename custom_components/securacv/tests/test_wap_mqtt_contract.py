@@ -41,7 +41,7 @@ then held to what reads it:
     their keys are held to the keys the sketch writes.
 
 What the record shows that is wrong today is written down as strict xfails,
-each naming its sweep item or handed up (#1802): a test that starts passing
+each naming its sweep item or handed up (#1832): a test that starts passing
 fails until its marker is removed.
 
 Host-tested: the harness is the firmware's code compiled with g++ over stubs,
@@ -690,29 +690,61 @@ def test_the_relayed_bodies_carry_the_keys_the_sketch_writes(record):
 # ─── the CI wiring ─────────────────────────────────────────────────────
 
 
+def _harness_inputs() -> set[str]:
+    """Every file the harness's compile read, from the dependency file make
+    wrote beside it: the union of every rule whose target is the harness.
+    with_deps runs -MM over each source the recipe compiles, so there is one
+    such rule per source (the harness's own TU, then csi_mqtt.cpp's); -MP's
+    empty rules, one per header, name the header as their target and add
+    nothing."""
+    deps = Path(f"{_HARNESS}.d").read_text(encoding="utf-8").replace("\\\n", " ")
+    rules = [line.partition(":") for line in deps.splitlines() if line.strip()]
+    words = [w for target, _, dep in rules if target.strip() == _HARNESS.name for w in dep.split()]
+    inputs = {(_HOST / w).resolve().relative_to(_REPO).as_posix() for w in words}
+    # So a change to with_deps or to the recipe cannot quietly shrink the set
+    # this test holds python.yml to: both compiled sources must be in it.
+    for source in (_HARNESS_SRC, _WAP / "arduino" / "canary_wap" / "csi_mqtt.cpp"):
+        assert source.relative_to(_REPO).as_posix() in inputs, (
+            f"{_HARNESS.name}.d names no rule for {source.name}: the recipe or with_deps moved"
+        )
+    return inputs
+
+
+def _paths_listed(paths: list[str], rel: str) -> bool:
+    """`rel` is one of a workflow trigger's `paths`, or under one of its `/**` globs."""
+    return rel in paths or any(p.endswith("/**") and rel.startswith(p[:-2]) for p in paths)
+
+
 def test_python_yml_runs_this_suite_on_each_file_the_harness_compiles(record):
     """A firmware-only edit to anything the harness compiles still runs this
     module: python.yml's push and pull_request paths list each file the
-    compile read (its dependency file, written by make), the Makefile, and
-    this module's other inputs, and the job requires the harness."""
+    compile read (every rule of its dependency file, written by make), the
+    Makefile, and this module's other inputs, and the step that runs this
+    suite requires the harness."""
     if not _WORKFLOW.is_file():
         pytest.skip("no python.yml beside this tree")
-    # The first rule of the dependency file: the harness and every file its
-    # compile read (-MP's empty rules for each header follow it).
-    deps = Path(f"{_HARNESS}.d").read_text(encoding="utf-8").replace("\\\n", " ")
-    first = next(line for line in deps.splitlines() if line.strip())
-    words = first.partition(":")[2].split()
-    inputs = {(_HOST / w).resolve().relative_to(_REPO).as_posix() for w in words}
-    inputs |= {
+    import yaml
+
+    inputs = _harness_inputs() | {
         (_HOST / "Makefile").relative_to(_REPO).as_posix(),
         _SKETCH.relative_to(_REPO).as_posix(),
     }
-    lines = [ln.strip() for ln in _WORKFLOW.read_text(encoding="utf-8").splitlines()]
-    globs = [ln[3:-4] for ln in lines if ln.startswith("- '") and ln.endswith("/**'")]
-    for rel in sorted(inputs):
-        listed = lines.count(f"- '{rel}'") + sum(rel.startswith(g + "/") for g in globs)
-        assert listed == 2, f"python.yml's push and pull_request paths must list {rel}"
-    assert f"{_REQUIRE}: require" in lines
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    on = workflow.get("on", workflow.get(True))   # YAML 1.1 reads a bare `on` as true
+    for trigger in ("push", "pull_request"):
+        paths = on[trigger]["paths"]
+        missing = sorted(rel for rel in inputs if not _paths_listed(paths, rel))
+        assert missing == [], f"python.yml's {trigger} paths must list {missing}"
+    steps = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if str(step.get("run", "")).split() == ["pytest", "custom_components/securacv/tests/", "-q"]
+    ]
+    assert len(steps) == 1, "python.yml runs this suite in exactly one step"
+    assert (steps[0].get("env") or {}).get(_REQUIRE) == "require", (
+        f"the step that runs this suite must set {_REQUIRE}: require"
+    )
 
 
 # ─── what the record shows is wrong today ──────────────────────────────
@@ -721,7 +753,7 @@ def test_python_yml_runs_this_suite_on_each_file_the_harness_compiles(record):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1802): the first events publish creates Last Event and is not "
+    reason="handed up (#1832): the first events publish creates Last Event and is not "
     "shown by it; events are not retained, and the entity subscribes after the delivery",
 )
 def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
@@ -736,7 +768,7 @@ def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1802): six discovery entities (Presence, State, Confidence, Motion "
+    reason="handed up (#1832): six discovery entities (Presence, State, Confidence, Motion "
     "Score, Breathing Score, Breathing Rate) read the events topic, which is not retained",
 )
 def test_every_discovery_entity_finds_its_state_after_a_restart(record):
@@ -768,7 +800,7 @@ def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1802): the device's sw_version comes from the status topic, "
+    reason="handed up (#1832): the device's sw_version comes from the status topic, "
     "and a canary-wap's status carries no firmware_version (its health does)",
 )
 def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
@@ -790,7 +822,7 @@ def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1802): created for a canary-wap, reads nothing it sends",
+    reason="handed up (#1832): created for a canary-wap, reads nothing it sends",
 )
 def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key, topic):
     """The entity is not created for a WAP, or its state moves when the WAP's
@@ -809,7 +841,7 @@ def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key,
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1802): the HomeKit projection maps no event type a canary-wap "
+    reason="handed up (#1832): the HomeKit projection maps no event type a canary-wap "
     "sends (its presence vocabulary: active, subtle, quiet, together, empty)",
 )
 def test_a_wap_presence_event_asserts_motion_and_occupancy(record, monkeypatch, key):
