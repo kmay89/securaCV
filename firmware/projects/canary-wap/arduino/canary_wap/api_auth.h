@@ -134,6 +134,18 @@ static void auth_record_success() {
   g_auth.total_successes++;
 }
 
+// The milliseconds the backoff has left, 0 once it has ended (the same
+// comparison auth_is_locked_out() makes). The two answers that report it read
+// it here: a caller checks the lockout first and sends later, and a backoff
+// that ends in between must read 0, not an unsigned subtraction that wraps to
+// about 4.29 million seconds.
+
+static uint32_t auth_lockout_remaining_ms() {
+  const uint32_t now = millis();
+  if (now >= g_auth.lockout_until_ms) return 0;
+  return g_auth.lockout_until_ms - now;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // TOKEN REDACTION
 // ═══════════════════════════════════════════════════════════════════
@@ -153,13 +165,14 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // AUTH CHECK — For use with esp_http_server (ESP-IDF)
 // ═══════════════════════════════════════════════════════════════════
 
-// The lockout's answer: 429 with Retry-After, the seconds left. Sent by
+// The lockout's answer: 429 with Retry-After, the seconds left (at least 1,
+// also when the backoff ended after the caller's check). Sent by
 // api_auth_check_bearer() for any request while the backoff runs, and by GET
 // /api/provisioning-receipt for a bearer the backoff kept from being compared
 // when neither the BOOT tap nor the setup-door claim served it.
 
 static void api_auth_send_lockout(httpd_req_t* req) {
-  uint32_t remaining = g_auth.lockout_until_ms - millis();
+  const uint32_t remaining = auth_lockout_remaining_ms();
   char retry_str[8];
   snprintf(retry_str, sizeof(retry_str), "%lu", (unsigned long)(remaining / 1000 + 1));
 
@@ -236,8 +249,10 @@ static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) 
   size_t token_len = strlen(token);
   while (token_len > 0 && token[token_len - 1] == ' ') token_len--;
 
+  // An empty device token is no token: no header matches it (a zero-length
+  // compare would take a bare "Bearer ").
   size_t expected_len = strlen(expected_token);
-  if (token_len != expected_len) {
+  if (expected_len == 0 || token_len != expected_len) {
     auth_record_failure();
     httpd_resp_set_status(req, "403 Forbidden");
     httpd_resp_set_type(req, "application/json");
@@ -289,6 +304,10 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
 // it. api_auth_check_optional() is the cookie OR this.
 
 static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) {
+  // An empty device token is no token (a zero-length compare would take a
+  // bare "Bearer "); this also covers api_auth_check_optional() and
+  // api_auth_bearer_grant(), which compare through here.
+  if (expected_token == nullptr || expected_token[0] == '\0') return false;
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
@@ -333,9 +352,10 @@ static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token
 //   - a malformed header or a wrong token: one strike, as on every admin
 //     route. Before this the receipt compared silently, so it was the one
 //     route where guessing the token cost nothing.
-// The lockout never gates the claim or the tap: an owner whose page holds a
-// stale token, or whose network a guesser is busy on, still gets in with a
-// hand on the BOOT button.
+// The lockout never gates the claim or the tap: a page holding a stale token,
+// or a backoff a guesser armed, is still served by the claim or a BOOT tap.
+// (What the lockout does not decide: any host on the network can spend a
+// pending claim with one wrong ?claim=, or take an open tap by asking first.)
 
 static bool api_auth_bearer_grant(httpd_req_t* req, const char* expected_token) {
   if (httpd_req_get_hdr_value_len(req, "Authorization") == 0) {
@@ -369,7 +389,7 @@ static bool api_auth_bearer_held(httpd_req_t* req) {
 static void auth_stats_json(char* buf, size_t buf_len) {
   bool locked = auth_is_locked_out();
   if (locked) {
-    uint32_t remaining = (g_auth.lockout_until_ms - millis()) / 1000;
+    uint32_t remaining = auth_lockout_remaining_ms() / 1000;
     snprintf(buf, buf_len,
       "{\"total_successes\":%lu,\"total_failures\":%lu,"
       "\"consecutive_failures\":%u,\"locked_out\":true,"
@@ -413,7 +433,8 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
       presented_credential = true;
       size_t token_len = strlen(token);
       size_t expected_len = strlen(expected_token);
-      if (token_len == expected_len && constant_time_compare(token, expected_token, expected_len)) {
+      if (expected_len != 0 && token_len == expected_len &&
+          constant_time_compare(token, expected_token, expected_len)) {
         auth_record_success();
         return true;
       }

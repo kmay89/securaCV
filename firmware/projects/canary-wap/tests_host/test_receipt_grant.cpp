@@ -10,9 +10,9 @@
 // "Trust-on-LAN"), so any host on the LAN could turn a page load into the
 // receipt — the bearer token, the SoftAP password, the TLS pin — or the QR
 // that carries the token, with no tap. Both routes now take as their bearer
-// grant ONLY an `Authorization: Bearer <token>` header (api_auth_bearer_valid,
-// api_auth_check_bearer in api_auth.h), constant-time compared as every admin
-// route's is; the receipt's other grants, the claim and the tap, are
+// grant ONLY an `Authorization: Bearer <token>` header (the receipt through
+// api_auth_bearer_grant, the QR through api_auth_check_bearer, both in
+// api_auth.h), constant-time compared as every admin route's is; the receipt's other grants, the claim and the tap, are
 // unchanged, and the dashboard's own routes still take the cookie.
 //
 // This runs the REAL api_auth.h and the handlers cut verbatim out of
@@ -52,7 +52,9 @@
 //     bearer gets the 429 with Retry-After and a bare poll the 403 its tap
 //     wait reads; the receipt's guesses lock the QR and the QR's lock the
 //     receipt; and the lockout never reaches the BOOT tap or the claim,
-//     which serve a stale bearer, inside the backoff or out of it;
+//     which serve a stale bearer, inside the backoff or out of it; a backoff
+//     that ends while the request is in the handler (after the held read,
+//     before the 429) still answers Retry-After 1, never a wrapped count;
 //   - the pairing QR on a cookie alone: 401 with the WWW-Authenticate
 //     challenge, no SVG, no token in the answer, no lockout strike (before:
 //     the SVG with the token); on a cookie beside a wrong bearer: 403 and a
@@ -63,7 +65,9 @@
 //   - api_auth.h's contract: api_auth_check() and api_auth_check_optional()
 //     still take the cookie (the dashboard's routes), api_auth_bearer_valid()
 //     and api_auth_check_bearer() never do, and the cookie path never clears
-//     the lockout;
+//     the lockout; an empty device token (provision_device() can stop before
+//     minting it) matches no bearer and no ?token=, on every gate, the
+//     receipt and the QR included;
 //   - the sketch's text (CANARY_WAP_INO, comments stripped): the two handlers
 //     name only the bearer-only checks and never the cookie bridge; every
 //     line that names g_device.api_token_str or g_device.ap_password is a
@@ -166,9 +170,13 @@ static void secure_zero(void* p, size_t n) {
 }
 
 static std::vector<std::string> g_health_lines;
+// Milliseconds each health line moves the fake clock (0 but in the one test
+// that needs time to pass inside the handler, between its reads).
+static uint32_t g_health_line_ms = 0;
 void log_health(LogLevel, LogCategory, const char* message, const char* detail = nullptr) {
   (void)detail;
   g_health_lines.push_back(message ? message : "");
+  stub_grant::now_ms += g_health_line_ms;
 }
 
 namespace csi_integration {
@@ -245,6 +253,7 @@ void reset_device() {
   g_served.clear();
   g_qr_payloads.clear();
   g_health_lines.clear();
+  g_health_line_ms = 0;
   g_live_session = "";
   g_cookie_checks = 0;
   g_auth = AuthState{0, 0, 0, 0, 0};
@@ -663,6 +672,48 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   CHECK(g_auth.consecutive_failures == 1);
 }
 
+// The receipt reads the lockout (api_auth_bearer_held) before the claim and
+// the tap and answers it after them, so the backoff can end in between. The
+// 429 still names a wait the client can use, at least 1 s, never the
+// unsigned difference wrapped to about 4.29 million seconds.
+void test_receipt_lockout_answer_never_wraps() {
+  reset_device();
+  arm_lockout(3);                 // 8 s left
+  Req running;
+  running.bearer(kToken);
+  CHECK(receipt(running) == 0);
+  check_lockout_refusal(running.r);
+  CHECK(header(running.r, "Retry-After") == "9");   // 8000 ms / 1000 + 1
+  CHECK(running.r.resp.find("\"retry_after_s\":9}") != std::string::npos);
+
+  // A wrong claim beside the bearer: the claim's health line is where the
+  // clock passes the backoff's end, after the held read, before the send.
+  reset_device();
+  arm_lockout(3);
+  mint_claim();
+  g_health_line_ms = 8001;
+  Req raced;
+  raced.bearer(kToken).query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(raced) == 0);
+  CHECK(millis() >= g_auth.lockout_until_ms);   // the backoff did end inside the handler
+  check_lockout_refusal(raced.r);
+  CHECK_MSG(header(raced.r, "Retry-After") == "1",
+            "the lockout's Retry-After wrapped when the backoff ended mid-request");
+  CHECK(raced.r.resp.find("\"retry_after_s\":1}") != std::string::npos);
+
+  // The same answer sent straight after the backoff ended, and the remaining
+  // time the health JSON reads: 0, not a wrap.
+  reset_device();
+  arm_lockout(1);
+  stub_grant::now_ms += 8000;
+  CHECK(auth_lockout_remaining_ms() == 0);
+  Req late;
+  api_auth_send_lockout(&late.r);
+  CHECK(header(late.r, "Retry-After") == "1");
+  stub_grant::now_ms -= 3000;
+  CHECK(auth_lockout_remaining_ms() == 3000);
+}
+
 // ── the pairing QR ───────────────────────────────────────────────────────────
 
 size_t qr(Req& q) {
@@ -834,6 +885,60 @@ void test_api_auth_contract() {
   again.cookie();
   CHECK(api_auth_check(&again.r, kToken));
   CHECK(g_auth.consecutive_failures == 4);
+}
+
+// An empty device token is no token. provision_device() can return before
+// the token is minted (a key that will not generate or store) while setup()
+// carries on to the servers, so g_device.api_token_str can be "" on a unit
+// that answers HTTP. A zero-length compare would then take a bare "Bearer "
+// as the right token: the receipt's secrets and the QR for anyone.
+void test_empty_device_token_takes_no_bearer() {
+  for (const char* raw : {"Bearer ", "Bearer    "}) {
+    reset_device();
+    g_device.api_token_str[0] = '\0';
+    Req valid;
+    valid.authorization(raw);
+    CHECK_MSG(!api_auth_bearer_valid(&valid.r, g_device.api_token_str),
+              "an empty device token took a bare Bearer header");
+    CHECK(!api_auth_check_optional(&valid.r, g_device.api_token_str));
+    CHECK(valid.r.sends == 0);
+    CHECK(g_auth.consecutive_failures == 0);   // the silent checks record nothing
+
+    Req grant;
+    grant.authorization(raw);
+    CHECK(!api_auth_bearer_grant(&grant.r, g_device.api_token_str));
+    CHECK(g_auth.consecutive_failures == 1);   // a presented header against no token: one strike
+    g_auth = AuthState{0, 0, 0, 0, 0};
+
+    Req admin;
+    admin.authorization(raw);
+    CHECK_MSG(!api_auth_check_bearer(&admin.r, g_device.api_token_str),
+              "an empty device token signed in an admin route");
+    CHECK(admin.r.status == "403 Forbidden");
+    CHECK(g_auth.consecutive_failures == 1);
+    g_auth = AuthState{0, 0, 0, 0, 0};
+
+    Req receipt_req;
+    receipt_req.authorization(raw);
+    CHECK_MSG(receipt(receipt_req) == 0, "an empty device token served the receipt to a bare Bearer");
+    check_gate_refusal(receipt_req.r);
+    CHECK(g_served.empty());
+    g_auth = AuthState{0, 0, 0, 0, 0};
+
+    Req qr_req;
+    qr_req.authorization(raw);
+    CHECK_MSG(qr(qr_req) == 0, "an empty device token served the pairing QR to a bare Bearer");
+    CHECK(qr_req.r.status == "403 Forbidden");
+    g_auth = AuthState{0, 0, 0, 0, 0};
+  }
+  // The ?token= gate, the same rule: an empty query token is not the token.
+  reset_device();
+  g_device.api_token_str[0] = '\0';
+  Req query_req;
+  query_req.query("token=");
+  CHECK_MSG(!api_auth_check_or_query(&query_req.r, g_device.api_token_str),
+            "an empty device token took an empty ?token=");
+  CHECK(query_req.r.status == "401 Unauthorized");
 }
 
 // ── the sketch's text ────────────────────────────────────────────────────────
@@ -1019,6 +1124,7 @@ int main() {
   test_receipt_lockout_holds_the_bearer();
   test_receipt_arming_guess_then_backoff();
   test_receipt_lockout_never_holds_the_tap_or_the_claim();
+  test_receipt_lockout_answer_never_wraps();
   test_qr_cookie_alone_is_refused();
   test_qr_cookie_beside_wrong_bearer_is_refused();
   test_qr_bearer_serves();
@@ -1026,6 +1132,7 @@ int main() {
   test_qr_lockout_is_every_admin_routes();
   test_receipt_and_qr_share_the_lockout();
   test_api_auth_contract();
+  test_empty_device_token_takes_no_bearer();
   test_sketch_text();
 
   if (g_failures) {
