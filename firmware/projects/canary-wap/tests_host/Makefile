@@ -55,6 +55,17 @@ DEPFLAGS = -MMD -MP
 override CXXFLAGS += $(DEPFLAGS)
 with_deps = $(1) && $(filter-out -o $@ -MMD -l% -Wl%,$(1)) -MM -MT $@ > $@.d
 
+# Every file a rule below cuts out of the sketch for a suite to #include
+# (test_*.inc: a function through firmware/tests_host/cut_functions.awk, or a
+# block cut by line). Each cutting rule appends its outputs here, and
+# run-arduino-globals (at the end of this file) takes the whole list as its
+# prerequisites, since check_arduino_globals.py's preprocessor reads them: a
+# cut missing from the list fails that check on a fresh checkout, and under
+# -jN its compile can race the rule that cuts it. The check holds every .inc
+# a compile reads to this list, so a rule that cuts one and does not append
+# it fails `make run` (the list used to be kept by hand and missed three).
+CUT_INCS :=
+
 # $(call run_marked,<suite>[ <args>][,<marker>]) runs ./<suite> and holds it
 # to the check firmware.yml's old inline steps made: a non-zero exit fails,
 # and so does output without the suite's marker (default "ALL .* PASSED"), so
@@ -528,6 +539,7 @@ RGRANT_BIN = test_receipt_grant
 RGRANT_SRC = test_receipt_grant.cpp
 RGRANT_INC = test_receipt_grant.inc
 RGRANT_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS  += $(RGRANT_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
 	awk -v 'sigs=static inline bool provisioning_gate_take() {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
@@ -570,6 +582,7 @@ WRITER_SRC = test_wap_json_writer.cpp
 # test_wap_json_writer_listed.inc), over the scan cache and its lock as the
 # test lays them out, the cache's layout read from canary_wap.ino.
 WRITER_LISTED = test_wap_json_writer_listed.inc
+CUT_INCS     += $(WRITER_LISTED)
 
 $(WRITER_LISTED): $(SRC_DIR)/canary_wap.ino ../../../tests_host/cut_functions.awk Makefile
 	awk -v 'sigs=static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {' \
@@ -608,6 +621,7 @@ DEVNAME_SRC   = test_device_name.cpp
 DEVNAME_WIZ   = test_device_name_wizard.inc
 DEVNAME_LABEL = test_device_name_label.inc
 DEVNAME_CUT   = ../../../tests_host/cut_functions.awk
+CUT_INCS     += $(DEVNAME_WIZ) $(DEVNAME_LABEL)
 
 $(DEVNAME_WIZ): $(SRC_DIR)/setup_wizard.h $(DEVNAME_CUT) Makefile
 	awk -v 'sigs=inline bool init() {|inline const char* get_device_name() {|inline bool set_device_name(const char* name) {' \
@@ -642,6 +656,7 @@ EXPORT_BIN = test_export_answer
 EXPORT_SRC = test_export_answer.cpp
 EXPORT_INC = test_export_answer.inc
 EXPORT_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS  += $(EXPORT_INC)
 
 $(EXPORT_INC): $(SRC_DIR)/canary_wap.ino $(EXPORT_CUT) Makefile
 	awk -v 'sigs=static esp_err_t handle_export(httpd_req_t* req) {' \
@@ -749,6 +764,7 @@ DAILY_SRC = test_wap_daily_summary.cpp
 DAILY_INC = test_wap_daily_summary_clock.inc
 DAILY_INO = $(SRC_DIR)/canary_wap.ino
 DAILY_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS += $(DAILY_INC)
 
 $(DAILY_INC): $(DAILY_INO) $(DAILY_CUT) Makefile
 	@test "$$(grep -cE '^static const time_t GPS_CLOCK_FLOOR = ' $(DAILY_INO))" = 1 || { \
@@ -796,6 +812,7 @@ FIRSTBOOT_CHIRP  = test_wap_first_boot_nvs_chirp.inc
 FIRSTBOOT_STAMP  = test_wap_first_boot_nvs_stamp.inc
 FIRSTBOOT_INCS   = $(FIRSTBOOT_WIZ) $(FIRSTBOOT_KEY) $(FIRSTBOOT_PWR) $(FIRSTBOOT_CHIRP) $(FIRSTBOOT_STAMP)
 FIRSTBOOT_CUT    = ../../../tests_host/cut_functions.awk
+CUT_INCS        += $(FIRSTBOOT_INCS)
 
 $(FIRSTBOOT_WIZ): $(SRC_DIR)/setup_wizard.h $(FIRSTBOOT_CUT) Makefile
 	awk -v 'sigs=inline bool init() {' -f $(FIRSTBOOT_CUT) $(SRC_DIR)/setup_wizard.h > $@.tmp && mv $@.tmp $@
@@ -1825,9 +1842,12 @@ clean: clean-mqtt-identity
 # sketch .cpp, a function cut out of the .ino) before arduino_globals.h; its
 # self-test mutates a copy of this Makefile and must see each mutation fail.
 # The cut .inc files are its prerequisites, since the preprocessor reads
-# them: run it standalone through `make run-arduino-globals`.
+# them: every one a rule above appended to CUT_INCS (the list this rule held
+# by hand missed three, and `make run-arduino-globals` on a fresh checkout
+# failed on them; the check holds every .inc a compile reads to this list).
+# Run it standalone through `make run-arduino-globals`.
 .PHONY: run-arduino-globals
-run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC) $(RGRANT_INC)
+run-arduino-globals: $(CUT_INCS)
 	python3 check_arduino_globals.py
 
 run: run-arduino-globals
