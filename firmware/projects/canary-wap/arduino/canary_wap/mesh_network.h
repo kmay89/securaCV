@@ -972,7 +972,7 @@ struct ChirpStatus {
   char session_emoji[EMOJI_DISPLAY_SIZE];
   uint8_t nearby_count;                         // Anonymous count only
   uint8_t recent_chirp_count;
-  uint32_t last_chirp_sent_ms;                  // 0 if never
+  uint32_t last_chirp_sent_ms;                  // 0 if never, or after 24 hours with no send
   uint32_t cooldown_remaining_ms;
   bool relay_enabled;
   bool muted;
@@ -1477,7 +1477,7 @@ struct StatusView {
   uint8_t cooldown_tier;                  // get_cooldown_tier()
   bool relay_enabled;
   bool muted;                             // the flag; mute_remaining_ms says if it still runs
-  uint32_t last_chirp_sent_ms;            // 0 if never
+  uint32_t last_chirp_sent_ms;            // 0 if never, or after 24 hours with no send
   uint32_t cooldown_ms;                   // the tier's cooldown, counted from last_chirp_sent_ms
   uint32_t mute_until_ms;
   uint32_t session_start_ms;              // 0: never enabled since boot
