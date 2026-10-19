@@ -43,7 +43,9 @@
 //
 // The cooldown tiers reset after 24 hours with no send, not 24 hours after
 // the first of a run, a disable and an enable keep them, and their count
-// stops at 255 (sweep F193).
+// stops at 255 (sweep F193); the reset and the cooldown count across the
+// uptime wrap, a mute and the votes beside the kept tiers leave them be,
+// and the tiers let 9 sends out on a first day, then 6 a day.
 //
 // The harness is one thread, so "the HTTP server's task" is a role the test
 // plays: rest() sets host_sim::on_httpd_task and calls submit() the way a
@@ -2080,11 +2082,12 @@ void test_a_send_that_ends_a_quiet_day_counts_from_tier_1() {
   std::printf("PASS a_send_that_ends_a_quiet_day_counts_from_tier_1\n");
 }
 
-// A disable and an enable keep the tiers: the new session (a new identity
-// on the wire) waits out the presence requirement, and then the cooldown's
-// rest. enable() zeroed them, so the send 10 minutes after the enable went
-// out at tier 1 inside tier 2's 15 minutes. And the 24 quiet hours count
-// while the channel is off: its status shows the reset when it comes.
+// A disable and an enable keep the tiers: the new session (a new key,
+// session id and emoji, spec 2.3) waits out the presence requirement, and
+// then the cooldown's rest. enable() zeroed them, so the send 10 minutes
+// after the enable went out at tier 1 inside tier 2's 15 minutes. And the
+// 24 quiet hours count while the channel is off: its status shows the reset
+// when it comes.
 void test_a_disable_keeps_the_tiers() {
   const uint32_t clock_was = host_sim::now_ms;
   host_sim::now_ms = 1000;
@@ -2140,9 +2143,9 @@ void test_a_disable_keeps_the_tiers() {
   std::printf("PASS a_disable_keeps_the_tiers\n");
 }
 
-// The count stops at 255. Kept across days, it reaches 256 after 43 days of
-// a send every 4 hours, and a uint8_t that wrapped to 0 read tier 0: the
-// next send went out with no cooldown, and the one after it at tier 1.
+// The count stops at 255. Kept across days, it reaches 256 after about 42
+// days of a send every 4 hours, and a uint8_t that wrapped to 0 read tier 0:
+// the next send went out with no cooldown, and the one after it at tier 1.
 void test_the_tier_count_stops_at_255() {
   const uint32_t clock_was = host_sim::now_ms;
   host_sim::now_ms = 1000;
@@ -2164,6 +2167,194 @@ void test_the_tier_count_stops_at_255() {
   CHECK(host_sim::httpd_side_effects == 0);
   host_sim::now_ms = clock_was;
   std::printf("PASS the_tier_count_stops_at_255\n");
+}
+
+// The tiers across the 49.7-day uptime wrap. Kept across days, a tier set
+// while millis() wraps is routine for a steady sender. The reset and the
+// cooldown both count the time since the last send, which crosses the wrap;
+// a deadline (last + 24 hours) that wrapped to a small number would read as
+// long past, and the next pass would reset the tiers and end the cooldown.
+void test_the_tiers_count_across_the_uptime_wrap() {
+  const uint32_t clock_was = host_sim::now_ms;
+  // Three sends before the wrap; tier 3's hour runs across it.
+  host_sim::now_ms = 0u - 40u * 60000u;
+  boot();
+  enabled_channel();                                  // 2^32 - 30 min
+  CHECK(send_when_due().cooldown_tier == 1);
+  cc::update();                                       // a pass right after it keeps the tier
+  CHECK(status_read().cooldown_tier == 1 && cc::get_cooldown_remaining_ms() > 0);
+  CHECK(send_when_due().cooldown_tier == 2);          // 2^32 - 25 min
+  CHECK(send_when_due().cooldown_tier == 3);          // 2^32 - 10 min
+  const uint32_t third = cc::g_cooldown.last_chirp_ms;
+  CHECK(third > 0u - 11u * 60000u);
+  host_sim::now_ms = 0u - 60000u;                     // a pass 1 minute before the wrap
+  cc::update();
+  CHECK(status_read().cooldown_tier == 3);
+  host_sim::now_ms = 20u * 60000u;                    // and one 20 minutes after it
+  cc::update();
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_tier == 3 && !v.can_send);
+  CHECK(v.cooldown_remaining_ms == cc::COOLDOWN_TIER_3_MS - (host_sim::now_ms - third));
+  Rest r = rest(send_of(cc::TPL_INFRA_POWER_OUT));
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_COOLDOWN && r.r.cooldown_tier == 3);
+  CHECK(r.r.cooldown_remaining_ms == cc::COOLDOWN_TIER_3_MS - (host_sim::now_ms - third));
+  CHECK(send_when_due().cooldown_tier == 4);          // when the hour ends, past the wrap
+  const uint32_t fourth = cc::g_cooldown.last_chirp_ms;
+  CHECK(fourth == third + cc::COOLDOWN_TIER_3_MS + cc::COMMAND_POLL_MS);
+  // The 24 quiet hours count from the last send, not from one before the wrap.
+  host_sim::now_ms = third + cc::COOLDOWN_RESET_MS + 1;
+  cc::update();
+  CHECK(status_read().cooldown_tier == 4);
+  host_sim::now_ms = fourth + cc::COOLDOWN_RESET_MS;
+  cc::update();
+  CHECK(status_read().cooldown_tier == 4);
+  host_sim::now_ms = fourth + cc::COOLDOWN_RESET_MS + 1;
+  cc::update();
+  v = status_read();
+  CHECK(v.cooldown_tier == 0 && v.last_chirp_sent_ms == 0);
+
+  // One send a minute before the wrap: tier 1's 5 minutes run across it,
+  // and so do the 24 quiet hours.
+  host_sim::now_ms = 0u - 11u * 60000u;
+  boot();
+  enabled_channel();                                  // 2^32 - 1 min
+  CHECK(send_when_due().cooldown_tier == 1);
+  const uint32_t one = cc::g_cooldown.last_chirp_ms;
+  CHECK(one > 0u - 2u * 60000u);
+  host_sim::now_ms = one + 2u * 60000u;               // past the wrap
+  CHECK(host_sim::now_ms < one);
+  cc::update();
+  CHECK(cc::get_cooldown_tier() == 1);
+  CHECK(cc::get_cooldown_remaining_ms() == cc::COOLDOWN_TIER_1_MS - 2u * 60000u);
+  host_sim::now_ms = one + cc::COOLDOWN_RESET_MS;
+  cc::update();
+  CHECK(status_read().cooldown_tier == 1);
+  host_sim::now_ms = one + cc::COOLDOWN_RESET_MS + 1;
+  cc::update();
+  CHECK(status_read().cooldown_tier == 0);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS the_tiers_count_across_the_uptime_wrap\n");
+}
+
+// A mute beside tiers a disable kept. A mute set inside tier 3's hour ends
+// at the disable (sweep F192); the enable's new session reads the cooldown
+// at tier 3, not muted; a new mute that runs out leaves the cooldown with
+// its exact remainder (sweep F178), and the send when it ends is tier 4's.
+// enable() zeroed the tiers, so the new session read active at tier 0.
+void test_a_mute_beside_the_kept_tiers() {
+  const uint32_t clock_was = host_sim::now_ms;
+  host_sim::now_ms = 1000;
+  boot();
+  enabled_channel();
+  CHECK(send_when_due().cooldown_tier == 1);
+  CHECK(send_when_due().cooldown_tier == 2);
+  CHECK(send_when_due().cooldown_tier == 3);          // a 1-hour cooldown
+  const uint32_t third = cc::g_cooldown.last_chirp_ms;
+  CHECK(rest(mute_of(15)).r.ok && cc::g_state == cc::CHIRP_MUTED);
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_MUTED && v.muted && v.cooldown_tier == 3 && v.cooldown_remaining_ms > 0);
+
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok && !cc::g_muted);
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);
+  v = status_read();
+  CHECK(!v.muted && v.mute_remaining_ms == 0);
+  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_tier == 3 && !v.can_send);
+
+  // A mute in the new session runs out; the cooldown runs on.
+  CHECK(rest(mute_of(15)).r.ok && cc::g_state == cc::CHIRP_MUTED);
+  host_sim::now_ms = cc::g_mute_until_ms;
+  cc::update();
+  v = status_read();
+  CHECK(!v.muted && v.state == cc::CHIRP_COOLDOWN && v.cooldown_tier == 3);
+  CHECK(v.cooldown_remaining_ms == cc::COOLDOWN_TIER_3_MS - (host_sim::now_ms - third));
+  CHECK(reason_of(v) == "cooldown");
+  CHECK(send_when_due().cooldown_tier == 4);
+  CHECK(cc::g_cooldown.last_chirp_ms == third + cc::COOLDOWN_TIER_3_MS + cc::COMMAND_POLL_MS);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS a_mute_beside_the_kept_tiers\n");
+}
+
+// The votes beside tiers a disable kept. A dismiss's suppress vote and a
+// confirm wait on the channel, the presence requirement and the clock, never
+// on the send cooldown, so both go out while the kept tier-2 cooldown runs,
+// and neither moves it.
+void test_the_votes_beside_the_kept_tiers() {
+  const uint32_t clock_was = host_sim::now_ms;
+  host_sim::now_ms = 1000;
+  boot();
+  enabled_channel();
+  CHECK(send_when_due().cooldown_tier == 1);
+  CHECK(send_when_due().cooldown_tier == 2);          // a 15-minute cooldown
+  const uint32_t second = cc::g_cooldown.last_chirp_ms;
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_DISABLE)).r.ok);
+  CHECK(rest(cmd_of(cc::CHIRP_CMD_ENABLE)).r.ok);
+  host_sim::now_ms = cc::g_session_start_ms + cc::PRESENCE_REQUIRED_MS;
+  cc::update();
+  CHECK(cc::get_cooldown_tier() == 2);
+  CHECK(cc::get_cooldown_remaining_ms() == cc::COOLDOWN_TIER_2_MS - (host_sim::now_ms - second));
+  CHECK(cc::get_cooldown_remaining_ms() > 4u * 60000u);
+
+  const uint8_t a[8] = {0xE1, 1, 1, 1, 1, 1, 1, 1};
+  const uint8_t b[8] = {0xE2, 2, 2, 2, 2, 2, 2, 2};
+  neighbor_chirp(a);
+  neighbor_chirp(b);
+  size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, a));
+  CHECK(r.r.ok && r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_SUPPRESS_VOTE});
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, b));
+  CHECK(r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
+  CHECK(acks_since(before) == 1);
+
+  cc::StatusView v = status_read();
+  CHECK(v.state == cc::CHIRP_COOLDOWN && v.cooldown_tier == 2 && v.last_chirp_sent_ms == second);
+  CHECK(v.cooldown_remaining_ms == cc::COOLDOWN_TIER_2_MS - (host_sim::now_ms - second));
+  CHECK(send_when_due().cooldown_tier == 3);
+  CHECK(cc::g_cooldown.last_chirp_ms == second + cc::COOLDOWN_TIER_2_MS + cc::COMMAND_POLL_MS);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS the_votes_beside_the_kept_tiers\n");
+}
+
+// Spec 2.5.4's count, from the constants: sending as fast as its tiers let
+// it, a device sends 9 chirps in its first 24 hours and then one every 4
+// hours, 6 a day, and no 24 hours after the first day hold more than 6. The
+// old reset, 24 hours after the run's first send, dropped back to tier 1
+// once a day, so every day was a first day.
+void test_the_tiers_let_9_out_on_the_first_day_then_6() {
+  const uint32_t clock_was = host_sim::now_ms;
+  host_sim::now_ms = 1000;
+  boot();
+  enabled_channel();
+  std::vector<uint32_t> at;
+  for (int n = 0; n < 40; ++n) {
+    send_when_due();
+    at.push_back(cc::g_cooldown.last_chirp_ms);
+  }
+  constexpr uint32_t DAY_MS = 24u * HOUR_MS;
+  const uint32_t first = at.front();
+  CHECK(at.back() - first > 6u * DAY_MS);             // six whole days of sends
+  for (uint32_t day = 0; day < 6; ++day) {
+    unsigned sends = 0;
+    for (const uint32_t t : at) {
+      if (t - first >= day * DAY_MS && t - first < (day + 1) * DAY_MS) ++sends;
+    }
+    CHECK(sends == (day == 0 ? 9u : 6u));
+  }
+  unsigned most = 0;
+  for (size_t i = 0; i < at.size(); ++i) {
+    if (at[i] - first < DAY_MS) continue;
+    unsigned sends = 0;
+    for (size_t j = i; j < at.size() && at[j] - at[i] < DAY_MS; ++j) ++sends;
+    most = sends > most ? sends : most;
+  }
+  CHECK(most == 6);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS the_tiers_let_9_out_on_the_first_day_then_6\n");
 }
 
 // A chirp this device sent, as handle_witness() would store it if a
@@ -2327,6 +2518,10 @@ const Test kTests[] = {
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
     {"a_disable_keeps_the_tiers", test_a_disable_keeps_the_tiers},
     {"the_tier_count_stops_at_255", test_the_tier_count_stops_at_255},
+    {"the_tiers_count_across_the_uptime_wrap", test_the_tiers_count_across_the_uptime_wrap},
+    {"a_mute_beside_the_kept_tiers", test_a_mute_beside_the_kept_tiers},
+    {"the_votes_beside_the_kept_tiers", test_the_votes_beside_the_kept_tiers},
+    {"the_tiers_let_9_out_on_the_first_day_then_6", test_the_tiers_let_9_out_on_the_first_day_then_6},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},
     {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
