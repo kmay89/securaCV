@@ -1503,6 +1503,33 @@ static void test_closed_bundles_survive_an_outage_and_a_reboot() {
         "marked as replays");
 }
 
+/* Sweep F77's review: on a crash boot system.integrity's boot row seals its
+ * own bundle at the emit, on the first loop pass, and since F77 that is a
+ * live ring row. A card adopted after that pass (a boot mount past its
+ * budget) found it and restored nothing: the Today sheet lost every earlier
+ * row on the boots a user most wants them. The reload now puts them beneath
+ * it. Fails on the library and loader before that review (0 restored). */
+static void test_a_crash_boot_with_a_late_card_still_reloads_today() {
+  printf("-- a crash boot's sealed tamper row, then a late card: the earlier rows reload beneath it (F77)\n");
+  fresh_device();
+  loop_pass();                      // the card is open
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 5; ++i) { ids.push_back(emit_ping()); loop_pass(); }
+  SD.present = false;               // the crash; the next boot's mount runs late
+  boot();
+  const uint32_t t = commit_closed_bundle("system.integrity", "tamper", "watchdog");
+  loop_pass();                      // the first pass: the boot row is a live ring row
+  csi_event_record_t r;
+  CHECK(csi_event_find(t, &r) && csi_event_log::load_into_ring() == 0,
+        "the boot row is in the ring; with no card yet the reload waits");
+  SD.present = true;                // the late mount is adopted
+  CHECK(csi_event_log::load_into_ring() == 5, "the five earlier rows are restored");
+  std::vector<csi_event_record_t> recent(6);
+  bool order = csi_event_recent(recent.data(), 6) == 6 && recent[0].event_id == t;
+  for (size_t k = 0; order && k < 5; ++k) order = recent[1 + k].event_id == ids[4 - k];
+  CHECK(order, "the boot row stays the newest; the earlier rows sit below it, newest first");
+}
+
 /* ── A planned restart flushes open bundles, then drains (sweep F92) ──── */
 
 /* A state-bearing emit: it opens a bundle (the return is its handle, not an
@@ -1957,6 +1984,7 @@ int main() {
   test_ambient_rows_are_not_held();
   test_closed_bundle_reaches_the_ring_and_the_card();
   test_closed_bundles_survive_an_outage_and_a_reboot();
+  test_a_crash_boot_with_a_late_card_still_reloads_today();
   test_a_planned_restart_delivers_the_open_bundle();
   test_a_planned_restart_in_an_outage_keeps_the_bundle_owed();
   test_a_planned_restart_with_no_card_sends_it_live();

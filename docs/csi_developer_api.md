@@ -437,7 +437,12 @@ differs from the canary base in five ways:
   tampers) were among them until sweep F77 put them in the ring: now its
   card keeps them like any other row, the backfill replays them after an
   outage or a reboot, and the boot reload restores them to the Today sheet
-  (before, a reboot, or more than eight of them waiting, lost them).
+  (before, a reboot, or more than eight of them waiting, lost them). A card
+  adopted after the boot's first rows committed (a slow mount; on a crash
+  boot `system.integrity`'s boot row commits on the first loop pass) is
+  reloaded beneath them, so they stay the newest; past 32 such rows
+  (`CSI_EVENT_INJECT_BENEATH_MAX`) the reload reads nothing (F77's review:
+  before it, one such row stopped the reload).
   "Anything older"
   includes a card that is not open but may hold older rows: from boot until
   its log first opens (a slow card mounts after boot), and after it closes

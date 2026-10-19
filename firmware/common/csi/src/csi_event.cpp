@@ -148,10 +148,17 @@ namespace {
  * against dram0_0_seg. Mirrors handle_events_today() in csi_integration.cpp. */
 csi_event_record_t* g_ring = nullptr;
 size_t              g_ring_head = 0;   /* next write slot */
-/* Set by the first live commit (persist_to_ring). From then on
- * csi_event_inject refuses: an earlier boot's rows injected after a live
- * row would sit ahead of it in the ring's recency order. */
+/* Set by the first live commit (persist_to_ring). From then on an earlier
+ * boot's row that csi_event_inject takes goes beneath the live rows, not at
+ * the head, or it would sit ahead of them in the ring's recency order (sweep
+ * F77's review: a card adopted after the first loop pass, which on a crash
+ * boot has committed system.integrity's boot row). g_ring_live_count is how
+ * many rows this boot has persisted (they are the ring's newest, capped at
+ * the ring's size); g_ring_first_live_id the id of the first of them, so
+ * every live id is at or above it. */
 bool                g_ring_has_live = false;
+size_t              g_ring_live_count = 0;
+uint32_t            g_ring_first_live_id = 0;
 
 constexpr size_t kRingBytes =
     (size_t)CSI_EVENT_RING_CAP * sizeof(csi_event_record_t);
@@ -460,6 +467,8 @@ void persist_to_ring(uint32_t                  event_id,
   rec->module_id[CSI_EVENT_NAME_MAX - 1] = '\0';
   rec->type_name[CSI_EVENT_NAME_MAX - 1] = '\0';
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
+  if (!g_ring_has_live) g_ring_first_live_id = event_id;
+  if (g_ring_live_count < CSI_EVENT_RING_CAP) ++g_ring_live_count;
   g_ring_has_live = true;
 }
 
@@ -814,15 +823,38 @@ bool csi_event_inject(const csi_event_record_t* rec) {
    * dismiss by that id would reach the restored row instead (F46). */
   if (rec->event_id >= csi_event_id_floor::kHandleBase
       && rec->event_id < csi_event_id_floor::kIdSpaceBase) return false;
-  /* Recency order: nothing older may land ahead of a live row. */
-  if (g_ring_has_live) return false;
+  /* Recency order: nothing older may land ahead of a live row. Once this
+   * boot has persisted one, the row goes beneath them all: it must be older
+   * than every one (ids rise in commit order), and there must be few enough
+   * to lift (CSI_EVENT_INJECT_BENEATH_MAX), since each row injected moves
+   * them one slot. */
+  size_t lift = 0;
+  if (g_ring_has_live) {
+    if (rec->event_id >= g_ring_first_live_id) return false;
+    if (g_ring_live_count > CSI_EVENT_INJECT_BENEATH_MAX) return false;
+    lift = g_ring_live_count;
+  }
   if (!ring_ensure()) return false;
   for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
     if (g_ring[i].event_id == rec->event_id) return false;   /* duplicate */
   }
-  g_ring[g_ring_head] = clean;
+  /* The live rows sit in the `lift` slots below the head: each moves up one,
+   * the newest first, into the head slot (the ring's oldest row, which any
+   * write evicts), and the row takes the slot freed beneath them. */
+  size_t at = g_ring_head;
+  for (size_t k = 0; k < lift; ++k) {
+    const size_t from = (g_ring_head + CSI_EVENT_RING_CAP - 1 - k) % CSI_EVENT_RING_CAP;
+    g_ring[(from + 1) % CSI_EVENT_RING_CAP] = g_ring[from];
+    at = from;
+  }
+  g_ring[at] = clean;
   g_ring_head = (g_ring_head + 1) % CSI_EVENT_RING_CAP;
   return true;
+}
+
+bool csi_event_inject_open(void) {
+  RingLock _lock;
+  return !g_ring_has_live || g_ring_live_count <= CSI_EVENT_INJECT_BENEATH_MAX;
 }
 
 void csi_event_test_reset(void) {
@@ -830,6 +862,8 @@ void csi_event_test_reset(void) {
   if (g_ring) memset(g_ring, 0, kRingBytes);   /* leave unallocated rings lazy */
   g_ring_head = 0;
   g_ring_has_live = false;
+  g_ring_live_count = 0;
+  g_ring_first_live_id = 0;
   g_next_event_id = csi_event_id_floor::kIdSpaceBase;
   g_privacy_ceiling = CSI_PRIVACY_P0;
   memset(g_counters, 0, sizeof(g_counters));

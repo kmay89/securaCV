@@ -134,8 +134,10 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * each parsed line to csi_event_inject (the canonical CSI library), which
  * is where the rules live: it refuses a line whose id this boot could
  * still allocate, a type this build does not register, a type above the
- * current privacy ceiling, a duplicate, and everything once a live event
- * has committed this boot; it re-applies the manifest's allow-list and
+ * current privacy ceiling, a duplicate, and, once live events have
+ * committed this boot, a line not older than all of them, or every line
+ * past CSI_EVENT_INJECT_BENEATH_MAX of them (below them otherwise); it
+ * re-applies the manifest's allow-list and
  * sanitizing; it fires no witness write, MQTT publish or SD append.
  *
  * It does nothing, and does not latch, until arm_load() says csi_integration
@@ -145,14 +147,17 @@ constexpr size_t LOAD_TAIL_BYTES = 128u * 1024u;
  * the HTTP server came up, so on a boot where they did not, nothing is ever
  * loaded. Once armed it runs at most once per boot: the first call that
  * finds the card ready latches; a call with no card returns 0 and leaves the
- * next call to try. If a live event is already in the ring by then (a card
- * that mounted late), it latches without reading the card, since inject
- * would refuse every row. Since sweep F77 a closed bundle is such an event
- * too, and on a crash boot system.integrity's boot row (which closes its own
- * bundle at the emit) commits on the first loop pass, so a card adopted
- * after that pass restores nothing on such a boot; a card that mounts in
- * setup() (the usual case) or on the first pass reloads first. A card that is not this device's (a canary base's
- * owner file) is left alone, as poll() leaves it.
+ * next call to try. If live events are already in the ring by then (a card
+ * that mounted late), the earlier boots' rows go beneath them
+ * (csi_event_inject), so the live rows stay the newest; since sweep F77 a
+ * closed bundle is such an event too, and on a crash boot system.integrity's
+ * boot row (which closes its own bundle at the emit) commits on the first
+ * loop pass, after the reload a card ready by then gets. Past
+ * CSI_EVENT_INJECT_BENEATH_MAX live events (a card adopted long after boot)
+ * it latches without reading the card, since inject would refuse every row.
+ * Until F77's review it did so after the first live event, which F77 made
+ * every late card's case on a crash boot. A card that is not this device's
+ * (a canary base's owner file) is left alone, as poll() leaves it.
  *
  * The rows it restores are the log's newest, not today's: see "today is a
  * name, not a bound" above.
