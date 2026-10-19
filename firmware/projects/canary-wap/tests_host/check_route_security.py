@@ -44,16 +44,22 @@ to a fixed point, every function that calls one). What it reads:
     for the rest of the save stays: the dashboard's.
   - Each bearer gate is defined once, in its BEARER_GATES home, and names no
     any-session gate.
+  - The modules' own copies of the token (csi_integration's g_api_token,
+    csi_mqtt's provider, each register_routes module's auth_token_storage()):
+    named only by the functions and macros MODULE_TOKEN_COPIES lets keep it,
+    and in csi_mqtt's handlers only read into a local that is handed to a
+    gate, or tested against nullptr, and nothing else. Every module
+    canary_wap.ino hands the token to has an entry.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
 it does not know (a copy in a global, a member under another name, a whole
-struct handed out, a module's own copy of the token, a gate called through
+struct handed out, a copy a module's keeper passes on, a gate called through
 an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and twenty plants that each fail it.
+run: a clean sketch that passes and twenty-five plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -245,6 +251,38 @@ BROKER_PASSWORD_USES = {
 BROKER_REPOINT = {"handler": "handle_config_post",
                   "writes": ("write_row", "write_ca", "config_save", "ca_save"),
                   "gate": "move_needs_password"}
+
+# The modules' own copies of the bearer token: what csi_integration::init()
+# and each ns::register_routes(server, token) keep of the token canary_wap.ino
+# hands them (the hand-over TOKEN_COMPARED excuses). Per file: the spelling
+# that names the copy; the functions and macros that may name it ("keep":
+# the getter, the setter, the gate that compares it); the declarations
+# outside every function that may, whitespace folded ("decl"); and the route
+# handlers that read it into a local and hand that local only to a gate, as
+# `gate(req, tok)` ("read"). A module route that answered its copy names it
+# somewhere else, and fails; a module the sketch hands the token to with no
+# entry here fails too.
+def _gated_module(gate: str) -> dict:
+    return {"copy": r"\bauth_token_storage\s*\(", "keep": ("auth_token_storage", gate, "register_routes"),
+            "decl": (), "read": ()}
+
+
+MODULE_TOKEN_COPIES = {
+    "csi_integration.cpp": {"copy": r"\bg_api_token\b", "keep": ("CSI_AUTH_OR_RETURN", "init"),
+                            "decl": ("const char* g_api_token = nullptr;",), "read": ()},
+    "csi_mqtt.cpp": {"copy": r"\bs_api_token_provider\b", "keep": ("set_api_token_provider",),
+                     "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
+                     "read": ("handle_config_get", "handle_config_post", "handle_test")},
+    "audible_chirp_api.h": _gated_module("auth_gated"),
+    "beacon_api.h": _gated_module("bcn_auth_gated"),
+    "bluetooth_api.h": _gated_module("bt_auth_gated"),
+    "chirp_api.h": _gated_module("chirp_auth_gated"),
+    "household_api.h": _gated_module("auth_gated"),
+    "rf_presence_api.h": _gated_module("auth_gated"),
+    "wifi_presence_api.h": _gated_module("auth_gated"),
+}
+_TOKEN_HANDED = re.compile(r"\b(\w+)::(?:register_routes|init)\s*\(\s*\w+\s*,"
+                           r"\s*g_device\s*\.\s*api_token_str\s*\)")
 
 
 def strip_comments(text: str) -> str:
@@ -959,8 +997,76 @@ def broker_password_problems(sources: dict, handlers: set, any_session: set,
     return problems
 
 
+def module_token_problems(sources: dict, any_session: set, copies: dict) -> list:
+    """Each module's copy of the token is named only where `copies` says:
+    kept by its getter, setter and gate, declared once, or read into a local
+    that only a gate is handed. Every module the sketch hands the token to
+    has an entry."""
+    problems = []
+    for ns in sorted(set(_TOKEN_HANDED.findall(_blank(sources.get("canary_wap.ino", ""))))):
+        homes = [f for f, t in sources.items() if re.search(r"\bnamespace\s+" + ns + r"\s*\{", t)]
+        if not any(f in copies for f in homes):
+            problems.append(f"canary_wap.ino hands the token to {ns}::, and MODULE_TOKEN_COPIES "
+                            f"names no copy of it in {', '.join(homes) or 'any file the check reads'}")
+    gates = "|".join(map(re.escape, sorted(set(BEARER_GATES) | any_session)))
+    for fname, entry in sorted(copies.items()):
+        text = sources.get(fname)
+        if text is None:
+            problems.append(f"MODULE_TOKEN_COPIES names {fname}, which the check does not read")
+            continue
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        macros = [(m.group(1), m.start(), m.end()) for m in _DEFINE.finditer(blanked)]
+        decls = {_squash(d) for d in entry["decl"]}
+        named, readers = set(), {}
+        for m in re.finditer(entry["copy"], blanked):
+            inner = sorted((e - h, n, b, e) for n, _p, h, b, e in funcs if h <= m.start() < e)
+            macro = [n for n, a, z in macros if a <= m.start() < z]
+            stmt_a = max(blanked.rfind(c, 0, m.start()) for c in ";{}\n") + 1
+            stmt = blanked[stmt_a:blanked.find(";", m.start()) + 1]
+            where = f"{fname}:{_line(blanked, m.start())}"
+            if macro:
+                named.add(macro[0])
+            elif inner:
+                name, b, e = inner[0][1], inner[0][2], inner[0][3]
+                named.add(name)
+                if name in entry["read"]:
+                    local = re.fullmatch(r"\s*const\s+char\s*\*\s*(\w+)\s*=[^;]*;", stmt)
+                    if local is None:
+                        problems.append(f"{where}: {name}() names its module's copy of the token "
+                                        f"outside a `const char* tok = ...;` it hands only to a gate")
+                    else:
+                        readers.setdefault((name, local.group(1)), (b, e, m.start()))
+            elif _squash(stmt) not in decls:
+                problems.append(f"{where}: the module's copy of the token named outside every "
+                                f"function and macro the check reads, and not a declaration "
+                                f"MODULE_TOKEN_COPIES lists")
+        for (name, tok), (b, e, at) in sorted(readers.items()):
+            body = blanked[b:e]
+            decl_end = blanked.find(";", at) - b
+            for u in re.finditer(r"\b" + re.escape(tok) + r"\b", body):
+                if u.start() < decl_end and blanked.rfind("\n", 0, b + u.start()) == blanked.rfind(
+                        "\n", 0, at):
+                    continue  # the declaration itself
+                if re.match(r"\s*[!=]=\s*nullptr\b", body[u.end():]):
+                    continue  # a null test (#1835's bearer: tok != nullptr && ...) hands nothing on
+                head = body[:u.start()]
+                call = re.search(r"\b(?:" + gates + r")\s*\(\s*\w+\s*,\s*$", head)
+                if call is None or not re.match(r"\s*\)", body[u.end():]):
+                    problems.append(f"{fname}:{_line(blanked, b + u.start())}: {name}() uses `{tok}`, "
+                                    f"its copy of the token, other than as a gate's token argument "
+                                    f"or in a null test")
+        for name in sorted(named - set(entry["keep"]) - set(entry["read"])):
+            problems.append(f"{fname}: {name}() names its module's copy of the token and is not in "
+                            f"MODULE_TOKEN_COPIES (a route that names it can answer it)")
+        for name in sorted((set(entry["keep"]) | set(entry["read"])) - named):
+            problems.append(f"MODULE_TOKEN_COPIES lets {fname}'s {name}() name the token's copy, "
+                            f"and it names none")
+    return problems
+
+
 def secret_rule_problems(sources: dict, handlers: set, answers=None, local=None, hands=None,
-                         grants=None, broker_uses=None) -> list:
+                         grants=None, broker_uses=None, token_copies=None) -> list:
     """The whole secret rule over `sources` (file name -> comment-stripped
     text) and the registered handler names; the tables default to the ones
     above (the fixtures pass their own)."""
@@ -974,7 +1080,10 @@ def secret_rule_problems(sources: dict, handlers: set, answers=None, local=None,
                 OTHER_GRANTS if grants is None else grants)
             + broker_password_problems(
                 sources, handlers, any_session,
-                BROKER_PASSWORD_USES if broker_uses is None else broker_uses))
+                BROKER_PASSWORD_USES if broker_uses is None else broker_uses)
+            + module_token_problems(
+                sources, any_session,
+                MODULE_TOKEN_COPIES if token_copies is None else token_copies))
 
 
 def handler_names(routes) -> set:
@@ -1032,8 +1141,28 @@ _FIX_INO = (
     "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
     "}\n"
+    "static void start_server(httpd_handle_t server) {\n"
+    "  csi_integration::init(server, g_device.api_token_str);\n"
+    "}\n"
+)
+_FIX_CSI = (
+    "namespace csi_integration {\n"
+    "const char*   g_api_token  = nullptr;\n"
+    "#define CSI_AUTH_OR_RETURN(req) \\\n"
+    "  do { if (!api_auth_check_optional((req), g_api_token)) return ESP_OK; } while (0)\n"
+    "bool init(httpd_handle_t server, const char* api_token) {\n"
+    "  g_api_token = api_token;\n"
+    "  return true;\n"
+    "}\n"
+    "esp_err_t handle_csi_status(httpd_req_t* req) {\n"
+    "  CSI_AUTH_OR_RETURN(req);\n"
+    "  return httpd_resp_sendstr(req, \"{}\");\n"
+    "}\n"
+    "}\n"
 )
 _FIX_MQTT = (
+    "const char* (*s_api_token_provider)() = nullptr;\n"
+    "void set_api_token_provider(const char* (*fn)()) { s_api_token_provider = fn; }\n"
     "static bool authorized(httpd_req_t* req, const char* t) {\n"
     "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t);\n"
     "}\n"
@@ -1045,11 +1174,13 @@ _FIX_MQTT = (
     "  return before.pass[0] != '\\0' && strcmp(before.host, after.host) != 0;\n"
     "}\n"
     "esp_err_t handle_config_get(httpd_req_t* req) {\n"
+    "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
     "  if (!authorized(req, tok)) return ESP_OK;\n"
     "  Config c;\n"
     "  return httpd_resp_sendstr(req, c.pass[0] ? \"set\" : \"none\");\n"
     "}\n"
     "esp_err_t handle_config_post(httpd_req_t* req) {\n"
+    "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
     "  if (!authorized(req, tok)) return ESP_OK;\n"
     "  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);\n"
     "  Config c;\n"
@@ -1070,6 +1201,13 @@ _FIX_TABLES = {
     "grants": {"handle_kit": {"refusal": "!claimed && !gate_take()", "flag": "claimed",
                               "writes": ("bool claimed = false;", "claimed = claim_take(")}},
     "broker_uses": {"write_row": "fixture", "handle_config_post": "fixture"},
+    "token_copies": {
+        "csi_integration.cpp": {"copy": r"\bg_api_token\b", "keep": ("CSI_AUTH_OR_RETURN", "init"),
+                                "decl": ("const char* g_api_token = nullptr;",), "read": ()},
+        "csi_mqtt.cpp": {"copy": r"\bs_api_token_provider\b", "keep": ("set_api_token_provider",),
+                         "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
+                         "read": ("handle_config_get", "handle_config_post")},
+    },
 }
 _FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
                  "handle_config_post"}
@@ -1148,12 +1286,29 @@ _FIX_PLANTS = (
      "    httpd_resp_set_status(req, \"403 Forbidden\");\n", "no move gate before it"),
     ("the GET answering the broker password", "csi_mqtt.cpp",
      "c.pass[0] ? \"set\" : \"none\"", "c.pass", "handle_config_get"),
+    ("a module route answering its copy of the token", "csi_integration.cpp",
+     "  return httpd_resp_sendstr(req, \"{}\");", "  return httpd_resp_sendstr(req, g_api_token);",
+     "handle_csi_status() names its module's copy"),
+    ("a module handler answering the token it read for its gate", "csi_mqtt.cpp",
+     "  if (!authorized(req, tok)) return ESP_OK;\n  Config c;\n  return",
+     "  if (!authorized(req, tok)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
+     "  Config c;\n  return", "other than as a gate's token argument"),
+    ("a module handler reading the token it tests for null", "csi_mqtt.cpp",
+     "tok != nullptr && api_auth_bearer_valid(req, tok);",
+     "tok[0] != '\\0' && api_auth_bearer_valid(req, tok);", "or in a null test"),
+    ("the module's copy named outside every function", "csi_integration.cpp",
+     "bool init(", "const char* g_leak = g_api_token;\nbool init(", "outside every function"),
+    ("the token handed to a module whose copy is not listed", "canary_wap.ino",
+     "  csi_integration::init(server, g_device.api_token_str);\n",
+     "  csi_integration::init(server, g_device.api_token_str);\n"
+     "  vault_api::register_routes(server, g_device.api_token_str);\n",
+     "hands the token to vault_api::"),
 )
 
 
 def _fixture_sources() -> dict:
     return {"api_auth.h": _FIX_API_AUTH, "canary_wap.ino": _FIX_INO,
-            "csi_integration.cpp": "", "csi_mqtt.cpp": _FIX_MQTT}
+            "csi_integration.cpp": _FIX_CSI, "csi_mqtt.cpp": _FIX_MQTT}
 
 
 def _assert_secret_rules() -> None:
