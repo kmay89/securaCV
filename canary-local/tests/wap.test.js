@@ -25,7 +25,7 @@ const registry = JSON.parse(read(join(ROOT, "devices/registry.json")));
 const boards = JSON.parse(read(join(ROOT, "devices/boards.json")));
 
 const ino = read(join(FW, "canary_wap.ino"));
-const wapServerH = read(join(FW, "wap_server.h"));
+const onboardingFsmH = read(join(FW, "onboarding_fsm.h"));
 const setupWizardH = read(join(FW, "setup_wizard.h"));
 const setupPageH = read(join(FW, "setup_page_html.h"));
 const bootBannerCpp = read(join(FW, "boot_banner.cpp"));
@@ -70,7 +70,7 @@ test("device_type matches the .ino and the board mapping matches boards.json", (
 
 // ── 3. the SoftAP / captive facts trace to the firmware ────────────────────
 test("AP + setup constants are the firmware's own", () => {
-  assert.ok(wapServerH.includes('AP_SSID_PREFIX    = "' + data.ap.ssid_prefix + '"'));
+  assert.ok(onboardingFsmH.includes('SSID_PREFIX = "' + data.ap.ssid_prefix + '";'), "the SSID prefix is onboarding_fsm.h's");
   assert.ok(data.ap.ssid_example.startsWith(data.ap.ssid_prefix));
   assert.strictEqual(data.ap.ip, "192.168.4.1");
   // The name is the fleet's shape (onboarding_fsm.h ap_ssid): SecuraCV-wap-<4>.
@@ -80,6 +80,25 @@ test("AP + setup constants are the firmware's own", () => {
   assert.ok(ino.includes('"cv-%s", encoded'), "AP password format drifted");
   assert.ok(setupWizardH.includes('prefs.begin("' + data.ap.nvs_namespace + '"'));
   assert.ok(setupWizardH.includes('getBool("' + data.ap.nvs_key + '"'));
+});
+
+// The channel, the client cap and each server's port are the ones the sketch
+// uses (sweep F277: they were read from wap_server.h, whose copies of them no
+// code used, so the sketch could change one and the page keep the old number).
+test("AP channel, client cap and server ports are the sketch's own (F277)", () => {
+  const num = (re, what) => {
+    const m = ino.match(re);
+    assert.ok(m, what + " not found in canary_wap.ino");
+    return Number(m[1]);
+  };
+  assert.strictEqual(data.ap.channel, num(/static const int\s+AP_CHANNEL\s*=\s*(\d+);/, "AP_CHANNEL"));
+  assert.strictEqual(data.ap.max_clients, num(/static const int\s+AP_MAX_CLIENTS\s*=\s*(\d+);/, "AP_MAX_CLIENTS"));
+  for (const line of ino.split("\n").filter((l) => l.includes("WiFi.softAP(") && !/^\s*(\/\/|\*)/.test(l))) {
+    assert.match(line, /,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);/, "a SoftAP raised without the two constants");
+  }
+  assert.strictEqual(data.ap.https_port, num(/ssl_config\.httpd\.server_port\s*=\s*(\d+);/, "the HTTPS server's port"));
+  assert.strictEqual(data.ap.http_port, num(/redirect_config\.server_port\s*=\s*(\d+);/, "the port-80 redirect server's port"));
+  assert.strictEqual(data.ap.http_port, num(/[^\w.]config\.server_port\s*=\s*(\d+);/, "the HTTP-only server's port"));
 });
 
 test("captive.html is the firmware's CAPTIVE_PORTAL_HTML, verbatim", () => {
