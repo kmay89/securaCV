@@ -152,17 +152,26 @@
     },
     {
       "name": "a birth day of the wrong type is dropped, never fatal: the row and the rest of the snapshot survive",
-      "_note": "A string, a fraction, a null, an array or an object is not a day, and anything but true/false is not the flag. Each is dropped to absent rather than failing the parse, because a failed parse loses the WHOLE snapshot and one strange row would blank the Wall for every device that answered.",
-      "input": "{\"devices\":[{\"name\":\"A\",\"online\":true,\"born_day\":\"20673\",\"born_exact\":\"true\"},{\"name\":\"B\",\"online\":true,\"born_day\":20673.5,\"born_exact\":1},{\"name\":\"C\",\"online\":true,\"born_day\":null,\"born_exact\":null},{\"name\":\"D\",\"online\":true,\"born_day\":[20673],\"born_exact\":{}}]}",
+      "_note": "A string, a fraction, a null, an array or an object is not a day, and anything but true/false is not the flag. Each is dropped to absent rather than failing the parse, because a failed parse loses the WHOLE snapshot and one strange row would blank the Wall for every device that answered. Rows K and L put a good day beside a flag that only looks true (the string \"true\", the number 1): the day crosses, the flag does not, and the line reads First dated, never Born, so a reader that tests the flag for truthiness instead of for true goes red here.",
+      "input": "{\"devices\":[{\"name\":\"A\",\"online\":true,\"born_day\":\"20673\",\"born_exact\":\"true\"},{\"name\":\"B\",\"online\":true,\"born_day\":20673.5,\"born_exact\":1},{\"name\":\"C\",\"online\":true,\"born_day\":null,\"born_exact\":null},{\"name\":\"D\",\"online\":true,\"born_day\":[20673],\"born_exact\":{}},{\"name\":\"K\",\"online\":true,\"born_day\":20673,\"born_exact\":\"true\"},{\"name\":\"L\",\"online\":true,\"born_day\":20673,\"born_exact\":1}]}",
       "normalized": {
         "devices": [
           { "name": "A", "online": true },
           { "name": "B", "online": true },
           { "name": "C", "online": true },
-          { "name": "D", "online": true }
+          { "name": "D", "online": true },
+          { "name": "K", "online": true, "born_day": 20673 },
+          { "name": "L", "online": true, "born_day": 20673 }
         ]
       },
-      "born": [null, null, null, null]
+      "born": [
+        null,
+        null,
+        null,
+        null,
+        { "label": "First dated", "utc_date": "2026-08-08" },
+        { "label": "First dated", "utc_date": "2026-08-08" }
+      ]
     },
     {
       "name": "a day no Canary can stamp is not a date: 0 is the firmware's own 'never dated', and the window runs from its clock floor (2025-01-01) to the last day a 32-bit clock names (2106-02-07)",
