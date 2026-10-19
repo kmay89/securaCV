@@ -61,8 +61,11 @@
  *     port, user or TLS mode, or any CA, with no "password" in the body)
  *     takes only the bearer token (bearer_authorized() below, sweep F289).
  *     A session alone gets 403 password_needed and is asked to type the
- *     password again, so it can point the bridge at its own listener only
- *     with a password it already knows.
+ *     password again, so through this route it can point the bridge at its
+ *     own listener only with a password it already knows. Not covered here:
+ *     canary_wap.ino's QR provisioning re-point (qr_scan_task_fn), where a
+ *     scanned SCV1 code with a host moves the broker and keeps the stored
+ *     user and password (open, for the ledger).
  */
 
 #include "csi_mqtt.h"
@@ -1967,14 +1970,17 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
  * nothing else. Never the cv_session cookie: the landing page at / mints
  * that session for any caller on the home network (deliberate LAN posture
  * for the dashboard's own routes), and authorized() above takes it. An
- * empty token is no token: api_auth_bearer_valid() would match an empty
- * "Bearer " header against it. Silent, as authorized() is. */
+ * empty token is no token (api_auth_bearer_valid() refuses one too; this
+ * gate says so itself rather than lean on it). Silent, as authorized() is. */
 static bool bearer_authorized(httpd_req_t* req, const char* api_token) {
   return api_token != nullptr && api_token[0] != '\0' && api_auth_bearer_valid(req, api_token);
 }
 
-/* A copy of the stored password, gone before the frame is given back: a
- * plain memset of a dead buffer is a store the compiler may drop. */
+/* Zero a buffer with stores the compiler keeps (a plain memset of a dead
+ * buffer is a store it may drop). handle_config_post's password_needed
+ * refusal runs it over its copy of the stored password before the frame is
+ * given back; the handler's other returns (the 400s, the 500, the 200) do
+ * not wipe that copy. */
 static void wipe(void* p, size_t n) {
   volatile uint8_t* b = static_cast<volatile uint8_t*>(p);
   while (n--) *b++ = 0;
