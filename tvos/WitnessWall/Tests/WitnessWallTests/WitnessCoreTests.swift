@@ -116,6 +116,24 @@ final class WitnessCoreTests: XCTestCase {
         XCTAssertNil(fleet.devices[0].seeing)
     }
 
+    func testTheBirthDaySurvivesTheRustNormalizer() throws {
+        // The core used to drop born_day and born_exact, so the Wall had no
+        // birth day to show. The firmware's own bytes (FleetSelfReportTests
+        // .bornBody on the phone) cross the C ABI intact; a day no Canary can
+        // stamp, and a flag of the wrong type, do not — and cost nothing else.
+        let fleet = try WitnessCore.parseFleet(json: #"""
+        {"devices":[{"name":"Front Door","online":true,"chain":"ok","product":"canary-wap","chain_height":42,"born_day":20673,"born_exact":true},{"name":"Shed","online":true,"born_day":0,"born_exact":"yes"},{"name":"Porch"}]}
+        """#)
+        XCTAssertEqual(fleet.devices.count, 3)
+        XCTAssertEqual(fleet.devices[0].bornDay, 20673)
+        XCTAssertEqual(fleet.devices[0].bornExact, true)
+        XCTAssertEqual(fleet.devices[0].bornLabel, "Born")
+        XCTAssertNil(fleet.devices[1].bornDay, "0 is the firmware's 'never dated', not 1970")
+        XCTAssertNil(fleet.devices[1].bornExact, "\"yes\" is not a boolean")
+        XCTAssertTrue(fleet.devices[1].online, "a strange birth day costs the row nothing else")
+        XCTAssertNil(fleet.devices[2].bornLabel)
+    }
+
     func testOnlineDefaultsToFalseWhenOmitted() throws {
         // Same rule as the Swift decoder and the phone: a silent field is
         // never a presence claim (DeviceParityTests.testASilentFieldCostsTheDeviceNothing).

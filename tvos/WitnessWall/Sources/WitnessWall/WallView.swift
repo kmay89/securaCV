@@ -538,6 +538,27 @@ extension FleetSnapshot.Device {
                                        seeing: seeing,
                                        seeingScore: seeingScore)
     }
+
+    /// The device's own birth day, labeled as precisely as the device earned
+    /// it: "Born <day>" only when it said the day is exact, "First dated
+    /// <day>" otherwise, nil (draw nothing) when it cannot say. The day is
+    /// the UTC calendar day the firmware stamped (it logs "day N (UTC)"),
+    /// formatted in UTC so a television west of Greenwich does not show the
+    /// day before. `locale` is a parameter so a test can pin the words.
+    func wallBornLine(locale: Locale = .autoupdatingCurrent) -> String? {
+        guard let label = bornLabel, let bornOn else { return nil }
+        let day = bornOn.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted,
+                                                    locale: locale, timeZone: .gmt))
+        return "\(label) \(day)"
+    }
+
+    /// Said once, under a "First dated" line, so nobody has to wonder why one
+    /// Canary says "Born" and another does not — the phone's
+    /// BirthCertificateCard says the same beside the same label.
+    var wallBornNote: String? {
+        guard bornLabel == "First dated" else { return nil }
+        return "It met a clock later than it was made, so its real birthday is on or before this day."
+    }
 }
 
 struct DeviceCard: View {
