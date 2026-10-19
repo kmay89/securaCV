@@ -18567,7 +18567,7 @@ major, by theme") — work its themes, then tick here.
   it out. Found by C10c-2 (#1832).
 - [ ] **C31 [code] The released doorbell and Vision have knobs without help
   again.** C10 gave every knob in the released four help except the option
-  selectors. On #1832's base (8bb5647d), `canary_vision_doorbell.scad` has
+  selectors. At #1832's head, `canary_vision_doorbell.scad` has
   `svc_pip_depth` (:390), `ant_rib_d` (:472) and `spk_post_dy` (:669) without
   help (added by the doorbell v0.8/v0.9 work), and
   `canary_vision_enclosure.scad` has `span_max` (:436). Both files are
