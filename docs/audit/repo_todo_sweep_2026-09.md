@@ -2424,7 +2424,7 @@ so — see D2 below.)
   reproduces the reboot-then-spin scenario and pins zero reads while the
   log stands still (432 checks). Staged WAP copy re-synced. Not
   bench-verified on hardware (U1).
-- [ ] **F77 [code+decision] Closed bundles never reach the event ring.**
+- [x] **F77 [code+decision] Closed bundles never reach the event ring.**
   `csi_bundler.cpp` commits a closed bundle through
   `csi_event_commit_bundle_()`, which runs the commit hooks but not
   `persist_to_ring()` (F46 did not change this). So a presence or tamper
@@ -2472,6 +2472,57 @@ so — see D2 below.)
   (`test_csi_daily_summary.cpp` and `test_wap_daily_summary.cpp` pin `a0 q0
   x0` after a day of presence changes, which this item would update), and its
   note reaches no published surface (F219).
+  *Done (#1832), as the default decision:* closed bundles enter the ring on
+  both trees. `csi_event_commit_bundle_()` commits through `commit_row()` with
+  a ring row like every other commit (the `to_ring` flag is gone;
+  `persist_to_ring()` takes the row's span), ending at the close and starting
+  `duration_sec` before it. That is the close less the span, not the bundle's
+  opening: a bundle that closes on its 2-minute gap starts two minutes after
+  it opened (a known limit; no surface serializes it). The canary-wap's egress
+  logs the ring copy as before but stamps its first/last seen with the commit,
+  so the events body's `timestamp` stays the close on both trees, as
+  `docs/csi_developer_api.md` says. So the 2.4.15 note, the WAP dashboard's
+  comment and the developer API's example are true now: a closed presence or
+  tamper row stays on `/api/events/today` (dismissable), is a line of the
+  canary-wap's card, is restored by the boot reload, and is replayed after an
+  outage or a reboot (F78's residual: with a card in, none waits in the 8-row
+  RAM hold any more; with no card, or one not open yet, a closed bundle still
+  waits there like any row). The Today sheet now lists a held state as one row
+  per 10-minute window, and ambient rows still share the endpoint's 64-row
+  window. The daily summary counts bundles: both pins move from `a0 q0 x0` to
+  `a0 q8 x0`; what it should report stays F219's decision. The inject latch is
+  decided with it: a card adopted after the boot's first live rows (on a crash
+  boot system.integrity's boot row seals at the emit, on the first loop pass)
+  is reloaded beneath them, so they stay the newest; `csi_event_inject` lifts
+  up to `CSI_EVENT_INJECT_BENEATH_MAX` (32) live rows, refuses a row not older
+  than all of them, and past the bound the reload reads nothing
+  (`csi_event_inject_open()`). Before, one live row stopped the reload. The
+  lift copies up to 32 records under the ring lock per restored row, not
+  measured on PSRAM. A dismiss now reaches its module once per row: closed
+  presence and breathing rows are ring rows, and core.presence and
+  core.breathing raise their thresholds a point per dismiss, in RAM until the
+  next init, so a second press or a retry no longer nudges them again. One
+  edge got worse and is pinned: a card row walked while a RAM row's publish
+  waits gets its ceiling (a stride past it) before it goes, so a link drop and
+  a reboot then skip it and the card rows after it (F47's trade); a closed
+  bundle there used to wait in RAM and be lost alone. Tests:
+  `test_wap_event_egress.cpp` (a closed bundle in the ring with its span,
+  live, on the card, dismissable, restored after a reboot, its body timed at
+  the close; twelve closed bundles through an outage and a reboot, none
+  dropped) fails 11 checks on the library and egress before F77, and the
+  close-timestamp check fails alone without the stamp; its crash-boot scenario
+  (five card rows, a late mount, the sealed boot row, then the reload) and
+  `test_csi_event_log_load.cpp`'s late-card, bound and refusal scenarios fail
+  2 and 5 checks on the library and loader before the package's review;
+  `test_csi_modules_integration.cpp`'s ring scenario (the canary's real bridge
+  and core.presence) fails on the old library, and its dismiss scenario (three
+  dismisses, one nudge, read off core.presence's own classification) fails on
+  the library before the review; the WAP harness's RAM-hold scenarios that
+  used a closed bundle as "a row the card does not keep" now use a failed
+  append (`SD.fail_next_writes`); invariant 16 of
+  `csi_event_invariants_test.cpp` holds the beneath rule. Bench row: "A closed
+  presence bundle is on the card and in Today after a reboot". Host-tested;
+  the ESP32 compiles are CI's; not bench-tested (U1).
 - [x] **F78 [code] canary-wap's live publish overtakes its own backlog.** On
   reconnect, `MQTT_EVENT_CONNECTED` sets `s_connected` on the esp_mqtt task
   and only flags the backfill for the loop task. A row committed before
@@ -2551,6 +2602,10 @@ so — see D2 below.)
   canary-wap's egress now drops a held row at or below the watermark
   (`State::front_delivered()`), as the canary's does; two
   `test_wap_event_egress` scenarios fail on the code before.
+  *Since F77 (#1832):* the residual for closed bundles (never on the card, so
+  a reboot or more than eight waiting lost them) is closed with a card in:
+  closed bundles are card rows. With no card, or one not open yet, a closed
+  bundle waits in the RAM hold like any row.
 - [ ] **F79 [code+decision] Below the backfill's bound, the SD event log is
   trusted input.** Both backfills (the canary's
   `csi_event_backfill::Planner`, and the canary-wap's, which runs the same
@@ -3149,7 +3204,7 @@ so — see D2 below.)
   canary-wap-only key would break the one-object-on-both-devices shape F149
   and F179 give the diagnostics (if a bench run needs it, it belongs in both
   devices' diagnostics). Comment only; no behavior changed, so no test.
-- [ ] **F105 [code+decision] Ambient rows reach the SD event log and the
+- [x] **F105 [code+decision] Ambient rows reach the SD event log and the
   `events` topic.** Ambient rows reach the SD event log and the `events`
   topic, though `csi_event.h` says `CSI_CATEGORY_AMBIENT` is "never persisted,
   drives live UI only". Both trees' egresses log and publish every committed
@@ -3164,6 +3219,32 @@ so — see D2 below.)
   replayed on both. Decide whether ambient rows go to the
   card and the broker; if not, filter them in both egresses, which also keeps
   the canary-wap's 16-row commit queue far from full. Found by F78 (#1762).
+  *Done (#1832), as the default decision:* ambient rows reach neither the card
+  nor the `events` topic, on either tree. Both events egresses' commit hooks
+  drop every `CSI_CATEGORY_AMBIENT` row after the privacy gate and before the
+  egress queue (the canary's `csi_event_on_committed()`; the canary-wap's
+  `csi_event_egress::on_committed()`, which `csi_integration.cpp`'s hook calls
+  after its gate), counted in `ambient_dropped`, an atomic the committing task
+  bumps. The egress before F105 logged them, so a backlog an older firmware
+  left on the card can hold ambient lines: both ports' `send_backfill()` pass
+  each one over, counted in `planner.unsendable` beside the lines the walk
+  already never sends. The ring, the canary-wap's `/api/csi/stream` snapshot
+  and its Today sheet keep them; the RAM hold's ambient guard is gone, since
+  nothing ambient reaches it. `ambient_dropped` keeps its name (Home
+  Assistant's `const.py` lists it) and now counts every ambient row the hook
+  drops, which is not a loss (restated in both egress headers,
+  `docs/csi_developer_api.md`, `docs/homeassistant_setup.md`,
+  `docs/csi_modules.md`, the F109 bench row and the Lab's `wap.json` events
+  cadence). Home Assistant's Last event sensor no longer shows
+  `channel_active` rows. Tests: a new scenario in
+  `test_canary_event_egress.cpp` and in `test_wap_event_egress.cpp` (link up,
+  then an outage with a card in, the backfill, and on the canary-wap the boot
+  reload), which fails 7 canary and 11 canary-wap checks against the egress at
+  8bb5647d; and one per tree with the card rewritten as the old egress wrote
+  it (a, an ambient row, c) and a reboot, which fails 2 checks on each against
+  the egress before the package's review. Bench row: "No ambient row reaches
+  the card or the broker". Host-tested; the ESP32 compiles are CI's; not
+  bench-tested (U1).
 - [x] **F106 [code] The canary-wap's `csi_mqtt::init()` destroys the esp_mqtt
   client under a concurrent publish.** The canary-wap's `csi_mqtt::init()`
   destroys the esp_mqtt client under a concurrent publish. A config POST or
@@ -3524,7 +3605,10 @@ so — see D2 below.)
   *Since F93 (#1762):* a cooldown the canary-wap's Tuning Lab stored (30 to
   3600 s) applies from boot too, and one under two minutes lets a repeat merge
   into the open bundle; at the 600 s default nothing merges, as above.
-- [ ] **F92 [code+decision] An open bundle dies with a reboot.** Bundles live
+  *Since F92 (#1832):* a planned restart commits the open anomaly row first
+  (up to a second); a crash or power cut inside the two minutes still loses
+  it, and the restarts F355 lists still do.
+- [x] **F92 [code+decision] An open bundle dies with a reboot.** Bundles live
   in RAM until they close, up to 10 minutes after they open, and no planned
   restart (`deliberate_restart_now()` for `POST /api/reboot`, an OTA, a
   settings restart) closes them first, in either tree. On the canary the
@@ -3537,6 +3621,72 @@ so — see D2 below.)
   *Since F103 and F104 (#1762):* a restart also loses the rows waiting in
   either egress's RAM hold (up to eight), on the canary as on the canary-wap,
   so a flush before a planned restart would need that hold drained too.
+  *Done (#1832), as the default decision:* every planned restart the loop task
+  takes commits the open bundles, drains the egress and persists the chain
+  head first, bounded. `csi_event_egress_flush_for_restart(budget)` (canary)
+  and `csi_event_egress::flush_for_restart(budget)` (canary-wap) call
+  `csi_event_flush_bundles()`, then pump the egress until its queue is empty
+  and its RAM hold has gone (to the card, or the broker or MQTT layer), or the
+  budget is spent, 10 ms between passes; the canary's pumps its depth-8 queue
+  empty first, since a full slot table closing onto queued rows overflowed it.
+  Each tree's `flush_events_before_restart()` resets the watchdog and passes 1
+  s (`kCsiEventEgressRestartBudgetMs`, `kRestartBudgetMs`), inside the 8 s
+  watchdog, and every caller persists the chain right after (a flushed bundle
+  is a witness record; NVS holds the head only every few records). Canary: in
+  `deliberate_restart_now()` (POST /api/reboot, serial `x`), before the chain
+  persist and the MQTT disconnect, and at setup's restart once Wi-Fi joins.
+  canary-wap: `handle_reboot` only raises `g_reboot_requested` on the httpd
+  task, after its reply, and `loop()` runs `planned_restart_now()` (flush,
+  chain persist, mesh pre-reboot hook, restart) after `csi_mqtt::loop()`, as
+  the canary does; the provisioning grace reboot flushes and persists too. So
+  the canary-wap's chain persist and mesh pre-reboot hook now run on the loop
+  task, and POST /api/reboot's restart waits for the next loop pass plus up to
+  a second. Unchanged, and documented: the factory resets (a full reset erases
+  the chain and the broker settings, a credentials reset keeps the chain and
+  the card), the power policy's low-battery deep sleep, safe mode (the
+  canary-wap's auto-recovery and retry included), the setup libraries' idle
+  restarts, OTA, BLE OTA and the USB drive (F355); a crash or power cut still
+  loses every open bundle, a row that cannot go in the second (no link and no
+  card, a card not mounted yet) is lost as before, and rows on the card stay
+  owed but for up to a stride a walk in progress had covered (F47). Static
+  rules: `check_event_egress_order.py` rule 10 (21 mutations) and
+  `check_wap_event_egress.py` rule 13 (30 mutations) hold each helper's exact
+  body, its one call site, its place before the persists, the chain persist
+  after every flush, the reboot's loop-task deferral (the flag after the
+  reply, the gate a statement of loop()'s own body with no return ahead of
+  it), and a flush before every `ESP.restart()` and deep sleep in `main.cpp` /
+  `canary_wap.ino` but the factory reset's, safe mode's and the power policy's
+  sleep. Tests: four scenarios in `test_canary_event_egress.cpp` and five in
+  `test_wap_event_egress.cpp` (the open bundle and a queued row reach the
+  broker and the card before the restart; in an outage the bundle is on the
+  card and replayed after it; with no card it goes live from RAM; a row held
+  for a card costs the budget and no more; three queued rows and every slot
+  open, eleven rows, none refused); the first three and four fail 7 and 8
+  checks with the helper's body a bare `return true;`, and with only its flush
+  or only its drain, and the eleven-row scenario fails on the canary helper
+  before the package's review (three refused) and on both trees with the
+  drained test reduced to the hold. Bench row: "A planned restart delivers the
+  open bundle". Host-tested; `main.cpp` and `canary_wap.ino` compile in CI
+  only; not bench-tested (U1).
+- [ ] **F355 [decision] The restarts and sleeps that still flush no open
+  bundle.** The canary's `setup_check_timeout()` (`securacv_setup.cpp`) and
+  the canary-wap's `setup_wizard::check_timeout()` restart from inside the
+  setup code on the loop task without the F92 flush, as do the canary's
+  network library's fallback `handle_reboot` (unused while main.cpp registers
+  the restart owner), the canary-wap's safe-mode auto-recovery
+  (`hardware_state.h` `safe_mode_update()`, on the loop task, with CSI
+  running, since the WAP starts CSI in safe mode) and its retry (the httpd
+  task, which may not pump the egress), the power policy's low-battery deep
+  sleep on both trees (its wake is a reset; on the canary-wap CSI is off from
+  battery saver on, so bundles have mostly closed; `power_monitor.h`'s
+  critical-battery sleep too), and a factory reset of the credentials scope,
+  which keeps the chain and the card. A first-boot device rarely has open
+  bundles or a broker; decide whether each takes
+  `flush_events_before_restart()` and the chain persist (through a hook for
+  the libraries and `hardware_state.h`), or stays as it is and is said so in
+  the setup and power docs. `check_event_egress_order.py` rule 10 and
+  `check_wap_event_egress.py` rule 13 hold the two sleeps by their gates, so a
+  new restart or sleep in either file must choose. Found doing F92 (#1832).
 - [x] **F93 [code] Neither tree calls a CSI module's `init()` at boot.**
   `csi_module_register()` only records the module. The canary's
   `securacv_csi_modules_init()` never calls `init`, and the canary-wap calls
@@ -3727,6 +3877,12 @@ so — see D2 below.)
   minutes per state, which needs F77's bundles, or a `duration_sec` sum) and
   where a reader sees it (a wire field, Home Assistant attributes, the Today
   sheet). Found by F121 (#1762).
+  *Since F77 (#1832):* closed bundles reach the ring, so the counts are of
+  bundles (a state held for three hours is about 18 rows);
+  `test_csi_daily_summary.cpp` and `test_wap_daily_summary.cpp` pin `a0 q8 x0`
+  for the day that read `a0 q0 x0`, and no published surface carries the note
+  yet. What the summary reports and where a reader sees it is still the
+  maintainer's call.
 - [x] **F122 [code+decision] wifi.channel_activity's three tunables have no
   NVS row.** `wifi_channel_activity.cpp` documents `spike_ratio`,
   `min_activity` and `cooldown_sec` as NVS-backed via the Tuning Lab, but
@@ -4840,7 +4996,7 @@ so — see D2 below.)
   ahead with Beacon events, which still skip a PEER_UNKNOWN member. Spec §7.1
   states it. Host-tested only; the Arduino compile is CI's; not bench-verified
   (U1).
-- [ ] **F94 [code+decision] A pairing CONFIRM can be reflected, on both
+- [x] **F94 [code+decision] A pairing CONFIRM can be reflected, on both
   trees.** The CONFIRM hash is SHA256(DOMAIN_PAIR_CONFIRM, session_key ||
   code) in both directions (canary-wap's `confirm_pairing` and
   `handle_pair_confirm`; the PIO tree's `compute_confirmation_hash`). So a
@@ -4863,6 +5019,135 @@ so — see D2 below.)
   `the_joiner_takes_a_complete_only_after_its_owner_confirms`, which since the
   F97 review also delivers the CONFIRM sent in front of it). Spec §5.2 and
   THREAT_MODEL say so. Still open.
+  *Done (#1832):* the CONFIRM hash names its sender's role on both trees:
+  SHA-256(domain || session_key || code_u32_le) under
+  `securacv:pair:confirm:init:v1` for the initiator's CONFIRM and
+  `securacv:pair:confirm:join:v1` for the joiner's (PIO
+  `compute_confirmation_hash(Role, ...)`, which now returns false with its
+  output zeroed for no role or no key; canary-wap
+  `mesh_pair_crypto::confirm_hash`), and each side sends its own role's hash
+  and checks its partner's. A device's own CONFIRM sent back to it from the
+  partner's address is now a wrong hash and ends that device's pairing, as any
+  wrong hash from there already did (PIO `bad_confirm`; canary-wap now logs
+  "the partner's CONFIRM did not match"). Reflected to the initiator, nothing
+  is added, sealed or sent. Reflected to the joiner, only the joiner's pairing
+  ends: its initiator, holding the genuine CONFIRM, still adds it, seals the
+  secret and reports success, and the joiner drops the COMPLETE (canary-wap
+  logs after 2 minutes that it was never answered; PIO sends its copies for
+  the 5-minute window and does not log the end), the one-sided ending any
+  wrong hash sent to the joiner already caused (F357). Two initiators relayed
+  into one session key (forged joiner-role DISCOVERs, each OFFER relabeled an
+  ACCEPT) now refuse each other's CONFIRM; before F94 each added the other.
+  The 6-digit code is unchanged. A wire change that fails closed: between a
+  device on firmware before F94 and an updated one, whichever reads the
+  other's CONFIRM first refuses it and the other waits out the pairing timeout
+  (PIO `timeout`; canary-wap ends after 2 minutes with no log line, F359), so
+  neither completes. So the two pre-F97 mixes (F97's leading CONFIRM, F117's
+  re-send) no longer pair at all; their tests model the older ordering rules
+  on today's hash and stay green, and the F117 re-send is also loss handling
+  between updated devices
+  (`test_the_joiners_resend_recovers_its_lost_confirm`; the leading CONFIRM is
+  F360). An initiator on firmware before F94 keeps the reflection until it is
+  updated. Pinned: four cross-role vectors, the same in both trees' tests
+  (`test_mesh_pairing`, `test_mesh_pair_crypto`; computed with openssl and
+  hashlib); on PIO `test_each_side_sends_its_own_roles_confirm`,
+  `test_a_reflected_confirm_ends_the_pairing`,
+  `test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing`,
+  `test_two_relayed_initiators_refuse_each_others_confirm`,
+  `test_a_role_free_confirm_fails_closed`,
+  `test_a_side_with_no_role_refuses_every_confirm` and, through the session,
+  `test_a_reflected_confirm_fails_the_pairing_through_the_session` and
+  `test_a_reflected_confirm_fails_the_joiners_pairing_through_the_session`
+  (both read `bad_confirm` in the GET /api/mesh body); on canary-wap
+  `each_side_sends_its_own_roles_confirm`,
+  `a_reflected_confirm_does_not_count`,
+  `a_joiners_reflected_confirm_ends_only_the_joiners_pairing`,
+  `two_relayed_initiators_refuse_each_others_confirm` and
+  `a_role_free_confirm_fails_closed` in `test_mesh_liveness_wap`, plus source
+  pins on both call sites. Each fails on 8bb5647d's code (on canary-wap the
+  reflection test reproduces the item: A added J). Every mutant run in the
+  build and review rounds now fails at least one test: the check against the
+  receiver's own role, either side also accepting its own role's hash, the
+  joiner dropping its own role's hash, the partner's role sent, a consistent
+  swap of the two, the re-send built for the partner's role, swapped or
+  role-free domains, a big-endian code, the sender always the joiner, the log
+  line removed, and the two on the unreachable ROLE_NONE path that survived
+  the first round. Two old pins of "the hash is the same both ways" now pin
+  the opposite. Spec §5.2, §5.3 (the hash, its domains, the vectors) and §14
+  are updated (the spec stays Draft v0.4, its Last Updated 2026-10-19; whether
+  a wire break is v0.5 is the maintainer's call), and so is THREAT_MODEL; this
+  answers the reflection notes in F75, F97, F134 and F117's spec text.
+  Integration: THREAT_MODEL's F134 paragraph (the PlatformIO pairing endings)
+  was merged with #1833's F162/F320 text, so it now says the reflection's harm
+  held until F94, beside the post-pairing heartbeat that ends the initiator's
+  copies (F162) and the case where that heartbeat cannot reach it (F320). The
+  decision half: pairing v1 (F69, F115) would supersede this exchange; F94
+  ships ahead of it unless the maintainer folds it in (F356). Crypto review:
+  maintainer to confirm, as F33. Host-tested only; the `[env:full]` and
+  Arduino compiles are CI's; not bench-tested (U1). Found here: F356-F360.
+- [ ] **F356 [decision] Ship F94's role-bound CONFIRM ahead of pairing v1, or
+  fold it into v1.** F94 (#1832) is a wire break of its own: pairing firmware
+  before it cannot pair with firmware after it, on either tree. Pairing v1 is
+  a second break on both trees: F69's long-term keys bound into the code and
+  CONFIRM, or a transcript signed with them, and F115's commitment to one
+  ephemeral. Shipping F94 now closes the reflection today and costs two
+  breaks. Folding it into v1 costs one break and leaves the reflection open
+  until v1 ships. Either way v1 can keep F94's two domains
+  (`securacv:pair:confirm:init:v1`, `securacv:pair:confirm:join:v1`) and their
+  pinned vectors, or take new ones. Crypto review: maintainer to confirm.
+  Found by F94 (#1832).
+- [ ] **F357 [decision] Fail or drop a joiner's own CONFIRM reflected to it.**
+  Since F94 (#1832) a joiner that reads a CONFIRM equal to its own role's
+  hash, from the initiator's address, ends its pairing (`bad_confirm`), while
+  its initiator, holding the genuine CONFIRM, completes and holds a member
+  that never joined; a wrong hash sent to the joiner in that slot already
+  caused the same one-sided ending. The joiner could instead drop such a
+  CONFIRM, so the honest pairing completes through a reflection and any other
+  mismatch still ends it. F94 keeps the failure: a reflected CONFIRM shows a
+  radio forging the partner's address, and dropping it gains nothing against a
+  radio that can send any other wrong hash in the same slot.
+  `test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing` (both
+  trees' tests) pins the current choice and fails under the other. Found by
+  F94's protocol review (#1832).
+- [ ] **F358 [code] The PlatformIO web UI gives the wrong advice when a
+  pairing fails between firmware from before and after F94.** Since F94
+  (#1832) such a pairing ends with `bad_confirm` on the side that reads the
+  other's CONFIRM first and with `timeout` on the other.
+  `securacv_webui.cpp`'s `pairingFailText` says, for `bad_confirm`, to check
+  that both screens show the same code and try again, and, for `timeout`, that
+  it timed out before both Canaries confirmed the code. The codes will match,
+  both owners may have confirmed, and the retry will fail the same way. Add to
+  both texts that when the codes matched, both devices need the same firmware;
+  `firmware/tests_host/test_canary_mesh_pairing_poll.test.js` pins /did not
+  match/ and /timed out/. canary-wap has no failure reason on its pairing
+  surface; since F94 its health log names the likely cause on the side that
+  reads the CONFIRM, and nothing on the side that times out (F359). Found by
+  F94 (#1832).
+- [ ] **F359 [code] canary-wap ends a pairing at its 2-minute timeout without
+  a log line.** `update()`'s pairing-timeout check in `mesh_network.cpp` calls
+  `cancel_pairing()`, whose callback reports only `(PAIR_ROLE_NONE, 0,
+  false)`, and the sketch never sets a mesh pairing callback, so the owner
+  sees only a pairing that stopped. Since F94 (#1832) that is how the updated
+  side of a mixed-firmware pairing ends when its owner confirmed first: the
+  older side read its CONFIRM and failed. Log the timeout, and when this
+  side's owner had confirmed, say the partner may run older pairing firmware;
+  pin it in `test_mesh_liveness_wap`. Found by F94's protocol review (#1832).
+- [ ] **F360 [decision] Keep or remove the PlatformIO tree's leading CONFIRM
+  now that F94 leaves it no firmware to serve.** Every COMPLETE, and every
+  F134 copy, carries the initiator's CONFIRM in front of it (F97). It was
+  written for a joiner on firmware before F97, which is also before F94 and
+  since F94 (#1832) fails closed at the CONFIRM; an updated joiner does not
+  need it, and a lost first COMPLETE is recovered by the F134 copies in both
+  orders (host-probed in review). The joiner's bounded CONFIRM re-send (F117),
+  the other pre-F97 path, is also loss handling between updated devices and
+  should stay: when the joiner's owner confirmed first and its CONFIRM was
+  lost, the re-send is what reaches the initiator and brings the COMPLETE, and
+  without it both sides time out
+  (`test_the_joiners_resend_recovers_its_lost_confirm`). Decide whether to
+  keep the leading CONFIRM, or remove it, the pre-F97 joiner models in
+  `test_mesh_pairing` and `test_mesh_session`, and the frame it adds to every
+  COMPLETE and copy; `mesh_pairing.h` ("Firmware before F94") and spec §5.2
+  state where both paths stand now. Found by F94 (#1832).
 - [ ] **F115 [code+decision] The 6-digit pairing code has no commitment, so a
   relay that swaps both ephemeral keys can grind it.** Nothing commits either
   side's ephemeral before the other side's is sent. The relay answers the
@@ -5825,7 +6110,7 @@ so — see D2 below.)
   `BT_ADVERTISING` put back. Host-tested; the Arduino and PlatformIO compiles
   are CI's; not bench-tested (U1: the F190 row in
   `hardware_verification_checklist.md`).
-- [ ] **F191 [code+decision] canary-wap Bluetooth pairs outside Numeric
+- [x] **F191 [code+decision] canary-wap Bluetooth pairs outside Numeric
   Comparison with no owner.** A DisplayOnly or NoInputNoOutput initiator (or a
   legacy DisplayYesNo one) pairs Just Works (NimBLE 2.3.8's
   `ble_sm_sc_resp_ioa` and `ble_sm_lgcy_resp_ioa` for the WAP's DISPLAY_YESNO;
@@ -5842,6 +6127,56 @@ so — see D2 below.)
   pairing mode, and by keeping the digits out of the health log. From NimBLE
   2.3.8 source and the host harness; not probed. Found by F171's security
   review (#1762).
+  *Done (#1832):* the premise held. `apply_auth_complete()` now answers a bond
+  that is not authenticated (a Just Works pairing no owner asked for) by
+  deleting it through `forget_bond()`, with the radio quiet as Remove does (a
+  bare `deleteBond()` is refused busy for a bond carrying the phone's IRK),
+  and dropping its link by that link's own handle, whichever link is recorded;
+  it leaves the owner's pairing state as it is (that bond was never the
+  owner's pairing, and failing it let a stranger end the owner's pairing
+  mode), and a listed phone that re-pairs that way loses its now bondless
+  entry at once. A report that never reached the loop task (a full queue
+  dropped it, or it came before the channel owned the server's callbacks) is
+  refused the same way from the stack's record of the live link
+  (`refuse_unauthenticated_links()`, from `reconcile_link()` and the
+  adoption), and a bond the stack keeps (another task restarted the advertiser
+  in the delete's window) is asked again with the radio quiet each minute
+  (`retry_kept_bonds()`), never once an authenticated bond of that identity
+  was reported or a link event was dropped. An authenticated bond is never
+  touched (NimBLE never revokes authentication from a link), and the setup
+  door's Just Works keeps no bond. A passkey for the phone to type is shown
+  only inside the owner's pairing mode with Bluetooth on and new pairings
+  allowed (`owner_pairing_open()`, handed to the NimBLE host task with the
+  views); outside it `onPassKeyDisplay()` gives NimBLE a passkey above 999999,
+  which `ble_sm_inject_io()` refuses (NimBLE-Arduino 2.3.8 and 2.5.0, read
+  from source, not run), so no key is set and the pairing fails at NimBLE's 30
+  s timeout, and the loop task shows nothing and logs `BLE pairing passkey not
+  shown: no pairing mode (Pair in the web UI first)` at most once a minute;
+  the dispatcher does the same before the channel is its pairing owner. A
+  Numeric Comparison outside that pairing mode, or with new pairings off, is
+  answered no at once and counted in the same line (`owner_comparison_open()`;
+  one of the pairing mode already asking may still be replaced by the phone's
+  retry). The link of a refused passkey is not dropped: NimBLE-Arduino's
+  `onPassKeyDisplay()` names no link (F352). No pairing digits reach the
+  health log, the Numeric Comparison's line included. Pinned by
+  `test_bluetooth_commands_wap.cpp`'s
+  `a_passkey_outside_pairing_mode_is_shown_nowhere` (after a completed and a
+  failed pairing too), `a_passkey_to_show_reaches_the_owner`,
+  `an_unauthenticated_bond_is_deleted_and_its_link_dropped`,
+  `a_comparison_outside_pairing_mode_asks_nobody`,
+  `a_just_works_bond_beside_the_recorded_link_drops_its_own`,
+  `a_bond_whose_report_never_came_goes_from_the_stacks_record`,
+  `a_bond_the_stack_kept_is_asked_again_each_minute` and
+  `a_listed_phone_that_pairs_again_by_just_works_leaves_the_list`, each
+  failing on a mutant of its hunk, and by `check_wap_loop_commands.py` rule
+  BV9, which also refuses `setSecurityPasskey(` anywhere in the sketch
+  (NimBLE-Arduino calls `onPassKeyDisplay()` only while the static passkey is
+  its default 123456). A Just Works bond still survives a reboot before the
+  loop task saw it, and the next boot's rebuild of a list never saved by
+  identity lists it (F353). Host-tested over the NimBLE stand-in, which does
+  not run the security manager; the Arduino and PlatformIO compiles are CI's;
+  not bench-tested (U1: the F191/F209 row in
+  `hardware_verification_checklist.md`). Found here: F350-F354.
 - [ ] **F207 [decision] canary-wap Bluetooth: NimBLE's bond store holds 3
   phones and the paired list 8.** NimBLE-Arduino 2.3.8 and 2.5.0 keep
   `CONFIG_BT_NIMBLE_MAX_BONDS` = 3 (the nimconfig.h default; no build
@@ -5867,7 +6202,7 @@ so — see D2 below.)
   or keep the refusal and say in the dashboard that a phone's subscriptions
   may not survive a reconnect. From NimBLE source and the host harness; not
   probed. Found by F189's review (#1762).
-- [ ] **F209 [code+decision] canary-wap Bluetooth: unlisted Just Works bonds
+- [x] **F209 [code+decision] canary-wap Bluetooth: unlisted Just Works bonds
   can fill the bond store and lock the owner out.** A DisplayOnly or
   NoInputNoOutput phone pairs by Just Works with no owner asked (F191), and
   NimBLE stores the bond though the channel never lists it. Before F189 such
@@ -5880,6 +6215,29 @@ so — see D2 below.)
   quiet as Remove does), or let a full store evict only a bond the list does
   not hold, or show the store's count beside the list. From code and the host
   harness; not probed. Found by F189 (#1762).
+  *Done (#1832):* the premise held, and F191 closes it:
+  `apply_auth_complete()` deletes each new unauthenticated bond it is told of,
+  and the reconcile and the adoption each one whose report never came, so
+  three strangers' Just Works pairings no longer fill the store against the
+  owner (`unlisted_bonds_no_longer_lock_the_owner_out`, failing on the old
+  branch). Bonds an older firmware stored are not deleted on a sweep (a list
+  save that failed would make an owner's own bond read unlisted); one goes
+  when its phone next connects with that unauthenticated key, by F191's path
+  on its own link. GET /api/bluetooth now carries `bond_store` (`held`,
+  `capacity`, `unlisted`) once the stack is up, read again whenever the store
+  may have moved (a report, a list save, a delete, Remove, Clear all, the
+  hand-over, a pairing the full store refused, a dropped link event), and the
+  health log says `BLE bond store full with bonds the paired list does not
+  show: new pairings are refused until Clear all` once each time the store
+  comes to that, and never for a store of listed bonds
+  (`the_bond_store_shows_beside_the_list`,
+  `three_listed_bonds_fill_the_store_with_no_lockout`,
+  `a_locked_store_read_again_names_the_lockout_once`,
+  `the_bond_count_follows_a_dropped_report_and_a_refused_pairing`; BV9 holds
+  the count to the status view's builder and the marks of the refusal and the
+  reconcile). The dashboard does not show it yet (F350). Host-tested; the
+  Arduino and PlatformIO compiles are CI's; not bench-tested (U1: the
+  F191/F209 row).
 - [x] **F210 [code] canary-wap Bluetooth: `is_enabled()` is read off the loop
   task.** `bluetooth_api.h`'s Start Advertising and Pair handlers call
   `bluetooth_channel::is_enabled()`, a plain read of the loop task's
@@ -6060,7 +6418,7 @@ so — see D2 below.)
   row, which names each boot window by its serial line and what a tap answers
   there). Found here: F259 and F260; the F235 verification's findings, filed
   as F287 and F288, are closed in #1802 (below).
-- [ ] **F259 [code+decision] canary-wap Bluetooth: Enable, a settings POST and
+- [x] **F259 [code+decision] canary-wap Bluetooth: Enable, a settings POST and
   a saved-off tap still bring the stack up before the boot bring-up is over.**
   F235's review made Start Advertising and Pair on a device saved on wait for
   the sketch's boot bring-up (`waits_for_boot_bring_up()`, over at
@@ -6080,7 +6438,28 @@ so — see D2 below.)
   the host harness (`the_worker_never_meets_a_taps_bring_up` plays the race
   for a Start Advertising tap without the wait); not probed on a device. Found
   by F235's review (#1802).
-- [ ] **F260 [code+decision] canary-wap Bluetooth: a tap that brings the stack
+  *Done (#1832):* the premise held. `waits_for_boot_bring_up()` no longer
+  reads the saved setting (the worker runs `init()` whatever it says), and
+  Enable and the settings POST's `"enabled": true` branch answer
+  `send_boot_bring_up_pending()`'s 503 before any bring-up, as Start
+  Advertising and Pair do, saved on or off; a settings POST that turns nothing
+  on, or turns Bluetooth off, is not held. Before the gate opens that 503 now
+  asks for a retry, `Bluetooth is not ready yet; try again once Wi-Fi setup is
+  done or within five minutes (never in safe mode)`, where it said Bluetooth
+  starts, which on a device saved off (whose boot bring-up brings up only the
+  stack) it never does. In safe mode the sketch marks the bring-up skipped at
+  its Bluetooth gate
+  (`bluetooth_channel::skip_boot_bring_up_for_safe_mode()`), and the 503 says
+  `Bluetooth stays off in safe mode; it starts after a normal boot` where it
+  promised five minutes. Pinned by `test_bluetooth_commands_wap.cpp`'s
+  `every_tap_waits_for_the_boot_bring_up` (its text included) and
+  `the_worker_never_meets_a_taps_bring_up`, now over Enable, the settings POST
+  and a device saved off, both failing on the old `bluetooth_api.h`, and by
+  `check_wap_loop_commands.py` rules C3, BV1 and BV10; `web_ui_logic.test.js`
+  passes unchanged. A saved-off device's Enable in the first minutes after
+  boot now answers 503 where it brought the stack up. Host-tested; the Arduino
+  and PlatformIO compiles are CI's; not bench-tested (U1: the F235/F259 row).
+- [x] **F260 [code+decision] canary-wap Bluetooth: a tap that brings the stack
   up outside the boot worker's span leaves the worker's services out, or
   registers them on a running server.** (a) A bring-up by Enable, a settings
   POST turning Bluetooth on, or Start Advertising or Pair on a device saved
@@ -6097,6 +6476,109 @@ so — see D2 below.)
   channel runs the sketch's registrations after any bring-up, or a late
   bring-up says what it left out. From code; not probed. Found by F235
   (#1802).
+  *Done (#1832):* the premise held. (a) is closed by F259: no tap brings the
+  stack up before `boot_bring_up_finished()`, which runs after the worker. (b)
+  A late bring-up says what it left out and registers nothing on the running
+  server: the sketch's worker reports each service it registered
+  (`bluetooth_channel::boot_service_registered()`, in the blocks
+  `ble_status::init()`'s and `ble_manager::init()`'s success runs),
+  `boot_bring_up_finished()` records whether the boot left the stack up, a
+  stack the loop task adopts after a boot bring-up that left it down logs once
+  `BLE brought up after the boot bring-up: these services are off until a
+  reboot` with their names, and GET /api/bluetooth carries `late_bring_up` and
+  `services_missing` (`ble_status`, `ble_discovery`; a ble_status that failed
+  to register on the boot's own bring-up is listed too). Pinned by
+  `a_late_bring_up_says_what_it_left_out` (the finalize stage before and after
+  the adoption), each hunk's revert failing it, and by rule BV10, which holds
+  the sketch's marks (the sketch is not compiled on the host). The dashboard
+  does not show the two fields yet (F350), and on FULL a late tap's `init()`
+  can still fill a server `ble_manager` made (F351). Host-tested; the Arduino
+  and PlatformIO compiles are CI's; not bench-tested (U1: the F260 row).
+- [ ] **F350 [code] canary-wap dashboard: show the Bluetooth bond store and a
+  late bring-up.** Since #1832 GET /api/bluetooth carries `bond_store`
+  (`held`, `capacity`, `unlisted`, F209), `late_bring_up` and
+  `services_missing` (F260), but `web_ui.h`'s Bluetooth card renders none of
+  them (left out while `web_ui.h` was another package's), so an owner whose
+  store is full of unlisted bonds, or whose WAP runs without ble_status until
+  a reboot, still sees nothing on the dashboard. Render them beside the paired
+  list and the card's subtitle, with a pointer to Clear all when unlisted
+  bonds fill the store, test them in `web_ui_logic.test.js`, and add their
+  reads to `check_wap_loop_commands.py`'s `BT_JS_READS`. From code. Found by
+  F209 and F260's fix (#1832).
+- [ ] **F351 [code+decision] canary-wap Bluetooth: on FULL a late tap's
+  `init()` can fill a server `ble_manager` made and started.** When the
+  worker's `bluetooth_channel::init()` is refused, the worker goes on to
+  `ble_manager::init()`, whose own heap guard and `NimBLEDevice::init()` can
+  pass where the channel's did not (a heap that recovered in between, a
+  retryable NimBLE failure); Opera then registers on
+  `NimBLEDevice::createServer()`'s singleton and the finalize stage starts its
+  advertising (`operaStart()`). A later tap's `init()` finds NimBLE up, skips
+  its heap guard, and creates the channel's service, the OTA, console,
+  provisioning, Improv, log and witness exports and the standard profiles on
+  that server, which may already have started: F167's case from the other
+  side, which F260's report does not cover (it lists only the worker's
+  services). Decide whether the channel refuses a late `init()` on a server it
+  did not create, or the worker skips ble_manager when the channel's `init()`
+  was refused. From code (`ble_manager.h`:106-143, `ble_opera.h`:274); not
+  probed. Found by F260 (#1832).
+- [ ] **F352 [decision] canary-wap Bluetooth: a refused or canceled pairing's
+  link stays up, and Cancel does not cancel a shown passkey.** Since #1832 a
+  passkey outside the owner's pairing mode is refused by handing NimBLE a
+  passkey it cannot use (F191), but `onPassKeyDisplay()` names no link, so the
+  stranger's link stays until NimBLE's 30 s pairing timeout and then until the
+  inactivity timeout (5 minutes by default); a failed or rejected pairing's
+  link, and one whose comparison the channel answered no outside pairing mode,
+  stays the same way. On DEV the channel stops advertising while a link is
+  recorded, so such a link keeps the WAP from being found for that time, and
+  the stranger can connect again. And Cancel or the pairing-mode timeout
+  clears the channel's pairing state but not a Passkey Entry whose six digits
+  were already shown: NimBLE holds that key until its own timeout, so a phone
+  that types them after Cancel still bonds, and `apply_auth_complete()`'s
+  authenticated branch lists it with no pairing-mode check (the digits were
+  shown to the owner, so not a bond without the owner, but Cancel does not
+  cancel it). Decide whether a failed or canceled pairing on the recorded link
+  drops it (the owner's own rejected pairing included), the advertiser keeps
+  running beside an unauthenticated link, and an authenticated bond reported
+  outside pairing mode is listed, logged or refused. From code and
+  NimBLE-Arduino 2.3.8 source; not probed. Found by F191 and its review
+  (#1832).
+- [ ] **F353 [code+decision] canary-wap Bluetooth: a Just Works bond that
+  escapes F191's delete is listed by the next boot's rebuild.** Since #1832
+  the channel deletes an unauthenticated bond as it is reported, from the
+  stack's record when the report never came, and again each minute when the
+  stack keeps it, but a few roads still leave one in NimBLE's store: the
+  device reboots after NimBLE stored the bond and before the loop task applied
+  its report, or reboots inside a kept bond's retry minute, or a link event is
+  dropped after the stack kept it (the retry stops there, as that event may
+  have been the owner's own pairing of that identity). On a unit whose list
+  was never saved by identity (no owner has paired over BLE),
+  `migrate_paired_devices()` then lists that bond at the next adoption as a
+  paired device (`security` bonded), so F209's unlisted count and lockout line
+  never name it and the owner's list shows a phone nobody confirmed (its key
+  still opens no `*_AUTHEN` characteristic). Decide whether the rebuild skips
+  a bond whose stored record is unauthenticated (`ble_store_read_peer_sec()`'s
+  `value_sec.authenticated`, which the NimBLE stand-in would have to model),
+  and whether a kept bond's identity is remembered across a reboot (NVS) or
+  its record read so the retry need not stop at a dropped event. From code and
+  the host harness (the review's probes ATK6b, ATK8, ATK10); not bench-tested.
+  Found by the review of F191 (#1832).
+- [ ] **F354 [decision] canary-wap Bluetooth: a radio sending a listed phone's
+  identity address deletes its bond.** NimBLE-Arduino's server answers
+  `BLE_GAP_EVENT_REPEAT_PAIRING` itself (NimBLEServer.cpp, 2.5.0 :608-626;
+  2.3.8 the same handler, per the review): when a peer whose identity matches
+  a stored bond starts a new pairing, it deletes the old bond
+  (`ble_store_util_delete_peer()`) and lets the pairing go on. A phone's
+  identity address is usually its public Bluetooth address, which any radio
+  can send, so a stranger who has heard it may delete the owner's bond with
+  one pairing attempt, in or out of pairing mode; since #1832 the Just Works
+  bond that attempt makes is deleted too and the listed entry dropped with it
+  (F191's review), so the owner's phone must pair again (no stranger's bond is
+  kept). Whether a phone's own controller then refuses the stranger's address,
+  and which phones are exposed, is not read here. Decide whether the channel
+  answers repeat pairing itself (a GAP event listener ahead of the library's,
+  refusing it outside the owner's pairing mode), or the owner is told when a
+  listed phone's bond was replaced. From code (NimBLE-Arduino source, scratch
+  clone); not probed. Found by the review of F191 (#1832).
 - [x] **F287 [code] check_wap_loop_commands.py: BV7, BV4 and C3 pass mutants
   that bring F235's races back.** BV7 counts the sketch's two
   `boot_bring_up_finished()` calls and their order on the squashed bodies, and
@@ -6417,7 +6899,7 @@ so — see D2 below.)
   say so. Host-tested, the handlers' JSON checked only in the scratch harness;
   the Arduino and PlatformIO compiles are CI's; not bench-tested (U1: the two
   F192 rows).
-- [ ] **F193 [code+decision] canary-wap Chirp's cooldown tiers reset 24 hours
+- [x] **F193 [code+decision] canary-wap Chirp's cooldown tiers reset 24 hours
   after the first chirp of a run, not after 24 hours without one.**
   `reset_cooldown_if_stale()` clears the tiers 24 hours after
   `first_chirp_today_ms` whatever was sent since, where spec 2.5.4 says
@@ -6429,6 +6911,93 @@ so — see D2 below.)
   means and whether the tiers survive a re-enable and a reboot (a new session
   is a new identity on the wire; the tiers are local). From code. Found by
   F178 (#1762).
+  *Done (#1832):* the premise held, with the lines moved by wave 18's F269 and
+  F270 (`reset_cooldown_if_stale()` at chirp_channel.cpp:495, `enable()`'s
+  zeroing at :1433, the first send's stamp at :1748). Spec 2.5.4's words
+  decide it: the reset counts from the last send. `expire_stale_tiers()`
+  clears the tiers when `now - last_chirp_ms` passes 24 hours, which can never
+  end a cooldown (the longest is 4 hours) and holds across the 49.7-day uptime
+  wrap; `update()` runs it on every pass, on or off, and `send_chirp()` before
+  its gate, so a send drained in the pass that ends a quiet day counts from
+  tier 1. `enable()` no longer zeroes the tiers: the new session waits out the
+  presence requirement, then the rest of the cooldown, and its next send is a
+  tier up; a mute and the suppress and confirm votes beside the kept tiers
+  leave them as they are. They stay in RAM, so a reboot clears them; keeping
+  them in NVS would store when the owner chirped, and the cooldown binds only
+  this firmware anyway. Kept across days, the count stops at 255 (a send every
+  4 hours wrapped the `uint8_t` to tier 0 after about 42 days), the `chirp
+  sent` log names the tier, not the count, and the unused
+  `first_chirp_today_ms` is gone. Eight tests in `test_chirp_commands_wap.cpp`
+  fail on the old code: `the_tiers_reset_24_quiet_hours_after_the_last_send`
+  (the item's 22-hour case),
+  `a_send_that_ends_a_quiet_day_counts_from_tier_1`,
+  `a_disable_keeps_the_tiers`, `the_tier_count_stops_at_255`,
+  `the_tiers_count_across_the_uptime_wrap`, `a_mute_beside_the_kept_tiers`,
+  `the_votes_beside_the_kept_tiers` and
+  `the_tiers_let_9_out_on_the_first_day_then_6`; nine mutants of the new code
+  each fail one of them, a wrap-unsafe absolute deadline only the uptime-wrap
+  test (39 tests, 4516 checks). Spec 2.5.4 says so, with what the tiers allow
+  per day (9 sends in the first 24 hours, then 6 a day, against the design
+  list's and 2.5.8's figure, F362) and that the health log's `chirp sent` line
+  reaches the SD card's `/HEALTH` file (F364); 7.2 says an enable inside a
+  kept cooldown reads `cooldown`, and 11.2's table says the tiers are not
+  stored. `test_chirp_spec_tables.py` holds the reset, the per-day count and
+  the table. `check_wap_loop_commands.py`'s three mutations anchored on the
+  old call were re-anchored. Host-tested; the Arduino and PlatformIO compiles
+  are CI's; not bench-tested (U1: the two F193 rows in
+  `hardware_verification_checklist.md`). Found here: F361-F364.
+- [ ] **F361 [code] canary-wap Chirp's mute ends at once when it is set within
+  its length of the 49.7-day uptime wrap.** `mute()` stores the deadline
+  `g_mute_until_ms = millis() + duration`, and `update()` (`now >=
+  g_mute_until_ms`), `is_muted()`, `get_status()` and `read_status()`
+  (`millis() < g_mute_until_ms`) compare it as an absolute time, so a deadline
+  past 2^32 that wrapped to a small number reads as already passed:
+  `is_muted()` is false at once, `handle_witness()` takes the chirps the owner
+  muted, and the next pass ends the mute. Comparing elapsed time with the
+  mute's length, as the send cooldown's timer does (`cooldown_left_ms()`),
+  fixes it. From code. Found by F193 (#1832).
+- [ ] **F362 [decision] Chirp spec 2.5.4's "4-5 chirps per day" and 2.5.8's
+  "~5/day" are not what the cooldown tiers allow.** Spec 2.5.4's design list
+  says "Max 4-5 chirps per day per device" and 2.5.8's threat table says
+  "Escalating cooldowns (max ~5/day)", but the tiers (5 min, 15 min, 1 h, then
+  4 h) let a device send 9 in its first 24 hours and then 6 a day, since F193
+  resets them only after 24 quiet hours (before F193, 9 every day). F193's
+  paragraph in 2.5.4 states the real count, and
+  `test_chirp_commands_wap.cpp`'s
+  `the_tiers_let_9_out_on_the_first_day_then_6` counts it from the constants.
+  Decide whether the list and the table are corrected or the tiers lengthened
+  to meet them (a longer top tier, or a daily cap), which would change the
+  canary-wap's COOLDOWN_TIER_* constants,
+  `test_chirp_protocol_invariants.cpp`'s pins of them and that test's counts.
+  From the spec and code. Found by F193 (#1832).
+- [ ] **F363 [code] canary-wap Chirp's presence beacon tells neighbors how
+  long ago the previous session chirped.** `send_presence()` sets
+  `last_chirp_age_min` from `g_last_chirp_sent_ms`, which only a reboot clears
+  (neither `disable()` nor `enable()` touches it), so after a disable and an
+  enable the new session (a new key, id and emoji, spec 2.3) sends beacons
+  carrying the old session's last-send age, to the minute for its first 254
+  minutes. Example: a send, a disable 7 minutes later and an enable, and the
+  new session's first beacon says 7 (the same on 8bb5647d, so it predates
+  F193). A neighbor that heard the old session's chirp can link the two
+  sessions on the wire, against 2.3's "Identity discarded when chirp channel
+  disabled" and 6.4's "Cannot track chirp history across sessions". Counting
+  the age from this session's own sends (255 before its first) fixes it. From
+  code and the host harness. Found by F193's review (#1832).
+- [ ] **F364 [decision] canary-wap Chirp's `chirp sent` health line keeps a
+  lasting record of the owner's chirps on the SD card.** `send_chirp()` logs
+  `chirp sent: <template text> (<urgency>, tier N)` at INFO, the default store
+  threshold (`g_log_min_level`), and `log_health()` stages every line it keeps
+  for `health_store_drain()`, which appends it with its sequence number and
+  uptime to that boot's `/HEALTH/boot_<count>.jsonl` whenever a card is
+  mounted (FEATURE_SD_STORAGE is 1 in the full profile, the one with Chirp);
+  the files outlive reboots until datamgmt's /HEALTH count rotation drops
+  them. F193 kept the cooldown tiers out of NVS because storing them would
+  record when the owner chirped, and spec 6.4 says "Cannot prove a specific
+  device sent a chirp"; a card holding this device's `chirp sent` lines is
+  such a proof. Spec 2.5.4 now says the line reaches the card. Decide whether
+  it drops the template text, moves below the default threshold, stays out of
+  the SD tier, or stays as a deliberate local record that 6.4 then names. From
+  code. Found by F193's fix pass (#1832).
 - [x] **F194 [code] canary-wap Chirp's presence beacon says "not listening"
   while the send cooldown runs.** `send_presence()` sets `listening` from what
   the state reads as, and an active channel in its cooldown reads
@@ -9517,7 +10086,7 @@ so — see D2 below.)
   regenerated. GATED's entry takes its fixed form. Host-tested (node); the
   ESP32 compile is CI's; not run on a device. Found here: F296 (the view stops
   refreshing after an empty list) and F297.
-- [ ] **F277 [code+decision] canary-wap's `wap_server.cpp` is a stub server
+- [x] **F277 [code+decision] canary-wap's `wap_server.cpp` is a stub server
   API nothing calls, and its `send_json_error()` writes two strings
   unescaped.** `wap_server.h` declares init(), start_http_server(),
   check_rate_limit(), set_security_headers() and the rest, and
@@ -9532,6 +10101,74 @@ so — see D2 below.)
   move the list into a doc; if `send_json_error()` stays, spell it with
   `wap_json_writer.h` before anything calls it. From code. Found by F237, with
   F227's hand-up on `send_json_error()` merged in (#1802).
+  *Done (#1832):* deleted. `wap_server.cpp` is gone, and its unescaped
+  `send_json_error()` with it. `wap_server.h` keeps only the route list (still
+  held two ways to the route table, F237) and the transport bullets: no
+  declarations, no includes, no constants. Two things read those constants:
+  `canary-local/tools/gen_wap.py`, which took the Lab page's AP channel,
+  client cap, ports and SSID prefix from them while the sketch used its own
+  copies, and `wap.test.js`'s SSID assertion. The generator now reads each
+  value where the firmware uses it: `canary_wap.ino`'s `AP_CHANNEL` and
+  `AP_MAX_CLIENTS`, which every `WiFi.softAP()` call must pass; the port each
+  server starts on; and `onboarding_fsm.h`'s `SSID_PREFIX`. It refuses what it
+  cannot read instead of skipping it. Every code line that names a server port
+  or the TLS transport must be a digit-literal write, made once, to one of the
+  three configs the sketch starts its servers from, so a named `port_secure`,
+  a cast, a second config, a second write or a non-secure `transport_mode`
+  stops it (an explicit `HTTPD_SSL_TRANSPORT_SECURE`, the default spelled out,
+  is accepted). It also refuses an HTTPS port that `httpd_ssl_start()` would
+  overwrite with `port_secure`, and plain servers on two different ports.
+  `devices/wap.json` does not change by a byte. J7's record of
+  `send_json_error()` goes, and its rename mutation now renames
+  `wap_diagnostics.h`'s `build_json()`. A new mutation, a recorded builder
+  that stops spelling JSON, is refused by the stale-record rule alone. The
+  header's security bullets went with the API. One was false: CORS answers
+  `*`. One overstated it: there is no per-request limiter
+  (`check_rate_limit()` was a stub that allowed every request), only the
+  failed-token lockout and Chirp's send cooldown. The Phase 12 rf-sensing
+  spec, the sketch and Lab READMEs, the captive-portal test plan,
+  `firmware/canary/CONSOLIDATION.md` and the Vision device API's comment now
+  point at the sketch's own code. Two new tests pin it. The first is a
+  scratch-copy unittest (`canary-local/tools/tests/test_gen_wap_ap_facts.py`):
+  16 of its 19 cases fail on the old generator, and the other three are the
+  unmodified copy and two over-refusal guards. The second is a route-match
+  case: the header declares nothing, and no `.cpp` sits beside it. Only the
+  two sketch builds ever compiled `wap_server.cpp`: they compile every `.cpp`
+  in the folder, and neither needed its symbols. The package asked for one
+  squashed commit; it is cherry-picked here as five, and the first (60ffe635,
+  the generator and the `.cpp` deletion) fails J7 until the next (c1baf2e2)
+  drops the record, so bisect across that pair. Host-tested; the ESP32
+  compiles are CI's; not run on a device. Found here: F365 and F366.
+- [ ] **F365 [code] canary-wap sets its HTTPS port in a field
+  `httpd_ssl_start()` overwrites.** `canary_wap.ino`'s `start_http_server()`
+  writes `ssl_config.httpd.server_port = 443`. In secure transport mode,
+  ESP-IDF's `httpd_ssl_start()` sets `httpd.server_port` from the config's
+  `port_secure` (`HTTPD_SSL_CONFIG_DEFAULT()`: 443), so that write does
+  nothing. Changed alone, it would leave the server on 443 while the line
+  reads as if it moved. The boot log's literal "port 443" would stay right by
+  accident, and `gen_wap.py` refuses that sketch since F277. The PlatformIO
+  canary sets `ssl.port_secure = HTTPS_PORT` (`securacv_network.cpp`). Set
+  `port_secure`, drop the dead write, and spell the boot log from the same
+  constant. `gen_wap.py` refuses a sketch whose `httpd.server_port` and
+  `port_secure` disagree, and any server port, `port_secure` or non-secure
+  `transport_mode` it cannot read as a digit literal, so the fix repoints the
+  generator in the same change. Dropping the `httpd.server_port` write stops
+  it on its read, and a named `port_secure` is refused until it reads that
+  constant. From ESP-IDF's source
+  (`components/esp_https_server/src/https_server.c`, v4.4.7 :250 and v5.1.4
+  :337; `HTTPD_SSL_CONFIG_DEFAULT()`'s `port_secure = 443` in
+  `esp_https_server.h`, v4.4.7 :135 and v5.1.4 :162); not run on a device.
+  Found by F277 (#1832).
+- [ ] **F366 [code] `gen_wap.py` types the WAP page's mDNS service ports.**
+  `canary-local/tools/gen_wap.py` writes `mdns_services` with port 80 for
+  `_http._tcp` and `_securacv._tcp` as literals. Nothing reads the sketch's
+  `MDNS.addService("http", "tcp", 80)` and `MDNS.addService("securacv", "tcp",
+  80)`, which `canary_wap.ino` calls at each of its three mDNS starts. A port
+  change there would leave `devices/wap.json` green and wrong, the drift F277
+  closed for the AP channel, client cap and server ports. Read both from the
+  sketch, refusing any spelling the generator cannot read and any two starts
+  that disagree, and add a scratch-copy case to `test_gen_wap_ap_facts.py`.
+  From code. Found by the review of F277 (#1832).
 - [x] **F278 [code] Both dashboards' Export fails after a good export.**
   canary-wap's `POST /api/export` writes an export file to the SD card
   (`/EXPORT/bundle_<ms>.json`) and answers `download_url`
