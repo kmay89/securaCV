@@ -1021,12 +1021,13 @@ jobs:
         # scene rendered unturned at the logical size, pixel for pixel, and a
         # fed touch comes back out of LVGL's pointer where it went in. Then the
         # REAL splash.cpp plays the first meeting through the port's LVGL 8.4
-        # branch in the config of every display env that builds 8.4 (F185,
-        # F159): the speech bubble's tail is drawn, whole, on the bubble's
-        # center line, and the bird sits on seat()'s seat, clear of it where
-        # seat() says so; every one of those suites runs, and the step fails
-        # at its end if any did. Proves the sources, not the dist's bytes (the
-        # onboard probe reads those).
+        # branch in the config of every display env that builds 8.4 and in
+        # the dash's (the emulator's dash flavor is 8.4 too; F185, F159): the
+        # speech bubble's tail is drawn, whole, on the bubble's center line,
+        # and the bird sits on seat()'s seat, at its deepest breath clear of
+        # it where seat() says so; every one of those suites runs, and the
+        # step fails at its end if any did. Proves the sources, not the
+        # dist's bytes (the onboard probe reads those).
         # Runs BEFORE every step that reads the committed dist: a stale dist
         # turns the probes below red and skips every later step, and this is
         # the one proof of these sources that does not need the dist.
@@ -1243,7 +1244,8 @@ jobs:
         # script, and the tail, read off the frame at each new line, is
         # drawn where its box and styles put it (as each of F185's options
         # would be), on the bubble's center line (F185: square, turned about
-        # its center), with the bird on seat()'s seat, clear of it (F159).
+        # its center), with the bird on seat()'s seat, clear of it on every
+        # play (F159, pinned).
         # Every suite runs; the step fails at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift
