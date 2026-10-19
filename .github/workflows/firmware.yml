@@ -1480,9 +1480,11 @@ jobs:
         # by the handler-table overflow). It also holds every route whose
         # answer carries a secret (the token, the SoftAP password, the TLS
         # pin) to a bearer-only gate or the receipt's BOOT tap / setup-door
-        # claim, never a gate the landing page's session passes, and the
-        # broker save that keeps the stored password to #1835's move gate,
-        # handed a bearer (sweep F289), with fixtures that fail the rule.
+        # claim, never a gate the landing page's session passes (sweep
+        # F289); the broker password may be named only where it is stored,
+        # loaded or used, and its save sits behind #1835's move gate, handed
+        # a bearer (what counts as a move is test_mqtt_reinit's). Fixtures
+        # fail the rule.
         run: |
           python3 firmware/projects/canary-wap/tests_host/check_route_security.py
 

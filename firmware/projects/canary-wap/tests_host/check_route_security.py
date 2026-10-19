@@ -11,8 +11,9 @@ table) cannot silently widen the unauthenticated surface.
 
 It also holds the routes whose answer carries a secret (sweep F289): the
 bearer token, the SoftAP password, the TLS pin, the broker password. The
-landing page at / mints a cv_session (and, during setup, a pair token) for
-any caller that reaches the WAP, on the home network too: the owner's chosen
+landing page at / mints a pair token for any caller that reaches the WAP, on
+the home network too and at any time, not only during setup, and its Open
+dashboard link trades that token for a 24 h cv_session: the owner's chosen
 LAN posture for the dashboard's own routes. So a session is no proof of
 holding the token, and such a route takes a bearer-only gate
 (api_auth_bearer_grant / api_auth_check_bearer), or the receipt's BOOT tap
@@ -158,8 +159,9 @@ BEARER_GATES = {
     "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
 }
 # The gates a landing-page caller passes: the cv_session cookie, every gate
-# that takes it or a Bearer header, and the pair token the landing hands out
-# during setup. The class is these and, to a fixed point, every function and
+# that takes it or a Bearer header, and the pair token the landing hands to
+# any caller that loads it (send_pair_landing, at any time, not only during
+# setup). The class is these and, to a fixed point, every function and
 # macro in the sketch that names one (any_session_gates()), so a wrapper is
 # in it by what it calls; qr_scan_request_allowed() and
 # wifi_change_authorize() are, for example.
@@ -172,7 +174,7 @@ ANY_SESSION_GATES = (
     "CSI_AUTH_OR_RETURN",       # csi_integration's macro
     "authorized",               # csi_mqtt's cookie OR Bearer
     "auth_gated",               # the module trampolines (bt_/bcn_/plain)
-    "pair_token_valid",         # the landing's setup pair token
+    "pair_token_valid",         # the pair token the landing mints for any caller
     "pair_token_consume",
 )
 

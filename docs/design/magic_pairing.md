@@ -444,13 +444,31 @@ every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
 follow-up): a wrong or malformed bearer is one strike, the right one clears
 the count, and while the backoff runs no bearer is compared, so a request
 that brings one gets `429` with `Retry-After` when the claim and the tap do
-not serve it. The lockout never reaches rows 3 and 4: a page holding a stale
-token, or a guesser busy on the network, cannot keep the claim or the
-owner's BOOT tap from serving. Host-tested in
+not serve it. The lockout never gates rows 3 and 4: a page holding a stale
+token, or a backoff a guesser armed, is still served by the claim or a BOOT
+tap. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
 the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
+
+What the lockout does not decide, and what stays open (all of it predates
+F289's follow-up; it is the ledger's, not a claim of this design):
+
+- **The backoff is one per device, not one per caller.** A host on the
+  network that sends one wrong bearer whenever the backoff is not running
+  keeps row 2 answering `429` for everyone, the owner's right token
+  included, as it can on every admin route that takes the bearer. Rows 3
+  and 4 still serve: the dashboard's BOOT-tap wait sends no `Authorization`
+  header, and a stale one beside the tap or the claim is served anyway.
+- **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
+  spent, match or not, so one wrong guess from a host on the network burns
+  a pending setup-door claim, and the phone that provisioned over the door
+  then needs the BOOT tap.
+- **Row 4 is spent by whoever asks first.** The tap has one consumer: a
+  request from any host on the network inside its 30 s, a wrong bearer
+  included, is served the receipt and spends the tap, and the owner's own
+  request after it is refused.
 
 ---
 
