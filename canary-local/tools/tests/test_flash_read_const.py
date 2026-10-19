@@ -116,8 +116,8 @@ class ReadConst(unittest.TestCase):
         # Which definition compiles is the preprocessor's call, not a regex's:
         # before, the first one was read (50, 1500), with --check green.
         cases = [
-            ("#if VARIANT\nstatic constexpr int SCORE_MIN = 50;\n#else\n"
-             "static constexpr int SCORE_MIN = 70;\n#endif\n", "SCORE_MIN", "lines 2, 4"),
+            ("/* two rooms,\n   two scores */\n#if VARIANT\nstatic constexpr int SCORE_MIN = 50;\n"
+             "#else\nstatic constexpr int SCORE_MIN = 70;\n#endif\n", "SCORE_MIN", "lines 4, 6"),
             ("#define CS_CLEAR_TIMEOUT_MS 1500\n#undef CS_CLEAR_TIMEOUT_MS\n"
              "#define CS_CLEAR_TIMEOUT_MS 2000\n", "CS_CLEAR_TIMEOUT_MS", "lines 1, 3"),
         ]
