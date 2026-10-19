@@ -435,7 +435,14 @@ row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 `cv_session` cookie (sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
 dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
-token, takes the bearer alone the same way. Host-tested in
+token, takes the bearer alone the same way. Row 2 is also under the
+lockout every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`,
+F289's follow-up): a wrong or malformed bearer is one strike, the right one
+clears the count, and while the backoff runs no bearer is compared, so a
+request that brings one gets `429` with `Retry-After` when the claim and the
+tap do not serve it. The lockout never reaches rows 3 and 4: a page holding
+a stale token, or a guesser busy on the network, cannot keep the claim or
+the owner's BOOT tap from serving. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
@@ -685,7 +692,11 @@ wizard's words; one signed in with its token saves it from **Settings**,
 session cookie (the landing page's, or a tap's or a claim's once the page
 has been reloaded without its token) is refused there and sent back to the
 sign-in, whose BOOT tap offers the kit (F289: the receipt's bearer grant is
-the header alone, never the cookie). A kit saved on the setup network names the
+the header alone, never the cookie; the sign-in then says the session does
+not cover this, not that a token it never sent was wrong). The session
+cookie a tap or a claim sets is `Secure` when the answer goes out over
+HTTPS, and not on the first-boot SoftAP's plain-HTTP setup, where a browser
+would drop it. A kit saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -856,6 +867,16 @@ cannot speak to.
       neither body naming the token or the AP password; the same two
       requests with `Authorization: Bearer <token>` serve; `/api/status` on
       the cookie still serves (F289).
+- [ ] With the WAP joined to the home Wi-Fi, wrong bearers on
+      `GET /api/provisioning-receipt` arm the same backoff as the admin
+      routes: once it runs, the right token is `429` with `Retry-After` on
+      the receipt and on `GET /api/pairing-qr`, a short BOOT tap inside that
+      backoff still serves the receipt, and the right token serves again
+      once the backoff ends (F289's follow-up).
+- [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
+      link and a BOOT-tap receipt send carries `Secure`; on the first-boot
+      SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none
+      and the browser keeps it (F289's follow-up).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at

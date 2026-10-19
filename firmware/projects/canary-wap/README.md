@@ -335,7 +335,12 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie.
+as a bearer header or the dashboard's session cookie, with two exceptions that
+take the bearer header alone, because the landing page mints that session for
+any host on the home network: `/api/pairing-qr` (it carries the token), and a
+`/api/mqtt/config` save that keeps the stored broker password while changing
+the broker host, port, user, encryption or CA (a session gets `403
+password_needed`, and typing the password again is the way past it).
 
 ```json
 {

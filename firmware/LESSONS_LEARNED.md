@@ -2524,7 +2524,14 @@
   first grant and the pairing QR take the bearer-only halves; every other
   route keeps the wrappers. The receipt's tap and claim grants are
   unchanged, so a cookie-only browser gets the refusal a bare caller gets
-  and the dashboard's sign-in offers the recovery kit through the tap.
+  and the dashboard's sign-in offers the recovery kit through the tap
+  (amended 2026-10-19: the receipt's first grant is now
+  `api_auth_bearer_grant()`, the same header-only compare under the
+  lockout. The silent `api_auth_bearer_valid()` had made the receipt the
+  one route where a wrong token cost nothing, and a compare that records
+  nothing is a guessing oracle beside a lockout. A wrong bearer is now one
+  strike, and while the backoff runs none is compared (429). The claim and
+  the tap are never held by it).
 - **Regression check:** `tests_host/test_receipt_grant.cpp` (in `make run`)
   runs the real `api_auth.h` and both handlers cut out of the sketch: a
   cookie alone, and beside a wrong bearer, refused on both routes; a
@@ -2534,6 +2541,46 @@
   bearer-only gates as markers. Rule for the next route: before a route
   answers a credential, ask what minted the credential it accepts — if any
   LAN host could mint it, it is not a grant for that answer.
+- **Date learned:** 2026-10
+
+### A secret the device keeps is also sent wherever the device is told to send it
+- **What happened:** canary-wap's broker password was write-only (`GET
+  /api/mqtt/config` answers `password_set`, never the password), so after
+  sweep F289 it looked out of the landing session's reach. But `POST
+  /api/mqtt/config` takes that session, and a body with no `"password"`
+  kept the stored one while it changed the host, port, user, TLS mode or
+  CA. The next reconnect opened a client to the caller's own listener and
+  handed it the stored user and password. Any host on the home network
+  could read the secret without any route ever answering it (the F289
+  follow-up, shown by the re-init host test's fake client recording the
+  password it was configured with). The flagship's `credential_carry` had
+  refused the same carry to a new host or port since wave 8; the WAP's
+  handler had no such rule.
+- **Root cause:** "write-only" was checked on the answer and not on the
+  destination. Changing where a kept secret goes is a read of that secret
+  by whoever controls the new destination, so the gate on a re-point has
+  to be the gate on the secret, not the gate on the settings page.
+- **Fix:** `handle_config_post()` marks a save that moves the password (a
+  new host, port, user or TLS mode, or any CA sent) as each field is
+  written, and when it keeps a non-empty stored password and moves it, it
+  takes only the bearer (`bearer_authorized()`: a non-empty token and
+  `api_auth_bearer_valid()`). Otherwise it answers `403 password_needed`
+  before anything is saved, with this frame's copy of the password wiped,
+  and the `/mqtt` page puts the cursor in the password field. First boot
+  (nothing stored), a save that sends the password and an ordinary save
+  are not asked.
+- **Regression check:** `tests_host/test_mqtt_reinit.cpp` (in `make run`)
+  drives the real `csi_mqtt.cpp`: ten move bodies on a session are refused
+  and no client is ever given the stored password for another URI; the
+  saves that keep it home, the wizard's shape and first boot are served;
+  the bearer moves it. `check_route_security.py` holds `config_save()` to
+  a bearer-only re-point gate and every answer that carries a secret (the
+  token, the SoftAP password, the TLS pin, the broker password) to a
+  bearer-only gate, never an any-session one. Rule for the next setting:
+  for each stored secret, list every field that decides where it is sent.
+  Each of those fields is as sensitive as the secret. The QR provisioning
+  re-point (`qr_scan_task_fn`) has the same shape and is not covered by
+  this fix.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
