@@ -2483,6 +2483,45 @@
   device.
 - **Date learned:** 2026-10
 
+### A session any LAN host can mint is a sign-in, not a grant for the secret it was minted without
+- **What happened:** canary-wap's dashboard landing page mints a one-tap
+  pairing link for whoever loads `/`, and the tap becomes a 24-hour
+  `cv_session` cookie — deliberate: on the home network the dashboard treats
+  the LAN as its boundary (the 2026-07 audit's "Trust-on-LAN", MEDIUM).
+  `api_auth_check()` and `api_auth_check_optional()` took that cookie as an
+  API credential so a signed-in browser never had to retype the token, and
+  `GET /api/provisioning-receipt` used the optional check as its first
+  grant, `GET /api/pairing-qr` the full one. So the two answers that carry
+  the bearer token itself (and the SoftAP password and the TLS pin) were
+  reachable with the session any host on the LAN could mint: the BOOT tap
+  the receipt exists to gate, bypassed by a page load (sweep F289, read from
+  the code).
+- **Root cause:** one credential check for two different classes of route.
+  A session that stands in for the token on the dashboard's reads and
+  writes is a convenience the token's holder is entitled to; on a route
+  whose answer IS the token, the session has to prove the caller already
+  holds what the route hands out, and a session minted for any LAN host
+  proves only presence on the LAN. The same shape as the display's
+  per-boot CSRF token above: what a LAN caller can read is not what
+  authenticates the one thing the LAN must not reach.
+- **Fix:** `api_auth.h` splits each check into the cookie short-circuit and
+  a bearer-only body (`api_auth_bearer_valid()`, `api_auth_check_bearer()`:
+  the same constant-time compare, lockout and 401/403/429). The receipt's
+  first grant and the pairing QR take the bearer-only halves; every other
+  route keeps the wrappers. The receipt's tap and claim grants are
+  unchanged, so a cookie-only browser gets the refusal a bare caller gets
+  and the dashboard's sign-in offers the recovery kit through the tap.
+- **Regression check:** `tests_host/test_receipt_grant.cpp` (in `make run`)
+  runs the real `api_auth.h` and both handlers cut out of the sketch: a
+  cookie alone, and beside a wrong bearer, refused on both routes; a
+  bearer, the tap and the claim served; and a scan of the sketch's text
+  that names every line writing the token or the AP password and holds the
+  HTTP writers to the two handlers. `check_route_security.py` knows the
+  bearer-only gates as markers. Rule for the next route: before a route
+  answers a credential, ask what minted the credential it accepts — if any
+  LAN host could mint it, it is not a grant for that answer.
+- **Date learned:** 2026-10
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg

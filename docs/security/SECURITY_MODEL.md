@@ -320,9 +320,16 @@ CI, and none of it is bench-tested yet.
 
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a
-24-hour session cookie; the WAP's bearer token itself is handed out only in
-the provisioning receipt (its gate opens for thirty seconds after a short
-BOOT tap) or on the serial console. The displays treat the
+24-hour session cookie that signs that browser into the dashboard. That
+session is proof of being on the LAN and nothing more: the WAP's bearer
+token itself (with the SoftAP password and the TLS pin) is handed out only
+in the provisioning receipt — to a caller that already presents the token
+as a bearer, to a phone spending the setup door's claim, or for thirty
+seconds after a short BOOT tap — in the pairing QR an operator fetches with
+the token, or on the serial console. Until sweep F289 the session cookie
+bought the receipt and the QR too, so any host on the home network could
+read the token with no tap; both routes now take the `Authorization:
+Bearer` header alone (host-tested, not bench-tested). The displays treat the
 LAN as their trust boundary by design — no bearer credential at all, a
 per-boot CSRF token that keeps cross-site pages away from writes, and the
 on-glass-only settings above that no network caller can flip.

@@ -511,6 +511,46 @@ clean-receipt-authority:
 run: run-receipt-authority
 clean: clean-receipt-authority
 
+# The receipt's and the pairing QR's grants (sweep F289): the REAL api_auth.h
+# and handle_provisioning_receipt(), handle_pairing_qr() and
+# provisioning_gate_take() cut verbatim out of canary_wap.ino
+# (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
+# with headers and a query string) and stand-ins for the two writers, the
+# session mint, the health log and the Wi-Fi facts, beside the sketch's own
+# claim_ticket.h. A cv_session cookie alone is refused on both routes (403 on
+# the receipt, 401 on the QR; before F289 both served); a bearer serves both;
+# the BOOT tap and the setup-door claim still serve the receipt, a cookie
+# beside them changing nothing; the lockout is every admin route's. It also
+# reads the sketch's text (its path is passed in): the two handlers name only
+# the bearer-only checks, and nothing but send_provisioning_receipt() and
+# handle_pairing_qr() writes the token or the AP password into an answer.
+RGRANT_BIN = test_receipt_grant
+RGRANT_SRC = test_receipt_grant.cpp
+RGRANT_INC = test_receipt_grant.inc
+RGRANT_CUT = ../../../tests_host/cut_functions.awk
+
+$(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+# api_auth.h's helpers the two handlers never call (the ?token= gate, the
+# stats, the console's redaction) are unused here, and its constant-time
+# compare casts through volatile: both are the header's, not the suite's.
+$(RGRANT_BIN): $(RGRANT_SRC) $(RGRANT_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DRECEIPT_GRANT_INC='"$(RGRANT_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RGRANT_SRC)
+
+.PHONY: run-receipt-grant clean-receipt-grant
+run-receipt-grant: $(RGRANT_BIN)
+	$(call run_marked,$(RGRANT_BIN))
+clean-receipt-grant:
+	rm -f $(RGRANT_BIN) $(RGRANT_INC)
+
+run: run-receipt-grant
+clean: clean-receipt-grant
+
 # The writer's bounds (sweep F230): the REAL wap_json_writer.h, identity_json.h
 # and fleet_scan_cache.h, with a string grown where a live global can change
 # under a build: between escaped()'s measure and its copy (and str()'s), and
@@ -1787,7 +1827,7 @@ clean: clean-mqtt-identity
 # The cut .inc files are its prerequisites, since the preprocessor reads
 # them: run it standalone through `make run-arduino-globals`.
 .PHONY: run-arduino-globals
-run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC)
+run-arduino-globals: $(DAILY_INC) $(FIRSTBOOT_INCS) $(EXPORT_INC) $(RGRANT_INC)
 	python3 check_arduino_globals.py
 
 run: run-arduino-globals

@@ -195,6 +195,7 @@ same way; no sketch change is needed.)
 - No frame storage — camera peek is positioning only
 - API token derived via HKDF (never stored in plaintext)
 - Device-unique AP password derived from the device private key (HMAC, domain-separated)
+- Over the network, the API token and the AP password leave the device only in the provisioning receipt (a bearer, a setup-door claim or a BOOT tap) and the pairing QR (a bearer); the dashboard's session cookie buys neither. The serial console prints the same receipt at every boot, which takes physical access to the USB port
 - Optional TLS with self-signed certificate
 
 ## File Structure

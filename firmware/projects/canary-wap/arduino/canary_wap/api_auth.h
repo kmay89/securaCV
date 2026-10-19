@@ -27,6 +27,17 @@
 // cv_session cookie is an API credential for browser UI calls, so users
 // who already opened the paired dashboard do not have to reveal or retype
 // the long-lived API token when they click Settings.
+//
+// It is NOT a credential for the routes that hand out a credential (sweep
+// F289). The dashboard's landing page mints that session for whoever loads
+// it on the home network (deliberate LAN posture, the 2026-07 audit's
+// "Trust-on-LAN"), so a session is proof of being on the LAN, not of holding
+// the token or of a hand on the BOOT button. GET /api/provisioning-receipt
+// (the bearer token, the SoftAP password, the TLS pin) and GET
+// /api/pairing-qr (the token and the pin) therefore take the bearer-only
+// checks below — api_auth_bearer_valid() and api_auth_check_bearer() — and
+// never this bridge; their other grants (the BOOT tap, the setup-door claim)
+// are the handlers' own.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
 
 // ═══════════════════════════════════════════════════════════════════
@@ -144,18 +155,15 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 
 // Returns true if authenticated, false if response already sent (401/403/429).
 // The caller should return ESP_OK immediately if this returns false.
+//
+// Two entry points over one body. api_auth_check() takes a valid cv_session
+// cookie OR a Bearer token: every admin route. api_auth_check_bearer() takes
+// ONLY the Bearer token, with the same lockout, the same failure accounting
+// and the same 401/403/429 answers: the routes whose answer carries a
+// credential (sweep F289 — the pairing QR), where a session the landing page
+// mints for any LAN host must not stand in for the token.
 
-static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
-  // A valid session cookie authenticates the request, but it must NOT
-  // reset the Bearer-token failure lockout. Otherwise an attacker who
-  // happens to hold (or can mint) a session cookie could clear the
-  // consecutive_failures backoff between token guesses, neutralizing the
-  // brute-force protection. Only a successful Bearer token comparison
-  // calls auth_record_success() (see below).
-  if (cv_session_validate && cv_session_validate(req)) {
-    return true;
-  }
-
+static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) {
   // ── Check lockout ──
   if (auth_is_locked_out()) {
     uint32_t remaining = g_auth.lockout_until_ms - millis();
@@ -241,17 +249,36 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
   return true;
 }
 
+static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
+  // A valid session cookie authenticates the request, but it must NOT
+  // reset the Bearer-token failure lockout. Otherwise an attacker who
+  // happens to hold (or can mint) a session cookie could clear the
+  // consecutive_failures backoff between token guesses, neutralizing the
+  // brute-force protection. Only a successful Bearer token comparison
+  // calls auth_record_success() (in api_auth_check_bearer).
+  if (cv_session_validate && cv_session_validate(req)) {
+    return true;
+  }
+  return api_auth_check_bearer(req, expected_token);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // OPTIONAL AUTH CHECK — Returns true if valid token present
 // ═══════════════════════════════════════════════════════════════════
 
-// Like api_auth_check but does NOT send error response on failure.
-// Used for endpoints that allow both authenticated and unauthenticated access
-// (e.g., provisioning-receipt).
+// Like api_auth_check but does NOT send error response on failure, and
+// records nothing against the lockout. Used for endpoints that allow both
+// authenticated and unauthenticated access.
+//
+// api_auth_bearer_valid() is the Bearer half alone: a real
+// `Authorization: Bearer <token>` header, constant-time compared, true or
+// false and nothing sent. A valid cv_session cookie is NOT accepted here
+// (sweep F289): GET /api/provisioning-receipt's first grant, whose answer
+// is the bearer token itself and the SoftAP password, so the landing page's
+// 24 h session must not be what buys it. api_auth_check_optional() is the
+// cookie OR this.
 
-static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
-  if (cv_session_validate && cv_session_validate(req)) return true;
-
+static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) {
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
@@ -270,6 +297,11 @@ static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token
   if (token_len != expected_len) return false;
 
   return constant_time_compare(token, expected_token, expected_len);
+}
+
+static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
+  if (cv_session_validate && cv_session_validate(req)) return true;
+  return api_auth_bearer_valid(req, expected_token);
 }
 
 // ═══════════════════════════════════════════════════════════════════

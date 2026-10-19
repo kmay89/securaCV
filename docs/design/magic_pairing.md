@@ -430,7 +430,13 @@ of every handler, so its receipt route runs all four rows. **The WAP sketch
 asks no Host question on this route today** (it has no `auth_gate`; its
 `/` page checks the Host header only to pick the first-boot wizard), so its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim and the same unspent tap. Adding
+that order, with the same single-use claim and the same unspent tap. Its
+row 2 is the `Authorization: Bearer` header alone, never the dashboard's
+`cv_session` cookie (sweep F289): the landing page at `/` mints that session
+for whoever loads it on the home network, so it signs a browser into the
+dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
+token, takes the bearer alone the same way. Host-tested in
+`firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
 
@@ -674,9 +680,12 @@ this door, which never runs the wizard's close-out, has a kit to save. On
 the dashboard (`https://canary-<suffix>.local/settings` once set up; port
 80 redirects there) a browser that is signed out chooses **Use BOOT Tap
 Once**, and the tap that signs it in offers **Save my recovery kit** in the
-wizard's words; one already signed in (a session cookie from the landing
-page, a tap or a claim, or a token) saves it from **Settings**, **Device**,
-**Recovery kit** without a tap. A kit saved on the setup network names the
+wizard's words; one signed in with its token saves it from **Settings**,
+**Device**, **Recovery kit** without a tap, while one signed in only by a
+session cookie (the landing page's, or a tap's or a claim's once the page
+has been reloaded without its token) is refused there and sent back to the
+sign-in, whose BOOT tap offers the kit (F289: the receipt's bearer grant is
+the header alone, never the cookie). A kit saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -841,6 +850,12 @@ cannot speak to.
       second time is `403`; a wrong claim is `403` **and** burns the real
       one; a claim after 180 s is `403`; the BOOT tap is still unspent after
       a claim served.
+- [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
+      landing page's **Open dashboard** link minted is `403` on
+      `GET /api/provisioning-receipt` and `401` on `GET /api/pairing-qr`,
+      neither body naming the token or the AP password; the same two
+      requests with `Authorization: Bearer <token>` serve; `/api/status` on
+      the cookie still serves (F289).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at

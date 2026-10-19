@@ -536,10 +536,12 @@ void test_sketch_glue() {
   // No second spelling of the address beside the header's.
   CHECK(!has(send, R"(softAPIP|localIP|\.local")"));
 
-  // Each grant passes its own name: a bearer, a served claim, else the tap.
+  // Each grant passes its own name: a bearer (the header alone, never the
+  // cv_session cookie — api_auth_bearer_valid, sweep F289; test_receipt_grant
+  // drives it), a served claim, else the tap.
   const std::string route = body_of(ino, "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {");
   CHECK(!route.empty());
-  CHECK(has(route, R"(api_auth_check_optional\(req, g_device\.api_token_str\)\) \{\s*return send_provisioning_receipt\(req, receipt_authority::Grant::BEARER\);)"));
+  CHECK(has(route, R"(api_auth_bearer_valid\(req, g_device\.api_token_str\)\) \{\s*return send_provisioning_receipt\(req, receipt_authority::Grant::BEARER\);)"));
   CHECK(has(route, R"(send_provisioning_receipt\(\s*req, claim_served \? receipt_authority::Grant::SETUP_DOOR_CLAIM\s*: receipt_authority::Grant::BOOT_TAP\);)"));
   CHECK(count_of(ino, R"(\bsend_provisioning_receipt\()") == 3);   // the definition and the two calls
 

@@ -1126,7 +1126,7 @@ so — see D2 below.)
   its BOOT tap offers the kit. Docs: `magic_pairing.md`, the FAQ's Home
   Assistant answer, the WAP README, the U1 checklist rows. Host-tested; not
   run on a device or a phone (U1).
-- [ ] **F289 [code+decision] Any host on a canary-wap's home network can take
+- [x] **F289 [code+decision] Any host on a canary-wap's home network can take
   its bearer token and SoftAP password with no tap.** Read from the code, not
   run: `GET /` without a session serves
   `csi_integration::send_pair_landing()`, which mints a pair token for any
@@ -1145,6 +1145,60 @@ so — see D2 below.)
   the kit stays reachable (`recovery_kit.test.js` already drives the refused
   case). Needs an early look from a maintainer. Found by F255 and F257
   (#1802).
+  *Done (PR pending):* decided: the landing page's 24 h `cv_session` cookie
+  is deliberate LAN posture for the dashboard and stays; what a session buys
+  is narrowed. `GET /api/provisioning-receipt`'s first grant is a real
+  `Authorization: Bearer <token>` header and nothing else
+  (`api_auth_bearer_valid()`, the bearer half of `api_auth_check_optional()`
+  split out in `api_auth.h`, constant-time compared as every admin route's
+  bearer is; it records nothing against the lockout, as the optional check
+  never did), and `GET /api/pairing-qr` is gated by `api_auth_check_bearer()`
+  (the bearer half of `api_auth_check()`: the same lockout, the same failure
+  accounting, the same 401/403/429), so neither route takes the cookie;
+  `api_auth_check()` and `api_auth_check_optional()` keep taking it for every
+  other route, as wrappers over those halves. The receipt's other grants are
+  unchanged: a setup-door claim and the BOOT tap serve as before, a cookie
+  beside either changing nothing (a cookie beside an open tap is served as
+  the tap, which it spends). A browser signed in only through the landing
+  page or a tap gets `403 physical_confirmation_required` on the receipt and
+  `401` on the QR, the answers a credential-less caller gets; the dashboard's
+  `secureFetch` brings the sign-in back on both, whose **Use BOOT Tap Once**
+  offers the kit (F257), and a browser that typed the token sends it as a
+  bearer and keeps both. The `/companion` wizard's close-out was never on
+  the cookie: it fetches the receipt bare and asks for the BOOT tap on a
+  403, so first-boot setup is unchanged, and a setup-door pairing spends its
+  claim as before. Searched for other answers carrying the token or the
+  SoftAP password: none. `send_provisioning_receipt()` (called from the
+  receipt handler alone) and `handle_pairing_qr()` are the only HTTP writers
+  of either; `/api/status`, the setup page, the fleet QR and
+  `/api/wifi/pair-token` carry neither (the last one's `token` is the
+  wizard's 10-minute pair token); the rest are the serial console, the boot
+  banner and key management. `check_route_security.py` knows the two new
+  gates as markers. `tests_host/test_receipt_grant.cpp` (252 checks, in
+  `make run`) drives the REAL `api_auth.h` and the two handlers cut verbatim
+  out of the sketch over `stubs/receipt_grant`: a cookie alone, and a cookie
+  beside a wrong bearer, refused on both routes with no secret in the answer
+  and no cookie issued; a bearer served on both with the tap and the claim
+  left alone; a cookie beside the tap or the claim served as the tap or the
+  claim; a bare tap, a stale tap, a wrong claim and the bearer's shapes as
+  before; the QR's lockout; `api_auth_check()` still taking the cookie; and
+  the sketch's text — the two handlers name only the bearer-only checks, and
+  every line naming `g_device.api_token_str` or `g_device.ap_password` is a
+  comparison, a hand-over to a module's gate, key management, the console or
+  the boot banner, or sits in one of the two writers. The pre-F289 sketch
+  fails 61 of its checks (the cookie served both routes).
+  `test_receipt_authority.cpp`'s glue pin follows the new call. `web_ui.h`'s
+  comments and `recovery_kit.test.js`'s narrative say what the device now
+  answers (the page's behavior is unchanged: a cookie session sends no
+  header; `web_assets_gz.h` regenerated, `gen_wap.py` and `gen_csp.py
+  --check` clean). Docs: `magic_pairing.md` (§3.7 and the kit paragraph, a
+  §9 row), `SECURITY_MODEL.md`'s WAP paragraph, the FAQ's Home Assistant
+  answer, the WAP README, `api_auth.h`, `csi_integration.h` and
+  `receipt_authority.h`'s comments, `LESSONS_LEARNED.md`, the U1 checklist
+  section. Host-tested; the ESP32 compile is CI's; not run on a device (U1).
+  Still open and deliberate: the landing page keeps minting a session for
+  any LAN host (the dashboard's reads and writes, the audit's MEDIUM), and
+  the WAP's receipt still asks no Host question (§3.7).
 
 ### Parity & sub-projects
 

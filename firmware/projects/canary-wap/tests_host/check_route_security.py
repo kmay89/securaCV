@@ -24,8 +24,13 @@ SKETCH = Path("firmware/projects/canary-wap/arduino/canary_wap")
 # audit verified enforces access.
 AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
+    "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
+                                  # pairing QR, whose answer carries the token)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # silent variant (caller enforces)
+    "api_auth_bearer_valid(",     # silent Bearer-only variant (F289: the
+                                  # receipt's first grant; the tap and the
+                                  # claim are the handler's own)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
     "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred

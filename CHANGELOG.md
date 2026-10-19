@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### canary-wap: the landing page's session no longer reaches the provisioning receipt or the pairing QR
+
+- **canary-wap: a dashboard session buys neither the provisioning receipt nor
+  the pairing QR; only a bearer does (sweep F289).** The dashboard's landing
+  page mints a 24-hour `cv_session` cookie for whoever loads `/` on the home
+  network — deliberate LAN posture for the dashboard, and it stays — but
+  `GET /api/provisioning-receipt` took that cookie as its first grant and
+  `GET /api/pairing-qr` was gated the same way, so any host on the home
+  network could read the bearer token, the SoftAP password and the TLS pin
+  with no tap (read from the code, not run). Both routes now take as their
+  bearer grant only a real `Authorization: Bearer <token>` header,
+  constant-time compared as every admin route's is (`api_auth.h`'s
+  `api_auth_bearer_valid()` and `api_auth_check_bearer()`, the bearer halves
+  of the two checks every other route keeps); the BOOT tap and the setup-door
+  claim still serve the receipt as before. A browser signed in only through
+  the landing page is refused and the dashboard's sign-in comes back, whose
+  **Use BOOT Tap Once** offers the recovery kit; one that typed its token
+  keeps both. First-boot setup is unchanged (the wizard's close-out asks for
+  the BOOT tap). **Host-tested** (`test_receipt_grant.cpp`, 252 checks on the
+  real `api_auth.h` and the handlers cut out of the sketch; the pre-fix
+  sketch fails 61); the ESP32 compile is CI's; not run on a device (U1).
+
 ### No job floats on `ubuntu-latest`, the WAP's release rows build on their sketch's core, the hourly ceiling never refuses a refresh and keeps its last slot for a change, a PlatformIO Canary in an opera refuses a join and says it paired at once, another Canary cannot win the Scout's pairing window, the 4.3B fieldbus station reads a Modbus exception and recovers a bus-off, the Sense's count follows its presence, a Canary's Last event names its summaries, the root image mints Witness Wall viewer tokens, and the Lab groups enclosure knobs as the builder does (#1802, wave 19)
 
 - **CI: every job in the three repos that floated on `ubuntu-latest` runs on
