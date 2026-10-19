@@ -736,11 +736,13 @@ bool csi_event_find(uint32_t event_id, csi_event_record_t* out) {
 bool csi_event_dismiss(uint32_t event_id) {
   if (event_id == 0) return false;
   bool found = false;
+  bool first = false;
   {
     RingLock _lock;
     if (!g_ring) return false;   /* never allocated ⇒ nothing to dismiss */
     for (size_t i = 0; i < CSI_EVENT_RING_CAP; ++i) {
       if (g_ring[i].event_id == event_id) {
+        first = g_ring[i].values.dismissed == 0;
         g_ring[i].values.dismissed = 1;
         g_ring[i].values.present_fields |= CSI_FIELD_DISMISSED;
         found = true;
@@ -750,8 +752,12 @@ bool csi_event_dismiss(uint32_t event_id) {
   }
   /* csi_module_dispatch_dismiss() is invoked outside the ring lock so the
    * module callback can't accidentally re-enter the ring (e.g. via emit()) and
-   * deadlock against the same non-recursive mutex. */
-  if (found) csi_module_dispatch_dismiss(event_id);
+   * deadlock against the same non-recursive mutex. Only the first dismiss of
+   * a row reaches its module: core.presence and core.breathing raise their
+   * thresholds a point per call, and since sweep F77 their closed bundles
+   * are ring rows, so a second press of "That was nothing" or a client's
+   * retry would nudge them again (F77's review). */
+  if (first) csi_module_dispatch_dismiss(event_id);
   return found;
 }
 

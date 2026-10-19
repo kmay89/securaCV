@@ -24,6 +24,8 @@
 // securacv_csi_modules_tick, which is what main.cpp ran there: nothing).
 // test_a_closed_bundle_reaches_the_ring fails on the library before sweep
 // F77, where a closed bundle committed without a ring row.
+// test_a_dismissed_presence_row_nudges_its_module_once fails on the library
+// before F77's review, which dispatched every dismiss of a row to its module.
 //
 // Backlog F90, on the same bridge and clock: a state held one, two or three
 // hours (plus 0, 7, 133 or 301 s of phase) reopens its
@@ -375,6 +377,45 @@ static int test_a_held_state_keeps_its_refreshes_and_the_way_out() {
   return 0;
 }
 
+// Sweep F77's review: a closed presence row is a ring row now, so a dismiss
+// of it ("That was nothing" on the canary-wap's Today sheet) reaches
+// core.presence's handler, which raises its motion and breathing thresholds
+// a point. Only the first dismiss of a row does: a second press, or a
+// client's retry, finds the row dismissed and nudges nothing. Read off the
+// module's own classification: the motion threshold starts at 35, so a
+// window of 35 opens a "subtle" bundle; one nudge makes it 36, so 35 no
+// longer does and 36 still does. Fails on the library before the review
+// (three dismisses, three nudges, 38: a window of 36 opens nothing). Runs
+// last, since it leaves the thresholds nudged.
+static int test_a_dismissed_presence_row_nudges_its_module_once() {
+  fresh();
+  csi_event_record_t open;
+  const csi_features_t at35 = window_of(35);
+  const csi_features_t at36 = window_of(36);
+  for (int i = 0; i < 5; ++i) loop_pass(&at35);
+  CHECK(open_bundle("subtle", &open));          // the threshold is 35
+  const uint32_t opened = walk_in();
+  CHECK(opened != 0);
+  while (g_host_millis - opened < 300 * 1000) loop_pass(&kActive);
+  for (int i = 0; i < 200; ++i) loop_pass(&kEmpty);
+  CHECK(!open_bundle("subtle", &open) && !open_bundle("active", &open));
+  const Row* row = only_row_of("active");
+  CHECK(row != nullptr);
+  const uint32_t id = row->id;
+
+  CHECK(csi_event_dismiss(id));
+  CHECK(csi_event_dismiss(id));                 // the button pressed again
+  CHECK(csi_event_dismiss(id));                 // a client's retry
+  csi_event_record_t rec;
+  CHECK(csi_event_find(id, &rec) && rec.values.dismissed == 1);
+
+  for (int i = 0; i < 5; ++i) loop_pass(&at35);
+  CHECK(!open_bundle("subtle", &open));         // nudged: 35 is below the threshold
+  for (int i = 0; i < 5; ++i) loop_pass(&at36);
+  CHECK(open_bundle("subtle", &open));          // once: 36 still reaches it
+  return 0;
+}
+
 int main() {
   if (test_a_refresh_inside_the_window_commits_nothing_and_spends_nothing()) return 1;
   if (test_a_closed_bundle_commits_once()) return 1;
@@ -382,6 +423,7 @@ int main() {
   if (test_a_window_closes_into_one_row_and_reopens()) return 1;
   if (test_a_bundle_commits_while_csi_is_shed()) return 1;
   if (test_a_held_state_keeps_its_refreshes_and_the_way_out()) return 1;
+  if (test_a_dismissed_presence_row_nudges_its_module_once()) return 1;   // last: it nudges
   std::printf("test_csi_modules_integration: %d checks passed\n", g_checks);
   return 0;
 }

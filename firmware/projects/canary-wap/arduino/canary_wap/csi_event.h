@@ -273,9 +273,14 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max);
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out);
 
 /**
- * Mark an event dismissed by the user. Increments the values->dismissed flag,
- * routes a notification to the originating module, and updates the in-memory
- * record so the dashboard can gray it out. Local-only.
+ * Mark an event dismissed by the user. Sets the values->dismissed flag and
+ * updates the in-memory record so the dashboard can gray it out; the first
+ * dismiss of a row also routes a notification to the originating module
+ * (its on_event_dismissed, when this boot emitted it), a repeated one does
+ * not. Returns whether the row is in the ring. Local-only. Since sweep F77
+ * closed bundles are ring rows, so a dismissed core.presence or
+ * core.breathing row raises that module's thresholds a point, in RAM until
+ * its next init.
  */
 bool csi_event_dismiss(uint32_t event_id);
 

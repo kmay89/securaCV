@@ -481,8 +481,13 @@ RAM, up to eight, until it can; a reboot drops it.
 ### `POST /api/events/dismiss`
 
 Tells the ring "the user marked this row as 'that was nothing.'" Local-only.
-The originating module's `on_event_dismissed()` runs and may nudge its own
-thresholds. Nothing leaves the device.
+The first dismiss of a row runs the originating module's
+`on_event_dismissed()` (when this boot emitted the row), which may nudge its
+own thresholds; dismissing the same row again changes nothing. Since sweep
+F77 closed bundles are ring rows, so a dismissed `core.presence` or
+`core.breathing` row raises that module's thresholds one point each, in
+RAM until the module's next `init()` (F77's review made the nudge once per
+row). Nothing leaves the device.
 
 ```bash
 curl -X POST http://canary.local/api/events/dismiss \
