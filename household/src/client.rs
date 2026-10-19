@@ -37,6 +37,16 @@ pub enum Binding {
     },
 }
 
+/// The file [`keygen`] writes. Its secret lands in a [`Zeroizing`] buffer as
+/// it is parsed, never in a `serde_json::Value`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyFile {
+    alg: String,
+    #[serde(deserialize_with = "crate::secrets::deserialize_zeroizing_string")]
+    secret_key: Zeroizing<String>,
+}
+
 /// A software credential.
 pub struct SoftCredential {
     key: SigningKey,
@@ -61,7 +71,8 @@ pub fn keygen(path: &Path) -> Result<Vec<u8>> {
             break k;
         }
     };
-    let secret = Zeroizing::new(hex::encode(&key.to_bytes()));
+    let scalar: Zeroizing<[u8; 32]> = Zeroizing::new(key.to_bytes().into());
+    let secret = hex::encode_secret(&scalar[..]);
     let body = Zeroizing::new(format!(
         "{{\"alg\":\"es256\",\"secret_key\":\"{}\"}}\n",
         secret.as_str()
@@ -89,17 +100,13 @@ impl SoftCredential {
 
     /// Load the key file written by [`keygen`].
     pub fn load(path: &Path, handle: [u8; 16], binding: Binding) -> Result<Self> {
-        let raw = Zeroizing::new(crate::store::read_bounded(path, 4096)?);
-        let v: Value =
-            serde_json::from_slice(&raw).map_err(|_| Error::Invalid("key file is not JSON"))?;
-        if v["alg"] != "es256" {
+        let raw = crate::store::read_bounded_secret(path, 4096)?;
+        let f: KeyFile = serde_json::from_slice(&raw)
+            .map_err(|_| Error::Invalid("key file does not match the schema"))?;
+        if f.alg != "es256" {
             return Err(Error::Invalid("key file is not an es256 key"));
         }
-        let s = Zeroizing::new(hex::decode_array::<32>(
-            v["secret_key"]
-                .as_str()
-                .ok_or(Error::Invalid("key file has no secret_key"))?,
-        )?);
+        let s = hex::decode_secret_array::<32>(&f.secret_key)?;
         let key = SigningKey::from_slice(&s[..])
             .map_err(|_| Error::Invalid("key file holds an invalid key"))?;
         Ok(Self::new(key, handle, binding))

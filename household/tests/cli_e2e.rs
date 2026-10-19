@@ -67,6 +67,10 @@ struct Serve {
     child: Child,
     port: u16,
     stderr_rest: std::thread::JoinHandle<String>,
+    /// Everything the server wrote to stdout: searched by the sentinel and
+    /// expected empty (the server speaks only on stderr, and only to say it
+    /// started and stopped).
+    stdout_rest: std::thread::JoinHandle<String>,
 }
 
 fn serve(data: &Path, kek: &Path) -> Serve {
@@ -82,10 +86,16 @@ fn serve(data: &Path, kek: &Path) -> Serve {
             "--home-ttl",
             "600",
         ])
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let stdout_rest = std::thread::spawn(move || {
+        let mut all = Vec::new();
+        let _ = out.read_to_end(&mut all);
+        String::from_utf8_lossy(&all).into_owned()
+    });
     let mut r = BufReader::new(child.stderr.take().unwrap());
     let mut first = String::new();
     r.read_line(&mut first).unwrap();
@@ -96,14 +106,15 @@ fn serve(data: &Path, kek: &Path) -> Serve {
         .and_then(|p| p.parse().ok())
         .unwrap_or_else(|| panic!("no port in: {first}"));
     let stderr_rest = std::thread::spawn(move || {
-        let mut rest = first;
-        let _ = r.read_to_string(&mut rest);
-        rest
+        let mut rest = Vec::new();
+        let _ = r.read_to_end(&mut rest);
+        first + &String::from_utf8_lossy(&rest)
     });
     Serve {
         child,
         port,
         stderr_rest,
+        stdout_rest,
     }
 }
 
@@ -593,6 +604,7 @@ fn binary_end_to_end() {
     child.kill().unwrap();
     let _ = child.wait();
     let server_stderr = srv.stderr_rest.join().unwrap();
+    let server_stdout = srv.stdout_rest.join().unwrap();
     assert!(server_stderr.contains("listening"));
 
     // SENTINEL.
@@ -608,6 +620,10 @@ fn binary_end_to_end() {
             !server_stderr.to_ascii_lowercase().contains(h.as_str()),
             "handle in server log"
         );
+        assert!(
+            !server_stdout.to_ascii_lowercase().contains(h.as_str()),
+            "handle in server stdout"
+        );
         for c in client_out.borrow().iter() {
             assert!(
                 !c.to_ascii_lowercase().contains(h.as_str()),
@@ -615,12 +631,201 @@ fn binary_end_to_end() {
             );
         }
     }
-    // The server's log has no per-request lines at all.
+    // The server's log has no per-request lines at all, and its stdout is
+    // silent.
     for line in server_stderr.lines() {
         assert!(
             line.contains("listening") || line.contains("stopped"),
             "unexpected log line: {line}"
         );
+    }
+    assert!(
+        server_stdout.is_empty(),
+        "the server wrote to stdout: {server_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A 16-byte handle and a 32-byte public key as the CLI takes them. Their
+/// values are never reached: the parser refuses the command first.
+const HANDLE: &str = "00112233445566778899aabbccddeeff";
+const PUBKEY: &str = "0101010101010101010101010101010101010101010101010101010101010101";
+
+/// Each `roster propose` kind accepts only its own options: one that another
+/// kind takes is refused like a misspelled one (exit 2, named, nothing
+/// proposed). The shared list this replaced took `--threshold` on
+/// `add-member` with exit 0 and no effect.
+#[test]
+fn propose_kinds_refuse_each_others_options() {
+    let base = tmp();
+    let data = base.join("data");
+    let kek = base.join("kek.hex");
+    let admin = base.join("admin.json");
+    ok(&["init", "--data-dir", s(&data), "--kek", s(&kek)]);
+    ok(&["admin-keygen", "--out", s(&admin)]);
+    ok(&[
+        "roster",
+        "genesis",
+        "--data-dir",
+        s(&data),
+        "--kek",
+        s(&kek),
+        "--admin-key",
+        s(&admin),
+        "--physical-confirm",
+    ]);
+    let pending_before = ok(&["roster", "pending", "--data-dir", s(&data)]);
+    // (kind, its own complete options, one option another kind takes)
+    let cases: &[(&str, &[&str], &[&str])] = &[
+        (
+            "add-member",
+            &["--kind", "card", "--class", "possession"],
+            &["--threshold", "2"],
+        ),
+        (
+            "add-member",
+            &["--kind", "card", "--class", "possession"],
+            &["--handle", HANDLE],
+        ),
+        ("revoke", &["--handle", HANDLE], &["--kind", "card"]),
+        ("revoke", &["--handle", HANDLE], &["--class", "possession"]),
+        ("revoke", &["--handle", HANDLE], &["--public-key", PUBKEY]),
+        ("revoke", &["--handle", HANDLE], &["--not-after", "1"]),
+        (
+            "add-admin",
+            &[
+                "--handle",
+                HANDLE,
+                "--public-key",
+                PUBKEY,
+                "--alg",
+                "ed25519",
+            ],
+            &["--class", "intent"],
+        ),
+        (
+            "remove-admin",
+            &["--handle", HANDLE],
+            &["--public-key", PUBKEY],
+        ),
+        (
+            "set-threshold",
+            &["--threshold", "1"],
+            &["--handle", HANDLE],
+        ),
+    ];
+    for (kind, own, foreign) in cases {
+        let mut args = vec!["roster", "propose", kind, "--data-dir", s(&data)];
+        args.extend_from_slice(own);
+        args.extend_from_slice(foreign);
+        let o = run(&args);
+        assert_eq!(o.code, 2, "{kind} took {}: {}", foreign[0], o.stderr);
+        assert!(
+            o.stderr
+                .contains(&format!("{} is not an option of this command", foreign[0])),
+            "{kind}: {}",
+            o.stderr
+        );
+        assert!(o.stdout.is_empty(), "{kind} ran: {}", o.stdout);
+    }
+    assert_eq!(
+        ok(&["roster", "pending", "--data-dir", s(&data)]),
+        pending_before,
+        "a refused proposal was recorded"
+    );
+    // The same options on their own kind pass the parser: whatever the
+    // command then says about their values, it is not the parser's refusal.
+    for (kind, own, _) in cases {
+        let mut args = vec!["roster", "propose", kind, "--data-dir", s(&data)];
+        args.extend_from_slice(own);
+        let o = run(&args);
+        assert_ne!(o.code, 2, "{kind} refused its own options: {}", o.stderr);
+        assert!(
+            !o.stderr.contains("is not an option"),
+            "{kind}: {}",
+            o.stderr
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A stray argument that starts with `--` is named by its position, never
+/// echoed: it may be a key, a token or a handle typed as an option. Only a
+/// name some command takes is repeated, and its value never is.
+#[test]
+fn a_stray_dash_argument_is_never_echoed() {
+    const HEX: &str = "ffeeddccbbaa99887766554433221100";
+    let base = tmp();
+    // Nothing exists under it: should the parser let a command run, the
+    // command fails with exit 1, not the parser's 2.
+    let data = base.join("data");
+    let data = s(&data);
+    let stray = format!("--{HEX}");
+    let stray_eq = format!("--{HEX}=1");
+    // (argv, the stray's 1-based position among the options)
+    let cases: &[(&[&str], usize)] = &[
+        // Last, where the parser used to say "--<hex> needs a value".
+        (&["card", "provision", "--data-dir", data, &stray], 3),
+        // First, where it used to say "--<hex> is not an option ...".
+        (&["card", "provision", &stray, "--data-dir", data], 1),
+        // In `=` form, where it used to echo the part before the `=`.
+        (
+            &["card", "provision", "--data-dir", data, &stray_eq, "x"],
+            3,
+        ),
+        (&["pair", &stray], 1),
+        (&["client", "posture", "--addr", "127.0.0.1:1", &stray], 3),
+        (
+            &["serve", "--data-dir", data, &stray, "--bind", "127.0.0.1:0"],
+            3,
+        ),
+    ];
+    for (args, pos) in cases {
+        let o = run(args);
+        assert_eq!(o.code, 2, "{args:?}: {}", o.stderr);
+        assert!(
+            !o.stderr.contains(&HEX[..8]) && !o.stdout.contains(&HEX[..8]),
+            "the stray reached the terminal: {} {}",
+            o.stdout,
+            o.stderr
+        );
+        assert!(
+            o.stderr
+                .contains(&format!("argument {pos} is not an option of this command")),
+            "{args:?}: {}",
+            o.stderr
+        );
+    }
+    // A name some command takes is still named, so a misplaced real option
+    // reads as one; its value is not repeated.
+    let o = run(&["pair", "--data-dir", data, "--threshold", "zz-value"]);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o
+        .stderr
+        .contains("--threshold is not an option of this command"));
+    assert!(!o.stderr.contains("zz-value"), "{}", o.stderr);
+    let o = run(&["pair", "--data-dir", data, "--threshold=zz-value"]);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o
+        .stderr
+        .contains("--threshold is not an option of this command"));
+    assert!(!o.stderr.contains("zz-value"), "{}", o.stderr);
+    // An allowed option missing its value does not swallow the option that
+    // follows as that value: the parser refuses before any command runs
+    // (exit 2), whether the follower is foreign, a stray key or allowed.
+    for args in [
+        &["pair", "--data-dir", "--threshold"][..],
+        &["pair", "--data-dir", &stray][..],
+        &["card", "provision", "--data-dir", "--key-file", data][..],
+    ] {
+        let o = run(args);
+        assert_eq!(o.code, 2, "{args:?}: {}", o.stderr);
+        assert!(
+            o.stderr.contains("--data-dir needs a value"),
+            "{args:?}: {}",
+            o.stderr
+        );
+        assert!(!o.stderr.contains(&HEX[..8]), "{}", o.stderr);
     }
     let _ = std::fs::remove_dir_all(&base);
 }
