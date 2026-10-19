@@ -1963,21 +1963,32 @@ const std::string kPasswordNeeded =
     "{\"ok\":false,\"code\":\"password_needed\",\"reason\":\"the broker moved; type the broker "
     "password again to send it to the new address, or sign in with the API token\"}";
 
-// What NVS holds, as config_load() reads it, and the CA beside it.
+// What NVS holds, as config_load() reads it, and the CA beside it — and the
+// bytes themselves, with the count of writes the store has taken, so two
+// snapshots are equal only if nothing was written between them. Through
+// config_load() alone a refusal that rewrote the row with the bytes it held,
+// or with bytes read the same (a port 0 as the mode's default, a missing
+// prefix as the default), would read back equal (F289's second review).
 struct Stored {
   std::string host, user, pass, prefix, ca;
   uint16_t port;
   uint8_t tls_mode;
   bool enabled, discovery;
-  bool operator==(const Stored& o) const {
+  std::map<std::string, std::vector<uint8_t>> raw;   // stub_nvs() as it stood
+  unsigned writes;                                   // stub_nvs_writes() then
+  // The row as config_load() reads it (a save that wrote the same values).
+  bool reads_as(const Stored& o) const {
     return host == o.host && user == o.user && pass == o.pass && prefix == o.prefix && ca == o.ca &&
            port == o.port && tls_mode == o.tls_mode && enabled == o.enabled && discovery == o.discovery;
   }
+  // And nothing written since (a refusal).
+  bool operator==(const Stored& o) const { return reads_as(o) && raw == o.raw && writes == o.writes; }
 };
 Stored stored() {
   csi_mqtt::Config c;
   CHECK(csi_mqtt::config_load(&c));
-  return {c.host, c.user, c.pass, c.prefix, stored_ca(), c.port, c.tls_mode, c.enabled, c.discovery};
+  return {c.host, c.user, c.pass, c.prefix, stored_ca(), c.port, c.tls_mode, c.enabled, c.discovery,
+          stub_nvs(), stub_nvs_writes()};
 }
 
 // A device with the broker password on file, booted and connected to
@@ -2015,9 +2026,9 @@ Http bearer_post(const std::string& body, const char* token = kToken) {
 }
 
 // A refusal: 403 with the code and the reason, nothing of the password in
-// the answer, NVS as it was, the open client untouched, and no re-init
-// requested — the handler waited for none (not one delay), and a loop pass
-// with its worker serves none.
+// the answer, NVS as it was (byte for byte, and not one write taken), the
+// open client untouched, and no re-init requested — the handler waited for
+// none (not one delay), and a loop pass with its worker serves none.
 void expect_refused(const Http& h, const Stored& was) {
   if (h.req.status != "403 Forbidden") {
     std::printf("FAIL the move answered %s %s\n", h.req.status.c_str(), h.req.resp.c_str());
@@ -2125,7 +2136,7 @@ void test_a_session_cannot_change_the_tls_mode_and_keep_the_password() {
   expect_refused(session_post("{\"host\":\"10.0.0.1\",\"port\":1883,\"tls_mode\":0}"), ca_mode);
   // The same mode said again is not a move.
   expect_saved_no_client(session_post("{\"tls_mode\":1}"));   // CA mode, no CA: init() refuses
-  CHECK(stored() == ca_mode);
+  CHECK(stored().reads_as(ca_mode));                          // saved, the same row
   power_cycle();
   std::printf("PASS a_session_cannot_change_the_tls_mode_and_keep_the_password\n");
 }
@@ -2234,6 +2245,28 @@ void test_a_bearer_may_move_the_broker_and_keep_its_password() {
   now = stored();
   CHECK(now.port == 1884 && now.pass == kStoredPass);
   g_session_cookie_valid = true;
+  // The TLS mode, with a CA on file for the mode to use: the stored password
+  // goes out over TLS to the same host.
+  boot_with_password();
+  const std::string pem = pem_of(400, 'A');
+  CHECK(csi_mqtt::ca_save(pem.c_str()));
+  expect_saved(bearer_post("{\"tls_mode\":1}"), "mqtts://10.0.0.1:1883", kStoredPass);
+  now = stored();
+  CHECK(now.tls_mode == 1 && now.pass == kStoredPass && now.ca == pem);
+  CHECK(fake::last_client()->certificate == pem);
+  // A "ca" key, set on a plain device and then replaced, on the bearer alone.
+  boot_with_password();
+  g_session_cookie_valid = false;
+  expect_saved(bearer_post("{\"ca\":\"" + json_inside(pem + "\n") + "\"}"), "mqtt://10.0.0.1:1883", kStoredPass);
+  now = stored();
+  CHECK(now.tls_mode == 0 && now.pass == kStoredPass && now.ca == pem + "\n");
+  boot_with_password();
+  CHECK(csi_mqtt::ca_save(pem.c_str()));
+  expect_saved(bearer_post("{\"ca\":\"" + json_inside(pem_of(400, 'B') + "\n") + "\"}"), "mqtt://10.0.0.1:1883",
+               kStoredPass);
+  now = stored();
+  CHECK(now.pass == kStoredPass && now.ca == pem_of(400, 'B') + "\n");
+  g_session_cookie_valid = true;
   power_cycle();
   std::printf("PASS a_bearer_may_move_the_broker_and_keep_its_password\n");
 }
@@ -2271,6 +2304,27 @@ void test_a_stored_port_of_zero_is_the_modes_default() {
   CHECK(stored().port == 8883 && stored().pass == kStoredPass);
   power_cycle();
   std::printf("PASS a_stored_port_of_zero_is_the_modes_default\n");
+}
+
+// The snapshot the refusals are held to is the bytes and the writes, not the
+// row as config_load() reads it: a port 0 reads as the mode's default, and a
+// row rewritten with the bytes it held reads back the same, so the compare
+// must see both (guarding the guard).
+void test_a_stored_snapshot_sees_a_rewrite_of_the_same_row() {
+  boot_with_password();
+  const Stored a = stored();
+  CHECK(a.port == 1883);
+  store_u16(csi_mqtt::NVS_KEY_PORT, 0);               // reads as 1883
+  const Stored b = stored();
+  CHECK(b.reads_as(a));                               // the same row to config_load()
+  CHECK(!(a == b));                                   // the bytes differ
+  store_u16(csi_mqtt::NVS_KEY_PORT, 1883);            // the bytes as they were
+  const Stored c = stored();
+  CHECK(c.raw == a.raw);
+  CHECK(!(a == c));                                   // two writes happened
+  CHECK(c == stored());                               // and none since
+  power_cycle();
+  std::printf("PASS a_stored_snapshot_sees_a_rewrite_of_the_same_row\n");
 }
 
 // A wrong bearer beside the cookie is not a bearer: the session's refusal.
@@ -2378,28 +2432,34 @@ void boot_plain_with_ca() {
   boot_with_password();
   CHECK(csi_mqtt::ca_save(pem_of(400, 'A').c_str()));
 }
-const MoveScenario kMoves[] = {
-    {"plain: a new host and port, the attacker's password", boot_plain, "mqtt://10.0.0.1:1883",
-     "{\"host\":\"10.0.0.66\",\"port\":1884,\"tls_mode\":0,\"user\":\"mallory\",\"password\":\"attacker-chosen\"}",
-     "mqtt://10.0.0.66:1884", "attacker-chosen", false},
-    {"TLS: a downgrade to plain and a new host", boot_tls, "mqtts://10.0.0.1:1883",
-     "{\"host\":\"10.0.0.66\",\"tls_mode\":0,\"password\":\"attacker-chosen\"}",
-     "mqtt://10.0.0.66:1883", "attacker-chosen", false},
-    {"plain: an upgrade to TLS and a new host, a new password", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
-     "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"password\":\"n3w-pass\"}",
-     "mqtts://10.0.0.66:1883", "n3w-pass", true},
-    {"plain: an upgrade to TLS with a new CA and a new host", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
-     "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"ca\":\"" + json_inside(pem_of(400, 'B') + "\n") +
-         "\",\"password\":\"n3w-pass\"}",
-     "mqtts://10.0.0.66:1883", "n3w-pass", true},
-};
+// Built on first use, not at static initialization: pem_of() CHECKs its
+// size, and a CHECK before main() counts in every run of the binary and,
+// failing, names no test (main() holds that none ran before it).
+const std::vector<MoveScenario>& moves() {
+  static const std::vector<MoveScenario> kMoves = {
+      {"plain: a new host and port, the attacker's password", boot_plain, "mqtt://10.0.0.1:1883",
+       "{\"host\":\"10.0.0.66\",\"port\":1884,\"tls_mode\":0,\"user\":\"mallory\",\"password\":\"attacker-chosen\"}",
+       "mqtt://10.0.0.66:1884", "attacker-chosen", false},
+      {"TLS: a downgrade to plain and a new host", boot_tls, "mqtts://10.0.0.1:1883",
+       "{\"host\":\"10.0.0.66\",\"tls_mode\":0,\"password\":\"attacker-chosen\"}",
+       "mqtt://10.0.0.66:1883", "attacker-chosen", false},
+      {"plain: an upgrade to TLS and a new host, a new password", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
+       "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"password\":\"n3w-pass\"}",
+       "mqtts://10.0.0.66:1883", "n3w-pass", true},
+      {"plain: an upgrade to TLS with a new CA and a new host", boot_plain_with_ca, "mqtt://10.0.0.1:1883",
+       "{\"host\":\"10.0.0.66\",\"tls_mode\":1,\"ca\":\"" + json_inside(pem_of(400, 'B') + "\n") +
+           "\",\"password\":\"n3w-pass\"}",
+       "mqtts://10.0.0.66:1883", "n3w-pass", true},
+  };
+  return kMoves;
+}
 
 // The loop task's pass between two of a save's writes opens nothing and
 // leaves the pending request; the pass after the save opens the caller's
 // client. Every write of the save (the row's nine, and the CA's) gets the
 // pass after it, each on a fresh device.
 void test_a_save_in_progress_opens_no_client() {
-  for (const MoveScenario& m : kMoves) {
+  for (const MoveScenario& m : moves()) {
     for (unsigned at = 1;; ++at) {
       m.boot();
       const size_t from = fake::clients.size();
@@ -2452,7 +2512,7 @@ void test_a_save_inside_the_loop_tasks_read_opens_no_client() {
       csi_mqtt::NVS_KEY_TLS_MODE, csi_mqtt::NVS_KEY_DISCOVERY, csi_mqtt::NVS_KEY_HOST,
       csi_mqtt::NVS_KEY_USER,    csi_mqtt::NVS_KEY_PASS,   csi_mqtt::NVS_KEY_PREFIX,
   };
-  for (const MoveScenario& m : kMoves) {
+  for (const MoveScenario& m : moves()) {
     for (const char* key : kReads) {
       m.boot();
       const size_t from = fake::clients.size();
@@ -2622,6 +2682,8 @@ const Test kTests[] = {
     {"a_bearer_may_move_the_broker_and_keep_its_password",
      test_a_bearer_may_move_the_broker_and_keep_its_password},
     {"a_stored_port_of_zero_is_the_modes_default", test_a_stored_port_of_zero_is_the_modes_default},
+    {"a_stored_snapshot_sees_a_rewrite_of_the_same_row",
+     test_a_stored_snapshot_sees_a_rewrite_of_the_same_row},
     {"a_save_in_progress_opens_no_client", test_a_save_in_progress_opens_no_client},
     {"a_save_inside_the_loop_tasks_read_opens_no_client",
      test_a_save_inside_the_loop_tasks_read_opens_no_client},
@@ -2634,6 +2696,13 @@ const Test kTests[] = {
 
 int main(int argc, char** argv) {
   using namespace reinit;
+  // No CHECK ran before this line: one at static initialization (a scenario
+  // table built with pem_of(), once) counted in every run and, failing,
+  // would have printed no test's name.
+  if (g_checks != 0) {
+    std::fprintf(stderr, "FAIL %d check(s) ran before main()\n", g_checks);
+    return 1;
+  }
   stub_mqtt::current_task = fake::task_handle;
   const char* only = argc > 1 ? argv[1] : nullptr;
   int ran = 0;

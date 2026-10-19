@@ -39,6 +39,13 @@ inline int& stub_nvs_error_logs() {
  * config_load()'s reads, through these. */
 inline std::function<void(const char*)> stub_nvs_on_put;
 inline std::function<void(const char*)> stub_nvs_on_get;
+/* Every write the store took since the process began: each put and each
+ * remove, whatever it changed (F289's second review: a refusal that rewrote
+ * the row with the bytes it already held would read back equal). */
+inline unsigned& stub_nvs_writes() {
+  static unsigned writes = 0;
+  return writes;
+}
 inline bool stub_nvs_has_namespace(const std::string& ns) {
   if (stub_nvs_created().count(ns) != 0) return true;
   const std::string prefix = ns + "/";
@@ -60,7 +67,11 @@ class Preferences {
   }
   void end() {}
   bool isKey(const char* key) { return stub_nvs().count(k(key)) != 0; }
-  bool remove(const char* key) { return !ro_ && stub_nvs().erase(k(key)) != 0; }
+  bool remove(const char* key) {
+    if (ro_) return false;
+    ++stub_nvs_writes();
+    return stub_nvs().erase(k(key)) != 0;
+  }
 
   size_t putBool(const char* key, bool v) { return put(key, v); }
   size_t putUChar(const char* key, uint8_t v) { return put(key, v); }
@@ -68,6 +79,7 @@ class Preferences {
   size_t putULong(const char* key, uint32_t v) { return put(key, v); }
   size_t putString(const char* key, const char* v) {
     if (ro_) return 0;
+    ++stub_nvs_writes();
     const size_t n = strlen(v);
     stub_nvs()[k(key)].assign(v, v + n);
     if (stub_nvs_on_put) stub_nvs_on_put(key);
@@ -123,6 +135,7 @@ class Preferences {
   template <typename T>
   size_t put(const char* key, T v) {
     if (ro_) return 0;
+    ++stub_nvs_writes();
     std::vector<uint8_t>& b = stub_nvs()[k(key)];
     b.resize(sizeof v);
     memcpy(b.data(), &v, sizeof v);

@@ -329,12 +329,18 @@ seconds after a short BOOT tap — in the pairing QR an operator fetches with
 the token, or on the serial console. Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could
 read the token with no tap; both routes now take the `Authorization:
-Bearer` header alone (host-tested, not bench-tested). Since 2026-10-19 the
-session also cannot point the MQTT bridge at a new host, port, TLS mode or
-CA while keeping the stored broker password — that save takes the bearer or
-the password typed again (`403 password_needed`), so the password
-`GET /api/mqtt/config` keeps write-only cannot be read through a broker the
-session names (host-tested). The displays treat the
+Bearer` header alone (host-tested, not bench-tested). Since sweep F289's
+third road the session also cannot point the MQTT bridge at a new host,
+port, TLS mode or CA over `POST /api/mqtt/config` while keeping the stored
+broker password — that save takes the bearer or the password typed again
+(`403 password_needed`), so the password `GET /api/mqtt/config` keeps
+write-only cannot be read through a broker the session names that way
+(host-tested). The QR hub-provision path is the road that rule leaves open:
+a scanned hub code re-points the broker with the stored password, in a scan
+window the session can open (it mints the wizard's pair token over
+`GET /api/pair/token`), but only for a code in front of the camera
+(`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
+ledger. The displays treat the
 LAN as their trust boundary by design — no bearer credential at all, a
 per-boot CSRF token that keeps cross-site pages away from writes, and the
 on-glass-only settings above that no network caller can flip.
@@ -381,10 +387,15 @@ the unverified "lab" mode exists only as a mode chosen by name that warns on
 every connect. On the flagship's release images, and on its HTTPS builds
 until the first boot after setup or when HTTPS fails to start, provisioning
 the broker password over `POST /api/mqtt/config` crosses the LAN in the
-clear like the rest of the device API. A dashboard session alone cannot
-re-point the bridge at another host, port, TLS mode or CA while keeping the
-stored password; that save needs the bearer or the password typed again
-(sweep F289). This is compile-tested, host-tested, not yet bench-tested.
+clear like the rest of the device API. A `POST /api/mqtt/config` that moves
+the broker (a new host or port) while a password is stored and the body
+names none is refused `400 password_required_for_new_host` from any caller
+(`mqtt_tls_fields::credential_carry`; the flagship has no dashboard session,
+and a TLS-mode or CA change alone is not a move there). On the WAP, the same
+save from the dashboard session alone is refused `403 password_needed` when
+it moves the host, port, TLS mode or CA; the bearer, or the password typed
+again, moves it (sweep F289). This is compile-tested, host-tested, not yet
+bench-tested.
 
 **One read on the hub is open on purpose: the fleet roll-call**
 (`GET /api/fleet`). It answers anyone who can reach the kernel's port with

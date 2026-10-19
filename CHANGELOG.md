@@ -33,8 +33,15 @@
   because its cookie callers are the class in question, and the TLS mode
   and the CA count as moves on its transport. The QR hub-provision path
   still re-points the broker with the stored password — behind the pair
-  token and a code in front of the camera, not the session; named in the
-  ledger. **Host-tested** (`test_mqtt_reinit.cpp`, 2808 checks on the real
+  token, which the session can mint (`GET /api/pair/token` takes the
+  cookie), and a code in front of the camera, which it cannot; named in
+  the ledger. The refusal tests hold NVS byte for byte with the stub's
+  write count, the bearer leg covers a TLS-mode and a CA move, and
+  `scripts/tests/test_docs_claims.py` retires three sentences this
+  change's reviews found untrue (the busy-word mutant's failure, the QR
+  road's grant, the WAP's rule read as the flagship's) and holds the
+  pair-token gate and the flagship's rule to the code. **Host-tested**
+  (`test_mqtt_reinit.cpp`, 2872 checks on the real
   handler, 623 before; every refusal test fails with the gate reverted, and
   the three race tests — the loop task's pass after every write of a save,
   a whole save inside every read, each writer under the boot — fail with

@@ -1254,7 +1254,7 @@ so — see D2 below.)
   `password`, new or empty, chose what goes out, and the `/companion` wizard
   always sends one. The `/mqtt` page shows the device's reason, as it did,
   and puts the cursor in the password field. `tests_host/test_mqtt_reinit.cpp`
-  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 2808 checks, 47
+  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 2872 checks, 48
   tests, 623 and 33 before) names each clause: a cookie-only host (a
   respelling in case, a trailing dot and an emptied host among them), port,
   TLS-mode (both spellings) and CA move refused with the stored row
@@ -1297,9 +1297,22 @@ so — see D2 below.)
   `a_save_inside_the_loop_tasks_read_opens_no_client` (a whole save inside
   each of `config_load()`'s reads: the same) and
   `a_boot_under_a_save_asks_the_loop` (`config_save`, `ca_save` and
-  `config_clear` inside the boot's read). With the busy word never spoken,
-  the first fails at the host write with the stored password on a client for
-  `10.0.0.66`. The review also found `port_or_default()` unreachable with a 0
+  `config_clear` inside the boot's read). With the busy word never spoken
+  (`open_client()` reporting no save it saw), each of the three fails on its
+  first check, with no client opened: the loop task marks the request served
+  from a row a save was still writing (`!reinit_done(pending)`, the first
+  two) and the boot's `init()` returns false instead of handing the open to
+  `loop()` (the third). With the overlap check removed instead, the first
+  fails at the save's FIRST write (the pass after `enabled` opened a client
+  from the half-written row: the old host with the stored password), the
+  second at the first torn read (a client to `10.0.0.66` with the body's
+  password) and the third at the boot (a client opened under the save); with
+  only the in-progress count unchecked, the first fails the same way and the
+  other two pass, since the finished count covers a whole save inside a
+  read. (This round's second review found the sentence here and in
+  LESSONS_LEARNED describing the hand repro — one pass after the host write
+  — as if it were what the test does under the mutant; rewritten from the
+  run.) The review also found `port_or_default()` unreachable with a 0
   on either side (the gate now compares the ports as `config_load()` read
   them; the sentence above says where a stored 0 is read), two refusals
   reading the stored row as an argument beside the request (unspecified
@@ -1309,20 +1322,48 @@ so — see D2 below.)
   find them.* The QR hub-provision path (`canary_wap.ino`'s scan result: a
   scanned SCV1 code carrying a host re-points `host` and `port`, keeps the
   stored password and TLS mode, saves and asks for the re-init) moves the
-  broker with the stored password and no password typed — but its grant is
-  not the session's: a scan window opens from the boot auto-scan or from
+  broker with the stored password and no password typed, and the session
+  reaches it: a scan window opens from the boot auto-scan or from
   `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair token
-  (`pair_token_valid()`), never the cookie, and a code must be in front of
-  the camera (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
-  it is — proximity-bound, the display's "it's in the fleet" flow; owed, if
-  it ever opens wider, the same question (a display-minted code could carry
-  the password, or the WAP could refuse a host move with a stored password
-  from a code). And the flagship refuses the same move already, in another
+  (`pair_token_valid()`) and not the cookie — but the session buys that
+  token, since `GET /api/pair/token` (`csi_integration.cpp`'s
+  `handle_pair_token`) is gated by `CSI_AUTH_OR_RETURN`, which accepts the
+  `cv_session` cookie before it looks for a bearer. What the session does
+  not hold is the camera: a code must be in front of it
+  (`FEATURE_QR_PROVISION`, off in several profiles), and the scan task's
+  hub-code branch re-checks the pair token only for Wi-Fi-only codes.
+  Accepted as it is — proximity-bound, the display's "it's in the fleet"
+  flow; owed, if it ever opens wider (a code the camera need not see), the
+  same question (a display-minted code could carry the password, or the WAP
+  could refuse a host move with a stored password from a code). (The second
+  review found this paragraph, LESSONS_LEARNED and the CHANGELOG calling the
+  grant "not the session's" / "never the cookie": true of the scan route's
+  own check, not of the chain, whose gate is its token minter's.) And the
+  flagship refuses the same move already, in another
   shape: `400 password_required_for_new_host` (`mqtt_tls_fields::
   credential_carry`, since the 2026-09 sweep — any caller, host or port, a
   case-folded host); the WAP's is `403 password_needed`, for cookie callers
   only, and counts the TLS mode and the CA as moves, since on its transport
   they choose the peer. Nothing outside the firmware parses either code.
+  *Its second review, the same day:* besides the two sentences above, it
+  found `SECURITY_MODEL.md`'s broker paragraph stating the WAP's rule in
+  the flagship's paragraph with no device named (false read as the
+  flagship, which has no dashboard session and refuses a host-or-port move
+  from any caller with `400`; now scoped, each device's rule stated), and
+  the refusal tests holding "nothing saved" through `config_load()` alone
+  (a refusal that rewrote the row with the bytes it held, or with a port 0
+  read as the default, read back equal): `Stored` now carries the NVS bytes
+  and the stub's write count (`stub_nvs_writes()`), so two snapshots are
+  equal only if nothing was written between them, and
+  `a_stored_snapshot_sees_a_rewrite_of_the_same_row` guards that guard; the
+  bearer leg (`a_bearer_may_move_the_broker_and_keep_its_password`) covers
+  a TLS-mode and a CA move beside the host and the port; the race tests'
+  scenario table is built on first use (a `pem_of()` CHECK had run at static
+  initialization, counted in every run) and `main()` refuses to start with
+  a check already counted; the three audit docs date the rule to this
+  amendment instead of a branch day; `scripts/tests/test_docs_claims.py`
+  retires the three untrue sentences and holds the pair-token gate and the
+  flagship's rule to the code.
 
 ### Parity & sub-projects
 

@@ -2581,21 +2581,31 @@
   `a_save_inside_the_loop_tasks_read_opens_no_client` (a whole save inside
   every one of the loop task's reads) and `a_boot_under_a_save_asks_the_loop`
   (each writer inside the boot's read), through `stubs/mqtt/Preferences.h`'s
-  hooks; with the busy word never spoken the first fails at the host write
-  with the stored password on a client for the new host. Rule: when a
+  hooks; with the busy word never spoken each of the three fails on its
+  first check (the loop task marks the request served from a row a save
+  was still writing; the boot's `init()` returns false instead of handing
+  the open to `loop()`), and with the overlap check removed the first fails
+  at the save's first write, a client opened from the half-written row (a
+  second review found this bullet describing the hand repro, one pass after
+  the host write, as the test's failure; rewritten from the run). Rule: when a
   secret's safety depends on which row another task reads, the row must be
   readable whole or not at all — not written in a careful order.
 - **The road this rule leaves open, named:** the QR hub-provision path
   (`canary_wap.ino`'s scan result: a scanned SCV1 code with a host re-points
   `host` and `port`, keeps the stored password and TLS mode, saves and asks
   for the re-init) is the remaining writer that moves the broker with the
-  stored password and no password typed. Its grant is not the session's:
-  the scan window opens from the boot auto-scan or from
+  stored password and no password typed, and the session reaches its
+  grant: the scan window opens from the boot auto-scan or from
   `POST /api/wifi/qr-scan` behind the wizard's one-shot pair token
-  (`pair_token_valid()`), and a code must be in front of the camera
-  (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
+  (`pair_token_valid()`), and `GET /api/pair/token` mints that token for
+  the cookie (`CSI_AUTH_OR_RETURN` takes the session before the bearer).
+  The camera is what the session does not hold: a code must be in front of
+  it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens.
+  ever widens. A second review found this bullet calling the grant "not
+  the session's": a chain's gate is its weakest link's, and the token's
+  minter is a link — name the minter before calling a token-gated route
+  something the session cannot reach.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
