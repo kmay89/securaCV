@@ -22,6 +22,9 @@
  * "never persisted, drives live UI only", so the override drops each one
  * after its privacy gate, counted (ambient_dropped below). They go to
  * neither the card nor the `events` topic; the in-memory ring keeps them.
+ * The egress before F105 appended them to the card, so a backlog an older
+ * firmware left can hold ambient lines: the backfill passes each one over,
+ * counted in planner.unsendable.
  *
  * Persistence (backlog F37): with a card in, every row the pump drains is
  * appended to the SD event log (/EVENTS/today.ndjson, the canary-wap's line

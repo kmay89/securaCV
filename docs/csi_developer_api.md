@@ -317,7 +317,9 @@ those bodies `"replay":true`. On the canary base
   this far: the commit hook drops every one after its privacy gate,
   counted, so it reaches neither the card nor the `events` topic, and so
   never the hold (sweep F105; before it, ambient rows were logged and
-  published like any other, and only one that had to wait was dropped).
+  published like any other, and only one that had to wait was dropped;
+  an ambient line an older firmware left on the card is passed over by the
+  backfill, counted in `planner.unsendable`).
   The in-memory ring keeps it. RAM does not survive a reboot, and a
   broker change drops what waits (owed to neither broker, as the offline
   queue's flush).
@@ -390,8 +392,9 @@ those bodies `"replay":true`. On the canary base
     card that opens with nothing owed on it is not walked, so its lines are
     not counted.
   - `planner.unsendable`: card lines the backfill could never send: a body
-    that would not build, and on the canary-wap a dismissal line (never
-    replayed).
+    that would not build, an ambient line an older firmware logged before
+    sweep F105 (never replayed), and on the canary-wap a dismissal line
+    (never replayed).
   - `planner.truncated_unsent`: retention cuts of the log that dropped rows
     still waiting.
   - `planner.read_giveups`: walks abandoned after repeated failed card reads.

@@ -246,9 +246,13 @@ Sent WapPort::send_live(const csi_event_record_t& rec) {
 
 /* A row from the card, in id order. Rows waiting in RAM below it go first.
  * A dismissal line is the owner's local record (csi_event_log.h), never
- * replayed. */
+ * replayed. Nor is an ambient line (sweep F105): on_committed() queues none
+ * now, but the egress before F105 logged every ambient ring row, so a card
+ * an older firmware wrote can hold them. Both are counted in
+ * planner.unsendable. */
 Sent WapPort::send_backfill(const csi_event_record_t& rec, bool fresh) {
   if (rec.values.dismissed != 0) return Sent::kNever;
+  if (rec.category == CSI_CATEGORY_AMBIENT) return Sent::kNever;
   if (!send_held_below(rec.event_id)) return Sent::kNotNow;
   last = csi_mqtt::publish_event_row(rec, rec.bundled_count, /*replay=*/!fresh);
   return to_sent(last);

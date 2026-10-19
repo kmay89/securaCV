@@ -330,8 +330,12 @@ class EgressPort : public csi_event_backfill::Port {
   }
   /* A row from the card: the canary-wap's backfill body (the logged bundle
    * count, the committed time), a replay unless it was committed while the
-   * link was up. Rows waiting in the hold below it go first. */
+   * link was up. Rows waiting in the hold below it go first. An ambient line
+   * is never sent (sweep F105): the commit hook queues none now, but the
+   * egress before F105 logged every ambient row, so a card an older firmware
+   * wrote can hold them. Passed over, counted in planner.unsendable. */
   csi_event_backfill::Sent send_backfill(const csi_event_record_t& rec, bool fresh) override {
+    if (rec.category == CSI_CATEGORY_AMBIENT) return csi_event_backfill::Sent::kNever;
     if (!send_held_below(rec.event_id)) return csi_event_backfill::Sent::kNotNow;
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, !fresh);
     if (n == 0) return csi_event_backfill::Sent::kNever;

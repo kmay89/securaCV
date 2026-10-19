@@ -26,7 +26,10 @@
  * "never persisted, drives live UI only", so on_committed() drops each one,
  * counted (Stats::ambient_dropped). They go to neither the card nor the
  * `events` topic; the in-memory ring, the stream snapshot and the Today
- * sheet keep them, as before.
+ * sheet keep them, as before. The egress before F105 logged them on the
+ * card, so a backlog an older firmware left can hold ambient lines: the
+ * backfill passes each one over (WapPort::send_backfill), counted in
+ * planner.unsendable.
  *
  * Order. Home Assistant's replay gate refuses an event_id below the last
  * one it verified, so a row that overtakes an older one gets the older one

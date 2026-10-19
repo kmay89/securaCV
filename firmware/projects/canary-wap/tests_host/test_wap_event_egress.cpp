@@ -53,7 +53,9 @@
  * waiting in RAM writes no ceiling past the card rows after it, rows the
  * card does not keep wait in RAM in order (also while the card is not open
  * yet or briefly closed, for at most kCardWaitMs), ambient rows are never
- * held and reach neither the card nor the broker (sweep F105), the hook
+ * held and reach neither the card nor the broker (sweep F105), an ambient
+ * line an older firmware left on the card is never replayed (F105's review),
+ * the hook
  * never blocks, and the card adapter (torn tails, short
  * writes, dismissal lines at the tail, a failed rewrite) keeps every row.
  * A line that lands without its newline reaches HA once, not from the card
@@ -1399,6 +1401,40 @@ static void test_ambient_rows_stay_off_the_card_and_the_broker() {
   for (uint32_t id : ambient) CHECK(!csi_event_find(id, &r), "no ambient row comes back from the card");
   CHECK(csi_event_egress::stats().ambient_dropped == 0, "and the count starts over with the boot");
 }
+
+/* The other way an ambient row reached the broker: the card. The egress
+ * before F105 logged every ambient ring row, so the first boot of this
+ * firmware can find them in a backlog an older one left unsent (sweep
+ * F105's review). The walk passes each one over, counted with the other
+ * lines it never sends (planner.unsendable). Fails on the egress before
+ * that review: the ambient line is replayed. */
+static void test_ambient_lines_an_older_firmware_logged_are_not_replayed() {
+  printf("-- an ambient line an older firmware left on the card is never replayed (F105)\n");
+  fresh_device();
+  loop_pass();                      // the card is open; the link is down
+  const uint32_t a = emit_ping(); loop_pass();
+  const uint32_t b = emit_ambient(); loop_pass();
+  const uint32_t c = emit_ping(); loop_pass();
+  csi_event_record_t amb;
+  CHECK(b != 0 && csi_event_find(b, &amb) && card_lines_for(b) == 0,
+        "an ambient row between two card rows, in the ring and not on the card");
+  /* The card as the egress before F105 wrote it: a, the ambient row, c. */
+  char line[csi_event_log_line::kLineMax];
+  const size_t n = csi_event_log_line::marshal(&amb, line, sizeof(line));
+  std::string& log = SD.files["/EVENTS/today.ndjson"];
+  const size_t after_a = log.find('\n') + 1;
+  CHECK(n > 0 && card_lines_for(a) == 1 && card_lines_for(c) == 1 && after_a > 0,
+        "the card holds a and c");
+  log.insert(after_a, std::string(line, n));
+  CHECK(card_lines_for(b) == 1, "and, as an older firmware left it, the ambient line between them");
+  boot();                           // the upgrade's reboot, before the broker returns
+  connect();
+  drain();
+  CHECK(exactly(W.ha.accepted, {a, c}) && W.ha.refused.empty() && !has(W.wire, b),
+        "the backfill sends a and c, in order, and not the ambient line");
+  CHECK(csi_event_egress::stats().planner.unsendable == 1,
+        "the ambient line is counted with the lines the walk never sends");
+}
 #endif
 
 /* ── Closed bundles are card rows (sweep F77) ──────────────────────────── */
@@ -1889,6 +1925,7 @@ int main() {
   test_a_planned_restart_is_bounded();
 #ifndef EGRESS_BEFORE_REVIEW
   test_ambient_rows_stay_off_the_card_and_the_broker();
+  test_ambient_lines_an_older_firmware_logged_are_not_replayed();
   test_other_tasks_read_what_the_pump_published();
   test_the_counters_spell_the_canarys_names();
 #endif
