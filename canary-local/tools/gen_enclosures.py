@@ -777,8 +777,8 @@ HARDWARE_ITEM_KEYS = ("qty", "kind", "spec", "text")
 
 
 def carry_hardware(devices: dict) -> dict:
-    """hardware.json's per-set hardware -> {device: {"source", "sets"}}, in
-    hardware.json's own set order. Refuses what it cannot carry whole: a set
+    """Each set of HARDWARE_JSON -> {device: {"source", "sets"}}, in the
+    file's own set order. Refuses what it cannot carry whole: a set
     for a device build.json has no entry for (no BOM_MAP row and no README
     §Assembly block: no card to show it on), a set or item missing a field, a
     count that is not a whole positive number — a carry that dropped one

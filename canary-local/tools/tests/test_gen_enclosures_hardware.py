@@ -97,7 +97,9 @@ class HardwareCarry(unittest.TestCase):
         built = self.root / REL_BUILD
         self.assertTrue(built.exists(), proc.stderr)
         self.assertEqual(built.read_bytes(), (REPO / REL_BUILD).read_bytes(),
-                         "the scratch copy is missing an input the build stage reads")
+                         "the scratch build.json differs from the committed one: either "
+                         "build.json is stale (run canary-local/tools/gen_enclosures.py) "
+                         "or the scratch copy is missing an input the build stage reads")
         out = json.loads(built.read_text(encoding="utf-8"))
         carried = {s for d in out["devices"].values() for s in d.get("hardware", {}).get("sets", {})}
         self.assertEqual(carried, set(self.hw["sets"]), "every hardware.json set is carried")
@@ -114,7 +116,8 @@ class HardwareCarry(unittest.TestCase):
     def test_a_set_for_a_device_with_no_card_is_refused(self):
         hw = self.mutated()
         hw["sets"]["sense"]["device"] = "canary-nowhere"
-        self.assert_refused(hw, "names device 'canary-nowhere'")
+        self.assert_refused(hw, "names device 'canary-nowhere', which build.json has no "
+                                "entry for (no BOM_MAP row, no README §Assembly block)")
 
     def test_a_count_that_is_not_a_whole_positive_number_is_refused(self):
         for bad in (0, -4, 4.0, "4", True, None):
