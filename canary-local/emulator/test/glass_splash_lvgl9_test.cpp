@@ -60,9 +60,12 @@
 //  8. over the meeting, the bird breathes down to the seat seat() names for
 //     the tallest bubble the meeting drew (splash.cpp measures it itself
 //     before it seats the bird, F159) and hops no higher than kHopReach
-//     above it, on the glass; and wherever seat() says the bird is clear of
-//     the tail, the tail's ink starts at least kGap below the bird's box at
-//     every read.
+//     above it, on the glass; seat() says the bird is clear of the tail on
+//     every play here (pinned: the dash both ways and the C6 nightstand have
+//     the room), and the bird's box at its deepest breath (the lowest the
+//     meeting drew it) ends at least kGap above the highest the tail's ink
+//     stood, the bound seat() seats the bird by (glass_splash_test.cpp holds
+//     the same on LVGL 8.4).
 //
 // Printed, not held: where the diamond stands against the bubble (its center
 // against the bubble's center line, how far it pokes above the top edge and
@@ -387,7 +390,8 @@ struct Watch {
   int center_fails = 0, rise_fails = 0;
   int tallest = 0;  // the tallest bubble drawn
   int bird_lo = 1 << 30, bird_hi = -(1 << 30);  // the bird's box top, drawn
-  int tail_gap = 1 << 30;  // the tail's own ink top less the bird's box bottom
+  int bird_h = 0;               // the bird's box height
+  int ink_top_lo = 1 << 30;     // the highest the tail's own ink stood
   long ink_lo = 1 << 30, ink_hi = 0;
   bool reported = false;
   std::string last_text;   // the bubble's text at the last tick it was up
@@ -463,14 +467,8 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
     HOLD((int)b.y1 - r.own.b.y0 <= sl::kTailRise, W.rise_fails,
          "%s: the tail's own ink starts %d rows above the bubble's top edge (y %d); kTailRise "
          "is %d (\"%s\")", W.tag, (int)b.y1 - r.own.b.y0, (int)b.y1, sl::kTailRise, text);
-    // 8's read: how far the tail's ink starts below the bird's box.
-    lv_obj_t* bird = canary::ui::canary_mark_obj();
-    if (bird != nullptr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN)) {
-      lv_area_t m;
-      lv_obj_get_coords(bird, &m);
-      const int gap = r.own.b.y0 - ((int)m.y2 + 1);
-      if (gap < W.tail_gap) W.tail_gap = gap;
-    }
+    // 8's tail side: the highest its ink stood.
+    if (r.own.b.y0 < W.ink_top_lo) W.ink_top_lo = r.own.b.y0;
   }
   // 5: each of F185's options, on this frame, keeps 3 and 4.
   const bool report = g_report && !W.reported && text[0] != '\0';
@@ -514,6 +512,7 @@ void observe() {
     lv_obj_get_coords(bird, &m);
     if (m.y1 < W.bird_lo) W.bird_lo = m.y1;
     if (m.y1 > W.bird_hi) W.bird_hi = m.y1;
+    W.bird_h = lv_area_get_height(&m);
   }
   lv_obj_t* tail = nullptr;
   lv_obj_t* bub = nullptr;
@@ -575,6 +574,8 @@ std::vector<std::string> hello_lines() {
   return out;
 }
 
+std::vector<std::string> g_unclear;  // the plays seat() leaves within the tail's reach
+
 void play(const char* tag) {
   Watch& W = g_w;
   W = Watch();
@@ -620,15 +621,21 @@ void play(const char* tag) {
         "%s: the bird's top is drawn at y %d..%d; seat() seats it at y %d for the %d px tallest "
         "bubble (breathing %d px, hopping %d at most, a hop seen)", tag, W.bird_lo, W.bird_hi,
         seat_top, W.tallest, sl::kBreath, sl::kHopReach);
+  // The bird's box at its deepest breath against the highest the tail's
+  // ink stood.
+  const int worst = W.ink_top_lo - (W.bird_hi + W.bird_h);
   if (s.clear)
-    CHECK(W.tail_gap >= sl::kGap, "%s: the tail's ink starts %d px from the bird's box (below "
-          "it; negative, into it); seat() keeps it kGap (%d) clear", tag, W.tail_gap, sl::kGap);
+    CHECK(worst >= sl::kGap, "%s: at its highest the tail's ink starts %d px from the bird's "
+          "box at its deepest breath (below it; negative, into it); seat() keeps it kGap (%d) "
+          "clear", tag, worst, sl::kGap);
+  else
+    g_unclear.push_back(tag);
   printf("    %d ticks (%.1f s), %d with the bubble up, %zu of the script's %zu lines typed "
          "whole, the tail read off the frame %d times, %ld..%ld px of ink; the bird seated at "
-         "y %d%s for the %d px tallest bubble, the tail's ink %d px below its box; %d checks "
-         "failed\n",
+         "y %d%s for the %d px tallest bubble, the tail's ink at its highest %d px below its box "
+         "at its deepest breath; %d checks failed\n",
          W.ticks, (g_now - t0) / 1000.0, W.bubble_ticks, same, want.size(), W.captures,
-         W.ink_lo, W.ink_hi, seat_top, s.raised ? " (raised)" : "", W.tallest, W.tail_gap,
+         W.ink_lo, W.ink_hi, seat_top, s.raised ? " (raised)" : "", W.tallest, worst,
          W.seat_fails + W.ink_fails + W.land_fails + W.option_fails + W.mismatched +
              W.center_fails + W.rise_fails);
 }
@@ -669,6 +676,14 @@ int main() {
 #else
   play_all("nightstand-c6");
 #endif
+  // Pinned (F159): every canvas here has the room to seat the bird clear
+  // of the tail (a seat() that never raised would leave the dash's bird
+  // under Heirloom, and the C6's, in the tail's reach).
+  std::string unclear;
+  for (const std::string& u : g_unclear) unclear += (unclear.empty() ? "" : "; ") + u;
+  printf("  not clear of the tail: %s\n", unclear.empty() ? "none" : unclear.c_str());
+  CHECK(unclear.empty(), "seat() leaves the bird within the tail's reach in: %s; every play "
+        "here should be clear", unclear.c_str());
   if (g_fail) {
     printf("%d of %d LVGL 9 splash tail checks FAILED\n", g_fail, g_checks);
     return 1;
