@@ -4837,6 +4837,11 @@ so — see D2 below.)
   PlatformIO compiles are CI's; not bench-tested (U1: the F96/F106 rows in
   `hardware_verification_checklist.md`, a dashboard reboot included). Found
   here: F110 and F111.
+  *Note (2026-10-19):* since #1802's merge with main (the owner's 45aaf6eb,
+  2026-10-18), `regression_check.sh` runs `check_wap_loop_commands.py` with
+  `--no-self-test`, and its mutation self-test runs in `firmware.yml`'s "WAP
+  guard self-tests" job (436 mutations on main), so the Regression Guards job
+  stays inside its ten minutes.
 - [x] **F110 [code] canary-wap's mesh status routes read the loop task's state
   from the httpd task.** `GET /api/mesh`, `/api/mesh/peers` and
   `/api/mesh/alerts` still read `g_peers`, `g_pairing` and the alert history
@@ -4989,6 +4994,11 @@ so — see D2 below.)
   CI's; not bench-tested (U1: the F111 rows in
   `hardware_verification_checklist.md`). Found here: F138 (with F110) and
   F143-F146.
+  *Note (2026-10-19):* since #1802's merge with main (the owner's 45aaf6eb,
+  2026-10-18), `regression_check.sh` runs `check_wap_loop_commands.py` with
+  `--no-self-test`, and its mutation self-test runs in `firmware.yml`'s "WAP
+  guard self-tests" job (436 mutations on main), so the Regression Guards job
+  stays inside its ten minutes.
 - [x] **F138 [code] canary-wap's Chirp and Bluetooth status routes read the
   loop task's state from the httpd task.** `GET /api/chirp`,
   `/api/chirp/nearby` and `/api/chirp/recent` (`chirp_api.h`, through
@@ -5074,6 +5084,11 @@ so — see D2 below.)
   the Bluetooth and Chirp sections in `hardware_verification_checklist.md`,
   the Chirp row also expecting the boot log's internal heap within about 150
   bytes of a build before F138). Found here: F170 and F177.
+  *Note (2026-10-19):* since #1802's merge with main (the owner's 45aaf6eb,
+  2026-10-18), `regression_check.sh` runs `check_wap_loop_commands.py` with
+  `--no-self-test`, and its mutation self-test runs in `firmware.yml`'s "WAP
+  guard self-tests" job (436 mutations on main), so the Regression Guards job
+  stays inside its ten minutes.
 - [x] **F143 [code] canary-wap's Bluetooth state is still written by the
   NimBLE host task.** `bluetooth_channel.cpp`'s callbacks (`onConnect`,
   `onDisconnect`, `onAuthenticationComplete`, `onPassKeyDisplay`,
@@ -6554,6 +6569,13 @@ so — see D2 below.)
   backslash or a control byte into the rewritten line and the backfill's MQTT
   body (F264), some shapes J5 and J8 still pass (F265), and `wap_server.cpp`'s
   `send_json_error()` has no caller (merged into F277).
+  *Note (2026-10-19):* on main J7 reads 82 texts in 60 functions, 40 of them
+  recorded (81, 59 and 39 on the integrated tree): #1802's merge with main
+  brought #1816's staged `onboarding_fsm.h`, whose `announce_line()` (the
+  serial label both flashers parse, not JSON) the owner's 45aaf6eb records in
+  `RECORDED`. Since that commit `regression_check.sh` runs the check with
+  `--no-self-test`, and its 136 mutations run in `firmware.yml`'s "WAP guard
+  self-tests" job.
 - [ ] **F228 [decision] canary-wap: the fleet scan lists every
   `_securacv._tcp` advert as a Canary.** Any device on the LAN can advertise
   the service with any TXT values, and adverts are unsigned. GET
@@ -6619,6 +6641,10 @@ so — see D2 below.)
   name suites), not the rest that force-include it (`make -B`; CI builds
   fresh; F286). Host-tested (10 to 15 s with the self-test); the ESP32
   compiles are CI's.
+  *Note (2026-10-19):* since F286 (#1802) every canary-wap compile writes its
+  own dependency file, so an edit to `arduino_globals.h` rebuilds every suite
+  that force-includes it, not only the four that list it, and the Makefile's
+  `make -B` advice is gone.
 - [x] **F230 [code] canary-wap: `wap_json_writer.h`'s escaped write trusts a
   length it measured earlier.** `escaped()` checks room for the string's
   measured length, then copies up to the string's NUL without bounding the
@@ -6789,6 +6815,17 @@ so — see D2 below.)
   the health log's other details, take a control byte (F303); and GET
   `/api/fleet/qr` cuts a long percent-encoded password without a word (F304,
   found by the review's fix).
+  *Note (2026-10-19):* #1802's merge with main brought #1816's Wi-Fi code
+  under J9, and the merge and the owner's 45aaf6eb send its SSID-bearing
+  health lines through `log_health_ssid()` (the join-failure label, which
+  replaced this package's timeout and failure lines, the saved-networks ring's
+  NVS warning and the rotate-on-not-found notice), so nine lines go through it
+  on main, not eight. `SSID_RAW` records four uses that keep the real bytes,
+  not two: the staged `onboarding_fsm.h`'s `ap_ssid()` (the setup network's
+  own name) and `announce_line()` (the serial label both flashers parse)
+  beside the Improv row and the QR payload, neither JSON. a2ef1911 re-anchors
+  the posted-SSID length mutation on #1816's `wifi_credential::check()`; the
+  check still refuses 136.
 - [x] **F263 [code] canary-wap: POST `/api/device-name`'s refusal names a rule
   the route does not apply.** It answers "Invalid name (1-32 chars,
   letters/digits/hyphen)", but the route takes any byte from 0x20 up so long
