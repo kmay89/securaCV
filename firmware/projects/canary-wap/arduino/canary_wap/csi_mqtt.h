@@ -608,7 +608,12 @@ void set_api_token_provider(const char* (*fn)());
  * reports the broker's reachability within about 4 s, so the dashboard's
  * "Test connection" button gives a real signal rather than a spinner. The
  * config POST saves, asks for the same re-init and waits up to 2 s for it,
- * so the page's status refresh sees the new client. */
+ * so the page's status refresh sees the new client — unless the request
+ * carries only the cookie, a password is stored, the body has no "password"
+ * key and the broker moves (host, port, TLS mode or CA): then nothing is
+ * saved and the answer is 403 with code "password_needed", until the body
+ * carries the password or the request a real bearer (sweep F289, the third
+ * road; csi_mqtt.cpp's move_needs_password()). */
 esp_err_t handle_config_get(httpd_req_t* req);
 esp_err_t handle_config_post(httpd_req_t* req);
 esp_err_t handle_test(httpd_req_t* req);

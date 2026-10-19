@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### canary-wap: a dashboard session alone cannot move the broker while keeping the stored MQTT password
+
+- **canary-wap: `POST /api/mqtt/config` from a session alone is refused when
+  it moves the broker and keeps the stored password (sweep F289, the third
+  road).** The route takes the landing page's 24-hour `cv_session` cookie or
+  the bearer, and `GET /api/mqtt/config` keeps the password write-only — but
+  the POST saved whatever host, port and TLS mode the body named, kept the
+  stored password when the body carried none, and the loop task's re-init
+  sent the stored username and password to the new host, in plain text with
+  `tls_mode` 0, so any host on the home network could read the broker
+  password through a broker it named (read from the code, not run). Now a
+  save without a valid `Authorization: Bearer` header is refused — `403`,
+  `code` `password_needed`, nothing saved, no re-init — when the body
+  carries no `password` key, a password is stored, and the destination
+  moves: the host, the port (a stored 0 read as the mode's default), the TLS
+  mode in either spelling, or a `ca` key set or cleared. A change of user,
+  prefix, enabled or discovery alone is not a move; a body that carries
+  `password`, new or empty, is saved as before; a bearer is never refused;
+  the `/companion` wizard always sends a password and is unchanged. The
+  `/mqtt` page shows the device's reason and puts the cursor in the password
+  field. **Host-tested** (`test_mqtt_reinit.cpp`, 1183 checks on the real
+  handler, 623 before; every refusal test fails with the gate reverted); the
+  ESP32 compile is CI's; not run on a device (U1).
+
 ### Post-#1802 verification: the WAP's port 80 keeps a typed address, a setup-door claim keeps its `.local` name with the STA down, the globals check takes every cut it reads, and thirteen passages say what landed
 
 An independent verification of #1802's packages against the merged code,

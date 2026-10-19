@@ -124,8 +124,11 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   `GET /api/provisioning-receipt` (the bearer token, the SoftAP password, the TLS pin) and
   `GET /api/pairing-qr` (the token), so any LAN host could read the token with no BOOT tap; since
   sweep F289 both routes take the `Authorization: Bearer` header alone (`api_auth_bearer_valid`,
-  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. See
-  `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
+  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. And since 2026-10-19 the
+  session cannot re-point the MQTT bridge at a new host, port, TLS mode or CA while keeping the
+  stored broker password — `POST /api/mqtt/config` answers `403 password_needed` until the password
+  is typed or a bearer sent — so the password the config GET keeps write-only cannot be read through
+  a broker the session names; host-tested. See `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the

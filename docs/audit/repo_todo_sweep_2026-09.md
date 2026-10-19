@@ -1229,6 +1229,39 @@ so — see D2 below.)
   Still open and deliberate: the landing page keeps minting a session for
   any LAN host (the dashboard's reads and writes, the audit's MEDIUM), and
   the WAP's receipt still asks no Host question (§3.7).
+  *Amended 2026-10-19 (the merge sweep, F289's third road):* the Done text's
+  "searched for other answers carrying the token or the SoftAP password:
+  none" held, and the broker password had a third road that no answer
+  carries: `POST /api/mqtt/config` took the same session (`authorized()`,
+  cookie or bearer), saved whatever host, port and TLS mode the body named,
+  kept the stored password when the body carried no `password` key, and asked
+  the loop task to re-init — whose new client sent the stored username and
+  password to the host the body named, in plain text with `tls_mode` 0. So a
+  session alone could read the password `GET /api/mqtt/config` keeps
+  write-only through a broker it pointed the device at. Now a save without a
+  valid bearer (`api_auth_bearer_valid()`, computed once up front) is refused
+  when the body carries no `password` key, a password is stored, and the
+  destination moves — the host (bytes), the port (a stored 0 read as the
+  mode's default on both sides, so a session's `enabled` toggle on such a
+  device is not refused), the TLS mode in either spelling, or a `ca` key, set
+  or cleared; `user`, `prefix`, `enabled` and `discovery` alone are not a
+  move, since the password still goes to the same peer. The refusal is `403`
+  `{"ok":false,"code":"password_needed","reason":...}`, nothing saved, no
+  re-init, no secret in the answer (`csi_mqtt.cpp`'s pure
+  `move_needs_password()`, after the existing 400s); a body that carries
+  `password`, new or empty, chose what goes out, and the `/companion` wizard
+  always sends one. The `/mqtt` page shows the device's reason, as it did,
+  and puts the cursor in the password field. `tests_host/test_mqtt_reinit.cpp`
+  (the REAL `csi_mqtt.cpp` over the real `api_auth.h` check; 1183 checks, 44
+  tests, 623 and 33 before) names each clause: a cookie-only host, port,
+  TLS-mode (both spellings) and CA move refused with the stored row
+  unchanged, the open client untouched and no re-init; the password typed or
+  cleared, a change that is no move, a device with no stored password, a
+  bearer beside or without the cookie, and a stored port of 0, each served;
+  a wrong bearer beside the cookie refused. With the gate reverted, every
+  refusal test fails on its first `403` check (the move answers `200`). A U1
+  row in `hardware_verification_checklist.md`. Host-tested; not run on a
+  device (U1).
 
 ### Parity & sub-projects
 

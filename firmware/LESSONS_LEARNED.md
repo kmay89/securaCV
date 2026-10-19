@@ -2534,6 +2534,26 @@
   bearer-only gates as markers. Rule for the next route: before a route
   answers a credential, ask what minted the credential it accepts — if any
   LAN host could mint it, it is not a grant for that answer.
+- **The same lesson, 2026-10-19, for the broker password:** the MQTT
+  bridge's `POST /api/mqtt/config` took the cookie too (`authorized()`:
+  cookie or bearer), and its answer carried no secret — but the save it
+  made did. The body could name a new host, port or TLS mode and leave the
+  stored password alone, and the loop task's re-init sent that password to
+  the new host, in plain text with `tls_mode` 0: a secret the session was
+  minted without leaves through a side effect as readily as through an
+  answer. The fix is the same one-check-two-classes split, applied to the
+  write: a save without a valid bearer (`api_auth_bearer_valid()`) that
+  moves the broker — host, port read as `config_load()` reads a stored 0,
+  TLS mode, or a `ca` key — while the body carries no `password` key and
+  one is stored is refused (`403 password_needed`, nothing saved, no
+  re-init); a body that carries the password chose what goes out, and
+  user, prefix, enabled and discovery alone move nothing. Regression test:
+  `tests_host/test_mqtt_reinit.cpp`'s eleven `a_session_*`, `a_bearer_*`,
+  `a_stored_port_*` and `a_wrong_bearer_*` tests run the REAL
+  `csi_mqtt.cpp` over the real `api_auth.h` check; with the gate reverted
+  every refusal test fails on its first `403` check. Rule for the next
+  route: before a route saves anything a stored secret will be sent to,
+  ask the same question of the credential it accepts.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
