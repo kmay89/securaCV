@@ -436,9 +436,10 @@ every part resolves to a file that exists, every quoted step maps to a real
 build.json README step, every claimed quantity matches the BOM (a `×4`
 screws badge can't drift from the BOM's four), and every screw the tab drives
 is one the case's own `HARDWARE` echo counts for the build it shows, at the
-echoed size, head, length and count (`build.json` carries each printable
-set's hardware from `docs/hardware/enclosure/hardware.json`; the known gaps
-are listed in the test). The ribbon says so to your face:
+echoed size, head, length and count, one per placement drawn (`build.json`
+carries each printable set's hardware from
+`docs/hardware/enclosure/hardware.json`; the known gaps are listed in the
+test). The ribbon says so to your face:
 *"every part is the real thing… the choreography is staged."*
 
 | Piece | File |
