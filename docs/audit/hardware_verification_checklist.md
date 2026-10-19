@@ -1996,8 +1996,10 @@ send; `enable()` keeps them; the count stops at 255) and `mesh_network.h`
 (`tests_host/test_chirp_commands_wap.cpp`:
 `the_tiers_reset_24_quiet_hours_after_the_last_send`,
 `a_send_that_ends_a_quiet_day_counts_from_tier_1`,
-`a_disable_keeps_the_tiers`, `the_tier_count_stops_at_255`). Compile is
-CI's. Owner: U1.
+`a_disable_keeps_the_tiers`, `the_tier_count_stops_at_255`,
+`the_tiers_count_across_the_uptime_wrap`, `a_mute_beside_the_kept_tiers`,
+`the_votes_beside_the_kept_tiers`,
+`the_tiers_let_9_out_on_the_first_day_then_6`). Compile is CI's. Owner: U1.
 
 - [ ] **Turning Chirp off and on keeps the cooldown; a reboot clears it**
   - Setup: one canary-wap with a GPS fix (the clock set), Chirp on for ten
@@ -2010,10 +2012,13 @@ CI's. Owner: U1.
     with `"cooldown_tier":2` and a new session emoji; the first press is
     refused `presence_required`; the press ten minutes on is refused
     `cooldown` with about 5 minutes left, tier 2 (before F193 it went out,
-    tier 1); the send when the countdown ends goes out at tier 3. After the
-    power cycle `GET /api/chirp` reads `"cooldown_tier":0` and the send goes
-    out at tier 1. The health log's `chirp sent` lines end `tier 1)`,
-    `tier 2)`, `tier 3)`, `tier 1)`.
+    tier 1); the send when the countdown ends goes out at tier 3, and before
+    the power cycle the health log's `chirp sent` lines end `tier 1)`,
+    `tier 2)`, `tier 3)`. After the power cycle the health log starts over
+    (with an SD card in, those lines stay in the previous boot's
+    `/HEALTH/boot_<count>.jsonl`): `GET /api/chirp` reads
+    `"cooldown_tier":0`, the send goes out at tier 1, and its `chirp sent`
+    line ends `tier 1)`.
   - Artifact: `docs/audit/repro/F193/off-on-keeps-tier/`.
 - [ ] **24 hours with no send reset the tiers, on or off**
   - Setup: as above.
