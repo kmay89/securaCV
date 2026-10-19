@@ -2111,9 +2111,7 @@ so — see D2 below.)
   script that runs a compiler with none of those tools in its tree. It passes
   on the old tree, so it is proven by mutation: 30 cases plant each break on
   copies of the real inputs, and thirteen mutations of the checker each fail a
-  case. `ENTERPRISE_READINESS_TODO.md`'s box is ticked. Still open in F34: the
-  factory-reset and setup-preset decisions (the MQTT contract fixture landed
-  in #1832, below).
+  case. `ENTERPRISE_READINESS_TODO.md`'s box is ticked.
   Found here: A102 (the tract model is not hashed at load).
   *Partly done (#1832), the MQTT contract fixture:*
   `firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp` (`make
@@ -2130,8 +2128,8 @@ so — see D2 below.)
   acoustic bodies relayed byte for byte), delivers every command word a
   discovery config names back as MQTT_EVENT_DATA and checks it latches (no
   host test delivered a command before), and prints the record with `--json`.
-  `custom_components/securacv/tests/test_wap_mqtt_contract.py` (17 cases, 14
-  strict xfails) builds it with make, so there is no committed fixture to go
+  `custom_components/securacv/tests/test_wap_mqtt_contract.py` (31 cases: 17
+  pass, 14 strict xfails) builds it with make, so there is no committed fixture to go
   stale. It replays the record into the integration, set up in MQTT mode
   against an emulated broker (retained on subscribe, an empty retained publish
   clears), and holds: the TOFU pin from health, the signed chain, counts and
@@ -10220,7 +10218,7 @@ so — see D2 below.)
   case: the header declares nothing, and no `.cpp` sits beside it. Only the
   two sketch builds ever compiled `wap_server.cpp`: they compile every `.cpp`
   in the folder, and neither needed its symbols. The package asked for one
-  squashed commit; it is cherry-picked here as five, and the first (60ffe635,
+  squashed commit; it is cherry-picked here as six, and the first (60ffe635,
   the generator and the `.cpp` deletion) fails J7 until the next (c1baf2e2)
   drops the record, so bisect across that pair. Host-tested; the ESP32
   compiles are CI's; not run on a device. Found here: F365 and F366.
@@ -11364,9 +11362,10 @@ so — see D2 below.)
   9.5 test 222 on the dash and 152 on the C6; a tail turned about the old
   top-left pivot fails the center line by 5.5 px on both. `test_splash_scenes`
   holds the tail's styles (radius 0, turned 450 about (6, 6)); the old styles
-  fail 3, 18 and 6 checks in its three builds. The tail is now drawn on the
-  watch, nightstand-s3, touch169, AMOLED and nightlight-c3 and in every
-  emulator flavor, where it was not. On the round watch, whose bird F159 could
+  fail 3, 18 and 6 checks in its three builds. The code for the watch,
+  nightstand-s3, touch169, AMOLED and nightlight-c3 and for every emulator
+  flavor now draws the tail, where it did not (rendered natively; the
+  committed dist does not draw it until the rebuild). On the round watch, whose bird F159 could
   not raise, it reaches into the bird: read at every tick of the native 8.4
   render, its ink stands up to 16 px into the bird's box under Heirloom (the
   watch's tallest bubble is 94 px there whatever the pseudonym) and hides as
@@ -15881,9 +15880,9 @@ so — see D2 below.)
   `tvos/witness-core/tests/fixtures/fleet_contract_vectors.json`, which
   `scripts/carry_to_site.py` carries into the website's tests, so it lands as
   one cross-repo change.
-  *Done (#1832, the monorepo half, 9514c694..f48a8d18; the website half is
-  `kmay89/securacv_website` wip/w24-a72-site, 57b564d..49f3ae8, not yet
-  merged):* witness-core's `Device` (`tvos/witness-core/src/fleet.rs`) now
+  *Done (#1832, the monorepo half, 9514c694 through f48a8d18, nine commits;
+  the website half is `kmay89/securacv_website` wip/w24-a72-site, 57b564d
+  through 49f3ae8, four commits, not yet merged):* witness-core's `Device` (`tvos/witness-core/src/fleet.rs`) now
   carries `born_day` and `born_exact`. `born_day` is kept only when it is an
   integral day a Canary can stamp: `BORN_DAY_MIN` 20089 (`kClockFloor` / 86400
   in `firmware/common/identity/birth_day.h`, 2025-01-01) through
@@ -18437,9 +18436,9 @@ major, by theme") — work its themes, then tick here.
     and 27 other selector sets is byte-identical to the base under OpenSCAD
     2021.01, the comment-stripped token streams are identical, and 207 of the
     208 PNG previews are byte-identical to base renders (the 7-inch frame's
-    underside view varies from run to run in both trees; 14 of the 208 render
-    blank at the defaults on the base too, nine of them gates whose pass is an
-    empty render). The wave leaves `build.json`, `workshop.json`,
+    underside view varies from run to run in both trees; 14 parts, 28 of the
+    208 PNGs, render blank at the defaults on the base too, nine of them gates
+    whose pass is an empty render). The wave leaves `build.json`, `workshop.json`,
     `figures.json` and `builder_manifest.json` as they were; only
     `enclosures.json` and `catalog.json` regenerate. Host-tested; nothing
     printed.
@@ -18450,9 +18449,9 @@ major, by theme") — work its themes, then tick here.
     package's): the Lab lists the 36 knobs it skipped, three of them read by
     nothing (the C6's `snap_n`, the vehicle mount's `tol_slide` and
     `tol_press`), and the 1.69 case's `skirt_wall` and its computed
-    `skirt_dep`, in three groups it never showed (the C3 case's and the
-    vehicle mount's Print tolerances, the Hammond plate's Board snap clips),
-    and `catalog.json`'s `engineering_param_count` moves for seven products
+    `skirt_dep`: 38 entries, 10 of them in three groups it never showed (the
+    C3 case's and the vehicle mount's Print tolerances, the Hammond plate's
+    Board snap clips) and 28 in groups it already showed, and `catalog.json`'s `engineering_param_count` moves for seven products
     (c3_lcd147 176 -> 182, c6_display 88 -> 92, hammond_chassis 26 -> 31,
     relay_solar 100 -> 107, s3_touch169 94 -> 100, vehicle_mount 19 -> 26,
     wear_clip 15 -> 18), as it reads at this head. And the 21 boolean helps
@@ -18520,8 +18519,10 @@ major, by theme") — work its themes, then tick here.
   decisions, each droppable alone. (1) The shared-line splits: e29b9282, here
   222f6827 (eleven lines in seven cases, 36 knobs, three read by nothing),
   with 33433c38, here efb87fbd (the 1.69 case's `skirt_wall` / `skirt_dep`
-  line): the Lab gains 38 entries in three new groups and `catalog.json`'s
-  `engineering_param_count` moves for seven products (c3_lcd147 +6, c6_display
+  line): the Lab gains 38 entries (37 skipped knobs and the computed
+  `skirt_dep`), 10 of them in three groups it never showed (the Hammond
+  plate's Board snap clips, the C3 case's and the vehicle mount's Print
+  tolerances), and `catalog.json`'s `engineering_param_count` moves for seven products (c3_lcd147 +6, c6_display
   +4, hammond_chassis +5, relay_solar +7, s3_touch169 +6, vehicle_mount +7,
   wear_clip +3). (2) 08e44df1, here c5abc963: help for 21 boolean options,
   which becomes their Lab catalog label in place of the bare knob name (two
