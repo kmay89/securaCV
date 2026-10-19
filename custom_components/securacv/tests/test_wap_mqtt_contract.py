@@ -14,7 +14,7 @@ then held to what reads it:
   * The delivery bound. Every publish is QoS 0 (at most once); the last will
     is QoS 1 and retained; the command topics are subscribed at QoS 1. State
     topics and discovery configs are retained, the events and tamper topics
-    are not. So anything Home Assistant shows from a state topic survives a
+    are not. So what Home Assistant shows from a retained topic survives a
     broker or Home Assistant restart, and an event is delivered once or
     never: no reader may count on a redelivery.
   * The integration's parsers, end to end. The integration is set up in MQTT
@@ -29,8 +29,8 @@ then held to what reads it:
   * Home Assistant's MQTT discovery. The integration does not parse the
     discovery configs; Home Assistant's MQTT integration does, and it is not
     installed in this lane. So the configs are held to the record instead:
-    every topic a config reads is one the WAP publishes (retained, where a
-    restart must find it), every ``value_json.<key>`` a template reads is in
+    every topic a config reads is one the WAP publishes (its availability
+    topic retained), every ``value_json.<key>`` a template reads is in
     the bodies on its topic (in every body, unless the template gives a
     default), the payload words agree, the commands are the ones the WAP
     subscribes to, and the removal clears every config. No template is
