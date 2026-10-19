@@ -2264,9 +2264,6 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         ('in.degrade_name != nullptr ? in.degrade_name : "UNKNOWN"', "object"),
         "the diagnostics body (host-tested): the degrade level's literal name, and object, a JSON piece "
         "written outside a string on purpose"),
-    ("wap_server.cpp", "send_json_error"): (
-        ('error_code ? error_code : "error"', 'message ? message : "Unknown error"'),
-        "never called: wap_server.cpp's helper has no caller in the sketch"),
     ("witness_page.h", "header_build"): (
         ("CHAIN_FORMAT", "SCHEMA", "id"),
         "the witness page header (host-tested): the schema and chain-format constants, the device id"),
@@ -3279,8 +3276,8 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the hardware state writes yes/no where a token goes",
      raw_in(f"{SKETCH}/hardware_state.h", 'g_hw.safe_mode ? "true" : "false",', 'g_hw.safe_mode ? "yes" : "no",')),
     ("a recorded builder is renamed, leaving its record behind",
-     raw_in(f"{SKETCH}/wap_server.cpp", "esp_err_t send_json_error(httpd_req_t* req, int status_code,",
-            "esp_err_t send_json_error2(httpd_req_t* req, int status_code,")),
+     raw_in(f"{SKETCH}/wap_diagnostics.h", "inline size_t build_json(const Inputs& in, const csi_event_egress::Stats* egress,",
+            "inline size_t build_json2(const Inputs& in, const csi_event_egress::Stats* egress,")),
     ("a new card line writes a raw char array",
      add_file(f"{SKETCH}/zz_card_line.h",
               "inline int zz_line(char* out, size_t cap, const char label[24]) {\n"
