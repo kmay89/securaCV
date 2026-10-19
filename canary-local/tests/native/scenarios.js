@@ -51,7 +51,7 @@ function visionTicks(ref, cand, why) {
     d.begin(); n.begin();
     for (let b = r(40) < 30 ? r(3) : r(36); b > 0; b--) {
       const box = [r(700) - 50, r(500) - 50, r(400), r(500), r(110), r(3)];
-      assert.strictEqual(n.push(...box), d.push(...box), "push_box " + why);
+      assert.strictEqual(n.push(...box), d.push(...box), `push_box(${box}) before tick ${i} ` + why);
     }
     t += 50 + r(400);
     const want = d.tick(t);
@@ -78,7 +78,9 @@ function visionExtremes(ref, cand, why) {
   let t = 0, frames = 0;
   const frame = (boxes) => {
     d.begin(); n.begin();
-    for (const b of boxes) assert.strictEqual(n.push(...b, 90, 0), d.push(...b, 90, 0), "push_box " + why);
+    for (const b of boxes) {
+      assert.strictEqual(n.push(...b, 90, 0), d.push(...b, 90, 0), `push_box(${[...b, 90, 0]}) before the tick at ${t + 100} ms ` + why);
+    }
     t += 100;
     const want = d.tick(t);
     assert.strictEqual(n.tick(t), want, `boxes ${JSON.stringify(boxes)} at ${t} ms ` + why);
@@ -115,7 +117,7 @@ function audioFrames(ref, cand, why) {
   d.reset(); n.reset();
   assert.strictEqual(n.contract(), d.contract(), "contract " + why);
   const N = d.samples();
-  assert.strictEqual(n.samples(), N);
+  assert.strictEqual(n.samples(), N, "frame_samples " + why);
   const r = lcg(4040);
   let ph = 0;
   // a T3 cadence, a T4 cadence, an off-band rhythm and noise, in turns
@@ -128,7 +130,7 @@ function audioFrames(ref, cand, why) {
     for (let f = 0; f < frames; f++, frame++) {
       if (r(400) === 0) {
         const th = [r(3000), r(2000)];
-        assert.strictEqual(n.thresholds(...th), d.thresholds(...th), "set_thresholds " + why);
+        assert.strictEqual(n.thresholds(...th), d.thresholds(...th), `set_thresholds(${th}) before frame ${frame} ` + why);
       }
       const pcm = new Int16Array(N);
       for (let i = 0; i < N; i++) {

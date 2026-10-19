@@ -213,7 +213,9 @@ test("a long put back in each core: the g++ build misses it, the wasm32 build ca
       const [mutantWasm, mutantHost] = await Promise.all([wasi.wasmFactory(m.core, options).then((make) => make()),
         cores.compile(plan).then((built) => cores.instance(built))]);
       // the g++ build reads the mutant as the sources: a 64-bit long holds the product
-      m.scenario(await hostCore(m.core), mutantHost, `${m.name}: the g++ build of the mutant ${DIFFERS}`);
+      m.scenario(await hostCore(m.core), mutantHost, `${m.name}: the g++ build of the mutant answers otherwise than the ` +
+        "g++ build of the sources, so the edit changes 64-bit behavior too and no longer isolates a 32-bit long; " +
+        "move it to a spelling only a 32-bit long sees");
       const ref = await hostCore(m.core);
       assert.throws(() => m.scenario(ref, mutantWasm, DIFFERS), (e) => e instanceof assert.AssertionError &&
         e.message.includes(DIFFERS), `${m.name}: the wasm32 build must answer some call otherwise, and answered none`);

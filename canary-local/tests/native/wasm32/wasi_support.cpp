@@ -8,7 +8,10 @@
 //   allocates (the Vision shim's in-memory Preferences map) would not link.
 //   The cores build with -fno-exceptions, as build.sh's em++ calls do, and
 //   emscripten with exceptions off aborts where a throw would be; so do
-//   these. Weak, so a sysroot whose C++ runtime defines them keeps its own.
+//   these. They are weak, so an object file linked beside them that defines
+//   either strongly wins; a sysroot archive's definition would not be pulled
+//   in for them (this object already satisfies the reference), which is
+//   harmless here because nothing in a -fno-exceptions core throws.
 // - lab_wasm32_long_bits(): this build's sizeof(long) in bits, so
 //   cores_wasm32.test.js reads the 32 from the module rather than assume it.
 
