@@ -219,6 +219,15 @@ class ChirpSpecCooldownTiers(unittest.TestCase):
         self.assertIn("A disable and an enable keep them", prose)
         self.assertIn("a reboot still clears them", prose)
 
+    def test_the_count_per_day_is_the_one_the_harness_holds(self):
+        # test_chirp_commands_wap.cpp's the_tiers_let_9_out_on_the_first_day_then_6
+        # counts these from the COOLDOWN_TIER_* constants on the real channel.
+        section = spec_section(SPEC.read_text(encoding="utf-8"), "2.5.4 Defense: Escalating Cooldowns")
+        prose = " ".join(section.split())
+        self.assertIn("sends 9 chirps in its first 24 hours and then one every 4 hours, 6 a day", prose)
+        harness = (REPO / "firmware/projects/canary-wap/tests_host/test_chirp_commands_wap.cpp").read_text(encoding="utf-8")
+        self.assertIn("CHECK(sends == (day == 0 ? 9u : 6u));", harness)
+
 
 class ChirpSpecEmojiField(unittest.TestCase):
     def test_the_beacon_field_is_five_emoji_in_31_bytes(self):
