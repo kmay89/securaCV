@@ -176,6 +176,7 @@ struct Read {
   int bird_d;
   int bubble_frames, bubble_tallest, bubble_w;
   std::string bubble_line;  // the line the tallest bubble held
+  std::string first_text;   // the first words the bubble showed
   int min_gap;              // the bubble's top less the bird's bottom
   int min_tail_gap;         // the tail's reach (kTailRise over the bubble's
                             // top) less the bird's bottom
@@ -274,6 +275,7 @@ void refresh() {
     return;
   }
   R.bubble_frames++;
+  if (R.first_text.empty()) R.first_text = bub->children[0]->text;
   R.bubble_w = bub->w;
   R.line_same_sets = bub->children[0]->same_text_sets;
   const int bh = bub->h;
@@ -466,6 +468,25 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
   CHECK(R.bubble_frames > 0 && R.word_shown,
         "%s: the bubble (%d refreshes) or the wordmark (%d) never showed", n,
         R.bubble_frames, R.word_shown);
+  // F159: splash.cpp lays every line out in the bubble to measure it, and
+  // leaves its label empty after: the bubble's first words are the
+  // script's first line's, not the last line measured.
+  std::string opening;
+  {
+    canary::story::StoryTeller teller;
+    teller.set_subject(subject.c_str());
+    for (uint8_t k = 0; k < canary::story::kHello.n && opening.empty(); ++k) {
+      const canary::story::Beat* b = &canary::story::kHello.beats[k];
+      if (b->line == nullptr) continue;
+      char buf[192];
+      teller.expand(b, buf, sizeof(buf));
+      opening = buf;
+    }
+  }
+  CHECK(!R.first_text.empty() &&
+            opening.compare(0, R.first_text.size(), R.first_text) == 0,
+        "%s: the bubble's first words were \"%s\"; story::kHello opens on \"%s\"",
+        n, R.first_text.c_str(), opening.c_str());
   const int want_w = sl::bubble_w(cv.w, kFam);
   CHECK(R.bubble_w == want_w && want_w == g_fam_drawn.bubble_w,
         "%s: the bubble is %d px wide; bubble_w() gives %d on this canvas "
