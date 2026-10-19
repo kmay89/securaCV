@@ -713,7 +713,7 @@ def check_event(payload: str, label: str) -> None:
 TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
-    {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
+    {"suffix": "events", "retained": False, "cadence": "per committed CSI event (not ambient ones, sweep F105)",
      "payload": event_body(state="active", motion=78, breathing=8)},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},
