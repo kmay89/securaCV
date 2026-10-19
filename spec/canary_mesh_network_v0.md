@@ -2,7 +2,7 @@
 
 Status: Draft v0.4
 Intended Status: Normative
-Last Updated: 2026-10-18
+Last Updated: 2026-10-19
 
 > **v0.4 summary — one outer frame for both trees (§4.5).** The PlatformIO
 > mesh and canary-wap numbered the type byte of their outer frame
