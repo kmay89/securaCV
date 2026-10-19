@@ -2704,7 +2704,9 @@ to https. The rows below use https; on an http-only build (or one whose
 
 ## canary-wap: the landing page's session reaches neither the receipt nor the pairing QR (F289) — on-device verification
 
-Code: `api_auth_bearer_valid()` / `api_auth_check_bearer()` in `api_auth.h`,
+Code: `api_auth_bearer_valid()` / `api_auth_check_bearer()` in `api_auth.h`
+(the receipt's first grant is `api_auth_bearer_grant()` since F289's
+follow-up, the same compare under the lockout: see the next section),
 `handle_provisioning_receipt()`'s first grant and `handle_pairing_qr()`'s
 gate in `canary_wap.ino`. Host-tested (`tests_host/test_receipt_grant.cpp`:
 the REAL `api_auth.h` and both handlers cut out of the sketch; a cookie
@@ -2740,8 +2742,10 @@ handler; every refusal test fails with the gate reverted).
     with `token` and `ap_password`, and the bearer's QR is the SVG;
     `/api/status` on the cookie is `200` (the cookie still signs the
     dashboard in). In the dashboard the Settings save and **Show QR** each
-    bring the sign-in back ("Sign in again first" under the kit card) and
-    save or show nothing; after the BOOT-tap sign-in the card offers the kit
+    bring the sign-in back ("Sign in again first" under the kit card; since
+    F289's follow-up the sign-in reads "Your session does not cover this, or
+    has ended", not "Invalid or expired token", because the page sent no
+    token) and save or show nothing; after the BOOT-tap sign-in the card offers the kit
     and saves it, and **Show QR** shows the code (the tap's receipt gave the
     page its token, which it sends as a bearer). The last curl, inside the
     tap's window, is `200`: the tap serves whatever cookie rides beside it,
@@ -2780,6 +2784,67 @@ handler; every refusal test fails with the gate reverted).
     host with the password typed or with the bearer: a cookie-only save of
     the old host is the same `403`.
   - Artifact: `docs/audit/repro/F289/broker-move/`.
+
+## canary-wap: F289's follow-up — the Secure cookie, the receipt's lockout — on-device verification
+
+The broker move is the section above's last row (#1835's gate); this
+follow-up (#1832) adds none of its own. Code: `session_cookie_header()` and
+`handle_provisioning_receipt()` in `canary_wap.ino`;
+`read_session_cookie_hex()` in `csi_integration.cpp`;
+`api_auth_bearer_grant()`, `api_auth_bearer_held()` and
+`api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`.
+Host-tested (`tests_host/test_session_cookie.cpp`: the cookie's attributes
+over HTTPS and plain HTTP, and the whole-name read;
+`tests_host/test_receipt_grant.cpp`: a wrong bearer one strike, the
+backoff's 429, the tap and the claim never held; `recovery_kit.test.js`: the
+sign-in's copy); `check_route_security.py` holds every answer that carries a
+secret to a bearer-only gate; the compile is CI's; nothing here ran on a
+device or in a browser. Owner: U1.
+
+- [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
+  - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
+    up, a second unit (or this one after a factory reset) at its first-boot
+    SoftAP setup, a browser with developer tools, `curl`.
+  - Repro: in a private window open `https://canary-<suffix>.local/` and
+    follow **Open dashboard**; in the developer tools (Network, then
+    Application, Cookies) read the `Set-Cookie` of the `/?cv_pair=` answer
+    and the stored cookie's flags. Sign in once more with **Use BOOT Tap
+    Once** and read the receipt's `Set-Cookie`. On the first-boot unit, join
+    its SoftAP, run the setup page at `http://192.168.4.1` to its recovery-kit
+    save, and read that answer's `Set-Cookie` and whether the cookie is
+    stored. Last, `curl -sk -o /dev/null -w '%{http_code}\n' -H "Cookie:
+    xcv_session=<hex>" https://canary-<suffix>.local/api/status` with a live
+    session's `<hex>`, and the same with `-H "Cookie: xcv_session=0;
+    cv_session=<hex>"`.
+  - Expected: both HTTPS answers carry `cv_session=<64 hex>; HttpOnly;
+    SameSite=Strict; Path=/; Max-Age=86400; Secure` and the browser marks
+    the cookie Secure; the first-boot SoftAP answer carries the same
+    attributes without `Secure` and the browser keeps the cookie (the setup
+    page's optional Home Assistant step, which rides it, then saves); the `xcv_session` curl is `401` (a
+    longer name is not this cookie) and the one with both cookies is `200`.
+    Before this change no answer carried `Secure`, and `xcv_session=<hex>`
+    was read as the session.
+  - Artifact: `docs/audit/repro/F289/cookie-secure/`.
+
+- [ ] **A wrong bearer on the receipt is a strike; the backoff holds the bearer, never the tap**
+  - Setup: as the section above, with the API token.
+  - Repro: five times, 20 s apart (each strike doubles the backoff from 2 s,
+    so the fifth runs about 32 s), `curl -sk -o /dev/null -w
+    '%{http_code}\n' -H "Authorization: Bearer cv_wrong"
+    https://canary-<suffix>.local/api/provisioning-receipt`. Right after
+    the fifth, the same with the right token, on the receipt and on
+    `/api/pairing-qr` (`-D -` to see `Retry-After`); short-tap BOOT and,
+    still inside the backoff, the receipt with the right token again; then
+    wait out the `Retry-After` and fetch the receipt with the right token.
+  - Expected: each wrong bearer is `403` with
+    `physical_confirmation_required` (any bearer sent while a backoff runs
+    is `429` instead and is not compared); the right token inside the
+    backoff is `429` with a `Retry-After` header on the receipt and on the
+    QR; the request after the BOOT tap is `200` (the tap serves and is
+    spent, the lockout does not hold it); after the backoff the right
+    token alone is `200`. Before this change the wrong bearers on the
+    receipt armed no backoff and the right token was served inside one.
+  - Artifact: `docs/audit/repro/F289/receipt-lockout/`.
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 

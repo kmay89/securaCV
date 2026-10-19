@@ -36,7 +36,8 @@ Confirm that Settings is easy to reach without weakening the threat model:
 ## Security Checks
 
 - Confirm no full API token appears in page source for `/` or `/settings`.
-- Confirm `Set-Cookie` includes `HttpOnly`, `SameSite=Strict`, `Path=/`, and `Max-Age=86400`.
+- Confirm `Set-Cookie` includes `HttpOnly`, `SameSite=Strict`, `Path=/`, and `Max-Age=86400`, and `Secure` when the page is `https://` (the first-boot setup at `http://192.168.4.1` sets it without `Secure`, which the browser keeps).
+- Confirm a session alone does not fetch the recovery kit: **Settings**, **Device**, **Recovery kit** on a page signed in only by the cookie brings the sign-in back, which reads "Your session does not cover this, or has ended", and BOOT Tap Once then saves the kit.
 - Confirm unauthenticated calls to protected endpoints such as `/api/status` return `401` or `403`.
 - Confirm repeated bad token attempts trigger auth backoff instead of unlimited retries.
 

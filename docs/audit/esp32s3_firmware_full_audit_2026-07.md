@@ -131,7 +131,9 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
   QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
   the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
-  the camera. See `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
+  the camera. F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
+  toward the lockout (`api_auth_bearer_grant`), also host-tested only. See
+  `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the
@@ -141,6 +143,11 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   P-256 + proper SANs (also drops the 30–60 s RSA keygen at first boot).
 - **[LOW] `cv_session` cookie lacks `Secure`**; **wildcard `Access-Control-Allow-Origin: *`** on all
   JSON; **global (not per-client) auth lockout** any LAN host can trip to 429 the operator.
+  *(2026-10 note, F289's follow-up: the cookie now carries `Secure` whenever it is set over the
+  HTTPS server, and not on the first-boot setup's plain HTTP, where a browser would drop it
+  (`session_cookie_header()` in `canary_wap.ino`); it is also read by its whole name, so
+  `xcv_session=` is no longer taken for it. Host-tested, not run in a browser against a device.
+  The other two items in this bullet are unchanged.)*
 
 `wap_server.cpp` is a **linker stub** — the real 499 KB server is inline in the `.ino`, and the
 stub's header comment advertises properties ("TLS on all connections", rate limiting) that aren't
