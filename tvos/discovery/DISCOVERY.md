@@ -50,10 +50,20 @@ GET /api/fleet        →  200 application/json
   a birthday). `born_day` and `born_exact` travel together and are omitted
   until the device has met a clock, so absence means "cannot say", never any
   particular day. A day carries no time of day, by construction
-  (`firmware/common/identity/birth_day.h`). The Wall ignores all three today
-  — they are not part of the witness core's normalized shape
-  (`fleet_contract_vectors.json`), and a reader that does take them must
-  treat absence as "cannot say".
+  (`firmware/common/identity/birth_day.h`): it is the UTC day, and a reader
+  shows it as one. The Wall reads the birth pair: the witness core's
+  normalizer keeps `born_day` only when it is an integral number a Canary
+  could have stamped (the firmware's clock floor, day 20089 = 2025-01-01,
+  through day 49710 = 2106-02-07, the last a 32-bit clock names) and
+  `born_exact` only when it is a boolean, and drops anything else (the
+  firmware never sends 0, which is its own "never dated") to absent rather
+  than failing the snapshot. Each half crosses alone if sent alone. The
+  Wall's detail screen, the website's web Wall and the emulator then say
+  "Born <day>" only when `born_exact` is `true`, "First dated <day>" for a
+  day without that (a missing flag is not exact), and nothing without a day.
+  `fleet_contract_vectors.json` pins all of it, with the line each reader
+  must render (`born`). `chain_height` is still not part of the normalized
+  shape; the Wall ignores it.
 - **Optional wellbeing keys** (a row may carry them; most rows never will):
   `presence` (`"clear"`/`"present"`), `occupants` (`"0"`/`"1"`/`"2+"`),
   `breathing` (`true`/`false` — a breathing lock held or lapsed), and
