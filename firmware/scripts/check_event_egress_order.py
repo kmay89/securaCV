@@ -153,11 +153,16 @@ compiles `main.cpp`, where the restarts are:
     `witness_persist_chain_state();`, `mqtt_disconnect();` and
     `ESP.restart();`, so the flushed rows reach the card and the broker
     before the link closes. And every `ESP.restart(` in `main.cpp` is in
-    `factory_reset()` or `safe_mode_clear_and_restart()` (a reset erases the
-    broker settings first; safe mode runs no CSI), or has
-    `flush_events_before_restart();` before it, at the top of its own
-    innermost block: a restart added to the loop later must take one or the
-    other.
+    `factory_reset()` or `safe_mode_clear_and_restart()` (a reset flushes
+    nothing, as before; safe mode runs no CSI), or has
+    `flush_events_before_restart();` and then `witness_persist_chain_state();`
+    before it, both at the top of its own innermost block: a flushed bundle
+    is a witness record, and the chain head reaches NVS only every few
+    records (sweep F92's review). Every deep sleep (`lowpower_enter_deep_sleep(`,
+    `esp_deep_sleep_start(`; its wake is a reset) takes the same pair, or is
+    the power policy's, in the block of `if (policy_should_deep_sleep() &&
+    !power_is_charging())`, which flushes nothing (documented). A restart or
+    a sleep added to the loop later must take one or the other.
 
 Rule 1 holds the live send's refusal; the other half of the order is what a
 buffered publish does while the offline queue still drains (backlog F107).
@@ -887,7 +892,11 @@ SIG_DELIBERATE = r"\bstatic\s+void\s+deliberate_restart_now\s*\(\s*(?:void)?\s*\
 SIG_FACTORY_RESET = r"\bstatic\s+void\s+factory_reset\s*\([^)]*\)"
 SIG_SAFE_MODE_RESTART = r"\bstatic\s+void\s+safe_mode_clear_and_restart\s*\(\s*(?:void)?\s*\)"
 FLUSH_STMT = "flush_events_before_restart();"
+PERSIST_STMT = "witness_persist_chain_state();"
 EGRESS_FLUSH = "csi_event_egress_flush_for_restart"
+# The one deep sleep that flushes nothing: the power policy's (rule 10).
+POLICY_SLEEP_GATE = "policy_should_deep_sleep()&&!power_is_charging()"
+STOPS = r"\b(?:ESP\s*\.\s*restart|lowpower_enter_deep_sleep|esp_deep_sleep_start)\s*\("
 # Rule 10: the helper's whole body, comments blanked and whitespace removed.
 FLUSH_HELPER_BODIES = tuple(
     "#ifFEATURE_CSI#ifFEATURE_WATCHDOGesp_task_wdt_reset();#endif"
@@ -948,18 +957,33 @@ def check_restart(main_src: str, others: dict[str, str]) -> list[str]:
     exempt = []
     for sig in (SIG_FACTORY_RESET, SIG_SAFE_MODE_RESTART):
         exempt += [s for s in bodies(code, sig) if code[s[0]:s[1]].strip()]
-    for m in re.finditer(r"\bESP\s*\.\s*restart\s*\(", code):
-        if any(a <= m.start() < b for a, b in exempt):
+    for m in re.finditer(STOPS, code):
+        stop = code[m.start():m.end() - 1].replace(" ", "")
+        sleep = not stop.startswith("ESP")
+        if not sleep and any(a <= m.start() < b for a, b in exempt):
             continue
         start = innermost_block_start(code, m.start())
+        if sleep:
+            gate = enclosing_if(code, m.start())
+            if gate is not None and squash(gate[1]) == POLICY_SLEEP_GATE and gate[2] <= start:
+                continue
         block = code[start:m.start()]
         flush = block.rfind(FLUSH_STMT)
         line = code.count("\n", 0, m.start()) + 1
         if flush < 0 or not top_level_statement(block, flush):
-            errors.append(f"{MAIN_CPP}:{line}: `ESP.restart()` with no `{FLUSH_STMT}` before it in "
-                          "its own block — every planned restart on the loop task commits the "
-                          "open CSI bundles and drains the egress first; a reset or safe mode "
-                          "restarts from factory_reset() or safe_mode_clear_and_restart() (F92)")
+            errors.append(f"{MAIN_CPP}:{line}: `{stop}()` with no `{FLUSH_STMT}` before it in "
+                          "its own block — every planned restart or sleep on the loop task "
+                          "commits the open CSI bundles and drains the egress first; a reset or "
+                          "safe mode restarts from factory_reset() or "
+                          "safe_mode_clear_and_restart(), and only the power policy's sleep "
+                          "skips it (F92)")
+            continue
+        persist = block.find(PERSIST_STMT, flush)
+        if persist < 0 or not top_level_statement(block, persist):
+            errors.append(f"{MAIN_CPP}:{line}: `{stop}()` after `{FLUSH_STMT}` with no "
+                          f"`{PERSIST_STMT}` between them in its own block — the bundles the "
+                          "flush commits are witness records, and the chain head must reach NVS "
+                          "before the restart, or the next boot reuses their seqs (F92)")
     return errors
 
 
@@ -1340,10 +1364,26 @@ RESTART_MUTATIONS: list[tuple[str, RestartMutation]] = [
     ("the deliberate restart flushes twice",
      on_restart(SIG_DELIBERATE, r"(flush_events_before_restart\(\);)", r"\1 \1")),
     ("setup's restart flushes nothing",
-     on_restart(SIG_LOOP, r"\n[ \t]*flush_events_before_restart\(\);(\s*delay\(1000\);)", r"\1")),
+     on_restart(SIG_LOOP, r"\n[ \t]*flush_events_before_restart\(\);(\s*witness_persist_chain_state\(\);)",
+                r"\1")),
     ("setup's restart flushes in a block of its own",
-     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)(\s*delay\(1000\);)",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)(\s*witness_persist_chain_state\(\);)",
                 r"if (WiFi.status() == WL_CONNECTED) { \1 }\2")),
+    ("setup's restart persists no chain head after the flush",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)\s*witness_persist_chain_state\(\);",
+                r"\1")),
+    ("setup's restart persists the chain head before the flush",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)(\s*)(witness_persist_chain_state\(\);)",
+                r"\3\2\1")),
+    ("setup's restart persists the chain head only once healthy",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);\s*)(witness_persist_chain_state\(\);)",
+                r"\1if (g_boot_healthy) \2")),
+    ("a new deep sleep in the loop flushes nothing",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (g_boot_status.count > 9) lowpower_enter_deep_sleep();")),
+    ("a sleep borrows the power policy's gate in another block",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (policy_should_deep_sleep() && !power_is_charging()) { } { esp_deep_sleep_start(); }")),
     ("a new restart in the loop flushes nothing",
      on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
                 r"\1 if (g_boot_status.count > 9) ESP.restart();")),
@@ -1510,7 +1550,8 @@ def main() -> int:
           f"queued surfaces); the planner's sends never buffer, the tamper bridge goes first, "
           f"the planner gets the id floor and the broker-change epoch; the modules register "
           f"and run their boot init after the floor and before the first tick; every planned "
-          f"restart commits the open bundles and drains the egress first "
+          f"restart or sleep commits the open bundles, drains the egress and persists the chain "
+          f"first, or is a reset, safe mode or the power policy's sleep "
           f"({len(MUTATIONS) + len(BOOT_MUTATIONS) + len(QUEUE_MUTATIONS) + len(RESTART_MUTATIONS)}"
           f" mutations refused).")
     return 0

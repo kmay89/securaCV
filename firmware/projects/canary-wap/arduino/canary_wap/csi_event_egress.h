@@ -122,7 +122,8 @@ constexpr uint32_t kRestartBudgetMs = 1000;
 
 /* Loop task, right before a planned restart (sweep F92): canary_wap.ino's
  * flush_events_before_restart(), which POST /api/reboot (deferred to the
- * loop) and the provisioning grace reboot run, ahead of the chain persist.
+ * loop) and the provisioning grace reboot run, each ahead of its chain
+ * persist (the flushed bundles' witness records advanced the head).
  * Commits every open CSI bundle now (csi_event_flush_bundles(): each takes
  * its event id and queues here, its witness record written on this task),
  * then runs pump() until the queue is empty and the RAM hold has gone, or
@@ -131,7 +132,9 @@ constexpr uint32_t kRestartBudgetMs = 1000;
  * or behind a backlog the backfill is still walking costs the budget and no
  * more (each pass is the loop's own pump, as bounded as on any pass; the
  * caller resets the watchdog first). What is still in the queue or the hold
- * then is lost to the restart, as before; rows on the card stay owed.
+ * then is lost to the restart, as before. Rows on the card stay owed, but
+ * for up to kStride ids a walk in progress had already covered with its
+ * NVS ceiling (F47's trade: the next boot reads them as delivered).
  * Returns true when the queue and the hold were empty. Before begin(), it
  * only commits the bundles. */
 bool flush_for_restart(uint32_t budget_ms);

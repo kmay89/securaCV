@@ -4822,11 +4822,18 @@ static bool g_reboot_requested = false;
 // every open bundle commits now (its witness record with it, on this task)
 // and the egress drains to the card and the broker, bounded by
 // csi_event_egress::kRestartBudgetMs (about a second) inside the loop task's
-// 8 s watchdog, reset first. Not on a factory reset (it erases the broker
-// settings first, so nothing is owed); the setup wizard's idle restart, the
-// safe-mode paths and the OTA, BLE OTA and USB-drive restarts are not the
-// loop's or run no CSI (check_wap_event_egress.py rule 13 holds every
-// ESP.restart() in this file to one or the other).
+// 8 s watchdog, reset first. The chain head reaches NVS only every
+// SD_PERSIST_INTERVAL records, so each caller persists it right after, before
+// the restart. Unchanged, so the open bundles are lost as before: the
+// factory reset's release (its broker settings go; a credentials reset keeps
+// the chain and the card), the power policy's low-battery deep sleep below
+// (its wake is a reset; CSI is off from battery saver on, so bundles have
+// mostly closed), and the restarts outside this file: hardware_state.h's
+// safe-mode auto-recovery (safe_mode_update(), on this task, with CSI
+// running) and its retry (the httpd task), the setup wizard's idle restart,
+// and the OTA, BLE OTA and USB-drive restarts. check_wap_event_egress.py
+// rule 13 holds every ESP.restart() and deep sleep in this file to one or
+// the other.
 static void flush_events_before_restart() {
   #if FEATURE_WATCHDOG
   esp_task_wdt_reset();
@@ -13219,6 +13226,7 @@ void loop() {
       __atomic_store_n(&g_setup_grace_reboot_at_ms, 0u, __ATOMIC_RELEASE);
       Serial.println("[OK] Provisioning grace elapsed — rebooting into steady state...");
       flush_events_before_restart();
+      persist_chain_state();   // the head the flushed bundles advanced
       delay(500);
       ESP.restart();
     }

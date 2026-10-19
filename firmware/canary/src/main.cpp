@@ -1057,12 +1057,17 @@ static void boot_health_before_deliberate_stop() {
 // egress commits through a queue and a RAM hold the restart would wipe. So
 // every open bundle commits now and the egress drains to the card and the
 // broker, bounded by kCsiEventEgressRestartBudgetMs (about a second) inside
-// the loop task's 8 s watchdog, reset first. Before the chain persist and
-// the MQTT disconnect, so the rows reach both. Not on a factory reset (it
-// erases the broker settings first, so nothing is owed) or in safe mode (no
-// CSI runs); the setup library's idle restart and the OTA paths are not the
-// loop's (check_event_egress_order.py rule 10 holds every ESP.restart() in
-// this file to one or the other).
+// the loop task's 8 s watchdog, reset first. A flushed bundle is a witness
+// record, and the chain head is in NVS only every few records, so each
+// caller persists the chain right after it, before the MQTT disconnect and
+// the restart. Not on a factory reset (factory_reset(): nothing is flushed,
+// so the open bundles are lost, as before; a full reset erases the chain
+// and the broker settings, a credentials reset keeps the chain and the
+// card), in safe mode (no CSI runs) or before the power policy's low-power
+// deep sleep (FEATURE_DEEP_SLEEP builds only; its wake is a reset, and its
+// open bundles are lost too); the setup library's idle restart and the OTA
+// paths are not the loop's. check_event_egress_order.py rule 10 holds every
+// ESP.restart() and deep sleep in this file to one or the other.
 static void flush_events_before_restart() {
 #if FEATURE_CSI
 #if FEATURE_WATCHDOG
@@ -2454,6 +2459,7 @@ void loop() {
       Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
       boot_health_before_deliberate_stop();
       flush_events_before_restart();
+      witness_persist_chain_state();   // the head the flushed bundles advanced
       delay(1000);
       ESP.restart();
     }
