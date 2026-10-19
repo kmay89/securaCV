@@ -3,7 +3,8 @@
 const { Router } = require('express');
 const { isPrivateOrigin } = require('../lib/private-origin');
 
-// Mirrors the firmware's BOOT-button provisioning gate (wap_server.h):
+// Mirrors the firmware's BOOT-button provisioning gate (canary_wap.ino's
+// handle_provisioning_receipt()):
 // GET /api/provisioning-receipt is unauthenticated — it is how a client
 // obtains the API token in the first place — but returns 403 until the
 // physical BOOT button is short-tapped. The 403 body advertises

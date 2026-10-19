@@ -589,7 +589,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 
 | Fact on the page | Source of truth |
 |---|---|
-| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
+| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, AP channel + client cap, ports, NVS keys, timeouts | `arduino/canary_wap/{canary_wap.ino,onboarding_fsm.h,setup_wizard.h}` |
 | The captive landing page (rendered verbatim) | `arduino/canary_wap/setup_page_html.h` |
 | Setup routes + the five wizard steps | `canary_wap.ino` + `companion_pwa.h` |
 | Boot banner + `setup()` log lines | `boot_banner.cpp` + `canary_wap.ino` |
