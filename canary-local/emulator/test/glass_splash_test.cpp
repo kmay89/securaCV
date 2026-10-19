@@ -5,8 +5,12 @@
 // config of every display env that builds LVGL 8.4: the round watch, the
 // nightstand on the S3 stick, the touch169, the AMOLED and the nightlight (on
 // its 180x320 panel, and turned to 320x180 the way main.cpp wears a saved
-// landscape before the splash). g++ only, no emsdk, no ESP32. Its sibling for
-// the LVGL 9.5 builds is glass_splash_lvgl9_test.cpp.
+// landscape before the splash); and in the dash's, which no env builds on 8.4
+// but the browser emulator does (build.sh compiles every display flavor
+// against its 8.4 pin): on its 800x480 panel, and turned to 480x800 by LVGL's
+// software rotation the way main.cpp wears a saved portrait. g++ only, no
+// emsdk, no ESP32. Its sibling for the LVGL 9.5 builds (the dash hardware
+// line and the C6 nightstand) is glass_splash_lvgl9_test.cpp.
 //
 // Before F185 the 8.4 glass drew no tail: splash.cpp turned a rounded
 // square, LVGL 8.4 renders a turned object through a layer, a rounded one
@@ -44,17 +48,29 @@
 //     the tallest bubble the meeting drew (splash.cpp measures it itself,
 //     through LVGL, before it seats the bird), and hops no higher than
 //     kHopReach above it, on the glass;
-//  7. wherever seat() says the bird is clear of the tail (F159), the tail's
-//     ink starts at least kGap below the bird's box at every read;
+//  7. wherever seat() says the bird is clear of the tail (F159), the bird's
+//     box at its deepest breath (the lowest the meeting drew it) ends at
+//     least kGap above the highest the tail's ink stood: the bound seat()
+//     seats the bird by, both sides read off the glass (a read of the box
+//     only at the ticks the tail is read never lands on the deepest breath,
+//     and passed a seat 1 px short of kGap); seat() leaves the bird within
+//     the tail's reach only on the round watch and the landscape nightlight
+//     (pinned), and on the nightlight's hung bubble the tail hides none of
+//     the bird's drawn pixels at any tick;
 //  8. the bubble typed every line story::kHello has, whole and in order,
 //     and the meeting was remembered.
 //
 // Printed, not held: the tail's ink, its offset from the bubble's center
-// line and its reach, and, where seat() leaves the bird within the tail's
-// reach (the round watch, the landscape nightlight, pinned), how far into
-// the bird's box it reaches and how many of the bird's drawn pixels it hides
-// at the reads that see it there (the bird drawn with the bubble and the
-// tail hidden, against the same frame with the tail shown).
+// line and its reach; where seat() leaves the bird within the tail's reach,
+// how far into the bird's box the tail's ink stands (at its highest against
+// the deepest breath, and at the ticks seen: the tail's ink as its last read
+// found it, read again whenever it moves, against the bird's box at every
+// tick) and the most of the bird's drawn pixels it hides at any tick (the
+// bird drawn with the bubble and the tail hidden, against the same frame with
+// the tail shown); and, through the wordmark's beat after the bubble bows
+// out, how far the bird's ink ends above the wordmark's (F159 keeps the
+// first meeting's raised bird where it rose) and whether the wordmark's ink
+// reaches the canvas's edge columns.
 //
 // Prints "ALL LVGL 8 SPLASH TAIL TESTS PASSED" on success.
 #include <Arduino.h>
@@ -75,6 +91,7 @@
 #include "identity/device_pseudonym.h"
 #include "story/story_scripts.h"
 
+#include "canary/glass_settings.h"
 #include "canary/hal/display.h"
 #include "canary/log.h"
 #include "canary/ui/canary_mark.h"
@@ -86,8 +103,14 @@
 #if LVGL_VERSION_MAJOR != 8
 #error "glass_splash_test.cpp builds against LVGL 8.4 (glass_turn.sh); its 9.x sibling is glass_splash_lvgl9_test.cpp"
 #endif
-#if !defined(CD_FLAVOR_WATCH) && !defined(CD_FLAVOR_NIGHTSTAND)
-#error "glass_splash_test.cpp builds a small-glass config (glass_turn.sh): the dash line is LVGL 9"
+#if defined(CD_FLAVOR_DASH)
+// The emulator's dash: the dash hardware line runs LVGL 9.5
+// (glass_splash_lvgl9_test.cpp), the browser emulator's dash flavor 8.4.
+#define GLASS_TURNS 1
+#elif defined(CD_FLAVOR_WATCH) || defined(CD_FLAVOR_NIGHTSTAND)
+#define GLASS_TURNS 0
+#else
+#error "glass_splash_test.cpp builds a display config: a small-glass one or the dash's (glass_turn.sh)"
 #endif
 
 namespace sl = canary::ui::splashlayout;
@@ -97,7 +120,11 @@ namespace {
 uint32_t g_now = 0;
 int g_fail = 0;
 int g_checks = 0;
+#if GLASS_TURNS
+constexpr int PW = LCD_WIDTH, PH = LCD_HEIGHT;  // the dash panel's native scan
+#else
 constexpr int PW = TFT_WIDTH, PH = TFT_HEIGHT;  // the panel's own scan
+#endif
 Arduino_GFX g_panel(PW, PH);
 #ifdef CD_NIGHTLIGHT
 // The panel once the HAL's display_set_rotation() has turned its scan
@@ -158,14 +185,30 @@ constexpr long kMinInk = 30;     // a drawn tail; 0 where 8.4 drew none (F185)
 constexpr long kWholeInk = 130;  // the whole turned square (144 px of area)
 constexpr int kWin = 40;         // the window read around the tail's box
 
+#if GLASS_TURNS
+const sl::Family& kFam = sl::kWideGlass;
+#else
+const sl::Family& kFam = sl::kSmallGlass;
+#endif
+
 // ── Reading the glass ────────────────────────────────────────────────────
 int g_lw = PW, g_lh = PH;  // the logical canvas (the panel's, turned or not)
+lv_disp_rot_t g_rot = LV_DISP_ROT_NONE;  // LVGL's software rotation (the dash)
 
-uint16_t logical_px(int x, int y) { return g_gfx->fb[(size_t)y * g_gfx->W + x]; }
-
-void render_whole() {
-  lv_obj_invalidate(lv_scr_act());
-  lv_refr_now(nullptr);
+// Where logical (lx, ly) lands on the panel: where LVGL drew it, but on the
+// dash turned by LVGL's software rotation (lvgl_port_set_rotation sets
+// sw_rotate), the quarter turns emu_hal_display.cpp undoes for the page
+// (glass_turn_test holds them pixel for pixel). The nightlight's panel turns
+// in hardware instead (g_turned), and LVGL draws nothing turned.
+uint16_t logical_px(int lx, int ly) {
+  int px = lx, py = ly;
+  switch (g_rot) {
+    case LV_DISP_ROT_90:  px = ly;          py = PH - 1 - lx; break;
+    case LV_DISP_ROT_180: px = PW - 1 - lx; py = PH - 1 - ly; break;
+    case LV_DISP_ROT_270: px = PW - 1 - ly; py = lx;          break;
+    default: break;
+  }
+  return g_gfx->fb[(size_t)py * g_gfx->W + px];
 }
 
 struct Box {
@@ -176,35 +219,55 @@ struct Ink {
   Box b{9999, 9999, -9999, -9999};
 };
 
-std::vector<uint16_t> read_window(const lv_area_t& c, Box* w) {
-  w->x0 = c.x1 - kWin;
-  w->y0 = c.y1 - kWin;
-  w->x1 = c.x2 + kWin;
-  w->y1 = c.y2 + kWin;
+// The window read around an object's box, kWin px a side.
+Box window_of(const lv_obj_t* obj) {
+  lv_area_t c;
+  lv_obj_get_coords(obj, &c);
+  Box w;
+  w.x0 = c.x1 - kWin;
+  w.y0 = c.y1 - kWin;
+  w.x1 = c.x2 + kWin;
+  w.y1 = c.y2 + kWin;
+  return w;
+}
+
+// The window rendered afresh: LVGL redraws everything in it from the
+// objects as they stand now (what it does with any area it is told
+// changed); the rest of the glass, never read, is left as it was.
+void render(const Box& w) {
+  lv_area_t a;
+  a.x1 = (lv_coord_t)w.x0;
+  a.y1 = (lv_coord_t)w.y0;
+  a.x2 = (lv_coord_t)w.x1;
+  a.y2 = (lv_coord_t)w.y1;
+  lv_obj_invalidate_area(lv_scr_act(), &a);
+  lv_refr_now(nullptr);
+}
+
+std::vector<uint16_t> read_window(const Box& w) {
   std::vector<uint16_t> out;
-  for (int y = w->y0; y <= w->y1; y++)
-    for (int x = w->x0; x <= w->x1; x++)
+  for (int y = w.y0; y <= w.y1; y++)
+    for (int x = w.x0; x <= w.x1; x++)
       out.push_back(x >= 0 && y >= 0 && x < g_lw && y < g_lh ? logical_px(x, y) : 0);
   return out;
 }
 
-// The tail's ink: the canvas rendered whole with the tail and without it.
-// With the bubble as `under`, the bubble is hidden for both renders, so a
-// part of the tail in the bubble's own color counts too. The glass is left
-// as the splash drew it.
-Ink tail_ink(lv_obj_t* tail, lv_obj_t* under = nullptr) {
-  lv_area_t c;
-  lv_obj_get_coords(tail, &c);
-  Box w;
+// An object's ink (the tail's, the bird's, the wordmark's): the window
+// around its box rendered with it and without it. With the bubble as
+// `under`, the bubble is hidden for both renders, so a part of the tail in
+// the bubble's own color counts too. The glass is left as the splash drew
+// it.
+Ink ink_of(lv_obj_t* obj, lv_obj_t* under = nullptr) {
+  const Box w = window_of(obj);
   if (under != nullptr) lv_obj_add_flag(under, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
-  const std::vector<uint16_t> with = read_window(c, &w);
-  lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
-  const std::vector<uint16_t> without = read_window(c, &w);
-  lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
+  render(w);
+  const std::vector<uint16_t> with = read_window(w);
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  render(w);
+  const std::vector<uint16_t> without = read_window(w);
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
   if (under != nullptr) lv_obj_clear_flag(under, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
+  render(w);
   Ink ink;
   size_t i = 0;
   for (int y = w.y0; y <= w.y1; y++) {
@@ -257,22 +320,20 @@ Box styled_extent(const lv_obj_t* tail) {
 // hidden) that the tail's own ink then covers (the tail shown over the
 // bird, the bubble still hidden). The glass is left as the splash drew it.
 long bird_hidden(lv_obj_t* tail, lv_obj_t* bub, lv_obj_t* bird) {
-  lv_area_t c;
-  lv_obj_get_coords(bird, &c);
-  Box w;
+  const Box w = window_of(bird);
   lv_obj_add_flag(bub, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(tail, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
-  const std::vector<uint16_t> bird_only = read_window(c, &w);
+  render(w);
+  const std::vector<uint16_t> bird_only = read_window(w);
   lv_obj_add_flag(bird, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
-  const std::vector<uint16_t> bare = read_window(c, &w);
+  render(w);
+  const std::vector<uint16_t> bare = read_window(w);
   lv_obj_clear_flag(bird, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(tail, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
-  const std::vector<uint16_t> with_tail = read_window(c, &w);
+  render(w);
+  const std::vector<uint16_t> with_tail = read_window(w);
   lv_obj_clear_flag(bub, LV_OBJ_FLAG_HIDDEN);
-  render_whole();
+  render(w);
   long n = 0;
   for (size_t i = 0; i < bare.size(); i++)
     if (bird_only[i] != bare[i] && with_tail[i] != bird_only[i]) n++;
@@ -295,8 +356,20 @@ struct Watch {
   int rise_hi = -9999;      // the highest the ink stood over the bubble's top
   int tallest = 0;          // the tallest bubble drawn
   int bird_lo = 1 << 30, bird_hi = -(1 << 30);  // the bird's box top, drawn
-  int tail_gap = 1 << 30;   // the tail's ink top less the bird's box bottom
-  long hidden = 0;          // the most of the bird's drawn pixels the tail hid
+  int bird_h = 0;           // the bird's box height
+  int ink_top = 1 << 30;    // the tail's ink top, as its last read found it
+  int ink_top_lo = 1 << 30; // ...and the highest it stood over the meeting
+  int tick_gap = 1 << 30;   // the tail's ink top less the bird's box bottom,
+                            // at the ticks seen
+  long hidden = 0;          // the most of the bird's drawn pixels the tail
+                            // hid at any tick
+  // The wordmark's beat: the bird's ink bottom against the wordmark's ink
+  // top (read again whenever the bird's box moves), and the wordmark's ink
+  // across the canvas.
+  int word_reads = 0;
+  int word_gap_lo = 1 << 30, word_gap_hi = -(1 << 30);
+  int word_x0 = 1 << 30, word_x1 = -(1 << 30);
+  int word_bird_y = -(1 << 30);
   std::string last_text;
   std::vector<std::string> typed;
   bool emptied = false;
@@ -343,14 +416,14 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
        (int)lv_area_get_height(&t), (int)t.x1, (int)t.y1, (int)b.x1, (int)b.x2, (int)b.y1, text,
        want_x, want_y);
   // 3: drawn on the glass.
-  const Ink glass = tail_ink(tail);
+  const Ink glass = ink_of(tail);
   if (glass.n < W.ink_lo) W.ink_lo = glass.n;
   if (glass.n > W.ink_hi) W.ink_hi = glass.n;
   HOLD(glass.n >= kMinInk, W.ink_fails,
        "%s: the tail draws %ld px of ink (box at %d,%d, \"%s\"); a drawn tail has at least %ld",
        tag, glass.n, (int)t.x1, (int)t.y1, text, kMinInk);
   // 4: its own ink, the whole turned square, where its styles put it.
-  const Ink own = tail_ink(tail, bub);
+  const Ink own = ink_of(tail, bub);
   const Box want = styled_extent(tail);
   if (own.n < W.own_lo) W.own_lo = own.n;
   HOLD(own.n >= kWholeInk && abs(own.b.x0 - want.x0) <= 2 && abs(own.b.x1 - want.x1) <= 2 &&
@@ -377,18 +450,37 @@ void capture(lv_obj_t* tail, lv_obj_t* bub) {
   HOLD(rise <= sl::kTailRise, W.rise_fails,
        "%s: the tail's ink starts %d rows above the bubble's top edge (y %d); kTailRise is %d "
        "(\"%s\")", tag, rise, (int)b.y1, sl::kTailRise, text);
-  // 7's read: how far the tail's ink starts below the bird's box.
-  lv_obj_t* bird = canary::ui::canary_mark_obj();
-  if (bird != nullptr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN)) {
-    lv_area_t m;
-    lv_obj_get_coords(bird, &m);
-    const int gap = own.b.y0 - ((int)m.y2 + 1);
-    if (gap < W.tail_gap) W.tail_gap = gap;
-    if (gap < 0) {
-      const long h = bird_hidden(tail, bub, bird);
-      if (h > W.hidden) W.hidden = h;
-    }
+  // 7's tail side: where the tail's ink starts, until it moves again.
+  W.ink_top = own.b.y0;
+  if (own.b.y0 < W.ink_top_lo) W.ink_top_lo = own.b.y0;
+}
+
+// The wordmark: the label the splash sets "SecuraCV".
+lv_obj_t* find_word(const lv_obj_t* scr) {
+  const uint32_t n = lv_obj_get_child_cnt(scr);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t* c = lv_obj_get_child(scr, (int32_t)i);
+    if (lv_obj_check_type(c, &lv_label_class) && strcmp(lv_label_get_text(c), "SecuraCV") == 0)
+      return c;
   }
+  return nullptr;
+}
+
+// The wordmark's beat, read whenever the bird's box moves: how far the
+// bird's ink ends above the wordmark's, and where the wordmark's ink runs.
+void read_word(lv_obj_t* bird, lv_obj_t* word, const lv_area_t& m) {
+  Watch& W = g_w;
+  if ((int)m.y1 == W.word_bird_y) return;
+  W.word_bird_y = (int)m.y1;
+  const Ink bi = ink_of(bird);
+  const Ink wi = ink_of(word);
+  if (bi.n == 0 || wi.n == 0) return;
+  W.word_reads++;
+  const int gap = wi.b.y0 - (bi.b.y1 + 1);
+  if (gap < W.word_gap_lo) W.word_gap_lo = gap;
+  if (gap > W.word_gap_hi) W.word_gap_hi = gap;
+  if (wi.b.x0 < W.word_x0) W.word_x0 = wi.b.x0;
+  if (wi.b.x1 > W.word_x1) W.word_x1 = wi.b.x1;
 }
 
 void observe() {
@@ -399,11 +491,14 @@ void observe() {
   W.ticks++;
   lv_obj_update_layout(scr);
   lv_obj_t* bird = canary::ui::canary_mark_obj();
-  if (bird != nullptr && lv_obj_get_parent(bird) == scr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN)) {
-    lv_area_t m;
+  const bool bird_up =
+      bird != nullptr && lv_obj_get_parent(bird) == scr && !lv_obj_has_flag(bird, LV_OBJ_FLAG_HIDDEN);
+  lv_area_t m{0, 0, -1, -1};
+  if (bird_up) {
     lv_obj_get_coords(bird, &m);
     if (m.y1 < W.bird_lo) W.bird_lo = m.y1;
     if (m.y1 > W.bird_hi) W.bird_hi = m.y1;
+    W.bird_h = lv_area_get_height(&m);
   }
   lv_obj_t* tail = nullptr;
   lv_obj_t* bub = nullptr;
@@ -415,6 +510,14 @@ void observe() {
   // 1: up together.
   HOLD(tail_up == bub_up, W.mismatched, "%s: the tail is %s while the bubble is %s",
        W.tag.c_str(), tail_up ? "up" : "hidden", bub_up ? "up" : "hidden");
+  if (!bub_up) {
+    lv_obj_t* word = find_word(scr);
+    if (bird_up && word != nullptr && !lv_obj_has_flag(word, LV_OBJ_FLAG_HIDDEN)) {
+      W.capturing = true;
+      read_word(bird, word, m);
+      W.capturing = false;
+    }
+  }
   if (!tail_up || !bub_up) return;
   W.bubble_ticks++;
   lv_area_t t, b;
@@ -438,6 +541,19 @@ void observe() {
     W.capturing = true;
     capture(tail, bub);
     W.capturing = false;
+  }
+  // 7's reads at every tick: the tail's ink, as its last read found it,
+  // against the bird's box as it stands; where it reaches into the box,
+  // the bird's drawn pixels it hides on this frame.
+  if (bird_up && W.ink_top != (1 << 30)) {
+    const int gap = W.ink_top - ((int)m.y2 + 1);
+    if (gap < W.tick_gap) W.tick_gap = gap;
+    if (gap < 0) {
+      W.capturing = true;
+      const long h = bird_hidden(tail, bub, bird);
+      W.capturing = false;
+      if (h > W.hidden) W.hidden = h;
+    }
   }
   W.last_text = text;
   W.last_tail = t;
@@ -474,11 +590,14 @@ void play(const char* canvas, canary::ui::Character ch, char letter) {
   native9::prefs().clear();  // never met: the first meeting
   g_lw = canary::ui::lvgl_port_width();
   g_lh = canary::ui::lvgl_port_height();
+  g_rot = lv_disp_get_rotation(lv_disp_get_default());
+  // The panel's scan, turned by LVGL's software rotation where it turns.
+  const bool side = g_rot == LV_DISP_ROT_90 || g_rot == LV_DISP_ROT_270;
   CHECK(lv_disp_get_hor_res(nullptr) == g_lw && lv_disp_get_ver_res(nullptr) == g_lh &&
-            g_gfx->W == g_lw && g_gfx->H == g_lh,
-        "%s: LVGL's canvas is %dx%d, the port's %dx%d, the panel's %dx%d", tag,
+            (side ? g_gfx->H : g_gfx->W) == g_lw && (side ? g_gfx->W : g_gfx->H) == g_lh,
+        "%s: LVGL's canvas is %dx%d, the port's %dx%d, the panel's %dx%d (turned %d)", tag,
         (int)lv_disp_get_hor_res(nullptr), (int)lv_disp_get_ver_res(nullptr), g_lw, g_lh,
-        g_gfx->W, g_gfx->H);
+        g_gfx->W, g_gfx->H, (int)g_rot);
   W.home = lv_scr_act();
   printf("  %s, canvas %dx%d:\n", tag, g_lw, g_lh);
   const uint32_t t0 = g_now;
@@ -496,38 +615,54 @@ void play(const char* canvas, canary::ui::Character ch, char letter) {
         same < W.typed.size() ? W.typed[same].c_str() : "(nothing)",
         same < want.size() ? want[same].c_str() : "(nothing)");
   // 6: the bird on seat()'s seat for the tallest bubble drawn.
-  const sl::Seat s = sl::seat(g_lh, sl::kSmallGlass, true, W.tallest);
-  const int seat_top = sl::bird_top(g_lh, sl::kSmallGlass.bird, s.bird_off);
+  const sl::Seat s = sl::seat(g_lh, kFam, true, W.tallest);
+  const int seat_top = sl::bird_top(g_lh, kFam.bird, s.bird_off);
   CHECK(W.bird_hi >= seat_top + sl::kBreath - 1 && W.bird_hi <= seat_top + sl::kBreath &&
             W.bird_lo >= seat_top - sl::kHopReach && W.bird_lo >= 0 &&
             W.bird_lo < seat_top - sl::kBreath,
         "%s: the bird's top is drawn at y %d..%d; seat() seats it at y %d for the %d px tallest "
         "bubble (breathing %d px, hopping %d at most, a hop seen)", tag, W.bird_lo, W.bird_hi,
         seat_top, W.tallest, sl::kBreath, sl::kHopReach);
-  // 7: clear of the tail wherever seat() says so (a tail never inked is
-  // check 3's to fail).
+  // 7: clear of the tail wherever seat() says so: the bird's box at its
+  // deepest breath against the highest the tail's ink stood (a tail never
+  // inked is check 3's to fail).
+  const int worst = W.ink_top_lo - (W.bird_hi + W.bird_h);
   if (s.clear) {
     if (W.inked > 0)
-      CHECK(W.tail_gap >= sl::kGap, "%s: the tail's ink starts %d px from the bird's box "
-            "(below it; negative, into it); seat() keeps it kGap (%d) clear", tag, W.tail_gap,
-            sl::kGap);
+      CHECK(worst >= sl::kGap, "%s: at its highest the tail's ink starts %d px from the bird's "
+            "box at its deepest breath (below it; negative, into it); seat() keeps it kGap (%d) "
+            "clear", tag, worst, sl::kGap);
   } else {
     g_unclear.push_back(canvas);
   }
-  char where[96];
+  // ...and on a hung bubble the tail stands in the empty foot of the box.
+  if (s.hang)
+    CHECK(W.hidden == 0, "%s: the tail under the hung bubble hides %ld of the bird's drawn "
+          "pixels at a tick; it stands in the foot of the bird's box, below the drawn bird", tag,
+          W.hidden);
+  char where[160];
   if (W.inked == 0)
     snprintf(where, sizeof(where), "never inked");
-  else if (W.tail_gap >= 0)
-    snprintf(where, sizeof(where), "%d px below the bird's box", W.tail_gap);
+  else if (worst >= 0)
+    snprintf(where, sizeof(where), "%d px below the bird's box at its deepest breath", worst);
   else
-    snprintf(where, sizeof(where), "%d px into the bird's box, hiding %ld of its drawn pixels",
-             -W.tail_gap, W.hidden);
+    snprintf(where, sizeof(where), "%d px into the bird's box at its deepest breath (%d at the "
+             "ticks seen), hiding up to %ld of its drawn pixels at a tick", -worst, -W.tick_gap,
+             W.hidden);
   printf("    bird seated at y %d%s, tallest bubble %d px; the tail read %d times: %ld..%ld px "
          "on the glass, %ld+ of its own, at worst %+.1f px off the bubble's center line, %d rows "
-         "above its top edge at most, %s; %d checks failed\n",
+         "above its top edge at most, at its highest %s; %d checks failed\n",
          seat_top, s.raised ? " (raised)" : s.hang ? " (hung bubble)" : "", W.tallest, W.captures,
          W.ink_lo, W.ink_hi, W.own_lo, W.center_worst, W.inked ? W.rise_hi : 0, where,
          W.seat_fails + W.ink_fails + W.land_fails + W.center_fails + W.rise_fails + W.mismatched);
+  if (W.word_reads > 0)
+    printf("    the wordmark's beat (%d reads): the bird's ink ends %d..%d px above the "
+           "wordmark's; the wordmark's ink spans x %d..%d of the canvas's 0..%d%s\n",
+           W.word_reads, W.word_gap_lo, W.word_gap_hi, W.word_x0, W.word_x1, g_lw - 1,
+           W.word_x0 <= 0 || W.word_x1 >= g_lw - 1 ? ", reaching its edge (cut)" : "");
+  else
+    printf("    the wordmark's beat: never read\n");
+  CHECK(W.word_reads > 0, "%s: the wordmark's beat was never read", tag);
   (void)t0;
 }
 
@@ -546,6 +681,13 @@ int main() {
   char canvas[32];
   snprintf(canvas, sizeof(canvas), "%dx%d", PW, PH);
   play_all(canvas);
+#if GLASS_TURNS
+  // main.cpp: a saved portrait is worn before the splash, LVGL's software
+  // rotation turning the dash's canvas to 480x800.
+  canary::ui::lvgl_port_set_rotation(canary::glass::ROT_PORTRAIT);
+  snprintf(canvas, sizeof(canvas), "%dx%d (portrait)", PH, PW);
+  play_all(canvas);
+#endif
 #ifdef CD_NIGHTLIGHT
   // main.cpp: a saved landscape is worn before the splash, the panel turned
   // in hardware (the HAL's MADCTL write, here the turned panel) and LVGL
@@ -557,7 +699,8 @@ int main() {
 #endif
   // Pinned (F159): seat() leaves the bird within the tail's reach only on
   // the round watch (its clear seat would lift its hop off the disc) and on
-  // the landscape nightlight (its bubble hangs kGap under the bird).
+  // the landscape nightlight (its bubble hangs kGap under the bird); the
+  // dash is clear both ways.
   std::string unclear;
   for (const std::string& u : g_unclear)
     if (unclear.find(u) == std::string::npos) unclear += (unclear.empty() ? "" : ", ") + u;

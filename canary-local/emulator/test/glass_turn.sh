@@ -8,10 +8,11 @@
 # ceiling (sweep A61: clipped as the C3-LCD-1.47 clips it in the nightlight
 # config, passed through as asked in the dash's). Then it builds
 # glass_splash_test.cpp (F185, F159) in the config of every display env that
-# builds LVGL 8.4, against the same LVGL objects: the REAL splash.cpp plays
-# the first meeting, and the speech bubble's tail and the bird's seat over it
-# are read off the frame; every one of those suites runs, and the script
-# fails at its end if any did. No emsdk: this proves the sources the dist is
+# builds LVGL 8.4, and in the dash's (the emulator's dash flavor is 8.4 too),
+# against the same LVGL objects: the REAL splash.cpp plays the first meeting,
+# and the speech bubble's tail and the bird's seat over it are read off the
+# frame; every one of those suites runs, and the script fails at its end if
+# any did. No emsdk: this proves the sources the dist is
 # built from, not the dist's bytes (the browser probe, onboard_probe.mjs,
 # reads those).
 #
@@ -141,8 +142,12 @@ g++ -o "$OUT/nl_backlight_cap_test" "$OUT/nl_backlight_cap_test.o" "$OUT/nl_emu_
 # round watch, the S3 nightstand, the touch169, the AMOLED and the nightlight
 # (with its env's lean budget, which in LVGL itself drops only faces and
 # widgets, and the refresh period, that a whole-frame read never sees). The
-# nightlight's suite also plays its turned 320x180 canvas. Every suite runs,
-# and the script fails at its end if any did.
+# nightlight's suite also plays its turned 320x180 canvas. Then the dash's:
+# its hardware line builds LVGL 9.5 (glass_turn_lvgl9.sh renders that), but
+# build.sh compiles the emulator's dash flavor against this 8.4, so its
+# suite plays the 800x480 panel and the 480x800 canvas LVGL's software
+# rotation turns it to. Every suite runs, and the script fails at its end if
+# any did.
 SPLASH_SRC=(lvgl_port splash canary_mark theme character)
 splash_failed=()
 splash_suite() {  # splash_suite <name> <config> <board> [defines...]
@@ -167,6 +172,7 @@ splash_suite nightstand nightstand waveshare-esp32s3-lcd147
 splash_suite touch169 touch169 waveshare-esp32s3-touch-lcd169
 splash_suite amoled241 amoled241 waveshare-esp32s3-amoled241
 splash_suite nightlight nightlight waveshare-esp32c3-lcd147 -DCD_LEAN_BUILD=1
+splash_suite dash dash waveshare-esp32s3-lcd43
 if ((${#splash_failed[@]})); then
   echo "glass_turn: the splash's tail FAILED in: ${splash_failed[*]}" >&2
   exit 1
