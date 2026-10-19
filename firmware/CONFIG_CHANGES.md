@@ -22,6 +22,30 @@ context lives in [CHANGELOG.md](../CHANGELOG.md); this file is only the
 
 ## Entries
 
+20261019: canary-vision's flavor config no longer names seventeen `CONFIG_*`
+values nothing read (sweep F182, #1802; this entry was added by the
+post-#1802 verification, which found the removal shipped without one). No
+device behaves differently: each macro was read by no source before it went.
+- `configs/canary-vision/default/config.h`: `CONFIG_DEVICE_ID`,
+  `CONFIG_MANUFACTURER`, `CONFIG_MODEL`, `CONFIG_DWELL_END_GRACE_MS`,
+  `CONFIG_INTERACTION_AFTER_LEAVE_WINDOW_MS`, `CONFIG_ZONE_INTERACTION_MS`,
+  `CONFIG_VOXEL_COLS`, `CONFIG_VOXEL_ROWS`, `CONFIG_FRAME_W`,
+  `CONFIG_FRAME_H`, `CONFIG_INVOKE_PERIOD_MS`, `CONFIG_HEARTBEAT_MS`,
+  `CONFIG_MQTT_BUFFER_BYTES`, `CONFIG_HA_DISCOVERY_PREFIX`,
+  `CONFIG_TOPIC_EVENTS`, `CONFIG_TOPIC_STATE` and `CONFIG_TOPIC_STATUS`. The
+  project's own `projects/canary-vision/include/canary/config.h` (identity,
+  detection and dwell defaults, voxel grid, frame size, timing, MQTT buffer,
+  discovery prefix) and `include/canary/topics.h` (the topic patterns) own
+  those values, as they always did: editing the flavor macro changed
+  nothing. A local `config_local.h` overlay that set one of them changes
+  nothing either; move the value to the project header. The flavor file
+  keeps the `FEATURE_*` flags, `CV_WATCHDOG_TIMEOUT_SEC`, and five seeds
+  that are copies of project constants tools read there
+  (`CONFIG_DEVICE_TYPE` for `canary-local/tools/figures/gen_figures.mjs`;
+  `CONFIG_PERSON_TARGET`, `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS` and
+  `CONFIG_DWELL_START_MS` for `canary-local/tools/gen_flash.py`), held equal
+  to the project's by `scripts/tests/test_vision_flavor_config_readers.py`.
+
 20261009: Flags, macros and one env that controlled nothing were removed.
 No device behaves differently: each was read by no source before it went.
 - `configs/canary-display/*/config.h`: `FEATURE_CHAIN_VERIFY`,

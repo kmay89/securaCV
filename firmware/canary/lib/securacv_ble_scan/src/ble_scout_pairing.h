@@ -17,15 +17,21 @@
  * the NimBLE host task, and expired by the loop task).
  *
  * Threat note (documented, bounded): the first single qualifying advert
- * wins, with no debounce and no strongest-wins rule, and the caller sees no
- * advert payload. So at the default -45 dBm the owner's own phone (in hand
- * after pressing Pair), a neighboring Canary's fleet-link advert on the
- * same shelf, or a phone held within a few centimeters by someone else
- * could pair instead of the tag. The window is short (<= 60 s), the
- * threshold floor is clamped (never looser than -70 dBm), the owner chose
- * the label, and unpair is one tap. Already-paired beacons never consume
- * the window. A multi-advert confirmation and a fleet-link/Chirp payload
- * filter wait on bench data (U1).
+ * wins, with no debounce and no strongest-wins rule. The scan callback
+ * reads the advert's manufacturer data once and passes a verdict
+ * (ble_scout_advert_kind.h, repo sweep F36): an advert in the fleet's own
+ * formats, another Canary's presence beacon or a Chirp, is never offered to
+ * the window, so a neighboring Canary on the same shelf cannot win it with
+ * those. What can still win at the default -45 dBm is any advert without
+ * fleet-format manufacturer data: the owner's own phone (in hand after
+ * pressing Pair), a phone held within a few centimeters by someone else, a
+ * stranger's tag, or a Canary advert that carries none (a canary-wap DEV
+ * build's Bluetooth channel advert, the legacy service-UUID advert the
+ * beacon code falls back to, a Sense or Vision setup door's flags-and-name
+ * advert). The window is short (<= 60 s), the threshold floor is clamped
+ * (never looser than -70 dBm), the owner chose the label, and unpair is
+ * one tap. Already-paired beacons never consume the window. A multi-advert
+ * confirmation still waits on bench data (U1).
  *
  * Host test: firmware/canary/lib/securacv_ble_scan/test_ble_scout_pairing.cpp
  * (the firmware.yml "Mesh + Scout Host Tests" job).

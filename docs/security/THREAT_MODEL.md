@@ -949,8 +949,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     a pairing when the joiner's owner confirms within the window, and still
     leaves the initiator holding a member that never joined when that owner
     does not. An initiator on firmware before F134 keeps the old harm. The
-    cost: this tree's members send nothing on a timer, so the copies
-    usually run their whole window, at most 149 copies of two frames.
+    cost, until F162: this tree's members sent nothing on a timer, so the
+    copies usually ran their whole window, at most 149 copies of two
+    frames. Since F162 a member sends one signed HEARTBEAT right after it
+    pairs, so the joiner's ends the initiator's copies within one pass; they
+    run on only while the first COMPLETE is lost (until the joiner opens a
+    copy and its heartbeat follows) or when that heartbeat cannot reach the
+    initiator (F320), and their whole window only then.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or
@@ -966,6 +971,33 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   code before its fix and by mutation; an interop probe in scratch ran the pairing library
   against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
   CI's; not bench-verified.
+- **PlatformIO membership: a join needs a leave, a member says it paired,
+  the peers list is the session's (F136, F162, F199; host-tested only).**
+  - *A join on a Canary already in an opera is refused (F136).*
+    `pair/join` with an opera held answers `409 opera_exists` before a
+    pairing number is taken or any member, key or secret is touched; until
+    F136 the join installed the new `opera_secret` over the old one while
+    every old member stayed registered, bound and stored, listed but never
+    heard and counting against the eight slots. The cost: a Canary cannot
+    pair with a second member of the opera it holds, so a changed radio
+    address is Leave then Join (F319). canary-wap's join is unchanged
+    (F318).
+  - *A member announces itself once (F162).* One signed `HEARTBEAT`
+    (registry 16, empty payload) to bound members only, right after
+    NOTIFY_PAIRED and once on the first pass after a boot that bound a
+    member; never to a pairing partner that is not a member, and never on
+    a timer (a recurring heartbeat was rejected as a new periodic RF
+    pattern, F324). A receiver handles it as any verified opera frame; it
+    discloses nothing an opera frame does not.
+  - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
+    its rows from the view the main loop published, one per member the
+    session holds, and reads no NVS on the HTTP task; a stored key the
+    session does not hold is not a member anything hears, so the rows
+    always agree with `peers_total`.
+  Pinned by host tests in `test_mesh_session` and `test_mesh_pairing`, by
+  `check_canary_mesh_status.py` and the handlers' wiring test; the canary
+  build is CI's; not bench-verified (the F136, F162, F199 and F215 section
+  of `docs/audit/hardware_verification_checklist.md`).
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the
   zero `opera_id` and `opera_secret` as an opera, and the next pairing it

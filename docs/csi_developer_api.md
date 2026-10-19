@@ -257,9 +257,14 @@ those bodies `"replay":true`. On the canary base
   reaches 0xF0000000 (2^28 ids before the wrap, about four years at the
   most a device can commit) and after a wrap. It only warns, and nothing on
   the device resets the id space (sweep F82's decision): recovery is an
-  owner action. On a canary, a factory reset clears its `securacv` NVS
-  namespace, the floor (`csi.evid`) and the delivery ceiling (`csi.evsent`)
-  with it; a canary-wap has no reset path, so its owner flashes it with the
+  owner action. On a canary the BOOT hold has two stages (since #1816): the
+  10 s release (`ResetScope::CredentialsAndSettings`) removes only
+  `reset_scope_keys.h`'s fixed key list, which names neither the floor
+  (`csi.evid`) nor the delivery ceiling (`csi.evsent`), so an exhausted id
+  space survives it; only the 30 s hold (`ResetScope::Everything`) clears the
+  `securacv` namespace, the floor and the ceiling with it, and the witness
+  identity and chain too, so every hub and display that pinned the device
+  sees a stranger; a canary-wap has no reset path, so its owner flashes it with the
   flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
   with the rest of NVS, and does not restore the flasher's pre-erase backup
   afterwards (it would bring the counter back). Either way the owner then
@@ -840,23 +845,28 @@ hash as 32 lowercase hex characters; the same tag has a different
 
 Limits worth saying out loud: the window pairs the **first** single advert
 at or above the threshold from any unpaired device. There is no debounce
-and no strongest-wins rule, and the scan callback sees only an address and
-a signal level, not what kind of device sent it. So three things other
-than the tag can win at −45 dBm:
+and no strongest-wins rule. The scan callback reads each advert's
+manufacturer data once and refuses the fleet's own formats — another
+Canary's presence beacon, a Chirp — from the window (sweep F36), so a
+neighboring Canary on the same shelf cannot win it with those. Three things
+other than the tag can still win at −45 dBm:
 
 - **your own phone**, in your hand after you pressed Pair;
-- **another Canary** on the same shelf, whose fleet-link adverts are
-  unpaired Bluetooth adverts like any other;
-- someone else's phone held right against the Canary.
+- **someone else's phone**, or **a stranger's tag**, held right against the
+  Canary;
+- **a Canary advert that carries no fleet-format manufacturer data**: a
+  canary-wap DEV build's Bluetooth channel advert, the legacy service-UUID
+  advert a beacon falls back to, or a Sense or Vision setup door's
+  flags-and-name advert.
 
 The window is at most 60 s, the name is yours, and forgetting the wrong
 device is one call (`POST /api/scout/unpair`), so the remedy is to unpair
-and pair again with the phone and other Canaries a step back. Most phones
+and pair again with the phone and other devices a step back. Most phones
 rotate their Bluetooth address every few minutes, so a paired phone stops
 matching; a tag with a fixed address is the reliable choice. Requiring two
-or three qualifying adverts from the same device, and skipping adverts that
-parse as a fleet-link or Chirp beacon, are the planned tightenings; both
-wait on a live pair against a real beacon, which is bench work (U1).
+or three qualifying adverts from the same device is the remaining planned
+tightening; it waits on a live pair against a real beacon, which is bench
+work (U1).
 
 ```bash
 curl -X POST http://canary.local/api/scout/pair/start \

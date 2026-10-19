@@ -1675,7 +1675,12 @@
   runway from the spend (`provisioning_logic::claim_spent_reboot_deadline`
   — set, not floored), so the WAP is on https ~15 s after "Paired". The
   port-80 redirect builds its `Location` from the request's `Host` (else
-  the STA address or the `.local` name), never the SoftAP address. The
+  the STA address or the `.local` name), never the SoftAP address
+  (amended 2026-10-19: since F255 the fallback is `receipt_authority.h`'s
+  choice — the SoftAP address for a caller on the setup network, else the
+  `.local` name — and the `Host` is kept only when it is an IP literal or
+  one of the device's own names; the post-#1802 verification settled that
+  after #1802's merge had kept no `Host` at all). The
   wizard's idle restart is not due while the door is open
   (`wizard_restart_due`; the door's window bounds the hold). Verified, not
   changed: a door join already leaves first-boot mode correctly — `loop()`
@@ -2464,13 +2469,21 @@
 - **Fix:** `receipt_authority.h` (pure): the SoftAP address only for a
   bearer or BOOT-tap request whose socket's local address is the SoftAP
   address, or while the STA holds no address; otherwise the `.local` name
-  (the STA's address with no name); a claim keeps its `.local` contract.
+  (the STA's address with no name); a claim keeps its `.local` contract
+  (amended 2026-10-19: in every network state, the STA down included — the
+  first cut sent a claim spent with the STA down to the SoftAP address,
+  against #1804's rule and `magic_pairing.md` §3.5, and the post-#1802
+  verification put the contract back).
   The sketch reads the local address with `httpd_req_to_sockfd()` +
   `getsockname()` through the same IPv4-mapped unwrap as the flagship, and
   a socket that cannot say falls back to the `.local` name while the STA is
   up, the one answer every home-network reader can use (sweep F255). Port
   80's redirect to https made the same choice for every caller and now asks
-  the same header. An address that reads 0 is never named: on
+  the same header (amended 2026-10-19: with the request's `Host` in front of
+  it when it is an IP literal or one of the device's own names, and the
+  256-byte `Location` with its root fallback restored from #1804; a foreign
+  `Host` is refused and falls back to the header's choice). An address that
+  reads 0 is never named: on
   Arduino-ESP32 core 3.x `WiFi.softAPIP()` reads `0.0.0.0` once
   `wifi_drop_ap()` has released the AP netif, which is an installed WAP's
   steady state, so a test that only ever feeds the configured
@@ -2479,8 +2492,9 @@
   (every grant and the redirect on the SoftAP, on the STA, with the STA
   down and with the SoftAP dropped, beside the old rule; the unwrap held to
   `provisioning_gate.h`'s; the sketch's glue compared token for token with
-  its comments removed). The lwIP glue is built only by CI; not run on a
-  device.
+  its comments removed; since 2026-10-19 the kept and refused Hosts, the
+  Location's root fallback and the claim in every state). The lwIP glue is
+  built only by CI; not run on a device.
 - **Date learned:** 2026-10
 
 ### A session any LAN host can mint is a sign-in, not a grant for the secret it was minted without

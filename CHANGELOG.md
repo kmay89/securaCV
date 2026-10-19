@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### Post-#1802 verification: the WAP's port 80 keeps a typed address, a setup-door claim keeps its `.local` name with the STA down, the globals check takes every cut it reads, and thirteen passages say what landed
+
+An independent verification of #1802's packages against the merged code,
+each finding confirmed by two adversarial reviewers, found three code
+shortfalls and thirteen places where the text no longer described the code.
+All are closed here; none of the code changes is run on a device.
+
+- **canary-wap: port 80's redirect keeps the address the browser typed
+  (post-#1802 WBS-1).** #1802's wave 17 chose the Location from the device's
+  own names alone (`receipt_authority.h`), which lost two things #1804 had:
+  the 256-byte Location with its root fallback (a URI past 128 bytes was cut,
+  into a redirect to the wrong page), and the request's Host, so a browser
+  that typed the WAP's IP on a PC or phone with no mDNS (Windows, Android
+  without Bonjour) was sent to a `.local` name it could not resolve. The
+  redirect now keeps the request's Host when it is an IP literal or one of
+  the device's own names (`canary-<suffix>.local`, the `canary.local`
+  catch-all), its port dropped, from the alphabet alone — never a foreign
+  name, never a byte outside it — and otherwise falls back to
+  `receipt_authority.h`'s choice as before; the Location is 256 bytes and a
+  URI that does not fit sends the browser to the root. Pure and host-tested
+  (`redirect_host()`, `redirect_location()`; `test_receipt_authority.cpp`,
+  533 checks: a typed IP kept, the own `.local` name kept, a foreign Host
+  refused to the device's name, a URI past the buffer to `/`, the sketch's
+  handler held token for token). The receipt itself is chosen as before.
+- **canary-wap: a setup-door claim's receipt names the `.local` name whatever
+  the STA is doing (post-#1802 WBS-2).** F255's rule answered the SoftAP
+  address for every grant while the STA held no address, the claim included,
+  so a claim spent in the moment the join was lost named `192.168.4.1`, dead
+  once the AP drops; #1804's rule, `magic_pairing.md` §3.5 and the
+  `LESSONS_LEARNED.md` entry all say the claim receipt is the one the phone
+  keeps for the life of the pairing and spells the steady-state address. It
+  does again, in every network state, and `test_receipt_authority.cpp`'s
+  model of the old rule now spells #1804's, not #1780's.
+- **canary-wap tests_host: `make run-arduino-globals` works on a fresh
+  checkout (post-#1802 WCH-1).** Its prerequisite list missed three of the
+  eleven cut `.inc` files, so the check failed closed on a clean tree and
+  `make -jN` could race the cuts. Every cutting rule now appends to
+  `CUT_INCS`, the target takes that list, and `check_arduino_globals.py`
+  holds every `.inc` a compile reads to it (its self-test drops one and must
+  see the check bite).
+- **Thirteen passages corrected to what landed.** The sweep ledger's F249,
+  F286 (ticked, with the make-deps Done text and its wave-18 bullet below),
+  F248, F255, A75 and F226 text and the Lab ESLint pin (the lockfile's,
+  10.12.0 at merge); the 4.3B capability map's CAN entry (a bus-off
+  controller is recovered); the Scout pairing threat note in
+  `ble_scout_pairing.h` and `csi_developer_api.md` (fleet-format adverts are
+  refused from the window); `csi_event_id_floor.h`'s reset note (the 10 s
+  reset keeps the floor and ceiling; only the 30 s wipe drops them); the Lab
+  reset-rows comment and bench rows (a reset returns the board to the
+  preset); `THREAT_MODEL.md`'s COMPLETE-copies paragraph (the joiner's
+  heartbeat ends them) with the F136 and F199 sentences and the bench
+  section it promised; the Home Assistant Last event row (its summaries);
+  `CONFIG_CHANGES.md` and the Vision configs README (the seventeen unread
+  macros); and the #1804 redirect sentences in `CHANGELOG.md` and
+  `LESSONS_LEARNED.md`, amended with the rule above.
+
 ### canary-wap: the landing page's session no longer reaches the provisioning receipt or the pairing QR
 
 - **canary-wap: a dashboard session buys neither the provisioning receipt nor
@@ -428,6 +484,25 @@ check fails on those bundles. Four carried Home Assistant files change
 carry after #1802 merges. Nothing in wave 18 is bench-tested, and no running
 Home Assistant was seen.
 
+- **Both tests_host Makefiles rebuild a suite when any header it compiled
+  changes (sweep F286; bullet added 2026-10-19 by the post-#1802
+  verification, which found the change shipped without one).** Each compile
+  writes the headers it read beside its binary (`DEPFLAGS = -MMD -MP`, on
+  every compile through `override CXXFLAGS += $(DEPFLAGS)`; a recipe that
+  compiles several sources runs as `$(call with_deps, ...)`, which lists them
+  with `-MM` after the compile), and the end of each Makefile reads the files
+  back (`-include $(wildcard ...*.d)`) with an empty rule for every source
+  they name, so a header or source moved since is a rebuild and not an
+  error. The hand-kept header lists (`VISCORE_HDR`, `BT_CMD_DEPS`) are gone,
+  and an edit to `arduino_globals.h` rebuilds every canary-wap suite.
+  `scripts/tests/test_vision_core_make_deps.py` (six cases over both
+  Makefiles) builds every target in a scratch copy of each tests_host
+  directory at `-j`, takes each compile's header closure with `g++ -MM` and
+  holds it to the prerequisites make's database carries, each a rule of its
+  own; its self-test changes each Makefile one line at a time and requires
+  every check to refuse the change. Host-tested; CI builds fresh, so no CI
+  result moves.
+
 ### canary-wap's receipt and port 80's redirect name it by its `.local` name on the home network and its dashboard saves the recovery kit, the Lab reads the WAP's flags from its sketch and the fleet figures find a WAP by the type it publishes, the display's RS-485 and CAN drivers get their caller, the Lab app's monitor takes commands and each bench prints its own chip's ROM, CI compiles Hub Core for Windows, lints the Lab's scripts and runs the camera wizard on jq 1.6, the spelling lint holds the website's word families, and the website and the HACS mirror close three items in their own PRs (#1802, wave 17)
 
 - **canary-wap: the receipt and port 80's redirect name the WAP by its
@@ -445,8 +520,11 @@ Home Assistant was seen.
   offered after a BOOT-tap sign-in, and under Settings, Device, Recovery kit
   for a browser already signed in; saved by one builder shared with the wizard
   and never sent anywhere. **Host-tested** (`test_receipt_authority.cpp`, 263
-  checks; `recovery_kit.test.js`, 28 tests); the firmware compile is CI's; not
-  run on a device. Filed: F289 (any host on the home network can reach the
+  checks at #1802 — 533 since the post-#1802 verification above, which keeps
+  the request's Host in front of the redirect's choice when it is a typed
+  address or the device's own name, and the claim's `.local` answer with the
+  STA down; `recovery_kit.test.js`, 28 tests); the firmware compile is CI's;
+  not run on a device. Filed: F289 (any host on the home network can reach the
   receipt with the landing page's session, read from code; needs a
   maintainer's call) and A88.
 - **The Lab reads the WAP from its sketch; `firmware/configs/canary-wap/` is
@@ -507,7 +585,7 @@ Home Assistant was seen.
   HA32).** Hub Core compiles `desktop/hub-core` and `desktop/hub-io` on
   `windows-latest` (`cargo check --all-targets`; the Windows writer stays
   staged for A9). A new Lab assets lint workflow runs the repo's pinned ESLint
-  (10.11.0) with only `no-unused-vars` and the module source type over the
+  (the lockfile's: 10.12.0 at merge) with only `no-unused-vars` and the module source type over the
   Lab's 78 first-party scripts, reading no config file and obeying no disable
   comment; it found 24 unused bindings in 10 files (19 catch clauses that
   never read their error, 5 parameters), now removed with no behavior change.
@@ -598,7 +676,9 @@ CI9's one-word fix), so the HACS mirror needs a carry after #1802 merges.
   in the old bytes for ordinary input, and a host test pins every field and
   the answer buffer's free. J8 holds the name's setter, loader and routes; the
   check refuses 88 mutations. **Host-tested** (`test_device_name.cpp`, 1812
-  checks; `test_wap_json_writer.cpp`, 115, under AddressSanitizer; two MQTT
+  checks at the package head and 1844 at the merge; `test_wap_json_writer.cpp`,
+  115 at the package head and 12573 at the merge, F263 and F262 having added
+  theirs later in the PR, under AddressSanitizer; two MQTT
   config answer tests); the compiles are CI's; not bench-tested. The Bluetooth
   name, the Wi-Fi SSIDs and a hand-edited card events-log line still reach
   their texts raw (F261, F262, F264; also filed: F263, F265 and F277).
@@ -869,6 +949,11 @@ audit confirmed that software can fix today. Design: `docs/design/magic_pairing.
   spend by 10 s, the redirect's Location comes from the request's Host, and
   the wizard's 15-minute idle restart no longer fires while the door is
   open (it blinked the card out mid-window). `LESSONS_LEARNED.md` has the entry.
+  (Amended 2026-10-19: #1802's wave 17 chose the redirect's Location from
+  the device's own names alone, and the post-#1802 verification settled the
+  rule that holds now — the request's Host when it is an IP literal or one
+  of the device's own names, else `receipt_authority.h`'s choice; a foreign
+  Host is refused.)
 - **The setup sheet survives its own ceremony.** It hung off a card mounted
   only while the Canary advertised, and a connected Canary does not — so it
   vanished 15 s into the password. The card keeps the Canary being set up
