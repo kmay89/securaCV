@@ -240,6 +240,29 @@ final class DeviceParityTests: XCTestCase {
 
     private static let en = Locale(identifier: "en_US")
 
+    /// A born day is a UTC day, so the Wall formats it in UTC. CI's macOS
+    /// runners run in UTC, where a formatter that slipped back to the local
+    /// zone would print the same day and pass, so each birth-day test that
+    /// reads the words first moves this process west of Greenwich, where the
+    /// local day of a UTC midnight is the day before, and puts the zone back
+    /// when the test ends.
+    private func pinAZoneWestOfUTC() throws {
+        let saved = NSTimeZone.default
+        NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        addTeardownBlock { NSTimeZone.default = saved }
+    }
+
+    /// The en_US abbreviated form of a vector's `utc_date` ("2026-08-08"
+    /// reads "Aug 8, 2026"), spelled out by hand so the expected words never
+    /// come from the formatter under test.
+    private func enUSDay(_ iso: String) -> String? {
+        let parts = iso.split(separator: "-").compactMap { Int($0) }
+        let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        guard parts.count == 3, (1...12).contains(parts[1]) else { return nil }
+        return "\(months[parts[1] - 1]) \(parts[2]), \(parts[0])"
+    }
+
     /// The UTC calendar day of a born day, read independently of the Wall's
     /// formatter: a born day is a UTC day, so a TV west of Greenwich must not
     /// show the day before.
@@ -253,6 +276,7 @@ final class DeviceParityTests: XCTestCase {
     /// "Born" is the device's word, and only when the device says the day is
     /// exact.
     func testAnExactBirthDayReadsBorn() throws {
+        try pinAZoneWestOfUTC()
         let d = try device(from: bornJSON)
         XCTAssertEqual(d.bornDay, 20673)
         XCTAssertEqual(d.bornExact, true)
@@ -265,6 +289,7 @@ final class DeviceParityTests: XCTestCase {
     /// A day learned late is shown — it bounds the device's age — but never
     /// called a birthday.
     func testAFirstDatedDayIsNeverCalledABirthday() throws {
+        try pinAZoneWestOfUTC()
         let d = try device(from: firstDatedJSON)
         XCTAssertEqual(d.bornDay, 20666)
         XCTAssertEqual(d.bornExact, false)
@@ -301,6 +326,7 @@ final class DeviceParityTests: XCTestCase {
     /// raw `input` goes through this decoder's own backstop and must reach
     /// the same birth day — the window edges and the malformed rows included.
     func testEveryContractVectorsBornLineReadsTheSameHere() throws {
+        try pinAZoneWestOfUTC()
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // WitnessWallTests
             .deletingLastPathComponent()   // Tests
@@ -325,6 +351,16 @@ final class DeviceParityTests: XCTestCase {
                 if let want = born[i] as? [String: String] {
                     XCTAssertEqual(d.bornLabel, want["label"], "\(name) row \(i): label")
                     XCTAssertEqual(d.bornOn.map { self.utcDay($0) }, want["utc_date"], "\(name) row \(i): UTC day")
+                    // The words the detail screen shows, in a zone west of UTC.
+                    let words = try XCTUnwrap(want["utc_date"].flatMap { self.enUSDay($0) },
+                                              "\(name) row \(i): utc_date is not YYYY-MM-DD")
+                    XCTAssertEqual(d.wallBornLine(locale: Self.en), "\(want["label"] ?? "?") \(words)",
+                                   "\(name) row \(i): the detail screen's line")
+                    // The reason under "First dated" is the device's own: only
+                    // a row that said born_exact false gets it, never one that
+                    // sent its day without the flag.
+                    XCTAssertEqual(d.wallBornNote != nil, d.bornExact == false,
+                                   "\(name) row \(i): the note follows the device's own flag")
                     lines += 1
                 } else {
                     XCTAssertNil(d.wallBornLine(), "\(name) row \(i): no day, so no line")

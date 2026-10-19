@@ -554,9 +554,12 @@ extension FleetSnapshot.Device {
 
     /// Said once, under a "First dated" line, so nobody has to wonder why one
     /// Canary says "Born" and another does not — the phone's
-    /// BirthCertificateCard says the same beside the same label.
+    /// BirthCertificateCard says the same beside the same label. Only when
+    /// the device itself said `born_exact: false`: a day sent without its
+    /// flag still reads "First dated" (the cautious label), but the device
+    /// never said why, so the Wall gives it no reason it did not give.
     var wallBornNote: String? {
-        guard bornLabel == "First dated" else { return nil }
+        guard bornDay != nil, bornExact == false else { return nil }
         return "It met a clock later than it was made, so its real birthday is on or before this day."
     }
 }
