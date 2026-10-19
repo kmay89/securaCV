@@ -148,13 +148,20 @@ inline bool ceiling_ignored(uint32_t persisted_floor, uint32_t delivered_ceiling
 // It only warns. Nothing on the device resets the id space, and no route
 // does (backlog F82's decision): the recovery is an owner action that
 // clears the floor and the delivery ceiling together, then a re-pin. On a
-// canary, a factory reset (BOOT held, main.cpp's factory_reset()) clears its
-// NVS namespace, the floor `csi.evid` and the ceiling `csi.evsent` with it.
-// A canary-wap has no reset path, so its owner flashes it with the
+// canary the BOOT hold has two stages (common/io/reset_hold.h, wired in
+// main.cpp; since #1816): the 10 s release, ResetScope::CredentialsAndSettings,
+// removes only reset_scope_keys.h's fixed key list, which names neither the
+// floor `csi.evid` nor the ceiling `csi.evsent`, so an exhausted id space
+// survives it; only the 30 s hold, ResetScope::Everything (nvs.clear(), the
+// whole namespace), drops them, and it drops the witness identity and chain
+// with them, so every hub and display that pinned the device sees a
+// stranger. A canary-wap has no reset path, so its owner flashes it with the
 // flasher's full erase, which clears all of NVS, the floor `ev.next` and
 // `csi.evsent` included. Either way the allocator starts again at kIdSpaceBase,
 // below the mark Home Assistant holds, so the owner then re-pins the device
-// in Home Assistant, which resets that mark.
+// in Home Assistant, which resets that mark. (Amended 2026-10-19: this note
+// had said a factory reset clears the namespace, which only the 30 s stage
+// does; no behavior changed.)
 inline bool space_low(uint32_t next_id) {
   return next_id >= kHoldLimit || next_id < kIdSpaceBase;
 }

@@ -45,6 +45,18 @@ Created automatically via MQTT Discovery:
 | Dwell Start | 10s | Time to confirm dwelling |
 | Voxel Grid | 3x3 | Spatial resolution |
 
+These values live in the project's own `include/canary/config.h`
+(`../../../projects/canary-vision/include/canary/config.h`; the topic
+patterns in `include/canary/topics.h`), which owns every setting the
+firmware reads; `config.h` here owns only the `FEATURE_*` flags and the
+watchdog timeout (sweep F182).
+Its five `CONFIG_*` lines are seeds — copies of the project's constants that
+two tools read from this file: `CONFIG_DEVICE_TYPE` for
+`canary-local/tools/figures/gen_figures.mjs` and the four detection defaults
+for `canary-local/tools/gen_flash.py` — and
+`scripts/tests/test_vision_flavor_config_readers.py` holds each equal to its
+owner.
+
 ## Usage
 
 1. Copy `secrets/secrets.example.h` to `secrets/secrets.h`

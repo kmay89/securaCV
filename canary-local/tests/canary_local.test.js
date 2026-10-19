@@ -273,6 +273,57 @@ test("both apps' vendored Witness Wall reads a silent `online` as offline", () =
   }
 });
 
+// The birth day (sweep A72). A Canary's /api/fleet row carries born_day (days
+// since the Unix epoch, a UTC day) and born_exact, and the contract vectors
+// carry a `born` line per row: what every reader must render, held to the
+// Apple TV core's normalized pair by tvos/witness-core/tests/fleet_contract.rs.
+// The vendored emulator renders it from the raw rows its live fleet is built
+// from (witness:fleet from the native witness_discover command, or a connect),
+// through one self-contained bornLine(row, locale). Lift that function out of
+// both apps' copies and replay every row: "Born" only when the device says
+// the day is exact, "First dated" otherwise, nothing without a day a Canary
+// could stamp. A born day is a UTC day and the emulator formats it in UTC; CI
+// runs in UTC, where a copy that slipped back to the local zone would print
+// the same day and pass, so this test runs west of Greenwich (where the local
+// day of a UTC midnight is the day before) and puts the zone back after.
+test("both apps' vendored Witness Wall says Born only when the device says the day is exact", (t) => {
+  const savedTZ = process.env.TZ;
+  process.env.TZ = "Pacific/Honolulu";
+  t.after(() => { if (savedTZ === undefined) delete process.env.TZ; else process.env.TZ = savedTZ; });
+  const { vectors } = JSON.parse(readFileSync(
+    join(ROOT, "../tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"), "utf8"));
+  const utcDay = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US",
+    { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
+  for (const rel of ["witness/tv-emulator.js", "../desktop/src/witness/tv-emulator.js"]) {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    const fn = src.match(/\n {2}function bornLine\(row, locale\) \{[\s\S]*?\n {2}\}\n/);
+    assert.ok(fn, `${rel} has no self-contained bornLine(row, locale) — re-vendor with scripts/vendor_witness_emulator.sh`);
+    const bornLine = new Function(`${fn[0]}\nreturn bornLine;`)();
+    let lines = 0;
+    for (const x of vectors) {
+      const body = JSON.parse(x.input);
+      const rows = Array.isArray(body) ? body : body.devices;
+      const born = x.born || rows.map(() => null);
+      rows.forEach((r, i) => {
+        const want = born[i] ? `${born[i].label} ${utcDay(born[i].utc_date)}` : "";
+        assert.strictEqual(bornLine(r, "en-US"), want,
+          `${rel}: vector "${x.name}" row ${i} ${JSON.stringify(r)} — re-vendor with scripts/vendor_witness_emulator.sh`);
+        if (want) lines += 1;
+      });
+    }
+    assert.ok(lines >= 4, `${rel}: the vectors pin Born and First dated lines (${lines})`);
+    // The line reaches the live rows the wall draws from, both ways in.
+    const fed = [...src.matchAll(/online: [A-Za-z_$][\w$]*\.online === true, born: bornLine\(([A-Za-z_$][\w$]*)\)/g)];
+    assert.ok(fed.length >= 2, `${rel}: witness:fleet and connect both carry the row's birth day (${fed.length})`);
+    // And both places the emulator shows a live row print it: a tile's toast,
+    // and the connect panel's device list (escaped, since that one is HTML).
+    assert.match(src, /showToast\([A-Za-z_$][\w$]* \+ ' · online · chain intact' \+ \(([A-Za-z_$][\w$]*) && \1\.born \? ' · ' \+ \1\.born : ''\)\)/,
+      `${rel}: a live tile's toast lost its birth-day line — re-vendor with scripts/vendor_witness_emulator.sh`);
+    assert.match(src, /\$\{([A-Za-z_$][\w$]*)\.born \? ' · ' \+ esc\(\1\.born\) : ''\}/,
+      `${rel}: the connect panel lost its escaped birth-day line — re-vendor with scripts/vendor_witness_emulator.sh`);
+  }
+});
+
 // ── CI wiring: a test file here is a gate only once CI runs it ─────────────
 // canary-local.yml names each file on its own `node --test` line (repo
 // convention: no glob, no runner), so a new file is silently not a gate until

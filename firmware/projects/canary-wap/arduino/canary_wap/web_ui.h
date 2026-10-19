@@ -2467,10 +2467,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
 
         <!-- Recovery kit, any time (sweep F257): the receipt this signed-in
-             page can fetch (GET /api/provisioning-receipt serves its token,
-             or the session cookie a BOOT tap or a setup-door claim minted;
-             a session the landing page at / minted gets the BOOT-tap
-             refusal, sweep F289), saved by the browser as
+             page fetches with its token (GET /api/provisioning-receipt takes
+             the bearer, never the session cookie, sweep F289; a page signed
+             in by the landing page or a tap alone is refused, and the
+             sign-in's BOOT tap offers the kit), saved by the browser as
              canary-recovery-kit.json through RecoveryKit.save, the builder
              the BOOT-tap offer and the /companion wizard save with. -->
         <div class="card" id="settingsKitCard">
@@ -2840,9 +2840,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // ═══════════════════════════════════════════════════════════════
     let apiToken = null;
 
+    // A refusal names what the page sent. A token it held: refused. No
+    // token, only the session cookie the page resumed on load: that session
+    // does not cover the route, or it has ended. The device answers a
+    // session alone 403 on the recovery kit and 401 on the pairing QR
+    // (sweep F289), and 401 on any route once the session has ended, so
+    // "Invalid or expired token" would name a token the page never had.
     async function secureFetch(endpoint, options = {}) {
       const headers = options.headers || {};
-      if (apiToken) {
+      const sentToken = !!apiToken;
+      if (sentToken) {
         headers['Authorization'] = 'Bearer ' + apiToken;
       }
       options.headers = headers;
@@ -2850,7 +2857,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         const resp = await fetch(API_BASE + endpoint, options);
         if (resp.status === 401 || resp.status === 403) {
           apiToken = null;
-          showAuthModal('Invalid or expired token. Please re-enter.');
+          showAuthModal(sentToken
+            ? 'Invalid or expired token. Please re-enter.'
+            : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
           throw new Error('auth_required');
         }
         if (resp.status === 429) {
@@ -2949,15 +2958,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     // Settings → Device → Recovery kit (sweep F257): the kit again, any time,
-    // without a tap, for a page that holds what the receipt route serves on:
-    // its token, or the cv_session cookie a BOOT tap or a setup-door claim
-    // minted. A browser that resumed its session on load never sees the
-    // BOOT-tap offer above, so this is where its owner saves the kit. The one
-    // request is that GET; the save is RecoveryKit.save's blob: download. A
-    // session the landing page at / minted (for any caller on the network)
-    // runs this dashboard but is refused here (sweep F289), as is one a
-    // reboot dropped: secureFetch brings the sign-in back, and its BOOT tap
-    // offers the kit.
+    // for a page signed in with the token. The receipt route serves its
+    // bearer grant on the Authorization header alone (sweep F289): the
+    // cv_session cookie signs a browser into the dashboard, but the landing
+    // page mints one for any host on the home network, so it is no grant for
+    // the token and the SoftAP password the kit carries. A browser that
+    // resumed a cookie session on load never saw the BOOT-tap offer above and
+    // holds no token, so its save is refused (403) and secureFetch brings the
+    // sign-in back: Use BOOT Tap Once offers the kit as it signs in, and a
+    // typed token is sent as a bearer and serves here. The one request is
+    // that GET; the save is RecoveryKit.save's blob: download.
     async function saveRecoveryKitFromSettings() {
       const done = document.getElementById('settingsKitDone');
       const err = document.getElementById('settingsKitErr');

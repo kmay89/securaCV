@@ -229,9 +229,7 @@ does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
 dashboard at `https://canary-<suffix>.local/settings` then saves that
 receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
 pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
-**Device**, **Recovery kit** when signed in by a tap or a token; sweep F257.
-A browser that only opened the landing page at `/` holds a session the
-receipt does not take: its save asks for the tap; sweep F289.) The route decides bearer (or the session a served receipt minted) → claim → BOOT tap — the four-grant
+**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
 flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
@@ -323,7 +321,7 @@ make help               # Show all targets
 | `/api/fleet` | GET/OPTIONS | The coarse fleet roll-call (name, online, chain verdict); the one `/api/` row here that answers without a token ([`DISCOVERY.md`](../../../tvos/discovery/DISCOVERY.md)) |
 | `/api/identify` | POST | Blink + chirp so you can find the unit (`duration_ms`, default ~15 s) |
 | `/api/pairing-qr` | GET | The pairing receipt as a QR: device id, base URL and token, plus `tls_cert_fp` on a TLS-enabled device |
-| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above); a save that moves the stored password to a new broker, user or encryption takes the bearer or a tap's or claim's session (sweep F289) |
+| `/api/mqtt/config` | GET/POST | Broker host, port, credentials (the password is write-only) and encryption (off, or CA-verified; see Connect above) |
 | `/api/settings` | GET/POST | Presence preset, sensitivity, pet mode, quiet hours, privacy ceiling, `filter_foreign` and the household time zone ([`csi_developer_api.md`](../../../docs/csi_developer_api.md)) |
 
 The table is the common subset, not the whole surface: the sketch registers
@@ -337,25 +335,12 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie. The landing page at
-`/` hands a session to any caller that reaches the WAP (on the home network
-too, once it has joined), so the two routes that answer a credential,
-`/api/pairing-qr` and `/api/provisioning-receipt`, take the bearer header or
-only the session a BOOT tap or a setup-door claim minted beside a served
-receipt; a landing-page session gets `401` from the QR and the BOOT-tap
-refusal from the receipt (sweep F289, `cv_session_store.h`). The broker
-password is write-only, but the bridge sends it to whatever broker is
-saved, so a `POST /api/mqtt/config` that keeps the stored password and
-moves it (a new host, port, user, TLS mode or CA) takes the same two; a
-landing-page session gets `403 password_needed` and saves nothing, and
-typing the password again saves the change. That covers the save, not the
-link: the landing's pair token alone moves the WAP's Wi-Fi, and a landing
-session can make the bridge reconnect (`/api/mqtt/test`, `/api/reboot`), so
-a host that answers for the broker's address, on a network it runs or on
-yours, still gets the stored broker password on a plain link. Only a
-CA-verified broker link keeps it; Scenario 12 in
-[`THREAT_MODEL.md`](../../../docs/security/THREAT_MODEL.md) lists these
-roads.
+as a bearer header or the dashboard's session cookie, with two exceptions that
+take the bearer header alone, because the landing page mints that session for
+any host on the home network: `/api/pairing-qr` (it carries the token), and a
+`/api/mqtt/config` save that keeps the stored broker password while changing
+the broker host, port, user, encryption or CA (a session gets `403
+password_needed`, and typing the password again is the way past it).
 
 ```json
 {

@@ -27,16 +27,18 @@
 // cv_session cookie is an API credential for browser UI calls, so users
 // who already opened the paired dashboard do not have to reveal or retype
 // the long-lived API token when they click Settings.
+//
+// It is NOT a credential for the routes that hand out a credential (sweep
+// F289). The dashboard's landing page mints that session for whoever loads
+// it on the home network (deliberate LAN posture, the 2026-07 audit's
+// "Trust-on-LAN"), so a session is proof of being on the LAN, not of holding
+// the token or of a hand on the BOOT button. GET /api/provisioning-receipt
+// (the bearer token, the SoftAP password, the TLS pin) and GET
+// /api/pairing-qr (the token and the pin) therefore take the bearer-only
+// checks below — api_auth_bearer_grant() and api_auth_check_bearer(), both
+// under the one lockout — and never this bridge; their other grants (the
+// BOOT tap, the setup-door claim) are the handlers' own.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
-
-// The same store, narrowed to the sessions minted beside a served
-// provisioning receipt (a BOOT tap or a setup-door claim; cv_session_store.h
-// Origin::OWNER). The landing page at / mints a session for any caller on
-// the network (the Trust-on-LAN posture), so a route that answers a
-// credential — the bearer token, the SoftAP password — takes only this one
-// in place of the bearer (api_auth_check_credential*, sweep F289). Weak and
-// absent means no session answers a credential.
-extern bool cv_session_validate_owner(httpd_req_t* req) __attribute__((weak));
 
 // ═══════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -132,6 +134,18 @@ static void auth_record_success() {
   g_auth.total_successes++;
 }
 
+// The milliseconds the backoff has left, 0 once it has ended (the same
+// comparison auth_is_locked_out() makes). The two answers that report it read
+// it here: a caller checks the lockout first and sends later, and a backoff
+// that ends in between must read 0, not an unsigned subtraction that wraps to
+// about 4.29 million seconds.
+
+static uint32_t auth_lockout_remaining_ms() {
+  const uint32_t now = millis();
+  if (now >= g_auth.lockout_until_ms) return 0;
+  return g_auth.lockout_until_ms - now;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // TOKEN REDACTION
 // ═══════════════════════════════════════════════════════════════════
@@ -151,27 +165,42 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // AUTH CHECK — For use with esp_http_server (ESP-IDF)
 // ═══════════════════════════════════════════════════════════════════
 
+// The lockout's answer: 429 with Retry-After, the seconds left (at least 1,
+// also when the backoff ended after the caller's check). Sent by
+// api_auth_check_bearer() for any request while the backoff runs, and by GET
+// /api/provisioning-receipt for a bearer the backoff kept from being compared
+// when neither the BOOT tap nor the setup-door claim served it.
+
+static void api_auth_send_lockout(httpd_req_t* req) {
+  const uint32_t remaining = auth_lockout_remaining_ms();
+  char retry_str[8];
+  snprintf(retry_str, sizeof(retry_str), "%lu", (unsigned long)(remaining / 1000 + 1));
+
+  httpd_resp_set_status(req, "429 Too Many Requests");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Retry-After", retry_str);
+
+  char body[128];
+  snprintf(body, sizeof(body),
+    "{\"error\":\"too_many_requests\",\"retry_after_s\":%s}",
+    retry_str);
+  httpd_resp_sendstr(req, body);
+}
+
 // Returns true if authenticated, false if response already sent (401/403/429).
 // The caller should return ESP_OK immediately if this returns false.
+//
+// Two entry points over one body. api_auth_check() takes a valid cv_session
+// cookie OR a Bearer token: every admin route. api_auth_check_bearer() takes
+// ONLY the Bearer token, with the same lockout, the same failure accounting
+// and the same 401/403/429 answers: the routes whose answer carries a
+// credential (sweep F289 — the pairing QR), where a session the landing page
+// mints for any LAN host must not stand in for the token.
 
-// The Authorization header alone, with the lockout: what api_auth_check
-// asks after a session, and api_auth_check_credential after an owner's.
-static bool api_auth_check_header(httpd_req_t* req, const char* expected_token) {
+static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) {
   // ── Check lockout ──
   if (auth_is_locked_out()) {
-    uint32_t remaining = g_auth.lockout_until_ms - millis();
-    char retry_str[8];
-    snprintf(retry_str, sizeof(retry_str), "%lu", (unsigned long)(remaining / 1000 + 1));
-
-    httpd_resp_set_status(req, "429 Too Many Requests");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Retry-After", retry_str);
-
-    char body[128];
-    snprintf(body, sizeof(body),
-      "{\"error\":\"too_many_requests\",\"retry_after_s\":%s}",
-      retry_str);
-    httpd_resp_sendstr(req, body);
+    api_auth_send_lockout(req);
     return false;
   }
 
@@ -220,11 +249,9 @@ static bool api_auth_check_header(httpd_req_t* req, const char* expected_token) 
   size_t token_len = strlen(token);
   while (token_len > 0 && token[token_len - 1] == ' ') token_len--;
 
-  // An empty device token is no token (sweep F289's second review): a unit
-  // whose token was never derived (provision_device() failed and setup()
-  // still serves HTTP) would otherwise take "Bearer " with nothing after it,
-  // a zero-byte compare that says yes.
-  size_t expected_len = expected_token ? strlen(expected_token) : 0;
+  // An empty device token is no token: no header matches it (a zero-length
+  // compare would take a bare "Bearer ").
+  size_t expected_len = strlen(expected_token);
   if (expected_len == 0 || token_len != expected_len) {
     auth_record_failure();
     httpd_resp_set_status(req, "403 Forbidden");
@@ -252,35 +279,35 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
   // happens to hold (or can mint) a session cookie could clear the
   // consecutive_failures backoff between token guesses, neutralizing the
   // brute-force protection. Only a successful Bearer token comparison
-  // calls auth_record_success() (api_auth_check_header).
+  // calls auth_record_success() (in api_auth_check_bearer).
   if (cv_session_validate && cv_session_validate(req)) {
     return true;
   }
-  return api_auth_check_header(req, expected_token);
-}
-
-// For a route that answers a credential (sweep F289): the bearer token in
-// the Authorization header, or a session minted beside a served receipt —
-// never a session the landing page minted, which any host on the network
-// can get. Same responses and lockout as api_auth_check; a landing session
-// with no header is a plain 401 (no strike), which brings the dashboard's
-// sign-in back, whose BOOT tap mints an owner's session.
-static bool api_auth_check_credential(httpd_req_t* req, const char* expected_token) {
-  if (cv_session_validate_owner && cv_session_validate_owner(req)) {
-    return true;
-  }
-  return api_auth_check_header(req, expected_token);
+  return api_auth_check_bearer(req, expected_token);
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // OPTIONAL AUTH CHECK — Returns true if valid token present
 // ═══════════════════════════════════════════════════════════════════
 
-// The bearer token in the Authorization header, and nothing else: no
-// cookie, no response sent, no lockout counted.
-static bool api_auth_bearer_header_ok(httpd_req_t* req, const char* expected_token) {
-  // An empty device token is no token (see api_auth_check_header).
-  if (!expected_token || expected_token[0] == '\0') return false;
+// Like api_auth_check but does NOT send error response on failure, and
+// records nothing against the lockout. Used for endpoints that allow both
+// authenticated and unauthenticated access.
+//
+// api_auth_bearer_valid() is the Bearer half alone: a real
+// `Authorization: Bearer <token>` header, constant-time compared, true or
+// false, nothing sent and nothing recorded. A valid cv_session cookie is NOT
+// accepted here (sweep F289): the compare under GET
+// /api/provisioning-receipt's first grant (api_auth_bearer_grant(), below,
+// which adds the lockout), whose answer is the bearer token itself and the
+// SoftAP password, so the landing page's 24 h session must not be what buys
+// it. api_auth_check_optional() is the cookie OR this.
+
+static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) {
+  // An empty device token is no token (a zero-length compare would take a
+  // bare "Bearer "); this also covers api_auth_check_optional() and
+  // api_auth_bearer_grant(), which compare through here.
+  if (expected_token == nullptr || expected_token[0] == '\0') return false;
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
 
@@ -301,24 +328,58 @@ static bool api_auth_bearer_header_ok(httpd_req_t* req, const char* expected_tok
   return constant_time_compare(token, expected_token, expected_len);
 }
 
-// Like api_auth_check but does NOT send error response on failure: any
-// live session, or the bearer header. For a caller that enforces on its
-// own (the CSI and MQTT routes' guards, the QR scan's status poll). Not for
-// a route that answers a credential: that is api_auth_check_credential_
-// optional below.
 static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
   if (cv_session_validate && cv_session_validate(req)) return true;
-  return api_auth_bearer_header_ok(req, expected_token);
+  return api_auth_bearer_valid(req, expected_token);
 }
 
-// The silent form of api_auth_check_credential, for GET
-// /api/provisioning-receipt's first grant (sweep F289): the bearer header,
-// or a session minted beside a served receipt. A landing session falls
-// through to the setup-door claim and the BOOT tap, exactly as a request
-// with no session does.
-static bool api_auth_check_credential_optional(httpd_req_t* req, const char* expected_token) {
-  if (api_auth_bearer_header_ok(req, expected_token)) return true;
-  return cv_session_validate_owner && cv_session_validate_owner(req);
+// ═══════════════════════════════════════════════════════════════════
+// THE RECEIPT'S BEARER GRANT — the lockout kept, nothing sent
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/provisioning-receipt's first grant (sweep F289's follow-up). The
+// bearer header alone, as api_auth_bearer_valid() reads it, with
+// api_auth_check_bearer()'s lockout and failure accounting but no answer
+// sent, so the route's other grants (the setup-door claim, the BOOT tap)
+// still decide what a refused bearer gets. True only for the right token
+// outside a lockout (the count cleared, as every admin route clears it).
+// False otherwise, and:
+//   - no Authorization header: nothing recorded (auth_logic.h: no credential
+//     carries no guess);
+//   - the backoff running: the header is not compared and nothing is
+//     recorded, so a guess sent during it learns nothing (the receipt answers
+//     429 when nothing else serves: api_auth_bearer_held());
+//   - a malformed header or a wrong token: one strike, as on every admin
+//     route. Before this the receipt compared silently, so it was the one
+//     route where guessing the token cost nothing.
+// The lockout never gates the claim or the tap: a page holding a stale token,
+// or a backoff a guesser armed, is still served by the claim or a BOOT tap.
+// (What the lockout does not decide: any host on the network can spend a
+// pending claim with one wrong ?claim=, or take an open tap by asking first.)
+
+static bool api_auth_bearer_grant(httpd_req_t* req, const char* expected_token) {
+  if (httpd_req_get_hdr_value_len(req, "Authorization") == 0) {
+    if (auth_logic::counts_toward_lockout(auth_logic::Attempt::NO_CREDENTIAL)) {
+      auth_record_failure();
+    }
+    return false;
+  }
+  if (auth_is_locked_out()) return false;
+  if (api_auth_bearer_valid(req, expected_token)) {
+    auth_record_success();
+    return true;
+  }
+  auth_record_failure();
+  return false;
+}
+
+// Whether `req` presents an Authorization header while the backoff runs:
+// the bearer api_auth_bearer_grant() will not compare. The receipt reads it
+// before its grant, so the guess that arms the backoff is refused like any
+// wrong token (403) and only the ones sent during it get the 429.
+
+static bool api_auth_bearer_held(httpd_req_t* req) {
+  return httpd_req_get_hdr_value_len(req, "Authorization") != 0 && auth_is_locked_out();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -328,7 +389,7 @@ static bool api_auth_check_credential_optional(httpd_req_t* req, const char* exp
 static void auth_stats_json(char* buf, size_t buf_len) {
   bool locked = auth_is_locked_out();
   if (locked) {
-    uint32_t remaining = (g_auth.lockout_until_ms - millis()) / 1000;
+    uint32_t remaining = auth_lockout_remaining_ms() / 1000;
     snprintf(buf, buf_len,
       "{\"total_successes\":%lu,\"total_failures\":%lu,"
       "\"consecutive_failures\":%u,\"locked_out\":true,"
@@ -371,9 +432,8 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
     if (httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
       presented_credential = true;
       size_t token_len = strlen(token);
-      size_t expected_len = expected_token ? strlen(expected_token) : 0;
-      // An empty device token is no token: ?token= with nothing matches none.
-      if (expected_len > 0 && token_len == expected_len &&
+      size_t expected_len = strlen(expected_token);
+      if (expected_len != 0 && token_len == expected_len &&
           constant_time_compare(token, expected_token, expected_len)) {
         auth_record_success();
         return true;

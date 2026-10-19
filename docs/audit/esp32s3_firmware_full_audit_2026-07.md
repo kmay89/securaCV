@@ -120,6 +120,19 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   WPA2-gated, but once on home WiFi the same handler is served on the STA interface — a compromised
   IoT gadget or roommate on the LAN can pair. Deliberate posture, but a passwordless live-camera
   path to every LAN host is a real residual risk for a custody-first device.
+  *(2026-10 note: the posture stands, but what the session buys is narrower. It also used to buy
+  `GET /api/provisioning-receipt` (the bearer token, the SoftAP password, the TLS pin) and
+  `GET /api/pairing-qr` (the token), so any LAN host could read the token with no BOOT tap; since
+  sweep F289 both routes take the `Authorization: Bearer` header alone (`api_auth_bearer_valid`,
+  `api_auth_check_bearer` in `api_auth.h`), host-tested, not bench-tested. See
+  `docs/audit/repo_todo_sweep_2026-09.md` F289. Its follow-up: the receipt's
+  bearer grant counts a wrong token toward the lockout
+  (`api_auth_bearer_grant`), and a `POST /api/mqtt/config` that keeps the
+  stored broker password while changing where it goes takes the bearer, so
+  the session can no longer send that password to a broker of its choosing
+  through that route. Still open: the camera's QR provisioning re-point
+  (`qr_scan_task_fn`) keeps the stored user and password when a scanned SCV1
+  code moves the broker host. Also host-tested only.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
   the AP is dropped (normal home-WiFi operation, exactly when TLS is on), typing `canary.local`
   301-redirects to a non-routable address and the dashboard hangs. Build the `Location` from the
@@ -129,6 +142,11 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   P-256 + proper SANs (also drops the 30–60 s RSA keygen at first boot).
 - **[LOW] `cv_session` cookie lacks `Secure`**; **wildcard `Access-Control-Allow-Origin: *`** on all
   JSON; **global (not per-client) auth lockout** any LAN host can trip to 429 the operator.
+  *(2026-10 note, F289's follow-up: the cookie now carries `Secure` whenever it is set over the
+  HTTPS server, and not on the first-boot setup's plain HTTP, where a browser would drop it
+  (`session_cookie_header()` in `canary_wap.ino`); it is also read by its whole name, so
+  `xcv_session=` is no longer taken for it. Host-tested, not run in a browser against a device.
+  The other two items in this bullet are unchanged.)*
 
 `wap_server.cpp` is a **linker stub** — the real 499 KB server is inline in the `.ino`, and the
 stub's header comment advertises properties ("TLS on all connections", rate limiting) that aren't

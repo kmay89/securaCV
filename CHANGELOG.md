@@ -1,6 +1,175 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap: a dashboard session cannot send the stored broker password elsewhere, the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
+
+- **canary-wap: a dashboard session can no longer send the stored MQTT broker
+  password to a broker of its choosing (sweep F325).** The landing page mints
+  a 24-hour `cv_session` for any host on the home network, and `POST
+  /api/mqtt/config` takes it; a save with no `"password"` kept the stored one
+  while it moved the host, port, user, TLS mode or CA, so the next connect
+  handed the stored user and password to the caller's broker (the host test's
+  fake client recorded it on #1822's head). Such a save now needs the
+  `Authorization: Bearer` header (`bearer_authorized()`, never the cookie); a
+  session gets `403 password_needed` with a reason before anything is saved,
+  and the `/mqtt` page shows it and moves focus to the password field. A save
+  that keeps the broker, one that sends a password and the first save are
+  unchanged, and the setup wizard always sends one. **Host-tested**
+  (`test_mqtt_reinit.cpp`, 877 checks in 37 tests, on the real `csi_mqtt.cpp`
+  and `api_auth.h`; `wizard_logic.test.js`, 38 tests); the ESP32 compile is
+  CI's; not run on a device (U1). Still open: a QR code held to the camera
+  moves the broker and keeps the password (F333), and a host that answers for
+  the broker's address on a plain link receives it with no save at all (F334).
+- **canary-wap: the session cookie is `Secure` over HTTPS and read by its
+  whole name (sweep F326, F327).** One writer, `session_cookie_header()`,
+  spells both mints' attributes and adds `Secure` exactly when the answer
+  leaves over the HTTPS server; the first-boot SoftAP's plain-HTTP cookie
+  stays without it, so the browser keeps it. `read_session_cookie_hex()` no
+  longer takes `xcv_session=` or `foo=cv_session=` for the session, and such a
+  cookie in front no longer hides the real one. **Host-tested** (new
+  `test_session_cookie.cpp`, 81 checks, 18 of them failing on #1822's sources;
+  `test_receipt_grant.cpp`'s HTTPS cases); the compile is CI's; not run on a
+  device or in a browser (U1). Filed: F337 (a `Secure` cookie strands a
+  browser if the unit falls back to plain HTTP within its day; the `__Host-`
+  name; HSTS).
+- **canary-wap: a wrong bearer on the provisioning receipt is a strike, as on
+  the pairing QR and the admin routes (sweep F329, F331, F332).** Since #1822 the receipt
+  compared its bearer silently, so guessing the token there cost nothing while
+  the pairing QR and the admin routes backed a guesser off.
+  `api_auth_bearer_grant()` keeps the lockout's accounting: a wrong or
+  malformed bearer is one strike, the right one clears the count, and no
+  bearer is compared while a backoff runs; such a request gets the lockout's
+  `429` with `Retry-After` when the setup-door claim and the BOOT tap do not
+  serve it, and the lockout never holds those two. An empty device token (a
+  unit whose key could not be made) no longer matches a bare `Bearer ` on any
+  `api_auth.h` gate, and the lockout's `Retry-After` can no longer wrap to
+  about 49.7 days when a backoff ends mid-request. **Host-tested**
+  (`test_receipt_grant.cpp`, 536 checks; the sketch before the lockout change
+  fails 36, the `api_auth.h` before the empty-token change 34); the compile is
+  CI's; not run on a device (U1). Filed: F341-F343 (a strike the tap then
+  serves, the claim and the tap spent by whoever asks first, one backoff for
+  every caller).
+- **canary-wap's sign-in names no token a cookie-only page never held (sweep
+  F330).** A browser signed in by its session cookie alone, refused by the
+  recovery-kit save or the pairing QR since #1822, read "Invalid or expired
+  token. Please re-enter."; it now reads "Your session does not cover this, or
+  has ended. Paste the API token, or use BOOT Tap Once.", and a page that sent
+  a token keeps the old line. **Host-tested** in node (`recovery_kit.test.js`,
+  32 tests; 4 fail on the page before); `web_assets_gz.h` regenerated; the
+  ESP32 compile is CI's; not run on a device or in a browser.
+- **The WAP's route check holds every answer that carries a secret to a
+  bearer-only gate (sweep F328).** `check_route_security.py` carries the
+  token, the SoftAP password and the TLS pin up the sketch's call graph to the
+  routes that answer them, and fails a route whose answer is not behind
+  `api_auth_check_bearer()`, `api_auth_bearer_grant()` or the receipt's
+  claim-or-tap refusal, or that names a gate any session passes on the way. In
+  `csi_mqtt.cpp` it holds the stored broker password to the four functions
+  that load, save and use it, and the broker save to its bearer refusal; and
+  it holds each module's copy of the token to its keepers. It fails #1822's
+  parent (13 problems: eight on the pairing QR and the receipt, the broker
+  save, and four bearer gates it does not define) and #1822 itself (3: the
+  broker save above, and the gates F325 and F329 add, defined nowhere there),
+  and its 21 planted fixtures each fail for their named reason before
+  the tree is read. A static text check that matches names; it now runs in
+  seconds (`function_body()` caches its blanking). Filed: F338 (the flagship's
+  check has no such rule) and F348.
+- **The docs and the Lab say what was built.** `magic_pairing.md` §3.7 (the
+  receipt's lockout, and what stays open: one backoff per device, the claim
+  and the tap spent by whoever asks first), `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md` (the `Secure` cookie; the broker-move gate, and the
+  spoofing and QR roads it does not cover), both WAP READMEs,
+  `LESSONS_LEARNED.md` (a dated amendment to the F289 entry and a new entry on
+  the broker re-point), `SECURITY-AUDIT.md`, the 2026-07 firmware audit,
+  `canary_settings_access_validation.md` and `PENTEST_SCOPE.md`; three U1 rows
+  in `hardware_verification_checklist.md`'s new "canary-wap: F289's follow-up"
+  section and two in `magic_pairing.md` §9, all unticked. The Lab's WAP page
+  (`gen_wap.py`, `wap.json`) names the MQTT routes' real gate where it said
+  "pairing token". The sweep files F333-F349, among them the hand-ups of the
+  superseded F289 port that still apply to #1822's design (F333, F334, F337,
+  F342 and F344-F347).
+
+One Makefile line lists the new suite's two cuts in `CUT_INCS`, which main's
+`run-arduino-globals` reads since #1833. Nothing here moves the emulator dist
+or a carried Home Assistant file. Host-tested; the ESP32 compiles are CI's;
+nothing ran on a device or in a browser.
+
+### Post-#1802 verification: the WAP's port 80 keeps a typed address, a setup-door claim keeps its `.local` name with the STA down, the globals check takes every cut it reads, and thirteen passages say what landed
+
+An independent verification of #1802's packages against the merged code,
+each finding confirmed by two adversarial reviewers, found three code
+shortfalls and thirteen places where the text no longer described the code.
+All are closed here; none of the code changes is run on a device.
+
+- **canary-wap: port 80's redirect keeps the address the browser typed
+  (post-#1802 WBS-1).** #1802's wave 17 chose the Location from the device's
+  own names alone (`receipt_authority.h`), which lost two things #1804 had:
+  the 256-byte Location with its root fallback (a URI past 128 bytes was cut,
+  into a redirect to the wrong page), and the request's Host, so a browser
+  that typed the WAP's IP on a PC or phone with no mDNS (Windows, Android
+  without Bonjour) was sent to a `.local` name it could not resolve. The
+  redirect now keeps the request's Host when it is an IP literal or one of
+  the device's own names (`canary-<suffix>.local`, the `canary.local`
+  catch-all), its port dropped, from the alphabet alone — never a foreign
+  name, never a byte outside it — and otherwise falls back to
+  `receipt_authority.h`'s choice as before; the Location is 256 bytes and a
+  URI that does not fit sends the browser to the root. Pure and host-tested
+  (`redirect_host()`, `redirect_location()`; `test_receipt_authority.cpp`,
+  533 checks: a typed IP kept, the own `.local` name kept, a foreign Host
+  refused to the device's name, a URI past the buffer to `/`, the sketch's
+  handler held token for token). The receipt itself is chosen as before.
+- **canary-wap: a setup-door claim's receipt names the `.local` name whatever
+  the STA is doing (post-#1802 WBS-2).** F255's rule answered the SoftAP
+  address for every grant while the STA held no address, the claim included,
+  so a claim spent in the moment the join was lost named `192.168.4.1`, dead
+  once the AP drops; #1804's rule, `magic_pairing.md` §3.5 and the
+  `LESSONS_LEARNED.md` entry all say the claim receipt is the one the phone
+  keeps for the life of the pairing and spells the steady-state address. It
+  does again, in every network state, and `test_receipt_authority.cpp`'s
+  model of the old rule now spells #1804's, not #1780's.
+- **canary-wap tests_host: `make run-arduino-globals` works on a fresh
+  checkout (post-#1802 WCH-1).** Its prerequisite list missed three of the
+  eleven cut `.inc` files, so the check failed closed on a clean tree and
+  `make -jN` could race the cuts. Every cutting rule now appends to
+  `CUT_INCS`, the target takes that list, and `check_arduino_globals.py`
+  holds every `.inc` a compile reads to it (its self-test drops one and must
+  see the check bite).
+- **Thirteen passages corrected to what landed.** The sweep ledger's F249,
+  F286 (ticked, with the make-deps Done text and its wave-18 bullet below),
+  F248, F255, A75 and F226 text and the Lab ESLint pin (the lockfile's,
+  10.12.0 at merge); the 4.3B capability map's CAN entry (a bus-off
+  controller is recovered); the Scout pairing threat note in
+  `ble_scout_pairing.h` and `csi_developer_api.md` (fleet-format adverts are
+  refused from the window); `csi_event_id_floor.h`'s reset note (the 10 s
+  reset keeps the floor and ceiling; only the 30 s wipe drops them); the Lab
+  reset-rows comment and bench rows (a reset returns the board to the
+  preset); `THREAT_MODEL.md`'s COMPLETE-copies paragraph (the joiner's
+  heartbeat ends them) with the F136 and F199 sentences and the bench
+  section it promised; the Home Assistant Last event row (its summaries);
+  `CONFIG_CHANGES.md` and the Vision configs README (the seventeen unread
+  macros); and the #1804 redirect sentences in `CHANGELOG.md` and
+  `LESSONS_LEARNED.md`, amended with the rule above.
+
+### canary-wap: the landing page's session no longer reaches the provisioning receipt or the pairing QR
+
+- **canary-wap: a dashboard session buys neither the provisioning receipt nor
+  the pairing QR; only a bearer does (sweep F289).** The dashboard's landing
+  page mints a 24-hour `cv_session` cookie for whoever loads `/` on the home
+  network — deliberate LAN posture for the dashboard, and it stays — but
+  `GET /api/provisioning-receipt` took that cookie as its first grant and
+  `GET /api/pairing-qr` was gated the same way, so any host on the home
+  network could read the bearer token, the SoftAP password and the TLS pin
+  with no tap (read from the code, not run). Both routes now take as their
+  bearer grant only a real `Authorization: Bearer <token>` header,
+  constant-time compared as every admin route's is (`api_auth.h`'s
+  `api_auth_bearer_valid()` and `api_auth_check_bearer()`, the bearer halves
+  of the two checks every other route keeps); the BOOT tap and the setup-door
+  claim still serve the receipt as before. A browser signed in only through
+  the landing page is refused and the dashboard's sign-in comes back, whose
+  **Use BOOT Tap Once** offers the recovery kit; one that typed its token
+  keeps both. First-boot setup is unchanged (the wizard's close-out asks for
+  the BOOT tap). **Host-tested** (`test_receipt_grant.cpp`, 252 checks on the
+  real `api_auth.h` and the handlers cut out of the sketch; the pre-fix
+  sketch fails 61); the ESP32 compile is CI's; not run on a device (U1).
 
 ### No job floats on `ubuntu-latest`, the WAP's release rows build on their sketch's core, the hourly ceiling never refuses a refresh and keeps its last slot for a change, a PlatformIO Canary in an opera refuses a join and says it paired at once, another Canary cannot win the Scout's pairing window, the 4.3B fieldbus station reads a Modbus exception and recovers a bus-off, the Sense's count follows its presence, a Canary's Last event names its summaries, the root image mints Witness Wall viewer tokens, and the Lab groups enclosure knobs as the builder does (#1802, wave 19)
 
@@ -194,6 +363,19 @@
   options is byte-identical under OpenSCAD 2021.01, and only `enclosures.json`
   regenerates. **Host-tested** (Python and node suites, the generator checks);
   nothing printed. C10 stays open. Filed: C21-C24.
+- **Dependency advisories (bullet added 2026-10-19 by #1832's ledger, since
+  #1802 took the bumps without one).** rustls 0.23.46 in the five
+  lockfiles that carry it (the root `Cargo.lock`, `desktop/src-tauri`,
+  `desktop-lab/src-tauri`, `desktop/flash-engine` and `desktop/hub-io`) for
+  RUSTSEC-2026-0346 to -0349; quinn-proto 0.11.19 in the three desktop
+  lockfiles that carry it (`desktop/src-tauri`, `desktop-lab/src-tauri`,
+  `desktop/flash-engine`) for RUSTSEC-2026-0338 to -0342; and for zip's
+  RUSTSEC-2026-0367 to -0369 the root lockfile takes c2pa 0.91.3 and zip
+  9.0.5, while the two Tauri apps' zip 4.6.1, a Windows-only dependency of
+  `tauri-plugin-updater` that only opens an update archive whose minisign
+  signature has verified, is ignored in `.cargo/audit.toml` with `SECURITY.md`
+  Group 4's analysis until an updater 2.x takes zip 9. Lockfile bumps plus
+  that record; `cargo audit` is CI's.
 
 Nothing in wave 19 moves the emulator dist. Two carried Home Assistant files
 change (`sensor.py` and the new `tests/test_last_event_stateless.py`, HA28),
@@ -406,6 +588,26 @@ check fails on those bundles. Four carried Home Assistant files change
 carry after #1802 merges. Nothing in wave 18 is bench-tested, and no running
 Home Assistant was seen.
 
+- **Both tests_host Makefiles rebuild a suite when any header it compiled
+  changes (sweep F286; bullet added 2026-10-19 by the post-#1802
+  verification, which found the change shipped without one).** Each compile
+  writes the headers it read beside its binary (`DEPFLAGS = -MMD -MP`, on
+  every compile through `override CXXFLAGS += $(DEPFLAGS)`; a recipe that
+  compiles several sources runs as `$(call with_deps, ...)`, which lists them
+  with `-MM` after the compile), and the end of each Makefile reads the files
+  back (`-include $(wildcard ...*.d)`) with an empty rule for every source
+  they name, so a header or source moved since is a rebuild and not an
+  error. The hand-kept header lists (`VISCORE_HDR`, and the headers
+  `BT_CMD_DEPS` used to spell out) are gone,
+  and an edit to `arduino_globals.h` rebuilds every canary-wap suite.
+  `scripts/tests/test_vision_core_make_deps.py` (six cases over both
+  Makefiles) builds every target in a scratch copy of each tests_host
+  directory at `-j`, takes each compile's header closure with `g++ -MM` and
+  holds it to the prerequisites make's database carries, each a rule of its
+  own; its self-test changes each Makefile one line at a time and requires
+  every check to refuse the change. Host-tested; CI builds fresh, so no CI
+  result moves.
+
 ### canary-wap's receipt and port 80's redirect name it by its `.local` name on the home network and its dashboard saves the recovery kit, the Lab reads the WAP's flags from its sketch and the fleet figures find a WAP by the type it publishes, the display's RS-485 and CAN drivers get their caller, the Lab app's monitor takes commands and each bench prints its own chip's ROM, CI compiles Hub Core for Windows, lints the Lab's scripts and runs the camera wizard on jq 1.6, the spelling lint holds the website's word families, and the website and the HACS mirror close three items in their own PRs (#1802, wave 17)
 
 - **canary-wap: the receipt and port 80's redirect name the WAP by its
@@ -423,8 +625,11 @@ Home Assistant was seen.
   offered after a BOOT-tap sign-in, and under Settings, Device, Recovery kit
   for a browser already signed in; saved by one builder shared with the wizard
   and never sent anywhere. **Host-tested** (`test_receipt_authority.cpp`, 263
-  checks; `recovery_kit.test.js`, 28 tests); the firmware compile is CI's; not
-  run on a device. Filed: F289 (any host on the home network can reach the
+  checks at #1802 — 533 since the post-#1802 verification above, which keeps
+  the request's Host in front of the redirect's choice when it is a typed
+  address or the device's own name, and the claim's `.local` answer with the
+  STA down; `recovery_kit.test.js`, 28 tests); the firmware compile is CI's;
+  not run on a device. Filed: F289 (any host on the home network can reach the
   receipt with the landing page's session, read from code; needs a
   maintainer's call) and A88.
 - **The Lab reads the WAP from its sketch; `firmware/configs/canary-wap/` is
@@ -485,7 +690,7 @@ Home Assistant was seen.
   HA32).** Hub Core compiles `desktop/hub-core` and `desktop/hub-io` on
   `windows-latest` (`cargo check --all-targets`; the Windows writer stays
   staged for A9). A new Lab assets lint workflow runs the repo's pinned ESLint
-  (10.11.0) with only `no-unused-vars` and the module source type over the
+  (the lockfile's: 10.12.0 at merge) with only `no-unused-vars` and the module source type over the
   Lab's 78 first-party scripts, reading no config file and obeying no disable
   comment; it found 24 unused bindings in 10 files (19 catch clauses that
   never read their error, 5 parameters), now removed with no behavior change.
@@ -576,7 +781,9 @@ CI9's one-word fix), so the HACS mirror needs a carry after #1802 merges.
   in the old bytes for ordinary input, and a host test pins every field and
   the answer buffer's free. J8 holds the name's setter, loader and routes; the
   check refuses 88 mutations. **Host-tested** (`test_device_name.cpp`, 1812
-  checks; `test_wap_json_writer.cpp`, 115, under AddressSanitizer; two MQTT
+  checks at the package head and 1844 at the merge; `test_wap_json_writer.cpp`,
+  115 at the package head and 12573 at the merge, F263 and F262 having added
+  theirs later in the PR, under AddressSanitizer; two MQTT
   config answer tests); the compiles are CI's; not bench-tested. The Bluetooth
   name, the Wi-Fi SSIDs and a hand-edited card events-log line still reach
   their texts raw (F261, F262, F264; also filed: F263, F265 and F277).
@@ -847,6 +1054,11 @@ audit confirmed that software can fix today. Design: `docs/design/magic_pairing.
   spend by 10 s, the redirect's Location comes from the request's Host, and
   the wizard's 15-minute idle restart no longer fires while the door is
   open (it blinked the card out mid-window). `LESSONS_LEARNED.md` has the entry.
+  (Amended 2026-10-19: #1802's wave 17 chose the redirect's Location from
+  the device's own names alone, and the post-#1802 verification settled the
+  rule that holds now — the request's Host when it is an IP literal or one
+  of the device's own names, else `receipt_authority.h`'s choice; a foreign
+  Host is refused.)
 - **The setup sheet survives its own ceremony.** It hung off a card mounted
   only while the Canary advertised, and a connected Canary does not — so it
   vanished 15 s into the password. The card keeps the Canary being set up

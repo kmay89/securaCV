@@ -320,12 +320,35 @@ CI, and none of it is bench-tested yet.
 
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a
-24-hour session cookie; the WAP's bearer token itself is handed out only in
-the provisioning receipt (its gate opens for thirty seconds after a short
-BOOT tap) or on the serial console. The displays treat the
-LAN as their trust boundary by design — no bearer credential at all, a
-per-boot CSRF token that keeps cross-site pages away from writes, and the
-on-glass-only settings above that no network caller can flip.
+24-hour session cookie that signs that browser into the dashboard. That
+session is proof of being on the LAN and nothing more: the WAP's bearer
+token itself (with the SoftAP password and the TLS pin) is handed out only
+in the provisioning receipt — to a caller that already presents the token
+as a bearer, to a phone spending the setup door's claim, or for thirty
+seconds after a short BOOT tap — in the pairing QR an operator fetches with
+the token, or on the serial console. Until sweep F289 the session cookie
+bought the receipt and the QR too, so any host on the home network could
+read the token with no tap; both routes now take the `Authorization:
+Bearer` header alone (host-tested, not bench-tested). The same reasoning
+covers the broker password the WAP keeps for its MQTT bridge: it is
+write-only, and a save that keeps it while changing where it goes (a new
+broker host, port, user or encryption setting, or any CA) takes the bearer
+token too, so a session alone is asked to type the password again (`403
+password_needed`) and cannot use that route to point the bridge at a
+listener of its own and collect it. Not covered by that gate, and open: the
+camera's QR provisioning re-point, where an SCV1 code that names a hub host,
+scanned while a scan a landing-page session or pair token started is
+running (or during the unprovisioned boot scan), moves the broker host and
+port and keeps the stored user and password (the code has to be held in
+the camera's view). A wrong bearer on the receipt counts toward the same lockout as
+the admin routes, and the session cookie itself is `HttpOnly`,
+`SameSite=Strict`, and `Secure` whenever it is set over HTTPS (the
+first-boot setup runs plain HTTP, where a `Secure` cookie would be
+dropped). Host-tested; the ESP32 compile is CI's; not bench-tested. The
+displays treat the LAN as their trust boundary by design — no bearer
+credential at all, a per-boot CSRF token that keeps cross-site pages away
+from writes, and the on-glass-only settings above that no network caller
+can flip.
 
 **Encryption in transit is an opt-in, not the default.** The Canary WAP
 serves HTTPS on port 443 with a certificate minted on the device once setup

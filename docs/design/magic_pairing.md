@@ -430,16 +430,40 @@ of every handler, so its receipt route runs all four rows. **The WAP sketch
 asks no Host question on this route today** (it has no `auth_gate`; its
 `/` page checks the Host header only to pick the first-boot wizard), so its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim and the same unspent tap. Adding
+that order, with the same single-use claim and the same unspent tap. Its
+row 2 is the `Authorization: Bearer` header alone, never the dashboard's
+`cv_session` cookie (sweep F289): the landing page at `/` mints that session
+for whoever loads it on the home network, so it signs a browser into the
+dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
+token, takes the bearer alone the same way. Row 2 is also under the
+lockout every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`,
+F289's follow-up): a wrong or malformed bearer is one strike, the right one
+clears the count, and while the backoff runs no bearer is compared, so a
+request that brings one gets `429` with `Retry-After` when the claim and the
+tap do not serve it. The lockout never gates rows 3 and 4: a page holding
+a stale token, or a backoff a guesser armed, is still served by the claim or
+a BOOT tap. Host-tested in
+`firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`. Adding
 the Host row to the WAP is a separate change, not a claim this document
-makes. On the WAP, row 2 is the bearer in the `Authorization` header or a
-dashboard session minted beside a receipt this route served (a BOOT tap's or
-a claim's, whose answer already carried the token); a session the landing
-page at `/` minted, which any caller that reaches the WAP can get, is not row
-2 and falls to rows 3 and 4 like a request with none (sweep F289:
-`cv_session_store.h` stores each session's origin when it is minted,
-`api_auth.h`'s `api_auth_check_credential_optional()` reads it;
-`tests_host/test_receipt_session.cpp`).
+makes.
+
+What the lockout does not decide, and what stays open (all of it predates
+F289's follow-up; it is the ledger's, not a claim of this design):
+
+- **The backoff is one per device, not one per caller.** A host on the
+  network that sends one wrong bearer whenever the backoff is not running
+  keeps row 2 answering `429` for everyone, the owner's right token
+  included, as it can on every admin route that takes the bearer. Rows 3
+  and 4 still serve: the dashboard's BOOT-tap wait sends no `Authorization`
+  header, and a stale one beside the tap or the claim is served anyway.
+- **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
+  spent, match or not, so one wrong guess from a host on the network burns
+  a pending setup-door claim, and the phone that provisioned over the door
+  then needs the BOOT tap.
+- **Row 4 is spent by whoever asks first.** The tap has one consumer: a
+  request from any host on the network inside its 30 s, a wrong bearer
+  included, is served the receipt and spends the tap, and the owner's own
+  request after it is refused.
 
 ---
 
@@ -681,12 +705,16 @@ this door, which never runs the wizard's close-out, has a kit to save. On
 the dashboard (`https://canary-<suffix>.local/settings` once set up; port
 80 redirects there) a browser that is signed out chooses **Use BOOT Tap
 Once**, and the tap that signs it in offers **Save my recovery kit** in the
-wizard's words; one signed in by a tap or a claim (their session cookie) or
-by a token saves it from **Settings**, **Device**, **Recovery kit** without a
-tap. One that only opened the landing page at `/` runs the dashboard on the
-landing's session, which the receipt does not take (F289): its Settings save
-brings the sign-in back, and **Use BOOT Tap Once** offers the kit. A kit
-saved on the setup network names the
+wizard's words; one signed in with its token saves it from **Settings**,
+**Device**, **Recovery kit** without a tap, while one signed in only by a
+session cookie (the landing page's, or a tap's or a claim's once the page
+has been reloaded without its token) is refused there and sent back to the
+sign-in, whose BOOT tap offers the kit (F289: the receipt's bearer grant is
+the header alone, never the cookie; the sign-in then says the session does
+not cover this, not that a token it never sent was wrong). The session
+cookie a tap or a claim sets is `Secure` when the answer goes out over
+HTTPS, and not on the first-boot SoftAP's plain-HTTP setup, where a browser
+would drop it. A kit saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -851,6 +879,22 @@ cannot speak to.
       second time is `403`; a wrong claim is `403` **and** burns the real
       one; a claim after 180 s is `403`; the BOOT tap is still unspent after
       a claim served.
+- [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
+      landing page's **Open dashboard** link minted is `403` on
+      `GET /api/provisioning-receipt` and `401` on `GET /api/pairing-qr`,
+      neither body naming the token or the AP password; the same two
+      requests with `Authorization: Bearer <token>` serve; `/api/status` on
+      the cookie still serves (F289).
+- [ ] With the WAP joined to the home Wi-Fi, wrong bearers on
+      `GET /api/provisioning-receipt` arm the same backoff as the admin
+      routes: once it runs, the right token is `429` with `Retry-After` on
+      the receipt and on `GET /api/pairing-qr`, a short BOOT tap inside that
+      backoff still serves the receipt, and the right token serves again
+      once the backoff ends (F289's follow-up).
+- [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
+      link and a BOOT-tap receipt send carries `Secure`; on the first-boot
+      SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none
+      and the browser keeps it (F289's follow-up).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at
@@ -861,17 +905,10 @@ cannot speak to.
       `https://canary-<suffix>.local/settings`, before and after the AP
       drops.
 - [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**,
-      and a dashboard signed in by that tap saves it from **Settings**,
-      **Device**, **Recovery kit**; the saved `canary-recovery-kit.json` is
-      the receipt, and it pairs the WAP from its row under **Ready to pair**
-      in the iPhone app; a sign-in whose tap never came offers nothing.
-- [ ] From a second host on the home network that only opened the landing
-      page at `/` (its "Open dashboard" link), `GET
-      /api/provisioning-receipt` answers the BOOT-tap refusal (`403`) and
-      `GET /api/pairing-qr` answers `401`, neither carrying the token or
-      the AP password; after a BOOT tap the same browser's receipt fetch
-      serves, and the session that tap set serves both again with no tap
-      (F289).
+      and a signed-in dashboard saves it from **Settings**, **Device**,
+      **Recovery kit**; the saved `canary-recovery-kit.json` is the
+      receipt, and it pairs the WAP from its row under **Ready to pair** in
+      the iPhone app; a sign-in whose tap never came offers nothing.
 - [ ] The iPhone ends up paired from one tap; the `tls_cert_fp` pin holds
       on a TLS-enabled unit; a phone that takes three minutes to spend the
       claim still finds the WAP up (the reboot is held while the claim is
@@ -923,7 +960,6 @@ cannot speak to.
 | The hub hand-off's store (Sense, Vision) | `include/canary/runtime_config.h` (`set_mqtt_credentials`), the `store_hub` hook in each `main.cpp` | CI-compiled; bench |
 | The receipt's four-grant order | [`firmware/common/network/provisioning_gate.h`](../../firmware/common/network/provisioning_gate.h) (`receipt_decide`) | `firmware/tests_host/test_provisioning_gate.cpp` |
 | Which address the WAP's receipt and port-80 redirect name (pure) | [`firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h`](../../firmware/projects/canary-wap/arduino/canary_wap/receipt_authority.h) | `firmware/projects/canary-wap/tests_host/test_receipt_authority.cpp` |
-| Which sessions stand in for the WAP's bearer on the receipt and the pairing QR: a BOOT tap's or a claim's, never the landing page's (pure store; F289) | [`firmware/projects/canary-wap/arduino/canary_wap/cv_session_store.h`](../../firmware/projects/canary-wap/arduino/canary_wap/cv_session_store.h), `api_auth.h` (`api_auth_check_credential*`) | `firmware/projects/canary-wap/tests_host/test_receipt_session.cpp`; `check_route_security.py` |
 | The WAP's recovery kit, one builder for the wizard and the dashboard (BOOT-tap offer and Settings) | `RECOVERY_KIT` in `companion_pwa.h` and `web_ui.h` (same lines) | `firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js` |
 | The beacon's setup bit | [`firmware/common/fleet_link/fleet_beacon.h`](../../firmware/common/fleet_link/fleet_beacon.h) (`FLEET_BEACON_FLAG_SETUP_OPEN`) | the beacon tests |
 | Sense / Vision flag and window | `include/canary/config.h` (`FEATURE_IMPROV`, `IMPROV_FIRST_BOOT_WINDOW_MS`) | the per-board `-DFEATURE_IMPROV=0` CI veto |

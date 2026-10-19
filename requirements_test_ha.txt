@@ -11,4 +11,4 @@
 pytest-homeassistant-custom-component==0.13.372   # Home Assistant 2026.10.1
 paho-mqtt==2.1.0   # the mqtt integration's own requirement (mqtt_mock drives it; tests skip pip)
 mypy==2.4.0        # the same pin as requirements_test.txt; run against the real core on 3.14
-ruff==0.17.0
+ruff==0.17.1

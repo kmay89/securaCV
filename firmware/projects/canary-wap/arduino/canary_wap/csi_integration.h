@@ -19,7 +19,6 @@
 // different type, exactly the bug that broke an earlier rev of this file.
 #include <csi_types.h>
 #include "tz_rule.h"   // household time zone (F28), staged from firmware/common/time
-#include "cv_session_store.h"   // the session store and each session's origin (F289)
 
 namespace csi_integration {
 
@@ -110,44 +109,43 @@ void on_wifi_sta_connected();
  * 64 hex chars). Callers issuing a Set-Cookie need this to size their
  * scratch buffers safely.
  */
-constexpr size_t SESSION_COOKIE_HEX_LEN = cv_session::TOK_HEX_LEN;
+constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
 
 /**
  * True if the request carries a `cv_session=<hex>` cookie that matches
- * a live, unexpired session in the in-RAM session store, whatever its
- * origin. Never sends a response — caller decides what to do on failure
- * (handle_ui shows a pair landing; CSI API handlers fall through to Bearer
- * auth or 401).
+ * a live, unexpired session in the in-RAM session store. Never sends
+ * a response — caller decides what to do on failure (handle_ui shows
+ * a pair landing; CSI API handlers fall through to Bearer auth or 401).
  *
  * Replaces the previous design where the device's Bearer api_token was
  * injected into dashboard HTML — that approach made the token
  * harvestable by anyone on the SoftAP who could view-source on /
  * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
  * SameSite=Strict, so JS can't read them and cross-origin requests
- * can't forge them.
+ * can't forge them, and Secure on an answer from the HTTPS server
+ * (canary_wap.ino session_cookie_header()), so a browser never sends
+ * one to the port-80 redirect in the clear. The header is read by the
+ * cookie's whole name: "xcv_session=" is not this cookie.
+ *
+ * A session signs a browser into the dashboard and nothing more (sweep
+ * F289): the landing page mints one for whoever loads / on the home
+ * network, so it proves presence on the LAN, not possession of the token.
+ * The two routes whose answer carries a credential — GET
+ * /api/provisioning-receipt (the token, the SoftAP password, the TLS pin)
+ * and GET /api/pairing-qr (the token and the pin) — never take it; their
+ * bearer grant is the Authorization header alone, under the one lockout
+ * (api_auth.h's api_auth_bearer_grant / api_auth_check_bearer).
  */
 bool session_validate_cookie(httpd_req_t* req);
 
 /**
- * True only for a live session minted beside a served provisioning
- * receipt (cv_session::Origin::OWNER: a BOOT tap or a setup-door claim),
- * never for one the landing page minted. The origin was stored with the
- * session when it was minted; the cookie carries only the random token.
- * The routes that answer a credential take this in place of the bearer
- * (api_auth.h's api_auth_check_credential*, sweep F289).
+ * Mint a fresh session and write 64 hex chars + NUL to hex_out.
+ * out_cap must be >= SESSION_COOKIE_HEX_LEN + 1 (65). Returns true on
+ * success. Used by handle_ui's `?cv_pair=<token>` consumption branch:
+ * after a valid one-shot pair-token, we issue a session and bake the
+ * hex into a Set-Cookie header.
  */
-bool session_validate_owner_cookie(httpd_req_t* req);
-
-/**
- * Mint a fresh session with the origin of the code path minting it and
- * write 64 hex chars + NUL to hex_out. out_cap must be >=
- * SESSION_COOKIE_HEX_LEN + 1 (65). Returns true on success. Two callers:
- * handle_ui's `?cv_pair=<token>` consumption branch (LANDING: the landing
- * page mints that pair token for any caller), and handle_provisioning_
- * receipt after a BOOT tap or a setup-door claim served the receipt
- * (OWNER). Each bakes the hex into a Set-Cookie header.
- */
-bool session_issue(char* hex_out, size_t out_cap, cv_session::Origin origin);
+bool session_issue(char* hex_out, size_t out_cap);
 
 /**
  * Render the "tap to enter" landing page served by handle_ui when a
@@ -217,9 +215,7 @@ uint32_t outbound_bytes_today();
  *     fresh QR scan. The token ages out naturally; we don't burn it.
  *   - Dashboard auto-login (?cv_pair=<hex> on /): single-use via
  *     pair_token_consume(). The token is exchanged for a 24 h cv_session
- *     cookie, and the slot is burned on first redemption. That session is
- *     a LANDING one (the landing page mints the token for any caller): it
- *     runs the dashboard and stands in for no BOOT tap (sweep F289).
+ *     cookie, and the slot is burned on first redemption.
  *
  * Common properties:
  *   - 32 random bytes per token (256-bit entropy from esp_fill_random).

@@ -48,24 +48,24 @@
  *
  * Auth model:
  *   - The HTTP config / test handlers take what CSI_AUTH_OR_RETURN takes
- *     on every other /api/csi/* route (authorized() below): any live
- *     dashboard session, or the bearer token in the Authorization header.
- *     A visitor with neither can't read the config, can't change the
- *     broker, and can't trigger /test (which would leak the broker
- *     hostname via a connect attempt).
- *   - Any session is not only the owner's. The landing page at / mints
- *     one for any caller that reaches the device, on the SoftAP and, once
- *     the WAP has joined the home Wi-Fi, on the home network too (the
- *     2026-07 audit's "Trust-on-LAN" posture; cv_session_store.h,
- *     Origin::LANDING). Such a session can change the broker. The broker
- *     password is write-only (GET answers password_set, never the
- *     password), and a save that would send the STORED password somewhere
- *     new (a new host, port, user, TLS mode or CA, with no "password" in
- *     the body) takes only the bearer header or a session a BOOT tap or a
- *     setup-door claim minted (Origin::OWNER; authorized_for_credential()
- *     below, sweep F289): a landing session is asked to type the password
- *     again, so it can point the bridge at its own listener only with a
- *     password it already knows.
+ *     on every other /api/csi/* route (authorized() below): a live
+ *     dashboard session (the cv_session cookie), or the bearer token in
+ *     the Authorization header. A visitor with neither can't read the
+ *     config, can't change the broker, and can't trigger /test (which
+ *     would leak the broker hostname via a connect attempt).
+ *   - A session is not proof of holding the token: the landing page at /
+ *     mints one for any caller on the home network (deliberate LAN posture
+ *     for the dashboard's own routes). So the broker password is
+ *     write-only (GET answers password_set, never the password), and a
+ *     save that would send the STORED password somewhere new (a new host,
+ *     port, user or TLS mode, or any CA, with no "password" in the body)
+ *     takes only the bearer token (bearer_authorized() below, sweep F289).
+ *     A session alone gets 403 password_needed and is asked to type the
+ *     password again, so through this route it can point the bridge at its
+ *     own listener only with a password it already knows. Not covered here:
+ *     canary_wap.ino's QR provisioning re-point (qr_scan_task_fn), where a
+ *     scanned SCV1 code with a host moves the broker and keeps the stored
+ *     user and password (open, for the ledger).
  */
 
 #include "csi_mqtt.h"
@@ -1964,35 +1964,26 @@ static bool authorized(httpd_req_t* req, const char* api_token) {
   return false;
 }
 
-/* For a save that would send the stored broker password somewhere it was
- * not going (sweep F289): the bearer token in the Authorization header, or
- * a session minted beside a served provisioning receipt (a BOOT tap or a
- * setup-door claim; api_auth.h's cv_session_validate_owner, the check
- * api_auth_check_credential_optional() makes). Never a session the landing
- * page minted: the landing hands one to any caller on the network, and
- * authorized() above takes it. An empty token is no token. */
-static bool authorized_for_credential(httpd_req_t* req, const char* api_token) {
-  if (api_token && api_token[0] != '\0' && api_auth_bearer_header_ok(req, api_token)) return true;
-  return cv_session_validate_owner && cv_session_validate_owner(req);
+/* For a save that sends the stored broker password somewhere it was not
+ * going (sweep F289): the bearer token in a real `Authorization: Bearer`
+ * header, constant-time compared (api_auth.h's api_auth_bearer_valid), and
+ * nothing else. Never the cv_session cookie: the landing page at / mints
+ * that session for any caller on the home network (deliberate LAN posture
+ * for the dashboard's own routes), and authorized() above takes it. An
+ * empty token is no token (api_auth_bearer_valid() refuses one too; this
+ * gate says so itself rather than lean on it). Silent, as authorized() is. */
+static bool bearer_authorized(httpd_req_t* req, const char* api_token) {
+  return api_token != nullptr && api_token[0] != '\0' && api_auth_bearer_valid(req, api_token);
 }
 
-/* Whether a save would send the stored broker password somewhere it was
- * not going (sweep F289): the body sent no "password", so `next` carries
- * the stored one, and it moves the broker (host or port), the user the
- * password is sent for, or how it is sent (the TLS mode, or the CA a
- * CA-mode link trusts: a CA the caller picks is a broker the caller runs).
- * The stored settings are read again here, in this frame, not the
- * handler's; with no settings namespace they read as the defaults (no
- * host), which the kept password's broker is not. */
-static bool moves_the_kept_password(const Config& next, bool password_sent, bool ca_sent) {
-  if (password_sent || next.pass[0] == '\0') return false;
-  if (ca_sent) return true;
-  Config was;
-  (void)config_load(&was);
-  const bool moved = strcmp(was.host, next.host) != 0 || was.port != next.port ||
-                     strcmp(was.user, next.user) != 0 || was.tls_mode != next.tls_mode;
-  memset(&was, 0, sizeof(was));   /* its copy of the password */
-  return moved;
+/* Zero a buffer with stores the compiler keeps (a plain memset of a dead
+ * buffer is a store it may drop). handle_config_post's password_needed
+ * refusal runs it over its copy of the stored password before the frame is
+ * given back; the handler's other returns (the 400s, the 500, the 200) do
+ * not wipe that copy. */
+static void wipe(void* p, size_t n) {
+  volatile uint8_t* b = static_cast<volatile uint8_t*>(p);
+  while (n--) *b++ = 0;
 }
 
 /* The api_token for csi_mqtt's Bearer surface is the same one
@@ -2278,6 +2269,13 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   Config c;
   config_load(&c);
 
+  /* Whether this save sends the stored password somewhere it was not going
+   * (sweep F289): set below by each field that moves it, a new host, port,
+   * user or TLS mode, or any CA sent (a CA the caller picks is a broker the
+   * caller runs). Read against the gate after the last field. */
+  bool moves_password = false;
+  const uint8_t stored_tls_mode = c.tls_mode;
+
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);
   json_extract_bool  (body, "\"discovery\"", &c.discovery);
   /* Broker TLS mode. The numeric mode is the contract
@@ -2317,6 +2315,7 @@ esp_err_t handle_config_post(httpd_req_t* req) {
       c.tls_mode = (uint8_t)mode_l;
     }
     c.tls = c.tls_mode != 0;
+    if (c.tls_mode != stored_tls_mode) moves_password = true;
   }
   /* The CA: present-and-empty removes it, present-and-PEM replaces it,
    * absent leaves it. Shape-checked before it can reach NVS so a pasted
@@ -2341,9 +2340,11 @@ esp_err_t handle_config_post(httpd_req_t* req) {
       return ESP_OK;
     }
     ca_changed = true;
+    moves_password = true;
   }
   long port_l = c.port;
   if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
+    if ((uint16_t)port_l != c.port) moves_password = true;
     c.port = (uint16_t)port_l;
   }
   /* Empty string in any field clears it; missing field leaves it as-is.
@@ -2360,10 +2361,12 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   char buf[kLongestSetting + 2] = {};
   if (json_extract_string(body, "\"host\"",   buf, sizeof(buf))) {
     if (refuse_too_long(req, "host", buf, MAX_HOST_LEN)) return ESP_OK;
+    if (strcmp(buf, c.host) != 0) moves_password = true;
     strncpy(c.host,   buf, MAX_HOST_LEN);   c.host  [MAX_HOST_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"user\"",   buf, sizeof(buf))) {
     if (refuse_too_long(req, "user", buf, MAX_USER_LEN)) return ESP_OK;
+    if (strcmp(buf, c.user) != 0) moves_password = true;
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
   if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
@@ -2401,21 +2404,24 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   if (!c.prefix[0]) strncpy(c.prefix, DEFAULT_PREFIX, MAX_PREFIX_LEN);
   if (c.port == 0)  c.port = c.tls ? DEFAULT_PORT_TLS : DEFAULT_PORT;
 
-  /* The stored password goes only where the owner sent it (sweep F289). A
-   * save that keeps it (no "password" in the body) and moves it (a new
-   * host, port, user, TLS mode or CA) takes the bearer header or an owner's
-   * session, not any session: the landing page mints one for any caller on
-   * the network, which could otherwise point the bridge at a listener of
-   * its own and have the bridge send it the password. Refused before
-   * anything is saved; typing the password again is the owner's way past
-   * it on a landing session (the /mqtt page shows this reason). */
-  if (moves_the_kept_password(c, password_sent, ca_changed) &&
-      !authorized_for_credential(req, tok)) {
-    memset(&c, 0, sizeof(c));
+  /* The stored password goes only where it was going (sweep F289). A save
+   * that keeps it (no "password" in the body, and one is stored) and moves
+   * it takes only the bearer token (bearer_authorized above), not a
+   * session: the landing page mints one for any caller on the home
+   * network, which could otherwise point the bridge at a listener of its
+   * own and have the re-init send it the broker user and password. Refused
+   * before anything is saved, and this frame's copy of the password wiped;
+   * typing the password again is the way past it from a browser (the /mqtt
+   * page shows this reason and puts the cursor in the password field). A
+   * save that sends a password, or keeps it where it was going, or finds
+   * none stored (first boot), is not asked. */
+  if (moves_password && !password_sent && c.pass[0] != '\0' && !bearer_authorized(req, tok)) {
+    wipe(&c, sizeof(c));
+    wipe(buf, sizeof(buf));
     httpd_resp_set_status(req, "403 Forbidden");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req,
-      "{\"ok\":false,\"error\":\"password_needed\",\"reason\":\"type the broker password again to change the broker, user or encryption\"}", -1);
+      "{\"ok\":false,\"error\":\"password_needed\",\"reason\":\"type the broker password again to change the broker, the user or the encryption\"}", -1);
     return ESP_OK;
   }
 
@@ -2592,6 +2598,12 @@ f.addEventListener('submit', async (e) => {
   document.getElementById('status').textContent = ok ? 'Saved.' : ('Save failed. ' + (j.reason || ''));
   document.getElementById('status').className = 'status ' + (ok ? 'good' : 'bad');
   if (ok) { ca.value = ''; setTimeout(load, 600); }
+  else if (j.error === 'password_needed') {
+    /* A change of broker, user or encryption sends the saved password
+     * there, so the device asks for it again (sweep F289). */
+    password.setAttribute('aria-describedby', 'status');
+    password.focus();
+  }
 });
 document.getElementById('test').addEventListener('click', async () => {
   document.getElementById('status').textContent = 'Trying to reach the broker…';

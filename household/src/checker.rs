@@ -171,9 +171,20 @@ impl std::fmt::Debug for Checker {
 }
 
 /// The next `seq`: strictly above the last one, and never below
-/// `minute(issued_at) << 10`, so a restored older `seq.json` (with a sane
-/// clock) still cannot make the hub reuse a sequence number. The floor
-/// carries nothing beyond `issued_at`, which the statement already states.
+/// `minute(issued_at) << 10`, so on a hub clock that has not stepped back a
+/// restored older `seq.json` cannot make the hub reuse a sequence number from
+/// an earlier minute. It can reuse one from the current minute, and a clock
+/// stepped back together with the file can reuse an earlier minute's: a
+/// restore and restart in the minute of earlier statements, or a clock held or
+/// stepped back into it, issues the floor again
+/// (`tests::next_seq_floor_collides_within_the_minute`); a witness holding
+/// the higher `seq` refuses that statement, as `away`, until the hub's `seq`
+/// passes it: the next minute's floor guarantees that for a same-minute
+/// collision while fewer than 1024 statements were issued in that minute (the
+/// floor's spacing), a clock stepped back N minutes takes N minutes, and
+/// `last + 1` reaches in any case. The
+/// floor carries nothing beyond `issued_at`, which the statement already
+/// states.
 pub fn next_seq(last: u64, issued_at: u64) -> u64 {
     let floor = (issued_at / 60).saturating_mul(1024);
     last.saturating_add(1).max(floor)
@@ -776,6 +787,46 @@ pub(crate) mod tests {
         // A restored seq.json of 0 still issues above every earlier minute.
         assert!(next_seq(0, T0 + 60) > last);
         assert_eq!(next_seq(u64::MAX, T0), u64::MAX);
+    }
+
+    #[test]
+    fn next_seq_floor_collides_within_the_minute() {
+        // The floor stops reuse across minutes, not within one: a seq.json
+        // restored to before this minute's statements, or a clock held or
+        // stepped back into their minute, issues the floor again. Pinned so
+        // the spec (§3.1) and the README claim exactly that and no more.
+        let floor = (T0 / 60) * 1024;
+        let mut c = checker();
+        let mut issued = vec![c.current().seq];
+        for p in [Purpose::Night, Purpose::Away] {
+            let req = es256_req(&mut c, p, INTENT, 0x31, 0);
+            issued.push(c.command(&req, &S, &LAN_DOOR_ID, 1, T0).unwrap().seq);
+        }
+        assert_eq!(issued, [floor, floor + 1, floor + 2]);
+        // seq.json restored to anything below the floor, in the same minute:
+        // the first statement's seq again. Restored to the first's: the
+        // second's.
+        assert_eq!(next_seq(0, T0), issued[0]);
+        assert_eq!(next_seq(floor - 1, T0), issued[0]);
+        assert_eq!(next_seq(issued[0], T0), issued[1]);
+        // The checker restarted from that seq.json publishes the collision,
+        // and a witness holding the newest seq refuses it (§3.2 rule 4): away
+        // until the hub's seq passes what the witness holds.
+        let restarted = checker();
+        assert_eq!(restarted.current().seq, issued[0]);
+        assert_eq!(
+            posture::verify(
+                &restarted.current_bytes(),
+                &[0xaa; 16],
+                &c.posture_public_key(),
+                Some(issued[2]),
+                Some(T0)
+            ),
+            Err(posture::Reject::Seq)
+        );
+        // The next minute's floor is above every one of them.
+        assert!(next_seq(0, T0 + 60) > issued[2]);
+        assert!(next_seq(floor - 1, T0 + 60) > issued[2]);
     }
 
     #[test]

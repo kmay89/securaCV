@@ -122,6 +122,23 @@ struct DeviceDetailView: View {
                         .font(.title2)
                         .foregroundStyle(.secondary)
                 }
+                // When the device's key was born, in the device's own words
+                // and no further: "Born" only when it says the day is exact,
+                // "First dated" when it met a clock late, and nothing at all
+                // when it cannot say (wallBornLine). A fact about the Canary,
+                // so it sits with its name rather than with its state.
+                if let born = device.wallBornLine() {
+                    Text(born)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if let note = device.wallBornNote {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 900)
+                    }
+                }
                 Text(device.wallStatusLine)
                     .font(.title3)
                     .foregroundStyle(device.chainIsTroubled ? Color.orange : Color.secondary)

@@ -3558,6 +3558,38 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
   return httpd_resp_send(req, (const char*)gz, gz_len);
 }
 
+// The cv_session cookie's Set-Cookie value, written into `out` (`cap`
+// bytes): the one spelling of its attributes for both places that mint a
+// session (handle_ui's ?cv_pair exchange and the receipt's BOOT-tap or
+// setup-door grant). False, and nothing to send, if it does not fit.
+//   - 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
+//   - HttpOnly: no JS can read the cookie (mitigates XSS exfil).
+//   - SameSite=Strict: cross-origin requests can't carry it (CSRF).
+//   - Path=/: covers /, /tune, /api/*.
+//   - Secure exactly when THIS answer goes out over the HTTPS server
+//     (sweep F289's residual): the request arrived on g_https_server, as the
+//     flagship asks it (req->handle against its HTTPS server,
+//     securacv_network.cpp). Once that server is up every route is
+//     registered on it alone, and port 80 keeps only the captive probes,
+//     /api/fleet and the redirect (handle_https_redirect), none of which
+//     reads the cookie, so the browser then never sends it in the clear. Not g_tls_enabled: that is set before the server starts and
+//     a build without esp_https_server.h never starts one. On a plain-HTTP
+//     answer (the first-boot SoftAP setup, which runs HTTP-only so captive
+//     sheets render, or a unit whose HTTPS start failed) Secure is left off:
+//     a browser drops a Secure cookie an http page sets. (The other way
+//     round has an edge: a browser still holding a Secure cv_session from
+//     an HTTPS visit refuses a same-name cookie from an http page, so a unit
+//     that comes back HTTP-only signs that browser in again only once the
+//     old cookie's 24 h are up, or its site data is cleared.)
+static bool session_cookie_header(httpd_req_t* req, const char* session_hex,
+                                  char* out, size_t cap) {
+  const bool tls = g_https_server != nullptr && req->handle == g_https_server;
+  const int n = snprintf(out, cap,
+      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+      session_hex, tls ? "; Secure" : "");
+  return n > 0 && (size_t)n < cap;
+}
+
 static esp_err_t handle_ui(httpd_req_t* req) {
   // The default route now lands on the headline Sensing dashboard from
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
@@ -3572,11 +3604,7 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   //   2. ?cv_pair=<hex> query param present → consume the one-shot
   //      pair token, mint a fresh session, set the cookie, and 302
   //      redirect to "/" so the URL is clean and the cookie is in
-  //      effect for subsequent requests. The landing page hands that
-  //      token to any caller that reaches the device (on the home
-  //      network too, once the WAP has joined it), so the session is
-  //      minted LANDING: the dashboard runs on it, and no route that
-  //      answers a credential takes it (sweep F289).
+  //      effect for subsequent requests.
   //   3. Neither cookie nor pair param → render the "Welcome / Open
   //      dashboard" landing page (csi_integration::send_pair_landing),
   //      which mints a new pair token and offers a one-tap link.
@@ -3638,25 +3666,10 @@ static esp_err_t handle_ui(httpd_req_t* req) {
     if (httpd_query_key_value(qs, "cv_pair", pair_hex, sizeof(pair_hex)) == ESP_OK
         && csi_integration::pair_token_consume(pair_hex)) {
       char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-      // LANDING: the pair token came from the landing page, which mints one
-      // for any caller, so this session runs the dashboard and answers no
-      // credential (sweep F289; cv_session_store.h).
-      if (csi_integration::session_issue(session_hex, sizeof(session_hex),
-                                         cv_session::Origin::LANDING)) {
-        // 86400 = 24 h, matching cv_session::TTL_MS (cv_session_store.h).
-        // HttpOnly: no JS can read the cookie (mitigates XSS exfil).
-        // SameSite=Strict: cross-origin requests can't carry it (CSRF).
-        // Path=/: covers /, /tune, /api/*.
-        // Secure when the HTTPS server started (sweep F289 review): every
-        // route is registered on 443 only then, and port 80 is the redirect
-        // server, so a browser that types http:// never sends the cookie in
-        // the clear. Not g_tls_enabled: that says a certificate loaded, and
-        // a build without esp_https_server.h loads one and still serves this
-        // route over plain HTTP, where a browser drops a Secure cookie.
-        char cookie_hdr[160];
-        snprintf(cookie_hdr, sizeof(cookie_hdr),
-          "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-          session_hex, g_https_server != nullptr ? "; Secure" : "");
+      char cookie_hdr[160];
+      // The cookie's attributes, Secure over HTTPS: session_cookie_header().
+      if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
+          session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
         httpd_resp_set_hdr(req, "Location", "/");
@@ -7931,11 +7944,15 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  * Canary Vision companion app's "Scan pairing QR" fallback.
  *
  * The payload carries the API token, so this endpoint demands the same
- * auth as the receipt's first grant (api_auth_check_credential: the bearer
- * header, or a session a BOOT tap or a setup-door claim minted, never the
- * landing page's; sweep F289) — the QR is something an already-
+ * auth as the receipt's Bearer path — the QR is something an already-
  * authenticated operator deliberately shows to their own phone, never an
- * anonymous read. Only the fields the app's scanner consumes are encoded:
+ * anonymous read. "The same auth" is the bearer alone (api_auth_check_bearer,
+ * sweep F289): a cv_session cookie signs a browser into the dashboard, but
+ * the landing page mints one for any host on the home network, so it is no
+ * proof of holding the token this answer hands out. A cookie-only browser
+ * gets the 401 any credential-less caller gets and secureFetch brings the
+ * sign-in back; the lockout and its 429 are the same as every admin route's.
+ * Only the fields the app's scanner consumes are encoded:
  * {device_id, base_url, token}, plus tls_cert_fp on a TLS-enabled device —
  * the certificate pin the app requires before it will speak to an https
  * Canary at all (ios DeviceAPI.swift; PairView refuses an https receipt
@@ -7945,9 +7962,7 @@ static esp_err_t handle_fleet_options(httpd_req_t* req) {
  */
 static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   g_health.http_requests++;
-  // The bearer, or a session minted beside a served receipt; never the
-  // landing page's (sweep F289): this answer is the API token.
-  if (!api_auth_check_credential(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
 
   // Prefer the home-LAN mDNS name (stable across DHCP leases); fall back
   // to the AP address while the device is still in setup mode.
@@ -8675,8 +8690,10 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The grants, in order — the contract is provisioning_gate.h's four-grant
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
   // (firmware/common/network; the sketch keeps the inline copy by
-  // convention). The WAP's actual order here: a valid bearer serves (the
-  // claim and the tap left alone); else a claim the request presented is
+  // convention). The WAP's actual order here: a valid bearer (the header,
+  // never the session cookie, under the api_auth lockout) serves (the claim
+  // and the tap left alone);
+  // else a claim the request presented is
   // SPENT, match or not (a guesser gets one guess per join), and serves on
   // a match, the tap left unspent for the owner's own page load; else the
   // BOOT tap, exactly as before. The contract's first question, a foreign
@@ -8684,14 +8701,28 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // front of this route there); the WAP sketch has no Host guard on this
   // route and does not ask it.
 
-  // 1. A valid Bearer token in the Authorization header always serves (for
-  //    SAP re-sync), and so does a session minted beside a receipt this
-  //    route served before (OWNER: a BOOT tap or a claim, whose response
-  //    already carried the token). A session the landing page minted does
-  //    NOT: the landing hands a pair token to any caller on the network, so
-  //    such a session falls through to the claim and the tap like a request
-  //    with none (sweep F289).
-  if (api_auth_check_credential_optional(req, g_device.api_token_str)) {
+  // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
+  //    the bearer: a real `Authorization: Bearer <token>` header,
+  //    constant-time compared (api_auth_bearer_grant), never the cv_session
+  //    cookie (sweep F289). The landing page at / mints that cookie's
+  //    session for whoever loads it on the home network — deliberate LAN
+  //    posture for the dashboard — so with api_auth_check_optional here any
+  //    host on the LAN could turn a page load into this answer: the token,
+  //    the SoftAP password and the TLS pin, with no tap. A browser signed in
+  //    only through that cookie is refused below like any caller without a
+  //    credential (403 physical_confirmation_required; the dashboard's
+  //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
+  //    one that typed the token sends it as a bearer and is served here.
+  //    The bearer is under every admin route's lockout (F289's follow-up):
+  //    a wrong one is a strike, and while the backoff runs none is compared
+  //    (the 429 below, when the claim and the tap do not serve). The lockout
+  //    never gates the claim or the tap: a page with a stale token, or a
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
+  //    (The lockout is all this decides. Any host on the network can still
+  //    spend a pending claim with one wrong ?claim=, or take an open tap by
+  //    asking first; both predate F289 and are the ledger's.)
+  const bool bearer_held = api_auth_bearer_held(req);
+  if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
@@ -8724,6 +8755,13 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    atomic step; the BLE OTA break-glass hook competes for the same tap
   //    from another task)
   if (!claim_served && !provisioning_gate_take()) {
+    // A bearer the backoff kept from being compared gets the lockout's own
+    // answer (429, Retry-After), not "press BOOT": a page holding the right
+    // token keeps it (secureFetch drops a token on 403) and retries.
+    if (bearer_held) {
+      api_auth_send_lockout(req);
+      return ESP_OK;
+    }
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
@@ -8748,20 +8786,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The claim matched, or the gate was open (and is now closed) — serve the
   // receipt with the same session cookie either way: the phone that
   // provisioned over the door is as present as the hand on the BOOT button.
-  // OWNER: this response carries the bearer token, so the session minted
-  // with it stands in for the bearer on grant 1 (sweep F289).
-  // The same attributes as handle_ui's, Secure included when the HTTPS
-  // server started: this cookie stands in for the bearer for 24 h.
+  // The cookie's attributes are handle_ui's (session_cookie_header()):
+  // Secure when this answer goes out over HTTPS, and not on the first-boot
+  // SoftAP's plain-HTTP setup, where the recovery-kit save mints it.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
-  if (csi_integration::session_issue(session_hex, sizeof(session_hex),
-                                     cv_session::Origin::OWNER)) {
-    char cookie_hdr[160];
-    int cookie_len = snprintf(cookie_hdr, sizeof(cookie_hdr),
-      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-      session_hex, g_https_server != nullptr ? "; Secure" : "");
-    if (cookie_len > 0 && (size_t)cookie_len < sizeof(cookie_hdr)) {
-      httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
-    }
+  char cookie_hdr[160];
+  if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
+      session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie_hdr);
   }
   esp_err_t result = send_provisioning_receipt(
       req, claim_served ? receipt_authority::Grant::SETUP_DOOR_CLAIM
@@ -8786,21 +8818,30 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 // ════════════════════════════════════════════════════════════════════════════
 
 #if SECURACV_HAS_HTTPS_SERVER
-// The Location names the WAP the way the receipt's base_url does
-// (receipt_authority.h): a caller on the setup network keeps the SoftAP
-// address, anyone else gets the .local name. It used to be WiFi.softAPIP()
-// for everyone, so http://canary-<suffix>.local/ typed on the home network
-// went to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
-// which the home network cannot reach.
+// The Location names the WAP where this caller reached it
+// (receipt_authority.h, redirect_location()): the request's Host when it is
+// an IP literal or one of the device's own names — a browser that typed the
+// device's address on a PC or phone with no mDNS keeps it, as does one that
+// typed canary-<suffix>.local or canary.local; a port is dropped — else the
+// address the receipt's base_url would name for this reach: a caller on the
+// setup network gets the SoftAP address, anyone else the .local name. Any
+// other Host (a foreign name, a byte outside the alphabet, one too long for
+// the buffer) is refused, never forwarded. It used to be WiFi.softAPIP() for
+// everyone, so http://canary-<suffix>.local/ typed on the home network went
+// to https://192.168.4.1 (or https://0.0.0.0 once the AP netif is gone),
+// which the home network cannot reach; then the device's own names for
+// everyone (#1802), so a typed IP went to a .local name a browser without
+// mDNS cannot resolve. A URI the 256-byte Location cannot hold is not cut (a
+// cut URI redirects to the wrong page): the root instead.
 static esp_err_t handle_https_redirect(httpd_req_t* req) {
-  char authority[80];
-  if (receipt_authority::write(authority, sizeof(authority),
-                               request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
+  char host[96] = {0};
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) host[0] = '\0';
+  char location[256];
+  if (receipt_authority::redirect_location(location, sizeof(location), host, req->uri,
+                                           request_reach(req, receipt_authority::Grant::HTTPS_REDIRECT)) == 0) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_sendstr(req, "No address to redirect to.");
   }
-  char location[128];
-  snprintf(location, sizeof(location), "https://%s%s", authority, req->uri);
   httpd_resp_set_status(req, "301 Moved Permanently");
   httpd_resp_set_hdr(req, "Location", location);
   return httpd_resp_sendstr(req, "Redirecting to HTTPS...");
@@ -9889,7 +9930,6 @@ static void start_http_server() {
       Serial.println("[HTTPS] Server start FAILED — falling back to HTTP");
       log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "HTTPS start failed, using HTTP", nullptr);
       g_tls_enabled = false;
-      g_https_server = nullptr;   // the session cookies' Secure reads it (sweep F289)
     }
   }
 #endif // SECURACV_HAS_HTTPS_SERVER

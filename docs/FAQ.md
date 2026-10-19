@@ -554,9 +554,12 @@ for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
 in the SecuraCV app: tap it under *Ready to pair* on the Fleet tab and add it
 with its recovery kit (`canary-recovery-kit.json`: open its dashboard at
 `https://canary-<suffix>.local/settings` and accept the certificate
-warning; signed in already, choose **Settings**, **Device**, **Recovery
-kit**, **Save my recovery kit**; signed out, choose **Use BOOT Tap Once**,
-short-tap BOOT, then **Save my recovery kit**. The setup page's close-out
+warning; signed in with the token, choose **Settings**, **Device**,
+**Recovery kit**, **Save my recovery kit**; signed out, or signed in only
+through the landing page's link, choose **Use BOOT Tap Once**, short-tap
+BOOT, then **Save my recovery kit** — the kit holds the token and the setup
+network's password, so only a BOOT tap or the token itself fetches it, never
+the dashboard's own session. The setup page's close-out
 saves the same file. Both dashboard paths are new, checked by automated
 tests and not yet on a bench device). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
 radio on the Home Assistant machine itself; through an ESPHome Bluetooth

@@ -42,7 +42,6 @@
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <esp_random.h>           // esp_fill_random() — pairing token entropy
-#include <esp_timer.h>            // esp_timer_get_time() — the session and pair-token clock
 #include <string.h>
 #include <stdlib.h>
 
@@ -1531,14 +1530,6 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
   return handle_tune_post_coefficients(req);
 }
 
-/* The pairing tokens' and the sessions' clock: milliseconds since boot, in
- * 64 bits (sweep F289's review). Arduino-ESP32's millis() is 32 bits on both
- * cores and wraps every 2^32 ms (49.7 days), and an age taken across the
- * wrap reads young again: a session or a pair token past its TTL would
- * answer once more, for a whole TTL, every 49.7 days of uptime. esp_timer
- * counts microseconds since boot in 64 bits and does not wrap. */
-uint64_t session_now_ms() { return (uint64_t)(esp_timer_get_time() / 1000); }
-
 /* ──────────────────────────────────────────────────────────────────────────
  * PAIRING TOKEN STORE — Tier 5 #11
  *
@@ -1558,14 +1549,14 @@ uint64_t session_now_ms() { return (uint64_t)(esp_timer_get_time() / 1000); }
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t   PAIR_SLOTS        = 4;
-constexpr uint64_t PAIR_TTL_MS       = 10ULL * 60ULL * 1000ULL;  /* 10 min */
+constexpr uint32_t PAIR_TTL_MS       = 10UL * 60UL * 1000UL;  /* 10 min */
 constexpr size_t   PAIR_TOK_BYTES    = 32;                    /* 256-bit entropy */
 constexpr size_t   PAIR_TOK_HEX_LEN  = PAIR_TOK_BYTES * 2;    /* 64 hex chars */
 
 struct PairSlot {
   bool     used;
   bool     active;
-  uint64_t issued_ms;          /* session_now_ms() at issue */
+  uint32_t issued_ms;
   uint8_t  token[PAIR_TOK_BYTES];
 };
 PairSlot g_pair_slots[PAIR_SLOTS] = {};
@@ -1601,7 +1592,7 @@ bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {
 }
 
 PairSlot* pick_slot_for_issuance() {
-  const uint64_t now = session_now_ms();
+  const uint32_t now = millis();
   /* Pass 1: prefer a used or expired slot. */
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
@@ -1618,7 +1609,7 @@ PairSlot* pick_slot_for_issuance() {
 }
 
 PairSlot* find_slot(const uint8_t* token) {
-  const uint64_t now = session_now_ms();
+  const uint32_t now = millis();
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
     if (!s.active || s.used) continue;
@@ -1632,32 +1623,79 @@ PairSlot* find_slot(const uint8_t* token) {
  * SESSION COOKIE STORE
  *
  * Issued on successful one-shot pair-token consumption (handle_ui's
- * /?cv_pair=<hex> branch) and beside a served provisioning receipt (a BOOT
- * tap or a setup-door claim). Replaces the previous design where the
- * device's Bearer api_token was injected into dashboard HTML — that
- * approach made the token harvestable by anyone on the SoftAP who could
- * `view-source` on / (per pull-request review #392 r3213361582).
+ * /?cv_pair=<hex> branch). Replaces the previous design where the device's
+ * Bearer api_token was injected into dashboard HTML — that approach made
+ * the token harvestable by anyone on the SoftAP who could `view-source`
+ * on / (per pull-request review #392 r3213361582).
  *
  * Each cookie is HttpOnly + SameSite=Strict, so JS can't read it (no XSS
- * exfil) and cross-origin requests can't forge it (no CSRF). Cookie body
+ * exfil) and cross-origin requests can't forge it (no CSRF), and Secure
+ * on an answer from the HTTPS server (canary_wap.ino
+ * session_cookie_header()). Cookie body
  * is 32 bytes hex-encoded — 256-bit entropy, indistinguishable from
  * random by anything an in-page script could observe.
  *
- * The store, its slots and the origin each session is minted with (the
- * landing page's, or a served receipt's) live in cv_session_store.h, pure
- * and host-tested (tests_host/test_receipt_session.cpp, sweep F289); what
- * is left here reads the clock (session_now_ms(), 64-bit), the RNG and the
- * request's Cookie header.
+ * 8 slots is enough for a household worth of phones / laptops / tablets
+ * pairing concurrently. 24 h TTL matches typical "remember me" UX and
+ * caps the post-compromise window without forcing daily re-pairing.
  *
  * Threading: HTTP handlers serialize behind one ESP-IDF httpd worker, so
  * no portMUX needed; matches the pair-slot store above. ────────────── */
 
-cv_session::Store g_sessions = {};
+constexpr size_t   SESSION_SLOTS    = 8;
+constexpr uint32_t SESSION_TTL_MS   = 24UL * 60UL * 60UL * 1000UL;  /* 24 h */
+constexpr size_t   SESSION_TOK_BYTES   = 32;                     /* 256-bit entropy */
+constexpr size_t   SESSION_TOK_HEX_LEN = SESSION_TOK_BYTES * 2;  /* 64 hex chars */
 
-/* Read the cv_session cookie out of the Cookie request header: the header
- * whole, then cv_session_store.h's scan for exactly 64 hex characters.
- * Returns false on any parse failure (header missing, cookie absent, hex
- * too short / too long). Never sends a response. */
+struct SessionSlot {
+  bool     active;
+  uint32_t issued_ms;
+  uint8_t  token[SESSION_TOK_BYTES];
+};
+SessionSlot g_session_slots[SESSION_SLOTS] = {};
+
+SessionSlot* pick_session_slot_for_issuance() {
+  const uint32_t now = millis();
+  /* Pass 1: prefer an empty or expired slot. */
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active || (now - s.issued_ms) >= SESSION_TTL_MS) return &s;
+  }
+  /* Pass 2: evict the oldest active slot. Same trade-off as the pair
+   * store — a determined attacker can churn issuances and bump a real
+   * user's session, but the legitimate user is on the AP and can re-pair
+   * by tapping the QR / "Open dashboard" link again. */
+  size_t oldest = 0;
+  for (size_t i = 1; i < SESSION_SLOTS; ++i) {
+    if ((now - g_session_slots[i].issued_ms) >
+        (now - g_session_slots[oldest].issued_ms)) {
+      oldest = i;
+    }
+  }
+  return &g_session_slots[oldest];
+}
+
+bool find_valid_session(const uint8_t* token) {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < SESSION_SLOTS; ++i) {
+    SessionSlot& s = g_session_slots[i];
+    if (!s.active) continue;
+    if ((now - s.issued_ms) >= SESSION_TTL_MS) continue;
+    if (ct_eq(s.token, token, SESSION_TOK_BYTES)) return true;
+  }
+  return false;
+}
+
+/* Read the cv_session cookie out of the Cookie request header.
+ * The Cookie header is a single string of "name=value; name=value; ..."
+ * pairs. We find the first cookie NAMED cv_session and copy out exactly
+ * SESSION_TOK_HEX_LEN bytes after its "=". The name is the whole name: it
+ * starts the header or follows a ';' (spaces or tabs between), so another
+ * cookie whose name ends in it ("xcv_session=") or whose value holds it
+ * ("foo=cv_session=") is never read as the session (sweep F289's
+ * residual; tests_host/test_session_cookie.cpp). Returns false on any
+ * parse failure (header missing, cookie absent, hex too short / too long).
+ * Never sends a response. */
 bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (!req || !hex_out) return false;
   const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Cookie");
@@ -1668,16 +1706,31 @@ bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (httpd_req_get_hdr_value_str(req, "Cookie", buf, sizeof(buf)) != ESP_OK) {
     return false;
   }
-  return cv_session::cookie_hex(buf, hex_out);
-}
-
-/* The live session the request's cookie names, or nullptr. */
-const cv_session::Slot* session_of(httpd_req_t* req) {
-  char hex[cv_session::TOK_HEX_LEN + 1];
-  if (!read_session_cookie_hex(req, hex)) return nullptr;
-  uint8_t raw[cv_session::TOK_BYTES];
-  if (!hex_decode_to(hex, raw, cv_session::TOK_BYTES)) return nullptr;
-  return cv_session::find(g_sessions, session_now_ms(), raw);
+  static const char kName[] = "cv_session=";
+  const char* k = nullptr;
+  for (const char* p = strstr(buf, kName); p; p = strstr(p + 1, kName)) {
+    const char* q = p;
+    while (q > buf && (q[-1] == ' ' || q[-1] == '\t')) --q;
+    if (q == buf || q[-1] == ';') {
+      k = p + (sizeof(kName) - 1);
+      break;
+    }
+  }
+  if (!k) return false;
+  /* Ensure there are exactly SESSION_TOK_HEX_LEN hex chars and the
+   * value is terminated by ';' or end-of-string. Anything else is
+   * a malformed cookie and we reject it. */
+  for (size_t i = 0; i < SESSION_TOK_HEX_LEN; ++i) {
+    const char c = k[i];
+    const bool is_hex = (c >= '0' && c <= '9') ||
+                        (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (!is_hex) return false;
+    hex_out[i] = c;
+  }
+  hex_out[SESSION_TOK_HEX_LEN] = '\0';
+  /* The next char must be the cookie-pair terminator. */
+  const char tail = k[SESSION_TOK_HEX_LEN];
+  return (tail == '\0' || tail == ';' || tail == ' ');
 }
 
 }  /* namespace (anonymous) */
@@ -1685,12 +1738,11 @@ const cv_session::Slot* session_of(httpd_req_t* req) {
 namespace csi_integration {
 
 bool session_validate_cookie(httpd_req_t* req) {
-  return session_of(req) != nullptr;
-}
-
-bool session_validate_owner_cookie(httpd_req_t* req) {
-  const cv_session::Slot* s = session_of(req);
-  return s != nullptr && s->origin == cv_session::Origin::OWNER;
+  char hex[SESSION_TOK_HEX_LEN + 1];
+  if (!read_session_cookie_hex(req, hex)) return false;
+  uint8_t raw[SESSION_TOK_BYTES];
+  if (!hex_decode_to(hex, raw, SESSION_TOK_BYTES)) return false;
+  return find_valid_session(raw);
 }
 
 }  /* namespace csi_integration */
@@ -1704,21 +1756,16 @@ bool cv_session_validate(httpd_req_t* req) {
   return csi_integration::session_validate_cookie(req);
 }
 
-/* api_auth.h's weak hook for the routes that answer a credential (sweep
- * F289): only a session minted beside a served receipt. */
-bool cv_session_validate_owner(httpd_req_t* req) {
-  return csi_integration::session_validate_owner_cookie(req);
-}
-
 namespace csi_integration {
 
-bool session_issue(char* hex_out, size_t out_cap, cv_session::Origin origin) {
-  if (!hex_out || out_cap < cv_session::TOK_HEX_LEN + 1) return false;
-  uint8_t fresh[cv_session::TOK_BYTES];
-  esp_fill_random(fresh, cv_session::TOK_BYTES);
-  cv_session::issue(g_sessions, session_now_ms(), fresh, origin);
-  hex_encode(fresh, cv_session::TOK_BYTES, hex_out);
-  cv_session::wipe(fresh, sizeof(fresh));
+bool session_issue(char* hex_out, size_t out_cap) {
+  if (!hex_out || out_cap < SESSION_TOK_HEX_LEN + 1) return false;
+  SessionSlot* s = pick_session_slot_for_issuance();
+  if (!s) return false;
+  esp_fill_random(s->token, SESSION_TOK_BYTES);
+  s->issued_ms = millis();
+  s->active    = true;
+  hex_encode(s->token, SESSION_TOK_BYTES, hex_out);
   return true;
 }
 
@@ -2552,7 +2599,7 @@ bool pair_token_issue(char* hex_out, size_t out_cap) {
   PairSlot* s = pick_slot_for_issuance();
   if (!s) return false;
   esp_fill_random(s->token, PAIR_TOK_BYTES);
-  s->issued_ms = session_now_ms();
+  s->issued_ms = millis();
   s->used      = false;
   s->active    = true;
   hex_encode(s->token, PAIR_TOK_BYTES, hex_out);

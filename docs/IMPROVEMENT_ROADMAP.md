@@ -57,6 +57,7 @@ survived only if a majority could not. The counts:
 | Landed in wave 17 (PR #1802, website securacv_website#227, mirror securacv-homeassistant#28) | a ninth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items the 2026-10 cleanup and wave 16 filed; it closes none of the rows here and changes no sentence of §2. canary-wap's provisioning receipt and port 80's redirect name it by its `.local` name over the home network, and its dashboard saves the recovery kit after a BOOT-tap sign-in or from Settings (F255, F257); the Lab reads the WAP's flags from its sketch's `build_config.h`, the fleet figures find a WAP by the type it puts on the wire (`canary-wap`, not its `DEVICE_TYPE` constant `canary`, so step 3 of F258 was premised wrong), `firmware/configs/canary-wap/` is deleted, and the emulator stops passing a flag nothing reads (F258, A76); the display's RS-485 and CAN drivers serve the dev playground in their two compile envs, which now carry dev mode (F253); the Lab app's post-flash monitor takes commands and each Lab bench prints its own chip's ROM banner (A67, A59); CI compiles Hub Core for Windows, lints the Lab's scripts for unused bindings and runs the camera wizard's jq cases on jq 1.6 (A68, CI12, HA32); and the spelling lint carries the website's word families (CI9). In their own PRs, both merged on 2026-10-13, the website lifts dark ink on night panels and fixes four leftovers (W22, W23) and the HACS mirror checks its store page's links into this repo (HA31); W31's playground carry lands here and its website half in the website PR (securacv_website#227). F258's figure table moves the canary-display-dash bundle, which CI's pinned emsdk rebuilds on the branch; it was not run here. It files F289-F294, A83-A89, C19, HA34, HA35, W32-W34 and CI13-CI16, among them F289 (a home-network path to the WAP's bearer token without a tap, read from code). Host-tested; the ESP32 compiles are CI's; one carried Home Assistant file changes; nothing ran on a bench. See §3, "Landed in wave 17" |
 | Landed in wave 18 (PR #1802, website securacv_website#228, mirror securacv-homeassistant#29) | a tenth wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking items waves 16 and 17 filed; it closes none of the rows here and changes no sentence of §2. canary-wap keeps a control byte out of its JSON answers through the Bluetooth name and every SSID, joins a network listed with one by its own bytes, and states its name rules in its refusals (F261-F263, F265); both trees' card parser refuses an edited line, POST /api/mqtt/config reads its body whole, and an unconfigured bridge logs no NVS errors (F264, F266, F267); Chirp takes a suppressed chirp out of its table at once, holds a nonce 331 to 662 s, its security suites run the real `chirp_channel.cpp`, and the common C-ABI header carries the v0.2 values (F269-F272); both dashboards show only what the build serves and Export saves what it exported (F273-F276, F278); the canary mark's ration starts at power-on and the nightlight face keeps time by elapsed ms, with an `[orient]` line for every turn (F279-F281, F284, F285); Home Assistant's Chirp Active reads the state word the WAP sends and the app skips a go2rtc stream with an empty name (HA33, HA34); the iPhone moves a renamed WAP's recovery kit onto the address it answers at and reads the Keychain once per screen (A88, A75); each serial monitor offers its own firmware's commands (A85, A86); the Nightlight's bench turns its running glass and each bench tells its board's BOOT story (A79-A83); and Hub Core's Windows job runs clippy and the tests, the figures give the WAP's board its type, a lint finds unused Lab selectors, and every PR runs the HACS store page's link check (A87, A89, CI15, CI16, D13, C19, HA35). In its own PR the website's night theme passes a rendered contrast check (W32-W34 and CI13's website half), and the mirror's lint names its one spelling list (CI13's mirror half); both merged on 2026-10-14. mark3 moves the emulator bundles of all six display flavors and A79 the nightlight's; CI's pinned emsdk rebuilds them on the branch after the push, and the rebuilt dist was not run here. It files F295-F311, A90-A101, HA36-HA39, W35-W39, C20 and D14. Host-tested; the ESP32 compiles, the Swift build and cargo are CI's; four carried Home Assistant files change; nothing ran on a bench. See §3, "Landed in wave 18" |
 | Landed in wave 19 (PR #1802, website securacv_website#228, mirror securacv-homeassistant#29) | an eleventh wave on the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)), taking older open items, from the first sweep's F20, F21, F34 and F36 to wave 17's F290 and F291; it closes none of the rows here, answers row 35's residual (the WAP release rows' core), adds a sentence to row 1 (the root image mints viewer tokens), and changes one clause of §2's Wi-Fi sensing row (F90 and F132 decided). Every job in the three repos that floated on `ubuntu-latest` runs on `ubuntu-24.04` ahead of that label's move to 26.04 on 2026-10-19, with rule R11 holding the monorepo to it, the WAP's release rows build on the sketch's esp32 core 3.3.8 and the LVGL 9 rows on exactly 9.5.0, and a static gate holds the kernel's detector backends behind default-off features (CI11, F247; F21 and F34 in part); the hourly ceiling never refuses a refresh and keeps its last slot for a change of state, and the Tuning Lab's reset removes the row (F90, F132, F82, F122, F127); a PlatformIO Canary in an opera refuses a join, sends one heartbeat after it pairs and after a boot, lists its members from the published view, and the wizard's timeouts say what they found (F136's PlatformIO half, F162, F199, F215); another Canary's beacon or Chirp cannot win the Scout's pairing window (F36 and F20 in part); the 4.3B fieldbus station reads a Modbus exception at once and recovers a bus-off controller, and the wide Join card's reach is held (F291, F290, F155); the Sense's count follows its debounced presence and the Vision's flavor file keeps only what something reads (F131, F182); a Canary's Last event names its summaries and the MQTT test plan says its ids need Home Assistant 2025.10 (HA28, HA29); the root image mints Witness Wall viewer tokens and the release docs say the kernel has never been released (A18 in part, CI10); and the Lab groups enclosure knobs as the builder does (C10, wave 3). The planner found W8, W9 and C1 already done. Nothing in it moves the emulator dist. It files F312-F324, A102-A110, HA40-HA43, C21-C24 and CI17-CI19. Host-tested; the ESP32 compiles, cargo and the image build are CI's; two more carried Home Assistant files change; nothing ran on a bench. See §3, "Landed in wave 19" |
+| Landed after wave 19 (PR #1822 and PR #1832) | F289 and its follow-up, from the 2026-09-20 sweep's backlog ([`repo_todo_sweep_2026-09.md`](audit/repo_todo_sweep_2026-09.md)); they close none of the rows here and change no sentence of §2. #1822 takes canary-wap's provisioning receipt and pairing QR off the landing page's session: the receipt opens to a real bearer, the BOOT tap or a setup-door claim, and the QR to the bearer alone, and the session stays as deliberate LAN posture for the dashboard's own routes (F289). #1832 hardens what that left, in the same bearer-only design: a session's save that would send the stored MQTT broker password to a new broker needs the bearer (F325), the session cookie is `Secure` over HTTPS and read by its whole name (F326, F327), the route check holds every answer that carries a secret to a bearer-only gate (F328), a wrong bearer on the receipt is a strike under the lockout, an empty device token takes no bearer and the lockout's `Retry-After` cannot wrap (F329, F331, F332), and the sign-in names no token a cookie-only page never held (F330). It files F333-F349, among them a QR code that moves the broker with the kept password (F333) and the claim and the tap spent by whoever asks first (F342), and records #1802's dependency advisories in the CHANGELOG. Nothing in it moves the emulator dist. Host-tested; the ESP32 compiles are CI's; nothing ran on a device or in a browser. See §3, "Landed after wave 19" |
 | Still open | 0 in full, 1 in part (21's Parametrize leftovers — the 7" frame's panel record, the render-plan package's selector half and the C6 manifest's `figure`; see row 21 and §4); row 20 carries one new open clause (a signed head for the sealed-log document, without which the Wall's "Verified" cannot say the tail is current or complete). Decisions taken and waiting on the maintainer's confirmation: row 30's version spread and the witness chain's uptime-bucket floor (`TIME_BUCKET_MS`, widened to the ten-minute grid; §3, "Landed in wave 4"), both decided on 2026-09-22 and landed in PR #1704; the two wave-5 questions, landed in PR #1703 — the render-plan package's Lab-card half (option B; the selector half, option A, is not built) and `canary-local/devices/registry.json`'s hand-typed `body_mm` (retired and derived; row 21); and, landed in PR #1704, the sidecar's bind (option (3), row 1) and the Wall's viewer token (option (a), row 20) |
 
 "Landed" means the change is in a PR and its local checks pass. The firmware
@@ -1596,6 +1597,18 @@ carried Home Assistant files change (HA33's sensor, its new test and two tests
 it updates), so the HACS mirror needs a carry after #1802 merges. Nothing ran
 on a bench or in a running Home Assistant.
 
+*Added 2026-10-19 (#1832's ledger):* a twelfth change shipped in this wave
+without a line here, make deps (sweep F286, ticked on main by the post-#1802
+verification, #1833). Both host-test Makefiles take each suite's headers from
+its own compile (`-MMD -MP` on every compile, `$(call with_deps, ...)` for a
+recipe that compiles several sources, the dependency files read back after
+`all` with an empty rule for every source they name), so a header edit,
+`arduino_globals.h` included, rebuilds every suite that reads it;
+`test_vision_core_make_deps.py` (six cases) holds every compile of both trees
+to `g++ -MM`. At integration the canary-wap Chirp suites, whose recipes
+compile `airtime_governor.cpp` beside the test, were wrapped in `with_deps`
+too. Host-tested; CI builds fresh, so no CI result moved.
+
 ### Landed in wave 19
 
 A nineteenth pass on 2026-10-14 (monorepo PR #1802, with the website PR
@@ -1684,6 +1697,53 @@ reviewer with the secret still unset; F38 now says F59 (#1749) carried
 Home Assistant files change (HA28's `sensor.py` and its new test), so the
 mirror's carry after #1802 merges takes six files. Nothing ran on a bench or
 in a running Home Assistant.
+
+
+### Landed after wave 19
+
+Two PRs after #1802 worked F289, the home-network path to canary-wap's bearer
+token and SoftAP password that wave 17 filed. Neither closes a row above or
+changes a sentence of §2.
+
+- **F289's decision (PR #1822, merged 2026-10-18).** The landing page's
+  24-hour `cv_session` stays as deliberate LAN posture for the dashboard's own
+  routes; the routes that carry a secret take a real `Authorization: Bearer`
+  (the receipt also the BOOT tap or a setup-door claim), never the cookie
+  (`api_auth_bearer_valid()` and `api_auth_check_bearer()` in `api_auth.h`).
+  Host-tested (`test_receipt_grant.cpp`, 252 checks at merge); the compile is
+  CI's; not run on a device.
+- **Its follow-up (PR #1832, sweep F325-F332).** The residual hardening in
+  #1822's design; an earlier port of a different design, with session origins
+  and owner sessions, was superseded and not ported. A session's `POST
+  /api/mqtt/config` that keeps the stored broker password while it moves the
+  host, port, user, TLS mode or CA gets `403 password_needed`, and the bearer
+  moves it (F325). One writer gives the session cookie `Secure` over HTTPS,
+  and the reader takes `cv_session` by its whole name (F326, F327).
+  `check_route_security.py` carries the token, the SoftAP password and the TLS
+  pin to the routes that answer them and holds each answer to a bearer-only
+  gate, the broker save to its bearer refusal and each module's copy of the
+  token to its keepers (F328). The receipt's bearer grant counts a wrong
+  bearer as a strike and answers a held one the lockout's `429`, the claim and
+  the tap never held (F329); an empty device token takes no bearer (F331) and
+  the lockout's `Retry-After` cannot wrap (F332); the sign-in on a cookie-only
+  page names no token (F330). Host-tested (`test_mqtt_reinit.cpp` 877 checks,
+  `test_receipt_grant.cpp` 536, the new `test_session_cookie.cpp` 81,
+  `recovery_kit.test.js` 32 and `wizard_logic.test.js` 38 tests, and the route
+  check's 21 planted fixtures); the ESP32 compiles are CI's; three U1 rows in
+  `hardware_verification_checklist.md` and two in `magic_pairing.md` §9 wait
+  for a bench. Files F333-F349: the QR re-point of the broker, the broker link
+  a host on the network can answer for, the vault re-key, the servers after a
+  failed provisioning, the HTTPS cookie's name and HSTS, the flagship's route
+  check and receipt, the other silent bearer compares, the strike a stale
+  token still counts when the tap serves it, the claim and tap race, the one
+  backoff for every caller, the landing's missing Host check, Forget Wi-Fi's
+  re-armed setup door, the Bluetooth passkey and mesh code, 32-bit time, and
+  two review nits.
+
+The ledger pass of #1832 also leaves dated notes where #1802's merge with main
+(2026-10-18) moved five Done texts (F262, F227, F96, F111, F138) and where
+F286 moved F229's, and records in the CHANGELOG the dependency advisories
+#1802 took. Nothing ran on a bench or in a browser.
 
 
 ### The documentation wave

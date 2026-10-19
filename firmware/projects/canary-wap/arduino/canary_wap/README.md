@@ -195,6 +195,10 @@ same way; no sketch change is needed.)
 - No frame storage — camera peek is positioning only
 - API token derived via HKDF (never stored in plaintext)
 - Device-unique AP password derived from the device private key (HMAC, domain-separated)
+- Over the network, the API token and the AP password leave the device only in the provisioning receipt (a bearer, a setup-door claim or a BOOT tap) and the pairing QR (a bearer); the dashboard's session cookie buys neither. The serial console prints the same receipt at every boot, which takes physical access to the USB port
+- A wrong bearer on the provisioning receipt counts toward the same lockout as every admin route; the lockout never holds back the setup-door claim or the BOOT tap
+- The MQTT broker password is write-only, and a save that keeps it while changing where it goes (the broker host, port, user or encryption, or any CA) takes the bearer: the dashboard's session alone gets `403 password_needed`, and the `/mqtt` page asks for the password again
+- The dashboard's session cookie (`cv_session`) is `HttpOnly` and `SameSite=Strict`, and `Secure` when it is set over HTTPS (the first-boot setup is plain HTTP and sets it without)
 - Optional TLS with self-signed certificate
 
 ## File Structure

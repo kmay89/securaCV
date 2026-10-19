@@ -1675,7 +1675,12 @@
   runway from the spend (`provisioning_logic::claim_spent_reboot_deadline`
   — set, not floored), so the WAP is on https ~15 s after "Paired". The
   port-80 redirect builds its `Location` from the request's `Host` (else
-  the STA address or the `.local` name), never the SoftAP address. The
+  the STA address or the `.local` name), never the SoftAP address
+  (amended 2026-10-19: since F255 the fallback is `receipt_authority.h`'s
+  choice — the SoftAP address for a caller on the setup network, else the
+  `.local` name, or the STA's own address when the device has no name — and the `Host` is kept only when it is an IP literal or
+  one of the device's own names; the post-#1802 verification settled that
+  after #1802's merge had kept no `Host` at all). The
   wizard's idle restart is not due while the door is open
   (`wizard_restart_due`; the door's window bounds the hold). Verified, not
   changed: a door join already leaves first-boot mode correctly — `loop()`
@@ -2464,13 +2469,21 @@
 - **Fix:** `receipt_authority.h` (pure): the SoftAP address only for a
   bearer or BOOT-tap request whose socket's local address is the SoftAP
   address, or while the STA holds no address; otherwise the `.local` name
-  (the STA's address with no name); a claim keeps its `.local` contract.
+  (the STA's address with no name); a claim keeps its `.local` contract
+  (amended 2026-10-19: in every network state, the STA down included — the
+  first cut sent a claim spent with the STA down to the SoftAP address,
+  against #1804's rule and `magic_pairing.md` §3.5, and the post-#1802
+  verification put the contract back).
   The sketch reads the local address with `httpd_req_to_sockfd()` +
   `getsockname()` through the same IPv4-mapped unwrap as the flagship, and
   a socket that cannot say falls back to the `.local` name while the STA is
   up, the one answer every home-network reader can use (sweep F255). Port
   80's redirect to https made the same choice for every caller and now asks
-  the same header. An address that reads 0 is never named: on
+  the same header (amended 2026-10-19: with the request's `Host` in front of
+  it when it is an IP literal or one of the device's own names, and the
+  256-byte `Location` with its root fallback restored from #1804; a foreign
+  `Host` is refused and falls back to the header's choice). An address that
+  reads 0 is never named: on
   Arduino-ESP32 core 3.x `WiFi.softAPIP()` reads `0.0.0.0` once
   `wifi_drop_ap()` has released the AP netif, which is an installed WAP's
   steady state, so a test that only ever feeds the configured
@@ -2479,8 +2492,98 @@
   (every grant and the redirect on the SoftAP, on the STA, with the STA
   down and with the SoftAP dropped, beside the old rule; the unwrap held to
   `provisioning_gate.h`'s; the sketch's glue compared token for token with
-  its comments removed). The lwIP glue is built only by CI; not run on a
-  device.
+  its comments removed; since 2026-10-19 the kept and refused Hosts, the
+  Location's root fallback and the claim in every state). The lwIP glue is
+  built only by CI; not run on a device.
+- **Date learned:** 2026-10
+
+### A session any LAN host can mint is a sign-in, not a grant for the secret it was minted without
+- **What happened:** canary-wap's dashboard landing page mints a one-tap
+  pairing link for whoever loads `/`, and the tap becomes a 24-hour
+  `cv_session` cookie — deliberate: on the home network the dashboard treats
+  the LAN as its boundary (the 2026-07 audit's "Trust-on-LAN", MEDIUM).
+  `api_auth_check()` and `api_auth_check_optional()` took that cookie as an
+  API credential so a signed-in browser never had to retype the token, and
+  `GET /api/provisioning-receipt` used the optional check as its first
+  grant, `GET /api/pairing-qr` the full one. So the two answers that carry
+  the bearer token itself (and the SoftAP password and the TLS pin) were
+  reachable with the session any host on the LAN could mint: the BOOT tap
+  the receipt exists to gate, bypassed by a page load (sweep F289, read from
+  the code).
+- **Root cause:** one credential check for two different classes of route.
+  A session that stands in for the token on the dashboard's reads and
+  writes is a convenience the token's holder is entitled to; on a route
+  whose answer IS the token, the session has to prove the caller already
+  holds what the route hands out, and a session minted for any LAN host
+  proves only presence on the LAN. The same shape as the display's
+  per-boot CSRF token above: what a LAN caller can read is not what
+  authenticates the one thing the LAN must not reach.
+- **Fix:** `api_auth.h` splits each check into the cookie short-circuit and
+  a bearer-only body (`api_auth_bearer_valid()`, `api_auth_check_bearer()`:
+  the same constant-time compare, lockout and 401/403/429). The receipt's
+  first grant and the pairing QR take the bearer-only halves; every other
+  route keeps the wrappers. The receipt's tap and claim grants are
+  unchanged, so a cookie-only browser gets the refusal a bare caller gets
+  and the dashboard's sign-in offers the recovery kit through the tap
+  (amended 2026-10-19: the receipt's first grant is now
+  `api_auth_bearer_grant()`, the same header-only compare under the
+  lockout. The silent `api_auth_bearer_valid()` had made the receipt the
+  one route where a wrong token cost nothing, and a compare that records
+  nothing is a guessing oracle beside a lockout. A wrong bearer is now one
+  strike, and while the backoff runs none is compared (429). The claim and
+  the tap are never held by it).
+- **Regression check:** `tests_host/test_receipt_grant.cpp` (in `make run`)
+  runs the real `api_auth.h` and both handlers cut out of the sketch: a
+  cookie alone, and beside a wrong bearer, refused on both routes; a
+  bearer, the tap and the claim served; and a scan of the sketch's text
+  that names every line writing the token or the AP password and holds the
+  HTTP writers to the two handlers. `check_route_security.py` knows the
+  bearer-only gates as markers. Rule for the next route: before a route
+  answers a credential, ask what minted the credential it accepts — if any
+  LAN host could mint it, it is not a grant for that answer.
+- **Date learned:** 2026-10
+
+### A secret the device keeps is also sent wherever the device is told to send it
+- **What happened:** canary-wap's broker password was write-only (`GET
+  /api/mqtt/config` answers `password_set`, never the password), so after
+  sweep F289 it looked out of the landing session's reach. But `POST
+  /api/mqtt/config` takes that session, and a body with no `"password"`
+  kept the stored one while it changed the host, port, user, TLS mode or
+  CA. The next reconnect opened a client to the caller's own listener and
+  handed it the stored user and password. Any host on the home network
+  could read the secret without any route ever answering it (the F289
+  follow-up, shown by the re-init host test's fake client recording the
+  password it was configured with). The flagship's `credential_carry` had
+  refused the same carry to a new host or port since wave 7 (#1691); the WAP's
+  handler had no such rule.
+- **Root cause:** "write-only" was checked on the answer and not on the
+  destination. Changing where a kept secret goes is a read of that secret
+  by whoever controls the new destination, so the gate on a re-point has
+  to be the gate on the secret, not the gate on the settings page.
+- **Fix:** `handle_config_post()` marks a save that moves the password (a
+  new host, port, user or TLS mode, or any CA sent) as each field is
+  written, and when it keeps a non-empty stored password and moves it, it
+  takes only the bearer (`bearer_authorized()`: a non-empty token and
+  `api_auth_bearer_valid()`). Otherwise it answers `403 password_needed`
+  before anything is saved, with this frame's copy of the password wiped,
+  and the `/mqtt` page puts the cursor in the password field. First boot
+  (nothing stored), a save that sends the password and an ordinary save
+  are not asked.
+- **Regression check:** `tests_host/test_mqtt_reinit.cpp` (in `make run`)
+  drives the real `csi_mqtt.cpp`: ten move bodies on a session are refused
+  and no client is ever given the stored password for another URI; the
+  saves that keep it home, the wizard's shape and first boot are served;
+  the bearer moves it. `check_route_security.py` holds every answer that
+  carries a secret (the token, the SoftAP password, the TLS pin) to a
+  bearer-only gate, never an any-session one; it lets only the functions
+  that store, load or use the broker password name it, and requires the
+  save to sit behind a returning bearer refusal. That half is a check of
+  the code's shape: what counts as a move is the host test's. Rule for the
+  next setting:
+  for each stored secret, list every field that decides where it is sent.
+  Each of those fields is as sensitive as the secret. The QR provisioning
+  re-point (`qr_scan_task_fn`) has the same shape and is not covered by
+  this fix.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
