@@ -625,33 +625,31 @@ test("CI runs each core probe on the dist, then on this tree's sources even afte
 // LAB_CORES=native in a step of its own, straight after the native page
 // tests, whenever the dist step ran. Its own step, so its red (the first call
 // where the native build and the committed dist differ) is not read as the
-// native page tests' (the sources pass the page tests).
+// native page tests' (the sources pass the page tests). The step is read as
+// the runner reads it (native/ci_steps.js): a comment that says
+// "LAB_CORES: native", a "|| true" after the command, a continue-on-error or
+// a missing recorder line each fail here.
 test("CI runs this file under LAB_CORES=native in its own step, after the native page tests, even after a red dist step", () => {
-  const wf = fs.readFileSync(join(REPO, ".github/workflows/canary-local.yml"), "utf8");
-  const from = wf.indexOf("\n  logic-tests:\n");
-  assert.ok(from >= 0, "canary-local.yml has the logic-tests job");
-  const rest = wf.slice(from + 1);
-  const end = rest.search(/\n {2}[\w-]+:\n/);   // the next job, or the file's end
-  const steps = (end < 0 ? rest : rest.slice(0, end + 1))
-    .split(/\n {6}- name: /).slice(1).map((chunk) => {
-      const nl = chunk.indexOf("\n");
-      return { name: chunk.slice(0, nl), body: chunk.slice(nl + 1) };
-    });
-  const ran = "if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}";
-  const dist = steps.findIndex((s) => s.body.includes("id: dist-node-tests"));
-  assert.ok(dist >= 0 && steps[dist].body.includes("node --test canary-local/tests/native_cores.test.js\n"),
-    "the dist step runs this file in its default mode");
-  const pages = steps.findIndex((s) => s.body.includes("LAB_CORES: native") && s.body.includes("node --test canary-local/tests/vision.test.js"));
+  const ci = require("./native/ci_steps.js");
+  const { steps } = ci.job("logic-tests");
+  const runs = (st, file) => (st.run || "").split("\n").includes(`node --test canary-local/tests/${file}`);
+  const dist = steps.findIndex((st) => st.keys.id === "dist-node-tests");
+  assert.ok(dist >= 0 && runs(steps[dist], "native_cores.test.js"), "the dist step runs this file in its default mode");
+  assert.ok(!steps[dist].env.LAB_CORES, "the dist step runs it on the committed dist");
+  const pages = steps.findIndex((st) => st.env.LAB_CORES === "native" && runs(st, "vision.test.js"));
   assert.ok(pages > dist, "the native page-test step follows the dist step");
-  assert.ok(!steps[pages].body.includes("native_cores.test.js"), "the native page-test step keeps its own meaning");
-  const mine = steps.filter((s) => s.body.includes("LAB_CORES: native") && s.body.includes("canary-local/tests/native_cores.test.js"));
+  assert.ok(!runs(steps[pages], "native_cores.test.js"), "the native page-test step keeps its own meaning");
+  const mine = steps.filter((st) => st.env.LAB_CORES === "native" && (st.run || "").includes("native_cores.test.js"));
   assert.strictEqual(mine.length, 1, "one step runs this file under LAB_CORES=native");
-  const at = steps.indexOf(mine[0]);
-  assert.strictEqual(at, pages + 1, "it is the step after the native page tests");
-  assert.match(mine[0].body, /\n {8}run: node --test canary-local\/tests\/native_cores\.test\.js(?:\n|$)/, "it runs this file alone");
-  assert.ok(mine[0].body.includes(ran), "it runs whenever the dist step ran, red or green");
-  assert.ok(mine[0].body.includes("PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads"), "its reads are recorded");
-  assert.match(mine[0].name, /red = the dist is stale/, "its name says what its red means");
+  const step = mine[0];
+  assert.strictEqual(steps.indexOf(step), pages + 1, "it is the step after the native page tests");
+  assert.strictEqual(step.run, "node --test canary-local/tests/native_cores.test.js", "it runs this file alone, and its exit status is the step's");
+  assert.strictEqual(step.keys.if, ci.RAN, "it runs whenever the dist step ran, red or green");
+  assert.ok(!("continue-on-error" in step.keys), "its red stays red (no continue-on-error)");
+  assert.deepStrictEqual(Object.keys(step.keys).sort(), ["env", "if", "name", "run"], "the step is its name, if:, env and command, nothing else");
+  assert.deepStrictEqual(step.env, { LAB_CORES: "native", ...ci.RECORDER },
+    "LAB_CORES=native and the path-filter recorder's three lines (the dist step also records this file, so the gate cannot tell an unarmed step)");
+  assert.match(step.name, /red = the dist is stale/, "its name says what its red means");
 });
 
 // ── LAB_CORES=native only: the native core next to its committed dist ──────

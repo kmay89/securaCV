@@ -51,29 +51,61 @@ const wasmCore = (name) => {
 const hostCore = async (name) => cores.instance(await cores.build(cores.buildPlan(name)));
 
 // CI's half, held with no compiler: the page logic job installs the sysroot
-// for clang 18 and runs this file with CORES_WASM32=require, whenever the
-// dist step ran, red or green, as it runs vision_wasm32.test.js.
+// for clang 18 through .github/actions/setup-wasi-sysroot and runs this file
+// with CORES_WASM32=require, whenever the dist step ran, red or green, as it
+// runs vision_wasm32.test.js. The steps are read as the runner reads them
+// (native/ci_steps.js), so a comment that says "CORES_WASM32: require", a
+// "|| true" after the command or a continue-on-error fails here; and both
+// steps carry a timeout (an apt mirror that stalls, a wasm32 call that never
+// returns), so neither can use the job's whole budget.
 test("CI installs the WASI sysroot and runs this file with CORES_WASM32=require (sweep A58)", () => {
-  const wf = fs.readFileSync(join(REPO, ".github/workflows/canary-local.yml"), "utf8");
-  const step = (name) => {
-    const at = wf.indexOf(`\n      - name: ${name}\n`);
-    assert.ok(at >= 0, `canary-local.yml has the step "${name}"`);
-    const body = /\n {6}- name: [^\n]*\n((?: {8}[^\n]*\n|\s*\n)+)/.exec(wf.slice(at))[1];
-    return { at, body };
+  const ci = require("./native/ci_steps.js");
+  const { keys: jobKeys, steps } = ci.job("logic-tests");
+  const named = (name) => {
+    const at = steps.findIndex((st) => st.name === name);
+    assert.ok(at >= 0, `canary-local.yml's logic-tests job has the step "${name}"`);
+    return { at, step: steps[at] };
   };
-  const ran = "if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}";
-  const install = step("WASI sysroot for the runner's clang 18 (Ubuntu's wasi-libc, libc++, libc++abi, compiler-rt)");
-  for (const pkg of ["wasi-libc", "libc++-18-dev-wasm32", "libc++abi-18-dev-wasm32", "libclang-rt-18-dev-wasm32"]) {
-    assert.match(install.body, new RegExp(`apt-get install [^\\n]*\\b${pkg.replace(/\+/g, "\\+")}\\b`), `the install step installs ${pkg}`);
+  const install = named("WASI sysroot for the runner's clang 18 (Ubuntu's wasi-libc, libc++, libc++abi, compiler-rt)");
+  const run = named("Whole Vision and WAP audio cores as wasm32-wasi, call for call against g++ (the runner's clang 18 + wasi-libc, not emscripten)");
+  assert.strictEqual(run.at, install.at + 1, "the cores step comes straight after the install");
+  for (const [what, { step }] of [["the install step", install], ["the cores step", run]]) {
+    assert.strictEqual(step.keys.if, ci.RAN, `${what} runs whenever the dist step ran`);
+    assert.ok(!("continue-on-error" in step.keys), `${what}'s red stays red (no continue-on-error)`);
+    assert.strictEqual(step.keys["timeout-minutes"], "5", `${what} has its own 5-minute timeout, under the job's ${jobKeys["timeout-minutes"]}`);
   }
-  assert.ok(install.body.includes(ran), "the install step runs whenever the dist step ran");
-  const run = step("Whole Vision and WAP audio cores as wasm32-wasi, call for call against g++ (the runner's clang 18 + wasi-libc, not emscripten)");
-  assert.ok(run.at > install.at, "the cores step comes after the install");
-  assert.ok(run.body.includes(ran), "the cores step runs whenever the dist step ran");
-  for (const line of ["CORES_WASM32: require", "WASM32_CLANGXX: clang++-18", "run: node --test canary-local/tests/cores_wasm32.test.js",
-    "PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads"]) {
-    assert.ok(run.body.includes(line), `the cores step has ${line}`);
-  }
+  assert.deepStrictEqual(Object.keys(install.step.keys).sort(), ["if", "name", "timeout-minutes", "uses", "with"]);
+  assert.strictEqual(install.step.keys.uses, "./.github/actions/setup-wasi-sysroot", "the install is the composite action (CI.md R10)");
+  const major = install.step.with["clang-major"];
+  assert.deepStrictEqual(install.step.with, { "clang-major": "18" }, "for clang 18");
+  assert.deepStrictEqual(Object.keys(run.step.keys).sort(), ["env", "if", "name", "run", "timeout-minutes"]);
+  assert.strictEqual(run.step.run, "node --test canary-local/tests/cores_wasm32.test.js", "it runs this file alone, and its exit status is the step's");
+  assert.deepStrictEqual(run.step.env, { CORES_WASM32: "require", WASM32_CLANGXX: `clang++-${major}`, ...ci.RECORDER },
+    "CORES_WASM32=require, the clang the sysroot is for, and the path-filter recorder's three lines");
+  // clang 18 is ubuntu-24.04's default clang. When the job moves image, the
+  // action's clang-major and WASM32_CLANGXX move with it, together.
+  assert.strictEqual(jobKeys["runs-on"], "ubuntu-24.04",
+    `the job left ubuntu-24.04: move clang-major (${major}) and WASM32_CLANGXX to the new image's clang, then this pin`);
+
+  // The action: Ubuntu's four packages for that clang, exactly wasi.js's
+  // list, through an apt that retries a dropped fetch and gives up on a
+  // stalled one (setup-libseccomp's guards).
+  const action = fs.readFileSync(join(REPO, ".github/actions/setup-wasi-sysroot/action.yml"), "utf8")
+    .split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  assert.match(action, /\n {2}clang-major:\n(?: {4}[^\n]*\n)* {4}required: true\n/, "the action takes clang-major, required");
+  assert.match(action, /\n {6}env:\n {8}CLANG_MAJOR: \$\{\{ inputs\.clang-major \}\}\n/, "and hands it to its shell as CLANG_MAJOR");
+  assert.match(action, /\n {8}set -euo pipefail\n/);
+  assert.match(action, /\n {8}apt=\(sudo env DEBIAN_FRONTEND=noninteractive apt-get\n {13}-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30\)\n/,
+    "apt retries a dropped fetch and gives up on a stalled one");
+  const script = /\n {6}run: \|\n((?: {8}[^\n]*\n?)*)/.exec(action);
+  assert.ok(script, "the action's step runs a script");
+  const aptLines = script[1].split("\n").filter((l) => /apt-get|\$\{apt\[@\]\}/.test(l)).map((l) => l.trim());
+  assert.deepStrictEqual(aptLines.map((l) => l.split(" ").slice(0, 2).join(" ")), ["apt=(sudo env", '"${apt[@]}" update', '"${apt[@]}" install'],
+    "every apt call goes through the guarded command, update then install");
+  const words = aptLines[2].split(/\s+/).slice(2);
+  assert.deepStrictEqual(words.filter((w) => w.startsWith("-")), ["-y", "--no-install-recommends"]);
+  assert.deepStrictEqual(words.filter((w) => !w.startsWith("-")).map((w) => w.replace(/^"|"$/g, "")).sort(),
+    Object.values(wasi.packages("${CLANG_MAJOR}")).sort(), "it installs exactly the packages wasi.js names when a part is missing");
 });
 
 test("CORES_WASM32 takes \"require\" or nothing, and a missing part is named, never guessed", () => {

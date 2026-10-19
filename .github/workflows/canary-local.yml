@@ -239,6 +239,8 @@ on:
       - "scripts/path_filter_reads/**"
       - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
+      # the logic job's WASI sysroot step (cores_wasm32.test.js holds it)
+      - ".github/actions/setup-wasi-sysroot/**"
   pull_request:
     paths:
       - "canary-local/**"
@@ -469,6 +471,8 @@ on:
       - "scripts/path_filter_reads/**"
       - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
+      # the logic job's WASI sysroot step (cores_wasm32.test.js holds it)
+      - ".github/actions/setup-wasi-sysroot/**"
 
 permissions:
   contents: read
@@ -637,15 +641,19 @@ jobs:
         # Sweep A58. The next step builds whole cores for wasm32-wasi, which
         # needs what the image's clang has no copy of for that target: a C
         # library and its headers, libc++ and libc++abi, and compiler-rt's
-        # wasm32 builtins. These are noble's packages, built for clang 18
-        # (the clang the next step pins), about 3 MB from the Ubuntu archive;
-        # no emsdk, nothing fetched from anywhere else. Same `if:` as the
-        # steps above, so the next step can say what is missing if this one
-        # fails.
+        # wasm32 builtins. The action installs noble's packages for clang 18
+        # (the clang the next step pins; the two move together), about 3 MB
+        # from the Ubuntu archive; no emsdk, nothing fetched from anywhere
+        # else. Its apt retries a dropped fetch and gives up on a stalled
+        # one, and the step timeout bounds the rest, so a hung mirror fails
+        # here in minutes instead of using the job's 20. Same `if:` as the
+        # steps above, so the next step still runs and says what is missing
+        # if this one fails or times out.
         if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends wasi-libc libc++-18-dev-wasm32 libc++abi-18-dev-wasm32 libclang-rt-18-dev-wasm32
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-wasi-sysroot
+        with:
+          clang-major: "18"
       - name: Whole Vision and WAP audio cores as wasm32-wasi, call for call against g++ (the runner's clang 18 + wasi-libc, not emscripten)
         # Sweep A58. vision_wasm32.test.js, two steps up, builds the Vision
         # box pipeline alone, freestanding. tests/native/wasi.js builds each
@@ -663,8 +671,15 @@ jobs:
         # CORES_WASM32=require makes a missing tool or sysroot part a failure
         # that names it, not a skip; WASM32_CLANGXX pins the clang the
         # packages above are built for. It reads the sources, not the dist,
-        # so it runs whenever the dist step ran, red or green.
+        # so it runs whenever the dist step ran, red or green. node:wasi runs
+        # each call to its end with no deadline of its own, so a call that
+        # never returns in wasm32 (a loop bound wrapped by a 32-bit long, the
+        # kind of bug this step hunts) would hang it; the step timeout, several
+        # times the file's usual run (under a minute on a 4-CPU machine), ends
+        # that. Like a red in the steps above, a red here skips the drift
+        # steps below until it is fixed.
         if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        timeout-minutes: 5
         env:
           CORES_WASM32: require
           WASM32_CLANGXX: clang++-18

@@ -74,6 +74,14 @@ function run(cmd, args, input) {
   return r.error ? { ok: false, out: String(r.error) } : { ok: r.status === 0, out: (r.stdout || "") + (r.stderr || "") };
 }
 
+// The Ubuntu packages that ship a WASI sysroot for clang <major>, by part.
+// The page logic job installs these through .github/actions/setup-wasi-sysroot
+// (cores_wasm32.test.js holds the action to this list).
+function packages(major = "<n>") {
+  return { libc: "wasi-libc", libcxx: `libc++-${major}-dev-wasm32`, libcxxabi: `libc++abi-${major}-dev-wasm32`,
+    builtins: `libclang-rt-${major}-dev-wasm32` };
+}
+
 // What a whole core needs past wasm32.js's clang++ and wasm-ld: the sysroot's
 // C library and headers, libc++ and libc++abi, and compiler-rt's wasm32
 // builtins. Each missing part is named with the Ubuntu package that ships it.
@@ -84,19 +92,19 @@ function sysrootMissing(clang, major, sysroot) {
     const p = r.ok ? r.out.trim() : "";
     return p && p !== name && fs.existsSync(p) ? p : null;
   };
-  const n = major || "<n>";
+  const pkg = packages(major || undefined);
   const where = sysroot ? ` under WASI_SYSROOT=${sysroot}` : "";
   const missing = [];
   if (!fileOf("libc.a") || !fileOf("crt1-reactor.o") || !run(clang, [...base, "-x", "c", "-fsyntax-only", "-"], "#include <stdio.h>\n").ok) {
-    missing.push(`the wasm32-wasi C library and headers${where} (Ubuntu: wasi-libc)`);
+    missing.push(`the wasm32-wasi C library and headers${where} (Ubuntu: ${pkg.libc})`);
   }
   if (!fileOf("libc++.a") || !run(clang, [...base, "-x", "c++", "-fsyntax-only", "-"], "#include <map>\n").ok) {
-    missing.push(`libc++ for wasm32-wasi${where} (Ubuntu: libc++-${n}-dev-wasm32)`);
+    missing.push(`libc++ for wasm32-wasi${where} (Ubuntu: ${pkg.libcxx})`);
   }
-  if (!fileOf("libc++abi.a")) missing.push(`libc++abi for wasm32-wasi${where} (Ubuntu: libc++abi-${n}-dev-wasm32)`);
+  if (!fileOf("libc++abi.a")) missing.push(`libc++abi for wasm32-wasi${where} (Ubuntu: ${pkg.libcxxabi})`);
   const rt = run(clang, [...base, "-rtlib=compiler-rt", "-print-libgcc-file-name"]);
   if (!rt.ok || !fs.existsSync(rt.out.trim())) {
-    missing.push(`compiler-rt's wasm32 builtins for ${clang} (Ubuntu: libclang-rt-${n}-dev-wasm32)`);
+    missing.push(`compiler-rt's wasm32 builtins for ${clang} (Ubuntu: ${pkg.builtins})`);
   }
   return missing;
 }
@@ -270,4 +278,4 @@ async function wasmFactory(name, options) {
   return async () => instance(built);
 }
 
-module.exports = { tools, gate, assertTools, required, hostLongBits, variant, buildWasm, wasmFactory, instance, SUPPORT };
+module.exports = { tools, gate, assertTools, required, packages, hostLongBits, variant, buildWasm, wasmFactory, instance, SUPPORT };

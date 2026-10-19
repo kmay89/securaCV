@@ -128,7 +128,12 @@ build and the committed dist answer otherwise. After a core change it means
 the dist is stale, so a core change goes red there as well as in the dist
 step until CI's rebuild lands; with no core change it means the two
 toolchains disagree on that input. It is a separate step so that the native
-step keeps its own answer (the sources pass the page tests).
+step keeps its own answer (the sources pass the page tests). The file's CI
+test reads that step the way the runner does ([`ci_steps.js`](ci_steps.js):
+comments dropped, each key once) and holds its place, its `if:`, its exact
+env (`LAB_CORES` and the path-filter recorder's three lines) and its exact
+command, so a `|| true`, a `continue-on-error` or an env line turned into a
+comment fails it.
 
 ## The Vision pipeline as wasm32, from the sources (`vision_wasm32.test.js`)
 
@@ -225,13 +230,23 @@ version `<n>`: `wasi-libc`, `libc++-<n>-dev-wasm32`,
 point `WASI_SYSROOT` at one (a wasi-sdk's `share/wasi-sysroot`). Where a
 part is missing the tests skip and say which, with the package that ships
 it; `CORES_WASM32=require` makes that a failure instead. CI installs the
-four packages for clang 18 and runs the file in its own step with
-`CORES_WASM32=require` and `WASM32_CLANGXX=clang++-18`, whenever the dist
-step ran. Ubuntu's libc++abi for wasm32-wasi is built without exceptions
-yet its `operator new` still names `__cxa_throw`; the cores build with
+four packages for clang 18 through
+[`.github/actions/setup-wasi-sysroot`](../../../.github/actions/setup-wasi-sysroot/action.yml)
+(its `clang-major` input; apt retries a dropped fetch and gives up on a
+stalled one) and runs the file in its own step with `CORES_WASM32=require`
+and `WASM32_CLANGXX=clang++-18`, whenever the dist step ran. Each of the two
+steps has a 5-minute timeout: a stalled mirror, or a wasm32 call that never
+returns (`node:wasi` sets no deadline of its own), fails in minutes and
+named instead of using the job's whole budget. The file's CI test reads
+both steps the way the runner does ([`ci_steps.js`](ci_steps.js)) and holds
+their `if:`, env, command and timeouts, the action's package list to
+`wasi.js`'s `packages()`, and the job's image (clang 18 is ubuntu-24.04's
+default: when the job moves, the input and `WASM32_CLANGXX` move with it).
+Ubuntu's libc++abi for wasm32-wasi is built without exceptions yet its
+`operator new` still names `__cxa_throw`; the cores build with
 `-fno-exceptions`, as `build.sh`'s em++ calls do, so `wasi_support.cpp`
-defines that pair (weakly) to abort, as emscripten does where a throw would
-be. `node:wasi` prints an experimental-feature warning on Node 22.
+defines that pair to abort, as emscripten does where a throw would be.
+`node:wasi` prints an experimental-feature warning on Node 22.
 
 It is the host's clang and wasi-libc, not emscripten (whose C library is
 its own musl), and it is not the dist. It settles what the sources compute
