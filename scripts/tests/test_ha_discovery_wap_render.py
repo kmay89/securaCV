@@ -367,7 +367,7 @@ class WapDiscoveryRenders(_Record):
 
     @unittest.expectedFailure
     def test_signal_strength_keeps_its_reading_across_a_connect(self):
-        """Handed up (#1832): the connect burst's status carries no rssi, so
+        """Handed up (#1836): the connect burst's status carries no rssi, so
         Signal Strength renders 0 dBm until the loop's next status (30 s or
         longer under power gating). A status without rssi must render
         nothing (Home Assistant then keeps the last reading), or carry it."""

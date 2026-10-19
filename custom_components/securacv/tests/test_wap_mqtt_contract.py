@@ -49,7 +49,7 @@ record is then held to what reads it:
     their keys are held to the keys the sketch writes.
 
 What the record shows that is wrong today is written down as strict xfails,
-each naming its sweep item or handed up (#1832): a test that starts passing
+each naming its sweep item or handed up (#1836): a test that starts passing
 fails until its marker is removed.
 
 Host-tested: the harness is the firmware's code compiled with g++ over stubs,
@@ -681,7 +681,7 @@ DEFAULTED_GAPS = {
         "the connect burst's status and the last will carry no rssi: after the "
         "will the entity is unavailable, so the default is not shown; after a "
         "connect Signal Strength reads 0 dBm until the loop's next status "
-        "(handed up (#1832))"
+        "(handed up (#1836))"
     ),
 }
 
@@ -855,7 +855,7 @@ def test_python_yml_runs_this_suite_on_each_file_the_harness_compiles(record):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): the first events publish creates Last Event and is not "
+    reason="handed up (#1836): the first events publish creates Last Event and is not "
     "shown by it; events are not retained, and the entity subscribes after the delivery",
 )
 def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
@@ -870,7 +870,7 @@ def test_the_first_event_is_shown_by_the_entity_it_creates(record, monkeypatch):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): six discovery entities (Presence, State, Confidence, Motion "
+    reason="handed up (#1836): six discovery entities (Presence, State, Confidence, Motion "
     "Score, Breathing Score, Breathing Rate) read the events topic, which is not retained",
 )
 def test_every_discovery_entity_finds_its_state_after_a_restart(record):
@@ -902,7 +902,7 @@ def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch)
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): the device's sw_version comes from the status topic, "
+    reason="handed up (#1836): the device's sw_version comes from the status topic, "
     "and a canary-wap's status carries no firmware_version (its health does)",
 )
 def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
@@ -914,7 +914,7 @@ def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): Memory Critical reads the health's free_heap (default "
+    reason="handed up (#1836): Memory Critical reads the health's free_heap (default "
     "100000); a canary-wap's health carries memory_free",
 )
 def test_memory_critical_turns_on_when_the_wap_is_low_on_memory(record, monkeypatch):
@@ -952,7 +952,7 @@ def test_memory_critical_turns_on_when_the_wap_is_low_on_memory(record, monkeypa
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): created for a canary-wap, reads nothing it sends",
+    reason="handed up (#1836): created for a canary-wap, reads nothing it sends",
 )
 def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key, topic):
     """The entity is not created for a WAP, or its state moves when the WAP's
@@ -971,7 +971,7 @@ def test_an_entity_a_wap_gets_moves_with_what_it_sends(record, monkeypatch, key,
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="handed up (#1832): the HomeKit projection maps no event type a canary-wap "
+    reason="handed up (#1836): the HomeKit projection maps no event type a canary-wap "
     "sends (its presence vocabulary: active, subtle, quiet, together, empty)",
 )
 def test_a_wap_presence_event_asserts_motion_and_occupancy(record, monkeypatch, key):
