@@ -503,7 +503,8 @@ sketch, with one table for every file of the sketch (`g_auth_table` in
 `api_auth.h`); the flagship reads it by path, its table held by
 `AuthManager` (sweep F340). It tracks 8 addresses, each with its own
 backoff: 2 s after the first strike, doubling, never more than 60 s, and
-cleared once that address sends no wrong token for a minute. An address that finds no free
+cleared a minute after that address's last counted strike (a bearer sent
+while it is held is neither compared nor counted). An address that finds no free
 slot strikes one shared overflow slot, which holds every address without a
 slot of its own while it runs. The key is the request's socket peer, read by
 `request_peer_key()` (`getpeername`, never a header such as
@@ -519,8 +520,10 @@ once.
 Its limits. Clients behind one address share a backoff: a NAT, a reverse
 proxy, a VPN router, or one Mac running both the dashboard and the app. At
 most nine backoffs run at once, so a host with many addresses gets about 30
-guesses a minute, against a token of about 184 bits (32 characters of a
-54-character alphabet). Not closed by it:
+guesses a minute, against a token of about 184 bits on a WAP (32 random
+characters of a 54-character alphabet; about 155 on the flagship, whose
+encoder takes 32 HMAC bytes, and fewer on a WAP whose token predates the
+64-byte encoder: `THREAT_MODEL.md` scenario 10). Not closed by it:
 `POST /api/reboot` from any landing session, which also clears the table (it
 lives in RAM); ARP spoofing; httpd's LRU purge (a host that opens enough
 connections closes the owner's); nine or more striking addresses (the

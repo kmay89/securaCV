@@ -30,8 +30,13 @@
   the shared overflow slot runs, and a tap does not clear that; then wait,
   change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
   The flagship has no Bluetooth lane that changes its Wi-Fi, so there the
-  fallbacks are to wait or the 10 s hold. Found on the way and fixed with
-  it, as on the WAP: the 5-minute cap never ran (the 60 s window cleared
+  fallbacks are to wait or the 10 s hold. The dashboard now drops a token
+  the device refuses (a `401`, or `403 {"error":"forbidden"}`) and shows its
+  unlock banner again, saying the token was refused, as the WAP's page does;
+  it kept a mistyped paste and sent it on every poll, a strike each time the
+  address's backoff ended, so that address stayed held until the page was
+  reloaded. A `429` or the Host guard's `403` keeps the token. Found on the
+  way and fixed with it, as on the WAP: the 5-minute cap never ran (the 60 s window cleared
   the count first, while the sixth strike announced `Retry-After: 65`; it
   now never names more than 61), and `now < until`
   freed a backoff armed just before the 49.7-day `millis()` wrap. An empty
@@ -50,8 +55,12 @@
   guesses, the 65 s `Retry-After` and the backoff freed before the wrap; text
   pins hold `securacv_network.cpp` to the wiring; a Makefile step proves each
   old knob is refused; `check_route_security.py`'s self-test plants
-  `auth_bearer_grant()` before the Host check); the ESP32 compile is CI's;
-  not run on a device (U1).
+  `auth_bearer_grant()` before the Host check, and now counts that grant
+  only compared `== AuthManager::BearerResult::OK`;
+  `test_canary_dashboard_gates.test.js`, 11 refused-token tests, 6 of which
+  fail on the page before: a wrong or malformed token dropped by `api()` and
+  by the two pollers that fetch with it, the banner's line); the ESP32
+  compile is CI's; not run on a device or in a browser (U1).
 - **canary-wap: one host's wrong bearers no longer hold every other host
   (sweep F343).** The bearer lockout was one backoff for the whole device
   (`static AuthState g_auth` in `api_auth.h`), so a host that sent a wrong
@@ -83,7 +92,12 @@
   no hold lasts more than 60 s and `Retry-After` never names more than 61.
   The unused `auth_stats_json()` is gone. The 429 body is unchanged.
   **Host-tested** (new `firmware/tests_host/test_auth_backoff.cpp`, which the
-  old logic fails 41 checks of; `test_receipt_grant.cpp`, 916 checks, 26 of
+  old logic fails 41 checks of, and whose three rows the PR's review added
+  each fail a mutant every suite passed before: `locked()` without its own
+  settle past 2^31 ms idle, the overflow's window edge, source 0 behind a
+  freed Slot; `check_improv_sync.sh`, which now fails on a staged
+  common/network header no sync script holds, so dropping the
+  `auth_backoff.h` line fails it; `test_receipt_grant.cpp`, 916 checks, 26 of
   which the code before the change fails, the suite's few state helpers
   pointed at the old `g_auth`: two hosts, the replay at 0 of
   86, one table across two translation units, the real
@@ -113,8 +127,9 @@
   fails any sketch file other than `api_auth.h` that calls
   `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
   The pair token's compares stay outside on purpose (the landing page hands
-  that token to any caller). The token's about 184 bits remain the real
-  bound, so this is consistency and a closed bypass, not a credential path.
+  that token to any caller). The token's entropy remains the real bound
+  (`THREAT_MODEL.md` scenario 10), so this is consistency and a closed
+  bypass, not a credential path.
   **Host-tested** (`test_receipt_grant.cpp`, 1514 checks, 31 of which fail on
   the code before the change, its new three-argument calls adapted onto the
   old functions: `CSI_AUTH_OR_RETURN` and `qr_scan_request_allowed()` cut
@@ -123,8 +138,11 @@
   on the code before, among them a held address's right bearer moving the
   broker and the move gate reading the bearer twice; `test_docs_claims.py`;
   the route check's four new plants, and the tree before the change failing
-  it at `csi_mqtt.cpp:2359`); the ESP32 compile is CI's; not run on a device
-  (U1).
+  it at `csi_mqtt.cpp:2359`; the PR's review added a fifth, a held argument
+  that is not `&<identifier>`, which a reader tail loosened to any
+  expression passes, and a case that the right header alone is served on
+  the `?token=` gate, which deleting the grant's header half fails); the
+  ESP32 compile is CI's; not run on a device (U1).
 - **A BOOT tap or the setup-door claim ends the backoff of the host it hands
   the token to, on both firmwares (sweep F341).** A stale bearer that the
   tap or the claim then serves is still a strike against its address (one
@@ -133,11 +151,15 @@
   Canary dark and the flagship dashboard looked frozen. The serve point now
   clears that address's backoff, as a right bearer does: on the WAP,
   `auth_record_success(req)` right after the receipt's refusal block, so a
-  refused request clears nothing; on the flagship, `auth_handed_token()` in
-  the receipt's `SERVE_TAP` branch and on the page load a tap unlocks
-  (`page_token_inject()`). The address holds the token at that moment, so
-  the clear grants nothing. It frees that address's own slot only: another
-  host's count is untouched, and an address held only through the shared
+  request refused before the tap or the claim is taken clears nothing
+  (`check_route_security.py` holds that call there, once, and fails any
+  other caller outside `api_auth.h`); on the flagship, `auth_handed_token()`
+  in the receipt's `SERVE_TAP` branch and on the page load a tap unlocks
+  (`page_token_inject()`). The address was just handed the token, or its
+  send failed after the tap or the claim was spent (the WAP's
+  `send_provisioning_receipt()` can still answer `503` or `500`), so the
+  clear grants nothing a send that worked would not have. It frees that
+  address's own slot only: another host's count is untouched, and an address held only through the shared
   overflow stays held, since clearing it would free the striker too. A
   host's wrong bearers hold only that host's address (F343). A browser that
   mistyped the token waits at most about 60 s, or taps BOOT, which clears
@@ -145,14 +167,17 @@
   60 s holds every untracked address while the shared overflow slot runs,
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
   bonded Bluetooth lane, or hold BOOT 10 s. **Host-tested**
-  (`test_receipt_grant.cpp`, 1635 checks, 25 of which fail on the sketch
+  (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the
   claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
   128 checks, 7 of which fail on the network code before the change, its
   receipt and page-token handlers cut from `securacv_network.cpp` and run
   over the real `AuthManager`; both suites hold another host's count, the
-  overflow and every refusal unchanged); the ESP32 compile is CI's; not run
-  on a device (U1).
+  overflow and every refusal unchanged; `check_route_security.py`, whose
+  three new plants move the WAP's clear inside the refusal, add it to
+  another route and to a module, and which fails the sketch with the clear
+  moved above the refusal or copied into the pairing QR, both of which the
+  check before passed); the ESP32 compile is CI's; not run on a device (U1).
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 

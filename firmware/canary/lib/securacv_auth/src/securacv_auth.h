@@ -42,8 +42,9 @@
 
 // The backoff's numbers are firmware/common/network/auth_backoff.h's, the one
 // table both firmware trees run (sweep F340): per source address, 2 s after
-// the first strike and doubling, never more than 60 s, and cleared once that
-// address sends no wrong token for a minute. The old per-device knobs are
+// the first strike and doubling, never more than 60 s, and cleared a minute
+// after that address's last counted strike (a bearer sent while it is held
+// is neither compared nor counted). The old per-device knobs are
 // gone. A build that still sets one meant to change a number this library no
 // longer reads, so it stops here instead of building with the knob ignored.
 #if defined(SECURACV_AUTH_MAX_FAILURES) || defined(SECURACV_AUTH_LOCKOUT_BASE_MS) || \

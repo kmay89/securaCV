@@ -2808,7 +2808,9 @@ backoff's 429, the tap and the claim never held and clearing only the host
 they serve (F341), one host's strikes never holding another;
 `firmware/tests_host/test_auth_backoff.cpp`: the table;
 `recovery_kit.test.js`: the sign-in's copy); `check_route_security.py`
-holds every answer that carries a secret to a bearer-only gate; the compile
+holds every answer that carries a secret to a bearer-only gate, and the
+backoff's clear outside `api_auth.h` to the receipt, after its refusal
+(`BACKOFF_CLEARS`, F341); the compile
 is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
@@ -2933,7 +2935,7 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     bearer and A's right `?token=` are `429` with `Retry-After`. B is `200`
     at once, and A's right token after the wait is `200`. Before this
     change A's guesses armed nothing (no console line, and step 2's bearer
-    was `200`), and the `?token=` passed the gate inside a backoff:
+    was `200`), and the `?token=` read no lockout at all:
     `/api/vault/download` answered its own `400` (no `name=`), never `429`.
   - Artifact: `docs/audit/repro/F339/`.
 
@@ -2946,18 +2948,22 @@ reached through `auth_gate()` and `bearer_present_and_valid()` in
 `securacv_network.cpp`, which pass `request_peer_ipv4()` (the socket peer),
 and the two BOOT-tap paths there that call `auth_handed_token()` with it
 (the receipt's `SERVE_TAP` and `page_token_inject()`'s tap, F341);
-the dashboard's `api()` and `saveRecoveryKit()` in `securacv_webui.cpp`. The
-`api()` helper sends no `Authorization` header when the page carries no
-token. Host-tested (`firmware/tests_host/test_securacv_auth.cpp`, over the
+the dashboard's `api()`, `dropRefusedToken()` and `saveRecoveryKit()` in
+`securacv_webui.cpp`. The `api()` helper sends no `Authorization` header
+when the page carries no token, and drops a token the device refuses.
+Host-tested (`firmware/tests_host/test_securacv_auth.cpp`, over the
 real `securacv_auth.cpp` and `auth_backoff.h`: a request with no header is a
 `401` and no strike, a malformed or wrong one is a strike against its own
 address only, the receipt's grant is accounted and never compares a held
 bearer, the 61 s ceiling, the wrap; the receipt and the page-token decision
 cut from `securacv_network.cpp` and run, a tap clearing only the address it
-serves; text pins over `securacv_network.cpp`);
-the compile is CI's; nothing here ran on a device. Owner: U1.
+serves; text pins over `securacv_network.cpp`;
+`firmware/tests_host/test_canary_dashboard_gates.test.js`: the page's
+`api()` and its two pollers dropping a refused token and keeping one a `429`
+or the Host guard answered);
+the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
-- [ ] **Flagship: the dashboard tab arms no lockout, one host's wrong bearers hold only that host, and a BOOT tap clears the host it serves (F340, F341)**
+- [ ] **Flagship: the dashboard tab arms no lockout, one host's wrong bearers hold only that host, a BOOT tap clears the host it serves, and the page drops a refused token (F340, F341)**
   - Setup: a `firmware/canary` unit on this firmware, set up and joined to
     the home Wi-Fi, over plain HTTP (the release images serve no HTTPS, and
     the HTTPS builds' certificate generator is compiled only where the core
@@ -2967,7 +2973,7 @@ the compile is CI's; nothing here ran on a device. Owner: U1.
     developer tools, and `curl`; host B, the iPhone app or a second computer
     with `curl` and the API token; both on IPv4; one dashboard tab only (two
     tabs reach the device-wide request limit by themselves, F351); no BOOT
-    tap during the row.
+    tap before step 5.
   - Repro:
     1. On A, open `http://canary.local/` (or the unit's IP) without a BOOT
        tap, so the page carries no token, and leave the Status panel open
@@ -2985,9 +2991,16 @@ the compile is CI's; nothing here ran on a device. Owner: U1.
     5. Repeat step 2 from A. Then, inside the backoff it arms (about 32 s),
        short-tap BOOT and reload A's dashboard tab; at once, from A, the
        right token on `/api/status` with `-D -`.
-    6. Repeat step 2 from A. Then, inside the backoff, short-tap BOOT and
-       fetch `/api/provisioning-receipt` from A with the right token; at
-       once, from A, the right token on `/api/status`.
+    6. Close A's dashboard tab, or navigate it away from the unit: since
+       step 5 it holds the right token, and each of its polls (every 2 s) is
+       a right bearer that clears A's count, so this step's strikes would
+       each be a first one and never arm the long backoff. Then repeat
+       step 2 from A, and inside the backoff it arms (about 32 s), short-tap
+       BOOT and fetch `/api/provisioning-receipt` from A with the right
+       token; at once, from A, the right token on `/api/status`.
+    7. On A, open `http://canary.local/` again without a tap, paste
+       `cv_wrong` into the unlock banner, press **Unlock**, and watch the
+       Network panel for a minute.
   - Expected: for step 1's 5 minutes B's polls are `200` (before part 1 of
     this change about 119 of 120 were `429`), and A's own calls in its
     Network panel are `401`, never `429`. A's wrong bearers on the receipt
@@ -3008,8 +3021,18 @@ the compile is CI's; nothing here ran on a device. Owner: U1.
     `Retry-After`: the tap ended A's backoff. In step 6 the receipt is `200`
     (a held bearer reads as none, so the tap serves it), and A's
     `/api/status` right after it is `200` too. Before F341, A's call after
-    the tap was `429` until the backoff ran out.
-  - Artifact: `docs/audit/repro/F340/` (steps 5 and 6: `docs/audit/repro/F341/`).
+    the tap was `429` until the backoff ran out. In step 7 the first call
+    that carries `cv_wrong` is `403` `{"error":"forbidden"}` (one sent in
+    the same moment may be `429`), the banner comes back reading "The Canary
+    refused that token.", and every call after it carries no
+    `Authorization` header: `429` until that one strike's 2 s backoff has
+    run, then `401`, never `429` again. Before this change the page kept
+    the token and sent it on every poll, a strike each time A's backoff
+    ended, so A's calls stayed `429` until the page was reloaded.
+  - Artifact: `docs/audit/repro/F340/` (step 5:
+    `docs/audit/repro/F341/flagship-page/`; step 6:
+    `docs/audit/repro/F341/flagship-receipt/`; step 7:
+    `docs/audit/repro/F340/refused-token/`).
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 

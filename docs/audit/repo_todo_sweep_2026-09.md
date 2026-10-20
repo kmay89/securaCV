@@ -1742,8 +1742,9 @@ so — see D2 below.)
   allowlist. Its `MODULE_TOKEN_COPIES` reader takes a gate's token argument
   followed by `)` or by the grant's `, &<identifier>)`.
   The pair token's compares stay outside on purpose (the landing page hands
-  that token to any caller). The token's about 184 bits remain the real
-  bound, so this is consistency and a closed bypass, not a credential path.
+  that token to any caller). The token's entropy remains the real bound
+  (`THREAT_MODEL.md` scenario 10), so this is consistency and a closed
+  bypass, not a credential path.
   The posture is F343's per-address backoff, unchanged.
   Host-tested in `test_receipt_grant.cpp` (1514 checks; run against the code
   before the change, its new three-argument calls adapted onto the old
@@ -1753,8 +1754,12 @@ so — see D2 below.)
   (three new or rewritten tests, each failing on the code before: a held
   address's right bearer moved the broker, and the move gate read the bearer
   twice) and `test_docs_claims.py`; the route check's self-test plants the
-  raw compare in `csi_mqtt.cpp` and in `bluetooth_api.h`, and the tree before
-  the change fails it at `csi_mqtt.cpp:2359`. The ESP32 compile is CI's; not
+  raw compare in `csi_mqtt.cpp` and in `bluetooth_api.h`, and a held
+  argument that is not `&<identifier>` (added by the PR's review: a reader
+  tail loosened to any expression passed every plant before), and the tree
+  before the change fails it at `csi_mqtt.cpp:2359`. The review also added
+  the case that the right header alone is served on the `?token=` gate,
+  which deleting the grant's header half fails and every suite passed. The ESP32 compile is CI's; not
   run on a device (U1: the "every bearer compare holds its own address" row
   in `hardware_verification_checklist.md`).
 - [x] **F340 [code] The flagship's provisioning receipt compares its bearer
@@ -1824,8 +1829,17 @@ so — see D2 below.)
     60 s; it now never says more than 61), and `now < until` freed a backoff
     armed just before the `millis()` wrap. An empty expected token matches
     no bearer inside the library either.
-  - `check_route_security.py` counts `auth_bearer_grant()` as a gate and as
-    a step that must not run before the Host check, with a self-test plant.
+  - `check_route_security.py` counts `auth_bearer_grant()` as a gate only
+    where its call is compared `== AuthManager::BearerResult::OK` (its four
+    values say yes only as OK), and as a step that must not run before the
+    Host check, with self-test plants.
+  - The dashboard drops a token the device refuses (a `401`, or `403
+    {"error":"forbidden"}`) and shows its unlock banner again, as the WAP's
+    page does. It kept a mistyped paste and sent it on every poll, a strike
+    each time the address's backoff ended, so that address (the same
+    computer's other tabs and its curl too) stayed held until the page was
+    reloaded, and the posture sentence below was false for it. A `429` or
+    the Host guard's `403` keeps the token. Found by the PR's review.
     F338's flagship route-check tables, which are not in the tree yet, are
     to be written against this API.
   The posture: A host's wrong bearers hold only that host's address (F343).
@@ -1843,9 +1857,11 @@ so — see D2 below.)
   part, its new calls adapted onto the old one-per-device `AuthManager`,
   fails 34 of them: two hosts, the receipt's grant, the overflow, the wrap,
   the 61 s ceiling, the hand-over API F341 calls, and the text pins over
-  `securacv_network.cpp`'s wiring). The ESP32 compile is CI's; not run on a
-  device (U1: the flagship's bearer-lockout row in
-  `hardware_verification_checklist.md`).
+  `securacv_network.cpp`'s wiring), and in
+  `firmware/tests_host/test_canary_dashboard_gates.test.js` (11 refused-token
+  tests over the page's own `api()` and pollers; 6 fail on the page before).
+  The ESP32 compile is CI's; not run on a device or in a browser (U1: the
+  flagship's bearer-lockout row in `hardware_verification_checklist.md`).
 - [x] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
@@ -1871,13 +1887,19 @@ so — see D2 below.)
   *Done (2026-10-19):* the serve point now clears that address's backoff:
   - on the WAP, `auth_record_success(req)` right after the receipt's refusal
     block (`if (!claim_served && !provisioning_gate_take()) { ... }`, whose
-    `403`, `429` and `500` all return), so a refused request clears nothing,
-    and F342's planned `409` inside that block will clear nothing either;
+    `403`, `429` and `500` all return), so a request refused before the tap
+    or the claim is taken clears nothing, and F342's planned `409` inside
+    that block will clear nothing either (`check_route_security.py`'s
+    `BACKOFF_CLEARS` holds the call there, once, and fails any other caller
+    outside `api_auth.h`);
   - on the flagship, `auth_handed_token(request_peer_ipv4(req))` in the
     receipt's `SERVE_TAP` branch, before the receipt is sent, and in
     `page_token_inject()`'s tap-spent branch.
-  The address holds the token at that moment, so the clear grants nothing.
-  It frees only the address's own slot. A tap does not clear the shared
+  The address was just handed the token, or its send failed after the tap
+  or the claim was spent (the WAP's `send_provisioning_receipt()` can still
+  answer `503 no_address`, `500 out_of_memory` or `503 answer_changed`), so
+  the clear grants nothing a send that worked would not have. It frees only
+  the address's own slot. A tap does not clear the shared
   overflow that a host striking from nine or more addresses keeps running,
   because the attacker's next strike would re-arm it; the lockout sentence
   says so: A host's wrong bearers hold only that host's address (F343). A
@@ -1886,7 +1908,7 @@ so — see D2 below.)
   addresses within 60 s holds every untracked address while the shared
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
   from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
-  Host-tested. `test_receipt_grant.cpp` (1635 checks; the sketch before the
+  Host-tested. `test_receipt_grant.cpp` (1642 checks; the sketch before the
   change fails 25 of them): after the tap, the claim and a header-less tap
   wait, A's right bearer gets the receipt as `BEARER` at once and the QR is
   served; another host's count, armed by a direct slot write, is untouched;
@@ -1952,8 +1974,12 @@ so — see D2 below.)
   - a saturating count and wrap-safe ages.
   The table is the pure `firmware/common/network/auth_backoff.h`, host-tested
   in `firmware/tests_host/test_auth_backoff.cpp` (the old logic behind its
-  API fails 41 of the suite's checks) and staged byte-identical in the sketch
-  (`check_improv_sync.sh`). F340's second part moves the flagship onto it.
+  API fails 41 of the suite's checks; the PR's review added three rows, each
+  failing a mutant every suite passed: `locked()` without its own settle
+  past 2^31 ms idle, the overflow's window edge, source 0 behind a freed
+  Slot) and staged byte-identical in the sketch (`check_improv_sync.sh`,
+  which now also fails on a staged common/network header that no sync
+  script holds). F340's second part moves the flagship onto it.
   Found on the way:
   - `api_auth.h`'s state was a `static` in a header, so `canary_wap.ino`,
     `csi_integration.cpp` and `csi_mqtt.cpp` each had their own copy. It is
@@ -2079,8 +2105,8 @@ so — see D2 below.)
   `rate_limit_check()` (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`)
   counts every request in one 60 s window for the whole device: 120 requests
   and 30 actions (`canary_config.h`'s `RATE_LIMIT_MAX_REQUESTS` and
-  `RATE_LIMIT_MAX_ACTIONS`). It runs before `auth_gate()` on 57 handlers. One
-  dashboard tab on the Status panel spends 60 a minute (`securacv_webui.cpp`
+  `RATE_LIMIT_MAX_ACTIONS`). It runs on 57 handlers, before `auth_gate()` on
+  the 56 that have one. One dashboard tab on the Status panel spends 60 a minute (`securacv_webui.cpp`
   polls `/api/status` and `/api/sensing` every 2 s), so a second tab, or any
   host on the network sending two requests a second, holds every
   rate-limited route at `429 rate_limited` for everyone, the owner's app

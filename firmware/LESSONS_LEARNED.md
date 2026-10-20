@@ -859,6 +859,32 @@
   that costs nothing is still an oracle and a bypass of the backoff.
 - **Date learned:** 2026-10
 
+### A page that keeps a refused token strikes on every poll
+- **What happened:** The flagship's dashboard kept a token pasted into its
+  unlock banner whatever the device answered, and sent it on every 2 s poll.
+  A mistyped one was a strike each time its address's backoff ended, so the
+  count never had a clean minute to clear: it saturated, and the address
+  (that computer's other tabs and its curl too) stayed held at `429`, but
+  for the one poll a minute that struck again as each backoff ended, until
+  the page was reloaded. The docs said such
+  a browser waits at most about 60 s; the WAP's
+  page made that true by dropping a refused token (`secureFetch`), and the
+  flagship's did not.
+- **Fix:** `dropRefusedToken()` (sweep F340, the PR's review): a `401`, or a
+  `403 {"error":"forbidden"}`, to a request that carried the token drops it
+  and shows the banner again with "The Canary refused that token."; a `429`
+  (nothing compared) or the Host guard's `403` (never read) keeps it, and so
+  does an answer to a token the banner has since replaced. `api()` and the
+  two pollers that fetch with the token themselves all call it.
+- **Regression check:** `firmware/tests_host/test_canary_dashboard_gates.test.js`
+  (host, over the page's own functions): the drop, the keeps, the replaced
+  token, and a census that every fetch setting the bearer header is one of
+  the four it knows.
+- **Rule:** a client that polls with a credential drops it on the answer that
+  refuses it. The lockout's bound is what the server allows; whether a
+  person waits that bound or forever is the client's.
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

@@ -331,7 +331,10 @@ else its `403`, which the page reads as "tap BOOT". A request with no
 `Authorization` header is no strike, so a dashboard tab loaded without the
 token, which polls with no header, arms nothing. A BOOT tap that hands an
 address the token, on the receipt or on the page load it unlocks, ends that
-address's backoff as a right bearer would (sweep F341). A host's wrong
+address's backoff as a right bearer would (sweep F341). The dashboard
+drops a token the device refuses and shows its unlock banner again, so a
+mistyped paste is dropped at its first refusal instead of being sent on
+every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or taps BOOT, which clears its address
 (F341). A host that strikes from 9 or more addresses within 60 s holds every
