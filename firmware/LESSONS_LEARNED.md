@@ -494,6 +494,47 @@
   the sketch, and fails a call anywhere in the sketch that drops the
   helper's result.
 
+### A key that could not be read is not a key that is absent
+- **What happened:** The flagship's `nvs_load_key()` checked the stored
+  private key's length, then read it with `Preferences::getBytes()` and
+  discarded the count it answered. The Arduino core leaves the buffer as it
+  was when that read fails, so an NVS error between the two reads ran the
+  boot on the zeroed `DeviceIdentity` key: an Ed25519 signing key anyone
+  holds, whose setup-network key is the published known answer
+  `cv-3jByJ6rHdhM2`, and from which the API token is derived too. And the
+  load answered one `false` for
+  everything else: `witness_provision_device()` read it as "no key",
+  generated a keypair and stored it over the old one, so a failed open or
+  length lookup, or a stored key of the wrong length, replaced the unit's
+  identity whenever the write after it landed (sweep F360, found by F350's
+  review).
+- **Root cause:** Preferences cannot tell "nothing stored" from "NVS
+  failed": its `begin()` fails alike on a namespace never created and on a
+  fault, and `getBytesLength()` answers 0 alike for a missing key and a
+  failed lookup. The load inherited that one answer and handed it on.
+- **Fix:** `nvs_load_key()` answers `KeyLoad::Loaded`, `Absent` or
+  `Refused`, and zeroes the buffer on any but `Loaded`. Only IDF's own
+  `ESP_ERR_NVS_NOT_FOUND`, asked through `nvs_open()` / `nvs_get_blob()`
+  as `common/health/boot_guard.h` asks it, is `Absent`; the read must answer
+  all 32 bytes, and a key of 32 zero bytes is refused.
+  `establish_identity_key()` generates only on `Absent`, and on `Refused`
+  provisioning stops, so `setup()` halts with nothing generated or written.
+- **Rule:** A load that can fail answers three ways, and only "not there"
+  may lead to a fresh secret. Never fall back to a new secret over a stored
+  one: a refused read halts and leaves the stored value for the next boot
+  (the owner's 30 s BOOT wipe is the way to start fresh). A read's count is
+  part of its answer; a buffer the read may not have filled is zeroed
+  before anything sees it.
+- **Regression check:** `firmware/tests_host/test_nvs_load_key.cpp` runs
+  the load, its IDF probe, the store and `establish_identity_key()`, cut
+  verbatim out of the firmware, over a fake NVS that Preferences and IDF
+  read alike and that fails the open, the length lookup, the session or the
+  read; built again as the opt-in image. It also holds
+  `witness_provision_device()` to stopping on the refusal before it derives
+  anything, `setup()` to its halt, and `NVS_KEY_PRIV` to one owner. The
+  canary-wap's own `nvs_load_key()` (`canary_wap.ino`) has the same two
+  faults and is not changed yet.
+
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
 - **Rule:** Bearer tokens authenticate HTTP requests. They are NOT

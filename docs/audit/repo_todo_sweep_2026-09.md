@@ -2033,7 +2033,7 @@ so — see D2 below.)
   set up, and the stand-in does the same. `provision_device()` itself is not
   driven; its refusals are source pins. Host-tested; the ESP32 compile is
   CI's; not run on a device.
-- [ ] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
+- [x] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
   result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
   private key's length, then reads it with `Preferences::getBytes()` and
   ignores the count it returns; the Arduino core leaves the buffer untouched
@@ -2043,6 +2043,68 @@ so — see D2 below.)
   from the same zero key. The fix: require 32 bytes from `getBytes()` and
   refuse an all-zero key, so `witness_provision_device()` halts, with a host
   case over the witness glue stubs. Found by F350's review (#1837).
+  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* the halt needed more than the two checks.
+  `nvs_load_key()` answered one `false` for every failure, and
+  `witness_provision_device()` read it as "no key": it generated a keypair
+  and stored it over the old one, so a failed read-only open or length
+  lookup replaced the unit's identity whenever the write after it landed,
+  and a stored key of any length but 32 was replaced the same way. A
+  refused read there
+  would have done the same. So `nvs_load_key()` now answers a `KeyLoad`,
+  `Loaded`, `Absent` or `Refused`, and zeroes the buffer on any answer but
+  `Loaded`. Preferences cannot tell "nothing stored" from "NVS failed" (its
+  `begin()` fails alike on a namespace never created and on a fault, and
+  `getBytesLength()` answers 0 alike for a missing key and a failed lookup),
+  so a new `stored_key_length()` asks IDF's `nvs_open()` / `nvs_get_blob()`
+  first, as `common/health/boot_guard.h` does: only
+  `ESP_ERR_NVS_NOT_FOUND`, at the namespace or at the key, is `Absent`. Any
+  other error, a stored key that is not 32 bytes, a Preferences read that
+  does not answer all 32 bytes (the filed case; the buffer is zeroed again,
+  as a refused read may have written part of it) and a key of 32 zero bytes
+  are `Refused`, each with an `[!!] identity key not loaded: ...` line. So
+  is the opt-in image's at-rest policy refusal
+  (`SECURACV_REQUIRE_FLASH_ENCRYPTION=1`): before, it read as no key, a
+  keypair was generated, and only the store's own refusal kept it out of
+  NVS; now none is generated, and bench row K1's expected lines say so. The
+  key block moved into a new `establish_identity_key()`
+  (`securacv_witness.cpp`), which generates only on `Absent`. On `Refused`
+  it prints `[!!] Stored identity key not read: not replacing it,
+  provisioning cannot continue` and returns `false`, so
+  `witness_provision_device()` returns before it names or derives anything
+  from the key and `setup()` halts as it does on any provisioning failure.
+  Nothing is generated or written on that path, so a later boot that can
+  read the key loads it; for a key that stays unreadable the owner's way
+  out is the 30 s BOOT hold at power-on, which wipes the identity. A first
+  boot is unchanged, except that its key read no longer opens Preferences
+  on a namespace never created, so it no longer logs Arduino's
+  `nvs_open failed: NOT_FOUND` there. New
+  `firmware/tests_host/test_nvs_load_key.cpp` runs the load, the probe, the
+  store and `establish_identity_key()`, cut verbatim out of the two sources,
+  over a fake NVS (`tests_host/stubs/nvs_key`) that Preferences and IDF read
+  alike and that can fail the read-only open, the length lookup, the
+  session or the read (the buffer untouched, garbled or short); it is built
+  twice, the second as the opt-in image. It also reads the canary tree:
+  `witness_provision_device()` stops on `establish_identity_key()` before it
+  derives anything, `setup()` halts on that, `establish_identity_key()`
+  holds the one call of the load, and only `securacv_crypto.cpp`'s probe,
+  load and store name `NVS_KEY_PRIV` (`canary_config.h` defines it,
+  `reset_scope_keys.h` lists it as kept). Against the old code, adapted only
+  so that it builds (the `bool` as the enum, its caller's block moved
+  verbatim into `establish_identity_key()`), it fails 186 of 708 checks and
+  the opt-in build 12 of 75: among them the filed case loading as a key with
+  the buffer still the zeroed one, a garbled read loading its `0xA5` bytes,
+  and a failed open, a failed length lookup or a wrong-length key replaced
+  by a new keypair. Mutants that drop the zeroing, the re-zeroing, the
+  short-read, read-count or zero-key check, the probe, its close or its
+  read-only open, that read a probe or length refusal as `Absent`, that
+  generate over `Refused`, that ignore it in `witness_provision_device()` or
+  derive before it, or that drop `setup()`'s halt each fail it. Not changed
+  here: canary-wap's own `nvs_load_key()` (`canary_wap.ino`) has the same
+  two faults (it discards `getBytes()`' count and answers a failed open or
+  length lookup as no key); it is the WAP's and is not filed yet.
+  Host-tested; the PlatformIO compile is CI's; not run on a device.
 
 ### Parity & sub-projects
 

@@ -166,35 +166,54 @@ static bool persist_chain_blob() {
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
+// The identity key: the stored one, or, only when NVS says none is stored, a
+// new one generated and stored (sweep F360). Any other answer is a key that
+// is, or may be, in NVS and was not read or not used: provisioning stops
+// there, so setup() halts, and nothing is generated or written, so the stored
+// key is left as it is for the next boot (power-cycle to retry; the 30 s BOOT
+// hold at power-on wipes the identity and starts fresh). Before, a failed
+// read fell through to a new keypair stored over the old one, and a read that
+// failed after the length check ran the boot on the zeroed key.
+static bool establish_identity_key() {
+  const KeyLoad stored = nvs_load_key(g_device.privkey);
+  if (stored == KeyLoad::Loaded) {
+    Serial.println("[OK] Loaded existing keypair from NVS");
+    return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    Serial.println("[!!] Stored identity key not read: not replacing it, provisioning cannot "
+                   "continue (see the identity key line above)");
+    return false;
+  }
+  Serial.println("[..] Generating new keypair...");
+  if (!crypto_generate_keypair(g_device.privkey, g_device.pubkey)) {
+    Serial.println("[!!] Keypair generation failed");
+    return false;
+  }
+  if (!nvs_store_key(g_device.privkey)) {
+    // nvs_store_key already printed WHY: either NVS failed, or this image
+    // requires the key encrypted at rest and its NVS is not (key_at_rest
+    // rule 2 — flash encryption alone does not count) — in which case
+    // halting here, before any identity exists, is the point.
+    Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
+                   "(see the identity key line above)");
+    return false;
+  }
+  Serial.println("[OK] New keypair generated and stored");
+  // This boot made the key, so this boot is the only one that can honestly
+  // say how old it is when a clock finally arrives.
+  g_device.key_is_new = true;
+  g_device.key_born_ms = millis();
+  return true;
+}
+
 bool witness_provision_device() {
   Serial.println("[..] Provisioning device identity...");
 
   // Establish the keypair FIRST: the device ID / AP SSID are derived from the
   // pubkey fingerprint (never the MAC — event_contract §10 / privacy Invariant
   // III), so the fingerprint must exist before we build those handles.
-  if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[OK] Loaded existing keypair from NVS");
-  } else {
-    Serial.println("[..] Generating new keypair...");
-    if (!crypto_generate_keypair(g_device.privkey, g_device.pubkey)) {
-      Serial.println("[!!] Keypair generation failed");
-      return false;
-    }
-    if (!nvs_store_key(g_device.privkey)) {
-      // nvs_store_key already printed WHY: either NVS failed, or this image
-      // requires the key encrypted at rest and its NVS is not (key_at_rest
-      // rule 2 — flash encryption alone does not count) — in which case
-      // halting here, before any identity exists, is the point.
-      Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
-                     "(see the identity key line above)");
-      return false;
-    }
-    Serial.println("[OK] New keypair generated and stored");
-    // This boot made the key, so this boot is the only one that can honestly
-    // say how old it is when a clock finally arrives.
-    g_device.key_is_new = true;
-    g_device.key_born_ms = millis();
-  }
+  if (!establish_identity_key()) return false;
 
   // Where that key sleeps, said once per boot. Tier 0 (plaintext NVS) is the
   // accepted default — docs/design/hardware_root_of_trust.md §8 — so this is a

@@ -736,6 +736,32 @@ CHAINPERSIST_CALLER = bool witness_create_record_gps(
 CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
 CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
 
+# The flagship's identity-key load fails closed (repo sweep F360,
+# test_nvs_load_key.cpp): nvs_load_key() answers Loaded, Absent (IDF's NVS
+# says nothing is stored) or Refused (the buffer zeroed), and
+# establish_identity_key() generates a key only on Absent, so a stored key
+# that could not be read is never replaced and the boot never runs on the
+# zeroed one. The load, its IDF probe, the store, the policy facts and
+# NvsManager's session and blob calls are cut verbatim out of
+# securacv_crypto.cpp, and establish_identity_key() out of
+# securacv_witness.cpp, into one .inc, compiled over stubs/nvs_key (a fake
+# NVS that Preferences and IDF's nvs_open() / nvs_get_blob() read alike) and
+# stubs/nvs_manager's FreeRTOS lock. Built twice: the default image, and with
+# -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 the opt-in one, whose policy refuses
+# every load before NVS is read. Both read the canary tree's sources (the
+# halt in setup(), the one call of the load, the one owner of the key's NVS
+# entry).
+NVSKEY_CRYPTO_SIGS  = $(NVSLOCK_SIGS)|size_t NvsManager::getBytes(|size_t NvsManager::putBytes(|static key_at_rest::Facts key_at_rest_facts(|static esp_err_t stored_key_length(|KeyLoad nvs_load_key(|bool nvs_store_key(
+NVSKEY_WITNESS_SIGS = static bool establish_identity_key(
+NVSKEY_HDRS   = $(NVSLOCK_HDRS) ../common/identity/key_at_rest.h \
+                ../canary/lib/securacv_witness/src/securacv_witness.h \
+                ../common/witness/chain_persist.h ../canary/include/log_level.h \
+                $(wildcard stubs/nvs_key/*.h)
+NVSKEY_READS  = $(sort $(shell find ../canary/src ../canary/lib ../canary/include -type f \( -name '*.cpp' -o -name '*.h' \)))
+NVSKEY_INC    = $(BUILD_DIR)/nvs_load_key.inc
+NVSKEY_BIN    = $(BUILD_DIR)/test_nvs_load_key
+NVSKEY_FE_BIN = $(BUILD_DIR)/test_nvs_load_key_require_fe
+
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
 # aspect ratio -> posture, area fraction -> proximity, count -> occupancy
@@ -1229,6 +1255,21 @@ $(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_H
 	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
 	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
 
+$(NVSKEY_INC): $(NVSLOCK_SRC) $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSKEY_CRYPTO_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && \
+	awk -v 'sigs=$(NVSKEY_WITNESS_SIGS)' -f cut_functions.awk $(CHAINPERSIST_SRC) >> $@.tmp && \
+	mv $@.tmp $@
+
+$(NVSKEY_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../canary/lib/securacv_witness/src -I ../common -I ../canary/include -I $(BUILD_DIR) \
+	    test_nvs_load_key.cpp -o $@
+
+$(NVSKEY_FE_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 -I stubs/nvs_key -I stubs/nvs_manager \
+	    -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src -I ../common \
+	    -I ../canary/include -I $(BUILD_DIR) test_nvs_load_key.cpp -o $@
+
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
 
@@ -1300,7 +1341,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1367,6 +1408,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(NVSLOCK_BIN)
 	./$(NVSSTORE_BIN)
 	./$(CHAINPERSIST_BIN)
+	./$(NVSKEY_BIN) $(NVSKEY_READS)
+	./$(NVSKEY_FE_BIN) $(NVSKEY_READS)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISION_PIPE_UBSAN_BIN)

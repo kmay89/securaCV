@@ -167,7 +167,16 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
 // common/identity/key_at_rest.h. Default builds never refuse (Tier 0 of
 // docs/design/hardware_root_of_trust.md is the accepted default) and report
 // the posture instead.
-bool nvs_load_key(uint8_t priv[32]);
+//
+// What nvs_load_key() found (sweep F360). Absent is the one answer that may
+// lead to a new key: NVS says nothing is stored. Refused means a key is, or
+// may be, stored and was not read or not used (the policy above, an NVS
+// error, a read that did not return all 32 bytes, a key of 32 zero bytes);
+// the caller must not mint a new identity over it, and the key buffer is
+// zeroed. The old bool answered false for both, and the caller generated and
+// stored a new key whatever false meant.
+enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
+KeyLoad nvs_load_key(uint8_t priv[32]);
 bool nvs_store_key(const uint8_t priv[32]);
 // The wire label for where the identity key sleeps right now:
 // "plaintext-nvs" | "nvs-encrypted" | "nvs-encrypted+secure-boot"

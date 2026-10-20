@@ -15,6 +15,7 @@
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
+#include "nvs.h"  // stored_key_length(): IDF's own answer for "nothing stored" (sweep F360)
 
 // Where the identity key sleeps: the tier / wire label / allow-refuse decision
 // is the host-tested policy in common/identity/key_at_rest.h; this file only
@@ -423,22 +424,84 @@ void crypto_print_key_at_rest() {
                 key_at_rest::boot_text(f));
 }
 
-bool nvs_load_key(uint8_t priv[32]) {
+// The stored private key's length, asked of IDF's NVS before Preferences
+// reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
+// failed": its begin() fails alike on a namespace never created and on a
+// fault, and getBytesLength() answers 0 alike for a missing key and a failed
+// lookup. IDF answers ESP_ERR_NVS_NOT_FOUND for exactly the first, at the
+// open (no namespace) or at the lookup (no key in it), as health/boot_guard.h
+// reads it; any other error is NVS failing to say. ESP_OK sets *len. A
+// read-only open logs nothing, so a first boot no longer logs Preferences'
+// "nvs_open failed: NOT_FOUND" for the key read either.
+static esp_err_t stored_key_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_PRIV, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// Fails closed (sweep F360): only a key NVS says is not there answers Absent,
+// and every other way the stored key goes unread or unused answers Refused
+// with priv zeroed, which witness_provision_device() turns into a halted boot
+// that writes nothing. Before, every failure answered false, and the caller
+// generated and stored a new identity over whatever false meant. Worse, the
+// read's own answer was discarded: Preferences::getBytes() leaves the buffer
+// as it was when its read fails, so an NVS error after the length check left
+// the zeroed DeviceIdentity key in use: a signing key every reader of this
+// source holds, whose setup-network key is the published known answer
+// cv-3jByJ6rHdhM2, and from which the API token is derived too.
+KeyLoad nvs_load_key(uint8_t priv[32]) {
+  memset(priv, 0, 32);
   // Rule 2 of key_at_rest.h: an image that requires the key encrypted at rest
   // refuses to USE a stored key unless NVS is actually encrypted (flash
-  // encryption alone is not enough), symmetrically with the store.
+  // encryption alone is not enough), symmetrically with the store. Refused,
+  // not Absent: the policy refuses whatever is stored, and no new key may be
+  // made in its place (the store would refuse it too).
   const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
   if (!d.allow_load) {
     Serial.printf("[!!] identity key not loaded: %s\n", d.reason);
-    return false;
+    return KeyLoad::Refused;
   }
+  size_t stored = 0;
+  const esp_err_t probe = stored_key_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] identity key not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
+  }
+  if (stored != 32) {
+    Serial.printf("[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must return all 32 bytes. A refused one may have left
+  // the buffer as it was or partly written (IDF fills it before it checks the
+  // data's CRC), so it is zeroed again.
   NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
-  if (n != 32) { nvs.end(); return false; }
-  nvs.getBytes(NVS_KEY_PRIV, priv, 32);
-  nvs.end();
-  return true;
+  size_t got = 0;
+  if (nvs.beginReadOnly()) {
+    got = nvs.getBytes(NVS_KEY_PRIV, priv, 32);
+    nvs.end();
+  }
+  if (got != 32) {
+    memset(priv, 0, 32);
+    Serial.printf("[!!] identity key not loaded: the stored key could not be read (%u of 32 bytes)\n",
+                  (unsigned)got);
+    return KeyLoad::Refused;
+  }
+  // A drawn key is 32 zero bytes with odds of 2^-256, and those bytes are
+  // the zeroed buffer's, the one key whose every derivation is public.
+  uint8_t any = 0;
+  for (size_t i = 0; i < 32; i++) any |= priv[i];
+  if (any == 0) {
+    Serial.printf("[!!] identity key not loaded: the stored key is 32 zero bytes\n");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 bool nvs_store_key(const uint8_t priv[32]) {

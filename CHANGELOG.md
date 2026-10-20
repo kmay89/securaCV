@@ -1,6 +1,37 @@
 # Changelog
 
 ## [Unreleased]
+### The flagship halts on a stored identity key it cannot read, instead of running on a zero key or replacing it (sweep F360)
+
+- **The `firmware/canary` flagship's key load tells "no key stored" from
+  "could not read it", and only the first makes a new key (sweep F360).**
+  `nvs_load_key()` checked the stored private key's length and then
+  discarded the count `Preferences::getBytes()` answered. The Arduino core
+  leaves the buffer as it was when that read fails, so an NVS error between
+  the two ran the boot on the zeroed key: an Ed25519 signing key anyone
+  holds, whose setup-network key is the published known answer
+  `cv-3jByJ6rHdhM2`, and from which the API token is derived too. And every
+  failure read as "no key": a failed
+  open or length lookup, or a stored key of the wrong length, led to a new
+  keypair stored over the unit's identity. Now IDF's NVS is asked first
+  whether a key is stored, and only its "not found" makes a new key. Any
+  other error, a key that is not 32 bytes, a read that does not return all
+  32 bytes and a key of 32 zero bytes stop provisioning with a serial line
+  saying why, and the boot halts with nothing generated or written, so a
+  later boot that can read the key loads it (power-cycle to retry; the 30 s
+  BOOT hold at power-on wipes the identity and starts fresh). The opt-in
+  image's at-rest policy refusal no longer generates a key before the store
+  refuses it. A working unit loads the same key as before; a first boot
+  generates one as before, and no longer logs Arduino's
+  `nvs_open failed: NOT_FOUND` for the key read. **Host-tested** (new
+  `firmware/tests_host/test_nvs_load_key.cpp`: the load, its probe, the
+  store and the caller, cut out of the firmware, over a fake NVS that can
+  fail the open, the length lookup, the session or the read, and built again
+  as the opt-in image; against the old code, adapted only so that it builds,
+  it fails 186 of its 708 checks and the opt-in build 12 of 75); the
+  PlatformIO compile is CI's; not run on a device. The canary-wap's own key
+  load is not changed yet.
+
 ### canary-wap refuses a failed HMAC instead of minting a key, a token or a backup from stack bytes (sweep F359)
 
 - **canary-wap's `hmac_sha256()` says whether it ran, and every caller

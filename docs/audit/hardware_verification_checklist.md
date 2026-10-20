@@ -145,11 +145,15 @@ host tests assert they do, on real radio.
       `[!!] identity key not loaded: flash encryption required by this
       build but not active` (the load is refused before NVS is read, so it
       prints whether or not a default image had already stored a key), then
-      `[!!] identity key not stored: ...` with the same reason, then
-      `Device provisioning failed`; NVS never gains a new `privkey` entry and
-      an existing one is left as it was.
-    - opt-in image, FE-on board: provisioning ALSO halts, the same two
-      lines with the reason `encrypted NVS required by this build but NVS
+      `[!!] Stored identity key not read: not replacing it, provisioning
+      cannot continue (see the identity key line above)`, then
+      `Device provisioning failed - HALTING`. No keypair is generated (no
+      `Generating new keypair` line; since sweep F360 the refusal is not
+      read as "no key stored", so the `[!!] identity key not stored: ...`
+      line this row used to expect no longer prints); NVS never gains a new
+      `privkey` entry and an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same lines
+      with the reason `encrypted NVS required by this build but NVS
       encryption is not active (flash encryption alone does not cover NVS)`.
       Under `framework = arduino` the opt-in image refuses on every board —
       that is the policy, not a fault.
@@ -164,7 +168,9 @@ host tests assert they do, on real radio.
       reading is a FAIL (the disable powered down / reset the ADC under the
       power monitor).
   - Policy under test: `firmware/common/identity/key_at_rest.h`
-    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`); the load
+    and its caller's halt by `firmware/tests_host/test_nvs_load_key.cpp`,
+    whose second build is the opt-in image.
   - Artifact: `docs/audit/repro/K1/`.
 
 - [ ] **K2 — chain head survives a power cut between record and persist**
