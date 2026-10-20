@@ -152,20 +152,23 @@ function statementEnd(code, from) {
   return code.length;
 }
 
-/** Every assignment to the `name` constant. Its one declaration,
- * `static const char* <name> = "<type>";`, names the type. A declaration whose
- * value is not one string literal is refused, and so is a second declaration.
- * So is any other assignment to the name: `const char*` leaves the pointer
- * itself writable, so a function could repoint it (`=`, a compound assignment
- * such as `+=`, `++` or `--`, prefix or postfix), and a type set at run time
- * is not one this reader can spell. The match is lexical, on the name: a
- * write through a pointer or a reference to the constant is not seen. `\b`
- * keeps a longer name (WAP_DEVICE_TYPE) out, and a comparison (`==`) is not a
- * write. */
+/** Every assignment to the `name` constant. Its one declaration names the
+ * type: `static const char* <name> = "<type>";`, or the same with the pointer
+ * itself const (`static const char* const`, or `static constexpr const
+ * char*`), the stronger form, since the compiler then refuses any other
+ * assignment too. A declaration whose value is not one string literal is
+ * refused, and so is a second declaration. So is any other assignment to the
+ * name: `const char*` leaves the pointer itself writable, so a function could
+ * repoint it (`=`, a compound assignment such as `+=` or `-=`, `++` or `--`,
+ * prefix or postfix), and a type set at run time is not one this reader can
+ * spell. The match is lexical, on the name: a write through a pointer or a
+ * reference to the constant is not seen. `\b` keeps a longer name
+ * (WAP_DEVICE_TYPE) out, and a comparison (`==`) is not a write. */
 export function constString(name) {
   const write = new RegExp(`\\b${name}\\b\\s*(?:(<<|>>|[-+*/%&|^])?=(?!=)|\\+\\+|--)`
     + `|(?:\\+\\+|--)\\s*\\b${name}\\b`, 'g');
-  const declPrefix = /^[ \t]*static[ \t]+const[ \t]+char[ \t]*\*[ \t]*$/;
+  const declPrefix =
+    /^[ \t]*static[ \t]+(?:constexpr[ \t]+)?const[ \t]+char[ \t]*\*[ \t]*(?:const[ \t]+)?$/;
   const literalValue = /^\s*("[^"\\\n]*")\s*$/;
   return {
     what: `${name} constant`,
@@ -178,7 +181,7 @@ export function constString(name) {
         const before = code.slice(code.lastIndexOf('\n', at - 1) + 1, at);
         if (!plain || !declPrefix.test(before)) {
           out.push({ at, refuse: `${name} is assigned here; publish it from its one declaration `
-            + `(static const char* ${name} = "<type>";)` });
+            + `(static const char* const ${name} = "<type>";, or without the second const)` });
           continue;
         }
         const from = at + m[0].length;

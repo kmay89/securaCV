@@ -2399,11 +2399,26 @@
   stopped pass drops it; and a 32-bit age wraps after about 49.7 days and
   would read a long-gone member `CONNECTED` again, so every pass, stopped
   or running, holds a heard member's age at 2^31 ms or under. What it does
-  not fix: the counter check is a high-water mark, so a genuine frame the
-  receiver has not heard (one a jammer blocked, or one heard since the last
-  replay-counter save before a reboot) still verifies and stamps the member
-  live when a copying radio sends it late; the threat model names the
-  bound.
+  not fix: the counter check is a high-water mark, so any genuine frame the
+  receiver did not hear still verifies and stamps the member live when a
+  copying radio sends it late, and nothing bounds that but the recorder's
+  stock. The largest stock is one the heartbeat itself creates: a member
+  heartbeats a bound member's address whether or not it is listening, so
+  every heartbeat sent while the receiver was off, booting or on another
+  channel is one it never heard, and relayed after a downtime they hold a
+  gone member `CONNECTED` about three times as long as the downtime (one
+  hour: about 2.9 hours, host-tested). A reboot adds the frames heard since
+  the last replay-counter save, and a jammer has its own. Review round 1
+  wrote the residual as "two ways, up to about 18 minutes" and listed only
+  the frames the receiver heard before a reboot; round 2 found the
+  downtime's frames, which need no jammer. A receiver rebooted within 5
+  minutes of a pairing also restored no counter for the new member, so
+  everything the member had signed before the pairing was fresh again (240
+  recorded frames, 356 minutes, host-probed); a member's first counter is
+  now persisted as soon as its first frame lands (the session's
+  first-counter handler, main.cpp `on_mesh_first_counter`). When a fix adds
+  a periodic send, count what the send leaves on the air for a recorder,
+  not only what it tells the receiver.
 - **Regression check:** `test_mesh_session`:
   `test_liveness_counts_only_verified_frames` (junk and a replay refresh
   nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
@@ -2421,8 +2436,15 @@
   `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
   re-arm before the guards), and the wrap case's stopped leg; and
   `test_a_frame_the_receiver_has_not_heard_still_counts_as_live` pins the
-  threat model's figures. Bounding each gap is not testing a jitter, and a
-  wrap-safe compare needs a window across the wrap. Silence assertions that a
+  threat model's figures, its downtime leg from a real sending session run
+  for an hour. Review round 2: `test_a_members_first_counter_is_saved_at_once`
+  (fails without the save), the liveness case's flipped signature byte and
+  frame under another opera (a stamp in either check's failure branch
+  passed every suite), and the documented 30 s ± 3 s pinned at compile time
+  (a jitter of 0 or a 40 s interval passed every check, because every check
+  derives its bounds from the constants it tests). Bounding each gap is not
+  testing a jitter, a check derived from a constant cannot catch a change to
+  it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
   timer makes false were rewritten to admit only member heartbeats checked
   by destination, signature, opera and counter
   (`assert_only_member_heartbeats`), not deleted.

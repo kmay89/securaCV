@@ -1153,12 +1153,15 @@ was lost sends its paired heartbeat to a joiner that is not a member yet,
 which drops it; that joiner, once a copy pairs it, reads the initiator
 `PEER_OFFLINE` until the initiator's next heartbeat (§5.2).
 
-Two leftovers, both harmless (from code): a device removed by a rotation it
-never heard keeps heartbeating its former members every interval, and each
-drops the frame at its transport, which no longer holds that address
+Two leftovers (from code): a device removed by a rotation it never heard
+keeps heartbeating its former members every interval, and each drops the
+frame at its transport, which no longer holds that address
 (`recv_dropped_no_peer`); and a live member keeps unicasting to a member
-that is gone until its owner removes it. At most 8 sends an interval either
-way. The cost of the timer, from code: one signature per interval per
+that is gone, or only down, until its owner removes it. At most 8 sends an
+interval either way. The second costs the sender nothing, but every one of
+those frames is one the absent member never heard, so a recorder near the
+sender can relay them to it once it is back and hold the sender
+`PEER_CONNECTED` there after the sender is gone too (§7.2, §8.3). The cost of the timer, from code: one signature per interval per
 sender, one outbound counter per heartbeat (one counter reservation per
 1024, about 2.8 NVS writes a day), and at most 8 Ed25519 heartbeat verifies
 per interval per receiver, one per bound member (`MAX_TRUSTED_PEERS` is 8),
@@ -1193,12 +1196,17 @@ refreshes before anything is verified, and ESP-NOW does not authenticate a
 source: a 3-byte junk frame and a replay sent from a quiet member's address
 once a minute held it `PEER_CONNECTED` for ten minutes (host-probed); now
 it reads `PEER_STALE` after 90 s and `PEER_OFFLINE` after 5 minutes. A
-genuine frame of the member's that the receiver has NOT heard passes every
+genuine frame of the member's that the receiver did NOT hear passes every
 check, so it does refresh the state when it arrives late from the member's
-address: after a receiver reboot, the frames heard since its last 5-minute
-replay-counter save; under a jammer that also sends what it blocked, its
-whole stock. A radio holding such frames keeps a member that is gone
-`PEER_CONNECTED` for about 90 s per frame (§8.3). The PlatformIO tree derives
+address: any heartbeat the member sent while the receiver was off, booting,
+out of range or on another channel (a member heartbeats each bound
+member's address whether or not it is listening, §7.1); after a receiver
+reboot, also the frames heard since its last 5-minute replay-counter save;
+under a jammer that also sends what it blocked, its whole stock. A radio
+holding such frames keeps a member that is gone `PEER_CONNECTED` for about
+90 s per frame, so a reboot gives no fixed bound: a downtime alone stocks
+about one frame per 30 s, which holds a gone member `PEER_CONNECTED` about
+three times as long as the receiver was down (§8.3). The PlatformIO tree derives
 the state from the last verified frame's age at each read, on a 32-bit
 millisecond clock, and every loop pass holds a heard member's age at
 2^31 ms (about 24.8 days) or under, so a member gone longer than the clock
@@ -1540,7 +1548,7 @@ is live once one such frame has arrived and while that MAC is in the
 ESP-NOW transport peer table, and the main loop builds it in the view it
 publishes for the route (F161, §8.1). A frame that fails verification or
 the counter check refreshes none of the three (a genuine frame the receiver
-has not heard passes both, whenever it arrives, §8.3); until F324 they were
+did not hear passes both, whenever it arrives, §8.3); until F324 they were
 the transport table entry's, which any frame from the address refreshed
 (§7.2).
 The checks prove who signed a frame, not which
@@ -1699,15 +1707,32 @@ stamps the member live (§7.2), so a jammer that sends the frames it blocked
 late, one under every 90 s, holds the member `PEER_CONNECTED` for as long as
 its stock lasts, after the member is gone too, with no `PEER_STALE` between;
 only one that blocks and sends nothing leaves it `PEER_STALE` within about
-90 s. The receiver reboot above reopens the same window for the frames heard
-since its last replay-counter save: about 90 s of `PEER_CONNECTED` each, up
-to about 18 minutes from the at most 12 heartbeats a 5-minute save interval
-holds (more if the member sent other frames in it), then `PEER_STALE` and
-`PEER_OFFLINE`. One frame the receiver hears from the member itself makes
-every older one a replay. Nothing in the receive path tells a late frame
-from a fresh one (the signed header carries the sender's own clock, which no
-receiver checks). Host-tested
-(`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`).
+90 s. The same holds for any genuine frame of the member's that the
+receiver did not hear, however it came to miss it, at about 90 s of
+`PEER_CONNECTED` per frame, then `PEER_STALE` and `PEER_OFFLINE`. There is
+no fixed bound: the hold is the size of the stock. Since F324 the largest source
+needs no jammer: a member heartbeats each bound member's address every
+interval whether or not that member is listening (§7.1), so every heartbeat
+it sends while the receiver is off, booting, out of range or on another
+channel is one the receiver never heard, and a passive recorder near the
+member keeps it. They build up at about one per 30 s the receiver is away,
+which holds a gone member `PEER_CONNECTED` about three times as long as the
+receiver was away (one hour down, about 2.9 hours in the host test). A
+receiver reboot adds the frames heard since its last 5-minute
+replay-counter save: at most 12 heartbeats one save interval holds at the
+shortest spacing (more if the member sent other frames in it), about 18
+minutes on their own; a receiver that reboots more often than every 5
+minutes never advances its saved counter, so the same stock serves on
+every boot. After a pairing the new receiver has heard nothing the member
+signed before it; the PlatformIO tree persists a member's first counter as
+soon as its first frame lands (the session's first-counter handler), so a
+reboot before the next 5-minute save does not reopen those. One frame the
+receiver hears from the member itself makes every older one a replay.
+Nothing in the receive path tells a late frame from a fresh one (the signed
+header carries the sender's own clock, which no receiver checks); closing
+it needs a freshness check against that clock or a wire change. Host-tested
+(`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its reboot,
+jammer and downtime legs, and `test_a_members_first_counter_is_saved_at_once`).
 
 So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
@@ -2178,10 +2203,15 @@ An implementation conforms to this specification if it:
   `peers_online` come from its last frame that passed the signature, opera
   and counter checks, as on canary-wap, so a junk frame or a replay of a
   frame the receiver has heard refreshes nothing, and an age past 2^31 ms is
-  held there so it does not wrap back to `PEER_CONNECTED` (§7.2, §8.3); a
-  frame the receiver has not heard (one a jammer blocked, or one heard since
-  its last replay-counter save before a reboot) still refreshes it when it
-  arrives late, about 90 s per frame (§8.3). A lost first COMPLETE heals at
+  held there so it does not wrap back to `PEER_CONNECTED` (§7.2, §8.3); any
+  genuine frame the receiver did not hear (one the member sent while the
+  receiver was off, booting or on another channel, one a jammer blocked,
+  or, after a reboot, one heard since its last replay-counter save) still
+  refreshes it when it arrives late, about 90 s per frame, with no fixed
+  bound (a downtime alone holds a gone member `PEER_CONNECTED` about three
+  times as long as it lasted); and a member's first counter is persisted as
+  soon as its first frame lands, so a reboot before the next 5-minute save
+  does not reopen what it signed before a pairing (§8.3). A lost first COMPLETE heals at
   the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
   station joined its router costs at most one interval after it joins
   (§7.1), and the §8.3 replay window of a missed frame closes at the

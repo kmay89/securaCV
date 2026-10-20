@@ -3837,7 +3837,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
     facts.credentials_submitted = __atomic_load_n(&g_onboard_creds_submitted, __ATOMIC_RELAXED);
 
     NodeStatus ns{};
-    ns.node           = DEVICE_TYPE;    // the sketch's one type word: the dt mDNS speaks
+    ns.node           = DEVICE_TYPE;    // the type constant, the same word as the mDNS dt
     ns.product        = OTA_PRODUCT;
     ns.fw             = FIRMWARE_VERSION;
     ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)

@@ -1014,34 +1014,74 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       it `CONNECTED` and `peers_online` 1 for ten minutes (host-probed). A
       heartbeat alone would have made that easy to aim (the member's MAC on
       the air every 30 s), so an intruder who pulled a Canary could have
-      held it `CONNECTED` with a spare ESP32. Now junk, a forgery and a
-      replay of a frame the receiver has heard refresh nothing, and a member
-      that is gone reads `STALE` within about 90-100 s and `OFFLINE` within
-      about 5 minutes while that is all a radio copying its address sends.
+      held it `CONNECTED` with a spare ESP32. Now junk, a forgery (a
+      flipped signature byte, or a frame signed under another opera) and a
+      replay of a frame the receiver has heard refresh nothing
+      (host-tested), and a member that is gone reads `STALE` within about
+      90-100 s and `OFFLINE` within about 5 minutes while that is all a
+      radio copying its address sends.
       An age past 2^31 ms is held there, so a member gone longer than the
       32-bit clock can count does not read `CONNECTED` again when it wraps.
-    - *Not covered: a frame the receiver has not heard.* The counter check
-      is a high-water mark, so a genuine frame of the member's that the
-      receiver has not heard verifies whenever it arrives from the member's
-      own address, and refreshes its liveness. A radio comes to hold such
-      frames two ways. After a receiver reboot, every frame it heard since
-      its last 5-minute replay-counter save is fresh again (spec §8.3; the
-      F116 bullet above says the same of canary-wap's own save): a
-      recorder that sends them one under every 90 s holds
-      a member that is gone `CONNECTED` for about 90 s per frame, up to
-      about 18 minutes from the at most 12 heartbeats one save interval
-      holds (more if the member sent other frames in it), and then it reads
-      `STALE` and `OFFLINE`. And a jammer that keeps the member's frames
-      from the receiver and sends them late holds it `CONNECTED` for as long
-      as its stock lasts, after the member is gone too, with no `STALE`
-      between; a jammer that only blocks leaves it `STALE` within about
-      90 s. One frame the receiver hears from the member itself makes every
-      older one a replay. Nothing on the receive side tells a late frame
-      from a fresh one: the signed header carries the sender's own clock,
-      which no receiver checks. A save before the deliberate restarts would
-      narrow the reboot case to unclean ones (a power cut, a crash); it is
-      not made. Host-tested
-      (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`).
+    - *Not covered: a frame the receiver did not hear.* The counter check
+      is a high-water mark, so any genuine frame of the member's that the
+      receiver did not hear verifies whenever it arrives from the member's
+      own address, and refreshes its liveness: a recorder that sends such
+      frames one under every 90 s holds a member that is gone `CONNECTED`
+      about 90 s per frame, and then it reads `STALE` and `OFFLINE`. There
+      is no fixed bound, after a reboot or otherwise: the hold is the size
+      of the recorder's stock, and a radio near the member comes to hold
+      one three ways (a fourth, after a pairing, is closed):
+      - *Frames the member sent while the receiver was not listening.* A
+        member heartbeats each bound member's address every interval
+        whether or not that member is there (spec §7.1), so every heartbeat
+        it sends while the receiver is off, booting, out of range or on
+        another channel (the softAP's channel 1 before its station rejoins
+        its router, F320) is one the receiver never heard, and a passive
+        recorder near the member keeps it with no jamming. They build up at
+        one per about 30 s the receiver is away, and relayed they hold a
+        gone member `CONNECTED` about three times as long as the receiver
+        was away (2.6 to 3.3 times by the jitter's range; one hour down
+        held it about 2.9 hours in the host test). Before F324 a member sent
+        nothing on a timer, so a downtime left no frames to keep. A breaker
+        trip on the receiver's circuit or a slow router rejoin leaves a
+        small stock with no intent at all; an intruder who unplugs the
+        receiver, pulls the member and plugs the receiver back in builds a
+        large one.
+      - *After a receiver reboot, every frame it heard since its last
+        5-minute replay-counter save* is fresh again (spec §8.3; the F116
+        bullet above says the same of canary-wap's own save): at most 12
+        heartbeats one save interval holds at the shortest spacing (more if
+        the member sent other frames in it), about 18 minutes, on top of
+        what the member sent while the receiver was down. A receiver that
+        reboots more often than every 5 minutes never advances its saved
+        counter, so the same stock serves on every boot. A save before the
+        deliberate restarts would narrow this to unclean ones (a power cut,
+        a crash); it is not made.
+      - *A jammer's stock.* A jammer that keeps the member's frames from the
+        receiver and sends them late holds it `CONNECTED` for as long as its
+        stock lasts, after the member is gone too, with no `STALE` between;
+        a jammer that only blocks leaves it `STALE` within about 90 s.
+      - *Closed: after a pairing, every frame the member signed under the
+        opera before it.* The new receiver never heard any of them, and
+        held no saved counter for the member until its first frame there.
+        That first counter is now persisted at once (mesh_session's
+        first-counter handler, main.cpp `on_mesh_first_counter`; also after
+        a re-pair from the member's replay tombstone, and after a boot that
+        restored none for it), so a receiver rebooted before its first
+        5-minute save restores it and those frames stay replays. Before
+        that save, a receiver paired on the bench and unplugged within 5
+        minutes to be mounted restored no counter for the member, and every
+        frame the member had signed (since F324, one heartbeat to each other
+        member every 30 s) held a gone member `CONNECTED` again: 240
+        recorded frames, 356 minutes (host-probed).
+      One frame the receiver hears from the member itself makes every older
+      one a replay. Nothing on the receive side tells a late frame from a
+      fresh one: the signed header carries the sender's own clock, which no
+      receiver checks, and closing this needs a freshness check against
+      that clock or a wire change. Host-tested
+      (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its
+      reboot, jammer and downtime legs, and
+      `test_a_members_first_counter_is_saved_at_once`); not run on a device.
     - *The replay window of a missed frame, bounded conditionally.* A frame
       of a member's that the receiver missed stays dispatchable from a radio
       copying the member's own address (spec §8.3) only until the receiver
@@ -1053,18 +1093,20 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       at most 8 heartbeat verifies per interval per receiver (one per bound
       member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
       counter per heartbeat (a reservation write per 1024, about 2.8 a
-      day); the 5-minute replay-counter save now writes counters that move
-      (only on flash-encrypted boards). The
-      transport's 100-frame-a-second storm gate is untouched. The same
-      cadence canary-wap pays (F76).
+      day); the 5-minute replay-counter save now writes counters that move,
+      and a member's first counter adds one save per pairing (and one
+      after a boot that restored none for it; both only on flash-encrypted
+      boards). The transport's 100-frame-a-second
+      storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
     session holds, and reads no NVS on the HTTP task; a stored key the
     session does not hold is not a member anything hears, so the rows
     always agree with `peers_total`.
   Pinned by host tests in `test_mesh_session` and `test_mesh_pairing`, by
-  `check_canary_mesh_status.py` and the handlers' wiring test; the canary
-  build is CI's; not bench-verified (the F136, F162, F199, F215 and F324 section
+  `check_canary_mesh_status.py` and the handlers' wiring tests (the
+  first-counter save's in `scripts/tests/test_canary_mesh_first_counter_wiring.py`);
+  the canary build is CI's; not bench-verified (the F136, F162, F199, F215 and F324 section
   of `docs/audit/hardware_verification_checklist.md`).
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the

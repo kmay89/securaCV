@@ -528,6 +528,19 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
 }
 
+/* A member's first verified frame since it was registered with no saved
+ * counter (F324): a member just paired, one re-paired from its replay
+ * tombstone, or one no save had caught before a reboot. Persist the counters
+ * now rather than at the next 5-minute save, so a reboot in between cannot
+ * make every frame it signed before this one (one heartbeat to each other
+ * member every 30 s) fresh again. Once per registration, and not after a
+ * boot that restored the member's counter; FE-gated like every replay_ctrs
+ * write. Runs on the main loop. */
+static void on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+  (void)fp;
+  persist_replay_counters();
+}
+
 /* A verified TAMPER_ALERT from a trusted peer (F10). The session has
  * counted it and stored it in its history ring (GET /api/mesh/alerts);
  * the health log carries the receipt with the sender's fingerprint
@@ -1714,6 +1727,8 @@ void setup() {
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
     /* F33 part 6: the revocation deny-list. */
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F324: a member's first counter is persisted at once. */
+    mesh_session::set_first_counter_handler(&on_mesh_first_counter);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);
     /* F161: GET /api/mesh and /api/mesh/peers read the view the main loop

@@ -205,6 +205,18 @@ std::vector<Beat> assert_only_member_heartbeats(const std::vector<OutFrame>& out
   return beats;
 }
 
+/* F324's cadence as the docs state it: spec §4.5's registry row and §7.1,
+ * THREAT_MODEL and the U1 bench row say every 30 s +/- 3 s. Every spacing
+ * check below derives its bounds from the two constants, so a check that
+ * reads them cannot catch a change to them: a jitter of 0 (one fixed
+ * deadline, the lock-step cadence the jitter exists to prevent) or a 40 s
+ * interval passed every one of them. This pins the numbers the docs give;
+ * mesh_session.h's own asserts keep the jitter above 0 and two of the
+ * longest intervals short of STALE. */
+static_assert(mesh_session::HEARTBEAT_INTERVAL_MS == 30000 &&
+                  mesh_session::HEARTBEAT_JITTER_MS == 3000,
+              "spec §4.5 and §7.1: a member heartbeat every 30 s +/- 3 s");
+
 /* F324's spacing, from the constants, never typed: a heartbeat is due
  * HEARTBEAT_INTERVAL_MS +/- HEARTBEAT_JITTER_MS after the one before and
  * goes out on the first pass at or past that, so with passes `pass_ms`
@@ -8667,14 +8679,18 @@ void test_the_heartbeat_timer_survives_a_long_disable() {
 }
 
 /* One verified frame from a member at rssi -40, then once a minute for ten
- * minutes a 3-byte junk frame at rssi -90 and a byte-identical replay of
- * that verified frame, both from the member's own address. Neither passes
- * the checks, so neither refreshes anything: the member reads STALE after
- * 90 s and OFFLINE after 5 minutes, with the verified frame's age and RSSI,
- * and the opera reads CONNECTING with peers_online 0. A fresh verified
- * frame then reads it CONNECTED at once. Fails before F324: the transport
- * stamp the junk refreshed made it CONNECTED, last_seen_sec 1, rssi -90,
- * and the status ACTIVE with peers_online 1 (probed at 3e593a01). */
+ * minutes, all from the member's own address at rssi -90: a 3-byte junk
+ * frame, a byte-identical replay of that verified frame, a full-length
+ * heartbeat with a fresh counter and one signature byte flipped (it fails
+ * the signature check, step 4), and one the member signed with a fresh
+ * counter under another opera's secret (it fails the opera check, step 5).
+ * None passes the checks, so none refreshes anything: the member reads
+ * STALE after 90 s and OFFLINE after 5 minutes, with the verified frame's
+ * age and RSSI, and the opera reads CONNECTING with peers_online 0. A fresh
+ * verified frame then reads it CONNECTED at once. Fails before F324: the
+ * transport stamp the junk refreshed made it CONNECTED, last_seen_sec 1,
+ * rssi -90, and the status ACTIVE with peers_online 1 (probed at 3e593a01);
+ * and on a stamp in the signature or the opera check's failure branch. */
 void test_liveness_counts_only_verified_frames() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x9F + i);
@@ -8699,6 +8715,8 @@ void test_liveness_counts_only_verified_frames() {
   /* A round a minute from 61000 to 601000; at the second round's pass the
    * verified frame is past STALE and short of OFFLINE. */
   const uint8_t junk[3] = {mesh_envelope::OPERA_VERSION, 0xEE, 0xEE};
+  uint8_t other_opera[32];
+  for (size_t i = 0; i < sizeof(other_opera); ++i) other_opera[i] = (uint8_t)(S[i] ^ 0x5A);
   const uint32_t round_ms = 60000, last_round = 601000, read_at = 602000;
   const uint32_t stale_at = 1000 + 2 * round_ms;
   assert(stale_at - 1000 >= mesh_transport::PEER_STALE_AFTER_MS &&
@@ -8709,6 +8727,19 @@ void test_liveness_counts_only_verified_frames() {
     if (t <= last_round && (t - 1000) % round_ms == 0) {
       mesh_transport::test::inject_recv(mac, junk, sizeof(junk), -90);
       mesh_transport::test::inject_recv(mac, verified, vlen, -90);   /* the replay */
+      uint8_t forged[mesh_envelope::MAX_FRAME_LEN];
+      const size_t forged_len = build_signed_session_frame(
+          m.pub, m.priv, S, ++m.counter, mesh_envelope::MsgType::HEARTBEAT, nullptr, 0, forged,
+          sizeof(forged));
+      assert(forged_len == mesh_envelope::MIN_FRAME_LEN);
+      forged[forged_len - 1] ^= 0x01;   /* the signature's last byte */
+      mesh_transport::test::inject_recv(mac, forged, forged_len, -90);
+      uint8_t foreign[mesh_envelope::MAX_FRAME_LEN];
+      const size_t foreign_len = build_signed_session_frame(
+          m.pub, m.priv, other_opera, ++m.counter, mesh_envelope::MsgType::HEARTBEAT, nullptr, 0,
+          foreign, sizeof(foreign));
+      assert(foreign_len == mesh_envelope::MIN_FRAME_LEN);
+      mesh_transport::test::inject_recv(mac, foreign, foreign_len, -90);
     }
     mesh_transport::process();
     mesh_session::process(t);
@@ -8948,22 +8979,38 @@ void test_a_member_bound_after_weeks_alone_is_heard_within_one_interval() {
 
 /* What verified-only liveness does not cover, pinned so the figures the
  * docs give come from a test (THREAT_MODEL, spec §8.3). The counter check
- * is a high-water mark, so a genuine frame of a member's that the receiver
- * has not heard verifies whenever it arrives from the member's own address,
- * and stamps the member live. A radio comes to hold such frames two ways:
- *  - The receiver reboots. Its replay counters come back from main.cpp's
- *    5-minute save (kReplaySaveMs below), so every frame it heard since
- *    that save is fresh again. A member heartbeating at the shortest
+ * is a high-water mark, so any genuine frame of a member's that the
+ * receiver did not hear verifies whenever it arrives from the member's own
+ * address, and stamps the member live: a recorder that sends such frames
+ * one each just inside PEER_STALE_AFTER_MS holds a member that is gone
+ * CONNECTED about 90 s per frame. There is no fixed bound; the hold is the
+ * size of the recorder's stock. The legs pin where a stock comes from:
+ *  - Leg 1, a reboot. The receiver's replay counters come back from
+ *    main.cpp's 5-minute save (kReplaySaveMs below), so every frame it heard
+ *    since that save is fresh again. A member heartbeating at the shortest
  *    spacing sends at most (kReplaySaveMs - 1) / kBeatGapMin + 1 of them
- *    between two saves (12), and a recorder that sends one each just inside
- *    PEER_STALE_AFTER_MS holds a member that is gone CONNECTED for about
- *    that many times 90 s (about 18 minutes); then it reads STALE, then
- *    OFFLINE. The frame at the saved counter refreshes nothing, and before
- *    the reboot none of them does.
- *  - A jammer keeps the member's frames from the receiver and sends them
- *    late: the same, for as long as its stock lasts, with no STALE between
- *    them. One frame the receiver hears from the member itself makes every
- *    older one a replay. */
+ *    between two saves (12, about 18 minutes held). That figure is for a
+ *    reboot with no downtime; leg 3's stock adds to it. The frame at the
+ *    saved counter refreshes nothing, and before the reboot none of them
+ *    does.
+ *  - Leg 2, a jammer. It keeps the member's frames from the receiver and
+ *    sends them late: the same, for as long as its stock lasts, with no
+ *    STALE between them. One frame the receiver hears from the member
+ *    itself makes every older one a replay.
+ *  - Leg 3, downtime. A member heartbeats a bound member's address every
+ *    interval whether or not that member is listening, so every heartbeat
+ *    it sends while the receiver is off, booting, out of range or on
+ *    another channel is one the receiver never heard, and a recorder near
+ *    the member keeps them with no jamming. A real session runs for an hour
+ *    as the member; the receiver comes back with the counter it saved just
+ *    before the cut and the member gone, and the hour's heartbeats, relayed,
+ *    hold it CONNECTED about (PEER_STALE_AFTER_MS - pass) /
+ *    HEARTBEAT_INTERVAL_MS times the downtime: about three hours for one
+ *    hour down. Before F324 a member sent nothing on a timer, so a downtime
+ *    left no frames to keep.
+ * A receiver that reboots before its first save after a pairing held no
+ * counter for the member at all; test_a_members_first_counter_is_saved_at_once
+ * pins the save that closes that one. */
 void test_a_frame_the_receiver_has_not_heard_still_counts_as_live() {
   /* main.cpp loop(): persist_replay_counters() every 300000 ms. */
   constexpr uint32_t kReplaySaveMs = 300000;
@@ -9086,11 +9133,208 @@ void test_a_frame_the_receiver_has_not_heard_still_counts_as_live() {
   const uint32_t after = own_at + mesh_transport::PEER_OFFLINE_AFTER_MS;
   idle(after);
   assert(has(peer_row(after, j.pub), "\"state\":\"OFFLINE\","));
+
+  /* Leg 3: downtime. This session is the member now, with the receiver
+   * bound at rx_mac, and runs for kDownMs past its first heartbeat, which
+   * the receiver heard and saved just before it went down. */
+  constexpr uint32_t kDownMs = 3600000;
+  uint8_t mpub[32], mpriv[32];
+  stand_up_session(S, mpub, mpriv);
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t rx_mac[1][6] = {{0x24, 0x0A, 0xC4, 0x32, 0xC0, 0x02}};
+  add_bound_member(rx_mac[0]);
+  std::vector<OutFrame> sent;
+  uint32_t first_beat = 0;
+  for (uint32_t d = 1000;; d += pass_ms) {
+    mesh_transport::test::set_now_ms(d);
+    g_outs.clear();
+    mesh_session::process(d);
+    sent.insert(sent.end(), g_outs.begin(), g_outs.end());
+    if (first_beat == 0 && !sent.empty()) first_beat = d;
+    if (first_beat != 0 && d - first_beat >= kDownMs) break;
+  }
+  const std::vector<Beat> beats = assert_only_member_heartbeats(sent, mpub, opera_id, rx_mac, 1);
+  const std::vector<uint32_t> times = beat_times_to(beats, rx_mac[0]);
+  assert(times.size() == sent.size() && times[0] == first_beat);
+  const std::vector<uint32_t> down_times(times.begin() + 1, times.end());
+  size_t n_min = 0, n_max = 0;
+  check_beat_spacing(down_times, first_beat, first_beat + pass_ms, first_beat + kDownMs, pass_ms,
+                     &n_min, &n_max);
+  std::vector<std::vector<uint8_t>> unheard;
+  for (size_t k = 1; k < sent.size(); ++k) unheard.push_back(sent[k].bytes);
+  /* The receiver comes back with the member gone: main.cpp's boot restore
+   * registers the member, binds its stored address, restores the save. */
+  TestMember i;
+  std::memcpy(i.pub, mpub, sizeof(i.pub));
+  mesh_crypto::compute_fingerprint(i.pub, i.fp);
+  stand_up_session(S, pub, priv);
+  assert(mesh_session::register_trusted_peer(i.pub));
+  assert(mesh_session::bind_peer_mac(i.fp, mac));
+  assert(mesh_session::restore_replay_counter(i.fp, beats[0].counter));
+  const uint32_t d0 = 2 * kDownMs;
+  deliver(sent[0].bytes, d0 - pass_ms);   /* at the saved counter: refreshes nothing */
+  assert(has(peer_row(d0 - pass_ms, i.pub), "\"state\":\"OFFLINE\",") &&
+         has(status_body(), "\"peers_online\":0,"));
+  const uint32_t down_ms = relay(i, unheard, d0);
+  assert(down_ms == (uint32_t)(unheard.size() - 1) * step + mesh_transport::PEER_STALE_AFTER_MS);
+  /* So the hold is `step` per heartbeat the member sent while the receiver
+   * was down, about (STALE - pass) / INTERVAL times the downtime: between
+   * what every gap at its longest and every gap at its shortest give (the
+   * counts check_beat_spacing derived), and more than twice the downtime
+   * either way. */
+  assert(down_ms >= (uint32_t)(n_min - 1) * step + mesh_transport::PEER_STALE_AFTER_MS);
+  assert(down_ms <= (uint32_t)(n_max - 1) * step + mesh_transport::PEER_STALE_AFTER_MS);
+  assert(down_ms > 2 * kDownMs);
   std::printf("PASS test_a_frame_the_receiver_has_not_heard_still_counts_as_live"
               "  (a reboot: %u frames since the save held a gone member CONNECTED %u s;"
-              " a jammer: %u frames, %u s)\n",
+              " a jammer: %u frames, %u s; %u s down: %zu frames, %u s, %.2f times the downtime)\n",
               (unsigned)kMaxUnsaved, (unsigned)(held_ms / 1000), (unsigned)(stock_n / 2),
-              (unsigned)(jammed_ms / 1000));
+              (unsigned)(jammed_ms / 1000), (unsigned)(kDownMs / 1000), unheard.size(),
+              (unsigned)(down_ms / 1000), (double)down_ms / kDownMs);
+}
+
+/* What main.cpp's first-counter handler (on_mesh_first_counter) does: its
+ * persist_replay_counters(), into a stand-in for the NVS replay_ctrs blob,
+ * and the boot's restore loop over that blob. */
+struct SavedCounters {
+  size_t   n = 0;
+  uint8_t  fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
+  uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
+};
+SavedCounters g_nvs_counters;
+size_t        g_first_counters = 0;
+uint8_t       g_first_counter_fp[mesh_crypto::FINGERPRINT_LEN];
+void persist_counters_on_first(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+  ++g_first_counters;
+  std::memcpy(g_first_counter_fp, fp, sizeof(g_first_counter_fp));
+  g_nvs_counters.n = mesh_session::get_replay_counters(g_nvs_counters.fps, g_nvs_counters.ctrs,
+                                                       mesh_session::MAX_REPLAY_COUNTERS);
+}
+void restore_counters_at_boot() {
+  for (size_t k = 0; k < g_nvs_counters.n; ++k) {
+    mesh_session::restore_replay_counter(g_nvs_counters.fps[k], g_nvs_counters.ctrs[k]);
+  }
+}
+
+/* A member's first counter is saved at once (F324). A receiver pairs with a
+ * member that has been in the opera an hour, heartbeating its other members
+ * every interval under counters this receiver never held. The member's
+ * first frame here, its paired heartbeat, fires the first-counter handler
+ * once, and main.cpp persists the counters then. So a receiver rebooted
+ * before its first 5-minute save restores that counter, and the hour's
+ * frames, recorded and relayed from the member's own address after the
+ * member is gone, refresh nothing: it stays OFFLINE. Fails without the
+ * save: the receiver restored no counter for the member, and the same relay
+ * held it CONNECTED about 90 s per frame (probed before the handler: 240
+ * frames, 356 minutes). The handler fires for nothing else: not the
+ * member's next frame, a replay, junk or a forgery, and not a first frame
+ * after a boot that restored the member's counter, so a boot costs no
+ * write. A boot that restored none (no save had caught it) fires it again,
+ * and so does the first frame after a re-pair from the member's replay
+ * tombstone, whose counter is not 0. */
+void test_a_members_first_counter_is_saved_at_once() {
+  const uint32_t step = mesh_transport::PEER_STALE_AFTER_MS - 1000;
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x2B + i);
+  uint8_t pub[32], priv[32];
+  const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x32, 0xD0, 0x01};
+  auto heartbeat = [&](TestMember& m) {
+    std::vector<uint8_t> f(mesh_envelope::MAX_FRAME_LEN);
+    f.resize(build_signed_session_frame(m.pub, m.priv, S, ++m.counter,
+                                        mesh_envelope::MsgType::HEARTBEAT, nullptr, 0, f.data(),
+                                        f.size()));
+    assert(f.size() == mesh_envelope::MIN_FRAME_LEN);
+    return f;
+  };
+  auto deliver = [&](const std::vector<uint8_t>& f, uint32_t t) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::test::inject_recv(mac, f.data(), f.size(), -60);
+    mesh_transport::process();
+    mesh_session::process(t);
+  };
+  auto boot = [&]() {   /* main.cpp setup(): the session, then the handlers */
+    stand_up_session(S, pub, priv);
+    mesh_session::set_first_counter_handler(persist_counters_on_first);
+  };
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  boot();
+  TestMember m;
+  make_member(m, mac);   /* the pairing registers and binds it: no counter held */
+  assert(g_first_counters == 0);
+  /* Its hour in the opera before this pairing, to its other members. */
+  std::vector<std::vector<uint8_t>> hour;
+  for (uint32_t k = 0; k < 3600000 / kBeatGapMin; ++k) hour.push_back(heartbeat(m));
+  /* The paired heartbeat: the first frame this receiver hears from it. */
+  uint32_t t = 1000;
+  const std::vector<uint8_t> paired = heartbeat(m);
+  deliver(paired, t);
+  assert(has(peer_row(t, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,"));
+  assert(g_first_counters == 1 && std::memcmp(g_first_counter_fp, m.fp, sizeof(m.fp)) == 0);
+  assert(g_nvs_counters.n == 1 && std::memcmp(g_nvs_counters.fps[0], m.fp, sizeof(m.fp)) == 0 &&
+         g_nvs_counters.ctrs[0] == m.counter);
+  /* Nothing else fires it: the next frame, a replay, junk, a forgery. */
+  t += kBeatGapMin;
+  deliver(heartbeat(m), t);
+  deliver(paired, t + 1000);
+  const std::vector<uint8_t> junk = {mesh_envelope::OPERA_VERSION, 0xEE, 0xEE};
+  deliver(junk, t + 2000);
+  std::vector<uint8_t> forged = heartbeat(m);
+  forged.back() ^= 0x01;
+  deliver(forged, t + 3000);
+  assert(g_first_counters == 1);
+  /* The member is gone, and the receiver reboots before the next save. */
+  boot();
+  assert(mesh_session::register_trusted_peer(m.pub));
+  assert(mesh_session::bind_peer_mac(m.fp, mac));
+  restore_counters_at_boot();
+  const uint32_t r0 = t + mesh_transport::PEER_OFFLINE_AFTER_MS;
+  for (size_t k = 0; k < hour.size(); ++k) {
+    const uint32_t at = r0 + (uint32_t)k * step;
+    deliver(hour[k], at);   /* below the saved counter: a replay */
+    assert(has(peer_row(at, m.pub), "\"state\":\"OFFLINE\","));
+    assert(has(status_body(), "\"state\":\"CONNECTING\"") &&
+           has(status_body(), "\"peers_online\":0,"));
+  }
+  deliver(paired, r0 + (uint32_t)hour.size() * step);   /* the saved one, too */
+  assert(has(peer_row(r0 + (uint32_t)hour.size() * step, m.pub), "\"state\":\"OFFLINE\","));
+  assert(g_first_counters == 1);
+  /* The member itself, back: CONNECTED at once, and a restored counter
+   * fires nothing. */
+  t = r0 + (uint32_t)(hour.size() + 1) * step;
+  deliver(heartbeat(m), t);
+  assert(has(peer_row(t, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,"));
+  assert(g_first_counters == 1);
+  /* A boot that restored no counter for it: the first frame saves one. */
+  g_nvs_counters = SavedCounters{};
+  boot();
+  assert(mesh_session::register_trusted_peer(m.pub));
+  assert(mesh_session::bind_peer_mac(m.fp, mac));
+  restore_counters_at_boot();
+  t += 1000;
+  deliver(heartbeat(m), t);
+  assert(g_first_counters == 2 && g_nvs_counters.n == 1 && g_nvs_counters.ctrs[0] == m.counter);
+  /* A member dropped and re-paired resumes from its replay tombstone, whose
+   * counter is not 0; its first frame after the re-pair still saves (the
+   * frames it signed meanwhile are past the tombstone). */
+  assert(mesh_session::unregister_trusted_peer(m.fp));
+  for (int k = 0; k < 3; ++k) (void)heartbeat(m);   /* to its other members */
+  assert(mesh_session::register_trusted_peer(m.pub));
+  assert(mesh_session::bind_peer_mac(m.fp, mac));
+  t += 1000;
+  deliver(heartbeat(m), t);
+  assert(has(peer_row(t, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,"));
+  assert(g_first_counters == 3);
+  bool saved_now = false;
+  for (size_t k = 0; k < g_nvs_counters.n; ++k) {
+    saved_now |= std::memcmp(g_nvs_counters.fps[k], m.fp, sizeof(m.fp)) == 0 &&
+                 g_nvs_counters.ctrs[k] == m.counter;
+  }
+  assert(saved_now);
+  std::printf("PASS test_a_members_first_counter_is_saved_at_once"
+              "  (%zu recorded frames after a reboot before the save: none refreshed it)\n",
+              hour.size());
 }
 
 int main() {
@@ -9238,6 +9482,7 @@ int main() {
   test_each_heartbeat_deadline_is_drawn_afresh();
   test_a_member_bound_after_weeks_alone_is_heard_within_one_interval();
   test_a_frame_the_receiver_has_not_heard_still_counts_as_live();
+  test_a_members_first_counter_is_saved_at_once();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

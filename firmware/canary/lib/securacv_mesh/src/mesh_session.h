@@ -412,6 +412,7 @@ constexpr uint32_t HEARTBEAT_JITTER_MS   = 3000;
 static_assert(2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS) < mesh_transport::PEER_STALE_AFTER_MS,
               "one lost heartbeat must not read STALE");
 static_assert(HEARTBEAT_JITTER_MS < HEARTBEAT_INTERVAL_MS, "the jittered deadline stays ahead");
+static_assert(HEARTBEAT_JITTER_MS > 0, "a fixed deadline lets two members' timers lock into step");
 
 typedef bool (*counter_reserve_fn)(uint64_t high_water);
 
@@ -707,6 +708,24 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
  * or tombstone was raised or created. */
 bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                               uint64_t counter);
+
+/* A member's first counter (F324). Runs on the process() task, from the
+ * receive path, on a member's first frame that passes every check (its
+ * binding, the signature, the opera_id, the counter) since it was
+ * registered with no saved counter: a member just paired, one re-paired
+ * from its replay tombstone, or one whose counter the boot restore did not
+ * bring back because no save had caught it. The integration layer persists
+ * the replay counters here (main.cpp's persist_replay_counters), so a
+ * reboot before the 5-minute save does not make every frame the member
+ * signed before this one fresh again: since F324 a member heartbeats its
+ * other members every 30 s, and each of those frames would otherwise verify
+ * after such a reboot and stamp the member live. At most once per
+ * registration. restore_replay_counter() of a trusted fingerprint marks its
+ * counter saved, so a boot that restored one costs no write. The handler
+ * must not change the trusted table. */
+typedef void (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
+
+void set_first_counter_handler(first_counter_fn fn);
 
 /* Beacon-event receiver callback. `sender_fp` lets the handler
  * correlate events with the Scout that sent them (each paired Scout

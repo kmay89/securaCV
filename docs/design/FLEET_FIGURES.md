@@ -76,8 +76,12 @@ kinds to one value. It refuses a site whose value is not a single string
 literal (a variable, a macro, a `%s`, an ArduinoJson assignment), a file with
 none left, and sites that disagree, and for the constant it also refuses a
 second declaration and any other assignment to its name (`=`, a compound
-assignment, `++` or `--`, prefix or postfix). The check is lexical: a write
-through a pointer to the constant is not one it sees. Improv's firmware-name
+assignment, `++` or `--`, prefix or postfix). It reads a
+`static const char* const` (or `static constexpr const char*`) declaration
+as the declaration too, the stronger form, whose other assignments the
+compiler refuses as well. The check is lexical: a write through a pointer to
+the constant is not one it sees. `figures.test.js` holds the constant's five
+readers to it, so none is handed a literal of its own. Improv's firmware-name
 string in `ble_improv.cpp` is a literal outside this check: that file cannot
 see the sketch's constant.
 

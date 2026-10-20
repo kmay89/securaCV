@@ -433,12 +433,28 @@ test("the WAP resolves by the device type it puts on the fleet's wire, read from
   const declLine = ino.slice(0, ino.search(/^static const char\* DEVICE_TYPE\s*=/m)).split("\n").length;
   assert.ok(tree.sites.includes(`firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino:${declLine}`),
     `the DEVICE_TYPE declaration at canary_wap.ino:${declLine} is a read site (${tree.sites.join(", ")})`);
-  // The sketch states the type once: /api/status's node_status.node and
-  // /api/fleet's self.product read the constant rather than a literal of their
-  // own, which the reader would not see (it reads the constant, not them).
-  assert.match(ino, /^\s*ns\.node\s*=\s*DEVICE_TYPE;/m, "node_status.node reads DEVICE_TYPE");
-  assert.match(ino, /^\s*self\.product\s*=\s*DEVICE_TYPE;/m, "/api/fleet's product reads DEVICE_TYPE");
-  assert.ok(!/^\s*(?:ns\.node|self\.product)\s*=\s*"/m.test(ino), "neither is handed a literal anywhere in the sketch");
+  // Every surface that is not an mDNS or MQTT wire site reads the constant
+  // rather than a literal of its own, which the reader would not see (it reads
+  // the constant, not them): REST /api/status's device_type and its
+  // node_status.node, /api/fleet's self.product, the hashed BOOT attestation's
+  // device_type and the boot banner's Type line. The mDNS dt records stay
+  // literals, which the reader requires of them; so do csi_mqtt.cpp's status
+  // strings. Read with comments blanked, so a commented-out line is no reader.
+  const { codeOnly } = await import(pathToFileURL(join(ROOT, "tools/figures/wire_types.mjs")).href);
+  const inoCode = codeOnly(ino);
+  const readers = [
+    ["REST /api/status's device_type", /^\s*doc\["device_type"\]\s*=\s*DEVICE_TYPE;/m,
+      /^\s*doc\["device_type"\]\s*=\s*"/m],
+    ["node_status.node", /^\s*ns\.node\s*=\s*DEVICE_TYPE;/m, /^\s*ns\.node\s*=\s*"/m],
+    ["/api/fleet's product", /^\s*self\.product\s*=\s*DEVICE_TYPE;/m, /^\s*self\.product\s*=\s*"/m],
+    ["the BOOT attestation's device_type", /w\.write_text\("device_type"\);\s*w\.write_text\(DEVICE_TYPE\);/,
+      /w\.write_text\("device_type"\);\s*w\.write_text\("/],
+    ["the boot banner's Type line", /^\s*bi\.device_type\s*=\s*DEVICE_TYPE;/m, /^\s*bi\.device_type\s*=\s*"/m],
+  ];
+  for (const [what, reads, literal] of readers) {
+    assert.strictEqual((inoCode.match(new RegExp(reads.source, "gm")) || []).length, 1, `${what} reads DEVICE_TYPE, once`);
+    assert.ok(!literal.test(inoCode), `${what} is not handed a literal anywhere in the sketch`);
+  }
   // "canary" is the flagship tree's word (firmware/canary) and is not mapped to the WAP.
   assert.ok(!dt.mapped.some((m) => m.device_type === "canary"), "\"canary\" is not mapped to the WAP");
   // The WAP figure's firmware evidence is the flavor the Workshop publishes
@@ -519,6 +535,9 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
         (r) => inSetup(r, 'DEVICE_TYPE = "canary";'), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
       ["the constant moved by a compound assignment",
         (r) => inSetup(r, "DEVICE_TYPE += 7;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      // `-=` is the other compound operator a pointer takes.
+      ["the constant moved by a compound subtraction",
+        (r) => inSetup(r, "DEVICE_TYPE -= 1;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
       ["the constant moved by an increment",
         (r) => inSetup(r, "++DEVICE_TYPE;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
       ["the constant moved by a prefix decrement",
@@ -538,6 +557,11 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
       ["the constant gone",
         (r) => ({ [inoF]: r[inoF].replace(CONST, "#define DEVICE_TYPE \"canary-wap\"") }),
         /canary_wap\.ino no longer publishes canary-wap's device type as the DEVICE_TYPE constant/],
+      // The const-pointer declarations are read as the declaration, not
+      // refused as an assignment, so a wrong type in one is a disagreement.
+      ["the const-pointer constant set back to the flagship's word",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* const DEVICE_TYPE  = "canary";') }),
+        /publishes 2 different device types[\s\S]*"canary" at [^;]*canary_wap\.ino:\d+/],
     ];
     for (const [name, edit, why] of refusals) {
       assert.throws(() => readWith(edit), why, name);
@@ -547,6 +571,14 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
       .replace(BANNER, `    if (DEVICE_TYPE == nullptr) return;\n${BANNER}`) }))[0];
     assert.strictEqual(near.device_type, "canary-wap", "WAP_DEVICE_TYPE and a == are not read as the constant");
     assert.strictEqual(near.sites.length, 6, "three dt records, two status strings, one declaration");
+    // A const pointer, whose other assignments the compiler refuses too, is
+    // the stronger form of the one declaration, and is read as it.
+    for (const decl of ['static const char* const DEVICE_TYPE  = "canary-wap";',
+      'static constexpr const char* DEVICE_TYPE = "canary-wap";']) {
+      const [held] = readWith((r) => ({ [inoF]: r[inoF].replace(CONST, decl) }));
+      assert.strictEqual(held.device_type, "canary-wap", `${decl} is read as the declaration`);
+      assert.strictEqual(held.sites.length, 6, `${decl}: three dt records, two status strings, one declaration`);
+    }
     // A commented-out site publishes nothing, so it is no site.
     assert.strictEqual(readWith((r) => ({ [inoF]: r[inoF].replace(DT, `${DT}\n  // MDNS.addServiceTxt("securacv", "tcp", "dt", DEVICE_TYPE);\n  /* doc["device_type"] = x; DEVICE_TYPE = "canary"; */`) }))[0].sites.length, 6,
       "a commented-out call is not read");

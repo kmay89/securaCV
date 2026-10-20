@@ -131,6 +131,13 @@ struct TrustedPeer {
    * ten minutes, `last_seen_sec` 1, the junk's RSSI). */
   uint32_t verified_seen_ms;
   int8_t   verified_rssi;
+  /* F324: no durable copy of this peer's counter is known to exist. Set by
+   * register_trusted_peer() (a pairing, a re-pair from a tombstone, a boot
+   * registration), cleared by restore_replay_counter() (the boot restore
+   * found a saved one) and by the first verified frame, which runs the
+   * first-counter handler (set_first_counter_handler) so the integration
+   * layer saves it. */
+  bool     counter_unsaved;
   /* Verified TAMPER_ALERT frames from this peer (F11 residual). Counted
    * in dispatch_verified, i.e. only after signature + opera_id + replay
    * checks — the same trust argument as `heard` above. */
@@ -216,6 +223,7 @@ static peer_left_fn             s_peer_left_cb    = nullptr;
 static tamper_alert_received_fn s_tamper_alert_cb = nullptr;
 static rekey_commit_fn          s_rekey_commit_cb = nullptr;
 static peer_revoked_fn          s_peer_revoked_cb = nullptr;
+static first_counter_fn         s_first_counter_cb = nullptr;
 
 /* The spec §5.6 REVOCATION_GRACE_MS deny-list (F33 part 6): every device
  * this one removed, and every device a verified REKEY_OFFER named as
@@ -785,9 +793,15 @@ static void arm_heartbeat(uint32_t now_ms) {
  * PEER_STALE_AFTER_MS (static_assert, mesh_session.h), so one lost
  * heartbeat never reads STALE; a member that is gone reads STALE within
  * about 90-100 s and OFFLINE within about 5 min, unless a radio sends this
- * device genuine frames of the member's it has not heard (ones a jammer
- * blocked, or, after a reboot, ones heard since the last replay-counter
- * save), each of which still verifies and stamps it live (spec §8.3). A
+ * device genuine frames of the member's it did not hear, each of which
+ * still verifies and stamps it live (spec §8.3). This timer makes the
+ * largest stock of those: it sends to every bound member whether or not
+ * that member is listening, so each heartbeat sent while a member is off,
+ * booting or on another channel is one that member never heard; relayed
+ * to it later by a recorder, they hold this device CONNECTED there about
+ * three times as long as that member was down, after this device is gone
+ * too. A jammer's blocked frames and, after a reboot, the frames heard since
+ * the last replay-counter save are others. A
  * joiner that lost the first COMPLETE pairs from a copy, but the
  * initiator's paired heartbeat reached it before it held the opera and was
  * dropped; it hears the initiator at the initiator's next heartbeat (F162's
@@ -1159,6 +1173,14 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
    * does, whenever it arrives (spec §8.3). */
   peer->verified_seen_ms = mesh_transport::clock_ms();
   peer->verified_rssi    = rssi;
+  /* F324: the first verified frame since the member was registered with no
+   * saved counter. The handler persists the replay counters (main.cpp), so
+   * a reboot before the next 5-minute save does not reopen everything the
+   * member signed before it (set_first_counter_handler). */
+  if (peer->counter_unsaved) {
+    peer->counter_unsaved = false;
+    if (s_first_counter_cb != nullptr) s_first_counter_cb(peer->sender_fp);
+  }
 
   /* F134: the member this device's COMPLETE copies are for is heard. It
    * signed a fresh frame under this opera, so it holds the opera_secret:
@@ -1353,6 +1375,7 @@ void deinit() {
   s_tamper_alert_cb = nullptr;
   s_rekey_commit_cb = nullptr;
   s_peer_revoked_cb = nullptr;
+  s_first_counter_cb = nullptr;
   mesh_revocation::init(s_revoked);
   s_running = false;
   s_initialized = false;
@@ -1771,6 +1794,7 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
       s_trusted_peers[i].heard            = false;
       s_trusted_peers[i].verified_seen_ms = 0;   /* F324 */
       s_trusted_peers[i].verified_rssi    = 0;
+      s_trusted_peers[i].counter_unsaved  = true;   /* F324: until a restore or its first frame */
       s_trusted_peers[i].in_use           = true;
       return true;
     }
@@ -2060,6 +2084,7 @@ bool restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
     if (!s_trusted_peers[i].in_use) continue;
     if (memcmp(s_trusted_peers[i].sender_fp, fp, mesh_crypto::FINGERPRINT_LEN) == 0) {
+      s_trusted_peers[i].counter_unsaved = false;   /* F324: a saved counter exists */
       if (counter > s_trusted_peers[i].last_counter) {
         s_trusted_peers[i].last_counter = counter;
         return true;
@@ -2265,6 +2290,8 @@ bool rekey_in_progress() { return mesh_rekey::in_progress(s_rekey); }
 void set_rekey_commit_handler(rekey_commit_fn fn) { s_rekey_commit_cb = fn; }
 
 void set_peer_revoked_handler(peer_revoked_fn fn) { s_peer_revoked_cb = fn; }
+
+void set_first_counter_handler(first_counter_fn fn) { s_first_counter_cb = fn; }
 
 bool is_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   return fp != nullptr && mesh_revocation::contains(s_revoked, fp, s_last_process_ms);
