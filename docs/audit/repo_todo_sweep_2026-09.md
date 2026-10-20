@@ -599,6 +599,10 @@ so — see D2 below.)
   provisioned devices keep theirs). New FEATURES.md row, ⚠️ in both trees;
   roadmap item 21 updated; four bench boxes in
   `docs/audit/hardware_verification_checklist.md` (U1). (#1704)
+  *Note (2026-10-19, F350):* the widening named above is done, with no
+  marker: the fingerprint the old key came from is published, so a marker
+  would have kept a key anyone who had seen the fingerprint could compute. F350
+  has the decision.
 - [x] **F17 [code] `provision_core.h` exists in two byte-identical copies** —
   done, the include flipped: the display's `provision.cpp` / `onboard_ui.cpp`
   now include `network/provision_core.h` straight from `common/` (the
@@ -1842,6 +1846,49 @@ so — see D2 below.)
   parallel F325 gate, which wiped `c` and `buf` on its refusal only; that gate
   was dropped for #1835's, which wipes nothing, so the item now says what
   holds, and the decision is whether to wipe at all.
+- [x] **F350 [code] The flagship's SoftAP password could be computed from its
+  public fingerprint.** `firmware/canary/src/main.cpp`'s `derive_ap_password()`
+  built `cv-` plus 5 characters from `device.pubkey_fp`. The device publishes
+  that fingerprint: the setup network's SSID suffix spells two of its bytes,
+  every signed event body over MQTT carries all eight (`fp`), and so do the
+  provisioning receipt, `/api/status` and the serial log. (The TLS
+  certificate's subject, `CN=securacv-<fp>`, would carry it too, but no
+  flagship unit generates that certificate today: `securacv_network.cpp`
+  gates certificate generation on `mbedtls/x509write_crt.h`, a header
+  mbedTLS does not ship, as F337's decision found for F15.) The SSID alone
+  leaves most units 54^3, about 157,000, candidates for an offline crack of
+  one captured WPA2 handshake, and none more than 54^5. On the flagship, a
+  peer on its own SoftAP is handed the page token, and the SoftAP comes back
+  on every home-link drop. So anyone in radio range who had seen the
+  fingerprint could join, load `GET /` and hold the bearer token.
+  `THREAT_MODEL.md` Scenario 2 stated that premise and marked it PASS.
+  canary-wap fixed the same class earlier (`canary_wap.ino`
+  `derive_ap_password`). Found while deciding F338.
+  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* the key is now HMAC-SHA256 of the device private
+  key under `securacv:ap-password:v1`, 12 characters of the unambiguous
+  alphabet (`cv-` + 12 = 15). It comes from one shared header,
+  `firmware/common/network/ap_password.h`, which renders through
+  `provision_core.h`'s `render_password`. The header takes the key as
+  `const uint8_t (&)[32]`, so the 8-byte fingerprint no longer compiles as
+  its argument. canary-wap's derivation is the same function, and
+  `firmware/tests_host/test_ap_password.cpp` holds the two equal over 256
+  keys (the WAP's cut verbatim out of the sketch), beside known answers, the
+  format, every one-bit key change, the refusals and static_asserts on the
+  real `DeviceIdentity` (its `pubkey_fp` does not bind, its `privkey` does).
+  On the old derivation the suite fails 742 checks and then crashes on the
+  null-buffer refusal, and a pointer-form header fails three of its
+  static_asserts. No marker keeps the old key: anyone who has seen the
+  fingerprint can compute it, so every unit in the field moves. The owner's
+  setup-network key changes once, on update; the SSID does not. A recovery
+  kit, saved phone network or printed card from before the update holds a
+  stale key. The serial banner, both flashers' done cards and a recovery kit
+  re-saved from the dashboard show the new one. `THREAT_MODEL.md`,
+  `SECURITY_MODEL.md`, `getting_started_canary.md`, `FEATURES.md`,
+  `LESSONS_LEARNED.md` and the roadmap are corrected. F338 later pins the
+  mint statement in `setup()`. Host-tested; the PlatformIO compile is CI's;
+  not run on a device (U1).
 
 ### Parity & sub-projects
 

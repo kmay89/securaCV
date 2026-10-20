@@ -21,6 +21,7 @@
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
 #include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
 #include "network/onboarding_fsm.h"     // the setup AP's name, the fleet's hold/reset numbers
+#include "network/ap_password.h"        // the setup AP's key, from the private key (F350)
 #include "io/reset_hold.h"              // the BOOT hold's stages: warn 3 s / reset 10 s / wipe (opt-in)
 #include "reset_scope_keys.h"           // what the 10 s stage clears, what it keeps
 // The identity's SSID field holds every shape onboarding_fsm.h's builder emits
@@ -392,8 +393,11 @@ static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
 #endif
 
-// Device-unique AP password (derived from pubkey fingerprint)
+// Device-unique AP password, derived from the device private key
+// (common/network/ap_password.h, sweep F350).
 static char g_ap_password[16];
+static_assert(sizeof(g_ap_password) >= canary::net::AP_PASSWORD_LEN + 1,
+              "g_ap_password must hold the cv- key and its NUL");
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
 // handle_boot_button(); the network lib takes it — from the receipt handler
@@ -412,7 +416,6 @@ static void handle_serial_commands();
 static void print_banner();
 static void print_status();
 static void handle_boot_button();
-static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len);
 
 #if FEATURE_MESH_NETWORK
 /* Mesh PairedCallback. Fires from mesh_session::process() on the main
@@ -831,32 +834,6 @@ static void serial_wait_for_cdc(uint32_t timeout_ms) {
 #else
   (void)timeout_ms;
 #endif
-}
-
-// Derive device-unique AP password from public key fingerprint
-// Format: "cv-XXXXX" (8 chars, unique per device)
-// Drops every case variant of the ambiguous glyphs (0/O/o, 1/I/i/l/L) so a
-// user can read the password off the serial monitor or sticker without
-// guessing. Must stay byte-identical to UNAMBIGUOUS_ALPHABET in
-// securacv_crypto.cpp — both are the project's single no-confusion alphabet.
-static const char UNAMBIGUOUS_ALPHABET[] =
-  "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
-static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
-
-static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
-  char encoded[6];
-  size_t chars_produced = 0;
-  for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
-    uint8_t b = fingerprint[i];
-    if (b < 216) { // 216 = 54 * 4, rejection sampling to avoid bias
-      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
-    }
-  }
-  while (chars_produced < 5) {
-    encoded[chars_produced++] = '2';
-  }
-  encoded[5] = '\0';
-  snprintf(password, len, "cv-%s", encoded);
 }
 
 // Factory reset by BOOT hold (common/io/reset_hold.h, the fleet's grammar):
@@ -1322,8 +1299,10 @@ void setup() {
   DeviceIdentity& device = witness_get_device();
   Serial.printf("[OK] Device ID: %s\n", device.device_id);
 
-  // Derive device-unique AP password from pubkey fingerprint
-  derive_ap_password(device.pubkey_fp, g_ap_password, sizeof(g_ap_password));
+  // The setup network's key: an HMAC of the private key, never anything the
+  // device publishes (sweep F350). The array-reference parameter refuses the
+  // 8-byte fingerprint at compile time.
+  canary::net::derive_ap_password(device.privkey, g_ap_password, sizeof(g_ap_password));
   Serial.printf("[OK] AP password derived (device-unique)\n");
 
   // Setup watchdog

@@ -2954,6 +2954,54 @@ after every `WiFi.softAP()` in both trees. Owner: U1.
   - Expected: `sta_pmf: true`; the association is stable.
   - Artifact: `docs/audit/repro/F16/sta-pmf/`.
 
+## The flagship's SoftAP key comes from the private key (F350) — on-device verification
+
+Code: `firmware/common/network/ap_password.h` (host-tested in
+`firmware/tests_host/test_ap_password.cpp`, held equal to canary-wap's),
+called from `firmware/canary/src/main.cpp` `setup()`. Owner: U1.
+
+- [ ] **The setup network takes the new 15-character key, and the old one is refused**
+  - Setup:
+    - two `canary (PIO)` units, one on a `release` image (2.0.17 core,
+      WPA2) and one on a `full` image (IDF 5.5, WPA2/WPA3);
+    - each first flashed with a build of `500f63b6` (main before this
+      change) and set up on the home Wi-Fi;
+    - a phone, both flashers (browser and desktop), `curl`, and the home
+      router within reach.
+  - Repro:
+    1. Note each unit's old key from its serial banner, and its
+       fingerprint from the receipt's `pubkey_fp` (or the `fp` of a signed
+       event body on the broker).
+    2. Update to this firmware.
+    3. Read the banner, the `[SETUP] Setup network up` line and the
+       `[SETUP] QR` line, and each flasher's done card.
+    4. Save the recovery kit from the dashboard.
+    5. Power off the home router.
+    6. On the phone, join `SecuraCV-canary-XXXX` with the old key, then
+       with the new one.
+    7. Load `http://192.168.4.1/`.
+    8. On one unit, hold BOOT for 10 s and release (credentials and
+       settings reset), then repeat steps 3 and 4; then hold it to 30 s (the
+       wipe, identity too) and repeat them again.
+  - Expected:
+    - the banner, the setup line, the QR line, both done cards and the
+      kit's `ap_password` show the same `cv-` key with 12 characters after
+      the prefix;
+    - the SSID is unchanged;
+    - the old key is refused and the new key joins;
+    - `GET /api/wifi/status` shows `ap_auth: "wpa2"` on release and
+      `"wpa2-wpa3"` on full (a `"wpa2"` there is F16's finding: record its
+      `ap_auth_reason`);
+    - the page arrives over the AP with the token;
+    - after the 10 s reset the key is the same (the keypair is kept); after
+      the 30 s wipe the SSID and the key both change, and match the new kit.
+    - Before this change the key had 5 characters after `cv-` and could be
+      computed from the fingerprint noted in step 1 (the first five
+      fingerprint bytes below 216, each as the unambiguous alphabet's
+      character at byte mod 54). Check that the old key does match that
+      computation and the new key does not.
+  - Artifact: `docs/audit/repro/F350/ap-key/`.
+
 ## Canary NvsManager session lock — on-device verification
 
 Code: `NvsManager` in `firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`,

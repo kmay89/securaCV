@@ -27,9 +27,11 @@ in [the browser flasher](browser_flasher.md) or the desktop
 - A USB-C cable
 - A printed card with your device's **AP password** and **Device ID**
 
-If your Canary did not come with a card, the password is also burned into
-the device and shown on the serial console at first boot — see *Recovering
-the password* at the bottom of this page.
+If your Canary did not come with a card, the password is made inside the
+device and shown on the serial console at every boot — see *Recovering the
+password* at the bottom of this page. A card printed before a firmware
+update can hold an older key; that section says where to read the current
+one.
 
 Building your own from parts? See the
 [Canary Peripheral Build Plan & BOM](hardware/canary_peripheral_build_plan.md)
@@ -91,8 +93,9 @@ Wi-Fi settings. You'll see a new network named something like:
 
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
-*not* `password` and *not* the device ID — it's the eight-character
-string printed under the QR code.) Newer firmware offers WPA3 to phones
+*not* `password` and *not* the device ID — it's the string printed under
+the QR code: `cv-` and twelve more characters on a Canary or a WAP, eight
+characters on a Sense or a Vision.) Newer firmware offers WPA3 to phones
 that support it; an older phone that only knows WPA2 still joins the same
 way.
 
@@ -771,13 +774,33 @@ If you've lost the printed card:
 
 1. Plug the Canary into a computer with a USB-C cable.
 2. Open a serial terminal at **115 200 baud** on the new USB-CDC port.
-3. Press the **BOOT** button on the device for ~1 second. The terminal
-   will print the AP SSID and password.
+3. Restart the Canary (its RESET button, or unplug it and plug it back
+   in) with the terminal open. The ready banner prints the setup
+   network's name (`WiFi AP`) and its key (`Password`), and the
+   `[SETUP] Setup network up` line repeats both whenever the setup
+   network comes up.
 
-If you've also lost the BOOT button (it's the small one next to the USB
-port), press and hold for **5 seconds** during power-up. The device will
-factory-reset, generate a fresh keypair, and print the new credentials
-on serial.
+Either flasher's done card shows the same pair after a flash, and a
+recovery kit saved from the dashboard (**Settings → Save recovery kit**)
+carries it as `ap_password`.
+
+A factory reset from the BOOT button keeps the key: released at 10
+seconds it clears Wi-Fi and settings and keeps the device's keypair, and
+the key is made from that keypair. Held to 30 seconds it wipes the
+keypair too, so the setup network's name and key both change, and the
+new ones print on serial.
+
+**After a firmware update.** Older firmware for the all-rounder Canary
+(`firmware/canary`) made the setup network's key from the device's
+public fingerprint, which the device shares (the setup network's name
+spells part of it), so the key was not a secret. Current firmware makes
+it from the device's private key, so the key changes once, on the first
+boot of the new firmware: from `cv-` and five characters to `cv-` and
+twelve. The network keeps its name. A printed card, a phone that saved
+the network, or a recovery kit saved before the update holds the old
+key: read the current one as above, and save the recovery kit again
+after you update. *(The new key is host-tested and not yet tried on a
+bench device.)*
 
 ---
 

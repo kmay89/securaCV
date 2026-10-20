@@ -278,9 +278,15 @@ flagship's own access point is told apart from one over your home network.
 
 **On the device's own access point** — the Canary WAP, the `firmware/canary`
 flagship, the headless products' setup portals — the boundary is the AP
-password, unique per device. Anyone holding it is inside. On the flagship
-that includes the API token: a request that provably arrived over its own
-access point gets the page with the token in it. The flagship keeps that
+password, unique per device. On the WAP and the flagship it is an HMAC of the
+device's private key, never derived from anything the device publishes; the
+headless setup portals draw theirs at random. Until sweep F350 the
+flagship's was computed from its public-key fingerprint, which the device
+publishes (its setup network's name spells two of the fingerprint's bytes,
+and every signed event it sends over MQTT carries all of it), so anyone who
+had seen the fingerprint could compute it. Anyone holding it is inside. On the
+flagship that includes the API token: a request that provably arrived over
+its own access point gets the page with the token in it. The flagship keeps that
 access point up while it has no home network and again whenever the home
 link drops, and takes it down once the home link has held for a grace
 period.

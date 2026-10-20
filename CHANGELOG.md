@@ -1,6 +1,41 @@
 # Changelog
 
 ## [Unreleased]
+### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350)
+
+- **The `firmware/canary` flagship's SoftAP key is an HMAC of the device
+  private key (sweep F350).** It had been `cv-` plus 5 characters of the
+  public-key fingerprint, and the device publishes that fingerprint: the
+  setup network's name spells two of its bytes, and every signed event body
+  over MQTT, the provisioning receipt, `/api/status` and the serial log carry
+  all eight. So anyone who had seen the fingerprint could compute the key,
+  and a peer on the flagship's own SoftAP is handed the page token, so that
+  key was the whole boundary whenever the home link dropped. The key is now
+  HMAC-SHA256 of the private key under `securacv:ap-password:v1`, `cv-` + 12
+  characters (15), from one shared header,
+  `firmware/common/network/ap_password.h`: the same derivation canary-wap
+  already used, held equal to it by a new host suite. The header takes the
+  key as `const uint8_t (&)[32]`, so handing it the 8-byte fingerprint is a
+  compile error. **Host-tested** (new `tests_host/test_ap_password.cpp`:
+  known answers, 256 keys against canary-wap's function cut out of its
+  sketch, every one-bit key change, the refusals, and static_asserts on the
+  real `DeviceIdentity`; on the old derivation it fails 742 checks and then
+  crashes on the null-buffer refusal); the PlatformIO compile is CI's; not
+  run on a device (U1).
+- **Owner step: the setup network's key changes once, on update.** Its name
+  (`SecuraCV-canary-XXXX`) does not. No marker keeps the old key, because
+  anyone who has seen the fingerprint can compute it. A printed card, a phone that
+  saved the network and a recovery kit saved before the update hold the old
+  key. The current one is on the serial banner (`Password`) and the
+  `[SETUP] Setup network up` line, on both flashers' done cards, and in a
+  recovery kit saved again from the dashboard: **save the recovery kit again
+  after updating.** The token, the device ID, the SSID and the TLS pin do not
+  change, and no client changes.
+- `THREAT_MODEL.md` Scenario 2, `SECURITY_MODEL.md`'s access-point paragraph,
+  `getting_started_canary.md` (the key's length, where to read the current
+  one, and what a BOOT-hold reset keeps), `FEATURES.md`, `LESSONS_LEARNED.md`
+  and the roadmap now say what the code does.
+
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
 - **The broker move a session could make with the kept password (sweep F325)

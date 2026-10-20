@@ -441,6 +441,26 @@
 - **Fix:** Derive AP password from pubkey fingerprint at provisioning
 - **Regression check:** Script greps for hardcoded `witness2026`
 
+### A password derived from a published value is not a secret
+- **What happened:** The per-device AP password above was derived from the
+  public-key fingerprint, and the device publishes the fingerprint: the
+  setup network's SSID suffix spells two of its bytes, and signed MQTT
+  events, the provisioning receipt, `/api/status` and the serial log carry
+  all eight. So anyone who had seen the fingerprint could compute its key,
+  and on the flagship a peer on its own SoftAP is handed the page token.
+  The WAP moved to the private key first; the flagship followed in sweep
+  F350.
+- **Fix:** Both trees derive the key as an HMAC of the device private key
+  under its own domain label (`securacv:ap-password:v1`), `cv-` + 12
+  characters; the flagship's comes from `common/network/ap_password.h`.
+- **Rule:** A function that takes key material takes `const uint8_t (&)[32]`,
+  not a pointer, so a shorter published value (the 8-byte fingerprint)
+  cannot be handed to it. A pointer parameter takes it without a word and
+  reads 24 bytes past it.
+- **Regression check:** `firmware/tests_host/test_ap_password.cpp`
+  static_asserts that `DeviceIdentity::pubkey_fp` does not bind and the
+  private key does, and holds the flagship's derivation equal to the WAP's.
+
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
 - **Rule:** Bearer tokens authenticate HTTP requests. They are NOT
