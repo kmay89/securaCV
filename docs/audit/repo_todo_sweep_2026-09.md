@@ -9036,7 +9036,7 @@ so — see D2 below.)
   initiator could send its heartbeat once more when its COMPLETE copies stop
   on hearing the joiner after at least one copy went out. The maintainer's
   call (#1802).
-  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
   remaining open items in best engineering practice, on the maintainer's
   behalf):* a periodic heartbeat, and liveness from verified frames only. A
   member sends the existing empty signed `HEARTBEAT` (registry 16) to its
@@ -12719,7 +12719,7 @@ so — see D2 below.)
   whether `DEVICE_TYPE` becomes `"canary-wap"` (a signed-record field change a
   verifier may pin) or the split is documented beside the record format. Found
   by F258 (#1802).
-  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
   remaining open items in best engineering practice, on the maintainer's
   behalf):* `DEVICE_TYPE` is `"canary-wap"`. The premise that it is a
   signed-record field a verifier may pin was wrong. The BOOT attestation's
