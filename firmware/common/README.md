@@ -66,7 +66,7 @@ common/
 │   ├── hub_handoff.h            # the hub hand-off over the same door, pure half: the HUB characteristic's JSON (host, port, user, pass, tls — the broker the phone found and the login it minted) read strictly, every refusal wiped, and the one status byte read back; Sense and Vision take it right after the join through improv_ble (host-tested)
 │   ├── auth_backoff.h           # the bearer lockout, one backoff per source address: 8 tracked plus a shared overflow, 2 s doubling capped at the 60 s window that clears a count (host-tested; a staged copy sits by the WAP sketch)
 │   ├── claim_ticket.h           # the WAP's claim ticket: 16 random bytes readable once over the link that provisioned, spent once on the home LAN for the receipt — so the bearer token never rides Bluetooth (host-tested; a staged copy sits by the WAP sketch)
-│   └── provisioning_gate.h      # the BOOT-tap gate, the page-token policy and the receipt's grant order: foreign Host → bearer → claim → tap (host-tested)
+│   └── provisioning_gate.h      # the BOOT-tap gate, the page-token policy and the receipt's grant order: foreign Host → bearer → claim → tap; and a request's peer as one 16-byte key, peer_key_from_addr() (host-tested; a staged copy sits by the WAP sketch, which reads its peers through it)
 ├── ota/            # src/securacv_ota.{h,cpp} — the signed pull-OTA engine every released tree links
 ├── power/          # power_events.h, power_logic.h — battery decision logic (pure, host-tested)
 ├── provision_qr/   # provision_qr.h — the provisioning QR grammar (the display mints, the Canaries scan)

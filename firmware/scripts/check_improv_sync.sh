@@ -25,9 +25,15 @@ set -euo pipefail
 #                     TTL, hex shape and take-once rule are the contract the
 #                     iOS app's claim step is written against. Host-tested by
 #                     firmware/tests_host/test_claim_ticket.cpp.
+#   provisioning_gate.h — the socket address mapping the sketch reads a
+#                     request's peer through (peer_key_from_addr(),
+#                     ipv4_host_order_from_addr()), the same functions the
+#                     canary tree's securacv_network uses. Host-tested by
+#                     firmware/tests_host/test_provisioning_gate.cpp.
 #   auth_backoff.h  — the bearer lockout, one backoff per source address
 #                     (sweep F343): 8 tracked addresses and a shared overflow,
-#                     2 s doubling capped at 60 s. Host-tested by
+#                     2 s doubling capped at 60 s. api_auth.h holds the one
+#                     table. Host-tested by
 #                     firmware/tests_host/test_auth_backoff.cpp.
 #
 # Canonical:  firmware/common/network/<name>
@@ -49,6 +55,7 @@ WAP="${REPO_ROOT}/firmware/projects/canary-wap/arduino/canary_wap"
 PAIRS=(
     "${COMMON}/improv_core.h|${WAP}/improv_core.h"
     "${COMMON}/claim_ticket.h|${WAP}/claim_ticket.h"
+    "${COMMON}/provisioning_gate.h|${WAP}/provisioning_gate.h"
     "${COMMON}/auth_backoff.h|${WAP}/auth_backoff.h"
 )
 

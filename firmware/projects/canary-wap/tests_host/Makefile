@@ -536,24 +536,31 @@ clean: clean-receipt-authority
 # reads the sketch's text (its path is passed in): the two handlers name only
 # the bearer-only checks, and nothing but send_provisioning_receipt() and
 # handle_pairing_qr() writes the token or the AP password into an answer.
+# The lockout is per source address (sweep F343): the cut carries the REAL
+# auth_request_source() over the suites' one stand-in for the socket read
+# (stubs/receipt_grant/peer_source.h), and api_auth_second_tu.cpp, a second
+# translation unit over api_auth.h compiled into the same binary, proves the
+# table is one for every file that includes the header.
 RGRANT_BIN = test_receipt_grant
 RGRANT_SRC = test_receipt_grant.cpp
+RGRANT_TU2 = api_auth_second_tu.cpp
 RGRANT_INC = test_receipt_grant.inc
 RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool session_cookie_header(|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
-# api_auth.h's helpers the two handlers never call (the ?token= gate, the
-# stats, the console's redaction) are unused here, and its constant-time
-# compare casts through volatile: both are the header's, not the suite's.
-$(RGRANT_BIN): $(RGRANT_SRC) $(RGRANT_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+# api_auth.h's helpers the two handlers never call (the console's
+# redaction) are unused here, and its constant-time compare casts through
+# volatile: both are the header's, not the suite's. Two sources in one
+# command, so the dependency file is written by with_deps.
+$(RGRANT_BIN): $(RGRANT_SRC) $(RGRANT_TU2) $(RGRANT_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
 	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
 	  -DRECEIPT_GRANT_INC='"$(RGRANT_INC)"' \
-	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RGRANT_SRC)
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RGRANT_SRC) $(RGRANT_TU2))
 
 .PHONY: run-receipt-grant clean-receipt-grant
 run-receipt-grant: $(RGRANT_BIN)

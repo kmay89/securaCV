@@ -62,6 +62,22 @@
 //     and the https .local base on a TLS unit on the home Wi-Fi, the AP
 //     address while in setup; five wrong guesses lock the right token out
 //     (429 with Retry-After) until the backoff passes;
+//   - the lockout is per source address (sweep F343; before, one backoff
+//     for the device, so one host's wrong bearers held every other host's
+//     right token at 429): host A's wrong bearer holds A and never B, on the
+//     receipt and the QR; the F289 follow-up review's replay (A strikes
+//     whenever it is not held, B polls every 7 s for ten minutes) refuses B
+//     0 of 86 times, where it refused 86 of 86; a socket that cannot say and
+//     a real IPv6 peer share one bucket, which holds neither A nor B (the
+//     REAL auth_request_source(), cut from the sketch, over the suites' one
+//     stand-in for the socket read, stubs/receipt_grant/peer_source.h); the
+//     table is ONE for every file that includes api_auth.h (a strike through
+//     this file's gates holds api_auth_second_tu.cpp's, and back; before,
+//     each file had its own `static` copy); no backoff outlives the 60 s
+//     window (the sixth strike's Retry-After is 61, where it was 65, and its
+//     hold ends at 60 s); a backoff armed just before millis() wraps holds
+//     across the wrap; 256 strikes saturate the count instead of wrapping it
+//     to a clean 0; two strikes a minute apart are two first strikes;
 //   - api_auth.h's contract: api_auth_check() and api_auth_check_optional()
 //     still take the cookie (the dashboard's routes), api_auth_bearer_valid()
 //     and api_auth_check_bearer() never do, and the cookie path never clears
@@ -96,7 +112,9 @@
 #include "log_level.h"         // the sketch's LogLevel / LogCategory
 #include "receipt_authority.h"
 #include "claim_ticket.h"
+#include "provisioning_gate.h" // the sketch's staged copy: the peer key and its IPv4
 #include "api_auth.h"          // the REAL one
+#include "peer_source.h"       // stubs/receipt_grant: request_peer_key(), the socket read
 
 #ifndef RECEIPT_GRANT_INC
 #error "RECEIPT_GRANT_INC must name the cut of canary_wap.ino (the Makefile passes it)"
@@ -229,7 +247,13 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 }
 
 // ── the handlers, cut verbatim out of canary_wap.ino ─────────────────────────
+// With them, auth_request_source(): the lockout's source, the real mapping
+// over request_peer_key() (peer_source.h).
 #include RECEIPT_GRANT_INC
+
+// api_auth_check_bearer(), as another file that includes api_auth.h calls it
+// (api_auth_second_tu.cpp, linked into this binary).
+bool second_tu_check_bearer(httpd_req_t* r, const char* t);
 
 namespace {
 
@@ -237,6 +261,36 @@ const char* const kToken = "cv_7kX9mN2pQ4rS6tU8vW0xY1zA3bC5dE7f";   // 35 chars,
 const char* const kWrong = "cv_7kX9mN2pQ4rS6tU8vW0xY1zA3bC5dE7g";   // one char off
 const char* const kApPass = "cv-9f8e7d6c5b4a";
 const char* const kClaimHex = "ffeeddccbbaa99887766554433221100";   // not the one mint_claim() mints
+
+// ── the lockout's state, per source address (sweep F343) ─────────────────────
+// api_auth.h's one table, read and written here only, by the source the cut
+// auth_request_source() maps each request's peer to.
+const uint32_t kHostA = 0xC0A80114;   // 192.168.1.20, the stub's default peer
+const uint32_t kHostB = 0xC0A80115;   // 192.168.1.21: Req::from(192, 168, 1, 21)
+
+void clear_lockout() { g_auth_table = {}; }
+// The strikes `host`'s own slot holds now.
+unsigned strikes(uint32_t host) {
+  return canary::net::auth_backoff::failures_of(g_auth_table, host, millis());
+}
+// Whether `host` is held now.
+bool held(uint32_t host) { return canary::net::auth_backoff::locked(g_auth_table, host, millis()); }
+// `host`'s slot written directly: `failures` strikes, the last at `last_ms`,
+// its backoff running until `until_ms`.
+void set_strikes(uint32_t host, uint8_t failures, uint32_t last_ms, uint32_t until_ms) {
+  canary::net::auth_backoff::Slot* s = canary::net::auth_backoff::tracked(g_auth_table, host);
+  for (uint8_t i = 0; i < canary::net::auth_backoff::SLOTS && !s; ++i) {
+    if (g_auth_table.slot[i].failures == 0) s = &g_auth_table.slot[i];
+  }
+  *s = canary::net::auth_backoff::Slot{host, last_ms, until_ms, failures};
+}
+// The clock moved to the end of `host`'s backoff, as a client that waits out
+// its Retry-After.
+void wait_out(uint32_t host) {
+  stub_grant::now_ms += canary::net::auth_backoff::remaining_ms(g_auth_table, host, millis());
+}
+// What the 429 for `req` reads as left of its source's backoff.
+uint32_t remaining_for(httpd_req_t* req) { return auth_lockout_remaining_ms(req); }
 
 void reset_device() {
   std::snprintf(g_device.device_id, sizeof(g_device.device_id), "%s", "canary-wap-7916");
@@ -256,7 +310,7 @@ void reset_device() {
   g_health_line_ms = 0;
   g_live_session = "";
   g_cookie_checks = 0;
-  g_auth = AuthState{0, 0, 0, 0, 0};
+  clear_lockout();
   stub_grant::now_ms = 100000;
 }
 
@@ -286,6 +340,23 @@ struct Req {
   // The server the request arrived on (default: the plain one).
   Req& on(httpd_handle_t server) {
     r.handle = server;
+    return *this;
+  }
+  // The peer it came from (default ::ffff:192.168.1.20, kHostA): an IPv4
+  // client of the dual-stack listener, ::ffff:a.b.c.d.
+  Req& from(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+    const uint8_t mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d};
+    std::memcpy(r.peer, mapped, sizeof(mapped));
+    return *this;
+  }
+  // A real IPv6 peer.
+  Req& from6(const uint8_t (&v6)[16]) {
+    std::memcpy(r.peer, v6, sizeof(v6));
+    return *this;
+  }
+  // A socket that cannot say who it is.
+  Req& unreadable() {
+    r.peer_ok = false;
     return *this;
   }
   Req() { r.handle = &g_http_server_obj; }
@@ -512,7 +583,7 @@ void test_receipt_bearer_shapes() {
     q.authorization(raw);
     CHECK_MSG(receipt(q) == 0, "accepted as a bearer: " + raw);
     check_gate_refusal(q.r);
-    CHECK_MSG(g_auth.consecutive_failures == 1, "not a strike: " + raw);
+    CHECK_MSG(strikes(kHostA) == 1, "not a strike: " + raw);
   }
   // Whitespace around the token is trimmed, as api_auth_check trims it.
   reset_device();
@@ -522,12 +593,9 @@ void test_receipt_bearer_shapes() {
   CHECK(g_served.back() == receipt_authority::Grant::BEARER);
 }
 
-// A backoff running now: `failures` strikes, the last one just sent.
-void arm_lockout(uint8_t failures) {
-  g_auth.consecutive_failures = failures;
-  g_auth.last_failure_ms = millis();
-  g_auth.lockout_until_ms = millis() + 8000;
-}
+// A backoff running now for host A: `failures` strikes, the last one just
+// sent, 8 s left.
+void arm_lockout(uint8_t failures) { set_strikes(kHostA, failures, millis(), millis() + 8000); }
 
 void check_lockout_refusal(const httpd_req_t& r) {
   CHECK(r.status == "429 Too Many Requests");
@@ -546,8 +614,7 @@ void test_receipt_wrong_bearer_is_a_strike() {
   wrong.bearer(kWrong);
   CHECK(receipt(wrong) == 0);
   check_gate_refusal(wrong.r);   // the guess that arms the backoff: the 403 any wrong token gets
-  CHECK_MSG(g_auth.consecutive_failures == 1, "a wrong bearer on the receipt was not a strike");
-  CHECK(g_auth.total_failures == 1);
+  CHECK_MSG(strikes(kHostA) == 1, "a wrong bearer on the receipt was not a strike");
   // A request with no Authorization header carries no guess: no strike,
   // the cookie beside it or not (auth_logic.h).
   reset_device();
@@ -557,21 +624,18 @@ void test_receipt_wrong_bearer_is_a_strike() {
   Req cookie_only;
   cookie_only.cookie();
   CHECK(receipt(cookie_only) == 0);
-  CHECK(g_auth.consecutive_failures == 0);
-  CHECK(g_auth.total_failures == 0);
+  CHECK(strikes(kHostA) == 0);
+  CHECK(g_auth_table.overflow.failures == 0);
 }
 
 void test_receipt_right_bearer_clears_the_count() {
   reset_device();
-  g_auth.consecutive_failures = 2;
-  g_auth.last_failure_ms = millis();
-  g_auth.lockout_until_ms = millis();   // the backoff just passed
+  set_strikes(kHostA, 2, millis(), millis());   // the backoff just passed
   Req right;
   right.bearer(kToken);
   CHECK(receipt(right) == 1);
   CHECK(g_served.back() == receipt_authority::Grant::BEARER);
-  CHECK_MSG(g_auth.consecutive_failures == 0, "a right bearer on the receipt left the count standing");
-  CHECK(g_auth.total_successes == 1);
+  CHECK_MSG(strikes(kHostA) == 0, "a right bearer on the receipt left the count standing");
 }
 
 void test_receipt_lockout_holds_the_bearer() {
@@ -589,8 +653,7 @@ void test_receipt_lockout_holds_the_bearer() {
   wrong.bearer(kWrong);
   CHECK(receipt(wrong) == 0);
   check_lockout_refusal(wrong.r);
-  CHECK(g_auth.consecutive_failures == 3);
-  CHECK(g_auth.total_successes == 0);
+  CHECK(strikes(kHostA) == 3);
   // A poll with no bearer is not held: the 403 with gate_ttl_seconds the
   // dashboard's BOOT-tap wait reads, the cookie beside it or not.
   mint_session();
@@ -601,14 +664,14 @@ void test_receipt_lockout_holds_the_bearer() {
   cookie_only.cookie();
   CHECK(receipt(cookie_only) == 0);
   check_gate_refusal(cookie_only.r);
-  CHECK(g_auth.consecutive_failures == 3);
+  CHECK(strikes(kHostA) == 3);
   // The backoff passes: the right token serves again, and clears the count.
   stub_grant::now_ms += 8001;
   Req later;
   later.bearer(kToken);
   CHECK(receipt(later) == 1);
   CHECK(g_served.back() == receipt_authority::Grant::BEARER);
-  CHECK(g_auth.consecutive_failures == 0);
+  CHECK(strikes(kHostA) == 0);
 }
 
 void test_receipt_arming_guess_then_backoff() {
@@ -617,18 +680,18 @@ void test_receipt_arming_guess_then_backoff() {
   first.bearer(kWrong);
   CHECK(receipt(first) == 0);
   check_gate_refusal(first.r);   // 403: this guess armed the backoff
-  CHECK(g_auth.consecutive_failures == 1);
+  CHECK(strikes(kHostA) == 1);
   Req second;
   second.bearer(kWrong);
   CHECK(receipt(second) == 0);
   check_lockout_refusal(second.r);   // inside it: 429, not compared, no strike
-  CHECK(g_auth.consecutive_failures == 1);
-  stub_grant::now_ms += AUTH_LOCKOUT_BASE_MS + 1;
+  CHECK(strikes(kHostA) == 1);
+  stub_grant::now_ms += canary::net::auth_backoff::BASE_MS + 1;
   Req third;
   third.bearer(kWrong);
   CHECK(receipt(third) == 0);
   check_gate_refusal(third.r);   // after it: compared, a strike, the 403
-  CHECK(g_auth.consecutive_failures == 2);
+  CHECK(strikes(kHostA) == 2);
 }
 
 void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
@@ -643,7 +706,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(!tap_open());
   CHECK(has_header(stale.r, "Set-Cookie"));
-  CHECK(g_auth.consecutive_failures == 5);   // the tap clears no count
+  CHECK(strikes(kHostA) == 5);   // the tap clears no count
   // The right token inside the backoff, a tap open: served, as the tap (no
   // bearer is compared while it runs).
   reset_device();
@@ -669,7 +732,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   fresh.bearer(kWrong);
   CHECK_MSG(receipt(fresh) == 1, "a stale bearer kept the tap from serving");
   CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
-  CHECK(g_auth.consecutive_failures == 1);
+  CHECK(strikes(kHostA) == 1);
 }
 
 // The receipt reads the lockout (api_auth_bearer_held) before the claim and
@@ -695,7 +758,7 @@ void test_receipt_lockout_answer_never_wraps() {
   Req raced;
   raced.bearer(kToken).query(std::string("claim=") + kClaimHex);
   CHECK(receipt(raced) == 0);
-  CHECK(millis() >= g_auth.lockout_until_ms);   // the backoff did end inside the handler
+  CHECK(!held(kHostA));   // the backoff did end inside the handler
   check_lockout_refusal(raced.r);
   CHECK_MSG(header(raced.r, "Retry-After") == "1",
             "the lockout's Retry-After wrapped when the backoff ended mid-request");
@@ -706,12 +769,12 @@ void test_receipt_lockout_answer_never_wraps() {
   reset_device();
   arm_lockout(1);
   stub_grant::now_ms += 8000;
-  CHECK(auth_lockout_remaining_ms() == 0);
   Req late;
+  CHECK(remaining_for(&late.r) == 0);
   api_auth_send_lockout(&late.r);
   CHECK(header(late.r, "Retry-After") == "1");
   stub_grant::now_ms -= 3000;
-  CHECK(auth_lockout_remaining_ms() == 3000);
+  CHECK(remaining_for(&late.r) == 3000);
 }
 
 // ── the pairing QR ───────────────────────────────────────────────────────────
@@ -734,7 +797,7 @@ void test_qr_cookie_alone_is_refused() {
   CHECK(header(q.r, "WWW-Authenticate").find("Bearer") == 0);
   CHECK(q.r.resp.find("\"error\":\"unauthorized\"") != std::string::npos);
   CHECK(!carries_secret(q.r));
-  CHECK(g_auth.consecutive_failures == 0);   // no credential presented: no strike
+  CHECK(strikes(kHostA) == 0);   // no credential presented: no strike
 }
 
 void test_qr_cookie_beside_wrong_bearer_is_refused() {
@@ -745,14 +808,13 @@ void test_qr_cookie_beside_wrong_bearer_is_refused() {
   CHECK_MSG(qr(q) == 0, "a cookie rescued a wrong bearer on the pairing QR");
   CHECK(q.r.status == "403 Forbidden");
   CHECK(!carries_secret(q.r));
-  CHECK(g_auth.consecutive_failures == 1);   // a guess: a strike
+  CHECK(strikes(kHostA) == 1);   // a guess: a strike
 }
 
 void test_qr_bearer_serves() {
   reset_device();
   mint_session();
-  g_auth.consecutive_failures = 2;
-  g_auth.last_failure_ms = millis();
+  set_strikes(kHostA, 2, millis(), millis());   // two strikes, the backoff over
   for (int with_cookie = 0; with_cookie < 2; ++with_cookie) {
     g_qr_payloads.clear();
     Req q;
@@ -764,7 +826,7 @@ void test_qr_bearer_serves() {
     CHECK(g_qr_payloads[0].find(std::string("\"token\":\"") + kToken + "\"") != std::string::npos);
     CHECK(g_qr_payloads[0].find("\"device_id\":\"canary-wap-7916\"") != std::string::npos);
   }
-  CHECK(g_auth.consecutive_failures == 0);   // a right bearer clears the count
+  CHECK(strikes(kHostA) == 0);   // a right bearer clears the count
   // In setup (not on the home Wi-Fi), plain http at the SoftAP address.
   CHECK(g_qr_payloads[0].find("\"base_url\":\"http://192.168.4.1\"") != std::string::npos);
   CHECK(g_qr_payloads[0].find("tls_cert_fp") == std::string::npos);
@@ -784,22 +846,21 @@ void test_qr_no_credential_is_401_without_strike() {
   Req q;
   CHECK(qr(q) == 0);
   CHECK(q.r.status == "401 Unauthorized");
-  CHECK(g_auth.consecutive_failures == 0);
+  CHECK(strikes(kHostA) == 0);
 }
 
 void test_qr_lockout_is_every_admin_routes() {
   reset_device();
   mint_session();
-  // Five wrong guesses, each outside the previous lockout.
+  // Five wrong guesses, each once the backoff before it ended.
   for (int i = 0; i < 5; ++i) {
-    stub_grant::now_ms += 400000;   // past AUTH_LOCKOUT_MAX_MS, inside nothing
-    g_auth.last_failure_ms = millis() - 1;   // keep the failure window from resetting the count
+    wait_out(kHostA);
     Req q;
     q.cookie().bearer(kWrong);
     CHECK(qr(q) == 0);
     CHECK(q.r.status == "403 Forbidden");
   }
-  CHECK(g_auth.consecutive_failures == 5);
+  CHECK(strikes(kHostA) == 5);
   // Locked out: the right token, the cookie beside it, is 429.
   Req right;
   right.cookie().bearer(kToken);
@@ -808,25 +869,24 @@ void test_qr_lockout_is_every_admin_routes() {
   CHECK(!header(right.r, "Retry-After").empty());
   CHECK(!carries_secret(right.r));
   // The backoff passes: served.
-  stub_grant::now_ms += AUTH_LOCKOUT_MAX_MS + 1000;
+  wait_out(kHostA);
   Req later;
   later.bearer(kToken);
   CHECK(qr(later) == 1);
 }
 
-// One lockout for both routes: guesses on the receipt hold the QR's right
-// token, and guesses on the QR hold the receipt's.
+// One lockout for both routes: one host's guesses on the receipt hold its
+// right token on the QR, and its guesses on the QR hold the receipt's.
 void test_receipt_and_qr_share_the_lockout() {
   reset_device();
   for (int i = 0; i < 5; ++i) {
-    stub_grant::now_ms += 400000;   // past AUTH_LOCKOUT_MAX_MS, inside nothing
-    g_auth.last_failure_ms = millis() - 1;
+    wait_out(kHostA);
     Req q;
     q.bearer(kWrong);
     CHECK(receipt(q) == 0);
     check_gate_refusal(q.r);
   }
-  CHECK(g_auth.consecutive_failures == 5);
+  CHECK(strikes(kHostA) == 5);
   Req on_qr;
   on_qr.bearer(kToken);
   CHECK_MSG(qr(on_qr) == 0, "five guesses on the receipt left the QR open");
@@ -834,8 +894,7 @@ void test_receipt_and_qr_share_the_lockout() {
 
   reset_device();
   for (int i = 0; i < 5; ++i) {
-    stub_grant::now_ms += 400000;
-    g_auth.last_failure_ms = millis() - 1;
+    wait_out(kHostA);
     Req q;
     q.bearer(kWrong);
     CHECK(qr(q) == 0);
@@ -844,6 +903,229 @@ void test_receipt_and_qr_share_the_lockout() {
   on_receipt.bearer(kToken);
   CHECK_MSG(receipt(on_receipt) == 0, "five guesses on the QR left the receipt's bearer open");
   check_lockout_refusal(on_receipt.r);
+}
+
+// ── per source address (sweep F343) ──────────────────────────────────────────
+
+// One host's wrong bearers hold that host and no other. Before, the backoff
+// was one for the device, so A's wrong token held B's right one at 429 on
+// every route that reads the bearer.
+void test_one_hosts_strikes_never_hold_another() {
+  reset_device();
+  Req wrong;   // A, the stub's default peer
+  wrong.bearer(kWrong);
+  CHECK(receipt(wrong) == 0);
+  check_gate_refusal(wrong.r);
+  CHECK(strikes(kHostA) == 1);
+  Req b_receipt;
+  b_receipt.from(192, 168, 1, 21).bearer(kToken);
+  CHECK_MSG(receipt(b_receipt) == 1, "A's wrong bearer held B's right one on the receipt");
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(b_receipt.r.status == "200 OK");
+  Req b_qr;
+  b_qr.from(192, 168, 1, 21).bearer(kToken);
+  CHECK_MSG(qr(b_qr) == 1, "A's wrong bearer held B's right one on the pairing QR");
+  Req b_admin;
+  b_admin.from(192, 168, 1, 21).bearer(kToken);
+  CHECK_MSG(api_auth_check(&b_admin.r, kToken), "A's wrong bearer held B's right one on an admin route");
+  CHECK(strikes(kHostB) == 0);
+  // A itself is held: its right token, inside its own backoff, is the 429.
+  Req a_right;
+  a_right.bearer(kToken);
+  CHECK(receipt(a_right) == 0);
+  check_lockout_refusal(a_right.r);
+  CHECK(strikes(kHostA) == 1);
+  // And B's own wrong bearer is B's strike alone.
+  Req b_wrong;
+  b_wrong.from(192, 168, 1, 21).bearer(kWrong);
+  CHECK(qr(b_wrong) == 0);
+  CHECK(b_wrong.r.status == "403 Forbidden");
+  CHECK(strikes(kHostB) == 1 && strikes(kHostA) == 1);
+}
+
+// The F289 follow-up review's replay: host A sends a wrong bearer every
+// 100 ms, so it strikes again the moment each of its backoffs ends; host B,
+// the owner's app, polls an admin route's gate every 7 s with the right
+// token, for ten minutes. Before, every one of B's 86 polls was refused.
+void test_the_review_replay_holds_no_other_host() {
+  reset_device();
+  const uint32_t start = millis();
+  int a_sent = 0, a_served = 0, a_strikes = 0, b_polls = 0, b_refused = 0;
+  for (uint32_t t = 0; t < 600000; t += 100) {
+    stub_grant::now_ms = start + t;
+    Req a;
+    a.bearer(kWrong);
+    if (api_auth_check_bearer(&a.r, kToken)) ++a_served;
+    ++a_sent;
+    if (a.r.status == "403 Forbidden") ++a_strikes;   // compared: not held, a strike
+    if (t % 7000 == 0) {
+      Req b;
+      b.from(192, 168, 1, 21).bearer(kToken);
+      ++b_polls;
+      if (!api_auth_check(&b.r, kToken)) ++b_refused;
+    }
+  }
+  std::printf("replay: A sent %d wrong bearers, %d of them strikes; B polled %d times, %d refused\n",
+              a_sent, a_strikes, b_polls, b_refused);
+  CHECK(a_served == 0);
+  CHECK(b_polls == 86);
+  CHECK_MSG(b_refused == 0, "B was refused " + std::to_string(b_refused) + " of " + std::to_string(b_polls));
+  CHECK(a_strikes > 10);   // A kept striking, each time its own backoff ended
+  CHECK(strikes(kHostB) == 0);
+}
+
+// A source the socket cannot name shares one bucket: a socket that cannot
+// say and a real IPv6 peer both key as 0 (the REAL auth_request_source(), cut
+// from the sketch, over peer_source.h). That bucket holds its own members and
+// no IPv4 host.
+void test_unknown_address_shares_one_bucket() {
+  static const uint8_t kV6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  reset_device();
+  Req a;
+  CHECK(auth_request_source(&a.r) == kHostA);   // ::ffff:192.168.1.20 keys as its IPv4
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK(auth_request_source(&b.r) == kHostB);
+  Req unreadable;
+  unreadable.unreadable();
+  CHECK(auth_request_source(&unreadable.r) == 0);
+  Req v6;
+  v6.from6(kV6);   // 2001:db8::1
+  CHECK(auth_request_source(&v6.r) == 0);
+  Req nobody;
+  nobody.from(0, 0, 0, 0);   // ::ffff:0.0.0.0 names no peer
+  CHECK(auth_request_source(&nobody.r) == 0);
+  // One strike from the socket that cannot say holds the IPv6 peer...
+  unreadable.bearer(kWrong);
+  CHECK(qr(unreadable) == 0);
+  CHECK(unreadable.r.status == "403 Forbidden");
+  CHECK(strikes(0) == 1);
+  v6.bearer(kToken);
+  CHECK(qr(v6) == 0);
+  CHECK_MSG(v6.r.status == "429 Too Many Requests", "the unknown sources were not one bucket: " + v6.r.status);
+  // ...and not A.
+  a.bearer(kToken);
+  CHECK_MSG(qr(a) == 1, "the unknown sources' bucket held an IPv4 host");
+  CHECK(strikes(kHostA) == 0);
+}
+
+// ONE table for every file that includes api_auth.h. A strike recorded by
+// this file's gate (the sketch's cut handler) holds another file's gate
+// (api_auth_second_tu.cpp), and the other way round. Before, the table was a
+// `static` in the header, one per file: the second file's was clean, and
+// answered 403 to a host the first file held.
+void test_one_table_for_every_file() {
+  reset_device();
+  Req first;
+  first.bearer(kWrong);
+  CHECK(qr(first) == 0);
+  CHECK(first.r.status == "403 Forbidden");
+  Req second;
+  second.bearer(kToken);
+  CHECK(!second_tu_check_bearer(&second.r, kToken));
+  CHECK_MSG(second.r.status == "429 Too Many Requests",
+            "another file's gate did not see this file's strike: " + second.r.status);
+  reset_device();
+  Req there;
+  there.bearer(kWrong);
+  CHECK(!second_tu_check_bearer(&there.r, kToken));
+  CHECK(there.r.status == "403 Forbidden");
+  Req here;
+  here.bearer(kToken);
+  CHECK(qr(here) == 0);
+  CHECK_MSG(here.r.status == "429 Too Many Requests",
+            "this file's gate did not see another file's strike: " + here.r.status);
+}
+
+// No backoff outlives the 60 s window that clears its count. Six wrong
+// bearers, each once the one before was waited out: the sixth holds 60 s and
+// its 429 says Retry-After 61, and the right token is served 60 s after it.
+// Before, the sixth armed 64 s and announced 65, for a hold the window ended
+// at 60 s (and at exactly 60 s the right token was still refused).
+void test_no_backoff_outlives_the_window() {
+  reset_device();
+  for (int i = 0; i < 6; ++i) {
+    wait_out(kHostA);
+    Req q;
+    q.bearer(kWrong);
+    CHECK(qr(q) == 0);
+    CHECK(q.r.status == "403 Forbidden");
+  }
+  CHECK(strikes(kHostA) == 6);
+  Req held_req;
+  held_req.bearer(kToken);
+  CHECK(qr(held_req) == 0);
+  CHECK(held_req.r.status == "429 Too Many Requests");
+  CHECK_MSG(header(held_req.r, "Retry-After") == "61",
+            "the sixth strike announced Retry-After " + header(held_req.r, "Retry-After"));
+  CHECK(held_req.r.resp.find("\"retry_after_s\":61}") != std::string::npos);
+  stub_grant::now_ms += 60000;
+  Req after;
+  after.bearer(kToken);
+  CHECK_MSG(qr(after) == 1, "the sixth strike held the right token past 60 s");
+}
+
+// A backoff armed 1024 ms before millis() wraps still holds 500 ms later.
+// Before, `millis() < until` read the wrapped end as long past.
+void test_a_backoff_armed_before_the_wrap_holds() {
+  reset_device();
+  stub_grant::now_ms = 0xFFFFFFFFu - 1023u;
+  Req wrong;
+  wrong.bearer(kWrong);
+  CHECK(qr(wrong) == 0);
+  CHECK(wrong.r.status == "403 Forbidden");
+  stub_grant::now_ms += 500;
+  Req right;
+  right.bearer(kToken);
+  CHECK(qr(right) == 0);
+  CHECK_MSG(right.r.status == "429 Too Many Requests",
+            "a backoff armed before the wrap did not hold: " + right.r.status);
+  CHECK(header(right.r, "Retry-After") == "2");   // 1500 ms left
+  stub_grant::now_ms += 2000;   // past the wrap and past the backoff
+  Req later;
+  later.bearer(kToken);
+  CHECK(qr(later) == 1);
+}
+
+// The count saturates. A wrong bearer arms a backoff, then 255 wrong ?token=
+// inside it (api_auth_check_or_query records each without asking the lockout
+// first; F339 is that gate's own item): 256 strikes, and A is still held.
+// Before, the uint8_t count wrapped to a clean 0 and A was let through.
+void test_wrong_query_tokens_never_wrap_the_count() {
+  reset_device();
+  Req first;
+  first.bearer(kWrong);
+  CHECK(qr(first) == 0);
+  for (int i = 0; i < 255; ++i) {
+    Req q;
+    q.query(std::string("token=") + kWrong);
+    CHECK(!api_auth_check_or_query(&q.r, kToken));
+  }
+  CHECK(strikes(kHostA) == canary::net::auth_backoff::MAX_COUNT);
+  Req right;
+  right.bearer(kToken);
+  CHECK(qr(right) == 0);
+  CHECK_MSG(right.r.status == "429 Too Many Requests", "256 strikes wrapped the count: " + right.r.status);
+}
+
+// A count is cleared 60 s after its last strike even when nobody asked the
+// lockout in between (api_auth_check_or_query records without asking): two
+// wrong ?token= 61 s apart are two first strikes, so the right token is
+// served 2 s after the second. Before, the second armed 4 s.
+void test_the_window_clears_a_count_nobody_asked_about() {
+  reset_device();
+  Req q1;
+  q1.query(std::string("token=") + kWrong);
+  CHECK(!api_auth_check_or_query(&q1.r, kToken));
+  stub_grant::now_ms += 61000;
+  Req q2;
+  q2.query(std::string("token=") + kWrong);
+  CHECK(!api_auth_check_or_query(&q2.r, kToken));
+  CHECK(strikes(kHostA) == 1);
+  stub_grant::now_ms += canary::net::auth_backoff::BASE_MS + 1;
+  Req right;
+  right.bearer(kToken);
+  CHECK_MSG(qr(right) == 1, "two strikes a minute apart armed more than 2 s: " + right.r.status);
 }
 
 // ── api_auth.h's contract ────────────────────────────────────────────────────
@@ -879,12 +1161,11 @@ void test_api_auth_contract() {
   CHECK(wrong.r.status == "403 Forbidden");
 
   // The cookie path clears no lockout (api_auth_check's own rule).
-  g_auth.consecutive_failures = 4;
-  g_auth.last_failure_ms = millis();
+  set_strikes(kHostA, 4, millis(), millis());
   Req again;
   again.cookie();
   CHECK(api_auth_check(&again.r, kToken));
-  CHECK(g_auth.consecutive_failures == 4);
+  CHECK(strikes(kHostA) == 4);
 }
 
 // An empty device token is no token. provision_device() can return before
@@ -902,34 +1183,34 @@ void test_empty_device_token_takes_no_bearer() {
               "an empty device token took a bare Bearer header");
     CHECK(!api_auth_check_optional(&valid.r, g_device.api_token_str));
     CHECK(valid.r.sends == 0);
-    CHECK(g_auth.consecutive_failures == 0);   // the silent checks record nothing
+    CHECK(strikes(kHostA) == 0);   // the silent checks record nothing
 
     Req grant;
     grant.authorization(raw);
     CHECK(!api_auth_bearer_grant(&grant.r, g_device.api_token_str));
-    CHECK(g_auth.consecutive_failures == 1);   // a presented header against no token: one strike
-    g_auth = AuthState{0, 0, 0, 0, 0};
+    CHECK(strikes(kHostA) == 1);   // a presented header against no token: one strike
+    clear_lockout();
 
     Req admin;
     admin.authorization(raw);
     CHECK_MSG(!api_auth_check_bearer(&admin.r, g_device.api_token_str),
               "an empty device token signed in an admin route");
     CHECK(admin.r.status == "403 Forbidden");
-    CHECK(g_auth.consecutive_failures == 1);
-    g_auth = AuthState{0, 0, 0, 0, 0};
+    CHECK(strikes(kHostA) == 1);
+    clear_lockout();
 
     Req receipt_req;
     receipt_req.authorization(raw);
     CHECK_MSG(receipt(receipt_req) == 0, "an empty device token served the receipt to a bare Bearer");
     check_gate_refusal(receipt_req.r);
     CHECK(g_served.empty());
-    g_auth = AuthState{0, 0, 0, 0, 0};
+    clear_lockout();
 
     Req qr_req;
     qr_req.authorization(raw);
     CHECK_MSG(qr(qr_req) == 0, "an empty device token served the pairing QR to a bare Bearer");
     CHECK(qr_req.r.status == "403 Forbidden");
-    g_auth = AuthState{0, 0, 0, 0, 0};
+    clear_lockout();
   }
   // The ?token= gate, the same rule: an empty query token is not the token.
   reset_device();
@@ -1131,6 +1412,14 @@ int main() {
   test_qr_no_credential_is_401_without_strike();
   test_qr_lockout_is_every_admin_routes();
   test_receipt_and_qr_share_the_lockout();
+  test_one_hosts_strikes_never_hold_another();
+  test_the_review_replay_holds_no_other_host();
+  test_unknown_address_shares_one_bucket();
+  test_one_table_for_every_file();
+  test_no_backoff_outlives_the_window();
+  test_a_backoff_armed_before_the_wrap_holds();
+  test_wrong_query_tokens_never_wrap_the_count();
+  test_the_window_clears_a_count_nobody_asked_about();
   test_api_auth_contract();
   test_empty_device_token_takes_no_bearer();
   test_sketch_text();

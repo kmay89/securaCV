@@ -3,7 +3,9 @@
 // Pure: <stdint.h> only, no Arduino, no httpd, no heap. Host-tested in
 // firmware/tests_host/test_auth_backoff.cpp. The canary-wap sketch compiles
 // only its own folder, so it stages a byte-identical copy
-// (firmware/scripts/check_improv_sync.sh holds the two equal).
+// (firmware/scripts/check_improv_sync.sh holds the two equal), and its
+// api_auth.h holds the one Table every file of the sketch shares, keyed by
+// auth_request_source() (canary_wap.ino).
 //
 // Why per address (sweep F343). The WAP's lockout used to be one backoff for
 // every caller, so one host's wrong bearers held every other host's right

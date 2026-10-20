@@ -61,6 +61,7 @@
 
 #include "csi_event_egress.h"
 #include "csi_integration.h"
+#include "api_auth.h"        // the bearer lockout's one table (g_auth_table, sweep F343)
 #include "device_signature.h"
 #include "json_strict.h"     // GET /api/mqtt/config parses under JSON.parse's rules (sweep F227)
 #include "mqtt_transport_logic.h"  // ca_pem_looks_valid(): the shape the CA test cuts past
@@ -340,6 +341,13 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
 // the bearer-only cases turn it off).
 bool g_session_cookie_valid = true;
 
+// The bearer lockout's source (api_auth.h declares it; canary_wap.ino
+// defines it from the request's socket peer, sweep F343). Every binary that
+// compiles the real api_auth.h defines it: here the one peer every request
+// comes from, which a test may set.
+uint32_t g_peer = 0;
+uint32_t auth_request_source(httpd_req_t*) { return g_peer; }
+
 namespace csi_integration {
 bool session_validate_cookie(httpd_req_t*) { return g_session_cookie_valid; }
 void add_outbound_bytes(uint32_t) {}
@@ -474,6 +482,8 @@ void power_cycle() {
   fake::during_publish = nullptr;
   csi_mqtt::set_api_token_provider(nullptr);   // no bearer to present (F289 tests register one)
   g_session_cookie_valid = true;
+  g_auth_table = {};                           // a reboot clears the RAM lockout (sweep F343)
+  g_peer = 0;
   (void)csi_mqtt::request_reinit();
   loop_pass();
   run_tasks();

@@ -173,9 +173,11 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # foreign Host gets no credential, the receipt route refuses it before the
 # bearer or the tap is consulted, and neither path spends the tap for it),
 # and the dual-stack socket's ::ffff:a.b.c.d peer address unwraps to IPv4
-# while a true IPv6 address reads as unknown.
+# while a true IPv6 address reads as unknown; peer_key_from_addr() names one
+# peer by one 16-byte key in either family, and refuses the unspecified one.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
-# sketch keeps an inline copy of the two gate operations to this contract.
+# sketch keeps an inline copy of the two gate operations to this contract,
+# and stages the header for its peer key (check_improv_sync.sh).
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 

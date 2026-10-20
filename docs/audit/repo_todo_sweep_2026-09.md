@@ -1777,7 +1777,7 @@ so — see D2 below.)
   allow-listed `Host`; or keep it, as `magic_pairing.md` §3.7 now states.
   Predates F289; the F289 follow-up's review reproduced both over the real cut
   handler. Found by that review and the superseded F289 port's review (#1832).
-- [ ] **F343 [decision] canary-wap: one lockout per device, so a host on the
+- [x] **F343 [decision] canary-wap: one lockout per device, so a host on the
   network can hold the receipt's bearer at 429.** `g_auth` is one backoff for
   every caller: a host that sends one wrong bearer whenever the backoff is not
   running keeps the receipt's right-bearer grant answering `429` (the F289
@@ -1788,6 +1788,65 @@ so — see D2 below.)
   header). A per-source backoff would be the change, and it is a design call;
   `magic_pairing.md` §3.7 states today's. Found by the F289 follow-up's review
   (#1832).
+  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, for the user and for
+  security): a per-address backoff on one shared table.*
+  What was wrong. The WAP's bearer lockout was one backoff for every caller,
+  so one host's wrong bearers held every other host's right token at `429`.
+  The F289 follow-up's replay refused 86 of 86 owner polls. The likeliest
+  striker was the owner's own phone, still polling a reset unit with its old
+  token.
+  What it is now. The backoff is keyed by the request's socket peer address,
+  never a header. It is read by `request_peer_key()` (`getpeername`), the
+  sketch's one peer reader, and `auth_request_source()` turns that key into
+  an IPv4 through `provisioning_gate.h`'s `ipv4_host_order_from_addr()`, the
+  function the flagship maps its peers with (`provisioning_gate.h` is now
+  staged in the sketch for it, with its new `peer_key_from_addr()`):
+  - an IPv4 address, or a v4-mapped one, has its own slot; any other address
+    shares bucket 0;
+  - 8 slots, plus one shared overflow that holds every untracked address
+    while it runs;
+  - 2 s doubling, capped at 60 s;
+  - a saturating count and wrap-safe ages.
+  The table is the pure `firmware/common/network/auth_backoff.h`, host-tested
+  in `firmware/tests_host/test_auth_backoff.cpp` (the old logic behind its
+  API fails 41 of the suite's checks) and staged byte-identical in the sketch
+  (`check_improv_sync.sh`). F340's second part moves the flagship onto it.
+  Found on the way:
+  - `api_auth.h`'s state was a `static` in a header, so `canary_wap.ino`,
+    `csi_integration.cpp` and `csi_mqtt.cpp` each had their own copy. It is
+    now one `inline` table.
+  - The `uint8_t` count wrapped after 256 strikes recorded inside a backoff
+    (`api_auth_check_or_query()`'s `?token=`, which records without asking
+    the lockout first: F339).
+  - `millis() < until` was not wrap-safe.
+  - The documented 5-minute cap never ran: the 60 s clean window cleared the
+    count first, while the sixth strike's `Retry-After` claimed 65 s. The
+    cap is now the window, so the stated 60 s is the real maximum.
+  - The unused `auth_stats_json()` is deleted.
+  The posture, in the sentence the docs use: A host's wrong bearers hold only
+  that host's address (F343). A browser that mistyped the token waits at
+  most about 60 s. A host that strikes from 9 or more addresses within 60 s
+  holds every untracked address while the shared overflow slot runs, and a
+  tap does not clear that; then wait, change Wi-Fi from the iPhone's bonded
+  Bluetooth lane, or hold BOOT 10 s.
+  Not closed:
+  - `POST /api/reboot` from any landing session, which also clears the RAM
+    table;
+  - ARP spoofing;
+  - httpd's LRU purge;
+  - clients behind one address share a backoff;
+  - a cross-site `<img src=...?token=x>` holds the visiting browser's own
+    address.
+  Host-tested in `test_receipt_grant.cpp` (916 checks; run against the code
+  before the change, with the suite's few state helpers pointed at the old
+  `g_auth`, 26 of them fail: two hosts, the replay at 0 of 86, one table
+  across two translation units, the real `auth_request_source()`, the 61 s
+  `Retry-After`, the wrap, the saturation, the window) and
+  `test_receipt_authority.cpp` (the reader's text). The ESP32 compile is
+  CI's; not run on a device (U1: the "one host's wrong bearers hold only
+  that host" row in `hardware_verification_checklist.md`). Filed: F352
+  (iOS, a reset unit's stale pairing).
 - [ ] **F344 [decision] canary-wap checks no Host on the post-setup landing
   page or the `?cv_pair=` exchange.** The Host is read only on the first-boot
   wizard's paths (`handle_ui()`'s setup branch and `request_host_is_direct()`,
@@ -1887,6 +1946,19 @@ so — see D2 below.)
   is the shape a per-source budget could take. Decide whether the budget
   stays per device, becomes per source, or both. From code; not probed.
   Found by the F340 decision's security review, 2026-10-19.
+- [ ] **F352 [code] iOS: a pairing for a reset Canary keeps polling with its
+  old token.** A factory reset that regenerates the WAP's key changes both
+  its token and its `device_id`. `DeviceStore.add`
+  (`ios/Sources/SecuraCV/Security/DeviceStore.swift`) dedupes by id, so the
+  old row stays beside the new one, and `FleetStore`'s 20 s refresh loop
+  (`ios/Sources/SecuraCV/App/FleetStore.swift`, `startRefreshLoop()`) keeps
+  sending the old token to `/api/status`. Since F343 that holds only the
+  phone's own address, but that is the address the new pairing polls from,
+  so the new row is held at `429` intermittently; a refused `wapStatus()`
+  falls back to the reference API's `info()`, and a row that answers
+  neither is marked `.lost` (the same file). The fix is to stop
+  polling a row that answers `403` and offer re-pair or remove. From code;
+  not run. Found by the F343 decision's owner review, 2026-10-19.
 
 ### Parity & sub-projects
 

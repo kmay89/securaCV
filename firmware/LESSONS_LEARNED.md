@@ -783,6 +783,38 @@
   fix or file it in the same change.
 - **Date learned:** 2026-10
 
+### A `static` in a header is one copy per .cpp, and one lockout for the device holds every caller
+- **What happened:** The WAP's bearer lockout was `static AuthState g_auth`
+  in `api_auth.h`: one backoff for every caller, so a host that sent a wrong
+  bearer whenever the backoff was not running held every other host's right
+  token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
+  and the likeliest such host was the owner's own phone, polling a reset unit
+  with its old token. Because a `static` in a header is a separate object in
+  every translation unit that includes it, `canary_wap.ino`,
+  `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
+  strike one file's gate recorded never held another file's. Three more
+  defects sat in the same twenty lines: the `uint8_t` count wrapped to a
+  clean 0 after 256 strikes recorded inside a backoff; `millis() < until`
+  freed a backoff armed just before the 49.7-day wrap; and the documented
+  5-minute cap never ran, because the 60 s window cleared the count first,
+  while the sixth strike announced `Retry-After: 65` for a hold that ended at
+  60 s.
+- **Fix:** `firmware/common/network/auth_backoff.h` (sweep F343): one backoff
+  per source address (the socket peer, never a header; 8 slots plus a shared
+  overflow), the cap equal to the window, a saturating count, ages read
+  modulo 2^32. `api_auth.h` holds it as one C++17 `inline` variable.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp` (host);
+  `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` (two
+  hosts, the replay, and `api_auth_second_tu.cpp`, a second translation unit
+  over `api_auth.h` linked into the same binary, which fails if the table is
+  ever per file again).
+- **Rule:** shared mutable state in a header is `inline` (C++17), never
+  `static`, and only a test with a second translation unit proves it is
+  shared. A cap the clearing window never lets run is not a cap: state the
+  maximum the code reaches, and assert it (`static_assert(MAX_MS <=
+  WINDOW_MS)`).
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

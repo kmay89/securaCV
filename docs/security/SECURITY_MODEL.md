@@ -353,10 +353,23 @@ window the session can open (it mints the wizard's pair token over
 `GET /api/pair/token`), but only for a code in front of the camera
 (`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
 ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
-toward the same lockout as the admin routes, and the session cookie itself
-is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever it is set over HTTPS
-(the first-boot setup runs plain HTTP, where a `Secure` cookie would be
-dropped); host-tested, the ESP32 compile is CI's, not bench-tested. The
+toward the same per-address lockout as the admin routes (F343), and the
+session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever
+it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
+cookie would be dropped); host-tested, the ESP32 compile is CI's, not
+bench-tested. The WAP's lockout is per source address. A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the token waits at most about
+60 s. A host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
+or hold BOOT 10 s. The key is the request's socket peer address, never a
+header, and clients behind one address share a backoff. It does not close a
+deliberate denial from the LAN: a landing session can still reboot the unit
+(`POST /api/reboot`, which also clears the table, kept in RAM), and ARP
+spoofing, httpd's connection purge and a cross-site `?token=` image that
+holds the visiting browser's own address stay open
+([`magic_pairing.md`](../design/magic_pairing.md) §3.7). Host-tested; not
+run on a device. The
 displays treat the LAN as their trust boundary by design — no bearer
 credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller

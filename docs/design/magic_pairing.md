@@ -441,8 +441,9 @@ broker password — no `password` in the body — takes the bearer too, or the
 password typed again, so the session cannot send that password to a host it
 names (`403 password_needed`). The receipt's row 2 is also under the lockout
 every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
-follow-up): a wrong or malformed bearer is one strike, the right one clears
-the count, and while the backoff runs no bearer is compared, so a request
+follow-up): a wrong or malformed bearer is one strike against the address
+that sent it, the right one clears that address's count, and while that
+address's backoff runs none of its bearers is compared, so a request from it
 that brings one gets `429` with `Retry-After` when the claim and the tap do
 not serve it. The lockout never gates rows 3 and 4: a page holding a stale
 token, or a backoff a guesser armed, is still served by the claim or a BOOT
@@ -452,15 +453,44 @@ the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
 
+**The backoff is per source address.** A host's wrong bearers hold
+only that host's address (F343). A browser that mistyped the token waits at
+most about 60 s. A host that strikes from 9 or more addresses within 60 s
+holds every untracked address while the shared overflow slot runs, and a tap
+does not clear that; then wait, change Wi-Fi from the iPhone's bonded
+Bluetooth lane, or hold BOOT 10 s.
+
+The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
+sketch, with one table for every file of the sketch (`g_auth_table` in
+`api_auth.h`). It tracks 8 addresses, each with its own backoff: 2 s after
+the first strike, doubling, never more than 60 s, and cleared once that
+address sends no wrong token for a minute. An address that finds no free
+slot strikes one shared overflow slot, which holds every address without a
+slot of its own while it runs. The key is the request's socket peer, read by
+`request_peer_key()` (`getpeername`, never a header such as
+`X-Forwarded-For`) and mapped to its IPv4 by `auth_request_source()`; a real
+IPv6 peer, or a socket that cannot say, shares bucket 0. Rows 3 and 4 are
+never held: the dashboard's BOOT-tap wait sends no `Authorization` header,
+and a stale one beside the tap or the claim is served anyway.
+
+Its limits. Clients behind one address share a backoff: a NAT, a reverse
+proxy, a VPN router, or one Mac running both the dashboard and the app. At
+most nine backoffs run at once, so a host with many addresses gets about 30
+guesses a minute, against a token of about 184 bits (32 characters of a
+54-character alphabet). Not closed by it:
+`POST /api/reboot` from any landing session, which also clears the table (it
+lives in RAM); ARP spoofing; httpd's LRU purge (a host that opens enough
+connections closes the owner's); nine or more striking addresses (the
+overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
+visiting browser's own address. A phone that still holds a pairing for a
+unit that was reset keeps polling with the old token, and so holds its own
+address, its new pairing included (F352). Host-tested
+(`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
+run on a device.
+
 What the lockout does not decide, and what stays open (all of it predates
 F289's follow-up; it is the ledger's, not a claim of this design):
 
-- **The backoff is one per device, not one per caller.** A host on the
-  network that sends one wrong bearer whenever the backoff is not running
-  keeps row 2 answering `429` for everyone, the owner's right token
-  included, as it can on every admin route that takes the bearer. Rows 3
-  and 4 still serve: the dashboard's BOOT-tap wait sends no `Authorization`
-  header, and a stale one beside the tap or the claim is served anyway.
 - **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
   spent, match or not, so one wrong guess from a host on the network burns
   a pending setup-door claim, and the phone that provisioned over the door
@@ -902,10 +932,11 @@ cannot speak to.
             the first new one by then (F289, the third road).
 - [ ] With the WAP joined to the home Wi-Fi, wrong bearers on
       `GET /api/provisioning-receipt` arm the same backoff as the admin
-      routes: once it runs, the right token is `429` with `Retry-After` on
-      the receipt and on `GET /api/pairing-qr`, a short BOOT tap inside that
-      backoff still serves the receipt, and the right token serves again
-      once the backoff ends (F289's follow-up).
+      routes: once it runs, the right token from the same host is `429`
+      with `Retry-After` on the receipt and on `GET /api/pairing-qr`, a
+      short BOOT tap inside that backoff still serves the receipt, and the
+      right token serves again once the backoff ends (F289's follow-up);
+      the right token from a second host is served throughout (F343).
 - [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
       link and a BOOT-tap receipt send carries `Secure`; on the first-boot
       SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none

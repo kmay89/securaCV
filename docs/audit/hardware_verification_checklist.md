@@ -2792,14 +2792,18 @@ follow-up (#1832) adds none of its own. Code: `session_cookie_header()` and
 `handle_provisioning_receipt()` in `canary_wap.ino`;
 `read_session_cookie_hex()` in `csi_integration.cpp`;
 `api_auth_bearer_grant()`, `api_auth_bearer_held()` and
-`api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`.
+`api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`; and,
+for the per-address row (F343), `request_peer_key()` and
+`auth_request_source()` in `canary_wap.ino` over
+`firmware/common/network/auth_backoff.h` (staged in the sketch).
 Host-tested (`tests_host/test_session_cookie.cpp`: the cookie's attributes
 over HTTPS and plain HTTP, and the whole-name read;
 `tests_host/test_receipt_grant.cpp`: a wrong bearer one strike, the
-backoff's 429, the tap and the claim never held; `recovery_kit.test.js`: the
-sign-in's copy); `check_route_security.py` holds every answer that carries a
-secret to a bearer-only gate; the compile is CI's; nothing here ran on a
-device or in a browser. Owner: U1.
+backoff's 429, the tap and the claim never held, one host's strikes never
+holding another; `firmware/tests_host/test_auth_backoff.cpp`: the table;
+`recovery_kit.test.js`: the sign-in's copy); `check_route_security.py`
+holds every answer that carries a secret to a bearer-only gate; the compile
+is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
@@ -2845,6 +2849,38 @@ device or in a browser. Owner: U1.
     token alone is `200`. Before this change the wrong bearers on the
     receipt armed no backoff and the right token was served inside one.
   - Artifact: `docs/audit/repro/F289/receipt-lockout/`.
+
+- [ ] **canary-wap: one host's wrong bearers hold only that host (F343)**
+  - Setup: a canary-wap on this firmware, joined to the home Wi-Fi. A stock
+    unit serves plain HTTP after setup (`canary_wap.ino`'s
+    `SECURACV_HAS_TLS_CERTGEN` is set only where the core has
+    `mbedtls/x509write_crt.h`, which no installed core ships), so this row
+    uses `http://<sta-ip>`; an HTTPS variant waits until a WAP serves HTTPS.
+    Two hosts on the home network over IPv4, A (a laptop with `curl`) and B
+    (a second computer, or a phone with a shell), both with the API token;
+    the serial console open; no BOOT tap during the row.
+  - Repro:
+    1. From A, five times, 20 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://<sta-ip>/api/provisioning-receipt`.
+    2. Right after the fifth, from A: the right token on the receipt, with
+       `-D -`.
+    3. At once, from B: the right token on `/api/provisioning-receipt`,
+       `/api/pairing-qr` and `/api/status`.
+    4. From B: one wrong bearer on `/api/status`.
+    5. From A, after its `Retry-After`: the right token on `/api/status`.
+    6. From A: six more wrong bearers on `/api/status`, and after each one
+       the right token with `-D -` to read that backoff's `Retry-After`;
+       send the next wrong bearer once that wait is over.
+  - Expected: A's five wrong bearers are `403`; A's right token inside its
+    backoff is `429` with `Retry-After`. B's three are `200` at once, and the
+    console prints no `[AUTH] Failed attempt` line for them. B's wrong bearer
+    is `403` and holds only B. A's right token after the wait is `200`. In
+    step 6 no `Retry-After` exceeds `61`; the firmware before this change
+    announced `65` on the sixth. If B is `429` while A is held, the key fell
+    back to one bucket: check `request_peer_key()`'s dual-stack
+    `::ffff:a.b.c.d` path.
+  - Artifact: `docs/audit/repro/F343/per-address/`.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 

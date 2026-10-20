@@ -16,6 +16,12 @@
 //   * a millis() of exactly 0 is stored as 1, because 0 means "closed";
 //   * uint32 wraparound is handled by unsigned subtraction (now - opened).
 //
+// The sketch also stages this header byte-identical
+// (firmware/scripts/check_improv_sync.sh) and reads every request's peer
+// through its socket address mapping (peer_key_from_addr(),
+// ipv4_host_order_from_addr(), below), so both trees map a peer's address
+// through one function.
+//
 // page_token_policy() is the second half: the dashboard (/) and the setup
 // wizard (/setup) are served with the bearer token injected into the HTML so
 // the page can call the API. That injection was unconditional on every
@@ -247,6 +253,51 @@ inline uint32_t ipv4_host_order_from_addr(AddrFamily family, const uint8_t* byte
   }
   return ((uint32_t)v4[0] << 24) | ((uint32_t)v4[1] << 16) |
          ((uint32_t)v4[2] << 8)  |  (uint32_t)v4[3];
+}
+
+// ── Socket address → one key per peer ──────────────────────────────────────
+
+// The 16 bytes that name one peer, whichever family its socket reports: an
+// IPv4 address as its IPv4-mapped form ::ffff:a.b.c.d (RFC 4291 §2.5.5.2), an
+// IPv6 address as its own 16 bytes. So a client keys the same on an AF_INET
+// listener and on the dual-stack AF_INET6 one, which reports it as
+// ::ffff:a.b.c.d already, and ipv4_host_order_from_addr(AddrFamily::IPV6,
+// key) is the IPv4 of a mapped key and 0 for every other. The WAP's one
+// reader of who sent a request (canary_wap.ino request_peer_key(), over
+// getpeername) writes it; the per-address bearer lockout keys on that IPv4
+// (auth_request_source(), network/auth_backoff.h).
+//   IPV4 a.b.c.d          → ::ffff:a.b.c.d
+//   IPV6 (any)            → its 16 bytes
+//   OTHER, a null `bytes` or `out`, or no address at all (:: or
+//   ::ffff:0.0.0.0, the unspecified address in either family) → false
+// `out` is zeroed whenever the answer is false, so a refused key is never
+// mistaken for a peer.
+inline constexpr size_t PEER_KEY_LEN = 16;
+
+inline bool peer_key_from_addr(AddrFamily family, const uint8_t* bytes,
+                               uint8_t out[PEER_KEY_LEN]) {
+  if (!out) return false;
+  for (size_t i = 0; i < PEER_KEY_LEN; ++i) out[i] = 0;
+  if (!bytes) return false;
+  if (family == AddrFamily::IPV4) {
+    out[10] = 0xFF;
+    out[11] = 0xFF;
+    for (size_t i = 0; i < 4; ++i) out[12 + i] = bytes[i];
+  } else if (family == AddrFamily::IPV6) {
+    for (size_t i = 0; i < PEER_KEY_LEN; ++i) out[i] = bytes[i];
+  } else {
+    return false;
+  }
+  bool prefix_zero = true;
+  for (size_t i = 0; i < 10; ++i) prefix_zero = prefix_zero && out[i] == 0;
+  const bool mapped_or_zero = prefix_zero && ((out[10] == 0xFF && out[11] == 0xFF) ||
+                                              (out[10] == 0 && out[11] == 0));
+  const bool tail_zero = out[12] == 0 && out[13] == 0 && out[14] == 0 && out[15] == 0;
+  if (mapped_or_zero && tail_zero) {
+    for (size_t i = 0; i < PEER_KEY_LEN; ++i) out[i] = 0;
+    return false;
+  }
+  return true;
 }
 
 // True only when `peer` is an IPv4 address inside the SoftAP's IPv4 subnet.

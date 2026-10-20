@@ -19,6 +19,44 @@
   `firmware/tests_host/test_securacv_auth.cpp` over the real
   `securacv_auth.cpp`, 33 checks, 6 of them failing before the change); the
   ESP32 compile is CI's; not run on a device (U1).
+- **canary-wap: one host's wrong bearers no longer hold every other host
+  (sweep F343).** The bearer lockout was one backoff for the whole device
+  (`static AuthState g_auth` in `api_auth.h`), so a host that sent a wrong
+  bearer whenever the backoff was not running held every other caller's right
+  token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
+  polls over ten minutes. The likeliest such host was the owner's own phone,
+  still polling a reset unit with its old token (filed as F352). The backoff
+  is now one per source address, the request's socket peer and never a
+  header, on the new pure `firmware/common/network/auth_backoff.h` (staged
+  into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each
+  2 s after the first strike and doubling, plus one shared overflow slot that
+  holds every address without a slot of its own while it runs. A host's wrong
+  bearers hold only that host's address (F343). A browser that mistyped the
+  token waits at most about 60 s. A host that strikes from 9 or more
+  addresses within 60 s holds every untracked address while the shared
+  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
+  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. Clients behind
+  one address share a backoff, and a deliberate LAN denial is not closed (a
+  landing session's `POST /api/reboot` also clears the table; ARP spoofing,
+  httpd's connection purge; `magic_pairing.md` §3.7). Found on the way and
+  fixed with it: the `static` in the header gave `canary_wap.ino`,
+  `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
+  `inline` table); the `uint8_t` count wrapped to a clean 0 after 256 strikes
+  recorded inside a backoff (it now saturates at 10); `millis() < until`
+  freed a backoff armed just before the 49.7-day wrap; and the documented
+  5-minute cap never ran, since the 60 s window cleared the count first while
+  the sixth strike announced `Retry-After: 65`. The cap is now that window:
+  no hold lasts more than 60 s and `Retry-After` never names more than 61.
+  The unused `auth_stats_json()` is gone. The 429 body is unchanged.
+  **Host-tested** (new `firmware/tests_host/test_auth_backoff.cpp`, which the
+  old logic fails 41 checks of; `test_receipt_grant.cpp`, 916 checks, 26 of
+  which the code before the change fails, the suite's few state helpers
+  pointed at the old `g_auth`: two hosts, the replay at 0 of
+  86, one table across two translation units, the real
+  `auth_request_source()`, the 61 s cap, the wrap, the saturation, the
+  window; `test_receipt_authority.cpp` pins `request_peer_key()`, the
+  sketch's one `getpeername`); the ESP32 compile is CI's; not run on a
+  device (U1).
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
