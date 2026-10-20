@@ -66,14 +66,18 @@ So: one description, one projector, one ladder, and every surface reads it.
 
 The device types come from each config's `DEVICE_TYPE`, and for the WAP —
 whose sketch reads no `firmware/configs/` directory — from the type it puts
-on the fleet's wire: the mDNS `dt` record in `canary_wap.ino` and the
-`device_type` on `csi_mqtt.cpp`'s status topic (`"canary-wap"`).
-`tools/figures/wire_types.mjs` reads every such site in those two files and
-refuses one whose value is not a single string literal (a variable, a macro,
-a `%s`, an ArduinoJson assignment), a file with none left, and sites that
-disagree. The sketch's own `DEVICE_TYPE` constant
-(`"canary"`, for REST and its signed records) is not what a peer's figure
-lookup is fed.
+on the fleet's wire (`"canary-wap"`). The sketch publishes it in three kinds
+of site: the mDNS `dt` records in `canary_wap.ino`, the `device_type` on
+`csi_mqtt.cpp`'s status topic, and the sketch's own `DEVICE_TYPE` constant,
+which REST `/api/status`, `node_status.node`, `/api/fleet`'s `product`, the
+boot banner and the hashed BOOT attestation read (sweep F294).
+`tools/figures/wire_types.mjs` reads every such site and holds all three
+kinds to one value. It refuses a site whose value is not a single string
+literal (a variable, a macro, a `%s`, an ArduinoJson assignment), a file with
+none left, and sites that disagree, and for the constant it also refuses a
+second declaration and any other write to it (`=`, a compound assignment,
+`++`, `--`). Improv's firmware-name string in `ble_improv.cpp` is a literal
+outside this check: that file cannot see the sketch's constant.
 
 One command builds all of it, and CI fails if the tree disagrees with it:
 

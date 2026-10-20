@@ -398,8 +398,9 @@ test("the WAP resolves by the device type it puts on the fleet's wire, read from
   // build compiles, as "canary_wap" and "canary_wap_mobile" — types nothing
   // publishes. The glass's figure_for() compares exactly, so a WAP peer (whose
   // MQTT status says "canary-wap") never resolved on a display. The sketch
-  // advertises its type twice, and both must say the same thing: the mDNS `dt`
-  // record the phone keys on, and the device_type its status topic carries.
+  // advertises its type twice on the wire, and both must say the same thing:
+  // the mDNS `dt` record the phone keys on, and the device_type its status
+  // topic carries. Since F294 its DEVICE_TYPE constant must say it too.
   // gen_figures.mjs reads it through wire_types.mjs, which reads every site
   // and refuses one it cannot spell (the next test holds the refusals).
   const WAP = join(REPO, "firmware/projects/canary-wap/arduino/canary_wap");
@@ -424,9 +425,15 @@ test("the WAP resolves by the device type it puts on the fleet's wire, read from
   // canonicalize, unlike the phone's lookup).
   const h = readFileSync(join(REPO, "firmware/common/core/fleet_figures.h"), "utf8");
   assert.match(h, /\{ "canary-wap", "device\.canary-wap", "[0-9a-f]{8}", "shipping" \},/);
-  // The sketch's DEVICE_TYPE constant ("canary": REST, signed records, boot
-  // banner) is not the wire type and is not claimed for the WAP's figure.
-  assert.match(ino, /^static const char\* DEVICE_TYPE\s*=\s*"canary";/m);
+  // Sweep F294: the sketch's DEVICE_TYPE constant (REST /api/status,
+  // node_status.node, /api/fleet's product, the boot banner, the hashed BOOT
+  // attestation) is the wire type too, and it is one of the agreeing sites:
+  // the reader reads its declaration line.
+  assert.match(ino, /^static const char\* DEVICE_TYPE\s*=\s*"canary-wap";/m);
+  const declLine = ino.slice(0, ino.search(/^static const char\* DEVICE_TYPE\s*=/m)).split("\n").length;
+  assert.ok(tree.sites.includes(`firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino:${declLine}`),
+    `the DEVICE_TYPE declaration at canary_wap.ino:${declLine} is a read site (${tree.sites.join(", ")})`);
+  // "canary" is the flagship tree's word (firmware/canary) and is not mapped to the WAP.
   assert.ok(!dt.mapped.some((m) => m.device_type === "canary"), "\"canary\" is not mapped to the WAP");
   // The WAP figure's firmware evidence is the flavor the Workshop publishes
   // from the same sketch (gen_enclosures.py), so its confidence stays derived.
@@ -449,8 +456,16 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
   const real = { [inoF]: readFileSync(join(REPO, inoF), "utf8"), [mqttF]: readFileSync(join(REPO, mqttF), "utf8") };
   const DT = 'MDNS.addServiceTxt("securacv", "tcp", "dt",   "canary-wap");';
   const STATUS = 'const char* online = "{\\"online\\":true,\\"device_type\\":\\"canary-wap\\"}";';
+  // Sweep F294: the DEVICE_TYPE constant is the third source, read from the
+  // same .ino; BANNER is one of its readers, inside setup().
+  const CONST = 'static const char* DEVICE_TYPE        = "canary-wap";';
+  const BANNER = '    bi.device_type   = DEVICE_TYPE;';
+  assert.strictEqual(row.sources[2].file, inoF, "the constant is read from the sketch's .ino");
   assert.strictEqual(real[inoF].split(DT).length - 1, 3, "the fixture edits find the three dt records");
   assert.ok(real[mqttF].includes(STATUS), "the fixture edits find the online status");
+  assert.strictEqual(real[inoF].split(CONST).length - 1, 1, "the fixture edits find the one DEVICE_TYPE declaration");
+  assert.strictEqual(real[inoF].split(BANNER).length - 1, 1, "the fixture edits find the boot banner's read of it");
+  const inSetup = (r, line) => ({ [inoF]: r[inoF].replace(BANNER, `    ${line}\n${BANNER}`) });
   const second = (text, from, to) => { const i = text.indexOf(from, text.indexOf(from) + 1); return text.slice(0, i) + to + text.slice(i + from.length); };
   const dir = fs.mkdtempSync(join(os.tmpdir(), "securacv-wire-types-"));
   const readWith = (edit) => {
@@ -482,12 +497,37 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
         (r) => ({ [inoF]: second(r[inoF], DT, 'MDNS.addServiceTxt("securacv", "tcp", "dt", "canary-wapx");') }), /publishes 2 different device types/],
       ["a file with no site left",
         (r) => ({ [mqttF]: r[mqttF].split("device_type").join("dev_kind") }), /csi_mqtt\.cpp no longer publishes/],
+      // Sweep F294: the constant agrees with the wire sites, is declared once
+      // with one literal, and nothing else writes it.
+      ["the constant set back to the flagship's word",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* DEVICE_TYPE        = "canary";') }),
+        /publishes 2 different device types[\s\S]*"canary" at [^;]*canary_wap\.ino:\d+/],
+      ["the constant handed a name",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* DEVICE_TYPE        = WAP_TYPE;') }),
+        /canary_wap\.ino:\d+: DEVICE_TYPE is not one string literal \(WAP_TYPE\)/],
+      ["a second declaration of the constant",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, `${CONST}\nstatic const char* DEVICE_TYPE = "canary-wap";`) }),
+        /DEVICE_TYPE is declared 2 times/],
+      ["the constant repointed at run time",
+        (r) => inSetup(r, 'DEVICE_TYPE = "canary";'), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant moved by a compound assignment",
+        (r) => inSetup(r, "DEVICE_TYPE += 7;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant moved by an increment",
+        (r) => inSetup(r, "++DEVICE_TYPE;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant gone",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, "#define DEVICE_TYPE \"canary-wap\"") }),
+        /canary_wap\.ino no longer publishes canary-wap's device type as the DEVICE_TYPE constant/],
     ];
     for (const [name, edit, why] of refusals) {
       assert.throws(() => readWith(edit), why, name);
     }
+    // A longer name and a comparison are not writes of the constant.
+    const near = readWith((r) => ({ [inoF]: r[inoF].replace(CONST, `${CONST}\nstatic const char* WAP_DEVICE_TYPE = "x";`)
+      .replace(BANNER, `    if (DEVICE_TYPE == nullptr) return;\n${BANNER}`) }))[0];
+    assert.strictEqual(near.device_type, "canary-wap", "WAP_DEVICE_TYPE and a == are not read as the constant");
+    assert.strictEqual(near.sites.length, 6, "three dt records, two status strings, one declaration");
     // A commented-out site publishes nothing, so it is no site.
-    assert.strictEqual(readWith((r) => ({ [inoF]: r[inoF].replace(DT, `${DT}\n  // MDNS.addServiceTxt("securacv", "tcp", "dt", DEVICE_TYPE);\n  /* doc["device_type"] = x; */`) }))[0].sites.length, 5,
+    assert.strictEqual(readWith((r) => ({ [inoF]: r[inoF].replace(DT, `${DT}\n  // MDNS.addServiceTxt("securacv", "tcp", "dt", DEVICE_TYPE);\n  /* doc["device_type"] = x; DEVICE_TYPE = "canary"; */`) }))[0].sites.length, 6,
       "a commented-out call is not read");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

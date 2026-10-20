@@ -4,11 +4,14 @@
 // A config's DEVICE_TYPE is the type that device puts on the fleet's wire,
 // which is what both figure lookups are fed: the glass's figure_for() reads
 // device_type off a peer's MQTT status and state rows, the phone's
-// forDeviceType() reads the mDNS `dt` record. The WAP's sketch reads no config
-// and its wire type is not its DEVICE_TYPE constant: canary_wap.ino declares
-// DEVICE_TYPE "canary" for its REST /api/status, its signed records and its
-// boot banner, but advertises `dt` "canary-wap" over mDNS and csi_mqtt.cpp
-// publishes "device_type":"canary-wap" on its status topic (sweep F258).
+// forDeviceType() reads the mDNS `dt` record. The WAP's sketch reads no config.
+// It publishes its wire type in three kinds of site: the mDNS `dt` records in
+// canary_wap.ino, the "device_type" of csi_mqtt.cpp's status topic, and the
+// sketch's DEVICE_TYPE constant, which REST /api/status, node_status.node,
+// /api/fleet's product, the boot banner and the hashed BOOT attestation read
+// (sweeps F258, F294). The reader holds all three to one value. It does not
+// read ble_improv.cpp's Improv firmware-name string, a literal in a file that
+// cannot see the sketch's constant.
 //
 // So a row lists every file that publishes the type and how it does, and
 // walkTrees() reads EVERY such site in those files, not only the ones in the
@@ -134,15 +137,77 @@ export function jsonKey(key) {
   };
 }
 
+/** Where the statement that starts at `from` ends: the offset of its first
+ * `;` outside a string or character literal, or the end of the code. */
+function statementEnd(code, from) {
+  for (let i = from; i < code.length; i++) {
+    const c = code[i];
+    if (c === ';') return i;
+    if (c === '"' || c === '\'') {
+      let j = i + 1;
+      while (j < code.length && code[j] !== c && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+      i = j;
+    }
+  }
+  return code.length;
+}
+
+/** Every write to the `name` constant. Its one declaration,
+ * `static const char* <name> = "<type>";`, names the type. A declaration whose
+ * value is not one string literal is refused, and so is a second declaration.
+ * So is any other write: `const char*` leaves the pointer itself writable, so
+ * a function could repoint it (`=`, a compound assignment such as `+=`, `++`
+ * or `--`), and a type set at run time is not one this reader can spell.
+ * `\b` keeps a longer name (WAP_DEVICE_TYPE) out, and a comparison (`==`) is
+ * not a write. */
+export function constString(name) {
+  const write = new RegExp(`\\b${name}\\b\\s*(?:(<<|>>|[-+*/%&|^])?=(?!=)|\\+\\+|--)`
+    + `|(?:\\+\\+|--)\\s*\\b${name}\\b`, 'g');
+  const declPrefix = /^[ \t]*static[ \t]+const[ \t]+char[ \t]*\*[ \t]*$/;
+  const literalValue = /^\s*("[^"\\\n]*")\s*$/;
+  return {
+    what: `${name} constant`,
+    sites(code) {
+      const decls = [];
+      const out = [];
+      for (const m of code.matchAll(write)) {
+        const at = m.index;
+        const plain = m[0].endsWith('=') && m[1] === undefined;
+        const before = code.slice(code.lastIndexOf('\n', at - 1) + 1, at);
+        if (!plain || !declPrefix.test(before)) {
+          out.push({ at, refuse: `${name} is assigned here; publish it from its one declaration `
+            + `(static const char* ${name} = "<type>";)` });
+          continue;
+        }
+        const from = at + m[0].length;
+        const expr = code.slice(from, statementEnd(code, from));
+        const v = literalValue.exec(expr);
+        const lit = v && LITERAL.exec(v[1]);
+        decls.push(lit ? { at, type: lit[1] }
+          : { at, refuse: `${name} is not one string literal (${expr.replace(/\s+/g, ' ').trim()})` });
+      }
+      if (decls.length > 1) {
+        for (const d of decls) out.push({ at: d.at, refuse: `${name} is declared ${decls.length} times` });
+      } else {
+        out.push(...decls);
+      }
+      return out.sort((a, b) => a.at - b.at);
+    },
+  };
+}
+
 /* The rows. Keyed `<family>/<flavor>` like a config, so gen_figures.mjs's
  * CONFIG_FIGURE, CONFIG_FIGURELESS and one-device-family backing treat a row
- * the same way; each carries its first source as `source`. */
+ * the same way; each carries its first source as `source`. The WAP's
+ * constant is read third, after the two wire sites, so `source` stays the
+ * sketch's mDNS file and the agreement error lists the wire sites first. */
 export const TREE_TYPES = [
   {
     family: 'canary-wap', flavor: 'sketch',
     sources: [
       { file: 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino', read: txtRecord('dt') },
       { file: 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp', read: jsonKey('device_type') },
+      { file: 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino', read: constString('DEVICE_TYPE') },
     ],
   },
 ];

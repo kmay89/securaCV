@@ -334,7 +334,14 @@ static volatile bool g_vault_test_pending = false;
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* DEVICE_TYPE        = "canary";
+// DEVICE_TYPE is this product's wire type, the same word the mDNS `dt` records
+// and csi_mqtt.cpp's status topic say. REST /api/status, node_status.node,
+// /api/fleet's product, the boot banner and the BOOT attestation read it; the
+// attestation's CBOR payload is hashed and never leaves the device. Keep it
+// one string literal declared once and never written elsewhere:
+// canary-local/tools/figures/wire_types.mjs holds it to the mDNS and MQTT
+// sites (gen_figures.mjs --check, sweep F294).
+static const char* DEVICE_TYPE        = "canary-wap";
 static const char* FIRMWARE_VERSION   = "2.4.16-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
@@ -3830,7 +3837,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
     facts.credentials_submitted = __atomic_load_n(&g_onboard_creds_submitted, __ATOMIC_RELAXED);
 
     NodeStatus ns{};
-    ns.node           = "canary-wap";   // the dt word mDNS and /api/fleet already speak
+    ns.node           = DEVICE_TYPE;    // the sketch's one type word: the dt mDNS speaks
     ns.product        = OTA_PRODUCT;
     ns.fw             = FIRMWARE_VERSION;
     ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)
@@ -7895,7 +7902,7 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   FleetSelfDevice self{};
   const char* nm = setup_wizard::get_device_name();
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
-  self.product = "canary-wap";
+  self.product = DEVICE_TYPE;
   self.online  = 1;   // we are answering this request, so we are up
   // Honest coarse chain state, backed by an actual tail check (see
   // chain_tail_intact): the latched flags PLUS the newest record

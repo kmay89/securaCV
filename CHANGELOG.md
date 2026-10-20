@@ -1,6 +1,34 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap's one device type is `canary-wap` on every surface (sweep F294)
+
+- **Compatibility: on a WAP, REST `GET /api/status` `device_type` changes from
+  `"canary"` to `"canary-wap"`, and so does the serial boot banner's Type line
+  (sweep F294).** `"canary"` was the flagship PlatformIO tree's word. The same
+  `/api/status` body's `node_status.node`, the mDNS `dt`, the MQTT status,
+  `/api/fleet`'s `product` and the Bluetooth Improv device info already said
+  `"canary-wap"`. A script that told a WAP apart by the REST field should read
+  `node_status.node`, the mDNS `dt` or the MQTT status, which are unchanged.
+  No in-tree client acted on the field: the iPhone decodes it and never reads
+  it. The sketch now states the type once: `node_status.node` and
+  `/api/fleet`'s `product` read the `DEVICE_TYPE` constant, with their values
+  unchanged. The BOOT attestation carries the constant in its CBOR payload,
+  which is hashed and never leaves the device, so no verifier sees the value;
+  the BOOT record's `payload_len` (REST `/api/witness`) and `plen` (the BLE
+  witness export) grow by 4 bytes, 240 of its 256-byte buffer at worst.
+  `wire_types.mjs` reads the constant as a third agreeing site beside the
+  three mDNS `dt` records and the two MQTT status strings, so
+  `gen_figures.mjs --check` refuses a split by file and line, and refuses a
+  second declaration or any other write to the constant. Improv's
+  firmware-name string in `ble_improv.cpp` stays a literal outside that check.
+  The Lab's `wap.json` is regenerated (the device type and the boot preview's
+  Type line); the figures, the Home Assistant data, the CSP and the emulator
+  dist are unchanged. No `FIRMWARE_VERSION` bump: devices get the new value
+  with the next WAP release. **Host-tested** (`figures.test.js`: seven new
+  refusals, each of which the old reader let through, and the constant's
+  read site; `wap.test.js`); the ESP32 compile is CI's; not run on a device.
+
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
 - **The broker move a session could make with the kept password (sweep F325)

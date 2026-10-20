@@ -12360,7 +12360,11 @@ so — see D2 below.)
   tree the page logic tests pass on the committed dist (1004 pass, 4 skipped,
   the four `LAB_CORES=native` only). Host-tested; not bench-tested on a
   display that sees a WAP. Found here: F294, A89 and C19.
-- [ ] **F294 [decision] The WAP publishes two device types.**
+  *Since F294 (2026-10-19):* the sketch's `DEVICE_TYPE` constant is
+  `"canary-wap"` too, and `wire_types.mjs` reads it as a third agreeing site
+  beside the mDNS `dt` and the MQTT status, so `"canary"` is no longer a WAP
+  type anywhere in the sketch.
+- [x] **F294 [decision] The WAP publishes two device types.**
   `canary_wap.ino`'s `DEVICE_TYPE` is `"canary"`, which REST `/api/status`,
   the signed record's `device_type` and the boot banner carry (the same string
   `firmware/canary` uses), while mDNS `dt` and the MQTT status say
@@ -12368,6 +12372,44 @@ so — see D2 below.)
   whether `DEVICE_TYPE` becomes `"canary-wap"` (a signed-record field change a
   verifier may pin) or the split is documented beside the record format. Found
   by F258 (#1802).
+  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* `DEVICE_TYPE` is `"canary-wap"`. The premise that it is a
+  signed-record field a verifier may pin was wrong. The BOOT attestation's
+  CBOR payload is built in a stack buffer (`boot_payload[256]`), hashed with
+  `sha256_domain("securacv:fw:payload:v1")` and discarded:
+  `create_witness_record` keeps only its length and hash, and `WitnessRecord`
+  has no payload field. The SD line, the BLE line, `/api/v1/witness` and every
+  verifier (`tools/verify_witness_log.py`, `witness_page.h`, the iOS
+  ChainVerifier) see only the payload hash (`spec/witness_api_v1.md` §4.2
+  and §5). No reader can see the value, and no record key changed. The old
+  `"canary"` was the flagship's word. It contradicted the same `/api/status`
+  body's `node_status.node`, the mDNS `dt`, the MQTT status, `/api/fleet`'s
+  `product` and the BLE Improv device info, which all say `"canary-wap"`. No
+  in-tree client acted on it: iOS `WapStatus` decodes it and ignores it, and
+  its fixture already expected `"canary-wap"`. `node_status.node` and
+  `/api/fleet`'s `self.product` now read the constant, so the sketch states
+  the type once. `wire_types.mjs` reads the constant as a third agreeing site
+  (`constString`: one declaration, one string literal, and any other write
+  refused, whether `=`, a compound assignment, `++` or `--`), so
+  `gen_figures.mjs --check` refuses any future split between the constant,
+  the three mDNS `dt` calls and the two MQTT status strings, by file and line.
+  Improv's firmware-name string (`ble_improv.cpp`) stays a literal outside
+  that check, since that file cannot see the sketch's constant.
+  `figures.test.js` pins the constant, holds its declaration line among the
+  read sites, and adds seven refusals (the constant set back to `"canary"`,
+  handed a name, declared twice, repointed, moved by `+=`, moved by `++`, and
+  gone to a `#define`), each of which the old reader let through, plus a
+  case that a longer name (`WAP_DEVICE_TYPE`) and a `==` are not writes.
+  `wap.json` is regenerated (`device_type` and the boot preview's Type line).
+  The figure outputs, the Home Assistant data, the CSP, `web_assets_gz.h` and
+  the emulator dist are unchanged. The BOOT record's `payload_len` (REST
+  `/api/witness`) and `plen` (the BLE witness export) grow by 4 bytes (240 B
+  worst case, with a 31-character device id, of its 256 B buffer). There is
+  no `FIRMWARE_VERSION` bump: the value reaches devices with the next WAP
+  release (CHANGELOG [Unreleased] names the REST change for out-of-tree
+  readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
+  is CI's; nothing to bench.
 
 ---
 
