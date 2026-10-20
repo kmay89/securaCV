@@ -9207,7 +9207,11 @@ void test_a_frame_the_receiver_has_not_heard_still_counts_as_live() {
 /* What main.cpp's first-counter handler (on_mesh_first_counter) does, on a
  * member's first verified frame and on the second save 66 s later: its
  * persist_replay_counters(), into a stand-in for the NVS replay_ctrs blob,
- * and the boot's restore loop over that blob. */
+ * returning whether the save landed, and the boot's restore loop over that
+ * blob. g_first_counter_fails makes the next that-many calls fail as
+ * main.cpp's does when NVS refuses the write (Preferences::begin or
+ * putBytes): nothing saved, false returned. SIZE_MAX fails every call, as
+ * main.cpp's does on a board without flash encryption. */
 struct SavedCounters {
   size_t   n = 0;
   uint8_t  fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
@@ -9215,12 +9219,18 @@ struct SavedCounters {
 };
 SavedCounters g_nvs_counters;
 size_t        g_first_counters = 0;
+size_t        g_first_counter_fails = 0;
 uint8_t       g_first_counter_fp[mesh_crypto::FINGERPRINT_LEN];
-void persist_counters_on_first(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+bool persist_counters_on_first(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   ++g_first_counters;
   std::memcpy(g_first_counter_fp, fp, sizeof(g_first_counter_fp));
+  if (g_first_counter_fails > 0) {
+    if (g_first_counter_fails != SIZE_MAX) --g_first_counter_fails;
+    return false;
+  }
   g_nvs_counters.n = mesh_session::get_replay_counters(g_nvs_counters.fps, g_nvs_counters.ctrs,
                                                        mesh_session::MAX_REPLAY_COUNTERS);
+  return true;
 }
 void restore_counters_at_boot() {
   for (size_t k = 0; k < g_nvs_counters.n; ++k) {
@@ -9644,6 +9654,298 @@ void test_an_older_first_frame_is_saved_over_once_more() {
               before_first, rec_b.size() - 1);
 }
 
+/* A failed first-counter save is tried again (F324; the Codex review of
+ * #1839, P2). The session cleared a member's `counter_unsaved` and armed the
+ * second save before it ran a handler that returned nothing, and main.cpp
+ * dropped save_replay_counters()'s result, so an NVS write that failed once
+ * (Preferences::begin or putBytes) was taken as done: the member's next
+ * frames saved nothing, and the receiver held no durable counter for it
+ * until the 66 s second save, or, when the counter had not moved by then,
+ * until the next 5-minute save. A reboot in between restored no counter,
+ * and every frame the member had signed under the opera before the pairing
+ * verified again. The handler now returns whether the save landed; on false
+ * the counter stays unsaved, and the member's next frame that passes every
+ * check runs it again. Pinned here: one refused write is retried on the
+ * member's next verified frame, not on a pass of its own, and not on a
+ * replay, junk or a forgery (the old code ran it once: this fails on the
+ * second frame); a reboot after that retry, before either 66 s deadline,
+ * restores the member's counter, and the frames it signed before the
+ * pairing stay replays; the second save is armed from the save that
+ * landed, not from the call that failed; a frame before any handler is
+ * installed leaves the counter unsaved too; and a handler that fails on
+ * every call (main.cpp's on a board without flash encryption, which writes
+ * no replay counter at all) runs once per verified frame of the member and
+ * on no other pass, and never arms the second save. */
+void test_a_failed_first_counter_save_is_tried_again() {
+  const uint32_t pass_ms = 1000;
+  const uint32_t step = mesh_transport::PEER_STALE_AFTER_MS - pass_ms;
+  constexpr uint32_t R = mesh_session::FIRST_COUNTER_RESAVE_MS;
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x4D + i);
+  uint8_t pub[32], priv[32];
+  const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x32, 0xD2, 0x01};
+  auto heartbeat = [&](TestMember& m) {
+    std::vector<uint8_t> f(mesh_envelope::MAX_FRAME_LEN);
+    f.resize(build_signed_session_frame(m.pub, m.priv, S, ++m.counter,
+                                        mesh_envelope::MsgType::HEARTBEAT, nullptr, 0, f.data(),
+                                        f.size()));
+    assert(f.size() == mesh_envelope::MIN_FRAME_LEN);
+    return f;
+  };
+  auto deliver = [&](const std::vector<uint8_t>& f, uint32_t t) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::test::inject_recv(mac, f.data(), f.size(), -60);
+    mesh_transport::process();
+    mesh_session::process(t);
+  };
+  auto idle = [&](uint32_t t) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::process();
+    mesh_session::process(t);
+  };
+  auto boot = [&]() {
+    stand_up_session(S, pub, priv);
+    mesh_session::set_first_counter_handler(persist_counters_on_first);
+  };
+  auto saved_counter = [&](const TestMember& m) {
+    for (size_t k = 0; k < g_nvs_counters.n; ++k) {
+      if (std::memcmp(g_nvs_counters.fps[k], m.fp, sizeof(m.fp)) == 0) return g_nvs_counters.ctrs[k];
+    }
+    return (uint64_t)UINT64_MAX;
+  };
+  auto reboot_restoring = [&](const TestMember& m) {   /* main.cpp's boot restore */
+    boot();
+    assert(mesh_session::register_trusted_peer(m.pub));
+    assert(mesh_session::bind_peer_mac(m.fp, mac));
+    restore_counters_at_boot();
+  };
+  const std::vector<uint8_t> junk = {mesh_envelope::OPERA_VERSION, 0xEE, 0xEE};
+  const uint32_t t0 = 1000;
+  const uint32_t t1 = t0 + kBeatGapMin;   /* the member's next heartbeat, at its soonest */
+
+  /* One write refused, then the member's next heartbeat: saved then. */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  g_first_counter_fails = 1;
+  boot();
+  TestMember m;
+  make_member(m, mac);
+  std::vector<std::vector<uint8_t>> rec;   /* its hour before the pairing */
+  for (uint32_t k = 0; k < 3600000 / kBeatGapMin; ++k) rec.push_back(heartbeat(m));
+  const std::vector<uint8_t> paired = heartbeat(m);
+  deliver(paired, t0);
+  assert(has(peer_row(t0, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,"));
+  assert(g_first_counters == 1 && g_nvs_counters.n == 0);   /* refused: nothing saved */
+  /* Nothing retries on a pass of its own, nor on a replay, junk or a forgery. */
+  std::vector<uint8_t> forged = heartbeat(m);
+  forged.back() ^= 0x01;
+  --m.counter;   /* never accepted: the member's next frame reuses its counter */
+  for (uint32_t t = t0 + pass_ms; t < t1; t += pass_ms) {
+    if (t == t0 + 5 * pass_ms)      deliver(paired, t);
+    else if (t == t0 + 6 * pass_ms) deliver(junk, t);
+    else if (t == t0 + 7 * pass_ms) deliver(forged, t);
+    else                            idle(t);
+  }
+  assert(g_first_counters == 1 && g_nvs_counters.n == 0);
+  deliver(heartbeat(m), t1);
+  assert(g_first_counters == 2 && std::memcmp(g_first_counter_fp, m.fp, sizeof(m.fp)) == 0);
+  assert(saved_counter(m) == m.counter);
+  /* A reboot after that retry, inside the first 66 s: the member's counter
+   * is restored, and the frames it signed before the pairing, relayed from
+   * its address with the member gone, refresh nothing. */
+  idle(t1 + pass_ms);
+  assert(t1 + pass_ms < t0 + R);
+  reboot_restoring(m);
+  const uint32_t r0 = t1 + mesh_transport::PEER_OFFLINE_AFTER_MS;
+  size_t relayed_connected = 0;
+  for (size_t k = 0; k < rec.size(); ++k) {
+    const uint32_t at = r0 + (uint32_t)k * step;
+    deliver(rec[k], at);
+    if (has(peer_row(at, m.pub), "\"state\":\"CONNECTED\",")) ++relayed_connected;
+  }
+  assert(relayed_connected == 0);
+
+  /* The second save is armed from the save that landed: R after t1, not
+   * after the call at t0 that failed. */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  g_first_counter_fails = 1;
+  boot();
+  TestMember a;
+  make_member(a, mac);
+  deliver(heartbeat(a), t0);
+  assert(g_first_counters == 1 && g_nvs_counters.n == 0);
+  deliver(heartbeat(a), t1);
+  const uint64_t landed = a.counter;
+  assert(g_first_counters == 2 && saved_counter(a) == landed);
+  for (uint32_t t = t1 + pass_ms; t < t1 + R; t += pass_ms) {
+    if (t == t1 + kBeatGapMin) deliver(heartbeat(a), t);   /* the counter moves */
+    else                       idle(t);
+  }
+  assert(g_first_counters == 2 && saved_counter(a) == landed);   /* t0 + R armed nothing */
+  idle(t1 + R);
+  assert(g_first_counters == 3 && saved_counter(a) == a.counter && a.counter > landed);
+
+  /* A frame before any handler is installed leaves the counter unsaved. */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  stand_up_session(S, pub, priv);   /* no handler */
+  TestMember h;
+  make_member(h, mac);
+  deliver(heartbeat(h), t0);
+  mesh_session::set_first_counter_handler(persist_counters_on_first);
+  for (uint32_t t = t0 + pass_ms; t < t1; t += pass_ms) idle(t);
+  assert(g_first_counters == 0);
+  deliver(heartbeat(h), t1);
+  assert(g_first_counters == 1 && saved_counter(h) == h.counter);
+
+  /* Every call fails (a board without flash encryption): once per verified
+   * frame of the member, on no other pass, and no second save, over ten
+   * minutes of heartbeats with a replay and junk between them. */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  g_first_counter_fails = SIZE_MAX;
+  boot();
+  TestMember f;
+  make_member(f, mac);
+  size_t verified = 0;
+  std::vector<uint8_t> last;
+  for (uint32_t dt = 0; dt <= 600000; dt += pass_ms) {
+    const uint32_t t = t0 + dt;
+    const uint32_t phase = dt % kBeatGapMin;
+    if (phase == 0) {
+      last = heartbeat(f);
+      deliver(last, t);
+      ++verified;
+    } else if (phase == 5 * pass_ms) {
+      deliver(last, t);   /* a replay */
+    } else if (phase == 6 * pass_ms) {
+      deliver(junk, t);
+    } else {
+      idle(t);
+    }
+    assert(g_first_counters == verified);
+  }
+  assert(verified == 600000 / kBeatGapMin + 1 && g_nvs_counters.n == 0);
+  assert(has(peer_row(t0 + 600000, f.pub), "\"state\":\"CONNECTED\","));   /* liveness unaffected */
+  for (uint32_t t = t0 + 600000 + pass_ms; t <= t0 + 600000 + 3 * R; t += pass_ms) idle(t);
+  assert(g_first_counters == verified && g_nvs_counters.n == 0);
+  g_first_counter_fails = 0;
+
+  std::printf("PASS test_a_failed_first_counter_save_is_tried_again"
+              "  (a refused write saved on the member's next frame, %u ms later: %zu relayed"
+              " frames after a reboot, none refreshed it; every call refused: %zu calls for %zu"
+              " verified frames)\n",
+              (unsigned)(t1 - t0), rec.size(), g_first_counters, verified);
+}
+
+/* A failed second save is tried again a full FIRST_COUNTER_RESAVE_MS later
+ * (F324; the Codex review of #1839). resave_first_counters() disarmed
+ * before it ran the handler and dropped its result, so a write refused at
+ * the 66 s deadline was never retried by the session, and the member's own
+ * counter waited for the 5-minute save while the saved one was the older
+ * frame's. The handler's false now moves the deadline to that pass, so the
+ * save is taken again R later, and then disarms once it lands; and a
+ * handler that fails on every call from the deadline on runs exactly once
+ * per R (no call on the passes in between, none on the member's frames,
+ * whose first save landed), at t0 = 1000 and with the clock wrapping
+ * between the first save and the retries. Fails on the old code: no call
+ * after the deadline's. */
+void test_a_failed_second_save_is_tried_again_a_deadline_later() {
+  const uint32_t pass_ms = 1000;
+  constexpr uint32_t R = mesh_session::FIRST_COUNTER_RESAVE_MS;
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x5E + i);
+  uint8_t pub[32], priv[32];
+  const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x32, 0xD3, 0x01};
+  auto heartbeat = [&](TestMember& m) {
+    std::vector<uint8_t> f(mesh_envelope::MAX_FRAME_LEN);
+    f.resize(build_signed_session_frame(m.pub, m.priv, S, ++m.counter,
+                                        mesh_envelope::MsgType::HEARTBEAT, nullptr, 0, f.data(),
+                                        f.size()));
+    assert(f.size() == mesh_envelope::MIN_FRAME_LEN);
+    return f;
+  };
+  auto deliver = [&](const std::vector<uint8_t>& f, uint32_t t) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::test::inject_recv(mac, f.data(), f.size(), -60);
+    mesh_transport::process();
+    mesh_session::process(t);
+  };
+  auto idle = [&](uint32_t t) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::process();
+    mesh_session::process(t);
+  };
+  auto boot = [&]() {
+    stand_up_session(S, pub, priv);
+    mesh_session::set_first_counter_handler(persist_counters_on_first);
+  };
+  auto saved_counter = [&](const TestMember& m) {
+    for (size_t k = 0; k < g_nvs_counters.n; ++k) {
+      if (std::memcmp(g_nvs_counters.fps[k], m.fp, sizeof(m.fp)) == 0) return g_nvs_counters.ctrs[k];
+    }
+    return (uint64_t)UINT64_MAX;
+  };
+  size_t persistent_calls = 0;
+  auto run = [&](uint32_t s0) {
+    /* One refused write at the deadline, then the retry R later. */
+    g_nvs_counters = SavedCounters{};
+    g_first_counters = 0;
+    g_first_counter_fails = 0;
+    boot();
+    TestMember q;
+    make_member(q, mac);
+    deliver(heartbeat(q), s0);
+    const uint64_t first = q.counter;
+    assert(g_first_counters == 1 && saved_counter(q) == first);
+    deliver(heartbeat(q), s0 + kBeatGapMin);
+    const uint64_t own = q.counter;
+    g_first_counter_fails = 1;
+    for (uint32_t dt = kBeatGapMin + pass_ms; dt < R; dt += pass_ms) idle(s0 + dt);
+    assert(g_first_counters == 1);
+    idle(s0 + R);
+    assert(g_first_counters == 2 && saved_counter(q) == first);   /* refused */
+    for (uint32_t dt = R + pass_ms; dt < 2 * R; dt += pass_ms) idle(s0 + dt);
+    assert(g_first_counters == 2);   /* no call on the passes in between */
+    idle(s0 + 2 * R);
+    assert(g_first_counters == 3 && saved_counter(q) == own);
+    /* Landed: disarmed, and the member's later frames add no save. */
+    for (uint32_t dt = 2 * R + pass_ms; dt <= 5 * R; dt += pass_ms) {
+      if (dt % kBeatGapMin == 0) deliver(heartbeat(q), s0 + dt);
+      else                       idle(s0 + dt);
+    }
+    assert(g_first_counters == 3 && saved_counter(q) == own);
+
+    /* Every call from the deadline on refused: once per R, exactly. */
+    g_nvs_counters = SavedCounters{};
+    g_first_counters = 0;
+    g_first_counter_fails = 0;
+    boot();
+    TestMember p;
+    make_member(p, mac);
+    deliver(heartbeat(p), s0);
+    const uint64_t p_first = p.counter;
+    assert(g_first_counters == 1 && saved_counter(p) == p_first);
+    g_first_counter_fails = SIZE_MAX;
+    for (uint32_t dt = pass_ms; dt <= 10 * R; dt += pass_ms) {
+      if (dt % kBeatGapMin == 0) deliver(heartbeat(p), s0 + dt);
+      else                       idle(s0 + dt);
+      assert(g_first_counters == 1 + dt / R);
+    }
+    assert(saved_counter(p) == p_first);
+    g_first_counter_fails = 0;
+    return g_first_counters - 1;
+  };
+  persistent_calls = run(1000);
+  assert(run(0u - 30000u) == persistent_calls);
+  assert(persistent_calls == 10);
+  std::printf("PASS test_a_failed_second_save_is_tried_again_a_deadline_later"
+              "  (a refused second save retried %u ms later; every call refused: %zu retries in"
+              " %u ms, one per %u ms, at t0 and across the wrap)\n",
+              (unsigned)R, persistent_calls, (unsigned)(10 * R), (unsigned)R);
+}
+
 int main() {
   std::srand(0xC51F0);
   /* F161: first, before anything publishes a status view. */
@@ -9791,6 +10093,8 @@ int main() {
   test_a_frame_the_receiver_has_not_heard_still_counts_as_live();
   test_a_members_first_counter_is_saved_at_once();
   test_an_older_first_frame_is_saved_over_once_more();
+  test_a_failed_first_counter_save_is_tried_again();
+  test_a_failed_second_save_is_tried_again_a_deadline_later();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

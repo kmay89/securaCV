@@ -425,17 +425,21 @@ static void handle_boot_button();
  * already had the secret when start_pairing_initiator() was called
  * (its persistence is the integration layer's responsibility before
  * pairing kicks off). */
-static void persist_replay_counters() {
-#if FEATURE_MESH_NETWORK
+static bool persist_replay_counters() {
   /* Live counters AND the replay tombstones of dropped peers, so a reboot
-   * does not re-open a left/removed device's window either. */
+   * does not re-open a left/removed device's window either. Returns whether
+   * they are durable: true with nothing to save, else
+   * mesh_state::save_replay_counters()'s result, which is false when NVS
+   * refused the write and on every call on a board without flash
+   * encryption (no replay_ctrs write there at all). Only the first-counter
+   * handler acts on it (F324; #1839's review). */
   static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
                 "replay_ctrs must hold every live counter and tombstone");
   uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
   uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
                                                      mesh_session::MAX_REPLAY_COUNTERS);
-  if (n == 0) return;
+  if (n == 0) return true;
   const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
                           ? mesh_state::MAX_REPLAY_ENTRIES : n;
   mesh_state::ReplayEntry entries[mesh_state::MAX_REPLAY_ENTRIES];
@@ -443,8 +447,7 @@ static void persist_replay_counters() {
     memcpy(entries[i].fingerprint, fps[i], mesh_crypto::FINGERPRINT_LEN);
     entries[i].last_counter = ctrs[i];
   }
-  mesh_state::save_replay_counters(entries, save_count);
-#endif
+  return mesh_state::save_replay_counters(entries, save_count);
 }
 
 #if FEATURE_SENSING_WITNESS
@@ -489,7 +492,7 @@ static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
   mesh_fp_hex(fp, hex);
   const bool dropped = pubkey == nullptr || mesh_state::remove_trusted_peer(pubkey);
-  persist_replay_counters();
+  (void)persist_replay_counters();
   persist_revocations();
   log_health(dropped ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
              "Opera peer revoked (7-day deny-list)", hex);
@@ -525,7 +528,7 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   const bool persisted = mesh_state::remove_trusted_peer(pubkey);
   /* Its last counter is now a tombstone; persist it now rather than at the
    * next 5-minute save, so a reboot in between cannot re-open its window. */
-  persist_replay_counters();
+  (void)persist_replay_counters();
   Serial.printf("[MESH] Peer %s left the opera (%s)\n", hex,
                 persisted ? "removed from NVS" : "NVS removal refused/failed");
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
@@ -540,13 +543,17 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * again. That frame need not be the member's newest (a radio copying its
  * address can land an older one first), so the session calls this once
  * more FIRST_COUNTER_RESAVE_MS (66 s) later if the counter has moved; a
- * reboot inside those 66 s still restores the older counter. At most twice
- * per registration, and not after a boot that restored a non-zero counter
- * for the member; FE-gated like every replay_ctrs write. Runs on the main
- * loop. */
-static void on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+ * reboot inside those 66 s still restores the older counter. Returns
+ * whether the save landed: on false the session tries the first save again
+ * on the member's next verified frame, and the second one 66 s later, so
+ * one failed NVS write does not wait for the 5-minute save (#1839's
+ * review). Two saves that land per registration at most, and none after a
+ * boot that restored a non-zero counter for the member; FE-gated like every
+ * replay_ctrs write, so on a board without flash encryption every call
+ * returns false and writes nothing. Runs on the main loop. */
+static bool on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   (void)fp;
-  persist_replay_counters();
+  return persist_replay_counters();
 }
 
 /* A verified TAMPER_ALERT from a trusted peer (F10). The session has
@@ -578,7 +585,7 @@ static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SEC
                                  size_t n_forgotten) {
   const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
   /* Every peer the rotation dropped keeps its counter as a tombstone. */
-  persist_replay_counters();
+  (void)persist_replay_counters();
   char detail[48];
   snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
            persisted ? "" : "; NOT persisted");
@@ -2382,7 +2389,7 @@ void loop() {
     const uint32_t now = millis();
     if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
       s_last_replay_save_ms = now;
-      persist_replay_counters();
+      (void)persist_replay_counters();
       persist_revocations();   /* grace left, while the list holds anything */
     }
   }

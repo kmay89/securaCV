@@ -9160,7 +9160,8 @@ so — see D2 below.)
   every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
   nvs), one sign per 30 s per sender and at most 8 heartbeat verifies per
   30 s per receiver (one per bound member; `MAX_TRUSTED_PEERS` is 8), and
-  at most two replay-counter saves per pairing. No wire change. The RF pattern is
+  at most two replay-counter saves that land per pairing (the Codex
+  amendment below). No wire change. The RF pattern is
   marginal: the only env with
   the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
   released image builds the mesh, so no OTA'd device changes. The owner
@@ -9223,6 +9224,56 @@ so — see D2 below.)
   refused). The `[env:full]` compile is CI's; host-tested, not run on a
   device. The on-air spacing and the STALE/OFFLINE transitions are a U1
   bench row (`hardware_verification_checklist.md`).
+  *Codex review on #1839 (2026-10-20), P2; fixed in the same PR:* the
+  first-counter save was marked done before it ran. `on_opera_frame`
+  cleared `counter_unsaved` and armed the second save before it called a
+  `void` handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so an NVS write that
+  failed once (`Preferences::begin` or `putBytes`) was not retried by the
+  session: a failed first save waited for the second save 66 s later, or,
+  with the counter unmoved by then, for the next 5-minute save, and a
+  failed second save (`resave_first_counters` disarmed either way) for the
+  5-minute save. A reboot in between restored an older counter or none,
+  the window the save exists to narrow. `first_counter_fn` now returns
+  `bool`, true when the replay counters were persisted:
+  `on_mesh_first_counter` returns `persist_replay_counters()`, which
+  returns `save_replay_counters()`'s result (true with nothing to save;
+  its other callers cast it to `void`). The flag clears and the second
+  save arms only on true, so on false, or with no handler, the counter
+  stays unsaved and the member's next verified frame tries again; a second
+  save that returns false moves its deadline to that pass and is tried
+  again `FIRST_COUNTER_RESAVE_MS` later, never on the next pass. The "at
+  most two saves per registration" above now means two that land; a failed
+  one costs one more call, on the member's next verified frame or 66 s
+  later. `save_replay_counters()` refuses every call on a board without
+  flash encryption, which writes no `replay_ctrs` at all, so there the
+  first save is tried on each of the member's verified frames: a counter
+  snapshot each and no write, accepted. Rejected: retrying on every
+  `process()` pass after a failed second save (a hot loop on a unit whose
+  NVS keeps failing); leaving it (the 5-minute save does catch up, but the
+  window reopens on exactly the failure the save should survive).
+  Host-tested: `test_a_failed_first_counter_save_is_tried_again` (one
+  refused write retried on the member's next verified frame, and not on a
+  pass of its own, a replay, junk or a forgery; a reboot after that retry
+  keeps the 133 frames the member signed before the pairing replays; the
+  second save armed from the save that landed; a frame before any handler
+  is installed; a handler refusing every call runs once per verified frame,
+  23 calls for 23 frames in ten minutes, and never arms the second save)
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (a
+  refused second save retried 66 s later, then disarmed; one refusing
+  every call runs exactly once per 66 s, ten times in 660 s, at t0 and
+  across the clock's wrap). Each fails on the code the review found (run
+  with a shim that drops the handler's result, as the old `void` typedef
+  did); the second also on a retry taken on the next pass and on a failed
+  save left armed with its old deadline, the first on a second save armed
+  from the call that failed. `test_canary_mesh_first_counter_wiring.py`
+  now pins `static bool on_mesh_first_counter(...) { (void)fp; return
+  persist_replay_counters(); }` and a `static bool` persist that returns
+  the save's result and true with nothing to save, and fails on the old
+  shape and on a handler or a persist that drops the result. The other 12
+  mesh suites pass unchanged; `check_canary_mesh_status.py` passes (68
+  mutations refused). The `[env:full]` compile is CI's; host-tested, not
+  run on a device; no new bench row.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)

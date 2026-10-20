@@ -1795,7 +1795,9 @@ row above or changes a sentence of §2.
   long as its stock lasts (`THREAT_MODEL.md`). Narrowed in review, not
   closed: the counter of a member's first frame that verifies is persisted
   as soon as it lands and once more 66 s later if it has moved
-  (`on_mesh_first_counter`), so a receiver rebooted before its first
+  (`on_mesh_first_counter`; a save that fails is tried again on the
+  member's next verified frame, or for the second 66 s later, which the
+  PR's Codex review found taken as done), so a receiver rebooted before its first
   5-minute save after a pairing, once the member's first frame has landed
   there, no longer takes everything the member signed before it as fresh;
   a reboot before that frame lands (milliseconds after the bind normally,
@@ -1807,7 +1809,7 @@ row above or changes a sentence of §2.
   member signed after it (`THREAT_MODEL.md`). `[env:full]` only; no
   released image builds the mesh.
   Host-tested
-  (`test_mesh_session`, twelve new cases and the five silence assertions
+  (`test_mesh_session`, fourteen new cases and the five silence assertions
   rewritten to admit only member heartbeats; `check_canary_mesh_status.py`;
   `test_canary_mesh_first_counter_wiring.py`); the `[env:full]` compile is
   CI's; not run on a device (a U1 row).

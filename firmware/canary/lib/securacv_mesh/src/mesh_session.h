@@ -415,7 +415,8 @@ static_assert(HEARTBEAT_JITTER_MS < HEARTBEAT_INTERVAL_MS, "the jittered deadlin
 static_assert(HEARTBEAT_JITTER_MS > 0, "a fixed deadline lets two members' timers lock into step");
 
 /* How long after a member's first counter is saved the session saves it once
- * more (set_first_counter_handler, F324): two of the longest heartbeat
+ * more (set_first_counter_handler, F324), and how long it waits again after
+ * that second save fails: two of the longest heartbeat
  * intervals. After the first save the member sends its next heartbeat
  * within one of them and the one after within two (plus one of its
  * main-loop passes per interval), so its own frames have reached this
@@ -724,15 +725,25 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
 bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                               uint64_t counter);
 
-/* A member's first counter (F324). Runs on the process() task, twice per
+/* A member's first counter (F324). Runs on the process() task. Returns true
+ * when the replay counters were persisted; two true returns per
  * registration at most:
  *   1. from the receive path, on the member's first frame that passes every
  *      check (its binding, the signature, the opera_id, the counter) since
  *      it was registered with no saved counter: a member just paired, one
  *      re-paired from its replay tombstone, or one the boot restore brought
- *      back no counter for (none saved, or a saved 0);
- *   2. from process(), FIRST_COUNTER_RESAVE_MS after (1), if the member's
- *      counter has moved since (1).
+ *      back no counter for (none saved, or a saved 0). On false the counter
+ *      stays unsaved, and the member's next frame that passes every check
+ *      runs it again (until #1839's review a failed save was marked done);
+ *   2. from process(), FIRST_COUNTER_RESAVE_MS after the true return of
+ *      (1), if the member's counter has moved since. On false it runs again
+ *      FIRST_COUNTER_RESAVE_MS after that pass, and so on until it returns
+ *      true or a deadline finds nothing moved.
+ * No false return is retried on the next pass, so a handler that always
+ * fails runs at most once per verified frame of the member and once per
+ * FIRST_COUNTER_RESAVE_MS. (main.cpp's returns false on every call on a
+ * board without flash encryption, which writes no replay counter at all; a
+ * retry there takes a snapshot of the counters and writes nothing.)
  * The integration layer persists the replay counters here (main.cpp's
  * persist_replay_counters) rather than at the next 5-minute save, so a
  * reboot in between does not make the frames the member signed under the
@@ -753,10 +764,10 @@ bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * counter at all), a reboot before (2), or every frame of the member's own
  * kept from this device until (2) (a jammer, or a station not yet on its
  * router's channel), after which the 5-minute save is the next to catch
- * up. No frame adds a save. A boot that restored a non-zero counter for the
- * member runs neither, so it costs no write. The handler must not change
- * the trusted table. */
-typedef void (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
+ * up. Past the two saves that land, no frame adds one. A boot that
+ * restored a non-zero counter for the member runs neither, so it costs no
+ * write. The handler must not change the trusted table. */
+typedef bool (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
 
 void set_first_counter_handler(first_counter_fn fn);
 

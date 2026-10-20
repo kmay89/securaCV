@@ -1083,7 +1083,13 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         replay tombstone, and after a boot that restored no counter for it,
         a saved 0 included, since a save before the member is heard writes
         it at 0 and no frame carries 0), and once more
-        `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has moved. The first
+        `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has moved. A save that
+        fails (NVS refused the write) is tried again rather than taken as
+        done: the first on the member's next frame that verifies, the
+        second 66 s after the pass that failed. The Codex review of #1839
+        found both taken as done, so a failed first save waited for the
+        second (or, with the counter unmoved by then, for the 5-minute
+        save) and a failed second save for the 5-minute save. The first
         frame that verifies need not be the member's newest: the counter
         check is a high-water mark, so any older genuine frame of the
         member's passes too, and a radio copying the member's address can
@@ -1100,9 +1106,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         member's own was kept from the receiver through those 66 s: lost,
         jammed, or, after a boot, unheard by a station that had not yet
         joined its router. So what stays open is three reboots. One before the
-        member's first frame lands finds nothing newer saved for it (after a
-        first pairing, no counter at all), so everything it signed before is
-        fresh again, and nothing need be landed at the pairing (host-tested:
+        member's first frame lands (or, when NVS refused that save, before
+        its retry on the member's next frame lands) finds nothing newer
+        saved for it (after a first pairing, no counter at all), so
+        everything it signed before is fresh again, and nothing need be landed at the pairing (host-tested:
         132 of 132 relayed frames read `CONNECTED`); after a pairing that
         window is the one above, milliseconds unless the first COMPLETE or
         the paired heartbeat was lost. One inside the 66 s, and, when the
@@ -1137,12 +1144,20 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
       counter per heartbeat (a reservation write per 1024, about 2.8 a
       day); the 5-minute replay-counter save now writes counters that move,
-      and a member's first counter adds at most two saves per registration
-      (a pairing, or a boot that restored no counter for the member): its
-      first frame's, and one 66 s later if the counter moved; no frame adds
-      another; only on flash-encrypted boards. The transport's
-      100-frame-a-second
-      storm gate is untouched. The same cadence canary-wap pays (F76).
+      and a member's first counter adds at most two saves that land per
+      registration (a pairing, or a boot that restored no counter for the
+      member): its first frame's, and one 66 s later if the counter moved;
+      past those two no frame adds another; these writes happen only on
+      flash-encrypted boards. A save that fails is tried again on the
+      member's next verified frame, or for the second save 66 s later,
+      never on the next pass. On a board without flash encryption every
+      replay-counter save is refused before any write, so the first-counter
+      save is tried on each of the member's verified frames and writes
+      nothing: a counter snapshot per frame (the session's half host-tested,
+      with a handler that fails on every call:
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`). The
+      transport's 100-frame-a-second storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
     session holds, and reads no NVS on the HTTP task; a stored key the

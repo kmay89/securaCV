@@ -135,17 +135,20 @@ struct TrustedPeer {
    * register_trusted_peer() (a pairing, a re-pair from a tombstone, a boot
    * registration), cleared by restore_replay_counter() of a non-zero
    * counter (the boot restore found a saved one; a saved 0 is a member
-   * that was never heard, not a counter) and by the first verified frame,
-   * which runs the first-counter handler (set_first_counter_handler) so
-   * the integration layer saves it. */
+   * that was never heard, not a counter) and by a verified frame whose
+   * first-counter handler call (set_first_counter_handler) returns true:
+   * the integration layer saved the counters. A false return leaves it
+   * set, so the member's next verified frame tries again. */
   bool     counter_unsaved;
   /* F324: the first-counter save's second half. The first verified frame
    * need not be the member's newest (a radio copying its address can land
-   * an older genuine one first), so that save arms one more:
+   * an older genuine one first), so a first save that lands arms one more:
    * resave_first_counters() runs the handler again FIRST_COUNTER_RESAVE_MS
    * after `counter_resave_from_ms` (the transport clock at the first save)
    * if last_counter has moved past `counter_resave_above` (what the first
-   * save wrote) by then, and disarms either way. */
+   * save wrote) by then. It disarms when nothing moved or the save lands;
+   * a save that fails moves `counter_resave_from_ms` to that pass, so it
+   * is tried once more FIRST_COUNTER_RESAVE_MS later. */
   bool     counter_resave_armed;
   uint32_t counter_resave_from_ms;
   uint64_t counter_resave_above;
@@ -1191,13 +1194,19 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
    * a reboot before the next 5-minute save does not reopen everything the
    * member signed before this frame. This frame need not be the member's
    * newest, so the save is taken once more FIRST_COUNTER_RESAVE_MS later
-   * (resave_first_counters; set_first_counter_handler). */
-  if (peer->counter_unsaved) {
+   * (resave_first_counters; set_first_counter_handler). Only a save that
+   * landed counts: on a false return (an NVS write that failed, a board
+   * without flash encryption) or with no handler the counter stays
+   * unsaved and the member's next verified frame tries again. Until
+   * #1839's review the flag was cleared before the call and the result
+   * dropped, so one failed write waited for the second save, or, with the
+   * counter unmoved by its deadline, for the 5-minute one. */
+  if (peer->counter_unsaved && s_first_counter_cb != nullptr &&
+      s_first_counter_cb(peer->sender_fp)) {
     peer->counter_unsaved        = false;
     peer->counter_resave_armed   = true;   /* this frame may be an old one */
     peer->counter_resave_from_ms = peer->verified_seen_ms;
-    peer->counter_resave_above   = peer->last_counter;
-    if (s_first_counter_cb != nullptr) s_first_counter_cb(peer->sender_fp);
+    peer->counter_resave_above   = peer->last_counter;   /* what the save wrote */
   }
 
   /* F134: the member this device's COMPLETE copies are for is heard. It
@@ -1573,20 +1582,30 @@ static mesh_transport::PeerState verified_state(const TrustedPeer& p) {
  * later the member's own heartbeats have arrived unless they were lost (its
  * definition in mesh_session.h says how many it takes), so the handler runs
  * once more then if the counter has moved, and the save holds the newer
- * counter; it disarms either way. Every pass, stopped or not: the age is taken
- * from the arming instant, so a pass at or after the deadline fires it
- * however long ago that was, up to 2^32 ms, which the main loop's pass rate
- * never approaches. One write at most per member per registration; nothing
- * a sender does arms it again. */
+ * counter. It disarms when nothing moved or the save landed. A save that
+ * failed (the handler returned false) is tried again FIRST_COUNTER_RESAVE_MS
+ * after that pass, not on the next one, so a write that keeps failing costs
+ * one call per FIRST_COUNTER_RESAVE_MS, never one per pass (until #1839's
+ * review it disarmed either way, and a failed write waited for the 5-minute
+ * save). Every pass, stopped or not: the age is taken from the arming
+ * instant, so a pass at or after the deadline fires it however long ago
+ * that was, up to 2^32 ms, which the main loop's pass rate never
+ * approaches. One write that lands at most per member per registration;
+ * nothing a sender does arms it again. */
 static void resave_first_counters() {
   const uint32_t now = mesh_transport::clock_ms();
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
     TrustedPeer& p = s_trusted_peers[i];
     if (!p.in_use || !p.counter_resave_armed) continue;
     if (now - p.counter_resave_from_ms < FIRST_COUNTER_RESAVE_MS) continue;
-    p.counter_resave_armed = false;
-    if (p.last_counter > p.counter_resave_above && s_first_counter_cb != nullptr) {
-      s_first_counter_cb(p.sender_fp);
+    if (p.last_counter <= p.counter_resave_above || s_first_counter_cb == nullptr) {
+      p.counter_resave_armed = false;   /* nothing newer to save */
+      continue;
+    }
+    if (s_first_counter_cb(p.sender_fp)) {
+      p.counter_resave_armed = false;
+    } else {
+      p.counter_resave_from_ms = now;   /* failed: once more a full deadline later */
     }
   }
 }

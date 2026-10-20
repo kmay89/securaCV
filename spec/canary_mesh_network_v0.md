@@ -1731,10 +1731,15 @@ signed before it. The PlatformIO tree persists the counter of a member's
 first frame that verifies as soon as it lands (the session's first-counter
 handler; also after a boot that restored no counter for the member, a saved
 0 included), and once more `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has
-moved. When that first frame is the member's own, as it normally is, a
-reboot at any point after it does not reopen those; a reboot before it,
-which finds nothing newer saved for the member (after a first pairing, no
-counter at all), does. This narrows the case rather than closing it: the
+moved. A save that fails (the replay-counter write refused) is tried again
+rather than taken as done: the first on the member's next frame that
+verifies (never on a pass of its own), the second 66 s after the pass that
+failed (never on the next one); on a board without flash encryption, which
+writes no replay counter at all, every try is refused and writes nothing. When that first
+frame is the member's own, as it normally is, a reboot at any point after
+its save lands does not reopen those; a reboot before that, which finds
+nothing newer saved for the member (after a first pairing, no counter at
+all), does. This narrows the case rather than closing it: the
 first frame that verifies need not be the member's newest. A radio copying
 the member's address can land one of the member's older genuine frames
 before the member's own first frame (the window lasts until that frame
@@ -2233,7 +2238,9 @@ An implementation conforms to this specification if it:
   bound (a downtime alone holds a gone member `PEER_CONNECTED` about three
   times as long as it lasted); and the counter of a member's first frame
   that verifies is persisted as soon as it lands and once more 66 s later
-  if it has moved, so a reboot once the member's own counter is saved does
+  if it has moved, a save that fails being tried again on the member's next
+  verified frame (or, for the second, 66 s later) rather than taken as
+  done, so a reboot once the member's own counter is saved does
   not reopen what the member signed before a pairing; a reboot before the
   member's first frame lands still does, and so does an older genuine
   frame of the member's landed first by a radio copying its address, then

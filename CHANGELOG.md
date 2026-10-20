@@ -71,9 +71,14 @@
   what it blocked holds it for as long as its stock lasts
   (`THREAT_MODEL.md`). The counter of a member's first frame that verifies
   is now persisted as soon as it lands, and once more 66 s later if it has
-  moved, so a receiver rebooted within 5 minutes of a pairing, once the
-  member's first frame has landed there, restores a counter for the member,
-  and the frames the member signed before the pairing stay replays (before,
+  moved; a save that fails (the replay-counter write refused) is tried
+  again on the member's next verified frame, or for the second save 66 s
+  after the pass that failed, where the PR's Codex review found it taken
+  as done (on a board without flash encryption, which writes no replay
+  counter, every try is refused and writes nothing). So a receiver
+  rebooted within 5 minutes of a pairing, once the member's first frame
+  has landed there and its save with it, restores a counter for the
+  member, and the frames the member signed before the pairing stay replays (before,
   it restored none, and 240 recorded frames held a gone member `CONNECTED`
   356 minutes, host-probed); a save taken before the member was heard wrote
   it at 0, which no longer counts as a saved counter. That narrows the
@@ -95,7 +100,7 @@
   signature per 30 s per sender, at most 8 heartbeat verifies per 30 s per
   receiver (one per bound member), one outbound counter per heartbeat (a
   reservation write about 2.8 times a day), and at most two replay-counter
-  saves per pairing. No wire change: older PlatformIO firmware verifies the
+  saves that land per pairing. No wire change: older PlatformIO firmware verifies the
   heartbeat and drops it. Only `[env:full]` builds the
   mesh; `[env:release]` and every env that extends it set
   `FEATURE_MESH_NETWORK=0`, so no OTA'd device changes. **Host-tested**
@@ -110,11 +115,15 @@
   jammer and an hour's downtime from a real sending session; one for the
   first-counter save, failing without it or when a saved 0 counts as
   saved; one for its second save, failing without it, with the reboot
-  before it pinned as still open; a flipped signature byte and a
+  before it pinned as still open; two for a save that fails, the first
+  retried on the member's next verified frame and the second a full 66 s
+  later, never on the next pass, each failing on the code the Codex review
+  found; a flipped signature byte and a
   frame under another opera in the liveness case; the documented 30 s ± 3 s
   pinned at compile time; the other 12 mesh suites unchanged;
   `check_canary_mesh_status.py`; `test_canary_mesh_first_counter_wiring.py`
-  for main.cpp's half); the `[env:full]` compile is CI's; not run on a
+  for main.cpp's half, which now fails on a handler or a persist that drops
+  the save's result); the `[env:full]` compile is CI's; not run on a
   device (a U1 bench row).
 ### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350, #1837)
 

@@ -2471,10 +2471,24 @@
   taken while the member was
   registered and unheard wrote it at 0, which the boot restore counted as a
   saved counter, so the member's first frame after that boot saved nothing;
-  a saved 0 no longer counts (no frame carries 0). When a fix adds a
-  periodic send, count what the send leaves on the air for a recorder, not
-  only what it tells the receiver; and when a save is meant to hold "the
-  newest", ask what makes the value it saves the newest.
+  a saved 0 no longer counts (no frame carries 0). The PR's Codex review
+  then found the save marked done before it ran: the session cleared the
+  member's `counter_unsaved` and armed the second save ahead of a `void`
+  handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so one NVS write that
+  failed (`Preferences::begin` or `putBytes`) was never retried by the
+  session: a failed first save waited for the second (or, with the
+  counter unmoved by then, for the 5-minute save), and a failed second
+  save for the 5-minute save. The handler now returns the save's result; the flag clears and the second
+  save arms only on true, a false first save is tried on the member's next
+  verified frame, and a false second save 66 s after the pass that failed,
+  never on the next pass (on a board without flash encryption every save
+  is refused before any write, so a retry costs a snapshot and writes
+  nothing). When a fix adds a periodic send, count what the send leaves on
+  the air for a recorder, not only what it tells the receiver; when a save
+  is meant to hold "the newest", ask what makes the value it saves the
+  newest; and when a step exists to make something durable, set "done"
+  from its result, not before the call.
 - **Regression check:** `test_mesh_session`:
   `test_liveness_counts_only_verified_frames` (junk and a replay refresh
   nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
@@ -2509,7 +2523,12 @@
   same across the millis() wrap (a `now < from + R` compare passed), a
   frame after a deadline that found nothing moved (a save left armed until
   the counter moved passed), and a reboot before the first frame (pinned
-  open). Bounding each gap is not
+  open). The Codex review: `test_a_failed_first_counter_save_is_tried_again`
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (each
+  fails on the code it found; the second also on a retry taken on the next
+  pass, and the first on a second save armed from the call that failed),
+  and the wiring test fails on a handler or a persist that drops the
+  result. Bounding each gap is not
   testing a jitter, a check derived from a constant cannot catch a change to
   it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
   timer makes false were rewritten to admit only member heartbeats checked
