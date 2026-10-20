@@ -174,10 +174,14 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # bearer or the tap is consulted, and neither path spends the tap for it),
 # and the dual-stack socket's ::ffff:a.b.c.d peer address unwraps to IPv4
 # while a true IPv6 address reads as unknown; peer_key_from_addr() names one
-# peer by one 16-byte key in either family, and refuses the unspecified one.
+# peer by one 16-byte key in either family, and refuses the unspecified one;
+# and the WAP's BOOT tap goes to one asker (sweep F342): peek() and
+# take_exact() take only the stamp that was judged, and tap_arbitrate(), on a
+# 32-bit test clock, refuses a poller and the owner across one tap, serves a
+# sole owner who asked before it, and fails closed across a 49.7-day silence.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
-# sketch keeps an inline copy of the two gate operations to this contract,
-# and stages the header for its peer key (check_improv_sync.sh).
+# sketch stages the header byte-identical (check_improv_sync.sh) and its
+# gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 

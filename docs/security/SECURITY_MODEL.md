@@ -362,8 +362,24 @@ session is proof of being on the LAN and nothing more: the WAP's bearer
 token itself (with the SoftAP password and the TLS pin) is handed out only
 in the provisioning receipt — to a caller that already presents the token
 as a bearer, to a phone spending the setup door's claim, or for thirty
-seconds after a short BOOT tap — in the pairing QR an operator fetches with
-the token, or on the serial console. Until sweep F289 the session cookie
+seconds after a short BOOT tap to the one address asking for it: when a
+second address asked for the receipt in the ten seconds before the tap or
+during it, the tap is closed and both get `409 tap_contended` (sweep F342;
+host-tested, not bench-tested) — in the pairing QR an operator fetches with
+the token, or on the serial console. The setup door's claim is spent only by
+a match, so a wrong `?claim=` from a host on the network no longer ends the
+phone's pairing (F342). The tap's asker is the request's socket peer
+(`request_peer_key()`, the same read the per-address lockout keys on, F343),
+never a header. What the tap rule cannot see: a tap no client of the
+owner's was already asking for (an accidental tap, a page or `curl` started
+after it, BLE OTA break-glass) still goes to the first asker; hosts behind
+one address (a NAT, an ARP spoofer, a page in the owner's own browser) are
+one asker; a host that keeps the WAP's one web server busy for more than
+ten seconds before the tap can hide the owner's client; and a host polling
+without pause makes every tap refuse, loudly. Then the recovery kit's token,
+the USB serial console (the receipt prints at every boot) and holding BOOT
+10 s, then setting up again from the iPhone through the setup door, are the
+ways in. Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could
 read the token with no tap; both routes now take the `Authorization:
 Bearer` header alone (host-tested, not bench-tested). Since sweep F289's

@@ -424,7 +424,7 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. On the WAP it is served only to the sole address asking for it (`tap_arbitrate()`); a second address in the window closes the tap with `409 tap_contended`. |
 | — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). |
 
 Every caller the three-grant overload admitted is admitted here too, in the
@@ -439,7 +439,8 @@ the flagship has no setup-door claim. **The WAP sketch
 asks no Host question on this route today** (it has no `auth_gate`; its
 `/` page checks the Host header only to pick the first-boot wizard), so its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim and the same unspent tap. Its
+that order, with the same single-use claim (spent only on a match) and the
+same unspent tap, and its row 4 goes to one asker (below). Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 `cv_session` cookie (sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
@@ -547,13 +548,54 @@ address, its new pairing included (F352). Host-tested
 (`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
 run on a device.
 
-What the lockout does not decide, and what stays open (all of it predates
-F289's follow-up; it is the ledger's, not a claim of this design):
+**The WAP's row 4 goes to one asker (sweep F342).** A tap identifies
+nobody, and the WAP has no screen, so the one signal it has is who else
+asks. `provisioning_gate.h`'s `tap_arbitrate()` keeps the last two distinct
+addresses that asked for the receipt without a credential (any request the
+bearer and the claim did not serve: a wrong bearer and a wrong claim count),
+including asks made **before** the tap, and serves the tap only to the sole
+address seen from 10 s before the tap onward. A second address in that
+window closes the tap, and every asker gets `409 tap_contended` for the rest
+of the tap's 30 s; nothing is handed out. A sole asker is served at once,
+with no settle delay. The asker is the request's socket peer, read by
+`request_peer_key()` (`getpeername`, never a header), the same read the
+per-address lockout keys on. A socket that cannot say is refused `403` and
+the tap is left for the next asker. The stamp is peeked, judged and then
+taken with one compare-and-swap of the stamp that was judged
+(`take_exact()`), so a re-tap or a BLE OTA break-glass take in between is
+never consumed unjudged. A `429` for a held bearer still comes before the
+`409`, and the `409` clears no backoff. The dashboard's **Use BOOT Tap
+Once** polls from the click, and the companion's recovery-kit save now asks
+from the Save tap, so the owner's client is on record when the press lands:
+a host that polls the route, one that watches `/api/logs` for the tap, or
+one that delays the owner's next poll is refused loudly instead of handed
+the token, the SoftAP password and the pin. The serial console names both
+addresses; the health log (readable by any session) names neither.
 
-- **Row 4 is spent by whoever asks first.** The tap has one consumer: a
-  request from any host on the network inside its 30 s, a wrong bearer
-  included, is served the receipt and spends the tap, and the owner's own
-  request after it is refused.
+What stays open, and is the ledger's, not a claim of this design:
+
+- A tap no client of the owner's was asking for (an accidental tap, a page
+  or `curl` started after it, BLE OTA break-glass) still goes to the first
+  asker.
+- Hosts behind one address (a NAT, an ARP spoofer, a page in the owner's own
+  browser) are one asker.
+- A host that keeps the WAP's one web server busy for more than 10 s before
+  the tap can hide the owner's earlier ask.
+- A host polling without pause makes every tap refuse, loudly. The owner's
+  ways out: the recovery kit's token (the iPhone app pairs from the kit);
+  the USB serial console, which prints the receipt with the token at every
+  boot; or hold BOOT 10 s, then set the Canary up again from the iPhone
+  through the setup door. The hold clears the saved Wi-Fi, the broker login
+  and the name, keeps the token, and the phone's claim can no longer be
+  spent by a stray request, so the phone ends paired.
+- A dual-stack browser would count as two askers if the WAP's station
+  interface ever enabled IPv6 (it does not today).
+- The flagship's tap, on its receipt and on the page load it unlocks, still
+  goes to the first asker (F354).
+
+Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
+`test_receipt_grant.cpp`, `test_receipt_authority.cpp`,
+`recovery_kit.test.js`); not run on a device.
 
 ---
 
@@ -969,6 +1011,12 @@ cannot speak to.
       second time is `403`; a wrong claim is `403` and the real one still
       serves; a claim after 180 s is `403`; the BOOT tap is still unspent
       after a claim served.
+- [ ] With a second host polling `GET /api/provisioning-receipt` over plain
+      HTTP, **Use BOOT Tap Once** and a short tap: both get `409
+      tap_contended`, nothing is served, and the dashboard says another
+      device asked; with the second host stopped for 10 s, the same sign-in
+      is served within about 2 s of the tap (F342; the rows in
+      `hardware_verification_checklist.md`).
 - [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
       landing page's **Open dashboard** link minted is `403` on
       `GET /api/provisioning-receipt` and `401` on `GET /api/pairing-qr`,

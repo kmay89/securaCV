@@ -21,6 +21,32 @@
   `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`); not
   run on a device.
 
+- **The BOOT tap is handed only to the one device asking for it (sweep
+  F342).** A short BOOT tap opened a 30 s gate that `GET
+  /api/provisioning-receipt` handed to the first request that asked, so any
+  host on the network that polled the route won the owner's next tap and was
+  handed the token, the SoftAP password and the TLS pin. The new
+  `provisioning_gate::tap_arbitrate()` (the WAP now uses the shared header's
+  gate, not an inline copy) remembers the last two distinct addresses that
+  asked without a credential, asks before the tap included, and serves the
+  tap only to the sole address seen from 10 s before the tap onward. A second
+  device asking in that window closes the tap with `409 tap_contended`, and
+  the dashboard's **Use BOOT Tap Once** and Settings recovery-kit save say
+  another device asked instead of "Didn't see a tap" or "HTTP 409". The
+  first-boot companion's recovery-kit save now asks first and waits up to
+  30 s for the press ("Tap Save my recovery kit, then short-press BOOT"; the
+  old order still works), and its message banner is now on screen (the
+  handler set its text but never showed it). A sole asker is served at once,
+  as before. The asker is the socket peer (`request_peer_key()`, the read
+  the per-address lockout already keys on), and the serial console names
+  both addresses while the health log names neither. Residuals: a tap no
+  client of the owner's was asking for still goes to the first asker; hosts
+  behind one address are one asker; a host polling without pause makes every
+  tap refuse, and then the recovery kit's token, the USB serial console and
+  the 10 s BOOT hold followed by a fresh iPhone setup are the ways in.
+  Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
+  `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
+
 ### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
 
 - **The flagship's dashboard tab no longer holds the owner's app at `429`,

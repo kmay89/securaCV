@@ -30,7 +30,8 @@
 // request, request_peer_key() (getpeername, both families, through
 // provisioning_gate.h's peer_key_from_addr()), and the bearer lockout's
 // source built on it, auth_request_source(); test_receipt_grant runs the
-// latter.
+// latter. Since sweep F342 the BOOT tap's asker (provisioning_gate_take_for())
+// is read through the same reader, and no other.
 
 #include "arduino_globals.h"
 
@@ -757,7 +758,15 @@ void test_sketch_glue() {
         "canary::net::provisioning_gate::AddrFamily::IPV6,key);}");
   CHECK(count_of(ino, R"(\bstatic bool request_peer_key\()") == 1);
   CHECK(count_of(ino, R"(\buint32_t auth_request_source\(httpd_req_t\* req\) \{)") == 1);
-  CHECK(count_of(ino, R"(\brequest_peer_key\()") == 2);      // the definition and auth_request_source
+  // The definition, auth_request_source and the BOOT tap's asker
+  // (provisioning_gate_take_for(), sweep F342): the tap's asker and the
+  // lockout's bucket are one read of the socket's peer.
+  CHECK(count_of(ino, R"(\brequest_peer_key\()") == 3);
+  const std::string tap_for = body_of(ino, "static bool provisioning_gate_take_for(httpd_req_t* req, "
+                                           "canary::net::provisioning_gate::TapVerdict* verdict) {");
+  CHECK(squash(tap_for).find("uint8_t key[pg::PEER_KEY_LEN];if(!request_peer_key(req,key))return false;") !=
+        std::string::npos);
+  CHECK(count_of(ino, R"(\bstatic bool provisioning_gate_take_for\()") == 1);
   CHECK(count_of(ino, R"(\bauth_request_source\()") == 1);   // the definition (api_auth.h calls it)
 
   // Every input from where the device keeps it, once.

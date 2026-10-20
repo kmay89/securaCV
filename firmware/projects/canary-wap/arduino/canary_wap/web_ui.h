@@ -2976,6 +2976,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       err.textContent = '';
       try {
         const resp = await secureFetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (resp.status === 409) {
+          // A cookie page's save reaches the device's BOOT-tap step, and
+          // another device asked during the same tap (sweep F342).
+          err.textContent = tapContendedText();
+          err.style.display = 'block';
+          return;
+        }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         if (!RecoveryKit.save(window, await resp.text())) throw new Error('not a recovery kit');
         done.style.display = 'block';
@@ -2988,12 +2995,30 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    // What the page says when the device answers 409 tap_contended (sweep
+    // F342): another address asked for the receipt during the same BOOT
+    // tap, so the device closed the tap and handed nothing out. The ways
+    // out avoid the token box on purpose: on a page the landing session
+    // signed in, that box still takes the cookie's word for a token, so a
+    // mistyped one looks accepted (the ledger's owner-authority items
+    // revisit this copy once the box checks the token itself).
+    function tapContendedText() {
+      return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
+             'Close any other Canary pages, wait 10 seconds, and try again. ' +
+             'If this keeps happening: the iPhone app can pair from your recovery kit, the USB console prints ' +
+             'the token each time the Canary starts, or hold BOOT for 10 seconds (this clears its Wi-Fi) and ' +
+             'set it up again from the iPhone app.';
+    }
+
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
       // Polling budget: 30 ticks × 2 s = 60 s. The device's gate TTL
       // (advertised in the 403 body's gate_ttl_seconds) is much shorter
       // than this budget, so a press anywhere in the 60 s window lands.
+      // The poll starts at the click, before the tap: the device hands a
+      // tap only to the one address that asked from 10 s before it onward
+      // (sweep F342), so this page is on record when the press lands.
       const POLL_INTERVAL_MS = 2000;
       const POLL_TICKS = 30;
       let gateTtl = 30;
@@ -3009,6 +3034,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             hideAuthModal();
             startDashboard();
             offerRecoveryKit(text);
+            return;
+          }
+          if (resp.status === 409) {
+            // Another device asked during the same tap (sweep F342): the
+            // device closed the tap and gave out nothing, so stop here.
+            s.textContent = tapContendedText();
+            s.className = 'auth-status error';
             return;
           }
           if (resp.status === 403 && !gotFirst403) {

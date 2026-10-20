@@ -2947,6 +2947,50 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `429`), and step 5 was served (the vault's `400`, the snapshot's `200`).
   - Artifact: `docs/audit/repro/F339/`.
 
+## canary-wap: the receipt's claim is spent on a match, and the BOOT tap goes to one asker (F342, F347) — on-device verification
+
+Host-tested (`test_claim_ticket`, `test_provisioning_gate`,
+`test_receipt_grant`, `test_receipt_authority`, `recovery_kit.test.js`). Not
+yet proven on a device: the peer address read (`request_peer_key()`'s
+`getpeername` on the dual-stack listener) and real poll timing. Every row
+runs over plain HTTP, the stock WAP's posture after setup: `canary_wap.ino`'s
+certgen guard tests for `mbedtls/x509write_crt.h`, which no installed core
+ships, so no stock WAP serves HTTPS. An HTTPS variant of the first two rows
+is blocked until a WAP serves HTTPS. The 49.7-day wraps (F347) are
+host-tested only; a bench cannot wait them out. The earlier tap rows in the
+F289 sections above assume no other host on the network is asking for the
+receipt; a second asker turns them into `409`. The first two rows must pass
+before the next WAP firmware release: a peer read that always fails would
+refuse every tap sign-in. Run F343's per-address row (the F289 follow-up
+section above) in the same session; it proves the same read. Code:
+`provisioning_gate_take_for()`, `request_peer_key()` and
+`handle_provisioning_receipt()` in `canary_wap.ino`;
+`firmware/common/network/provisioning_gate.h` (`tap_arbitrate()`,
+`take_exact()`) and `claim_ticket.h` (`spend_if_match()`), both staged in the
+sketch; `requestFromDevice()` and `saveRecoveryKitFromSettings()` in
+`web_ui.h`; the recovery-kit save in `companion_pwa.h`. Owner: U1.
+
+- [ ] **A second asker closes the tap.**
+  - On laptop B, run `while :; do curl -s -o /dev/null -w '%{http_code}\n' http://<STA address>/api/provisioning-receipt; sleep 0.2; done`.
+  - On laptop A, open the dashboard at `http://canary-<suffix>.local/`, choose **Use BOOT Tap Once**, and short-tap BOOT.
+  - Expect:
+    - within about 2 s, A shows "Another device on your network asked…" and holds no token;
+    - B prints `403`s, then `409`s, and never `200`;
+    - `/api/logs` has one "BOOT tap closed: two devices asked for the receipt" line, with no addresses;
+    - the serial console names both addresses.
+  - Stop B, wait 10 s, and sign in on A again: signed in within about 2 s of the tap.
+- [ ] **A sole asker is served at once.**
+  - With laptop A alone, at `http://canary-<suffix>.local/`: **Use BOOT Tap Once**, then short-tap BOOT. A is signed in within about 2 s of the tap.
+  - Short-tap BOOT and within 30 s run `curl -s http://canary-<suffix>.local/api/provisioning-receipt` from A: `200`. Repeat at `http://<STA address>/api/provisioning-receipt`: `200`.
+- [ ] **The first-boot recovery kit.**
+  - Factory-reset (hold BOOT 10 s) and walk the companion to the recovery step at `http://canary.local` or `http://192.168.4.1`.
+  - Tap **Save my recovery kit**, then short-press BOOT: the kit downloads, and "Now short-press BOOT on your Canary." was on screen while it waited.
+  - Repeat with B's loop running against the WAP's home-network address (`http://<STA address>`): the companion shows "Another device on your network asked…", and Save works again once B has been stopped for 10 s.
+- [ ] **A wrong claim spends nothing, and the 10 s hold is a way out under a poller.**
+  - With B's loop running, hold BOOT 10 s, release, and set the Canary up again from the iPhone through the Bluetooth setup door. During the pairing B also sends `curl -s 'http://<STA address>/api/provisioning-receipt?claim=00000000000000000000000000000000'` every second.
+  - Expect: the iPhone ends paired; B gets `403` every time; `/api/logs` shows at most one "setup-door claim did not match" line per 10 s; the serial console's boot receipt shows the same token as before the hold.
+- Artifact: `docs/audit/repro/F342/`.
+
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 
 Code: `AuthManager::check()` and `AuthManager::grant()` in

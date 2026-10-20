@@ -524,7 +524,8 @@ clean: clean-receipt-authority
 
 # The receipt's and the pairing QR's grants (sweep F289): the REAL api_auth.h
 # and handle_provisioning_receipt(), handle_pairing_qr(),
-# provisioning_gate_take() and session_cookie_header() (the receipt's
+# provisioning_gate_take(), provisioning_gate_take_for() (the BOOT tap's one
+# asker, sweep F342) and session_cookie_header() (the receipt's
 # cookie, Secure over HTTPS only) cut verbatim out of canary_wap.ino
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with headers and a query string) and stand-ins for the two writers, the
@@ -555,7 +556,7 @@ RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(RGRANT_CSI_INC): $(SRC_DIR)/csi_integration.cpp Makefile

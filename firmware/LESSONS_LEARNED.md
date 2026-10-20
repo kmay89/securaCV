@@ -2854,6 +2854,46 @@
   something the session cannot reach.
 - **Date learned:** 2026-10
 
+### A physical-presence tap with no identity for its asker goes to the first poller (canary-wap, F342)
+- **What happened:** the WAP's BOOT tap opened a 30 s gate that its receipt
+  route handed to the first request that asked: `provisioning_gate_take()`
+  was a bare exchange that knew nothing about who was asking. So any host on
+  the home network that polled `GET /api/provisioning-receipt` won the
+  owner's next tap and was handed the token, the SoftAP password and the TLS
+  pin, and `/api/logs` (readable by any session) even said when the tap
+  landed. The press proved a hand was on the device, not whose request it
+  was for: the line between "on the LAN" and "owns the device" was posture
+  only.
+- **Root cause:** a presence check that grants to "the next request" grants
+  to whoever is fastest, and on a network that is a machine, not a person.
+  The WAP has no screen to show a code on, so the only signal it has is who
+  else asks.
+- **Fix:** the tap goes to one asker. `provisioning_gate.h`'s
+  `tap_arbitrate()` keeps the last two distinct addresses that asked without
+  a credential, asks before the tap included, and serves the tap only when
+  the asker is the sole address seen from 10 s before the tap onward; a
+  second address closes the tap with `409 tap_contended`. The owner's
+  clients (the dashboard's sign-in, now the companion's kit save) ask from
+  before the press, so they are on record when it lands. The stamp is peeked,
+  judged and then taken with a compare-and-swap of the stamp that was judged
+  (`take_exact()`), so nothing between the judgment and the take is consumed
+  unjudged. Rules: a grant that answers "the next request" needs an identity
+  for that request, or the fastest poller wins it; and one peer read must
+  serve every per-address rule. The tap's asker and the bearer lockout's
+  bucket are both `request_peer_key()` (one `getpeername`), so the two can
+  never disagree about who a request came from, which two readers could.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` (the arbiter
+  on a 32-bit clock: a poller and the owner across one tap, a sole owner, an
+  attacker asking first after the tap, the lookback's edge to the
+  millisecond, a re-tap, the 49.7-day silence) and the WAP's
+  `test_receipt_grant.cpp` over the cut handler (`409` with no cookie and no
+  secret, one health line naming no address, a wrong bearer or claim counted
+  as an ask, a held bearer still `429`); `test_receipt_authority.cpp` pins
+  `getpeername` once in the sketch and three callers of `request_peer_key()`.
+  Host-tested; the peer read on the dual-stack listener is not yet proven on
+  a device (U1).
+- **Date learned:** 2026-10
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg

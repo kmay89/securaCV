@@ -31,7 +31,16 @@
 //     follow-up): a refused token is "Invalid or expired token", but a
 //     refusal of a page that holds no token (the kit's 403 or the pairing
 //     QR's 401 on a cookie session, or a session that has ended) says the
-//     session does not cover it, never a token the page never had.
+//     session does not cover it, never a token the page never had;
+//   * the BOOT tap goes to one asker (sweep F342): a 409 tap_contended
+//     stops the dashboard's sign-in on that answer and says another device
+//     asked, keeping no token and offering no kit, and the Settings save
+//     says the same instead of "HTTP 409"; neither sends the owner to the
+//     token box (on a cookie page it still takes the cookie's word); the
+//     companion's Save asks first and keeps asking every 2 s for 30 s while
+//     the owner presses BOOT (403, 403, 200 saves; a 409 says another device
+//     asked and gives Save back; fifteen 403s say no press was seen), and
+//     its banner is on screen whenever it holds a line.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -106,6 +115,24 @@ function startingDisplay(src, id) {
   return /display\s*:\s*none/.test(style) ? 'none' : '';
 }
 
+// An element's classList: add, remove, toggle (with its force argument) and
+// contains, as a browser's; `hidden` reads whether the class is set.
+function fakeClassList() {
+  const set = new Set();
+  return {
+    set,
+    get hidden() { return set.has('hidden'); },
+    add(c) { set.add(c); },
+    remove(c) { set.delete(c); },
+    toggle(c, force) {
+      const on = force === undefined ? !set.has(c) : !!force;
+      if (on) set.add(c); else set.delete(c);
+      return on;
+    },
+    contains(c) { return set.has(c); },
+  };
+}
+
 // A browser window just big enough for the pages' kit code: elements by id
 // (starting as `markup` draws them), a body, Blob, URL and timers, with every
 // save recorded.
@@ -113,9 +140,7 @@ function fakeWindow(ids, markup) {
   const els = {};
   for (const id of ids) {
     const display = markup ? startingDisplay(markup, id) : 'none';
-    els[id] = { id, style: { display }, textContent: '', className: '',
-                classList: { hidden: false, add(c) { if (c === 'hidden') this.hidden = true; },
-                             remove(c) { if (c === 'hidden') this.hidden = false; } } };
+    els[id] = { id, style: { display }, textContent: '', className: '', classList: fakeClassList() };
   }
   const saved = [];
   const appended = [];
@@ -167,6 +192,7 @@ function dashboard(answers, routes = {}) {
     uiFunction(src, 'offerRecoveryKit'),
     uiFunction(src, 'closeRecoveryKit'),
     uiFunction(src, 'saveRecoveryKit'),
+    uiFunction(src, 'tapContendedText'),
     uiFunction(src, 'saveRecoveryKitFromSettings', true),
     uiFunction(src, 'requestFromDevice', true),
     ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, saveRecoveryKitFromSettings, secureFetch,',
@@ -222,6 +248,10 @@ function carried(asked, text) {
 }
 
 const GATE_403 = { status: 403, body: '{"error":"physical_confirmation_required","gate_ttl_seconds":30}' };
+// The device's answer when another address asked during the same BOOT tap
+// (canary_wap.ino handle_provisioning_receipt, sweep F342).
+const TAP_409 = { status: 409, body: '{"error":"tap_contended","hint":"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed. Close other Canary pages, wait 10 seconds, then tap BOOT again."}' };
+const CONTENDED = /^Another device on your network asked for this Canary's keys at the same time, so it said no\./;
 
 describe('one builder, two pages', () => {
   it('web_ui.h and companion_pwa.h carry the same RECOVERY_KIT lines', () => {
@@ -392,6 +422,34 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.equal(win.els.recoveryKitCard.style.display, 'none');
     assert.equal(api.kitText(), null);
   });
+
+  it('another device asking during the tap (409) stops the sign-in on that answer and says so (sweep F342)', async () => {
+    // Before: a 409 was just another non-200, so the page polled all 30
+    // ticks and ended "Didn't see a tap", which is not what happened.
+    const { api, win, asked, calls } = await dashboardTap([GATE_403, GATE_403, TAP_409, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 3, 'the poll stops at the 409');
+    assert.match(win.els.authStatus.textContent, CONTENDED);
+    assert.equal(win.els.authStatus.className, 'auth-status error');
+    assert.doesNotMatch(win.els.authStatus.textContent, /Didn't see a tap/);
+    assert.equal(api.token(), null, 'no token kept');
+    assert.equal(calls.start, 0, 'the dashboard is not started');
+    assert.equal(win.els.recoveryKitCard.style.display, 'none', 'no kit offered');
+    assert.equal(api.kitText(), null);
+  });
+
+  it("the contention copy names ways out that do not go through the token box", () => {
+    const d = dashboard([GATE_403]);
+    const fn = uiFunction(read(UI), 'tapContendedText');
+    const text = vm.runInNewContext(fn + '\n;tapContendedText()', {});
+    assert.match(text, CONTENDED);
+    assert.match(text, /wait 10 seconds, and try again/);
+    assert.match(text, /recovery kit/);
+    assert.match(text, /USB console/);
+    assert.match(text, /hold BOOT for 10 seconds/);
+    assert.doesNotMatch(text, /paste|token box|type the token/i,
+      'on a cookie page the token box still takes the cookie\'s word for a token');
+    assert.ok(d.api);
+  });
 });
 
 describe('Settings → Device → Recovery kit saves it again for a signed-in page (sweep F257)', () => {
@@ -442,6 +500,19 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     await d.api.saveRecoveryKitFromSettings();
     assert.equal(d.win.saved.length, 0);
     assert.match(d.win.els.settingsKitErr.textContent, /Could not fetch the recovery kit: not a recovery kit/);
+    assert.equal(d.win.els.settingsKitDone.style.display, 'none');
+  });
+
+  it('another device asking during the tap (409) says so, instead of "HTTP 409" (sweep F342)', async () => {
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.asked.length, 1);
+    assert.equal(d.win.saved.length, 0);
+    assert.equal(d.win.els.settingsKitErr.style.display, 'block');
+    assert.match(d.win.els.settingsKitErr.textContent, CONTENDED);
+    assert.doesNotMatch(d.win.els.settingsKitErr.textContent, /HTTP 409/);
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in was never shown over it');
+    assert.equal(d.win.els.authStatus.textContent, '');
     assert.equal(d.win.els.settingsKitDone.style.display, 'none');
   });
 
@@ -578,7 +649,10 @@ describe("the offer speaks the wizard's words", () => {
 });
 
 describe("the wizard's close-out saves through the same builder", () => {
-  function wizardSave(answer) {
+  // The Save handler against a device answering `answers` in turn (the last
+  // repeats; one answer is every answer), each 2 s sleep run at once.
+  function wizardSave(answers) {
+    const queue = Array.isArray(answers) ? answers : [answers];
     const src = read(PWA);
     const m = src.match(/\$w\('wiz-recovery-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
     if (!m) throw new Error('the wiz-recovery-save handler was not found in companion_pwa.h');
@@ -587,7 +661,12 @@ describe("the wizard's close-out saves through the same builder", () => {
     const asked = [];
     const ctx = {
       $w: (id) => win.els[id],
-      fetch: async (url, opts) => { asked.push({ url, opts }); return { status: answer.status, ok: answer.status === 200, text: async () => answer.body }; },
+      fetch: async (url, opts) => {
+        const answer = queue[Math.min(asked.length, queue.length - 1)];
+        asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled });
+        return { status: answer.status, ok: answer.status === 200, text: async () => answer.body };
+      },
+      Promise,
       requestAnimationFrame: () => {}, focusActiveStepHeading: () => {},
       document: win.document, Blob: win.Blob, URL: win.URL, JSON, Error,
     };
@@ -606,10 +685,62 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
     assert.equal(win.els['wiz-ha-block'].style.display, 'block');
   });
-  it('a closed gate saves nothing and says to press BOOT', async () => {
-    const { win } = await wizardSave(GATE_403);
+  it('Save asks first and keeps asking while the owner presses BOOT: 403, 403, 200 saves (sweep F342)', async () => {
+    // Before: the first 403 ended the save with "Press the BOOT button on
+    // your Canary first", so the page was never asking when the press
+    // landed, and the device hands a tap only to an address that was.
+    const { win, asked } = await wizardSave([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 3);
+    assert.ok(asked.every((q) => q.url === '/api/provisioning-receipt' && q.opts.cache === 'no-store'));
+    assert.deepEqual(win.timers.slice(0, 2), [2000, 2000], 'two sleeps of 2 s between the three asks');
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 2, 'and no more (the rest is the blob URL\'s revoke)');
+    assert.ok(asked.every((q) => q.disabled === true), 'Save stays disabled while it asks');
+    assert.equal(win.saved.length, 1);
+    assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
+    assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-err'].textContent, '');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false, 'the banner is put away');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('the old order still works: pressed first, the first ask is served', async () => {
+    const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
+    assert.equal(asked.length, 1);
+    assert.equal(win.saved.length, 1);
+  });
+  it('the instruction is on screen while it asks, in the calm style', async () => {
+    const src = read(PWA);
+    assert.match(src, /say\('Now short-press BOOT on your Canary\.', true\);/);
+    const { win } = await wizardSave([GATE_403, TAP_409]);
+    // After the 409 the banner holds the contention copy, shown, not calm.
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'the banner is on screen');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('note'), false);
+  });
+  it('another device asking during the press (409) says so and gives Save back', async () => {
+    const { win, asked } = await wizardSave([GATE_403, TAP_409, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 2, 'the asking stops at the 409');
     assert.equal(win.saved.length, 0);
-    assert.match(win.els['wiz-recovery-err'].textContent, /Press the BOOT button/);
+    assert.match(win.els['wiz-recovery-err'].textContent, CONTENDED);
+    assert.match(win.els['wiz-recovery-err'].textContent, /wait 10 seconds, and tap Save again/);
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+  });
+  it('no press in 30 s (fifteen 403s) saves nothing and says so', async () => {
+    const { win, asked } = await wizardSave(GATE_403);
+    assert.equal(asked.length, 15);
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 14);
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'on screen');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('the steps say Save first, then BOOT', () => {
+    const src = read(PWA);
+    const block = src.match(/<div id="wiz-recovery-block"[^>]*>([\s\S]*?)\n {6}<\/div>\n/)[1];
+    const steps = [...block.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+    assert.deepEqual(steps, ['Tap <strong>Save my recovery kit</strong> below.',
+                             'Within 30 seconds, short-press the <strong>BOOT</strong> button on your Canary.']);
   });
   it('a 200 that is not a receipt saves nothing and says so', async () => {
     const { win } = await wizardSave({ status: 200, body: '{"ok":true}' });
