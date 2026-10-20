@@ -456,12 +456,15 @@ function usbBridgeInfo(vid, pid) {
 // Public-only is enforced HERE, in the builder, same as the browser side:
 // fixed field allowlist, MAC truncated to a non-stable tail, and the console
 // tail scrubbed of credential lines (the WAP prints its AP password to serial
-// at boot; a report someone is ASKED to paste must not carry it).
+// at boot, and every setup surface prints it again inside the "[SETUP] QR
+// WIFI:…;P:" line when its setup network comes up, the flagship on every
+// re-raise too; a report someone is ASKED to paste must not carry it).
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
   /wifi\s+pass\b/i,
   /token["']?\s*[:=]/i,
+  /\bWIFI:.*\bP:/,
 ];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>

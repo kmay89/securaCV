@@ -441,6 +441,47 @@
 - **Fix:** Derive AP password from pubkey fingerprint at provisioning
 - **Regression check:** Script greps for hardcoded `witness2026`
 
+### A password derived from a published value is not a secret
+- **What happened:** The per-device AP password above was derived from the
+  public-key fingerprint, and the device publishes the fingerprint: the
+  setup network's SSID suffix spells two of its bytes, and signed MQTT
+  events, the provisioning receipt, `/api/status` and the serial log carry
+  all eight. So anyone who had seen the fingerprint could compute its key,
+  and on the flagship a peer on its own SoftAP is handed the page token.
+  The WAP moved to the private key first; the flagship followed in sweep
+  F350.
+- **Fix:** Both trees derive the key as an HMAC of the device private key
+  under its own domain label (`securacv:ap-password:v1`), `cv-` + 12
+  characters; the flagship's comes from `common/network/ap_password.h`.
+- **Rule:** A function that takes a fixed-size private key takes `const uint8_t (&)[32]`,
+  not a pointer, so a shorter published value (the 8-byte fingerprint)
+  cannot be handed to it. A pointer parameter takes it without a word and
+  reads 24 bytes past it.
+- **Rule:** A secret derived from a primitive that can fail must see the
+  failure. `fleet_key::hmac_sha256` zeroes its output and says nothing, and
+  32 zero bytes render as `cv-222222222222` on every unit: the review of
+  F350's first cut found the derivation returning that as a success. It now
+  takes `hmac_sha256_checked` and refuses on false, and `setup()` halts
+  rather than raise the network on an empty key (the Arduino core raises an
+  open network on one) or a constant one. The second review found the same
+  header's HKDF reporting an all-zero fleet key as derived and its peer frame
+  tag letting a zero-tag frame through; both take the checked form now, and
+  nothing in `fleet_key.h` calls the unchecked one. `[[nodiscard]]` on the
+  derivation is a compiler warning on the device (the flagship builds
+  without `-Werror`), not a guard.
+- **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
+  device and OpenSSL on the host, and the first failure suite failed only
+  OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
+  with every host suite green and every CI compile clean. Build the failure
+  suite over the device branch too, against a stub of the library's header.
+- **Regression check:** `firmware/tests_host/test_ap_password.cpp`
+  static_asserts that `DeviceIdentity::pubkey_fp` does not bind and the
+  private key does, and holds the flagship's derivation equal to the WAP's;
+  `test_ap_password_hmac_fail.cpp` and `test_fleet_key_hmac_fail.cpp` run
+  over a failing primitive (`tests_host/hmac_fail_seam.h`), each built over
+  the OpenSSL branch and, with `-DARDUINO` over `tests_host/stubs/mbedtls_md`,
+  over the mbedTLS one.
+
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
 - **Rule:** Bearer tokens authenticate HTTP requests. They are NOT

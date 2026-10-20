@@ -444,7 +444,9 @@
       "    Dashboard   http://192.168.4.1",
       "",
       "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
-      "    Hold  BOOT (>3s)   = factory reset",
+      "    Token + WiFi credentials are printed above on every boot",
+      "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",
+      "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
       "    ------------------------------------------------"
     ],
     "join_line": "[OK] Setup complete \u2014 WiFi connected; rebooting after the provisioning grace window...",
@@ -1154,8 +1156,9 @@
         "gpio": 0,
         "what": "GPIO0, a strapping pin \u2014 the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
         "gestures": [
-          "short press (~1 s): prints the provisioning receipt \u2014 AP SSID + password \u2014 on serial",
-          "hold >3 s: factory reset (docs: hold 5 s during power-up if the device is unresponsive \u2014 new keypair, fresh credentials)",
+          "short press (under 2 s): opens the provisioning gate for 30 s, so the dashboard can hand over the recovery kit (it prints no key)",
+          "hold 2\u20133 s: prints the identity block (device ID, fingerprint, firmware) on serial",
+          "hold 10 s: factory reset \u2014 Wi-Fi, broker and name are cleared, the identity is kept, so the setup network's name and key do not change (\"keep holding\" at 3 s; released before 10 s, nothing is reset)",
           "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher"
         ]
       },
@@ -1286,13 +1289,14 @@
       "password": [
         "Plug the Canary into a computer with a USB-C cable",
         "Open a serial terminal at 115 200 baud on the new USB-CDC port",
-        "Press BOOT for ~1 second \u2014 the terminal prints the AP SSID and password"
+        "Restart it (RESET, or unplug it and plug it back in): the ready banner prints the setup network's name (WiFi AP) and key (Password), and the boot's [WIFI] AP started line repeats them",
+        "Or type w in the terminal: it prints both at any time, without a restart"
       ],
-      "factory": "Hold BOOT >3 s while running \u2014 or 5 s during power-up \u2014 for a factory reset: fresh keypair, new credentials printed on serial"
+      "factory": "Hold BOOT 10 s for a factory reset: Wi-Fi, broker and name are cleared and the identity is kept, so the setup network's name and key stay the same. No BOOT hold wipes a WAP's keypair."
     },
     "sources": {
       "build_paths": "firmware/projects/canary-wap/README.md \u00a7Choose Your Build Path + \u00a7Troubleshooting",
-      "buttons": "canary_wap.ino BOOT_BUTTON_* constants",
+      "buttons": "canary_wap.ino BOOT_* constants and its loop()'s BOOT handler, onboarding_fsm.h Timing",
       "recovery": "docs/getting_started_canary.md \u00a7Recovering the password"
     }
   },

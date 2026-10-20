@@ -602,6 +602,18 @@ single Forget.
 If the display has been sitting on the join screen for a while it will say
 this on its own glass too.
 
+The all-rounder Canary (`firmware/canary`) causes the same thing once, on the
+firmware update that moved its setup network's key to the device's private
+key (sweep F350): the network `SecuraCV-canary-XXXX` keeps its name, the key
+changes from `cv-` and five characters to `cv-` and twelve, and a phone that
+joined it before the update can rejoin silently with the old key. The same
+single Forget fixes it. Then join with the new key from the serial banner
+(`Password`), either flasher's done card or a recovery kit saved again from
+the dashboard, not by rescanning a card, QR or recovery kit from before the
+update: those still carry the old key. See *Recovering the password* in
+[getting started](getting_started_canary.md#recovering-the-password).
+*(Host-tested; not yet tried on a bench device.)*
+
 ---
 
 ## Contributing & agents

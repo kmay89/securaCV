@@ -57,7 +57,7 @@ static void reasons_name_the_first_blocker() {
 static void seven_char_passphrase_refused() {
   CHECK(decide(true, true, 7).mode == AuthMode::WPA2_PSK, "7 chars is below the WPA2 floor");
   CHECK(decide(true, true, 8).mode == AuthMode::WPA2_WPA3_TRANSITION,
-        "8 chars (the canary's cv-XXXXX) qualifies");
+        "8 chars (the WPA2 floor) qualifies");
 }
 
 static void driver_refusal_reports_wpa2() {
