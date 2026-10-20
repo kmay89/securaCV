@@ -136,10 +136,10 @@ bool build_mesh_status_json_from_view(char* out, size_t cap,
  * (verified TAMPER_ALERT frames from that peer this boot); the web UI
  * does not read it today, but HA and the spec do.
  *
- * The handler builds an array of PeerView from the persisted trusted-peer
- * set, best-effort-joined against the published view's members
- * (peer_views_from_status, F161), which carry the transport table's
- * liveness as the main loop last saw it. `state`
+ * The handler builds an array of PeerView from the published view's members
+ * (peer_views_from_status, F161, F199), which carry each member's liveness
+ * from its last fully verified frame (MemberView, F324) as the main loop
+ * last saw it. `state`
  * is one of the strings the UI styles: "CONNECTED" / "STALE" / "OFFLINE"
  * (a peer with no live match defaults to "OFFLINE"). fingerprint is the
  * 16-hex-char (FINGERPRINT_LEN*2) lowercase fingerprint.

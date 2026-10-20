@@ -133,11 +133,22 @@ struct TrustedPeer {
   int8_t   verified_rssi;
   /* F324: no durable copy of this peer's counter is known to exist. Set by
    * register_trusted_peer() (a pairing, a re-pair from a tombstone, a boot
-   * registration), cleared by restore_replay_counter() (the boot restore
-   * found a saved one) and by the first verified frame, which runs the
-   * first-counter handler (set_first_counter_handler) so the integration
-   * layer saves it. */
+   * registration), cleared by restore_replay_counter() of a non-zero
+   * counter (the boot restore found a saved one; a saved 0 is a member
+   * that was never heard, not a counter) and by the first verified frame,
+   * which runs the first-counter handler (set_first_counter_handler) so
+   * the integration layer saves it. */
   bool     counter_unsaved;
+  /* F324: the first-counter save's second half. The first verified frame
+   * need not be the member's newest (a radio copying its address can land
+   * an older genuine one first), so that save arms one more:
+   * resave_first_counters() runs the handler again FIRST_COUNTER_RESAVE_MS
+   * after `counter_resave_from_ms` (the transport clock at the first save)
+   * if last_counter has moved past `counter_resave_above` (what the first
+   * save wrote) by then, and disarms either way. */
+  bool     counter_resave_armed;
+  uint32_t counter_resave_from_ms;
+  uint64_t counter_resave_above;
   /* Verified TAMPER_ALERT frames from this peer (F11 residual). Counted
    * in dispatch_verified, i.e. only after signature + opera_id + replay
    * checks — the same trust argument as `heard` above. */
@@ -762,8 +773,10 @@ static size_t send_to_members(const uint8_t* frame, size_t len) {
 
 /* F324: the next periodic heartbeat is due HEARTBEAT_INTERVAL_MS after
  * now_ms, give or take HEARTBEAT_JITTER_MS, drawn afresh each time (two
- * random bytes; the modulo bias is a few parts in ten thousand, harmless
- * for spacing). */
+ * random bytes modulo 2 * HEARTBEAT_JITTER_MS + 1: 65536 % 6001 = 5526, so
+ * the lowest 5526 offsets are 11 in 65536 likely and the rest 10 in 65536,
+ * which shifts the mean deadline by about 20 ms of 30 s; harmless for
+ * spacing). */
 static void arm_heartbeat(uint32_t now_ms) {
   uint8_t r[2];
   mesh_crypto::fill_random(r, sizeof(r));
@@ -1176,9 +1189,14 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   /* F324: the first verified frame since the member was registered with no
    * saved counter. The handler persists the replay counters (main.cpp), so
    * a reboot before the next 5-minute save does not reopen everything the
-   * member signed before it (set_first_counter_handler). */
+   * member signed before this frame. This frame need not be the member's
+   * newest, so the save is taken once more FIRST_COUNTER_RESAVE_MS later
+   * (resave_first_counters; set_first_counter_handler). */
   if (peer->counter_unsaved) {
-    peer->counter_unsaved = false;
+    peer->counter_unsaved        = false;
+    peer->counter_resave_armed   = true;   /* this frame may be an old one */
+    peer->counter_resave_from_ms = peer->verified_seen_ms;
+    peer->counter_resave_above   = peer->last_counter;
     if (s_first_counter_cb != nullptr) s_first_counter_cb(peer->sender_fp);
   }
 
@@ -1548,6 +1566,30 @@ static mesh_transport::PeerState verified_state(const TrustedPeer& p) {
   return mesh_transport::PeerState::ACTIVE;
 }
 
+/* F324: the second half of the first-counter save (set_first_counter_handler).
+ * A member's first verified frame since its registration is saved at once,
+ * but it may be one of the member's older genuine frames that a radio
+ * copying its address landed before the member's own. FIRST_COUNTER_RESAVE_MS
+ * later the member's own heartbeats have arrived unless two in a row were
+ * lost, so the handler runs once more then if the counter has moved, and the
+ * save holds the newer counter. Every pass, stopped or not: the age is taken
+ * from the arming instant, so a pass at or after the deadline fires it
+ * however long ago that was, up to 2^32 ms, which the main loop's pass rate
+ * never approaches. One write at most per member per registration; nothing
+ * a sender does arms it again. */
+static void resave_first_counters() {
+  const uint32_t now = mesh_transport::clock_ms();
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    TrustedPeer& p = s_trusted_peers[i];
+    if (!p.in_use || !p.counter_resave_armed) continue;
+    if (now - p.counter_resave_from_ms < FIRST_COUNTER_RESAVE_MS) continue;
+    p.counter_resave_armed = false;
+    if (p.last_counter > p.counter_resave_above && s_first_counter_cb != nullptr) {
+      s_first_counter_cb(p.sender_fp);
+    }
+  }
+}
+
 /* F324: that age is a 32-bit difference, so a member unheard for 2^32 ms
  * (about 49.7 days) would read 0 again: CONNECTED and online for 90 s, every
  * 49.7 days, with nothing received. Every pass, stopped or not, holds each
@@ -1608,6 +1650,7 @@ void process(uint32_t now_ms) {
    * and leaving must work on a disabled mesh. */
   drain_request(now_ms);
   cap_verified_ages();   /* F324: before any view reads them, stopped or not */
+  resave_first_counters();   /* F324: stopped or not, so no deadline goes stale */
   if (!s_running) {
     s_heartbeat_armed = false;   /* F324: re-armed on the first running pass */
     publish_status();   /* F161: a stopped or disabled session's view too */
@@ -1795,6 +1838,9 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
       s_trusted_peers[i].verified_seen_ms = 0;   /* F324 */
       s_trusted_peers[i].verified_rssi    = 0;
       s_trusted_peers[i].counter_unsaved  = true;   /* F324: until a restore or its first frame */
+      s_trusted_peers[i].counter_resave_armed   = false;
+      s_trusted_peers[i].counter_resave_from_ms = 0;
+      s_trusted_peers[i].counter_resave_above   = 0;
       s_trusted_peers[i].in_use           = true;
       return true;
     }
@@ -2084,7 +2130,11 @@ bool restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
     if (!s_trusted_peers[i].in_use) continue;
     if (memcmp(s_trusted_peers[i].sender_fp, fp, mesh_crypto::FINGERPRINT_LEN) == 0) {
-      s_trusted_peers[i].counter_unsaved = false;   /* F324: a saved counter exists */
+      /* F324: a saved counter exists. Not for a saved 0: counters start
+       * at 1, so 0 is the entry get_replay_counters() wrote for a member
+       * registered and not yet heard, and the member's first frame must
+       * still be saved (set_first_counter_handler). */
+      if (counter > 0) s_trusted_peers[i].counter_unsaved = false;
       if (counter > s_trusted_peers[i].last_counter) {
         s_trusted_peers[i].last_counter = counter;
         return true;

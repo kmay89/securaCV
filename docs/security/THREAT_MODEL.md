@@ -1061,27 +1061,50 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         receiver and sends them late holds it `CONNECTED` for as long as its
         stock lasts, after the member is gone too, with no `STALE` between;
         a jammer that only blocks leaves it `STALE` within about 90 s.
-      - *Closed: after a pairing, every frame the member signed under the
-        opera before it.* The new receiver never heard any of them, and
-        held no saved counter for the member until its first frame there.
-        That first counter is now persisted at once (mesh_session's
-        first-counter handler, main.cpp `on_mesh_first_counter`; also after
-        a re-pair from the member's replay tombstone, and after a boot that
-        restored none for it), so a receiver rebooted before its first
-        5-minute save restores it and those frames stay replays. Before
-        that save, a receiver paired on the bench and unplugged within 5
+      - *Narrowed, not closed: after a pairing, every frame the member
+        signed under the opera before it.* The new receiver never heard any
+        of them, and held no saved counter for the member until its first
+        frame there. A receiver paired on the bench and unplugged within 5
         minutes to be mounted restored no counter for the member, and every
         frame the member had signed (since F324, one heartbeat to each other
         member every 30 s) held a gone member `CONNECTED` again: 240
-        recorded frames, 356 minutes (host-probed).
+        recorded frames, 356 minutes (host-probed). Now the counter of the
+        member's first frame that verifies there is persisted at once
+        (mesh_session's first-counter handler, main.cpp
+        `on_mesh_first_counter`; also after a re-pair from the member's
+        replay tombstone, and after a boot that restored no counter for it,
+        a saved 0 included, since a save before the member is heard writes
+        it at 0 and no frame carries 0), and once more
+        `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has moved. The first
+        frame that verifies need not be the member's newest: the counter
+        check is a high-water mark, so any older genuine frame of the
+        member's passes too, and a radio copying the member's address can
+        land one while the receiver holds the member registered and unheard.
+        That window runs from the bind to the member's own first frame:
+        milliseconds normally, up to about one heartbeat interval (33 s)
+        when the first COMPLETE or the paired heartbeat is lost, which a
+        jammer can force. The first save then holds the older counter, and
+        the member's own frames raise it in RAM only. The second save holds
+        the member's own counter unless every frame of the member's own was
+        kept from the receiver through those 66 s. So what stays open is a
+        reboot inside the 66 s, or, when a jammer kept the member's own
+        frames out through them, a reboot before the next 5-minute save:
+        either restores the older counter, and everything the member signed
+        after it is fresh again (host-tested: a reboot before the second
+        save let 132 relayed frames hold a gone member `CONNECTED` at every
+        read; after it, at none). It takes a recording of the member's
+        earlier frames, a radio copying its address at the pairing, and
+        that reboot.
       One frame the receiver hears from the member itself makes every older
       one a replay. Nothing on the receive side tells a late frame from a
       fresh one: the signed header carries the sender's own clock, which no
       receiver checks, and closing this needs a freshness check against
       that clock or a wire change. Host-tested
       (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its
-      reboot, jammer and downtime legs, and
-      `test_a_members_first_counter_is_saved_at_once`); not run on a device.
+      reboot, jammer and downtime legs,
+      `test_a_members_first_counter_is_saved_at_once` and
+      `test_an_older_first_frame_is_saved_over_once_more`); not run on a
+      device.
     - *The replay window of a missed frame, bounded conditionally.* A frame
       of a member's that the receiver missed stays dispatchable from a radio
       copying the member's own address (spec §8.3) only until the receiver
@@ -1094,9 +1117,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
       counter per heartbeat (a reservation write per 1024, about 2.8 a
       day); the 5-minute replay-counter save now writes counters that move,
-      and a member's first counter adds one save per pairing (and one
-      after a boot that restored none for it; both only on flash-encrypted
-      boards). The transport's 100-frame-a-second
+      and a member's first counter adds at most two saves per registration
+      (a pairing, or a boot that restored no counter for the member): its
+      first frame's, and one 66 s later if the counter moved; no frame adds
+      another; only on flash-encrypted boards. The transport's
+      100-frame-a-second
       storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the

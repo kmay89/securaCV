@@ -8949,9 +8949,10 @@ so — see D2 below.)
   wire change; neither is made here or filed under a number. A
   `persist_replay_counters()` before the deliberate restarts
   would narrow the reboot case to unclean ones; not done here, and not
-  filed under a number of its own. *Fixed in review round 2:* pairing
-  persisted no replay counter, so a receiver rebooted before its first
-  5-minute save after a pairing (paired on the bench, unplugged to mount)
+  filed under a number of its own. *Narrowed in review rounds 2 and 3, not
+  closed:* pairing persisted no replay counter, so a receiver rebooted
+  before its first 5-minute save after a pairing (paired on the bench,
+  unplugged to mount)
   restored none for the new member, and every frame the member had signed
   under the opera was fresh again (probed: 240 recorded frames held it
   `CONNECTED` 356 minutes). mesh_session now runs a first-counter handler
@@ -8959,7 +8960,34 @@ so — see D2 below.)
   check since it was registered with no saved counter (a pairing, a re-pair
   from its replay tombstone, a boot that restored none for it), and
   main.cpp's `on_mesh_first_counter` persists the replay counters then; a
-  counter the boot restored marks it saved, so a boot costs no write. One addition the
+  counter the boot restored marks it saved (a non-zero one since round 3,
+  below), so a boot costs no write. *Review round 3 (2026-10-20)* found
+  that save holding less than it claimed, twice. The first frame that verifies need not be the member's
+  newest: the counter check is a high-water mark, so a radio copying the
+  member's address that lands one of the member's older genuine frames
+  while the receiver holds it registered and unheard (milliseconds after
+  the bind normally, up to about 33 s when the first COMPLETE or the paired
+  heartbeat is lost, which a jammer can force) got that older counter
+  saved, and a reboot before the next 5-minute save reopened everything
+  after it (probed: counter 1 saved, 119 relayed frames held the gone
+  member `CONNECTED` at 119 of 119 reads). The session now runs the
+  handler once more `FIRST_COUNTER_RESAVE_MS` (2 × (30 + 3) s = 66 s) after
+  the first save if the counter has moved (`resave_first_counters`, every
+  pass, stopped or not), so the save holds the member's own counter unless
+  every frame of the member's own was kept out through those 66 s; at most
+  two saves per registration, and no frame adds one. Still open, and stated
+  so in the threat model and spec §8.3: a reboot inside the 66 s, or, when
+  a jammer kept the member's own frames out through them, before the next
+  5-minute save. Persisting on every advancing frame in a window after the
+  registration was rejected: a recorder replaying its stock in counter
+  order would drive one NVS write per frame. And a save taken while a
+  member was registered and unheard (another member's first counter, a
+  leave, the 5-minute save) wrote it at 0, which `restore_replay_counter()`
+  counted as a saved counter, so the member's first frame after that boot
+  saved nothing (probed: the handler fired 0 times, then 120 relayed frames
+  held it `CONNECTED` at 120 of 120 reads); a restored 0 no longer marks it
+  saved, as no frame carries counter 0. Neither is filed under a new
+  number. One addition the
   code needed beyond the decision: the age is a 32-bit difference, so a
   member gone 2^32 ms (about 49.7 days) would read `CONNECTED` again for
   90 s (the transport entry did the same at head); every pass, stopped or
@@ -8976,7 +9004,7 @@ so — see D2 below.)
   every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
   nvs), one sign per 30 s per sender and at most 8 heartbeat verifies per
   30 s per receiver (one per bound member; `MAX_TRUSTED_PEERS` is 8), and
-  one replay-counter save per pairing. No wire change. The RF pattern is
+  at most two replay-counter saves per pairing. No wire change. The RF pattern is
   marginal: the only env with
   the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
   released image builds the mesh, so no OTA'd device changes. The owner
@@ -9020,7 +9048,12 @@ so — see D2 below.)
   passed every suite); and the documented 30 s ± 3 s pinned at compile time,
   with `static_assert(HEARTBEAT_JITTER_MS > 0)` in `mesh_session.h` (a
   jitter of 0 and a 40 s interval passed every suite, since every check
-  derives its bounds from the constants). The other 12 mesh suites are
+  derives its bounds from the constants). Review round 3 (2026-10-20): the
+  first-counter case's saved-0 leg (fails on the round-2 restore) and
+  `test_an_older_first_frame_is_saved_over_once_more` (fails without the
+  second save; pins a reboot before it as still open, the second save's
+  exact deadline, once only, nothing when the counter has not moved, a
+  stopped session, and a member dropped first). The other 12 mesh suites are
   unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
   refused). The `[env:full]` compile is CI's; host-tested, not run on a
   device. The on-air spacing and the STALE/OFFLINE transitions are a U1

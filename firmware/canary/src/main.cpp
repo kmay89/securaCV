@@ -530,12 +530,17 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
 
 /* A member's first verified frame since it was registered with no saved
  * counter (F324): a member just paired, one re-paired from its replay
- * tombstone, or one no save had caught before a reboot. Persist the counters
- * now rather than at the next 5-minute save, so a reboot in between cannot
- * make every frame it signed before this one (one heartbeat to each other
- * member every 30 s) fresh again. Once per registration, and not after a
- * boot that restored the member's counter; FE-gated like every replay_ctrs
- * write. Runs on the main loop. */
+ * tombstone, or one no save had caught before a reboot (or caught at 0,
+ * before it was heard). Persist the counters now rather than at the next
+ * 5-minute save, so a reboot in between cannot make every frame it signed
+ * before this one (one heartbeat to each other member every 30 s) fresh
+ * again. That frame need not be the member's newest (a radio copying its
+ * address can land an older one first), so the session calls this once
+ * more FIRST_COUNTER_RESAVE_MS (66 s) later if the counter has moved; a
+ * reboot inside those 66 s still restores the older counter. At most twice
+ * per registration, and not after a boot that restored a non-zero counter
+ * for the member; FE-gated like every replay_ctrs write. Runs on the main
+ * loop. */
 static void on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   (void)fp;
   persist_replay_counters();
@@ -1727,7 +1732,8 @@ void setup() {
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
     /* F33 part 6: the revocation deny-list. */
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
-    /* F324: a member's first counter is persisted at once. */
+    /* F324: a member's first counter is persisted at once, and once more
+     * 66 s later if it has moved. */
     mesh_session::set_first_counter_handler(&on_mesh_first_counter);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);

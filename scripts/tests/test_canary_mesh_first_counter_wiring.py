@@ -3,9 +3,11 @@
 lands (sweep F324) — a pin on firmware/canary/src/main.cpp.
 
 mesh_session runs the first-counter handler on a member's first frame that
-passes every check since it was registered with no saved counter: a member
+passes every check since it was registered with no saved counter (a member
 just paired, one re-paired from its replay tombstone, or one no save had
-caught before a reboot. main.cpp's replay counters are
+caught before a reboot, or caught at 0), and once more 66 s later if the
+counter has moved, since that first frame need not be the member's newest.
+main.cpp's replay counters are
 otherwise saved every 5 minutes, so a receiver rebooted before that save
 restored no counter for a member it had just paired with, and every frame
 the member had signed under the opera (since F324, one heartbeat to each
@@ -14,8 +16,9 @@ other member every 30 s) verified again and stamped it live: host-probed,
 CONNECTED for 356 minutes.
 
 The session half is host-tested (test_mesh_session.cpp:
-test_a_members_first_counter_is_saved_at_once, which runs a stand-in for this
-wiring). main.cpp itself is compiled only by CI's [env:full] build and is run
+test_a_members_first_counter_is_saved_at_once and
+test_an_older_first_frame_is_saved_over_once_more, which run a stand-in for
+this wiring). main.cpp itself is compiled only by CI's [env:full] build and is run
 by nothing on a host, so these cases hold the wiring the stand-in mirrors:
 
 * on_mesh_first_counter is exactly `{ (void)fp; persist_replay_counters(); }`;

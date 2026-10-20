@@ -1300,8 +1300,11 @@ mesh setup, after the opera and its members are restored (the HTTP server
 is up before the first loop pass). Before any of these a read answers the
 state before `init()`. The view holds the pairing code only while
 `GET /api/mesh` shows it, and each member by fingerprint with its alerts
-and, once heard from its binding, its transport entry's state, RSSI and
-last-seen time; no key. The two routes read a whole copy and nothing else
+and, once heard from its binding and while that binding is in the
+transport table, the state, RSSI and arrival time of its last fully
+verified frame (`MemberView`; F324, §7.2: until F324 the transport entry's,
+which any frame from the address refreshed); no key. The two routes read a
+whole copy and nothing else
 of the session's, so they never wait for the main loop. Since F199 the
 peer list's rows are the view's members, in the view's order, and
 `last_seen_sec` is counted at the read; the route reads nothing from NVS.
@@ -1724,15 +1727,28 @@ shortest spacing (more if the member sent other frames in it), about 18
 minutes on their own; a receiver that reboots more often than every 5
 minutes never advances its saved counter, so the same stock serves on
 every boot. After a pairing the new receiver has heard nothing the member
-signed before it; the PlatformIO tree persists a member's first counter as
-soon as its first frame lands (the session's first-counter handler), so a
-reboot before the next 5-minute save does not reopen those. One frame the
+signed before it. The PlatformIO tree persists the counter of a member's
+first frame that verifies as soon as it lands (the session's first-counter
+handler; also after a boot that restored no counter for the member, a saved
+0 included), and once more `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has
+moved. When that first frame is the member's own, as it normally is, a
+reboot at any point after it does not reopen those. This narrows the case
+rather than closing it: the first frame that verifies need not be the
+member's newest. A radio copying the member's address can land one of the
+member's older genuine frames before the member's own first frame (the
+window is milliseconds after the bind normally, up to about one heartbeat
+interval when the first COMPLETE or the paired heartbeat is lost, which a
+jammer can force), and the first save then holds that older counter; a
+reboot before the second save, or before the next 5-minute save when a
+jammer kept every frame of the member's own out through the 66 s, restores
+it and reopens everything the member signed after it. One frame the
 receiver hears from the member itself makes every older one a replay.
 Nothing in the receive path tells a late frame from a fresh one (the signed
 header carries the sender's own clock, which no receiver checks); closing
 it needs a freshness check against that clock or a wire change. Host-tested
 (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its reboot,
-jammer and downtime legs, and `test_a_members_first_counter_is_saved_at_once`).
+jammer and downtime legs, `test_a_members_first_counter_is_saved_at_once`
+and `test_an_older_first_frame_is_saved_over_once_more`).
 
 So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
@@ -2209,9 +2225,12 @@ An implementation conforms to this specification if it:
   or, after a reboot, one heard since its last replay-counter save) still
   refreshes it when it arrives late, about 90 s per frame, with no fixed
   bound (a downtime alone holds a gone member `PEER_CONNECTED` about three
-  times as long as it lasted); and a member's first counter is persisted as
-  soon as its first frame lands, so a reboot before the next 5-minute save
-  does not reopen what it signed before a pairing (§8.3). A lost first COMPLETE heals at
+  times as long as it lasted); and the counter of a member's first frame
+  that verifies is persisted as soon as it lands and once more 66 s later
+  if it has moved, so a reboot once the member's own counter is saved does
+  not reopen what the member signed before a pairing; an older genuine frame of the member's landed
+  first by a radio copying its address, then a reboot inside the 66 s,
+  still does (§8.3). A lost first COMPLETE heals at
   the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
   station joined its router costs at most one interval after it joins
   (§7.1), and the §8.3 replay window of a missed frame closes at the

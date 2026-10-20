@@ -5708,12 +5708,14 @@ static esp_err_t handle_scout_unpair(httpd_req_t* req) {
 //
 // MAC↔fingerprint join: the persisted trusted-peer set keys on Ed25519
 // pubkey (→ fingerprint), while the live transport peer table keys on
-// MAC. mesh_session bridges them — each member's row in the view carries
-// its bound radio MAC's transport entry once a FULLY VERIFIED
-// opera-authenticated frame has arrived from it (a peer's frame from any
-// other address is not taken, F70), so per-peer state / last_seen / rssi
-// below are the transport table's real numbers, as of the main loop's last
-// pass, once a peer has spoken this boot. A peer that has
+// MAC. mesh_session bridges them — each member's row in the view is live
+// once a FULLY VERIFIED opera-authenticated frame has arrived from its bound
+// radio MAC (a peer's frame from any other address is not taken, F70) and
+// while that MAC is in the transport table, and per-peer state / last_seen /
+// rssi below are those of the member's last fully verified frame, as of the
+// main loop's last pass (MemberView, F324). Until F324 they were the
+// transport entry's, which any frame from the MAC refreshes before anything
+// is verified. A peer that has
 // not yet sent a verified frame reports OFFLINE/never — best-effort by
 // design, documented in spec/canary_mesh_network_v0.md §8. (The table
 // itself is filled by mesh_session from each peer's persisted radio MAC —
@@ -5760,8 +5762,9 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   // pubkeys needed flash encryption, so a dev board answered 500
   // load_failed, and an NVS write that failed left the two disagreeing
   // until a reboot). Each member's row carries its alerts and, once heard
-  // from its binding, the transport table's state, RSSI and last-seen time
-  // as that pass saw them (see section header + spec §8). The rows and the
+  // from its binding and while that binding is in the transport table, the
+  // state, RSSI and arrival time of its last fully verified frame as that
+  // pass saw them (MemberView, F324; see section header + spec §8). The rows and the
   // uptime (last_seen_sec is counted here, at the read) are
   // mesh_api::peer_views_from_status.
   mesh_session::StatusView view;

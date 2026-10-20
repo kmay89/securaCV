@@ -2414,11 +2414,21 @@
   downtime's frames, which need no jammer. A receiver rebooted within 5
   minutes of a pairing also restored no counter for the new member, so
   everything the member had signed before the pairing was fresh again (240
-  recorded frames, 356 minutes, host-probed); a member's first counter is
-  now persisted as soon as its first frame lands (the session's
-  first-counter handler, main.cpp `on_mesh_first_counter`). When a fix adds
-  a periodic send, count what the send leaves on the air for a recorder,
-  not only what it tells the receiver.
+  recorded frames, 356 minutes, host-probed); the counter of a member's
+  first frame that verifies is now persisted as soon as it lands (the
+  session's first-counter handler, main.cpp `on_mesh_first_counter`). Round
+  3 found two holes in that save. The first frame that verifies need not be
+  the member's newest (the counter check is a high-water mark, so an older
+  genuine frame a radio copying the member's address lands first passes,
+  and the save held its old counter), so the save is now taken once more
+  66 s later if the counter has moved, and a reboot inside those 66 s is
+  the residual the docs state. And a save taken while the member was
+  registered and unheard wrote it at 0, which the boot restore counted as a
+  saved counter, so the member's first frame after that boot saved nothing;
+  a saved 0 no longer counts (no frame carries 0). When a fix adds a
+  periodic send, count what the send leaves on the air for a recorder, not
+  only what it tells the receiver; and when a save is meant to hold "the
+  newest", ask what makes the value it saves the newest.
 - **Regression check:** `test_mesh_session`:
   `test_liveness_counts_only_verified_frames` (junk and a replay refresh
   nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
@@ -2442,7 +2452,11 @@
   frame under another opera (a stamp in either check's failure branch
   passed every suite), and the documented 30 s ± 3 s pinned at compile time
   (a jitter of 0 or a 40 s interval passed every check, because every check
-  derives its bounds from the constants it tests). Bounding each gap is not
+  derives its bounds from the constants it tests). Review round 3:
+  the first-counter case's saved-0 leg (fails on a restore that marks a
+  saved 0 saved) and `test_an_older_first_frame_is_saved_over_once_more`
+  (an older frame landed first: fails without the second save, and pins a
+  reboot before it as still open). Bounding each gap is not
   testing a jitter, a check derived from a constant cannot catch a change to
   it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
   timer makes false were rewritten to admit only member heartbeats checked

@@ -414,6 +414,13 @@ static_assert(2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS) < mesh_transpor
 static_assert(HEARTBEAT_JITTER_MS < HEARTBEAT_INTERVAL_MS, "the jittered deadline stays ahead");
 static_assert(HEARTBEAT_JITTER_MS > 0, "a fixed deadline lets two members' timers lock into step");
 
+/* How long after a member's first counter is saved the session saves it once
+ * more (set_first_counter_handler, F324): two of the longest heartbeat
+ * intervals, so the member's own heartbeats have reached this device by then
+ * unless two in a row were lost. Below PEER_STALE_AFTER_MS by the first
+ * assert above, and so well inside main.cpp's 5-minute replay save. */
+constexpr uint32_t FIRST_COUNTER_RESAVE_MS = 2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS);
+
 typedef bool (*counter_reserve_fn)(uint64_t high_water);
 
 void     set_counter_reserve_handler(counter_reserve_fn fn);
@@ -705,24 +712,40 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
 /* Restore a counter from NVS, after the trusted peers are registered. A
  * trusted fingerprint's last_counter is raised to it; any other
  * fingerprint becomes (or raises) a tombstone. Returns true if a counter
- * or tombstone was raised or created. */
+ * or tombstone was raised or created. A non-zero counter for a trusted
+ * fingerprint also marks that member's counter saved (first_counter_fn
+ * below); a saved 0 does not, as no frame carries counter 0: it is what
+ * get_replay_counters() writes for a member registered and not yet heard. */
 bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                               uint64_t counter);
 
-/* A member's first counter (F324). Runs on the process() task, from the
- * receive path, on a member's first frame that passes every check (its
- * binding, the signature, the opera_id, the counter) since it was
- * registered with no saved counter: a member just paired, one re-paired
- * from its replay tombstone, or one whose counter the boot restore did not
- * bring back because no save had caught it. The integration layer persists
- * the replay counters here (main.cpp's persist_replay_counters), so a
- * reboot before the 5-minute save does not make every frame the member
- * signed before this one fresh again: since F324 a member heartbeats its
+/* A member's first counter (F324). Runs on the process() task, twice per
+ * registration at most:
+ *   1. from the receive path, on the member's first frame that passes every
+ *      check (its binding, the signature, the opera_id, the counter) since
+ *      it was registered with no saved counter: a member just paired, one
+ *      re-paired from its replay tombstone, or one the boot restore brought
+ *      back no counter for (none saved, or a saved 0);
+ *   2. from process(), FIRST_COUNTER_RESAVE_MS after (1), if the member's
+ *      counter has moved since (1).
+ * The integration layer persists the replay counters here (main.cpp's
+ * persist_replay_counters) rather than at the next 5-minute save, so a
+ * reboot in between does not make the frames the member signed under the
+ * opera before the pairing fresh again: since F324 a member heartbeats its
  * other members every 30 s, and each of those frames would otherwise verify
- * after such a reboot and stamp the member live. At most once per
- * registration. restore_replay_counter() of a trusted fingerprint marks its
- * counter saved, so a boot that restored one costs no write. The handler
- * must not change the trusted table. */
+ * after such a reboot and stamp the member live.
+ * (1) saves the counter of the first frame that verifies, which need not be
+ * the member's newest. A radio copying the member's address can deliver one
+ * of the member's older genuine frames before the member's own first frame
+ * lands (from the bind to that frame is milliseconds normally, up to about
+ * one heartbeat interval when the first COMPLETE or the paired heartbeat is
+ * lost, which a jammer can force), and (1) then saves that older counter.
+ * (2) saves the member's own newer one, so what stays open is a reboot
+ * before (2), or a jammer that keeps every frame of the member's own from
+ * this device until (2), after which the 5-minute save is the next to catch
+ * up. No frame adds a save. A boot that restored a non-zero counter for the
+ * member runs neither, so it costs no write. The handler must not change
+ * the trusted table. */
 typedef void (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
 
 void set_first_counter_handler(first_counter_fn fn);
@@ -1156,12 +1179,12 @@ void abandon_request();
  * GET /api/mesh and /api/mesh/peers run on the httpd task, and what they
  * show (the enable switch, the opera's id and name, the pairing state, code,
  * number, outcome and reason, the member table and each member's liveness
- * from the transport table) is the main loop's, written by process(), the
- * receive path it runs and the REST requests it executes. Until F161 the
- * handlers read it in place, without a lock: each 32-bit value whole, but
- * one body could mix two passes (a pairing number with the outcome of a
- * pairing started between the reads, a name read mid-rename, a member's MAC
- * half rewritten). canary-wap's routes had the same gap (F110).
+ * from its last fully verified frame, F324) is the main loop's, written by
+ * process(), the receive path it runs and the REST requests it executes.
+ * Until F161 the handlers read it in place, without a lock: each 32-bit
+ * value whole, but one body could mix two passes (a pairing number with the
+ * outcome of a pairing started between the reads, a name read mid-rename, a
+ * member's MAC half rewritten). canary-wap's routes had the same gap (F110).
  *
  * Now the main loop builds a whole StatusView and publishes it
  * (loop_snapshot.h's Value<T>, the header canary-wap's routes read through

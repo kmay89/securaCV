@@ -69,11 +69,19 @@
   5-minute replay-counter save (at most 12 heartbeats, about 18 minutes,
   more if the member sent other frames in it), and a jammer that sends late
   what it blocked holds it for as long as its stock lasts
-  (`THREAT_MODEL.md`). A member's first counter is now persisted as soon as
-  its first frame lands, so a receiver rebooted within 5 minutes of a
-  pairing restores it, and the frames the member signed before the pairing
-  stay replays (before, it restored none, and 240 recorded frames held a
-  gone member `CONNECTED` 356 minutes, host-probed). An age past 2^31 ms is
+  (`THREAT_MODEL.md`). The counter of a member's first frame that verifies
+  is now persisted as soon as it lands, and once more 66 s later if it has
+  moved, so a receiver rebooted within 5 minutes of a pairing restores a
+  counter for the member, and the frames the member signed before the
+  pairing stay replays (before, it restored none, and 240 recorded frames
+  held a gone member `CONNECTED` 356 minutes, host-probed); a save taken
+  before the member was heard wrote it at 0, which no longer counts as a
+  saved counter. That narrows the pairing case rather than closing it: a
+  radio copying the member's address can land one of the member's older
+  genuine frames before the member's own first frame (milliseconds after
+  the bind normally, up to about 33 s when the first `PAIR_COMPLETE` or the
+  paired heartbeat is lost), the first save then holds that older counter,
+  and a reboot inside the 66 s restores it. An age past 2^31 ms is
   held there, so a member gone longer than the 32-bit clock can count stays
   `OFFLINE` instead of reading `CONNECTED` again after about 49.7 days. A joiner that lost the first
   `PAIR_COMPLETE` now hears the initiator at the initiator's next heartbeat,
@@ -81,9 +89,9 @@
   interval after the station joins its router. Cost, from code: one
   signature per 30 s per sender, at most 8 heartbeat verifies per 30 s per
   receiver (one per bound member), one outbound counter per heartbeat (a
-  reservation write about 2.8 times a day), and one replay-counter save per
-  pairing. No wire change: older PlatformIO firmware verifies the heartbeat
-  and drops it. Only `[env:full]` builds the
+  reservation write about 2.8 times a day), and at most two replay-counter
+  saves per pairing. No wire change: older PlatformIO firmware verifies the
+  heartbeat and drops it. Only `[env:full]` builds the
   mesh; `[env:release]` and every env that extends it set
   `FEATURE_MESH_NETWORK=0`, so no OTA'd device changes. **Host-tested**
   (`test_mesh_session`: the five silence assertions a timer makes false now
@@ -95,7 +103,9 @@
   age cap on a stopped pass, now a leg of the wrap case; one that pins the
   figures above for a frame the receiver did not hear, with a reboot, a
   jammer and an hour's downtime from a real sending session; one for the
-  first-counter save, failing without it; a flipped signature byte and a
+  first-counter save, failing without it or when a saved 0 counts as
+  saved; one for its second save, failing without it, with the reboot
+  before it pinned as still open; a flipped signature byte and a
   frame under another opera in the liveness case; the documented 30 s ± 3 s
   pinned at compile time; the other 12 mesh suites unchanged;
   `check_canary_mesh_status.py`; `test_canary_mesh_first_counter_wiring.py`

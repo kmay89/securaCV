@@ -1210,10 +1210,16 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     or no longer remembers, and a recorder that sends those keeps the member
     CONNECTED about 90 s each (the threat model's documented residual, not
     this row's). Last, on flash-encrypted boards: erase both boards' NVS
-    (so neither holds the other's key or a replay tombstone), pair them,
-    and reboot one within 5 minutes of the pairing; its boot log reads
-    `[OK] Restored 1/1 replay counters from NVS` (the first-counter save;
-    before review round 2 a reboot that soon restored none and printed no
+    (so neither holds the other's key or a replay tombstone), power both
+    up, pair them within the first 4 minutes of the rebooting board's
+    uptime, and reboot it within a few seconds of the pairing confirmation;
+    its boot log reads `[OK] Restored 1/1 replay counters from NVS` (the
+    first-counter save). The periodic replay save runs every 5 minutes of
+    uptime (`main.cpp`'s timer starts at boot, not at the pairing), so a
+    reboot minutes after a pairing can follow a periodic save and print the
+    same line on firmware without the first-counter save; only a pairing
+    and reboot both inside the board's first 300 s of uptime tell them
+    apart (before review round 2 that reboot restored none and printed no
     such line). Before F324: CONNECTING, the other OFFLINE with
     `last_seen_sec` about 600 after 10 idle minutes, and nothing on the
     sniffer; with the spoofing ESP32, CONNECTED indefinitely.
