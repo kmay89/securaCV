@@ -41,6 +41,10 @@ struct httpd_req {
   size_t recv_calls = 0;
   size_t recv_asked_max = 0;   /* the largest `len` any call asked for */
   std::map<std::string, std::string> req_hdrs;
+  /* How many times the handler read each header's value: a bearer compare
+   * reads the Authorization header's once (sweep F339: the move gate
+   * compares its bearer once per request). */
+  std::map<std::string, int> hdr_value_reads;
   std::string status = "200 OK";
   std::string type;
   std::map<std::string, std::string> resp_hdrs;
@@ -87,6 +91,7 @@ inline size_t httpd_req_get_hdr_value_len(httpd_req_t* r, const char* f) {
   return it == r->req_hdrs.end() ? 0 : it->second.size();
 }
 inline esp_err_t httpd_req_get_hdr_value_str(httpd_req_t* r, const char* f, char* buf, size_t len) {
+  ++r->hdr_value_reads[f];
   auto it = r->req_hdrs.find(f);
   if (it == r->req_hdrs.end() || len == 0) return ESP_ERR_NOT_FOUND;
   strncpy(buf, it->second.c_str(), len - 1);

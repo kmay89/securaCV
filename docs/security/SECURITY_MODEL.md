@@ -369,7 +369,20 @@ deliberate denial from the LAN: a landing session can still reboot the unit
 spoofing, httpd's connection purge and a cross-site `?token=` image that
 holds the visiting browser's own address stay open
 ([`magic_pairing.md`](../design/magic_pairing.md) §3.7). Host-tested; not
-run on a device. The
+run on a device. Every bearer compare on the WAP counts toward that
+per-address lockout, and none is compared while its address is held (sweep
+F339): the receipt and the pairing QR; the admin routes; the CSI routes, the
+MQTT bridge's routes and its broker move; the QR scan's admin fallback; and
+the camera's and the vault's `?token=` links, which until F339 never read
+the lockout at all (a right `?token=` was served inside a backoff and
+cleared it). A held address gets `429` with `Retry-After` on the CSI and MQTT
+routes and those links; the QR scan's status and stop keep their `403`. The
+route check (`check_route_security.py`) fails any file of the sketch but
+`api_auth.h` that calls a raw compare, so the passkey field F346 plans for
+`GET /api/bluetooth` can only compare through the same grant. The pair token's
+compares stay outside it on purpose: the landing page hands that token to
+any caller, and the CSI dashboard and `/companion` ride it or the cookie and
+send no bearer. Host-tested; not run on a device. The
 displays treat the LAN as their trust boundary by design — no bearer
 credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller

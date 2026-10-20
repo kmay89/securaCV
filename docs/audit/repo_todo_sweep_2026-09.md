@@ -1702,7 +1702,7 @@ so — see D2 below.)
   bearer-only grant. Review whether the flagship needs one (it has no session
   cookie today, so F328's any-session class has no counterpart), and port what
   applies. From code. Found by the F289 follow-up (#1832).
-- [ ] **F339 [code] canary-wap: other bearer compares stay silent beside the
+- [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s
   `authorized()` (the same) and `handle_config_post()`'s bearer for #1835's
@@ -1714,6 +1714,49 @@ so — see D2 below.)
   is consistency and defense in depth, not an open hole. One rule would give
   `api_auth_check_optional()`'s bearer half `api_auth_bearer_grant()`'s
   accounting, with host cases. From code. Found by the F289 follow-up (#1832).
+  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice): every bearer compare
+  is accounted.*
+  What changed:
+  - `api_auth_check_optional()` is the cookie or `api_auth_bearer_grant()`.
+    `CSI_AUTH_OR_RETURN`, `csi_mqtt.cpp`'s `authorized()` and
+    `qr_scan_request_allowed()` therefore count a wrong bearer as one strike
+    against its address, and compare none while that address is held.
+  - The CSI and `csi_mqtt` routes answer such a bearer `429` with
+    `Retry-After`. The grant reports the hold through an optional `held`
+    out-parameter, with no second lockout read. The QR scan's status and
+    stop keep their `403`.
+  - `handle_config_post()` compares its bearer once per request (it compared
+    it twice: `authorized()`, then the move gate's own).
+  - F346's planned passkey field on `GET /api/bluetooth` can only compare
+    through the same grant: the rule below has no allowlist.
+  Found beyond the entry: `api_auth_check_or_query()` (the camera peek, the
+  vault download) never read the lockout.
+  - A right `?token=` was served inside a backoff and cleared it.
+  - A wrong one was recorded during the backoff (before F343's saturating
+    count, 250 of them wrapped the count and freed the backoff).
+  It now runs the same grant over the header or the `?token=`: `429` while
+  the address is held, one strike per request.
+  `check_route_security.py` now fails any sketch file other than `api_auth.h`
+  that calls `api_auth_bearer_valid()` or `constant_time_compare()`. It has no
+  allowlist. Its `MODULE_TOKEN_COPIES` reader takes a gate's token argument
+  followed by `)` or by the grant's `, &<identifier>)`.
+  The pair token's compares stay outside on purpose (the landing page hands
+  that token to any caller). The token's about 184 bits remain the real
+  bound, so this is consistency and a closed bypass, not a credential path.
+  The posture is F343's per-address backoff, unchanged.
+  Host-tested in `test_receipt_grant.cpp` (1514 checks; run against the code
+  before the change, its new three-argument calls adapted onto the old
+  functions, 31 of them fail: `CSI_AUTH_OR_RETURN` and
+  `qr_scan_request_allowed()` cut from the sources, the `?token=` inside a
+  backoff, `api_auth_check_optional()` striking), `test_mqtt_reinit.cpp`
+  (three new or rewritten tests, each failing on the code before: a held
+  address's right bearer moved the broker, and the move gate read the bearer
+  twice) and `test_docs_claims.py`; the route check's self-test plants the
+  raw compare in `csi_mqtt.cpp` and in `bluetooth_api.h`, and the tree before
+  the change fails it at `csi_mqtt.cpp:2359`. The ESP32 compile is CI's; not
+  run on a device (U1: the "every bearer compare holds its own address" row
+  in `hardware_verification_checklist.md`).
 - [ ] **F340 [code] The flagship's provisioning receipt compares its bearer
   silently.** `firmware/canary`'s `GET /api/provisioning-receipt` takes
   `bearer_present_and_valid()`, which goes through `auth_check_optional()` and

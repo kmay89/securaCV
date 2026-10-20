@@ -76,8 +76,26 @@
 //     each file had its own `static` copy); no backoff outlives the 60 s
 //     window (the sixth strike's Retry-After is 61, where it was 65, and its
 //     hold ends at 60 s); a backoff armed just before millis() wraps holds
-//     across the wrap; 256 strikes saturate the count instead of wrapping it
-//     to a clean 0; two strikes a minute apart are two first strikes;
+//     across the wrap; 256 strikes, each once the backoff before it ran out,
+//     saturate the count instead of wrapping it to a clean 0; two strikes a
+//     minute apart are two first strikes;
+//   - every bearer compare is accounted (sweep F339; before, these compared
+//     a bearer and recorded nothing): api_auth_check_optional() is the cookie
+//     or api_auth_bearer_grant(), so a wrong bearer through it is one strike
+//     for its address and, inside that address's backoff, the right one is
+//     not compared and reports `held`; the CSI routes' gate
+//     (CSI_AUTH_OR_RETURN, cut from csi_integration.cpp) strikes a wrong
+//     bearer and answers a held one 429 with Retry-After, B served
+//     throughout; the QR scan's status gate (qr_scan_request_allowed(), cut
+//     from the sketch) strikes a wrong admin bearer, refuses a held one, and
+//     still takes the wizard's pair token from a held address;
+//     api_auth_check_or_query() (the peek and vault ?token=) runs one grant
+//     over the header or the ?token=: inside a backoff a right ?token= is 429
+//     and clears nothing, a wrong one records nothing, 250 of them leave A
+//     held at its own count, B's right ?token= is served, and a wrong header
+//     beside a wrong ?token= is one strike (before: the right ?token= was
+//     served inside the backoff and cleared it, the wrong ones were recorded
+//     during it);
 //   - api_auth.h's contract: api_auth_check() and api_auth_check_optional()
 //     still take the cookie (the dashboard's routes), api_auth_bearer_valid()
 //     and api_auth_check_bearer() never do, and the cookie path never clears
@@ -121,6 +139,9 @@
 #endif
 #ifndef CANARY_WAP_INO
 #error "CANARY_WAP_INO must name canary_wap.ino (the Makefile passes it)"
+#endif
+#ifndef RECEIPT_GRANT_CSI_INC
+#error "RECEIPT_GRANT_CSI_INC must name the cut of csi_integration.cpp's CSI_AUTH_OR_RETURN (the Makefile passes it)"
 #endif
 
 // ── the test's own bookkeeping ───────────────────────────────────────────────
@@ -198,6 +219,13 @@ void log_health(LogLevel, LogCategory, const char* message, const char* detail =
 }
 
 namespace csi_integration {
+// The wizard's pair token, as qr_scan_request_allowed() asks for it: one live
+// token, 64 hex characters, or none.
+constexpr size_t PAIR_TOKEN_HEX_LEN = 64;
+static std::string g_pair_token;
+bool pair_token_valid(const char* hex) {
+  return hex != nullptr && !g_pair_token.empty() && g_pair_token == hex;
+}
 constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
 static int g_sessions_issued = 0;
 bool session_issue(char* hex_out, size_t out_cap) {
@@ -255,6 +283,18 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
 // (api_auth_second_tu.cpp, linked into this binary).
 bool second_tu_check_bearer(httpd_req_t* r, const char* t);
 
+// ── the CSI routes' gate, cut verbatim out of csi_integration.cpp ───────────
+// CSI_AUTH_OR_RETURN (sweep F339) over the module's copy of the token, as
+// csi_integration::init() keeps it, and a route behind it the way every
+// /api/csi/* handler starts.
+static const char* g_api_token = nullptr;
+#include RECEIPT_GRANT_CSI_INC
+static esp_err_t csi_route(httpd_req_t* req) {
+  CSI_AUTH_OR_RETURN(req);
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 namespace {
 
 const char* const kToken = "cv_7kX9mN2pQ4rS6tU8vW0xY1zA3bC5dE7f";   // 35 chars, "cv_" + 32
@@ -310,6 +350,8 @@ void reset_device() {
   g_health_line_ms = 0;
   g_live_session = "";
   g_cookie_checks = 0;
+  csi_integration::g_pair_token.clear();
+  g_api_token = kToken;
   clear_lockout();
   stub_grant::now_ms = 100000;
 }
@@ -1087,32 +1129,33 @@ void test_a_backoff_armed_before_the_wrap_holds() {
   CHECK(qr(later) == 1);
 }
 
-// The count saturates. A wrong bearer arms a backoff, then 255 wrong ?token=
-// inside it (api_auth_check_or_query records each without asking the lockout
-// first; F339 is that gate's own item): 256 strikes, and A is still held.
-// Before, the uint8_t count wrapped to a clean 0 and A was let through.
+// The count saturates. 256 wrong ?token= from A, each sent once the backoff
+// the one before it armed has run out (inside a backoff none is compared or
+// recorded, since F339), are 256 strikes, and A is still held. Before F343
+// the uint8_t count wrapped to a clean 0 and A was let through.
 void test_wrong_query_tokens_never_wrap_the_count() {
   reset_device();
-  Req first;
-  first.bearer(kWrong);
-  CHECK(qr(first) == 0);
-  for (int i = 0; i < 255; ++i) {
+  for (int i = 0; i < 256; ++i) {
+    wait_out(kHostA);
     Req q;
     q.query(std::string("token=") + kWrong);
     CHECK(!api_auth_check_or_query(&q.r, kToken));
+    CHECK(q.r.status == "401 Unauthorized");
   }
   CHECK(strikes(kHostA) == canary::net::auth_backoff::MAX_COUNT);
+  CHECK(canary::net::auth_backoff::remaining_ms(g_auth_table, kHostA, millis()) ==
+        canary::net::auth_backoff::MAX_MS);
   Req right;
   right.bearer(kToken);
   CHECK(qr(right) == 0);
   CHECK_MSG(right.r.status == "429 Too Many Requests", "256 strikes wrapped the count: " + right.r.status);
 }
 
-// A count is cleared 60 s after its last strike even when nobody asked the
-// lockout in between (api_auth_check_or_query records without asking): two
-// wrong ?token= 61 s apart are two first strikes, so the right token is
-// served 2 s after the second. Before, the second armed 4 s.
-void test_the_window_clears_a_count_nobody_asked_about() {
+// A count is cleared 60 s after its last strike: two wrong ?token= 61 s apart
+// are two first strikes, so the right token is served 2 s after the second.
+// Before, the second armed 4 s. (That the window clears a count no lockout
+// read asked about is test_auth_backoff.cpp's.)
+void test_the_window_clears_a_query_tokens_count() {
   reset_device();
   Req q1;
   q1.query(std::string("token=") + kWrong);
@@ -1126,6 +1169,179 @@ void test_the_window_clears_a_count_nobody_asked_about() {
   Req right;
   right.bearer(kToken);
   CHECK_MSG(qr(right) == 1, "two strikes a minute apart armed more than 2 s: " + right.r.status);
+}
+
+// ── every bearer compare accounted (sweep F339) ──────────────────────────────
+
+// The camera peek's and the vault download's ?token= is under its address's
+// backoff. A armed at 3 strikes (8 s): before, A's right ?token= was served
+// inside the backoff and cleared the count, its wrong ones were recorded
+// during it (each one more strike), and its right header on these routes was
+// served too.
+void test_query_token_is_held_by_the_backoff() {
+  reset_device();
+  arm_lockout(3);
+  Req right_q;
+  right_q.query(std::string("token=") + kToken);
+  CHECK_MSG(!api_auth_check_or_query(&right_q.r, kToken), "a right ?token= was served inside its address's backoff");
+  CHECK(right_q.r.status == "429 Too Many Requests");
+  CHECK(header(right_q.r, "Retry-After") == "9");   // 8000 ms left
+  CHECK(right_q.r.resp == "{\"error\":\"too_many_requests\",\"retry_after_s\":9}");
+  CHECK(right_q.r.sends == 1);
+  CHECK_MSG(strikes(kHostA) == 3, "a right ?token= inside the backoff changed the count");
+  Req right_h;
+  right_h.bearer(kToken);
+  CHECK(!api_auth_check_or_query(&right_h.r, kToken));
+  CHECK(right_h.r.status == "429 Too Many Requests");
+  CHECK(strikes(kHostA) == 3);
+  Req wrong_q;
+  wrong_q.query(std::string("token=") + kWrong);
+  CHECK(!api_auth_check_or_query(&wrong_q.r, kToken));
+  CHECK_MSG(wrong_q.r.status == "429 Too Many Requests", "a wrong ?token= inside the backoff got " + wrong_q.r.status);
+  CHECK_MSG(strikes(kHostA) == 3, "a wrong ?token= inside the backoff was recorded");
+  // 250 more wrong ?token= inside the backoff: none recorded, A still held.
+  size_t held_answers = 0;
+  for (int i = 0; i < 250; ++i) {
+    Req q;
+    q.query(std::string("token=") + kWrong);
+    CHECK(!api_auth_check_or_query(&q.r, kToken));
+    if (q.r.status == "429 Too Many Requests") ++held_answers;
+  }
+  CHECK(held_answers == 250);
+  CHECK(strikes(kHostA) == 3 && held(kHostA));
+  // ...so A's next wrong admin bearer is the 429 too, not compared.
+  Req admin;
+  admin.bearer(kWrong);
+  CHECK(!api_auth_check_bearer(&admin.r, kToken));
+  CHECK(admin.r.status == "429 Too Many Requests");
+  // B's right ?token= is served at once, nothing sent, nothing recorded.
+  Req b;
+  b.from(192, 168, 1, 21).query(std::string("token=") + kToken);
+  CHECK_MSG(api_auth_check_or_query(&b.r, kToken), "another address's right ?token= was held");
+  CHECK(b.r.sends == 0);
+  CHECK(strikes(kHostB) == 0);
+  // Once A's backoff has run out, A's right ?token= is served and clears A.
+  wait_out(kHostA);
+  Req after;
+  after.query(std::string("token=") + kToken);
+  CHECK(api_auth_check_or_query(&after.r, kToken));
+  CHECK(strikes(kHostA) == 0);
+}
+
+// One request is one grant: a wrong header beside a wrong ?token= is one
+// strike (the 2 s first backoff); a wrong header beside the right ?token= is
+// served, and clears the count; neither, or a query without the key, is the
+// 401 and no strike.
+void test_or_query_counts_one_per_request() {
+  reset_device();
+  Req both;
+  both.bearer(kWrong).query(std::string("token=") + kWrong);
+  CHECK(!api_auth_check_or_query(&both.r, kToken));
+  CHECK(both.r.status == "401 Unauthorized");
+  CHECK(has_header(both.r, "WWW-Authenticate"));
+  CHECK_MSG(strikes(kHostA) == 1, "one request counted " + std::to_string(strikes(kHostA)) + " strikes");
+  CHECK(remaining_for(&both.r) == canary::net::auth_backoff::BASE_MS);
+  wait_out(kHostA);
+  Req mixed;
+  mixed.bearer(kWrong).query(std::string("token=") + kToken);
+  CHECK(api_auth_check_or_query(&mixed.r, kToken));
+  CHECK(strikes(kHostA) == 0);
+  Req bare;
+  CHECK(!api_auth_check_or_query(&bare.r, kToken));
+  CHECK(bare.r.status == "401 Unauthorized");
+  Req other_key;
+  other_key.query("t=123");
+  CHECK(!api_auth_check_or_query(&other_key.r, kToken));
+  CHECK(other_key.r.status == "401 Unauthorized");
+  CHECK(strikes(kHostA) == 0);
+}
+
+// The /api/csi/* routes' gate (CSI_AUTH_OR_RETURN, cut from
+// csi_integration.cpp): the iPhone's /api/csi/stream poll and every other
+// tooling call with a bearer. Before, a wrong bearer here recorded nothing
+// and the right one was served inside a backoff.
+void test_csi_routes_account_every_bearer() {
+  reset_device();
+  Req wrong;
+  wrong.bearer(kWrong);
+  CHECK(csi_route(&wrong.r) == ESP_OK);
+  CHECK(wrong.r.status == "401 Unauthorized");
+  CHECK(has_header(wrong.r, "WWW-Authenticate"));
+  CHECK_MSG(strikes(kHostA) == 1, "a wrong bearer on a CSI route was no strike");
+  // Inside A's backoff, A's right bearer is not compared: the lockout's 429.
+  Req right;
+  right.bearer(kToken);
+  CHECK(csi_route(&right.r) == ESP_OK);
+  CHECK_MSG(right.r.status == "429 Too Many Requests", "a held bearer on a CSI route got " + right.r.status);
+  CHECK(header(right.r, "Retry-After") == "3");   // 2000 ms left
+  CHECK(right.r.resp == "{\"error\":\"too_many_requests\",\"retry_after_s\":3}");
+  CHECK(right.r.sends == 1);
+  CHECK(strikes(kHostA) == 1);
+  // B's right bearer is served at once.
+  Req b;
+  b.from(192, 168, 1, 21).bearer(kToken);
+  CHECK(csi_route(&b.r) == ESP_OK);
+  CHECK(b.r.status == "200 OK" && b.r.resp == "{\"ok\":true}");
+  CHECK(strikes(kHostB) == 0);
+  // The dashboard's cookie is served inside A's backoff and records nothing.
+  mint_session();
+  Req cookie;
+  cookie.cookie();
+  CHECK(csi_route(&cookie.r) == ESP_OK);
+  CHECK(cookie.r.status == "200 OK");
+  // A poll with no Authorization header is the 401, never the 429 and no strike.
+  Req bare;
+  CHECK(csi_route(&bare.r) == ESP_OK);
+  CHECK(bare.r.status == "401 Unauthorized");
+  CHECK(strikes(kHostA) == 1);
+  // After the backoff, A's right bearer is served and clears A.
+  wait_out(kHostA);
+  Req later;
+  later.bearer(kToken);
+  CHECK(csi_route(&later.r) == ESP_OK);
+  CHECK(later.r.status == "200 OK");
+  CHECK(strikes(kHostA) == 0);
+  // No module token: the 503 it always was.
+  g_api_token = nullptr;
+  Req unconfigured;
+  unconfigured.bearer(kToken);
+  CHECK(csi_route(&unconfigured.r) == ESP_OK);
+  CHECK(unconfigured.r.status == "503 Service Unavailable");
+}
+
+// The QR scan's status and stop gate (qr_scan_request_allowed(), cut from the
+// sketch): the wizard's pair token first, then the admin fallback, which is
+// now accounted. A held address's admin bearer is refused (these routes'
+// own 403) without a compare; the pair token is no bearer and is read first,
+// so the wizard is never held. Before, a wrong admin bearer here recorded
+// nothing and a right one was taken inside a backoff.
+void test_qr_scan_fallback_is_accounted() {
+  reset_device();
+  csi_integration::g_pair_token.assign(csi_integration::PAIR_TOKEN_HEX_LEN, 'b');
+  arm_lockout(3);
+  Req wizard;
+  wizard.query("token=" + csi_integration::g_pair_token);
+  CHECK_MSG(qr_scan_request_allowed(&wizard.r), "the wizard's pair token was held");
+  CHECK(strikes(kHostA) == 3);
+  Req held_admin;
+  held_admin.bearer(kToken);
+  CHECK_MSG(!qr_scan_request_allowed(&held_admin.r), "a held address's admin bearer was taken");
+  CHECK(held_admin.r.sends == 0);
+  CHECK(strikes(kHostA) == 3);
+  Req b_wrong;
+  b_wrong.from(192, 168, 1, 21).bearer(kWrong);
+  CHECK(!qr_scan_request_allowed(&b_wrong.r));
+  CHECK_MSG(strikes(kHostB) == 1, "a wrong admin bearer on the QR scan gate was no strike");
+  wait_out(kHostB);
+  Req b_right;
+  b_right.from(192, 168, 1, 21).bearer(kToken);
+  CHECK(qr_scan_request_allowed(&b_right.r));
+  CHECK(strikes(kHostB) == 0);
+  mint_session();
+  Req cookie;
+  cookie.cookie();
+  CHECK(qr_scan_request_allowed(&cookie.r));
+  CHECK(strikes(kHostA) == 3);
 }
 
 // ── api_auth.h's contract ────────────────────────────────────────────────────
@@ -1166,6 +1382,62 @@ void test_api_auth_contract() {
   again.cookie();
   CHECK(api_auth_check(&again.r, kToken));
   CHECK(strikes(kHostA) == 4);
+
+  // Every bearer compare is accounted (sweep F339). api_auth_check_optional()
+  // is the cookie or api_auth_bearer_grant(): with no cookie, a wrong bearer
+  // is one strike for its address (before: none, it compared silently).
+  clear_lockout();
+  Req opt_wrong;
+  opt_wrong.bearer(kWrong);
+  bool held_out = true;
+  CHECK(!api_auth_check_optional(&opt_wrong.r, kToken, &held_out));
+  CHECK(!held_out);                                          // compared, not held
+  CHECK(opt_wrong.r.sends == 0);                             // and nothing sent
+  CHECK_MSG(strikes(kHostA) == 1, "a wrong bearer through api_auth_check_optional was no strike");
+  // Inside that address's backoff the right bearer is not compared (a compare
+  // would have cleared the count): false, with held reported.
+  Req opt_held;
+  opt_held.bearer(kToken);
+  held_out = false;
+  CHECK_MSG(!api_auth_check_optional(&opt_held.r, kToken, &held_out),
+            "api_auth_check_optional took the right bearer inside its address's backoff");
+  CHECK(held_out);
+  CHECK(opt_held.r.sends == 0);
+  CHECK(strikes(kHostA) == 1 && held(kHostA));
+  // The cookie is true with held false, beside a wrong bearer too, and
+  // records nothing.
+  Req opt_cookie;
+  opt_cookie.cookie().bearer(kWrong);
+  held_out = true;
+  CHECK(api_auth_check_optional(&opt_cookie.r, kToken, &held_out));
+  CHECK(!held_out);
+  CHECK(strikes(kHostA) == 1);
+  // No Authorization header: false, not held, nothing recorded.
+  Req opt_bare;
+  held_out = true;
+  CHECK(!api_auth_check_optional(&opt_bare.r, kToken, &held_out));
+  CHECK(!held_out);
+  CHECK(strikes(kHostA) == 1);
+  // Another address's right bearer is served while A is held.
+  Req opt_b;
+  opt_b.from(192, 168, 1, 21).bearer(kToken);
+  held_out = true;
+  CHECK(api_auth_check_optional(&opt_b.r, kToken, &held_out));
+  CHECK(!held_out);
+  CHECK(strikes(kHostB) == 0);
+  // api_auth_bearer_grant()'s own held: the grant's reading, set only when
+  // the backoff kept the header from being compared.
+  Req grant_held;
+  grant_held.bearer(kToken);
+  held_out = false;
+  CHECK(!api_auth_bearer_grant(&grant_held.r, kToken, &held_out));
+  CHECK(held_out);
+  Req grant_b_wrong;
+  grant_b_wrong.from(192, 168, 1, 21).bearer(kWrong);
+  held_out = true;
+  CHECK(!api_auth_bearer_grant(&grant_b_wrong.r, kToken, &held_out));
+  CHECK(!held_out);                                          // compared: a strike, not a hold
+  CHECK(strikes(kHostB) == 1);
 }
 
 // An empty device token is no token. provision_device() can return before
@@ -1181,9 +1453,17 @@ void test_empty_device_token_takes_no_bearer() {
     valid.authorization(raw);
     CHECK_MSG(!api_auth_bearer_valid(&valid.r, g_device.api_token_str),
               "an empty device token took a bare Bearer header");
-    CHECK(!api_auth_check_optional(&valid.r, g_device.api_token_str));
     CHECK(valid.r.sends == 0);
-    CHECK(strikes(kHostA) == 0);   // the silent checks record nothing
+    CHECK(strikes(kHostA) == 0);   // the raw compare records nothing
+
+    // api_auth_check_optional() is the accounted grant since F339: a
+    // presented header against no token is one strike.
+    Req optional;
+    optional.authorization(raw);
+    CHECK(!api_auth_check_optional(&optional.r, g_device.api_token_str));
+    CHECK(optional.r.sends == 0);
+    CHECK(strikes(kHostA) == 1);
+    clear_lockout();
 
     Req grant;
     grant.authorization(raw);
@@ -1419,7 +1699,11 @@ int main() {
   test_no_backoff_outlives_the_window();
   test_a_backoff_armed_before_the_wrap_holds();
   test_wrong_query_tokens_never_wrap_the_count();
-  test_the_window_clears_a_count_nobody_asked_about();
+  test_the_window_clears_a_query_tokens_count();
+  test_query_token_is_held_by_the_backoff();
+  test_or_query_counts_one_per_request();
+  test_csi_routes_account_every_bearer();
+  test_qr_scan_fallback_is_accounted();
   test_api_auth_contract();
   test_empty_device_token_takes_no_bearer();
   test_sketch_text();

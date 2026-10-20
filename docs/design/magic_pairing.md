@@ -447,7 +447,13 @@ address's backoff runs none of its bearers is compared, so a request from it
 that brings one gets `429` with `Retry-After` when the claim and the tap do
 not serve it. The lockout never gates rows 3 and 4: a page holding a stale
 token, or a backoff a guesser armed, is still served by the claim or a BOOT
-tap. Host-tested in
+tap. The broker move's bearer is under the same per-address lockout (sweep
+F339): `POST /api/mqtt/config` compares it once per request through
+`api_auth_bearer_grant()`, so a wrong one is a strike against its address,
+beside the cookie too (the save then goes on as the session's, and the move
+gate still asks for the password), and a held one is not compared and,
+without the cookie, gets `429` with `Retry-After`; the posture is the
+per-address backoff below. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
 the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document

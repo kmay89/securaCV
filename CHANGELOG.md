@@ -57,6 +57,40 @@
   window; `test_receipt_authority.cpp` pins `request_peer_key()`, the
   sketch's one `getpeername`); the ESP32 compile is CI's; not run on a
   device (U1).
+- **canary-wap: every bearer compare counts toward its address's lockout,
+  and the camera and vault `?token=` no longer slip past it (sweep F339).**
+  Four gates compared a bearer and recorded nothing: `CSI_AUTH_OR_RETURN`
+  (every `/api/csi/*` route, the iPhone's `/api/csi/stream` poll among
+  them), `csi_mqtt.cpp`'s `authorized()` (`GET /api/mqtt/config`,
+  `POST /api/mqtt/test`), the broker move gate's bearer on
+  `POST /api/mqtt/config`, and `qr_scan_request_allowed()`'s admin fallback.
+  `api_auth_check_optional()` is now the cookie or `api_auth_bearer_grant()`,
+  so a wrong bearer through any of them is one strike against its address and
+  none is compared while that address is held. The grant reports a hold
+  through an optional `held` out-parameter, with no second lockout read, and
+  the CSI and MQTT routes answer it `429` with `Retry-After` (the QR scan's
+  status and stop keep their `403`). `POST /api/mqtt/config` compares its
+  bearer once per request; it compared it twice. Found beyond the entry:
+  `api_auth_check_or_query()` (`/api/peek/stream`, `/api/peek/snapshot`,
+  `/api/vault/download`) never read the lockout, so a right `?token=` was
+  served inside a backoff and cleared it, and a wrong one was recorded during
+  it. It now runs one grant over the header or the `?token=`: `429` while
+  the address is held, one strike per request. `check_route_security.py` now
+  fails any sketch file other than `api_auth.h` that calls
+  `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
+  The pair token's compares stay outside on purpose (the landing page hands
+  that token to any caller). The token's about 184 bits remain the real
+  bound, so this is consistency and a closed bypass, not a credential path.
+  **Host-tested** (`test_receipt_grant.cpp`, 1514 checks, 31 of which fail on
+  the code before the change, its new three-argument calls adapted onto the
+  old functions: `CSI_AUTH_OR_RETURN` and `qr_scan_request_allowed()` cut
+  from the sources, the `?token=` inside a backoff, `api_auth_check_optional()`
+  striking; `test_mqtt_reinit.cpp`, whose three new or rewritten tests fail
+  on the code before, among them a held address's right bearer moving the
+  broker and the move gate reading the bearer twice; `test_docs_claims.py`;
+  the route check's four new plants, and the tree before the change failing
+  it at `csi_mqtt.cpp:2359`); the ESP32 compile is CI's; not run on a device
+  (U1).
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 

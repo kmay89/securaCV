@@ -815,6 +815,37 @@
   WINDOW_MS)`).
 - **Date learned:** 2026-10
 
+### Every compare of a credential goes through the one function that counts it
+- **What happened:** The WAP's `api_auth_check_or_query()` (the camera
+  peek's and the vault download's `?token=` links) never read the bearer
+  lockout: a right `?token=` was served inside a backoff and cleared it, and
+  a wrong one was recorded during it, so a backoff never held these routes
+  and the count ran on without bound (until F343's saturating count, 250 of
+  them wrapped it back to a clean slot). Beside it, four gates compared a
+  bearer and recorded nothing at all: `CSI_AUTH_OR_RETURN` (every
+  `/api/csi/*` route), `csi_mqtt.cpp`'s `authorized()`, the broker move
+  gate's own second compare, and `qr_scan_request_allowed()`, each through
+  the silent `api_auth_check_optional()` or `api_auth_bearer_valid()`.
+- **Root cause:** each gate assembled the compare and its accounting itself,
+  and the silent compares were callable from any file of the sketch.
+- **Fix:** one grant (sweep F339): every bearer compare goes through
+  `auth_backoff::grant()` (`api_auth_grant_presented()` in `api_auth.h`),
+  which reads the lockout once, compares at most once and records the
+  answer; a hold comes back through an optional `held` out-parameter, so a
+  route that answers it `429` makes no second lockout read.
+  `api_auth_check_or_query()` runs that grant over the header or the
+  `?token=`, one strike per request.
+- **Regression check:** `tests_host/test_receipt_grant.cpp` (host; the CSI
+  macro and `qr_scan_request_allowed()` cut from the sources),
+  `tests_host/test_mqtt_reinit.cpp`, and `tests_host/check_route_security.py`,
+  which fails any sketch file but `api_auth.h` that calls
+  `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
+- **Rule:** a credential's compare lives beside its accounting, in one
+  function every gate calls; the raw compare is private to that file, and a
+  text check keeps it there. A long token bounds the guessing, but a compare
+  that costs nothing is still an oracle and a bypass of the backoff.
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

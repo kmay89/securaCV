@@ -6752,9 +6752,10 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 // credential (session cookie / Bearer) instead. A *presented* admin
 // credential is validated through the lockout-aware `api_auth_check` so
 // Bearer guessing is throttled exactly like every other admin route —
-// `api_auth_check_optional` (used before) skipped the 429 backoff and never
-// recorded a failure, turning this fallback into an unthrottled token
-// oracle: an on-AP/LAN client could spray Authorization guesses and tell a
+// `api_auth_check_optional` (used before, and silent until sweep F339)
+// skipped the 429 backoff and never recorded a failure, turning this
+// fallback into an unthrottled token oracle: an on-AP/LAN client could
+// spray Authorization guesses and tell a
 // valid token from the handler proceeding. A bare pair-token miss (no
 // admin credential presented at all) stays a friendly `invalid_token` so
 // the wizard can silently re-issue its RAM-backed token and retry.
@@ -8400,6 +8401,11 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
 // credential. Without a gate, any on-AP peer could read the scanned SSID
 // or cancel a user's in-flight QR scan — POST already required the token,
 // so the read/cancel sides matching it is just closing the same door.
+// The admin fallback is api_auth_check_optional(): the cookie, or the bearer
+// under its address's lockout (sweep F339; before, it compared silently). A
+// wrong bearer is one strike against that address, and a held address gets
+// these routes' own 403, not a 429. The pair token is read first and is no
+// bearer, so the wizard's polls are never held.
 static bool qr_scan_request_allowed(httpd_req_t* req) {
   char qs[192];
   if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {

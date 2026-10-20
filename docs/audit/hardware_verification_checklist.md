@@ -2795,7 +2795,11 @@ follow-up (#1832) adds none of its own. Code: `session_cookie_header()` and
 `api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`; and,
 for the per-address row (F343), `request_peer_key()` and
 `auth_request_source()` in `canary_wap.ino` over
-`firmware/common/network/auth_backoff.h` (staged in the sketch).
+`firmware/common/network/auth_backoff.h` (staged in the sketch); and, for
+the every-compare row (F339), `api_auth_check_optional()` and
+`api_auth_check_or_query()` in `api_auth.h`, `CSI_AUTH_OR_RETURN` in
+`csi_integration.cpp` and `authorized()` and `handle_config_post()` in
+`csi_mqtt.cpp`.
 Host-tested (`tests_host/test_session_cookie.cpp`: the cookie's attributes
 over HTTPS and plain HTTP, and the whole-name read;
 `tests_host/test_receipt_grant.cpp`: a wrong bearer one strike, the
@@ -2881,6 +2885,32 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     back to one bucket: check `request_peer_key()`'s dual-stack
     `::ffff:a.b.c.d` path.
   - Artifact: `docs/audit/repro/F343/per-address/`.
+
+- [ ] **canary-wap: every bearer compare holds its own address (F339)**
+  - Setup: as the F343 row: a canary-wap on this firmware joined to the home
+    Wi-Fi, plain HTTP at `http://<sta-ip>` (no stock WAP serves HTTPS), hosts
+    A and B on IPv4, both with the API token, the serial console open, and
+    no BOOT tap during the row. For the link in step 2, a unit built with
+    the camera (`FEATURE_CAMERA_PEEK`, for `/api/peek/snapshot`) or the
+    sealed vault (`FEATURE_VAULT_SNAPSHOT`, for `/api/vault/download`); on a
+    unit with neither, skip that half of step 2.
+  - Repro:
+    1. From A, three wrong bearers, 10 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://<sta-ip>/api/csi/stream`.
+    2. Right after the third, from A: the right token on the same route,
+       with `-D -`; and `curl -s -D - 'http://<sta-ip>/api/vault/download?token=<right token>'`
+       (or `/api/peek/snapshot?token=<right token>`).
+    3. At once, from B: the right token on `/api/csi/stream`.
+    4. From A, after its `Retry-After`: the right token on `/api/csi/stream`.
+  - Expected: A's wrong bearers are `401`, and the console prints
+    `[AUTH] Failed attempt #1`, `#2` and `#3`. Inside A's backoff, A's right
+    bearer and A's right `?token=` are `429` with `Retry-After`. B is `200`
+    at once, and A's right token after the wait is `200`. Before this
+    change A's guesses armed nothing (no console line, and step 2's bearer
+    was `200`), and the `?token=` passed the gate inside a backoff:
+    `/api/vault/download` answered its own `400` (no `name=`), never `429`.
+  - Artifact: `docs/audit/repro/F339/`.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 

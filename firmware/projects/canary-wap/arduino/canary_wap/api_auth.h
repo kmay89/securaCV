@@ -6,6 +6,10 @@
  * - Exponential backoff on failed attempts (brute-force mitigation), one
  *   backoff per source address (sweep F343): 8 tracked addresses plus one
  *   shared overflow, 2 s doubling, capped at 60 s (auth_backoff.h)
+ * - Every bearer compare accounted (sweep F339): each gate below compares
+ *   under the request's source's backoff, and the raw compares
+ *   (api_auth_bearer_valid(), constant_time_compare()) are called from this
+ *   header alone (check_route_security.py holds that)
  * - Token redaction for safe logging
  *
  * Usage with esp_http_server (ESP-IDF native):
@@ -162,7 +166,10 @@ static void auth_redact_token(const char* token, char* out, size_t out_len) {
 // The lockout's answer: 429 with Retry-After, the seconds left of this
 // request's source's backoff (at least 1, also when the backoff ended after
 // the caller's check; at most 61, the 60 s cap's). Sent by
-// api_auth_check_bearer() for any request while the backoff runs, and by GET
+// api_auth_check_bearer() for any request while the backoff runs; by
+// api_auth_check_or_query() for a header or ?token= the backoff kept from
+// being compared; by CSI_AUTH_OR_RETURN and csi_mqtt.cpp's routes for a
+// bearer the grant reported held (sweep F339); and by GET
 // /api/provisioning-receipt for a bearer the backoff kept from being compared
 // when neither the BOOT tap nor the setup-door claim served it.
 
@@ -282,26 +289,24 @@ static bool api_auth_check(httpd_req_t* req, const char* expected_token) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OPTIONAL AUTH CHECK — Returns true if valid token present
+// THE RAW COMPARE — called only from this header
 // ═══════════════════════════════════════════════════════════════════
 
-// Like api_auth_check but does NOT send error response on failure, and
-// records nothing against the lockout. Used for endpoints that allow both
-// authenticated and unauthenticated access.
-//
-// api_auth_bearer_valid() is the Bearer half alone: a real
+// api_auth_bearer_valid() is the Bearer compare alone: a real
 // `Authorization: Bearer <token>` header, constant-time compared, true or
-// false, nothing sent and nothing recorded. A valid cv_session cookie is NOT
-// accepted here (sweep F289): the compare under GET
-// /api/provisioning-receipt's first grant (api_auth_bearer_grant(), below,
-// which adds the lockout), whose answer is the bearer token itself and the
-// SoftAP password, so the landing page's 24 h session must not be what buys
-// it. api_auth_check_optional() is the cookie OR this.
+// false, nothing sent and nothing recorded. It is the raw compare under every
+// accounted grant below, and only this header calls it (sweep F339:
+// check_route_security.py fails any other sketch file that calls it or
+// constant_time_compare()). A compare outside the lockout would be a token
+// oracle that costs nothing: every bearer a route compares goes through
+// api_auth_bearer_grant(), api_auth_check_bearer() or
+// api_auth_check_or_query() instead. A valid cv_session cookie is NOT
+// accepted here (sweep F289).
 
 static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) {
   // An empty device token is no token (a zero-length compare would take a
-  // bare "Bearer "); this also covers api_auth_check_optional() and
-  // api_auth_bearer_grant(), which compare through here.
+  // bare "Bearer "); this also covers api_auth_bearer_grant() and
+  // api_auth_check_optional(), which compare through here.
   if (expected_token == nullptr || expected_token[0] == '\0') return false;
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) return false;
@@ -323,50 +328,62 @@ static bool api_auth_bearer_valid(httpd_req_t* req, const char* expected_token) 
   return constant_time_compare(token, expected_token, expected_len);
 }
 
-static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token) {
-  if (cv_session_validate && cv_session_validate(req)) return true;
-  return api_auth_bearer_valid(req, expected_token);
-}
-
 // ═══════════════════════════════════════════════════════════════════
-// THE RECEIPT'S BEARER GRANT — the lockout kept, nothing sent
+// THE ACCOUNTED GRANT — the lockout kept, nothing sent
 // ═══════════════════════════════════════════════════════════════════
 
-// The bearer decision under the lockout, nothing sent (auth_backoff.h's
-// grant() over this request's source): NONE with no Authorization header
-// (nothing recorded: auth_logic.h, no credential carries no guess); HELD
-// while the source's backoff runs (the header is not compared and nothing is
-// recorded, so a guess sent during it learns nothing); OK for the right token
-// (that source's slot cleared, as every admin route clears it); WRONG for a
-// malformed header or a wrong token (one strike against that source, as on
-// every admin route).
+// One grant under the request's source's backoff (auth_backoff.h's grant()),
+// nothing sent: NONE when `presented` is false, no credential at all (nothing
+// recorded: auth_logic.h, no credential carries no guess); HELD while the
+// source's backoff runs (`valid` is not called and nothing is recorded, so a
+// guess sent during it learns nothing); OK when `valid()` says right (that
+// source's slot cleared, as every admin route clears it); WRONG otherwise
+// (one strike against that source, its console line printed). `valid` is
+// called at most once: one compare, one lockout read, per request.
 
-static canary::net::auth_backoff::BearerResult api_auth_bearer_result(httpd_req_t* req,
-                                                                     const char* expected_token) {
+template <class Valid>
+static canary::net::auth_backoff::BearerResult api_auth_grant_presented(httpd_req_t* req, bool presented,
+                                                                       Valid valid) {
   const uint32_t source = auth_request_source(req);
   const uint32_t now = millis();
-  const canary::net::auth_backoff::BearerResult r = canary::net::auth_backoff::grant(
-      g_auth_table, source, now, httpd_req_get_hdr_value_len(req, "Authorization") != 0,
-      [&]() { return api_auth_bearer_valid(req, expected_token); });
+  const canary::net::auth_backoff::BearerResult r =
+      canary::net::auth_backoff::grant(g_auth_table, source, now, presented, valid);
   if (r == canary::net::auth_backoff::BearerResult::WRONG) auth_log_strike(source, now);
   return r;
 }
 
-// GET /api/provisioning-receipt's first grant (sweep F289's follow-up). The
-// bearer header alone, as api_auth_bearer_valid() reads it, with
+// The Authorization header's grant: NONE with no header; HELD while the
+// source's backoff runs; OK for the right token; WRONG for a malformed header
+// or a wrong token.
+
+static canary::net::auth_backoff::BearerResult api_auth_bearer_result(httpd_req_t* req,
+                                                                     const char* expected_token) {
+  return api_auth_grant_presented(req, httpd_req_get_hdr_value_len(req, "Authorization") != 0,
+                                  [&]() { return api_auth_bearer_valid(req, expected_token); });
+}
+
+// The bearer header alone, under the lockout, nothing sent: true only for the
+// right token outside its source's backoff (api_auth_bearer_result() is OK).
+// `held`, when given, is set to whether the source's backoff kept the header
+// from being compared (HELD): the grant's own reading, so a caller that
+// answers 429 to a held bearer makes no second lockout read (sweep F339).
+//
+// GET /api/provisioning-receipt's first grant (sweep F289's follow-up): with
 // api_auth_check_bearer()'s lockout and failure accounting but no answer
 // sent, so the route's other grants (the setup-door claim, the BOOT tap)
-// still decide what a refused bearer gets. True only for the right token
-// outside its source's backoff (api_auth_bearer_result() is OK). Before
-// F289's follow-up the receipt compared silently, so it was the one route
-// where guessing the token cost nothing.
-// The lockout never gates the claim or the tap: a page holding a stale token,
-// or a backoff a guesser armed, is still served by the claim or a BOOT tap.
-// (What the lockout does not decide: any host on the network can spend a
-// pending claim with one wrong ?claim=, or take an open tap by asking first.)
+// still decide what a refused bearer gets. Before F289's follow-up the
+// receipt compared silently, so it was the one route where guessing the
+// token cost nothing. The lockout never gates the claim or the tap: a page
+// holding a stale token, or a backoff a guesser armed, is still served by the
+// claim or a BOOT tap. (What the lockout does not decide: any host on the
+// network can spend a pending claim with one wrong ?claim=, or take an open
+// tap by asking first.) Also the bearer half of api_auth_check_optional()
+// and csi_mqtt.cpp's move gate (POST /api/mqtt/config).
 
-static bool api_auth_bearer_grant(httpd_req_t* req, const char* expected_token) {
-  return api_auth_bearer_result(req, expected_token) == canary::net::auth_backoff::BearerResult::OK;
+static bool api_auth_bearer_grant(httpd_req_t* req, const char* expected_token, bool* held = nullptr) {
+  const canary::net::auth_backoff::BearerResult r = api_auth_bearer_result(req, expected_token);
+  if (held) *held = (r == canary::net::auth_backoff::BearerResult::HELD);
+  return r == canary::net::auth_backoff::BearerResult::OK;
 }
 
 // Whether `req` presents an Authorization header while its source's backoff
@@ -378,6 +395,44 @@ static bool api_auth_bearer_held(httpd_req_t* req) {
   return httpd_req_get_hdr_value_len(req, "Authorization") != 0 && auth_is_locked_out(req);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// OPTIONAL AUTH CHECK — the cookie or the accounted grant, nothing sent
+// ═══════════════════════════════════════════════════════════════════
+
+// Like api_auth_check() but sends no answer: the caller answers a refusal.
+// A valid cv_session cookie is true and records nothing (it never clears a
+// backoff, api_auth_check()'s rule); otherwise the bearer is
+// api_auth_bearer_grant()'s, under the source's lockout (sweep F339: before,
+// this compared silently, so CSI_AUTH_OR_RETURN, csi_mqtt.cpp's
+// authorized() and qr_scan_request_allowed() were token oracles that cost
+// nothing). A wrong bearer is one strike against its address, and none is
+// compared while that address is held; `held` reports that, for the caller
+// that answers it 429 (the CSI and MQTT routes). A request with no
+// Authorization header records nothing.
+
+static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token, bool* held = nullptr) {
+  if (held) *held = false;
+  if (cv_session_validate && cv_session_validate(req)) return true;
+  return api_auth_bearer_grant(req, expected_token, held);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE HEADER OR ?token= — for <img>, stream and download links
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/peek/stream, /api/peek/snapshot and /api/vault/download: a
+// browser link cannot set a header, so the token may ride `?<query_key>=`.
+// The cookie first (true, nothing recorded); then ONE grant over both
+// credentials, under the request's source's backoff (sweep F339): presented
+// when the request carries an Authorization header or the query key, right
+// when the header is the right bearer or the query value is the right token.
+// While the source is held it answers 429 with Retry-After and compares and
+// records nothing; a wrong header, a wrong ?token= or both on one request are
+// one strike; the right one clears that source's slot; no credential at all
+// is the 401 and no strike. Before, this read no lockout: a right ?token=
+// was served inside a backoff and cleared it, and a wrong one was recorded
+// during it (until F343's saturating count, 250 of them wrapped the count
+// back to a clean slot).
 
 static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token, const char* query_key = "token") {
   // Session-cookie auth grants access but must not reset the token
@@ -387,36 +442,29 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
     return true;
   }
 
-  if (api_auth_check_optional(req, expected_token)) {
-    auth_record_success(req);
-    return true;
-  }
-
-  bool presented_credential =
-      httpd_req_get_hdr_value_len(req, "Authorization") > 0;
-
+  const bool header = httpd_req_get_hdr_value_len(req, "Authorization") != 0;
+  char token[128];
+  token[0] = '\0';
+  bool query = false;
   char qs[192];
-  esp_err_t qerr = httpd_req_get_url_query_str(req, qs, sizeof(qs));
-  if (qerr == ESP_OK) {
-    char token[128];
-    if (httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
-      presented_credential = true;
-      size_t token_len = strlen(token);
-      size_t expected_len = strlen(expected_token);
-      if (expected_len != 0 && token_len == expected_len &&
-          constant_time_compare(token, expected_token, expected_len)) {
-        auth_record_success(req);
-        return true;
-      }
-    }
+  if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK &&
+      httpd_query_key_value(qs, query_key, token, sizeof(token)) == ESP_OK) {
+    query = true;
   }
 
-  // Only an actual guess (header or query token presented) advances the
-  // brute-force lockout; a bare request is a plain 401 (see auth_logic.h).
-  if (auth_logic::counts_toward_lockout(
-          presented_credential ? auth_logic::Attempt::WRONG_TOKEN
-                               : auth_logic::Attempt::NO_CREDENTIAL)) {
-    auth_record_failure(req);
+  const canary::net::auth_backoff::BearerResult r =
+      api_auth_grant_presented(req, header || query, [&]() {
+        if (header && api_auth_bearer_valid(req, expected_token)) return true;
+        if (!query || expected_token == nullptr) return false;
+        const size_t token_len = strlen(token);
+        const size_t expected_len = strlen(expected_token);
+        return expected_len != 0 && token_len == expected_len &&
+               constant_time_compare(token, expected_token, expected_len);
+      });
+  if (r == canary::net::auth_backoff::BearerResult::OK) return true;
+  if (r == canary::net::auth_backoff::BearerResult::HELD) {
+    api_auth_send_lockout(req);
+    return false;
   }
   httpd_resp_set_status(req, "401 Unauthorized");
   httpd_resp_set_type(req, "application/json");
