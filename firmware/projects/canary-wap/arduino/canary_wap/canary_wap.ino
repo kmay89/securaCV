@@ -338,9 +338,9 @@ static volatile bool g_vault_test_pending = false;
 // and csi_mqtt.cpp's status topic say. REST /api/status, node_status.node,
 // /api/fleet's product, the boot banner and the BOOT attestation read it; the
 // attestation's CBOR payload is hashed and never leaves the device. Keep it
-// one string literal declared once and never written elsewhere:
-// canary-local/tools/figures/wire_types.mjs holds it to the mDNS and MQTT
-// sites (gen_figures.mjs --check, sweep F294).
+// one string literal declared once and never assigned elsewhere: wire_types.mjs
+// (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
+// any other =, compound assignment, ++ or -- of the name (sweep F294).
 static const char* DEVICE_TYPE        = "canary-wap";
 static const char* FIRMWARE_VERSION   = "2.4.16-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";

@@ -433,6 +433,12 @@ test("the WAP resolves by the device type it puts on the fleet's wire, read from
   const declLine = ino.slice(0, ino.search(/^static const char\* DEVICE_TYPE\s*=/m)).split("\n").length;
   assert.ok(tree.sites.includes(`firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino:${declLine}`),
     `the DEVICE_TYPE declaration at canary_wap.ino:${declLine} is a read site (${tree.sites.join(", ")})`);
+  // The sketch states the type once: /api/status's node_status.node and
+  // /api/fleet's self.product read the constant rather than a literal of their
+  // own, which the reader would not see (it reads the constant, not them).
+  assert.match(ino, /^\s*ns\.node\s*=\s*DEVICE_TYPE;/m, "node_status.node reads DEVICE_TYPE");
+  assert.match(ino, /^\s*self\.product\s*=\s*DEVICE_TYPE;/m, "/api/fleet's product reads DEVICE_TYPE");
+  assert.ok(!/^\s*(?:ns\.node|self\.product)\s*=\s*"/m.test(ino), "neither is handed a literal anywhere in the sketch");
   // "canary" is the flagship tree's word (firmware/canary) and is not mapped to the WAP.
   assert.ok(!dt.mapped.some((m) => m.device_type === "canary"), "\"canary\" is not mapped to the WAP");
   // The WAP figure's firmware evidence is the flavor the Workshop publishes
@@ -498,7 +504,8 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
       ["a file with no site left",
         (r) => ({ [mqttF]: r[mqttF].split("device_type").join("dev_kind") }), /csi_mqtt\.cpp no longer publishes/],
       // Sweep F294: the constant agrees with the wire sites, is declared once
-      // with one literal, and nothing else writes it.
+      // with one literal, and no other assignment names it (=, a compound
+      // assignment, ++ or --, prefix or postfix).
       ["the constant set back to the flagship's word",
         (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* DEVICE_TYPE        = "canary";') }),
         /publishes 2 different device types[\s\S]*"canary" at [^;]*canary_wap\.ino:\d+/],
@@ -514,6 +521,20 @@ test("the WAP's wire-type reader refuses every site it cannot spell, not only a 
         (r) => inSetup(r, "DEVICE_TYPE += 7;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
       ["the constant moved by an increment",
         (r) => inSetup(r, "++DEVICE_TYPE;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant moved by a prefix decrement",
+        (r) => inSetup(r, "--DEVICE_TYPE;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant moved by a postfix increment",
+        (r) => inSetup(r, "DEVICE_TYPE++;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      ["the constant moved by a postfix decrement",
+        (r) => inSetup(r, "DEVICE_TYPE--;"), /canary_wap\.ino:\d+: DEVICE_TYPE is assigned here/],
+      // A flavor split spelled in the declaration (the F258 failure shape):
+      // the first literal of the expression is not the type.
+      ["the constant declared as a choice between two literals",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* DEVICE_TYPE        = WAP_MOBILE ? "canary-wap-mobile" : "canary-wap";') }),
+        /canary_wap\.ino:\d+: DEVICE_TYPE is not one string literal \(WAP_MOBILE \? "canary-wap-mobile" : "canary-wap"\)/],
+      ["the constant declared as two literals concatenated",
+        (r) => ({ [inoF]: r[inoF].replace(CONST, 'static const char* DEVICE_TYPE        = "canary" "-wap";') }),
+        /canary_wap\.ino:\d+: DEVICE_TYPE is not one string literal \("canary" "-wap"\)/],
       ["the constant gone",
         (r) => ({ [inoF]: r[inoF].replace(CONST, "#define DEVICE_TYPE \"canary-wap\"") }),
         /canary_wap\.ino no longer publishes canary-wap's device type as the DEVICE_TYPE constant/],

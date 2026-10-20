@@ -164,8 +164,9 @@ bool build_mesh_peers_json(char*  out,
  * MAX_TRUSTED_PEERS, in the session's table order): the members this
  * device enforces, so the rows equal GET /api/mesh's peers_total and no
  * NVS is read (the route answers on a board without flash encryption).
- * A member the view marks live takes its state ("CONNECTED" for an ACTIVE
- * transport entry, "STALE", else "OFFLINE"), RSSI and last_seen_sec, the
+ * A member the view marks live takes its state ("CONNECTED" while its last
+ * fully verified frame is younger than PEER_STALE_AFTER_MS, "STALE", else
+ * "OFFLINE": MemberView.link_state, F324), RSSI and last_seen_sec, the
  * age of its last_seen_ms at `now_ms` (uptime, counted at the read); any
  * other member is "OFFLINE", last_seen_sec 0xFFFFFFFF ("never"), RSSI 0.
  * Every row carries the member's alerts_received. Names are "" (the

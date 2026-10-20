@@ -784,19 +784,24 @@ static void arm_heartbeat(uint32_t now_ms) {
  * What the timer bounds: two of the longest intervals stay short of
  * PEER_STALE_AFTER_MS (static_assert, mesh_session.h), so one lost
  * heartbeat never reads STALE; a member that is gone reads STALE within
- * about 90-100 s and OFFLINE within about 5 min. A joiner that lost the
- * first COMPLETE pairs from a copy, but the initiator's paired heartbeat
- * reached it before it held the opera and was dropped; it hears the
- * initiator at the initiator's next heartbeat (F162's lost-COMPLETE case).
- * And a boot heartbeat sent before the station joined
+ * about 90-100 s and OFFLINE within about 5 min, unless a radio sends this
+ * device genuine frames of the member's it has not heard (ones a jammer
+ * blocked, or, after a reboot, ones heard since the last replay-counter
+ * save), each of which still verifies and stamps it live (spec §8.3). A
+ * joiner that lost the first COMPLETE pairs from a copy, but the
+ * initiator's paired heartbeat reached it before it held the opera and was
+ * dropped; it hears the initiator at the initiator's next heartbeat (F162's
+ * lost-COMPLETE case). And a boot heartbeat sent before the station joined
  * its router (WiFi.begin() is asynchronous; until then the radio sits on
- * the softAP's channel, F320) costs at most one interval: the next one goes
- * on the settled channel. canary-wap sends its own at the same cadence
- * (F76). The payload is empty, so the frame says nothing but "this member,
- * this opera, this counter". It goes through the transport's storm gate
- * like every send; this tree has no airtime governor. Nothing is signed,
- * and no counter spent, while the session is stopped, with no opera, or
- * when no member is bound. Returns how many sends the transport took. */
+ * the softAP's channel, F320) costs at most one interval after the station
+ * joins: each heartbeat goes on whatever channel the radio is on when it
+ * fires, so the first one after association reaches the members. canary-wap
+ * sends its own at the same cadence (F76). The payload is empty, so the
+ * frame says nothing but "this member, this opera, this counter". It goes
+ * through the transport's storm gate like every send; this tree has no
+ * airtime governor. Nothing is signed, and no counter spent, while the
+ * session is stopped, with no opera, or when no member is bound. Returns
+ * how many sends the transport took. */
 static size_t send_heartbeat(uint32_t now_ms) {
   arm_heartbeat(now_ms);
   if (!s_initialized || !s_running || !s_opera_id_set) return 0;
@@ -1149,7 +1154,9 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
   peer->heard = true;
   /* F324: liveness from this frame alone. The same instant drain_ring
    * stamped the transport entry for it, but past the counter check, so a
-   * replay, a junk frame or a forgery from this address never gets here. */
+   * replay of a frame already heard, a junk frame or a forgery from this
+   * address never gets here. A genuine frame this device has not heard
+   * does, whenever it arrives (spec §8.3). */
   peer->verified_seen_ms = mesh_transport::clock_ms();
   peer->verified_rssi    = rssi;
 

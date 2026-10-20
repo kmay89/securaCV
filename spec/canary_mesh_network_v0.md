@@ -1139,10 +1139,12 @@ it is turned on. That pass comes right after `setup()`, and `WiFi.begin()`
 does not wait for the station to join its router: until it does, the radio
 is on the softAP's channel (`AP_CHANNEL`, 1), and the ESP-NOW peers follow
 the current channel. So on a board whose router is on another channel the
-boot heartbeat can go out where no member listens (F320); the next periodic
-one, within about 33 s, goes out on the settled channel, so that costs the
-members at most one interval of reading this one `PEER_OFFLINE` (from code;
-the timer is host-tested, the channel behavior is a bench row). It goes
+boot heartbeat can go out where no member listens (F320). Each periodic one
+goes out on whatever channel the radio is on when it fires, so once the
+station has joined its router the next one, within about 33 s, reaches the
+members: they read this one `PEER_OFFLINE` until the station joins plus at
+most one interval, not one interval from boot (from code; the timer is
+host-tested, the channel behavior is a bench row). It goes
 through the transport's storm limit like every opera send; this tree has no
 airtime governor. A receiver handles it as any verified opera frame
 (counter, liveness) and nothing more; firmware before F324 does the same
@@ -1158,8 +1160,9 @@ drops the frame at its transport, which no longer holds that address
 that is gone until its owner removes it. At most 8 sends an interval either
 way. The cost of the timer, from code: one signature per interval per
 sender, one outbound counter per heartbeat (one counter reservation per
-1024, about 2.8 NVS writes a day), and at most 7 Ed25519 verifies per
-interval per receiver, on the main loop; canary-wap pays the same cadence
+1024, about 2.8 NVS writes a day), and at most 8 Ed25519 heartbeat verifies
+per interval per receiver, one per bound member (`MAX_TRUSTED_PEERS` is 8),
+on the main loop; canary-wap pays the same cadence
 (F76). The mesh builds only in `[env:full]`, which already broadcasts the
 BLE status beacon continuously, so the new periodic radio emission adds
 little to that device's RF pattern; no released image builds the mesh.
@@ -1183,13 +1186,19 @@ signature, `opera_id` and counter checks pass (canary-wap's
 `handle_received_message`; the PlatformIO session since F324, which stamps
 `verified_seen_ms` and the frame's RSSI after the counter check in
 `on_opera_frame`). A frame from the member's address that fails any of
-them, a replay included, or that is not an opera frame at all, refreshes
-nothing. Until F324 the PlatformIO tree read the transport table's entry,
-which any frame from the address refreshes before anything is verified,
-and ESP-NOW does not authenticate a source: a 3-byte junk frame and a
-replay sent from a quiet member's address once a minute held it
-`PEER_CONNECTED` for ten minutes (host-probed); now it reads `PEER_STALE`
-after 90 s and `PEER_OFFLINE` after 5 minutes. The PlatformIO tree derives
+them, a replay of a frame the receiver has heard included, or that is not
+an opera frame at all, refreshes nothing. Until F324 the PlatformIO tree
+read the transport table's entry, which any frame from the address
+refreshes before anything is verified, and ESP-NOW does not authenticate a
+source: a 3-byte junk frame and a replay sent from a quiet member's address
+once a minute held it `PEER_CONNECTED` for ten minutes (host-probed); now
+it reads `PEER_STALE` after 90 s and `PEER_OFFLINE` after 5 minutes. A
+genuine frame of the member's that the receiver has NOT heard passes every
+check, so it does refresh the state when it arrives late from the member's
+address: after a receiver reboot, the frames heard since its last 5-minute
+replay-counter save; under a jammer that also sends what it blocked, its
+whole stock. A radio holding such frames keeps a member that is gone
+`PEER_CONNECTED` for about 90 s per frame (§8.3). The PlatformIO tree derives
 the state from the last verified frame's age at each read, on a 32-bit
 millisecond clock, and every loop pass holds a heard member's age at
 2^31 ms (about 24.8 days) or under, so a member gone longer than the clock
@@ -1530,8 +1539,10 @@ MAC: the frame's age by the §7.2 thresholds, and its RSSI (F324). The row
 is live once one such frame has arrived and while that MAC is in the
 ESP-NOW transport peer table, and the main loop builds it in the view it
 publishes for the route (F161, §8.1). A frame that fails verification or
-the counter check refreshes none of the three; until F324 they were the
-transport table entry's, which any frame from the address refreshed (§7.2).
+the counter check refreshes none of the three (a genuine frame the receiver
+has not heard passes both, whenever it arrives, §8.3); until F324 they were
+the transport table entry's, which any frame from the address refreshed
+(§7.2).
 The checks prove who signed a frame, not which
 radio sent it — the envelope signs no address (the F49 part 3 note below)
 — so a member's frame is taken only from that member's own binding (F70):
@@ -1683,8 +1694,20 @@ note leaves open, conditionally: a frame of a member's that the receiver
 missed stays dispatchable from a radio copying the member's own address
 only until the receiver hears the member's next frame, which on a working
 link is its next heartbeat, about 33 s or less. A jammer that keeps the
-member's frames from the receiver keeps the window open, and the member
-then reads `PEER_STALE` within about 90 s (§7.2).
+member's frames from the receiver keeps the window open. Such a frame also
+stamps the member live (§7.2), so a jammer that sends the frames it blocked
+late, one under every 90 s, holds the member `PEER_CONNECTED` for as long as
+its stock lasts, after the member is gone too, with no `PEER_STALE` between;
+only one that blocks and sends nothing leaves it `PEER_STALE` within about
+90 s. The receiver reboot above reopens the same window for the frames heard
+since its last replay-counter save: about 90 s of `PEER_CONNECTED` each, up
+to about 18 minutes from the at most 12 heartbeats a 5-minute save interval
+holds (more if the member sent other frames in it), then `PEER_STALE` and
+`PEER_OFFLINE`. One frame the receiver hears from the member itself makes
+every older one a replay. Nothing in the receive path tells a late frame
+from a fresh one (the signed header carries the sender's own clock, which no
+receiver checks). Host-tested
+(`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`).
 
 So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
@@ -2153,10 +2176,13 @@ An implementation conforms to this specification if it:
   ones of F162 included) re-arming the deadline, and a stopped session drops
   it (§7.1); a PlatformIO member's peer state, `last_seen_sec`, `rssi` and
   `peers_online` come from its last frame that passed the signature, opera
-  and counter checks, as on canary-wap, so a junk frame or a replay from its
-  address refreshes nothing, and an age past 2^31 ms is held there so it does
-  not wrap back to `PEER_CONNECTED` (§7.2, §8.3). A lost first COMPLETE heals
-  at the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
-  station joined its router costs at most one interval (§7.1), and the §8.3
-  replay window of a missed frame closes at the member's next heartbeat on a
-  working link. No wire change.
+  and counter checks, as on canary-wap, so a junk frame or a replay of a
+  frame the receiver has heard refreshes nothing, and an age past 2^31 ms is
+  held there so it does not wrap back to `PEER_CONNECTED` (§7.2, §8.3); a
+  frame the receiver has not heard (one a jammer blocked, or one heard since
+  its last replay-counter save before a reboot) still refreshes it when it
+  arrives late, about 90 s per frame (§8.3). A lost first COMPLETE heals at
+  the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
+  station joined its router costs at most one interval after it joins
+  (§7.1), and the §8.3 replay window of a missed frame closes at the
+  member's next heartbeat on a working link. No wire change.

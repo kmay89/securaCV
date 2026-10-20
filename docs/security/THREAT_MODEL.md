@@ -1014,23 +1014,47 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       it `CONNECTED` and `peers_online` 1 for ten minutes (host-probed). A
       heartbeat alone would have made that easy to aim (the member's MAC on
       the air every 30 s), so an intruder who pulled a Canary could have
-      held it `CONNECTED` with a spare ESP32. Now it reads `STALE` within
-      about 90-100 s and `OFFLINE` within about 5 minutes whatever a radio
-      copying its address sends, unless that radio has the member's key.
+      held it `CONNECTED` with a spare ESP32. Now junk, a forgery and a
+      replay of a frame the receiver has heard refresh nothing, and a member
+      that is gone reads `STALE` within about 90-100 s and `OFFLINE` within
+      about 5 minutes while that is all a radio copying its address sends.
       An age past 2^31 ms is held there, so a member gone longer than the
       32-bit clock can count does not read `CONNECTED` again when it wraps.
+    - *Not covered: a frame the receiver has not heard.* The counter check
+      is a high-water mark, so a genuine frame of the member's that the
+      receiver has not heard verifies whenever it arrives from the member's
+      own address, and refreshes its liveness. A radio comes to hold such
+      frames two ways. After a receiver reboot, every frame it heard since
+      its last 5-minute replay-counter save is fresh again (spec §8.3; the
+      F116 bullet above says the same of canary-wap's own save): a
+      recorder that sends them one under every 90 s holds
+      a member that is gone `CONNECTED` for about 90 s per frame, up to
+      about 18 minutes from the at most 12 heartbeats one save interval
+      holds (more if the member sent other frames in it), and then it reads
+      `STALE` and `OFFLINE`. And a jammer that keeps the member's frames
+      from the receiver and sends them late holds it `CONNECTED` for as long
+      as its stock lasts, after the member is gone too, with no `STALE`
+      between; a jammer that only blocks leaves it `STALE` within about
+      90 s. One frame the receiver hears from the member itself makes every
+      older one a replay. Nothing on the receive side tells a late frame
+      from a fresh one: the signed header carries the sender's own clock,
+      which no receiver checks. A save before the deliberate restarts would
+      narrow the reboot case to unclean ones (a power cut, a crash); it is
+      not made. Host-tested
+      (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`).
     - *The replay window of a missed frame, bounded conditionally.* A frame
       of a member's that the receiver missed stays dispatchable from a radio
       copying the member's own address (spec §8.3) only until the receiver
       hears the member's next frame: on a working link its next heartbeat,
       about 33 s or less. A jammer that keeps the member's frames from the
-      receiver keeps it open, and the member then reads `STALE` within about
-      90 s. Not a flat 33 s bound.
+      receiver keeps it open; if it also sends them late, the member reads
+      `CONNECTED` throughout (the bullet above). Not a flat 33 s bound.
     - *Cost, from code.* One Ed25519 signature per interval per sender, and
-      at most 7 verifies per interval per receiver (eight members at most),
-      on the main loop; one outbound counter per heartbeat (a reservation
-      write per 1024, about 2.8 a day); the 5-minute replay-counter save
-      now writes counters that move (only on flash-encrypted boards). The
+      at most 8 heartbeat verifies per interval per receiver (one per bound
+      member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
+      counter per heartbeat (a reservation write per 1024, about 2.8 a
+      day); the 5-minute replay-counter save now writes counters that move
+      (only on flash-encrypted boards). The
       transport's 100-frame-a-second storm gate is untouched. The same
       cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds

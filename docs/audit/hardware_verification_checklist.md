@@ -1203,9 +1203,14 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     less. The sniffer shows one signed heartbeat from each MAC every
     27-33 s (plus one loop pass). After each unplug the other Canary reads
     it STALE within about 90-100 s and OFFLINE within about 5 minutes, also
-    while the third ESP32 sends from its MAC. Before F324: CONNECTING, the
-    other OFFLINE with `last_seen_sec` about 600 after 10 idle minutes, and
-    nothing on the sniffer; with the spoofing ESP32, CONNECTED indefinitely.
+    while the third ESP32 sends junk from its MAC. Do not reboot the
+    reading Canary in between: after a reboot the frames it heard since its
+    last 5-minute replay-counter save are fresh again, and a recorder that
+    sends those, or frames it never heard, keeps the member CONNECTED about
+    90 s each (the threat model's documented residual, not this row's).
+    Before F324: CONNECTING, the other OFFLINE with `last_seen_sec` about
+    600 after 10 idle minutes, and nothing on the sniffer; with the spoofing
+    ESP32, CONNECTED indefinitely.
   - Artifact: `docs/audit/repro/F324/quiet-opera/`.
 - [ ] **The peers list is the session's, without flash encryption**
   - Setup: a PlatformIO canary in an opera, flashed without flash

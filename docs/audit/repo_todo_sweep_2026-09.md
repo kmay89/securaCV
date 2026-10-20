@@ -8917,8 +8917,25 @@ so — see D2 below.)
   `OFFLINE` about 610 s old, and the web UI said "Searching for opera
   members"; now they read `ACTIVE` and `CONNECTED`, at most 34 s old. A
   member that is unplugged, crashed, out of range or jammed reads STALE
-  within about 90-100 s and OFFLINE within about 5 min, and a radio copying
-  its address cannot hide that without the member's key. One addition the
+  within about 90-100 s and OFFLINE within about 5 min while junk, forgeries
+  and replays of frames the receiver has heard are all a radio copying its
+  address sends. *Not covered (review round 1, 2026-10-20):* a genuine frame
+  of the member's that the receiver has NOT heard passes every check
+  whenever it arrives from the member's address (the counter check is a
+  high-water mark) and refreshes its liveness. After a receiver reboot the
+  frames heard since its last 5-minute replay-counter save are such frames
+  again (`main.cpp` saves on that timer and on revoke, leave and rekey, and
+  no restart path saves first): a recorder that sends them one under every
+  90 s holds a member that is gone `CONNECTED` about 90 s each, up to about
+  18 minutes from the at most 12 heartbeats one save interval holds (more if
+  the member sent other frames in it), then it reads STALE and OFFLINE. A
+  jammer that keeps the member's frames from the receiver and sends them
+  late holds it `CONNECTED` for as long as its stock lasts, with no STALE
+  between. Nothing on the receive side tells a late frame from a fresh one;
+  the signed header's timestamp is the sender's own clock and no receiver
+  checks it. A `persist_replay_counters()` before the deliberate restarts
+  would narrow the reboot case to unclean ones; not done here, and not
+  filed under a number of its own. One addition the
   code needed beyond the decision: the age is a 32-bit difference, so a
   member gone 2^32 ms (about 49.7 days) would read `CONNECTED` again for
   90 s (the transport entry did the same at head); every pass, stopped or
@@ -8928,12 +8945,14 @@ so — see D2 below.)
   F320's lost boot heartbeat costs at most one interval after association.
   A missed frame re-delivered from a copied address (spec §8.3) stays
   dispatchable until the receiver hears the sender's next frame: about 33 s
-  or less on a working link. A jammer can stretch that, but the member then
-  reads STALE. Cost, from code: one counter per heartbeat (about 2.8
+  or less on a working link. A jammer can stretch that, and one that also
+  sends the blocked frames late keeps the member `CONNECTED` while it does
+  (above). Cost, from code: one counter per heartbeat (about 2.8
   reservation writes a day), replay saves that now write moving counters
   every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
-  nvs), one sign per 30 s per sender and at most 7 verifies per 30 s per
-  receiver. No wire change. The RF pattern is marginal: the only env with
+  nvs), one sign per 30 s per sender and at most 8 heartbeat verifies per
+  30 s per receiver (one per bound member; `MAX_TRUSTED_PEERS` is 8). No
+  wire change. The RF pattern is marginal: the only env with
   the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
   released image builds the mesh, so no OTA'd device changes. The owner
   stops the frame by turning the mesh off. Rejected: the narrow
@@ -8953,8 +8972,19 @@ so — see D2 below.)
   a disable past 2^31 ms, junk and a replay from a member's address, and an
   age past the clock's wrap; each fails on the old code, and the re-arm,
   long-disable and wrap cases on a mutant without the re-arm, the
-  stopped-pass drop and the age cap. The other 12 mesh suites are
-  unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
+  stopped-pass drop and the age cap. Review round 1 (2026-10-20) added
+  cases for seven mutants every suite let through:
+  `test_the_heartbeat_spacing_holds_across_the_millis_wrap` (a plain
+  `now >= deadline` signs a heartbeat on every pass near the wrap: 28 in
+  400 s where 13 go), `test_each_heartbeat_deadline_is_drawn_afresh` (in
+  the seeded run an hour's gaps span 27.1-32.9 s with 52 distinct values; a
+  deadline fixed at 27, 30 or 33 s, or drawn once, gives one value),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), a stopped leg of the wrap case (the age cap on
+  a stopped pass), and `test_a_frame_the_receiver_has_not_heard_still_counts_as_live`,
+  which pins the figures of the not-covered note above (12 frames since
+  the save, 1069 s `CONNECTED`). The other 12 mesh suites are unchanged and
+  pass; `check_canary_mesh_status.py` passes (68 mutations
   refused). The `[env:full]` compile is CI's; host-tested, not run on a
   device. The on-air spacing and the STALE/OFFLINE transitions are a U1
   bench row (`hardware_verification_checklist.md`).
@@ -12471,17 +12501,22 @@ so — see D2 below.)
   in-tree client acted on it: iOS `WapStatus` decodes it and ignores it, and
   its fixture already expected `"canary-wap"`. `node_status.node` and
   `/api/fleet`'s `self.product` now read the constant, so the sketch states
-  the type once. `wire_types.mjs` reads the constant as a third agreeing site
-  (`constString`: one declaration, one string literal, and any other write
-  refused, whether `=`, a compound assignment, `++` or `--`), so
+  the type once (`figures.test.js` holds both to it and refuses a literal
+  handed to either, review round 1, 2026-10-20). `wire_types.mjs` reads the
+  constant as a third agreeing site (`constString`: one declaration, one
+  string literal, and any other assignment to the name refused, whether
+  `=`, a compound assignment, `++` or `--`; the check is lexical, so a
+  write through a pointer to the constant is not seen), so
   `gen_figures.mjs --check` refuses any future split between the constant,
   the three mDNS `dt` calls and the two MQTT status strings, by file and line.
   Improv's firmware-name string (`ble_improv.cpp`) stays a literal outside
   that check, since that file cannot see the sketch's constant.
   `figures.test.js` pins the constant, holds its declaration line among the
-  read sites, and adds seven refusals (the constant set back to `"canary"`,
-  handed a name, declared twice, repointed, moved by `+=`, moved by `++`, and
-  gone to a `#define`), each of which the old reader let through, plus a
+  read sites, and adds twelve refusals (the constant set back to `"canary"`,
+  handed a name, declared twice, repointed, moved by `+=`, by a prefix `++`
+  or `--` and by a postfix `++` or `--`, declared as a choice or a
+  concatenation of two literals, and gone to a `#define`), each of which the
+  old reader let through, plus a
   case that a longer name (`WAP_DEVICE_TYPE`) and a `==` are not writes.
   `wap.json` is regenerated (`device_type` and the boot preview's Type line).
   The figure outputs, the Home Assistant data, the CSP, `web_assets_gz.h` and

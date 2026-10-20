@@ -152,14 +152,16 @@ function statementEnd(code, from) {
   return code.length;
 }
 
-/** Every write to the `name` constant. Its one declaration,
+/** Every assignment to the `name` constant. Its one declaration,
  * `static const char* <name> = "<type>";`, names the type. A declaration whose
  * value is not one string literal is refused, and so is a second declaration.
- * So is any other write: `const char*` leaves the pointer itself writable, so
- * a function could repoint it (`=`, a compound assignment such as `+=`, `++`
- * or `--`), and a type set at run time is not one this reader can spell.
- * `\b` keeps a longer name (WAP_DEVICE_TYPE) out, and a comparison (`==`) is
- * not a write. */
+ * So is any other assignment to the name: `const char*` leaves the pointer
+ * itself writable, so a function could repoint it (`=`, a compound assignment
+ * such as `+=`, `++` or `--`, prefix or postfix), and a type set at run time
+ * is not one this reader can spell. The match is lexical, on the name: a
+ * write through a pointer or a reference to the constant is not seen. `\b`
+ * keeps a longer name (WAP_DEVICE_TYPE) out, and a comparison (`==`) is not a
+ * write. */
 export function constString(name) {
   const write = new RegExp(`\\b${name}\\b\\s*(?:(<<|>>|[-+*/%&|^])?=(?!=)|\\+\\+|--)`
     + `|(?:\\+\\+|--)\\s*\\b${name}\\b`, 'g');

@@ -2390,11 +2390,20 @@
   with a `static_assert` that one lost heartbeat cannot read `STALE`, and a
   per-member `verified_seen_ms` and RSSI stamped in `on_opera_frame` after
   the counter check, which the view and `online_peer_count` read instead of
-  the transport entry. Two edges the arithmetic hides: a deadline kept
+  the transport entry. Three edges the arithmetic hides: the deadline is
+  compared as a signed difference, because a device up about 49.7 days
+  arms one past 2^32 ms that wraps to a small number, and a plain
+  `now >= deadline` then signs a heartbeat on every pass until the clock
+  wraps too (28 in 400 s where 13 belong, host-probed); a deadline kept
   across a disable longer than 2^31 ms reads as weeks in the future, so a
   stopped pass drops it; and a 32-bit age wraps after about 49.7 days and
-  would read a long-gone member `CONNECTED` again, so every pass holds a
-  heard member's age at 2^31 ms or under.
+  would read a long-gone member `CONNECTED` again, so every pass, stopped
+  or running, holds a heard member's age at 2^31 ms or under. What it does
+  not fix: the counter check is a high-water mark, so a genuine frame the
+  receiver has not heard (one a jammer blocked, or one heard since the last
+  replay-counter save before a reboot) still verifies and stamps the member
+  live when a copying radio sends it late; the threat model names the
+  bound.
 - **Regression check:** `test_mesh_session`:
   `test_liveness_counts_only_verified_frames` (junk and a replay refresh
   nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
@@ -2403,7 +2412,17 @@
   `test_the_heartbeat_timer_survives_a_long_disable`,
   `test_a_long_gone_member_stays_offline_past_the_clock_wrap`; each fails
   on the code before F324, and the last three on a mutant without the
-  re-arm, the stopped-pass drop and the age cap. Silence assertions that a
+  re-arm, the stopped-pass drop and the age cap (running and stopped).
+  Review round 1 found seven mutants every suite let through, and these
+  fail on them: `test_the_heartbeat_spacing_holds_across_the_millis_wrap`
+  (the plain compare), `test_each_heartbeat_deadline_is_drawn_afresh` (a
+  fixed or once-drawn jitter keeps every gap inside the per-gap bounds, so
+  only a spread assertion sees it),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), and the wrap case's stopped leg; and
+  `test_a_frame_the_receiver_has_not_heard_still_counts_as_live` pins the
+  threat model's figures. Bounding each gap is not testing a jitter, and a
+  wrap-safe compare needs a window across the wrap. Silence assertions that a
   timer makes false were rewritten to admit only member heartbeats checked
   by destination, signature, opera and counter
   (`assert_only_member_heartbeats`), not deleted.
