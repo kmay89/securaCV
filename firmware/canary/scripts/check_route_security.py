@@ -28,7 +28,10 @@ every other gate):
     expression, or initializing a `const` local that one of those later
     reads. A bare `auth_gate(req);`, `(void)bearer_present_and_valid(req);`
     or a local nobody tests ignores the answer and is not a gate, and a
-    `return` inside a lambda body is the lambda deciding, not the handler;
+    `return` inside a lambda body is the lambda deciding, not the handler.
+    auth_bearer_grant() answers one of four (NONE / OK / WRONG / HELD), so
+    it counts only where its call is compared `== AuthManager::BearerResult::OK`
+    (`!= ...::WRONG` would serve a request with no header or a held one);
   * every `send_html_with_token(...)` call passes `page_token_inject(req)` as
     its third argument — never a literal `true`/`false` or anything else —
     and page_token_inject goes through provisioning_gate::page_token_decide
@@ -91,9 +94,11 @@ ROOTS = (Path("firmware/canary/lib"), Path("firmware/canary/src"))
 # Each is a real call that enforces access:
 AUTH_MARKERS = (
     "auth_gate(",               # bearer, fail-closed 503 when unprovisioned
-    "auth_check(",              # AuthManager bearer check (401/403/429)
-    "auth_check_optional(",     # silent bearer check; caller enforces the else
-    "bearer_present_and_valid(",  # auth_check_optional + refuses an unprovisioned credential
+    "auth_check(",              # AuthManager bearer check (401/403/429), per source address
+    "auth_bearer_grant(",       # the accounted grant (NONE/OK/WRONG/HELD), sends nothing;
+                                # the caller tests for OK and answers the rest (F340):
+                                # it counts only compared `== AuthManager::BearerResult::OK`
+    "bearer_present_and_valid(",  # auth_bearer_grant == OK + refuses an unprovisioned credential
     "provisioning_gate_take(",  # physical BOOT tap, one tap = one consumer
     "receipt_decide(",          # provisioning_gate::receipt_decide: the Host, then
                                 # the bearer, then the tap (host-tested). It runs the
@@ -461,6 +466,23 @@ def _statement_prefix(blanked: str, i: int) -> str:
 
 _DECIDING_PREFIX = re.compile(r"^(?:else\s+)?(?:if|while|switch)\s*\(|^return\b")
 _CONST_LOCAL = re.compile(r"^const\s+[\w:<>]+\s*[*&]?\s*([A-Za-z_]\w*)\s*=")
+# The markers whose result is not a yes or no: the comparison their call must
+# stand in to say yes. auth_bearer_grant()'s four values (NONE / OK / WRONG /
+# HELD) say yes only as OK, so `!= ...::WRONG` or `== ...::NONE` would serve a
+# request with no header, or a held one.
+_MARKER_YES = {
+    "auth_bearer_grant(": re.compile(r"\s*==\s*(?:AuthManager\s*::\s*)?BearerResult\s*::\s*OK\b"),
+}
+
+
+def _says_yes(blanked: str, marker: str, i: int) -> bool:
+    """True when the call of `marker` at `i` says yes or no by itself, or
+    stands in the one comparison _MARKER_YES names for it."""
+    yes = _MARKER_YES.get(marker)
+    if yes is None:
+        return True
+    close = _paren_close(blanked, i + len(marker) - 1)
+    return close >= 0 and yes.match(blanked, close + 1) is not None
 
 
 def first_deciding_marker(body: str, marker: str) -> int:
@@ -471,7 +493,8 @@ def first_deciding_marker(body: str, marker: str) -> int:
     local that a later if / while / switch condition or return expression
     reads. A bare call, a `(void)` cast, a non-const or unread local, and a
     `return` inside a lambda body (the lambda deciding, not the function)
-    discard the answer and do not count."""
+    discard the answer and do not count, and neither does a marker whose
+    answer is not a yes or no outside the comparison _MARKER_YES names."""
     blanked = blank_string_contents(body)
     start = 0
     while True:
@@ -479,7 +502,7 @@ def first_deciding_marker(body: str, marker: str) -> int:
         if i < 0:
             return -1
         start = i + 1
-        if in_lambda(blanked, i):
+        if in_lambda(blanked, i) or not _says_yes(blanked, marker, i):
             continue
         prefix = _statement_prefix(blanked, i)
         if _DECIDING_PREFIX.match(prefix):
@@ -600,12 +623,12 @@ TOKEN_EMITTERS = {
 # against it, never into a response.
 TOKEN_COMPARERS = {
     "auth_gate": "the API gate: the Host, then the bearer compare",
-    "bearer_present_and_valid": "the silent bearer compare the receipt and the pages use",
+    "bearer_present_and_valid": "the accounted bearer grant the receipt and the pages use",
 }
 
 # What must not run before the Host is decided: reading the bearer, taking
 # the tap, reading the token, emitting it.
-PRE_HOST_STEPS = ("bearer_present_and_valid(", "auth_check_optional(", "auth_check(",
+PRE_HOST_STEPS = ("bearer_present_and_valid(", "auth_bearer_grant(", "auth_check(",
                   "provisioning_gate_take(", "auth_get_token(") + tuple(
                       name + "(" for name in TOKEN_EMITTERS)
 
@@ -916,7 +939,7 @@ def check_host_first(sources: dict, require_defs: bool = True) -> list:
                             f"auth_gate route would serve under a rebound name")
         else:
             late = steps_before(body, refusals[0],
-                                ("auth_get_token(", "auth_check(", "auth_check_optional("))
+                                ("auth_get_token(", "auth_check(", "auth_bearer_grant("))
             if late:
                 failures.append(f"{fname}: auth_gate reads the token ({', '.join(late)}) "
                                 f"before its Host check")
@@ -1210,9 +1233,20 @@ def _assert_parser_robust() -> None:
     for ok in ("if (!auth_gate(req)) return ESP_OK;",
                "} else if (auth_check(req, t)) {",
                "if (a && (b || bearer_present_and_valid(req))) {",
-               "return auth_check_optional(req, token);"):
+               "return auth_bearer_grant(req, token, request_peer_ipv4(req)) ==\n"
+               "       AuthManager::BearerResult::OK;"):
         assert marker_decides("{ " + ok, next(m for m in AUTH_MARKERS if m in ok)), ok
     for bad in ("(void)bearer_present_and_valid(req); return send(req);",
+                "(void)auth_bearer_grant(req, t, request_peer_ipv4(req)); return send(req);",
+                # The grant's four values say yes only as OK (F340).
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) != "
+                "AuthManager::BearerResult::WRONG) return send(req);",
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+                "AuthManager::BearerResult::NONE) return send(req);",
+                "const AuthManager::BearerResult r = auth_bearer_grant(req, t, request_peer_ipv4(req));\n"
+                "  if (r != AuthManager::BearerResult::HELD) return send(req);",
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+                "AuthManager::BearerResult::OKAY) return send(req);",
                 "auth_gate(req); return ESP_OK;",
                 "bool ok = auth_gate(req); return send(req);",
                 "const bool ok = auth_gate(req); return send(req);",
@@ -1291,6 +1325,16 @@ def _assert_parser_robust() -> None:
         "  if (!provisioning_gate_take()) return ESP_OK;\n"
         "  return send_provisioning_receipt(req);\n",
         "before the Host check", "bearer_present_and_valid")
+    # The accounted grant itself, read before the Host (F340): it strikes
+    # a wrong bearer against its address, so a rebound page could spend a
+    # host's backoff (or test a token) under a name that is not this device.
+    red("  if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+        "AuthManager::BearerResult::OK)\n"
+        "    return send_provisioning_receipt(req);\n"
+        "  if (host_is_foreign(req)) return ESP_OK;\n"
+        "  if (!provisioning_gate_take()) return ESP_OK;\n"
+        "  return send_provisioning_receipt(req);\n",
+        "before the Host check", "auth_bearer_grant")
     for not_a_check in (
             "  host_is_foreign(req);\n",                                # answer dropped
             "  const bool foreign = host_is_foreign(req);\n",           # local unread
@@ -1319,8 +1363,15 @@ def _assert_parser_robust() -> None:
     good_gate = ("static bool auth_gate(httpd_req_t* req) {\n"
                  "  if (host_is_foreign(req)) {\n    send_host_refusal(req);\n"
                  "    return false;\n  }\n  const char* token = auth_get_token();\n"
-                 "  return auth_check(req, token);\n}\n")
+                 "  return auth_check(req, token, request_peer_ipv4(req));\n}\n")
     assert check_host_first({"fx": good_gate}, require_defs=False) == []
+    early_grant = good_gate.replace(
+        "  if (host_is_foreign(req)) {",
+        "  if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+        "AuthManager::BearerResult::HELD) return false;\n  if (host_is_foreign(req)) {")
+    got = check_host_first({"fx": early_grant}, require_defs=False)
+    assert any("auth_gate reads the token (auth_bearer_grant) before its Host check" in f
+               for f in got), (early_grant, got)
     green("  if (host_is_foreign(req)) return ESP_OK;\n" + no_host)
     green("  if (host_is_foreign(req)) {\n    send_host_refusal(req);\n"
           "    return ESP_OK;\n  }\n" + no_host)
@@ -1413,6 +1464,11 @@ def _assert_parser_robust() -> None:
                "  const bool foreign = host_is_foreign(req);\n"
                "  return page_token_decide(foreign, bearer_ok, false,\n" + tap,
                "before the Host check")
+    inject_red("  const bool bearer_ok = auth_bearer_grant(req, t, request_peer_ipv4(req)) ==\n"
+               "      AuthManager::BearerResult::OK;\n"
+               "  const bool foreign = host_is_foreign(req);\n"
+               "  return page_token_decide(foreign, bearer_ok, false,\n" + tap,
+               "page_token_inject runs auth_bearer_grant before the Host check")
     good_inject = ("  const bool foreign = host_is_foreign(req);\n"
                    "  const bool bearer_ok = !foreign && bearer_present_and_valid(req);\n"
                    "  return page_token_decide(foreign, bearer_ok, false,\n" + tap)

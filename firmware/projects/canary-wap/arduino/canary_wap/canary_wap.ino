@@ -202,6 +202,7 @@ extern "C" {
 #include "bluetooth_channel.h"
 #include "ble_improv.h"          // the Bluetooth setup door (Improv Wi-Fi), FULL profile
 #include "claim_ticket.h"        // the claim a phone reads over that door and spends on the LAN
+#include "provisioning_gate.h"   // pure, host-tested: a request's peer key and its IPv4 (staged; F343)
 #include "bluetooth_api.h"
 #include "ble_console.h"
 #include "ble_log_export.h"
@@ -6751,9 +6752,10 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 // credential (session cookie / Bearer) instead. A *presented* admin
 // credential is validated through the lockout-aware `api_auth_check` so
 // Bearer guessing is throttled exactly like every other admin route —
-// `api_auth_check_optional` (used before) skipped the 429 backoff and never
-// recorded a failure, turning this fallback into an unthrottled token
-// oracle: an on-AP/LAN client could spray Authorization guesses and tell a
+// `api_auth_check_optional` (used before, and silent until sweep F339)
+// skipped the 429 backoff and never recorded a failure, turning this
+// fallback into an unthrottled token oracle: an on-AP/LAN client could
+// spray Authorization guesses and tell a
 // valid token from the handler proceeding. A bare pair-token miss (no
 // admin credential presented at all) stays a friendly `invalid_token` so
 // the wizard can silently re-issue its RAM-backed token and retry.
@@ -8399,6 +8401,11 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
 // credential. Without a gate, any on-AP peer could read the scanned SSID
 // or cancel a user's in-flight QR scan — POST already required the token,
 // so the read/cancel sides matching it is just closing the same door.
+// The admin fallback is api_auth_check_optional(): the cookie, or the bearer
+// under its address's lockout (sweep F339; before, it compared silently). A
+// wrong bearer is one strike against that address, and a held address gets
+// these routes' own 403, not a 429. The pair token is read first and is no
+// bearer, so the wizard's polls are never held.
 static bool qr_scan_request_allowed(httpd_req_t* req) {
   char qs[192];
   if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
@@ -8608,6 +8615,52 @@ static uint32_t request_local_ipv4(httpd_req_t* req) {
   return 0;
 }
 
+// The sketch's one reader of who sent a request: the socket's PEER address
+// (getpeername; never getsockname, and never a request header), as the
+// 16-byte key provisioning_gate.h's peer_key_from_addr() writes. On the
+// dual-stack listener both cores open, an IPv4 client reads as
+// ::ffff:a.b.c.d; without the AF_INET6 branch every request would read as
+// unknown. False when the socket cannot say. The bearer lockout's source,
+// auth_request_source() below, is read through it. The same fd works under
+// esp_https_server, whose sessions sit on the httpd socket.
+static bool request_peer_key(httpd_req_t* req, uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof(ss);
+  memset(&ss, 0, sizeof(ss));
+  if (getpeername(fd, (struct sockaddr*)&ss, &len) != 0) return false;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return canary::net::provisioning_gate::peer_key_from_addr(
+        canary::net::provisioning_gate::AddrFamily::IPV4, (const uint8_t*)&sin->sin_addr.s_addr, out);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return canary::net::provisioning_gate::peer_key_from_addr(
+        canary::net::provisioning_gate::AddrFamily::IPV6, (const uint8_t*)&sin6->sin6_addr, out);
+  }
+#endif
+  return false;
+}
+
+// The source the bearer lockout counts a request's wrong bearers against
+// (api_auth.h, auth_backoff.h; sweep F343): the host-order IPv4 of the
+// request's peer key. It comes from the socket, never from a request header
+// (X-Forwarded-For included). A ::ffff: key gives its IPv4; a real IPv6
+// peer, or a socket that cannot say, gives 0, the one bucket every such
+// source shares. The mapping is provisioning_gate.h's
+// ipv4_host_order_from_addr(), the function the canary tree's
+// sockaddr_ip4_host_order() maps its peers through. Not static: api_auth.h
+// declares it, for every file of the sketch that includes it.
+uint32_t auth_request_source(httpd_req_t* req) {
+  uint8_t key[canary::net::provisioning_gate::PEER_KEY_LEN];
+  if (!request_peer_key(req, key)) return 0;
+  return canary::net::provisioning_gate::ipv4_host_order_from_addr(
+      canary::net::provisioning_gate::AddrFamily::IPV6, key);
+}
+
 // What receipt_authority.h decides from, read where the device keeps it:
 // the request's own local address, the SoftAP's (0.0.0.0 on core 3.x once
 // wifi_drop_ap() released the AP netif), the STA's while it is connected,
@@ -8713,11 +8766,15 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    credential (403 physical_confirmation_required; the dashboard's
   //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
   //    one that typed the token sends it as a bearer and is served here.
-  //    The bearer is under every admin route's lockout (F289's follow-up):
-  //    a wrong one is a strike, and while the backoff runs none is compared
-  //    (the 429 below, when the claim and the tap do not serve). The lockout
+  //    The bearer is under every admin route's lockout (F289's follow-up),
+  //    which is per source address (F343): a wrong one is a strike against
+  //    the address that sent it, and while that address's backoff runs none
+  //    of its bearers is compared (the 429 below, when the claim and the tap
+  //    do not serve); another address's right token is served. The lockout
   //    never gates the claim or the tap: a page with a stale token, or a
-  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap,
+  //    and the address they serve has its backoff cleared (sweep F341,
+  //    after step 3).
   //    (The lockout is all this decides. Any host on the network can still
   //    spend a pending claim with one wrong ?claim=, or take an open tap by
   //    asking first; both predate F289 and are the ledger's.)
@@ -8782,6 +8839,20 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, body);
   }
+
+  // The claim or the tap has just handed this address the token, so its
+  // backoff ends as a right bearer's would (sweep F341): the client served
+  // here gets its next right-token call answered at once, not after up to
+  // 60 s of 429. The strike its header may have cost above stays the rule
+  // (one accounting for every route). Only this address's own slot is freed,
+  // never the shared overflow (auth_backoff.h). The tap-and-claim refusal
+  // returned above, so a request refused before a tap or a claim is taken
+  // clears nothing (check_route_security.py's BACKOFF_CLEARS holds this call
+  // here, once). send_provisioning_receipt() below can still refuse (503
+  // no_address, 500 out_of_memory, 503 answer_changed) after the clear; the
+  // tap or the claim is spent by then, and a send that worked would have
+  // handed this address the token.
+  auth_record_success(req);
 
   // The claim matched, or the gate was open (and is now closed) — serve the
   // receipt with the same session cookie either way: the phone that

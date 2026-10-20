@@ -308,8 +308,10 @@ inline size_t redirect_location(char* out, size_t cap, const char* host, const c
  * order: 4 bytes for IPV4 (sin_addr), 16 for IPV6 (sin6_addr). Any IPv6
  * address that is not IPv4-mapped, any other family, and a null pointer read
  * as 0 (unknown). The same mapping as provisioning_gate.h's
- * ipv4_host_order_from_addr(), which the sketch cannot include (the Arduino
- * sketch compiles only its own directory); the host test holds the two equal. */
+ * ipv4_host_order_from_addr(). The sketch stages that header since F343 for
+ * the request's peer key (request_peer_key(), the bearer lockout's source);
+ * this copy stays here beside the receipt's other socket reads, and the host
+ * test holds the two equal. */
 enum class AddrFamily : uint8_t { IPV4, IPV6, OTHER };
 
 inline uint32_t ipv4_from_addr(AddrFamily family, const uint8_t* bytes) {

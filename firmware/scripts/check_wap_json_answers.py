@@ -223,11 +223,20 @@ from check_event_egress_order import (  # noqa: E402  (shared C++ scanning helpe
     matching_paren,
 )
 
-blank_comments_and_strings = functools.lru_cache(maxsize=256)(_blank)
-
 REPO = Path(__file__).resolve().parents[2]
 SKETCH = "firmware/projects/canary-wap/arduino/canary_wap"
 INO = f"{SKETCH}/canary_wap.ino"
+SOURCE_PATTERNS = ("*.h", "*.cpp", "*.ino")
+
+# The per-file caches below hold every sketch file at once, so each mutation of the self-test
+# re-reads only the file it changed. Sized from the sketch, never typed: at a typed 256 against the
+# sketch's 258 files, every pass evicted the file it was about to read, and the self-test ran past
+# its CI timeout at twice the time with nothing wrong. Four entries a file covers `forwarders_in()`
+# and `calls_in()`, which key a file once per round of the format-forwarding fixpoint.
+CACHE_ENTRIES = 4 * sum(1 for pattern in SOURCE_PATTERNS for _ in (REPO / SKETCH).glob(pattern)) + 64
+
+blank_comments_and_strings = functools.lru_cache(maxsize=CACHE_ENTRIES)(_blank)
+
 # Answer files left out, with why. A file named here is not measured.
 EXCLUDED: dict[str, str] = {}
 # J4: the fleet scan's cache, its writer and its size.
@@ -256,7 +265,7 @@ CHAR_ESCAPE = 2          # bytes ArduinoJson spends at most on one byte of a cha
 
 def sketch_files() -> dict[str, str]:
     out = {}
-    for pattern in ("*.h", "*.cpp", "*.ino"):
+    for pattern in SOURCE_PATTERNS:
         for path in sorted((REPO / SKETCH).glob(pattern)):
             out[path.relative_to(REPO).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
     return out
@@ -267,7 +276,7 @@ def scope_of(files: dict[str, str]) -> list[str]:
     return names + [INO]
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=CACHE_ENTRIES)
 def blank_comments_only(src: str) -> str:
     """Comments become spaces, string literals stay (offsets kept)."""
     code = blank_comments_and_strings(src)
@@ -455,7 +464,7 @@ STR_CONST = re.compile(r'\b(?:static\s+)?(?:constexpr|const)\s+char\s+(\w+)\s*\[
                        r'((?:"(?:[^"\\\n]|\\.)*"\s*)+);')
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=CACHE_ENTRIES)
 def index_file(name: str, src: str) -> Index:
     """One file's declarations (cached: each mutation of the self-test re-reads only the file it
     changed)."""
@@ -1514,7 +1523,7 @@ def printf_callees(idx: Index) -> Callees:
     return cs
 
 
-@functools.lru_cache(maxsize=1024)
+@functools.lru_cache(maxsize=CACHE_ENTRIES)
 def forwarders_in(name: str, src: str, at_items: tuple[tuple[str, int], ...]) -> tuple[tuple, tuple]:
     """One file's functions and macros that hand their own format to a callee in `at_items` (cached:
     a mutation re-reads only the file it changed)."""
@@ -1568,7 +1577,7 @@ def printf_calls(files: dict[str, str], cs: Callees):
             yield name, at, callee, list(args), fi
 
 
-@functools.lru_cache(maxsize=1024)
+@functools.lru_cache(maxsize=CACHE_ENTRIES)
 def calls_in(name: str, src: str, at_items: tuple[tuple[str, int], ...]) -> tuple:
     at = dict(at_items)
     rx = callee_re(at)

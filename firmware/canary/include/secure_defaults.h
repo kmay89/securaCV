@@ -110,9 +110,12 @@
 // ════════════════════════════════════════════════════════════════════
 // PRINCIPLE 9: FAIL SECURE
 // ════════════════════════════════════════════════════════════════════
-// API authentication lockout: lib/securacv_auth/src/securacv_auth.h
-// (SECURACV_AUTH_MAX_FAILURES 5, SECURACV_AUTH_LOCKOUT_BASE_MS 2 s,
-// SECURACV_AUTH_LOCKOUT_MAX_MS 5 min). Hardware watchdog:
+// API authentication lockout: lib/securacv_auth/src/securacv_auth.h runs
+// firmware/common/network/auth_backoff.h, the WAP's table, whose numbers
+// live there: per source address, 2 s doubling, capped at 60 s. A malformed
+// or wrong bearer is a strike; a request with no credential is none (sweep
+// F340). The old SECURACV_AUTH_* backoff knobs are gone; setting one is an
+// #error. Hardware watchdog:
 // canary_config.h's WATCHDOG_TIMEOUT_SEC. There is no periodic chain
 // re-verify: the boot self-test and the sign-then-verify on every record
 // are the checks (firmware/FEATURES.md, "Self-verification").

@@ -398,7 +398,7 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         # ... and that macro takes the cookie before it looks for a bearer.
         macro = body_after(csi, "#define CSI_AUTH_OR_RETURN(req)", r"\n\n")
         cookie = macro.index("cv_session_validate((req))")
-        bearer = macro.index("api_auth_check_optional((req), g_api_token)")
+        bearer = macro.index("api_auth_check_optional((req), g_api_token")
         self.assertLess(cookie, bearer)
         # POST /api/wifi/qr-scan takes that token and no cookie of its own.
         ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
@@ -417,6 +417,28 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertIn("csi_mqtt::config_save(mc)", hub)
         self.assertIn("csi_mqtt::request_reinit()", hub)
         self.assertNotIn("mc.pass", hub)
+
+    def test_the_csi_macro_answers_a_held_bearer_429(self):
+        # Sweep F339: the CSI routes' bearer is compared through the accounted
+        # grant, which reports a held address through `held_` (no second
+        # lockout read), and the macro answers that 429 before its 401.
+        csi = (WAP / "csi_integration.cpp").read_text(encoding="utf-8")
+        macro = body_after(csi, "#define CSI_AUTH_OR_RETURN(req)", r"\n\n")
+        lines = [ln.rstrip("\\").strip() for ln in macro.splitlines()]
+        self.assertEqual(lines[1], "do {")
+        self.assertEqual(lines[2], "bool held_ = false;", "held_ is the do-block's first statement")
+        grant = macro.index("if (api_auth_check_optional((req), g_api_token, &held_)) break;")
+        answer = macro.index("if (held_) { api_auth_send_lockout((req)); return ESP_OK; }")
+        unauthorized = macro.index('httpd_resp_set_status((req), "401 Unauthorized");')
+        self.assertLess(macro.index("cv_session_validate((req))"), grant)
+        self.assertLess(grant, answer)
+        self.assertLess(answer, unauthorized)
+        # The grant itself: the cookie, else api_auth_bearer_grant() with the
+        # held out-parameter, in api_auth.h.
+        auth = (WAP / "api_auth.h").read_text(encoding="utf-8")
+        optional = body_after(auth, "static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token, bool* held = nullptr) {", r"\n}\n")
+        self.assertIn("return api_auth_bearer_grant(req, expected_token, held);", optional)
+        self.assertNotIn("api_auth_bearer_valid(", optional)
 
     def test_the_flagship_rule_is_host_or_port_from_any_caller(self):
         net = FLAGSHIP_NET.read_text(encoding="utf-8")

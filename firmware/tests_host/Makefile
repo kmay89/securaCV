@@ -173,9 +173,11 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # foreign Host gets no credential, the receipt route refuses it before the
 # bearer or the tap is consulted, and neither path spends the tap for it),
 # and the dual-stack socket's ::ffff:a.b.c.d peer address unwraps to IPv4
-# while a true IPv6 address reads as unknown.
+# while a true IPv6 address reads as unknown; peer_key_from_addr() names one
+# peer by one 16-byte key in either family, and refuses the unspecified one.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
-# sketch keeps an inline copy of the two gate operations to this contract.
+# sketch keeps an inline copy of the two gate operations to this contract,
+# and stages the header for its peer key (check_improv_sync.sh).
 PROVGATE_HDR = ../common/network/provisioning_gate.h
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
@@ -200,6 +202,17 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # millis()==0 and the wrap, constant-time compare over the whole string.
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
+
+# The bearer lockout (common/network/auth_backoff.h, sweep F343): one backoff
+# per source address, 8 tracked plus one shared overflow that holds every
+# untracked address while it runs. The schedule (2 s doubling, capped at the
+# 60 s window that clears a count, so no hold and no Retry-After goes past
+# it), the 49.7-day wrap of millis(), a count that saturates instead of
+# wrapping, a window read with nobody asking first, the overflow's bound, and
+# grant()'s order (no credential records nothing, a held source is never
+# compared). The canary-wap sketch stages the header (check_improv_sync.sh).
+AUTHBACKOFF_HDR = ../common/network/auth_backoff.h
+AUTHBACKOFF_BIN = $(BUILD_DIR)/test_auth_backoff
 
 # The hub hand-off (common/network/hub_handoff.h): the JSON a phone writes to
 # the companion service's HUB characteristic right after the Improv join — the
@@ -524,6 +537,41 @@ CANDIAG_READS = ../canary/src/main.cpp \
                 ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp \
                 ../canary/lib/securacv_network/src/securacv_network.cpp
 CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
+
+# The canary's bearer check and its lockout (sweep F340): the REAL
+# canary/lib/securacv_auth/src/securacv_auth.cpp, compiled whole over
+# stubs/securacv_auth (a 32-bit millis() the test moves, a header-map httpd
+# request whose answers it reads, a token derive with no mbedtls), the real
+# canary_config.h and the real common/network/auth_backoff.h it runs on. A
+# request with no Authorization header is a 401 and no strike, so a
+# dashboard tab loaded without the token arms no lockout; a malformed or
+# wrong credential is still one, against its own source address only, and
+# the right one clears it. The receipt's grant (auth_bearer_grant) is
+# accounted and never compares a held bearer. securacv_network.cpp's path is
+# passed in for the text pins over its wiring (request_peer_ipv4 into both
+# gates), so the read fails closed, and firmware/canary's for the hand-over
+# census (outside lib/securacv_auth no file names auth_get_instance or
+# handedToken, and only securacv_network.cpp calls auth_handed_token, both
+# read at run time, so a new file is read too). The two BOOT-tap paths that hand an
+# address the token (sweep F341) run for real: page_token_inject() and
+# handle_provisioning_receipt(), with bearer_present_and_valid() and
+# send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
+# by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
+# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
+# the real AuthManager and the real provisioning_gate.h decisions.
+SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
+SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
+                ../canary/include/canary_config.h \
+                ../canary/include/log_level.h \
+                ../common/network/auth_backoff.h \
+                ../common/network/provisioning_gate.h \
+                $(wildcard stubs/securacv_auth/*.h)
+SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
+SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
+                -I ../canary/include -I ../common
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -983,6 +1031,9 @@ $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
 
+$(AUTHBACKOFF_BIN): test_auth_backoff.cpp $(AUTHBACKOFF_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_auth_backoff.cpp
+
 $(HUBHO_BIN): test_hub_handoff.cpp $(HUBHO_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_hub_handoff.cpp
 
@@ -1105,6 +1156,42 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_DIAG_CPP='"$(abspath ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp)"' \
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
+
+$(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
+	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
+	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
+	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
+
+# The lockout's numbers are auth_backoff.h's (sweep F340). A build that
+# still sets one of the old per-device knobs meant to change a number the
+# library no longer reads, so securacv_auth.h stops it with an #error that
+# names the header. Each knob is compiled once and must be refused that way.
+# Nothing to run, and no dependency file (no -o). -Wno-error: the flagship's
+# PlatformIO envs build without -Werror, so a #warning in place of the #error
+# lets a stale knob through there, and here it must compile and fail the
+# check, not ride CXXFLAGS' -Werror into an error that reads the same.
+SECAUTH_OLD_KNOBS = SECURACV_AUTH_MAX_FAILURES SECURACV_AUTH_LOCKOUT_BASE_MS \
+                    SECURACV_AUTH_LOCKOUT_MAX_MS SECURACV_AUTH_FAILURE_WINDOW_MS
+.PHONY: run-secauth-knobs
+run-secauth-knobs: DEPFLAGS =
+run-secauth-knobs:
+	@for k in $(SECAUTH_OLD_KNOBS); do \
+	  if out=$$($(CXX) $(CXXFLAGS) -Wno-error -fsyntax-only $(SECAUTH_INCS) -D$$k=1 $(SECAUTH_SRC) 2>&1); then \
+	    echo "FAIL: -D$$k=1 compiled; securacv_auth.h must refuse it (#error)"; exit 1; \
+	  fi; \
+	  case "$$out" in \
+	    *"#error"*"are gone (sweep F340)"*"firmware/common/network/auth_backoff.h"*) ;; \
+	    *) echo "FAIL: -D$$k=1 failed, but not with the #error naming auth_backoff.h:"; \
+	       echo "$$out"; exit 1 ;; \
+	  esac; \
+	done; \
+	echo "secauth: every old SECURACV_AUTH_* backoff knob is refused by its #error"
+run: run-secauth-knobs
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
@@ -1300,7 +1387,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1320,6 +1407,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(IMPROV_BIN)
 	./$(HUBHO_BIN)
 	./$(CLAIM_BIN)
+	./$(AUTHBACKOFF_BIN)
 	./$(SHORTTAP_BIN)
 	./$(TLSPOL_BIN)
 	./$(APSEC_BIN)
@@ -1355,6 +1443,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(BACKFILL_BIN)
 	./$(CANEGR_BIN)
 	./$(CANDIAG_BIN)
+	./$(SECAUTH_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)

@@ -731,13 +731,15 @@ jobs:
           chmod +x firmware/scripts/check_fleet_beacon_sync.sh
           firmware/scripts/check_fleet_beacon_sync.sh
 
-      - name: Verify the Improv Wi-Fi core header copies are in sync
-        # improv_core.h is the pure half of the Bluetooth setup door — a
-        # byte-exact BLE contract the phone's Swift twin is pinned to.
-        # Canonical at firmware/common/network/ (compiled by the sense and
-        # vision envs, host-tested in firmware/tests_host) and committed
-        # byte-identical next to the canary-wap Arduino sketch, which has no
-        # -I into common/. This guard catches drift in either direction.
+      - name: Verify the canary-wap sketch's staged common/network headers
+        # The firmware/common/network headers the canary-wap Arduino sketch
+        # stages (improv_core.h, claim_ticket.h, provisioning_gate.h,
+        # auth_backoff.h: the script's PAIRS), canonical under
+        # firmware/common/network/ and host-tested in firmware/tests_host, are
+        # committed byte-identical next to the sketch, which has no -I into
+        # common/. This guard catches drift in either direction, and fails on
+        # a staged header with a common/network twin that no sync script
+        # holds.
         run: |
           chmod +x firmware/scripts/check_improv_sync.sh
           firmware/scripts/check_improv_sync.sh
@@ -1491,7 +1493,7 @@ jobs:
       - name: Check canary (PIO) route security (every route gated or allowlisted)
         # The canary tree's sibling of the step above, same matcher: every
         # route registerHttpHandlers() adds (the captive-probe loop
-        # included) must reach auth_gate / auth_check / auth_check_optional
+        # included) must reach auth_gate / auth_check / auth_bearer_grant
         # / provisioning_gate_take — in an if/return, not ignored, and not
         # below an unconditional return — or sit on the script's documented
         # public allowlist. The two HTML pages are public shells whose
