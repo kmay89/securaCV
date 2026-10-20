@@ -42,7 +42,7 @@ sleep/TX-power plumbing. Four gaps were found and fixed on this branch:
 | Area | Our implementation | Seeed guidance | Verdict |
 |---|---|---|---|
 | SoftAP call | `WiFi.softAP(ssid, pass, AP_CHANNEL=1, hidden=false, AP_MAX_CONNECTIONS=1)` (`securacv_network.cpp`) | `WiFi.softAP(ssid, password, channel, ssid_hidden, max_connection, ftm_responder)`; channels 1–13; 1–4 clients | ✅ |
-| AP password | `cv-` + 5 unambiguous chars = 8 chars, device-unique from Ed25519 pubkey fingerprint (`main.cpp`) | WPA2 passphrase min 8 chars | ✅ (exactly at the minimum — by design, printed on serial/sticker) |
+| AP password | `cv-` + 12 unambiguous chars = 15 chars, device-unique, an HMAC of the Ed25519 private key (`common/network/ap_password.h`, called from `main.cpp`; until sweep F350, `cv-` + 5 from the published pubkey fingerprint) | WPA2 passphrase min 8 chars | ✅ (above the minimum; printed on serial/sticker) |
 | 2.4 GHz only | AP ch 1, no 5 GHz assumptions anywhere | "2.4GHz WiFi — 802.11 b/g/n" only | ✅ |
 | WiFi mode discipline | `WIFI_AP_STA` at provisioning, dropped to `WIFI_STA` once the home link holds (F4) | `WiFi.mode()` must be set appropriately before operations | ✅ (goes beyond Seeed: avoids Espressif's unstable AP+client+BLE combo) |
 | Bluetooth Classic | Not used anywhere | "The ESP32-S3 has no Bluetooth Classic hardware in the chip" | ✅ |
@@ -126,7 +126,11 @@ gives `60 = 15 dBm` (Seeed's weak-signal recommendation) as the worked example.
   (entropy ≈ 28.8 bits over the 54-char unambiguous alphabet). Acceptable for
   a provisioning AP that allows max 1 client and is torn down once the STA
   link holds (F4); not acceptable if the AP ever becomes long-lived — revisit
-  if that design changes.
+  if that design changes. *Superseded (sweep F350):* the length was not the
+  real problem. The key came from the public-key fingerprint, which the
+  device publishes, and the AP comes back on every home-link drop. It is now
+  an HMAC of the private key, `cv-` + 12 (about 69 bits); host-tested, not
+  run on a device.
 - **WiFi mesh.** Seeed's wiki demonstrates painlessMesh; this project uses
   ESP-NOW + its own mesh layer (`FEATURE_MESH_NETWORK`). Out of scope here —
   no Seeed-doc conflict.

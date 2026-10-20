@@ -363,11 +363,12 @@
 
 // There is deliberately NO default AP password macro. Every call into
 // ScvNetworkManager::begin() / network_init() must pass a password
-// explicitly — main.cpp derives a device-unique one from the pubkey
-// fingerprint (derive_ap_password). A shared compile-time fallback was
-// removed so it cannot silently ship on a future code path: a new caller
-// that forgets the password is now a compile error, not a known-password
-// AP. (regression_check.sh fails the build if the old literal returns.)
+// explicitly — main.cpp derives a device-unique one from the device
+// private key (common/network/ap_password.h, sweep F350). A shared
+// compile-time fallback was removed so it cannot silently ship on a future
+// code path: a new caller that forgets the password is now a compile error,
+// not a known-password AP. (regression_check.sh fails the build if the old
+// literal returns.)
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 

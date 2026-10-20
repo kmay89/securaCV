@@ -599,6 +599,10 @@ so — see D2 below.)
   provisioned devices keep theirs). New FEATURES.md row, ⚠️ in both trees;
   roadmap item 21 updated; four bench boxes in
   `docs/audit/hardware_verification_checklist.md` (U1). (#1704)
+  *Note (2026-10-19, F350):* the widening named above is done, with no
+  marker: the fingerprint the old key came from is published, so a marker
+  would have kept a key anyone who had seen the fingerprint could compute. F350
+  has the decision.
 - [x] **F17 [code] `provision_core.h` exists in two byte-identical copies** —
   done, the include flipped: the display's `provision.cpp` / `onboard_ui.cpp`
   now include `network/provision_core.h` straight from `common/` (the
@@ -2101,6 +2105,129 @@ so — see D2 below.)
   parallel F325 gate, which wiped `c` and `buf` on its refusal only; that gate
   was dropped for #1835's, which wipes nothing, so the item now says what
   holds, and the decision is whether to wipe at all.
+- [x] **F350 [code] The flagship's SoftAP password could be computed from its
+  public fingerprint.** `firmware/canary/src/main.cpp`'s `derive_ap_password()`
+  built `cv-` plus 5 characters from `device.pubkey_fp`. The device publishes
+  that fingerprint: the setup network's SSID suffix spells two of its bytes,
+  every signed event body over MQTT carries all eight (`fp`), and so do the
+  provisioning receipt, `/api/status` and the serial log. (The TLS
+  certificate's subject, `CN=securacv-<fp>`, would carry it too, but no
+  flagship unit generates that certificate today: `securacv_network.cpp`
+  compiles its generator only under
+  `__has_include("mbedtls/x509write_crt.h")`, a header mbedTLS does not
+  ship; it declares the certificate writer in `mbedtls/x509_crt.h`.) The
+  SSID alone leaves most units 54^3, about 157,000, candidates for an
+  offline crack of one captured WPA2 handshake, and none more than 54^5. On the flagship, a
+  peer on its own SoftAP is handed the page token, and the SoftAP comes back
+  on every home-link drop. So anyone in radio range who had seen the
+  fingerprint could join, load `GET /` and hold the bearer token.
+  `THREAT_MODEL.md` Scenario 2 stated that premise and marked it PASS.
+  canary-wap fixed the same class earlier (`canary_wap.ino`
+  `derive_ap_password`). Found while deciding F338.
+  *Done (#1837; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* the key is now HMAC-SHA256 of the device private
+  key under `securacv:ap-password:v1`, 12 characters of the unambiguous
+  alphabet (`cv-` + 12 = 15). It comes from one shared header,
+  `firmware/common/network/ap_password.h`, which renders through
+  `provision_core.h`'s `render_password`. The header takes the key as
+  `const uint8_t (&)[32]`, so the 8-byte fingerprint no longer compiles as
+  its argument. It is canary-wap's derivation, except in the padding of a
+  shortfall branch the header names (fewer than 12 of the 32 HMAC bytes
+  below 216, p ≈ 3e-10), and `firmware/tests_host/test_ap_password.cpp`
+  holds the two equal over 256
+  keys (the WAP's cut verbatim out of the sketch), beside known answers, the
+  format, every one-bit key change, the refusals and static_asserts on the
+  real `DeviceIdentity` (its `pubkey_fp` does not bind, its `privkey` does).
+  On the old derivation the suite fails 742 checks and then crashes on the
+  null-buffer refusal, and a pointer-form header fails three of its
+  static_asserts. A failed HMAC is refused, not rendered:
+  `fleet_key::hmac_sha256` zeroes its output on a failure (on the device,
+  an allocation failure inside `mbedtls_md_hmac`), and 32 zero bytes render
+  as `cv-222222222222` on every unit, so the derivation takes the new
+  `fleet_key::hmac_sha256_checked`, refuses with `false` and an empty key,
+  and `setup()` halts on the refusal as it does on a provisioning failure (an
+  empty key would reach `WiFi.softAP()`, which raises an open network). Its
+  `[[nodiscard]]` makes a discarded result a compiler warning, not an error:
+  the flagship builds without `-Werror`.
+  `firmware/tests_host/test_ap_password_hmac_fail.cpp` holds the refusal over
+  a failing primitive (`tests_host/hmac_fail_seam.h`) and is built twice:
+  over `fleet_key.h`'s OpenSSL branch, and with `-DARDUINO` over a stub
+  `mbedtls/md.h` (`tests_host/stubs/mbedtls_md`, mbedTLS 2.28's declarations)
+  over its mbedTLS branch, the one the device ships, failing it with
+  `MBEDTLS_ERR_MD_ALLOC_FAILED` and with no SHA-256 info. (The review's
+  first cut failed OpenSSL's `HMAC()` only, so an inverted or disabled
+  device-branch refusal passed every host suite.) On a derivation that
+  ignores the failure each build fails 72 checks; the mbedTLS build also
+  fails an inverted, disabled or unzeroed device-branch refusal and an
+  inverted success, and over the working primitive derives the known answer.
+  No host suite compiles the halt in `main.cpp`, its argument or its result
+  check. The same header's other secrets had the same fault, and take the
+  checked form now too (nothing in `fleet_key.h` calls the unchecked one):
+  `hkdf_sha256` ignored both HMAC results, so `derive_from_wifi` handed
+  `peer_link` an all-zero fleet key as a success, kept until the next join,
+  and `tag()` wrote a zero tag that `peer::decode()` compared a frame's tag
+  against, so a frame carrying sixteen zero bytes was accepted with no key.
+  The HKDF now refuses and wipes its output when its extract or any expand
+  round fails, `tag()` returns `false`, `peer::encode()` sends nothing,
+  `peer::decode()` answers `BadTag`, and `key_id_hex` returns `false` with
+  `""` rather than the id of a zero hash; `peer_link`'s refusal line no
+  longer calls such a network open. These run on Sense, Vision and Sentinel,
+  not on the flagship. `firmware/tests_host/test_fleet_key_hmac_fail.cpp`,
+  built the same two ways, holds each; on the old header it does not compile
+  (`tag()` and `key_id_hex` returned nothing), and with those three checks
+  dropped it fails 20 checks in each build. No marker keeps the old key: anyone who has seen the
+  fingerprint can compute it, so every unit in the field moves. The owner's
+  setup-network key changes once, on update; the SSID does not. A recovery
+  kit, saved phone network or printed card from before the update holds a
+  stale key, and a phone that saved the network may rejoin silently with
+  the old key and report a plain join failure, so the owner step is to
+  Forget the network on that phone and join with the new key. The serial
+  banner, both flashers' done cards and a recovery kit re-saved from the
+  dashboard show the new one. Both flashers' diagnostic report scrubbed
+  the `[SETUP] Setup network up` line but not the `[SETUP] QR
+  WIFI:…;P:<key>;;` line every setup surface prints beside it (the
+  flagship on every home-link drop too); `TAIL_REDACT` in
+  `canary-local/assets/flash-core.js` and `desktop/src/app.js` now covers
+  it, `flash.test.js` feeds it the real lines, and `desktop_parity.test.js`
+  holds the two lists equal. The rewritten recovery section of
+  `getting_started_canary.md` dropped two sentences that
+  `canary-local/tools/gen_wap.py` pinned, and the Lab's WAP page restated
+  them (a ~1 s BOOT press prints the key, a >3 s hold resets to a fresh
+  keypair), which the sketch does not do:
+  the generator now reads the gestures from the sketch's BOOT handler and
+  `onboarding_fsm.h` and pins the new section, `wap.json` is regenerated, and
+  `wap.test.js` holds the gestures to the sketch. The same page's serial
+  replay still said `Hold  BOOT (>3s) = factory reset`, a ready-banner line
+  `gen_wap.py` typed by hand: the banner's closing lines are now the
+  sketch's own `boot_line()` text, pinned and held to the BOOT handler's and
+  `onboarding_fsm.h`'s timings, and `wap.test.js` fails on the old replay.
+  `THREAT_MODEL.md`,
+  `SECURITY_MODEL.md`, `getting_started_canary.md`, `FAQ.md`,
+  `FIRMWARE_MAP.md`, `FEATURES.md`, `LESSONS_LEARNED.md`, the roadmap and
+  the `ScvNetworkManager::begin()` comment and the sketch's "DEVICE-UNIQUE
+  AP PASSWORD" banner comment are corrected. Not changed here:
+  canary-wap's own `hmac_sha256()` (`canary_wap.ino`) discards mbedTLS's
+  return codes, so an allocation failure there leaves its output as stack
+  bytes, under the AP key and the API token alike; the sketch is this
+  item's parity reference and its fix is a WAP change. Nor the flagship's
+  `nvs_load_key()` (`securacv_crypto.cpp`): it checks the stored private
+  key's length and then discards `getBytes()`' result, and the Arduino
+  core's `Preferences::getBytes()` leaves the buffer untouched when the read
+  fails, so an NVS error between those two reads would leave the zeroed
+  `DeviceIdentity` key in use. Its setup-network key is then the published
+  known answer `cv-3jByJ6rHdhM2`, and its token and Ed25519 identity come
+  from the same zero key. The fix is to require 32 bytes from `getBytes()`
+  and refuse an all-zero key, so `witness_provision_device()` halts. Both
+  are filed below, as F359 and F360. F338 later pins the mint in `setup()`, and its
+  pin must hold the whole statement as it now reads, `if
+  (!canary::net::derive_ap_password(device.privkey, g_ap_password,
+  sizeof(g_ap_password))) { ... HALTING ...; while (true) { ... } }`: F338's
+  plan, as first written, quoted the call as a bare statement ending in
+  `;`, which `main.cpp` no longer has, and a pin on the argument alone would pass a
+  deleted call, a discarded result or a dropped halt loop (no host suite or
+  guard reads that statement today, nor which 32-byte key it passes).
+  Host-tested; the PlatformIO compile is CI's; not run on a device (U1).
 - [ ] **F351 [decision] The flagship's request limit is one per device.**
   `rate_limit_check()` (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`)
   counts every request in one 60 s window for the whole device: 120 requests
@@ -2128,6 +2255,27 @@ so — see D2 below.)
   neither is marked `.lost` (the same file). The fix is to stop
   polling a row that answers `403` and offer re-pair or remove. From code;
   not run. Found by the F343 decision's owner review, 2026-10-19.
+- [ ] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
+  codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
+  `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of
+  them, so a failure there (an allocation failure inside mbedTLS) leaves its
+  output as whatever the stack held. The SoftAP key (`derive_ap_password()`)
+  and the API token are both minted through it, so a failed HMAC gives a
+  key and a token nobody chose and the device cannot reproduce. The fix:
+  `hmac_sha256()` returns whether it ran, its output is zeroed on a failure,
+  and every caller fails closed (provisioning refuses, so a release build
+  starts no server), with a host test over a failing HMAC seam like
+  `firmware/tests_host/hmac_fail_seam.h`. Found by F350's review (#1837).
+- [ ] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
+  result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
+  private key's length, then reads it with `Preferences::getBytes()` and
+  ignores the count it returns; the Arduino core leaves the buffer untouched
+  when the read fails, so an NVS error between the two reads leaves the
+  zeroed `DeviceIdentity` key in use. That key's SoftAP key is the published
+  known answer `cv-3jByJ6rHdhM2`, and its token and Ed25519 identity come
+  from the same zero key. The fix: require 32 bytes from `getBytes()` and
+  refuse an all-zero key, so `witness_provision_device()` halts, with a host
+  case over the witness glue stubs. Found by F350's review (#1837).
 
 ### Parity & sub-projects
 

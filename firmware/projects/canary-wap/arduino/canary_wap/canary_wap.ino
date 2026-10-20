@@ -1899,7 +1899,7 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DEVICE-UNIQUE AP PASSWORD (derived from pubkey fingerprint)
+// DEVICE-UNIQUE AP PASSWORD (derived from the device private key)
 // ════════════════════════════════════════════════════════════════════════════
 
 static void derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {

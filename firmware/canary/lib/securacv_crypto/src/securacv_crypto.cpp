@@ -267,8 +267,10 @@ bool hmac_sha256(const uint8_t* key, size_t key_len,
 // Unambiguous alphabet: drops EVERY case variant of the glyph-confusion
 // classes — 0/O/o and 1/I/i/l/L — so a value a user reads or types by hand
 // (serial monitor, sticker, phone screen) can't be mis-keyed. Shared by the
-// API token, the WiFi AP password, and the device_id / AP-SSID suffix, so the
-// "no confusing characters" rule holds everywhere a human sees an identifier.
+// API token and the device_id / AP-SSID suffix; the WiFi AP password
+// (common/network/ap_password.h) renders through provision_core.h's
+// render_password over the same 54 characters, so the "no confusing
+// characters" rule holds everywhere a human sees an identifier.
 // 54 chars; 32 chars × log2(54) ≈ 184 bits — the few bits dropped vs a raw
 // hex/base62 encoding are a clear UX win.
 static const char UNAMBIGUOUS_ALPHABET[] =

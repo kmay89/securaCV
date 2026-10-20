@@ -162,7 +162,9 @@ inline bool get_event(const Frame& f, Event& e) {
   return true;
 }
 
-/** @brief Serialize and tag. Returns bytes written, 0 on a cap too small. */
+/** @brief Serialize and tag. Returns bytes written, 0 on a cap too small or a
+ *  tag the HMAC could not compute (the buffer is then wiped: no frame goes out
+ *  under a zero tag). */
 inline size_t encode(const Frame& f, const uint8_t key[fleet_key::KEY_BYTES], uint8_t* out, size_t cap) {
   if (out == nullptr || f.payload_len > MAX_PAYLOAD) return 0;
   const size_t n = HEADER_BYTES + f.payload_len + TAG_BYTES;
@@ -179,7 +181,10 @@ inline size_t encode(const Frame& f, const uint8_t key[fleet_key::KEY_BYTES], ui
   out[32] = f.payload_len;
   out[33] = 0;
   memcpy(out + HEADER_BYTES, f.payload, f.payload_len);
-  fleet_key::tag(key, out, HEADER_BYTES + f.payload_len, out + HEADER_BYTES + f.payload_len);
+  if (!fleet_key::tag(key, out, HEADER_BYTES + f.payload_len, out + HEADER_BYTES + f.payload_len)) {
+    memset(out, 0, n);
+    return 0;
+  }
   return n;
 }
 
@@ -200,7 +205,8 @@ inline const char* verdict_label(Verdict v) {
   return "unknown";
 }
 
-/** @brief Parse and verify the tag. The replay check is accept()'s. */
+/** @brief Parse and verify the tag. The replay check is accept()'s. A tag the
+ *  HMAC could not compute is BadTag, never a compare against zeros. */
 inline Verdict decode(const uint8_t* in, size_t n, const uint8_t key[fleet_key::KEY_BYTES], Frame& out) {
   if (in == nullptr || n < MIN_FRAME) return Verdict::TooShort;
   if (in[0] != 'S' || in[1] != 'C' || in[2] != 'V' || in[3] != 'P') return Verdict::BadMagic;
@@ -208,8 +214,10 @@ inline Verdict decode(const uint8_t* in, size_t n, const uint8_t key[fleet_key::
   const uint8_t plen = in[32];
   if (plen > MAX_PAYLOAD || n != HEADER_BYTES + plen + TAG_BYTES) return Verdict::BadLength;
   uint8_t want[TAG_BYTES];
-  fleet_key::tag(key, in, HEADER_BYTES + plen, want);
-  if (!fleet_key::tag_equal(want, in + HEADER_BYTES + plen)) return Verdict::BadTag;
+  if (!fleet_key::tag(key, in, HEADER_BYTES + plen, want) ||
+      !fleet_key::tag_equal(want, in + HEADER_BYTES + plen)) {
+    return Verdict::BadTag;
+  }
   out.type = (Type)in[5];
   out.flags = in[6];
   out.role = in[7];

@@ -67,7 +67,10 @@ fleet_key = HKDF-SHA256(salt = "securacv:fleet-key:v1",
 - **An open network has no secret**, so no key is derived and the peer link
   stays **off** with one logged warning and `peer: "off"` in `/api/status`.
   The protocol never runs unauthenticated — that is the brief's "explicit
-  degradation" and `PARITY.md` marks such a node ⚠️.
+  degradation" and `PARITY.md` marks such a node ⚠️. The same holds when the
+  key's HMAC fails (on the device, an allocation failure inside mbedTLS): no
+  key is derived rather than an all-zero one, and a frame whose tag the HMAC
+  could not compute is neither sent nor accepted (sweep F350's review).
 - **Rotation.** A node honors a replacement key (32 random bytes) stored
   under NVS `fleet_key`: a stored key wins over the derived one, and a key
   change empties the peer table (a new key is a new fleet). What this program
@@ -123,6 +126,7 @@ BOOT-tap minute are the only times a node takes Wi-Fi from a phone.
 |---|---|---|
 | fleet key derivation, open-network refusal, tag | `common/network/fleet_key.h` | `firmware/tests_host/test_fleet_key.cpp` (RFC 4231 / 5869 vectors) |
 | frame tag, replay window, table, election, hub hand-off | `common/network/peer_protocol.h` | `test_peer_protocol.cpp` |
+| a failed HMAC derives no key, sends no frame and accepts none | `common/network/fleet_key.h`, `peer_protocol.h` | `test_fleet_key_hmac_fail.cpp`, built over the mbedTLS and OpenSSL branches |
 | socket, arming, disarming on an open network | `common/network/peer_link.cpp` | compiled on sense / vision / sentinel; bench-verified: no (PARITY.md E2E plan) |
 | reset keeps the identity | `common/io/reset_hold.h` + each board's reset glue | `test_reset_hold.cpp`; the key list each board clears is in its `main.cpp` |
 | signatures, canonical bytes | `common/identity/device_signature.{h,cpp}` | `test_device_signature.cpp`, HA `tests/test_signature.py` |

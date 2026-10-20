@@ -311,6 +311,39 @@ MDNSTXT_BIN = $(BUILD_DIR)/test_mdns_txt
 FLEETKEY_HDR = ../common/network/fleet_key.h
 FLEETKEY_BIN = $(BUILD_DIR)/test_fleet_key
 
+# The setup network's key (common/network/ap_password.h, sweep F350): an HMAC
+# of the device private key, "cv-" + 12 characters of the unambiguous
+# alphabet. test_ap_password.cpp checks known answers, the format over 256
+# keys, the refusals and the signature (the real DeviceIdentity's 8-byte
+# fingerprint does not bind, its private key does, over stubs/witness_glue),
+# and holds it equal to canary-wap's own derive_ap_password(), cut verbatim
+# out of canary_wap.ino with the sketch's alphabet lines and secure_zero()
+# (cut_functions.awk; the awk below takes the alphabet) over a stand-in for
+# its mbedTLS HMAC. Links OpenSSL on the host, mbedTLS on device.
+APPW_HDR      = ../common/network/ap_password.h ../common/network/fleet_key.h \
+                ../common/network/provision_core.h
+APPW_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
+APPW_WAP_SIGS = static void secure_zero(|static void derive_ap_password(
+APPW_WAP_INC  = $(BUILD_DIR)/ap_password_wap.inc
+APPW_BIN      = $(BUILD_DIR)/test_ap_password
+# The same header over a failing HMAC primitive (hmac_fail_seam.h), which
+# holds that the key is refused ("" and false), never rendered from the zeroed
+# output (the same "cv-222222222222" on every unit). Built twice, since
+# fleet_key.h has two branches: over its OpenSSL branch (the seam defines
+# OpenSSL's one-shot HMAC() itself) and, with -DARDUINO over stubs/mbedtls_md,
+# over its mbedTLS branch, the one the device ships (the seam defines
+# mbedtls_md_info_from_type() and mbedtls_md_hmac()). Their own binaries,
+# since each definition replaces the primitive for the whole program.
+HMAC_SEAM          = hmac_fail_seam.h $(wildcard stubs/mbedtls_md/mbedtls/*.h)
+APPW_FAIL_BIN      = $(BUILD_DIR)/test_ap_password_hmac_fail
+APPW_FAIL_MBED_BIN = $(BUILD_DIR)/test_ap_password_hmac_fail_mbedtls
+# The fleet key's other secrets over the same seam, both branches: the HKDF
+# (derive_from_wifi) and the peer frame tag refuse a failed HMAC (no zero
+# fleet key, no zero tag accepted or sent), and key_id_hex says so.
+FKFAIL_HDR      = ../common/network/fleet_key.h ../common/network/peer_protocol.h
+FKFAIL_BIN      = $(BUILD_DIR)/test_fleet_key_hmac_fail
+FKFAIL_MBED_BIN = $(BUILD_DIR)/test_fleet_key_hmac_fail_mbedtls
+
 # The authenticated peer protocol (common/network/peer_protocol.h): the frame
 # bytes and tag, the replay window, the 16-slot table, oldest-uptime-wins with
 # a hub anywhere winning outright.
@@ -1038,6 +1071,38 @@ $(MDNSTXT_BIN): test_mdns_txt.cpp $(MDNSTXT_HDR) Makefile | $(BUILD_DIR)
 $(FLEETKEY_BIN): test_fleet_key.cpp $(FLEETKEY_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_fleet_key.cpp -lcrypto
 
+# The sketch's alphabet is a three-line declaration, not a function, so this
+# awk takes it (each line once, or the build fails) before cut_functions.awk
+# appends the two functions that read it.
+$(APPW_WAP_INC): $(APPW_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk '/^static const char UNAMBIGUOUS_ALPHABET\[\] =$$/ { a++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  /^static const size_t UNAMBIGUOUS_LEN = / { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print; next } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  END { if (a != 1 || n != 1) { print "canary_wap.ino: UNAMBIGUOUS_ALPHABET found " a + 0 " time(s), UNAMBIGUOUS_LEN " n + 0 ", expected once each" > "/dev/stderr"; exit 1 } }' \
+	  $(APPW_WAP_SRC) > $@.tmp
+	awk -v 'sigs=$(APPW_WAP_SIGS)' -f cut_functions.awk $(APPW_WAP_SRC) >> $@.tmp && mv $@.tmp $@
+
+$(APPW_BIN): test_ap_password.cpp $(APPW_HDR) $(APPW_WAP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I stubs/witness_glue \
+	    -I ../canary/lib/securacv_witness/src -I ../canary/include -I ../common -I $(BUILD_DIR) \
+	    -o $@ test_ap_password.cpp -lcrypto
+
+$(APPW_FAIL_BIN): test_ap_password_hmac_fail.cpp $(APPW_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common \
+	    -o $@ test_ap_password_hmac_fail.cpp -lcrypto
+
+$(APPW_FAIL_MBED_BIN): test_ap_password_hmac_fail.cpp $(APPW_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -DARDUINO -I stubs/mbedtls_md -I ../common \
+	    -o $@ test_ap_password_hmac_fail.cpp -lcrypto
+
+$(FKFAIL_BIN): test_fleet_key_hmac_fail.cpp $(FKFAIL_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common \
+	    -o $@ test_fleet_key_hmac_fail.cpp -lcrypto
+
+$(FKFAIL_MBED_BIN): test_fleet_key_hmac_fail.cpp $(FKFAIL_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -DARDUINO -I stubs/mbedtls_md -I ../common \
+	    -o $@ test_fleet_key_hmac_fail.cpp -lcrypto
+
 $(PEERPROTO_BIN): test_peer_protocol.cpp $(PEERPROTO_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_peer_protocol.cpp -lcrypto
 
@@ -1315,7 +1380,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1348,6 +1413,11 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CLOCKSYNC_BIN)
 	./$(MDNSTXT_BIN)
 	./$(FLEETKEY_BIN)
+	./$(APPW_BIN)
+	./$(APPW_FAIL_BIN)
+	./$(APPW_FAIL_MBED_BIN)
+	./$(FKFAIL_BIN)
+	./$(FKFAIL_MBED_BIN)
 	./$(PEERPROTO_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
