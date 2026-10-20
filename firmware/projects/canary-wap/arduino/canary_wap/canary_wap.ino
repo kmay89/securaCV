@@ -8845,8 +8845,13 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // here gets its next right-token call answered at once, not after up to
   // 60 s of 429. The strike its header may have cost above stays the rule
   // (one accounting for every route). Only this address's own slot is freed,
-  // never the shared overflow (auth_backoff.h). Every refusal returned
-  // above, so a request this route refuses clears nothing.
+  // never the shared overflow (auth_backoff.h). The tap-and-claim refusal
+  // returned above, so a request refused before a tap or a claim is taken
+  // clears nothing (check_route_security.py's BACKOFF_CLEARS holds this call
+  // here, once). send_provisioning_receipt() below can still refuse (503
+  // no_address, 500 out_of_memory, 503 answer_changed) after the clear; the
+  // tap or the claim is spent by then, and a send that worked would have
+  // handed this address the token.
   auth_record_success(req);
 
   // The claim matched, or the gate was open (and is now closed) — serve the

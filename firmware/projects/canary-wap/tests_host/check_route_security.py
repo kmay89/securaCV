@@ -58,6 +58,11 @@ to a fixed point, every function that calls one). What it reads:
     gate, as `gate(req, tok)` or `gate(req, tok, &held)` (the grant's held
     out-parameter, sweep F339), or tested against nullptr, and nothing else.
     Every module canary_wap.ino hands the token to has an entry.
+  - The backoff's clear (sweep F341): auth_record_success() frees an
+    address's lockout slot. Outside api_auth.h (where the right bearer frees
+    it) only BACKOFF_CLEARS may call it, each once, at the top level of its
+    body after its OTHER_GRANTS refusal: a request that refusal answers (no
+    tap, no claim taken) clears nothing.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -67,7 +72,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and twenty-nine plants that each fail it.
+run: a clean sketch that passes and thirty-three plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -248,6 +253,13 @@ OTHER_GRANTS = {
                    "claim_served = canary::net::claim_ticket::take("),
     },
 }
+
+# The handlers that may free an address's lockout slot outside api_auth.h
+# (sweep F341): the receipt, once its BOOT tap or setup-door claim has handed
+# the asker the token. backoff_clear_problems() holds each to one
+# auth_record_success() call, at the top level of its body, after its
+# OTHER_GRANTS refusal.
+BACKOFF_CLEARS = ("handle_provisioning_receipt",)
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -1103,6 +1115,53 @@ def raw_compare_problems(sources: dict) -> list:
     return problems
 
 
+def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> list:
+    """The backoff's clear (sweep F341): outside RAW_COMPARE_HOME, a call of
+    auth_record_success() (comments and string contents blanked) stands only
+    in canary_wap.ino's `homes`, once each, at the top level of the body and
+    after the handler's OTHER_GRANTS refusal (the `if` whose whole condition
+    is that refusal and whose branch returns). So a request the refusal
+    answers, handed no credential, clears nothing, and no other route can
+    free an address's backoff without a right bearer."""
+    grants = OTHER_GRANTS if grants is None else grants
+    problems, seen = [], {}
+    call = re.compile(r"\bauth_record_success\s*\(")
+    for fname, text in sorted(sources.items()):
+        if fname == RAW_COMPARE_HOME:
+            continue
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        for m in call.finditer(blanked):
+            inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
+            name = inner[0][1] if inner else None
+            where = f"{fname}:{_line(blanked, m.start())}"
+            if fname != "canary_wap.ino" or name not in homes:
+                problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
+                                f"calls auth_record_success(), which frees an address's backoff: "
+                                f"outside {RAW_COMPARE_HOME} only {', '.join(homes)} may, after "
+                                f"its tap-and-claim refusal (BACKOFF_CLEARS)")
+                continue
+            seen.setdefault(name, []).append((m.start(), inner[0][2], inner[0][3], where))
+    ino = _blank(sources.get("canary_wap.ino", ""))
+    for h in homes:
+        sites = seen.get(h, [])
+        if len(sites) != 1:
+            problems.append(f"{h}() calls auth_record_success() {len(sites)} times; BACKOFF_CLEARS "
+                            f"holds it to once, after its tap-and-claim refusal")
+            continue
+        at, b, e, where = sites[0]
+        code, rel = ino[b:e], at - b
+        refusal = grants.get(h, {}).get("refusal")
+        ends = [bspan[1] for pos, cond, _c, bspan, returns in _ifs(code)
+                if refusal and returns and _depth(code, pos) == 0
+                and _squash(cond) == _squash(refusal)]
+        if not ends or rel < min(ends) or _depth(code, rel) != 0:
+            problems.append(f"{where}: {h}() calls auth_record_success() other than at the top "
+                            f"level after its refusal `if ({refusal}) {{ ... return ...; }}`: a "
+                            f"request handed no credential must clear nothing")
+    return problems
+
+
 # The three rule functions are named for the gates they hold, not for what
 # the gates protect: CodeQL's py/clear-text-logging-sensitive-data reads a
 # call to a function whose name says "secret" or "password" as a secret
@@ -1179,6 +1238,7 @@ _FIX_INO = (
     "  if (!claimed && !gate_take()) {\n"
     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
     "  }\n"
+    "  auth_record_success(req);\n"
     "  send_kit(req);\n"
     "  return ESP_OK;\n"
     "}\n"
@@ -1357,6 +1417,11 @@ _FIX_PLANTS = (
     ("a module handler handing its token on past a gate's held out-parameter", "csi_mqtt.cpp",
      "authorized(req, tok, &held)", "authorized(req, tok, held_of(tok))",
      "other than as a gate's token argument"),
+    # The token used once, as the token argument: only the tail after it,
+    # not `, &<identifier>)`, is wrong, so only the reader's tail rule fails it.
+    ("a gate's held argument that is not `&<identifier>`", "csi_mqtt.cpp",
+     "authorized(req, tok, &held)", "authorized(req, tok, held_ptr())",
+     "other than as a gate's token argument"),
     # Every bearer compare accounted (sweep F339): the raw compares outside
     # api_auth.h, with no allowlist.
     ("the move gate's bearer through the raw compare", "csi_mqtt.cpp",
@@ -1370,6 +1435,17 @@ _FIX_PLANTS = (
      "calls constant_time_compare(), the raw compare"),
     ("the module's copy named outside every function", "csi_integration.cpp",
      "bool init(", "const char* g_leak = g_api_token;\nbool init(", "outside every function"),
+    # The backoff's clear (sweep F341): once, after the tap-and-claim refusal.
+    ("the backoff cleared inside the tap's refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "    auth_record_success(req);\n  }\n  send_kit(req);", "other than at the top level"),
+    ("a second route clearing the backoff", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  auth_record_success(req);\n  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls auth_record_success()"),
+    ("a module clearing the backoff", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n", "  CSI_AUTH_OR_RETURN(req);\n  auth_record_success(req);\n",
+     "csi_integration.cpp:11: handle_csi_status() calls auth_record_success()"),
     ("the token handed to a module whose copy is not listed", "canary_wap.ino",
      "  csi_integration::init(server, g_device.api_token_str);\n",
      "  csi_integration::init(server, g_device.api_token_str);\n"
@@ -1385,15 +1461,17 @@ def _fixture_sources() -> dict:
 
 
 def _fixture_problems(sources: dict) -> list:
-    """The rules the fixtures exercise: the secret rule and the raw compare
-    rule, as main() runs them over the tree."""
+    """The rules the fixtures exercise: the secret rule, the raw compare rule
+    and the backoff's clear, as main() runs them over the tree."""
     return (answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
-            + raw_compare_problems(sources))
+            + raw_compare_problems(sources)
+            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"]))
 
 
 def _assert_secret_rules() -> None:
-    """Each plant fails the secret rule or the raw compare rule for its
-    reason; the clean fixture passes both. Runs every time, before the tree."""
+    """Each plant fails the secret rule, the raw compare rule or the
+    backoff's clear for its reason; the clean fixture passes all three. Runs
+    every time, before the tree."""
     clean = _fixture_problems(_fixture_sources())
     assert clean == [], "the secret rule's clean fixture fails: " + "; ".join(clean)
     for what, fname, old, new, word in _FIX_PLANTS:
@@ -1412,7 +1490,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 29, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 33, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1506,6 +1584,7 @@ def main() -> int:
 
     failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
     failures += raw_compare_problems(secret_sources)
+    failures += backoff_clear_problems(secret_sources)
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

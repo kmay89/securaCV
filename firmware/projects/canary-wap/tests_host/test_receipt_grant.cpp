@@ -101,10 +101,11 @@
 //     api_auth_check_or_query() (the peek and vault ?token=) runs one grant
 //     over the header or the ?token=: inside a backoff a right ?token= is 429
 //     and clears nothing, a wrong one records nothing, 250 of them leave A
-//     held at its own count, B's right ?token= is served, and a wrong header
-//     beside a wrong ?token= is one strike (before: the right ?token= was
-//     served inside the backoff and cleared it, the wrong ones were recorded
-//     during it);
+//     held at its own count, B's right ?token= is served, a wrong header
+//     beside a wrong ?token= is one strike, and the right header alone is
+//     served and frees its address (before: the right ?token= was served
+//     inside the backoff and cleared it, the wrong ones were recorded during
+//     it);
 //   - api_auth.h's contract: api_auth_check() and api_auth_check_optional()
 //     still take the cookie (the dashboard's routes), api_auth_bearer_valid()
 //     and api_auth_check_bearer() never do, and the cookie path never clears
@@ -1410,6 +1411,28 @@ void test_or_query_counts_one_per_request() {
   CHECK(strikes(kHostA) == 0);
 }
 
+// The right Authorization header alone, with no ?token=, is served: the
+// header half of the one grant. Every bearer client of the peek stream, the
+// snapshot and the vault download sends it so. Lost, that client's right
+// header would be compared as wrong: a 401, a strike against its address,
+// and a 429 while that strike's backoff ran, again and again. Past a
+// backoff it frees its address, as a right bearer does everywhere else.
+void test_or_query_serves_the_right_header_alone() {
+  reset_device();
+  Req right_h;
+  right_h.bearer(kToken);
+  CHECK_MSG(api_auth_check_or_query(&right_h.r, kToken), "the right Authorization header alone was refused");
+  CHECK_MSG(right_h.r.sends == 0, "the right header alone got an answer: " + right_h.r.status);
+  CHECK_MSG(strikes(kHostA) == 0, "the right header alone was a strike");
+  set_strikes(kHostA, 1, millis(), millis());   // one strike, its backoff just passed
+  Req after;
+  after.bearer(kToken);
+  CHECK_MSG(api_auth_check_or_query(&after.r, kToken), "the right header alone was refused past a backoff");
+  CHECK(after.r.sends == 0);
+  CHECK_MSG(strikes(kHostA) == 0, "the right header alone left its address's count standing");
+  CHECK(!held(kHostA));
+}
+
 // The /api/csi/* routes' gate (CSI_AUTH_OR_RETURN, cut from
 // csi_integration.cpp): the iPhone's /api/csi/stream poll and every other
 // tooling call with a bearer. Before, a wrong bearer here recorded nothing
@@ -1857,6 +1880,7 @@ int main() {
   test_the_window_clears_a_query_tokens_count();
   test_query_token_is_held_by_the_backoff();
   test_or_query_counts_one_per_request();
+  test_or_query_serves_the_right_header_alone();
   test_csi_routes_account_every_bearer();
   test_qr_scan_fallback_is_accounted();
   test_api_auth_contract();
