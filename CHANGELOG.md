@@ -80,9 +80,11 @@
   does not clear that; then wait, change Wi-Fi from the iPhone's bonded
   Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a
   backoff, and a deliberate LAN denial is not closed (a landing session's
-  `POST /api/reboot` also clears the table; ARP spoofing, httpd's
-  connection purge; `magic_pairing.md` §3.7). Found on the way and
-  fixed with it: the `static` in the header gave `canary_wap.ino`,
+  `POST /api/reboot` also empties the table, kept in RAM, and with it the
+  guess budget, so a guesser that reboots the unit every few seconds gets
+  more than the 30 a minute the table allows between reboots; ARP
+  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). Found on
+  the way and fixed with it: the `static` in the header gave `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
   `inline` table); the `uint8_t` count wrapped to a clean 0 after 256 strikes
   recorded inside a backoff (it now saturates at 10); `millis() < until`
@@ -203,17 +205,38 @@
   as a clear beside `auth_record_success()`, fails any sketch file other
   than `api_auth.h` that names `g_auth_table`, and plants each of its
   clear rule's three conditions alone (38 plants); the flagship's suite
-  reads every file of `firmware/canary` and fails one outside
-  `lib/securacv_auth` that names `auth_get_instance` or `handedToken`, or
-  a file other than `securacv_network.cpp` that calls
-  `auth_handed_token()` (a direct `.handedToken()` or `.reset()` in a
-  handler passed both trees' checks). `THREAT_MODEL.md`'s auth-failure row
+  reads every source file under `firmware/canary`'s `src`, `lib` and
+  `include` and fails one outside `lib/securacv_auth` that names
+  `auth_get_instance` or `handedToken`, or a file other than
+  `securacv_network.cpp` that calls `auth_handed_token()` (a direct
+  `.handedToken()` or `.reset()` in a handler passed both trees' checks). `THREAT_MODEL.md`'s auth-failure row
   scopes "no credential is no strike" to the Canaries: the kernel counts a
   missing token. **Host-tested** (`test_receipt_grant.cpp`, 1703 checks,
   3 of which fail on the `?token=` gate before; `test_securacv_auth.cpp`,
   171 checks; `test_auth_backoff.cpp`; each new test fails on the mutant
   it was written for, and each mutant passed every suite before); the
   ESP32 compile is CI's; not run on a device (U1).
+- **The lockout's third review (F339, F340, F343).** The docs said a host
+  with many addresses gets about 30 guesses a minute on both Canaries. That
+  holds only between reboots: on the WAP any landing session can reboot the
+  unit (`POST /api/reboot`, `POST /api/safe-mode/retry`), which empties the
+  table it keeps in RAM, so a guesser that reboots it after every few
+  seconds of guessing gets about 37 a minute if the unit is back on the
+  LAN 45 s later, about 100 at 10 s, about 155 at 5 s (the WAP's boot time
+  is not measured; the flagship's reboot needs the bearer).
+  `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md` and `magic_pairing.md`
+  §3.7 now say so, and `test_auth_backoff.cpp` models both figures over
+  `auth_backoff.h`, so a change to its numbers fails the suite until the
+  docs follow. No code changed; the token's entropy stays the bound.
+  Tests added: the WAP's main gate, `api_auth_check_bearer()`, counts a
+  `Basic` or lowercase `bearer` header and a header too long for its
+  128-byte buffer as one strike each, and serves the right token with
+  spaces around it (deleting either strike, or the trailing trim, passed
+  every suite; `test_qr_bearer_shapes`, 37 checks); and
+  `run-secauth-knobs` compiles without `-Werror`, so an `#error` turned
+  into a `#warning` (which the flagship's PlatformIO envs would let
+  through) fails it. **Host-tested** (`test_receipt_grant.cpp`, 1740
+  checks; `test_auth_backoff.cpp`); not run on a device.
 
 ### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350, #1837)
 

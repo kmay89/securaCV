@@ -526,8 +526,16 @@ Additionally, exponential backoff limits brute-force attempts. On the
 kernel and on both Canary firmwares it is per source address; on the
 Canaries (the WAP and the flagship share `auth_backoff.h`) at most nine
 backoffs run at once (8 tracked addresses and a shared overflow), so a host
-with many addresses gets about 30 guesses a minute, and the token's
-entropy is the bound across addresses (F343, F340): about 184 bits for a
+with many addresses gets about 30 guesses a minute between reboots. The
+table lives in RAM, and on the WAP any landing session can reboot the unit
+(`POST /api/reboot`, `POST /api/safe-mode/retry`), which empties it: a
+guesser that reboots the WAP after every few seconds of guessing gets about
+37 a minute if the unit is back on the LAN 45 s later, about 100 at 10 s,
+about 155 at 5 s (modeled over `auth_backoff.h` in
+`firmware/tests_host/test_auth_backoff.cpp`; the WAP's boot time is not
+measured; [`magic_pairing.md`](../design/magic_pairing.md) §3.7). The
+flagship's reboot needs the bearer. On both, the token's entropy is the
+bound across addresses (F343, F340): about 184 bits for a
 WAP token derived since its 64-byte encoder (32 random characters of a
 54-character alphabet); about 155 on average for the flagship's, whose
 encoder takes 32 HMAC bytes, so about 27 of its characters are random and

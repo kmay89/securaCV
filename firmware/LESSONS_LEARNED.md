@@ -932,6 +932,45 @@
   person waits that bound or forever is the client's.
 - **Date learned:** 2026-10
 
+### A guess rate stated for a table in RAM holds only between reboots
+- **What happened:** `THREAT_MODEL.md` scenario 10 said a host with many
+  addresses gets about 30 bearer guesses a minute on both Canaries. That is
+  the bound `auth_backoff.h`'s nine backoffs allow while the table stands.
+  On the WAP the table is a RAM global, and any landing session can reboot
+  the unit (`POST /api/reboot`, `POST /api/safe-mode/retry` take the cookie
+  the landing page mints for any caller), which empties it: a guesser that
+  reboots after every few seconds of guessing gets about 37 a minute if the
+  unit is back 45 s later and about 155 if it is back in 5 s. The docs
+  listed the reboot as a denial left open, never as a reset of the guess
+  budget.
+- **Fix:** the docs state the bound between reboots and the rates with them
+  (lockout third review, F343); `test_auth_backoff.cpp` models both over the
+  real table, so a change to its numbers fails until the docs follow. The
+  token's entropy stays the real bound.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp`
+  (`the_documented_guess_rates_hold`, host).
+- **Rule:** a rate a security doc quotes comes from a test, and names every
+  way the state behind it resets: a reboot, a power cut, a route that clears
+  it. State held in RAM is reset by whoever can reboot the device.
+- **Date learned:** 2026-10
+
+### A must-not-compile check built with `-Werror` cannot tell `#error` from `#warning`
+- **What happened:** `run-secauth-knobs` proves `securacv_auth.h` refuses
+  the flagship's old backoff knobs: each `-D` must fail to compile with the
+  message that names `auth_backoff.h`. It compiled with the suite's
+  `CXXFLAGS`, which carry `-Werror`, so the `#error` turned into a
+  `#warning` still failed with the same message, and the check passed. The
+  flagship's PlatformIO envs build without `-Werror`, where that edit lets
+  a stale knob through with a warning.
+- **Fix:** the check compiles with `-Wno-error` and requires `#error` in
+  the output (lockout third review, F340).
+- **Regression check:** `make -C firmware/tests_host run-secauth-knobs`
+  (host; the `#warning` edit fails it).
+- **Rule:** a check that a build must fail runs with the flags the real
+  build uses, or with none that turn a warning into the failure it expects,
+  and it matches the diagnostic's kind, not only its text.
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

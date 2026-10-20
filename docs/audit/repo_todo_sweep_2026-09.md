@@ -1889,6 +1889,17 @@ so — see D2 below.)
   "too long" `401`, and a compared `403`); deleting the check, deleting
   the trim, or `>=` to `>` each fails it (171 checks). Host-tested; not run
   on a device.
+  *Review (2026-10-19, the PR's third round):* `run-secauth-knobs` compiled
+  each old knob with `CXXFLAGS`' `-Werror`, so `securacv_auth.h`'s `#error`
+  turned into a `#warning` still failed the compile with the same message
+  and passed the check, while the PlatformIO envs, which build without
+  `-Werror`, would let the stale knob through with a warning. The check now
+  compiles with `-Wno-error` and requires the `#error` itself: the
+  `#warning` edit fails it. The bench row's step 1 now says what the code
+  before part 1 gives at that step's cadence (the host replay refuses all
+  60 calls of its first 5 minutes; 119 of 120 is the ten-minute figure),
+  and step 7 expects every other call the unlock sends with the wrong
+  token, up to three, to be `429`, not at most one.
 - [x] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
@@ -1959,12 +1970,18 @@ so — see D2 below.)
   `g_auth_table = {}` or a direct `record_success()` in a handler passed),
   and plants each of its three conditions (before the refusal, inside a
   branch, more than once) alone, so deleting any one fails its self-test
-  (38 plants). `test_securacv_auth.cpp` reads every file of
-  `firmware/canary` and fails one outside `lib/securacv_auth` that names
+  (38 plants). `test_securacv_auth.cpp` reads every source file under
+  `firmware/canary`'s `src`, `lib` and `include` and fails one outside
+  `lib/securacv_auth` that names
   `auth_get_instance` or `handedToken`, or a file other than
   `securacv_network.cpp` that calls `auth_handed_token()` (a direct
   `.handedToken()` or `.reset()` in `GET /` passed). No such call existed;
   these close the guard gap, not an open path.
+  *Review (2026-10-19, the PR's third round):* `magic_pairing.md` §3.7 and
+  `SECURITY-AUDIT.md`'s F341 note still said a refused request clears
+  nothing; both now say what the CHANGELOG and this entry say: a request
+  refused before the tap or the claim is taken clears nothing, and the WAP
+  receipt's send can still answer `503` or `500` after the clear.
 - [ ] **F342 [decision] canary-wap: the receipt's claim and BOOT tap are spent
   by whoever asks first.** Any `?claim=` on `GET /api/provisioning-receipt` is
   spent, match or not (`claim_ticket::take()`), so one wrong guess from a host
@@ -2025,8 +2042,8 @@ so — see D2 below.)
     `csi_integration.cpp` and `csi_mqtt.cpp` each had their own copy. It is
     now one `inline` table.
   - The `uint8_t` count wrapped after 256 strikes recorded inside a backoff
-    (`api_auth_check_or_query()`'s `?token=`, which records without asking
-    the lockout first: F339).
+    (`api_auth_check_or_query()`'s `?token=`, which recorded without asking
+    the lockout first, until F339).
   - `millis() < until` was not wrap-safe.
   - The documented 5-minute cap never ran: the 60 s clean window cleared the
     count first, while the sixth strike's `Retry-After` claimed 65 s. The
@@ -2040,8 +2057,11 @@ so — see D2 below.)
   that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or
   hold BOOT 10 s.
   Not closed:
-  - `POST /api/reboot` from any landing session, which also clears the RAM
-    table;
+  - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
+    session, which also clears the RAM table, and with it the guess budget:
+    about 30 guesses a minute from any number of addresses between reboots,
+    more for a guesser that reboots the unit every few seconds (third round,
+    below);
   - ARP spoofing;
   - httpd's LRU purge;
   - clients behind one address share a backoff;
@@ -2066,6 +2086,31 @@ so — see D2 below.)
   stopping at 10 with a `Retry-After` of 61. The bench row's step 6 now
   expects `2`, `4`, `8`, `16`, `32`, `60` (a probe lands after its strike),
   and the firmware before read `64` there, not `65`.
+  *Review (2026-10-19, the PR's third round):* `THREAT_MODEL.md` scenario 10
+  said a host with many addresses gets about 30 guesses a minute on both
+  Canaries, with no caveat. On the WAP any landing session can reboot the
+  unit (`POST /api/reboot`, `POST /api/safe-mode/retry`, both behind
+  `api_auth_check()`, which takes the cookie the landing page mints for any
+  caller), and the reboot empties the RAM table: a guesser that reboots it
+  after every few seconds of guessing gets about 37 a minute if the unit is
+  back on the LAN 45 s later, about 100 at 10 s, about 155 at 5 s. The
+  flagship's reboot needs the bearer. `THREAT_MODEL.md`, `SECURITY_MODEL.md`,
+  `magic_pairing.md` §3.7 and the CHANGELOG now say so, and
+  `test_auth_backoff.cpp` models the figures over `auth_backoff.h` (30 a
+  minute at best between reboots, k = 5 strikes per backoff; the three
+  reboot figures), so a change to the table's numbers fails it until the
+  docs follow. The WAP's boot time is not measured. No code changed: the
+  token's entropy stays the bound, and holding the guess budget across a
+  reboot (the bearer for the reboot routes, or a persisted or rate-limited
+  reset) would be its own item, not filed here. Tests added to
+  `test_receipt_grant.cpp` (`test_qr_bearer_shapes`, through the pairing QR,
+  which is `api_auth_check_bearer()`, the gate behind every admin route):
+  a `Basic` or lowercase `bearer` header and one too long for the 128-byte
+  buffer are each a `401` with its own hint and one strike, a 127-byte one
+  is compared (`403`, a strike), and the right token with spaces after or
+  before it is served and clears the count. Deleting either strike, the
+  trailing trim, or `>=` to `>` passed every suite before (1703 checks)
+  and fails it now (1740). Host-tested; not run on a device.
 - [ ] **F344 [decision] canary-wap checks no Host on the post-setup landing
   page or the `?cv_pair=` exchange.** The Host is read only on the first-boot
   wizard's paths (`handle_ui()`'s setup branch and `request_host_is_direct()`,

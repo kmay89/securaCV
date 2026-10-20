@@ -30,11 +30,16 @@
 //     exactly 60 s after its last strike and is gone 1 ms later, as a
 //     Slot's; and source 0 (the bucket every unnamed source shares) is found
 //     in its own live Slot, never in a freed one before it (a freed Slot
-//     reads source 0 too).
+//     reads source 0 too);
+//   * the guess rates the docs quote: at most 30 strikes a minute from any
+//     number of addresses while the table stands, and about 155, 100 and
+//     37 a minute for a guesser that empties it with a reboot and finds the
+//     unit back 5, 10 and 45 s later.
 
 #include "../common/network/auth_backoff.h"
 
 #include <cstdio>
+#include <initializer_list>
 
 using namespace canary::net::auth_backoff;
 
@@ -302,6 +307,93 @@ static void source_zero_is_found_in_its_own_slot_behind_a_freed_one() {
   CHECK(t.slot[0].failures == 0, "the freed Slot was taken");
 }
 
+// Strikes from SLOTS + 1 sources (nine), each the moment its own backoff
+// ends, from `start` until `end`; at most `per_source` each (0: no limit).
+// SLOTS of them take the Slots and the last the overflow: every further
+// address would share the overflow with it, so these are every backoff a
+// guesser can run at once.
+static constexpr int kSources = SLOTS + 1;
+static long strike_whenever_free(Table& t, uint32_t start, uint32_t end, int per_source) {
+  uint32_t next[kSources + 1];
+  int struck[kSources + 1] = {0};
+  long strikes = 0;
+  for (int i = 1; i <= kSources; ++i) next[i] = start;
+  for (;;) {
+    int pick = 0;
+    for (int i = 1; i <= kSources; ++i) {
+      if (per_source != 0 && struck[i] >= per_source) continue;
+      if ((int32_t)(next[i] - end) >= 0) continue;
+      if (pick == 0 || (int32_t)(next[i] - next[pick]) < 0) pick = i;
+    }
+    if (pick == 0) return strikes;
+    const uint32_t now = next[pick];
+    if (grant(t, (uint32_t)pick, now, true, [] { return false; }) == BearerResult::WRONG) {
+      ++strikes;
+      ++struck[pick];
+    }
+    const uint32_t rem = remaining_ms(t, (uint32_t)pick, now);
+    next[pick] = now + (rem != 0 ? rem : 1);
+  }
+}
+
+// The guess rates the docs quote (THREAT_MODEL.md scenario 10, magic_pairing.md
+// §3.7; third review of F343). Between reboots: a guesser's best schedule
+// strikes each backoff k times, each the moment the one before ends, then
+// waits out the 60 s window, and k = 5 (strikes at 0, 2, 6, 14 and 30 s, then
+// clean at 90 s) gives 30 a minute over nine backoffs; no k gives more. A
+// reboot empties the table (the WAP keeps it in RAM, and any landing session
+// can reboot that unit), so a guesser that strikes for a few seconds and then
+// reboots it gets more, depending on how soon the unit is back: about 155 a
+// minute at 5 s, about 100 at 10 s, about 37 at 45 s.
+static void the_documented_guess_rates_hold() {
+  double best = 0;
+  int best_k = 0;
+  for (int k = 1; k <= MAX_COUNT; ++k) {
+    Table t{};
+    uint32_t now = 1000;
+    long strikes = 0;
+    for (int cycle = 0; cycle < 20; ++cycle) {
+      strikes += strike_whenever_free(t, now, now + 10u * WINDOW_MS, k);
+      uint32_t last = t.overflow.last_failure_ms;
+      for (const Slot& s : t.slot) {
+        if ((int32_t)(s.last_failure_ms - last) > 0) last = s.last_failure_ms;
+      }
+      now = last + WINDOW_MS + 1;   // the first ms every backoff is clean
+      CHECK(failures_of(t, 1, now) == 0 && t.overflow.failures == 0, "k=%d: the table is clean", k);
+    }
+    const double per_minute = (double)strikes * 60000.0 / (double)(now - 1000);
+    if (per_minute > best) {
+      best = per_minute;
+      best_k = k;
+    }
+  }
+  std::printf("guess rate between reboots: at most %.1f a minute (%d strikes per backoff, then clean)\n",
+              best, best_k);
+  CHECK(best_k == 5 && best > 29.9 && best < 30.1, "the best schedule is %.1f a minute at k=%d, want 30 at k=5",
+        best, best_k);
+
+  struct Back {
+    uint32_t after_ms;
+    double low, high;
+  };
+  for (const Back& b : {Back{5000, 150, 160}, Back{10000, 95, 105}, Back{45000, 35, 40}}) {
+    double rate = 0;
+    uint32_t for_ms = 0;
+    for (uint32_t w = 1; w <= 2 * WINDOW_MS; w += 50) {
+      Table t{};   // the reboot: a table in RAM starts empty
+      const double r = (double)strike_whenever_free(t, 1000, 1000 + w, 0) * 60000.0 / (double)(w + b.after_ms);
+      if (r > rate) {
+        rate = r;
+        for_ms = w;
+      }
+    }
+    std::printf("guess rate rebooting the unit, back %lu s later: %.1f a minute (striking for %lu ms)\n",
+                (unsigned long)(b.after_ms / 1000), rate, (unsigned long)for_ms);
+    CHECK(rate > b.low && rate < b.high, "back %lu s later: %.1f a minute, want %.0f-%.0f",
+          (unsigned long)(b.after_ms / 1000), rate, b.low, b.high);
+  }
+}
+
 int main() {
   the_schedule_doubles_to_the_window_and_stops();
   the_wrap_of_millis_ends_no_backoff_early();
@@ -314,6 +406,7 @@ int main() {
   a_slot_idle_past_half_the_clock_reads_free();
   the_overflow_window_ends_after_60_s_not_at();
   source_zero_is_found_in_its_own_slot_behind_a_freed_one();
+  the_documented_guess_rates_hold();
 
   if (g_failures) {
     std::printf("test_auth_backoff: %d failure(s)\n", g_failures);

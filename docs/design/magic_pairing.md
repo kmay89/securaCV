@@ -454,11 +454,12 @@ wrong or malformed bearer is a strike against its address even when the
 claim or the tap then serves the request: one accounting rule for every
 route. And the claim or the tap that serves hands that address the token,
 so it ends that address's backoff as a right bearer would
-(`auth_record_success(req)`, after the route's refusals, so a refused
-request clears nothing): the phone or the page just served gets its next
-right-token call answered at once, not `429` for up to 60 s. It frees that
-address's own slot only, never another address's and never the shared
-overflow slot. The broker move's bearer is under the same per-address
+(`auth_record_success(req)`, after the route's refusals, so a request
+refused before the tap or the claim is taken clears nothing; the receipt's
+send can still answer `503` or `500` after the clear): the phone or the page
+just served gets its next right-token call answered at once, not `429` for
+up to 60 s. It frees that address's own slot only, never another address's
+and never the shared overflow slot. The broker move's bearer is under the same per-address
 lockout (sweep F339): `POST /api/mqtt/config` compares it once per request
 through `api_auth_bearer_grant()`, so a wrong one is a strike against its
 address, beside the cookie too (the save then goes on as the session's, and
@@ -520,13 +521,18 @@ once.
 Its limits. Clients behind one address share a backoff: a NAT, a reverse
 proxy, a VPN router, or one Mac running both the dashboard and the app. At
 most nine backoffs run at once, so a host with many addresses gets about 30
-guesses a minute, against a token of about 184 bits on a WAP (32 random
-characters of a 54-character alphabet; about 155 on the flagship, whose
-encoder takes 32 HMAC bytes, and fewer on a WAP whose token predates the
-64-byte encoder: `THREAT_MODEL.md` scenario 10). Not closed by it:
-`POST /api/reboot` from any landing session, which also clears the table (it
-lives in RAM); ARP spoofing; httpd's LRU purge (a host that opens enough
-connections closes the owner's); nine or more striking addresses (the
+guesses a minute between reboots, against a token of about 184 bits on a WAP
+(32 random characters of a 54-character alphabet; about 155 on the flagship,
+whose encoder takes 32 HMAC bytes, and fewer on a WAP whose token predates
+the 64-byte encoder: `THREAT_MODEL.md` scenario 10). Not closed by it:
+`POST /api/reboot` and `POST /api/safe-mode/retry` from any landing session,
+which reboot the WAP and so empty the table (it lives in RAM), and with it
+the guess budget: a guesser that reboots the unit after every few seconds
+of guessing gets about 37 guesses a minute if the unit is back on the LAN
+45 s later, about 100 at 10 s, about 155 at 5 s (modeled in
+`test_auth_backoff.cpp`; the boot time is not measured; the flagship's
+reboot needs the bearer); ARP spoofing; httpd's LRU purge (a host that opens
+enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
 unit that was reset keeps polling with the old token, and so holds its own

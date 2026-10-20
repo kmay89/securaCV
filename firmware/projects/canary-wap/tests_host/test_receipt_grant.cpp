@@ -1049,6 +1049,54 @@ void test_qr_no_credential_is_401_without_strike() {
   CHECK(strikes(kHostA) == 0);
 }
 
+// The shapes api_auth_check_bearer() reads before any compare, through the
+// gate every admin route shares (review of F343). A credential that is not a
+// bearer, or a header too long for the buffer, is a 401 and one strike, as
+// on the flagship (credential_shaped_failures_still_strike); the right token
+// with spaces around it is the right token. Before these rows the receipt's
+// grant was the only one that held them (test_receipt_bearer_shapes), and a
+// gate that skipped either strike or the trim passed every suite.
+void test_qr_bearer_shapes() {
+  struct Shape {
+    std::string raw;
+    const char* hint;
+  };
+  // 128 bytes, the buffer's size: no room for the NUL.
+  const std::string too_long = std::string("Bearer ") + std::string(121, 'x');
+  CHECK(too_long.size() == 128);
+  for (const Shape& s : {Shape{std::string("Basic ") + kToken, "Use 'Bearer <token>' format"},
+                         Shape{std::string("bearer ") + kToken, "Use 'Bearer <token>' format"},
+                         Shape{too_long, "Authorization header too long"}}) {
+    reset_device();
+    Req q;
+    q.authorization(s.raw);
+    CHECK_MSG(qr(q) == 0, "the pairing QR served: " + s.raw.substr(0, 16));
+    CHECK(q.r.status == "401 Unauthorized");
+    CHECK_MSG(q.r.resp.find(s.hint) != std::string::npos, "not the shape's own 401: " + q.r.resp);
+    CHECK(!carries_secret(q.r));
+    CHECK_MSG(strikes(kHostA) == 1, "a malformed credential was no strike: " + s.raw.substr(0, 16));
+  }
+  // One byte shorter fits the buffer, so it is compared: a wrong token, 403.
+  reset_device();
+  Req fits;
+  fits.authorization(too_long.substr(0, 127));
+  CHECK(qr(fits) == 0);
+  CHECK(fits.r.status == "403 Forbidden");
+  CHECK(strikes(kHostA) == 1);
+  // Spaces after and before the right token: served, and the count it
+  // carried cleared, as any right bearer clears it.
+  for (const std::string& raw : {std::string("Bearer ") + kToken + "  ", std::string("Bearer   ") + kToken}) {
+    reset_device();
+    set_strikes(kHostA, 2, millis(), millis());   // two strikes, the backoff over
+    g_qr_payloads.clear();
+    Req q;
+    q.authorization(raw);
+    CHECK_MSG(qr(q) == 1, "the right token beside spaces was refused: " + q.r.status);
+    CHECK(q.r.status == "200 OK");
+    CHECK_MSG(strikes(kHostA) == 0, "the right token beside spaces left the count standing");
+  }
+}
+
 void test_qr_lockout_is_every_admin_routes() {
   reset_device();
   mint_session();
@@ -2002,6 +2050,7 @@ int main() {
   test_qr_cookie_beside_wrong_bearer_is_refused();
   test_qr_bearer_serves();
   test_qr_no_credential_is_401_without_strike();
+  test_qr_bearer_shapes();
   test_qr_lockout_is_every_admin_routes();
   test_receipt_and_qr_share_the_lockout();
   test_one_hosts_strikes_never_hold_another();

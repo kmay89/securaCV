@@ -3010,7 +3010,9 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
        `cv_wrong` into the unlock banner, press **Unlock**, and watch the
        Network panel for a minute.
   - Expected: for step 1's 5 minutes B's polls are `200` (before part 1 of
-    this change about 119 of 120 were `429`), and A's own calls in its
+    this change nearly all of them were `429`: the host suite's replay of
+    this cadence, run over the code before it, refuses all 60 calls of its
+    first 5 minutes and 119 of 120 over ten), and A's own calls in its
     Network panel are `401`, never `429`. A's wrong bearers on the receipt
     are `403` `physical_confirmation_required`, each one a strike. In step 3
     A's right token is `429` with a `Retry-After` of at most `61` on
@@ -3030,11 +3032,14 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     (a held bearer reads as none, so the tap serves it), and A's
     `/api/status` right after it is `200` too. Before F341, A's call after
     the tap was `429` until the backoff ran out. In step 7 the first call
-    that carries `cv_wrong` is `403` `{"error":"forbidden"}` (one sent in
-    the same moment may be `429`), the banner comes back reading "The Canary
-    refused that token.", and every call after it carries no
-    `Authorization` header: `429` until that one strike's 2 s backoff has
-    run, then `401`, never `429` again. Before this change the page kept
+    that carries `cv_wrong` is `403` `{"error":"forbidden"}`, and the
+    other calls the unlock sent with it (up to three: `unlockWithToken()`
+    fires `/api/status` and `/api/wifi/status` at once, and `/api/chirp` and
+    `/api/bluetooth` when their tabs were turned away) are `429`, since
+    each reads the 2 s backoff the first one armed; the banner comes back
+    reading "The Canary refused that token.", and every call after it
+    carries no `Authorization` header: `429` until that one strike's 2 s
+    backoff has run, then `401`, never `429` again. Before this change the page kept
     the token and sent it on every poll, a strike each time A's backoff
     ended, so A's calls stayed `429` until the page was reloaded.
   - Artifact: `docs/audit/repro/F340/` (step 5:

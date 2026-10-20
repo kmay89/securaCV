@@ -1171,18 +1171,21 @@ $(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_
 # still sets one of the old per-device knobs meant to change a number the
 # library no longer reads, so securacv_auth.h stops it with an #error that
 # names the header. Each knob is compiled once and must be refused that way.
-# Nothing to run, and no dependency file (no -o).
+# Nothing to run, and no dependency file (no -o). -Wno-error: the flagship's
+# PlatformIO envs build without -Werror, so a #warning in place of the #error
+# lets a stale knob through there, and here it must compile and fail the
+# check, not ride CXXFLAGS' -Werror into an error that reads the same.
 SECAUTH_OLD_KNOBS = SECURACV_AUTH_MAX_FAILURES SECURACV_AUTH_LOCKOUT_BASE_MS \
                     SECURACV_AUTH_LOCKOUT_MAX_MS SECURACV_AUTH_FAILURE_WINDOW_MS
 .PHONY: run-secauth-knobs
 run-secauth-knobs: DEPFLAGS =
 run-secauth-knobs:
 	@for k in $(SECAUTH_OLD_KNOBS); do \
-	  if out=$$($(CXX) $(CXXFLAGS) -fsyntax-only $(SECAUTH_INCS) -D$$k=1 $(SECAUTH_SRC) 2>&1); then \
+	  if out=$$($(CXX) $(CXXFLAGS) -Wno-error -fsyntax-only $(SECAUTH_INCS) -D$$k=1 $(SECAUTH_SRC) 2>&1); then \
 	    echo "FAIL: -D$$k=1 compiled; securacv_auth.h must refuse it (#error)"; exit 1; \
 	  fi; \
 	  case "$$out" in \
-	    *"are gone (sweep F340)"*"firmware/common/network/auth_backoff.h"*) ;; \
+	    *"#error"*"are gone (sweep F340)"*"firmware/common/network/auth_backoff.h"*) ;; \
 	    *) echo "FAIL: -D$$k=1 failed, but not with the #error naming auth_backoff.h:"; \
 	       echo "$$out"; exit 1 ;; \
 	  esac; \

@@ -394,12 +394,17 @@ that serves ends that address's backoff, as a right bearer would (sweep
 F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a
 deliberate denial from the LAN: a landing session can still reboot the unit
-(`POST /api/reboot`, which also clears the table, kept in RAM), and ARP
-spoofing, httpd's connection purge and a cross-site `?token=` image that
-holds the visiting browser's own address stay open
-([`magic_pairing.md`](../design/magic_pairing.md) §3.7). Host-tested; not
-run on a device. Every bearer compare on the WAP counts toward that
-per-address lockout, and none is compared while its address is held (sweep
+(`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's
+connection purge and a cross-site `?token=` image that holds the visiting
+browser's own address stay open
+([`magic_pairing.md`](../design/magic_pairing.md) §3.7). The reboot also
+empties the table, kept in RAM, and so resets the guess budget: about 30
+guesses a minute between reboots from any number of addresses, and more for
+a guesser that reboots the unit every few seconds (about 100 a minute if it
+is back on the LAN 10 s later; `THREAT_MODEL.md` scenario 10). The token's
+entropy stays the bound. Host-tested; not run on a device. Every bearer
+compare on the WAP counts toward that per-address lockout, and none is
+compared while its address is held (sweep
 F339): the receipt and the pairing QR; the admin routes; the CSI routes, the
 MQTT bridge's routes and its broker move; the QR scan's admin fallback; and
 the camera's and the vault's `?token=` links, which until F339 never read
