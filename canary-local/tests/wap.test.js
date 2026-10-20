@@ -561,8 +561,46 @@ test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings
   const boot = f.buttons.find((b) => b.id === "boot");
   const gpio = ino.match(/BOOT_BUTTON_GPIO\s*=\s*(\d+)/);
   assert.strictEqual(boot.gpio, Number(gpio[1]));
+  // What each gesture does is the loop's BOOT handler's, not a guess. A short
+  // press opens the provisioning gate and prints no key; BOOT_LONG_PRESS_MS is
+  // only reset_hold.h's "keep holding" warning; the factory reset is the
+  // fleet's hold (onboarding_fsm.h Timing) and keeps the identity, so the
+  // setup network's name and key survive it; the sketch arms no wipe stage.
+  // (The page once said a ~1 s press printed the SSID and password and a >3 s
+  // hold reset to a fresh keypair: neither is what the sketch does.)
   const longMs = Number(ino.match(/BOOT_LONG_PRESS_MS\s*=\s*(\d+)/)[1]);
-  assert.ok(boot.gestures.some((g) => g.includes(`>${longMs / 1000} s`)), "factory-reset hold drifted");
+  const holdMs = Number(ino.match(/BOOT_BUTTON_HOLD_MS\s*=\s*(\d+)/)[1]);
+  const gateMs = Number(ino.match(/PROVISIONING_GATE_TTL_MS\s*=\s*(\d+)/)[1]);
+  const fsmH = read(join(FW, "onboarding_fsm.h"));
+  const resetMs = Number(fsmH.match(/factory_reset_hold_ms\s*=\s*(\d+);/)[1]);
+  assert.ok(ino.includes("canary::io::ResetHold{}.reset_ms == canary::net::onboard::Timing{}.factory_reset_hold_ms"),
+    "the sketch's reset hold is no longer the fleet's Timing");
+  assert.ok(ino.includes("static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,"),
+    "BOOT_LONG_PRESS_MS is no longer the reset hold's warning");
+  const reset = boot.gestures.find((g) => g.includes("factory reset"));
+  assert.ok(reset && reset.startsWith(`hold ${resetMs / 1000} s: factory reset`),
+    `the factory reset is the ${resetMs / 1000} s hold: ${reset}`);
+  assert.ok(/identity is kept/.test(reset) && /name and key do not change/.test(reset),
+    "the reset keeps the identity, and with it the setup network's key");
+  assert.ok(!boot.gestures.some((g) => g.includes(`>${longMs / 1000} s`)),
+    `the ${longMs / 1000} s mark is the warning, not a reset`);
+  const short = boot.gestures.find((g) => g.startsWith("short press"));
+  assert.ok(short && short.includes(`under ${holdMs / 1000} s`) && short.includes("provisioning gate") &&
+    short.includes(`${gateMs / 1000} s`) && /prints no key/.test(short),
+    "a short press opens the provisioning gate and prints no key: " + short);
+  assert.ok(boot.gestures.some((g) => g.startsWith(`hold ${holdMs / 1000}–${longMs / 1000} s: prints the identity block`)),
+    "the medium hold prints the identity block");
+  assert.ok(!/wipe_ms/.test(ino), "the sketch arms a wipe stage now: the recovery text says it has none");
+  const rec = f.recovery;
+  assert.ok(rec.password.some((st) => st.includes("WiFi AP") && st.includes("Password")) &&
+    ino.includes('boot_kv("WiFi AP",') && ino.includes('boot_kv("Password",'),
+    "recovery reads the setup network's name and key off the ready banner");
+  assert.ok(rec.password.some((st) => /\btype w\b/.test(st)) &&
+    /case 'w':\s*Serial\.printf\("WiFi AP: %s\\n", g_device\.ap_ssid\);\s*Serial\.printf\("Password: %s\\n"/.test(ino),
+    "recovery names the serial w command, which prints both");
+  assert.ok(!rec.password.some((st) => /press boot/i.test(st)), "no BOOT press prints the key");
+  assert.ok(rec.factory.includes(`Hold BOOT ${resetMs / 1000} s`) && /identity is kept/.test(rec.factory) &&
+    /No BOOT hold wipes/.test(rec.factory), "factory text: " + rec.factory);
   // the download ritual ends in the mask ROM's real strap line (bench.js prints it)
   assert.ok(benchJs.includes("DOWNLOAD(USB/UART0)"));
   assert.ok(f.download_mode.rom_line.includes("DOWNLOAD(USB/UART0)"));

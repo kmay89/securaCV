@@ -58,17 +58,36 @@ static constexpr const char* NVS_KEY = "fleet_key";
 static constexpr const char* SALT = "securacv:fleet-key:v1";
 static constexpr const char* INFO_PEER = "peer";
 
-inline void hmac_sha256(const uint8_t* key, size_t klen, const uint8_t* msg, size_t mlen,
-                        uint8_t out[HASH_BYTES]) {
+/// HMAC-SHA256 that says whether it ran. On a failure (on the device,
+/// mbedtls_md_hmac() reports one when it cannot allocate its context) `out`
+/// is zeroed and the answer is false. A caller that turns the output into a
+/// secret must take this form and refuse on false: 32 zero bytes are the same
+/// on every unit, so a key rendered from them is one key for all of them
+/// (ap_password.h, sweep F350).
+inline bool hmac_sha256_checked(const uint8_t* key, size_t klen, const uint8_t* msg, size_t mlen,
+                                uint8_t out[HASH_BYTES]) {
 #if defined(ARDUINO)
   const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (mbedtls_md_hmac(md, key, klen, msg, mlen, out) != 0) memset(out, 0, HASH_BYTES);
+  if (md == nullptr || mbedtls_md_hmac(md, key, klen, msg, mlen, out) != 0) {
+    memset(out, 0, HASH_BYTES);
+    return false;
+  }
+  return true;
 #else
   unsigned int olen = 0;
   if (HMAC(EVP_sha256(), key, (int)klen, msg, mlen, out, &olen) == nullptr || olen != HASH_BYTES) {
     memset(out, 0, HASH_BYTES);
+    return false;
   }
+  return true;
 #endif
+}
+
+/// The unchecked form the HKDF and tag paths below have always called: the
+/// same HMAC, zeroed output on a failure, nothing reported.
+inline void hmac_sha256(const uint8_t* key, size_t klen, const uint8_t* msg, size_t mlen,
+                        uint8_t out[HASH_BYTES]) {
+  (void)hmac_sha256_checked(key, klen, msg, mlen, out);
 }
 
 /// RFC 5869 HKDF-SHA256 (extract + expand). `olen` ≤ 255 * 32.

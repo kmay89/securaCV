@@ -94,10 +94,11 @@ Wi-Fi settings. You'll see a new network named something like:
 The four characters at the end are unique to your Canary. Tap the
 network and enter the **AP password** from your card. (The password is
 *not* `password` and *not* the device ID — it's the string printed under
-the QR code: `cv-` and twelve more characters on a Canary or a WAP, eight
-characters on a Sense or a Vision.) Newer firmware offers WPA3 to phones
-that support it; an older phone that only knows WPA2 still joins the same
-way.
+the QR code: `cv-` and twelve more characters on the all-rounder Canary or
+a WAP; eight characters, drawn once at random and kept, on the setup
+portal of a Sense or a Vision and on a display.) Newer firmware offers
+WPA3 to phones that support it; an older phone that only knows WPA2 still
+joins the same way.
 
 Your phone will **stay** connected — the Canary answers your phone's
 "is there internet here?" check so it won't drop the network or warn you
@@ -776,19 +777,26 @@ If you've lost the printed card:
 2. Open a serial terminal at **115 200 baud** on the new USB-CDC port.
 3. Restart the Canary (its RESET button, or unplug it and plug it back
    in) with the terminal open. The ready banner prints the setup
-   network's name (`WiFi AP`) and its key (`Password`), and the
-   `[SETUP] Setup network up` line repeats both whenever the setup
-   network comes up.
+   network's name (`WiFi AP`) and its key (`Password`).
+
+The all-rounder Canary (`firmware/canary`) repeats both in its
+`[SETUP] Setup network up` line whenever the setup network comes up, a
+home Wi-Fi outage included. A WAP repeats them in its `[WIFI] AP started`
+line at boot, and its serial command `w` prints both at any time. A short
+BOOT press prints neither: it opens the provisioning gate, which lets the
+dashboard hand over the recovery kit for 30 seconds.
 
 Either flasher's done card shows the same pair after a flash, and a
-recovery kit saved from the dashboard (**Settings → Save recovery kit**)
-carries it as `ap_password`.
+recovery kit saved from the dashboard carries the key as `ap_password`
+(on the all-rounder Canary, **Settings → Save recovery kit**; on a WAP,
+the *Save your recovery kit* card after a BOOT-tap sign-in).
 
-A factory reset from the BOOT button keeps the key: released at 10
-seconds it clears Wi-Fi and settings and keeps the device's keypair, and
-the key is made from that keypair. Held to 30 seconds it wipes the
-keypair too, so the setup network's name and key both change, and the
-new ones print on serial.
+A factory reset from the BOOT button keeps the key. Held for 10 seconds,
+BOOT resets Wi-Fi and settings and keeps the device's keypair, and the
+key is made from that keypair. Only the all-rounder Canary has a longer
+stage: held to 30 seconds it wipes the keypair too, so the setup
+network's name and key both change, and the new ones print on serial. A
+WAP has no such stage, and no BOOT hold changes its key.
 
 **After a firmware update.** Older firmware for the all-rounder Canary
 (`firmware/canary`) made the setup network's key from the device's
@@ -799,8 +807,15 @@ boot of the new firmware: from `cv-` and five characters to `cv-` and
 twelve. The network keeps its name. A printed card, a phone that saved
 the network, or a recovery kit saved before the update holds the old
 key: read the current one as above, and save the recovery kit again
-after you update. *(The new key is host-tested and not yet tried on a
-bench device.)*
+after you update.
+
+A phone that joined the setup network before may not ask you for the
+new key. Phones save a network by its name, so it can rejoin silently
+with the old key and report a plain join failure. Forget the network
+first, then join with the new key. iPhone: **Settings → Wi-Fi → the (i)
+beside `SecuraCV-canary-XXXX` → Forget This Network.** Android:
+long-press the network in the Wi-Fi list → **Forget**. *(The new key is
+host-tested and not yet tried on a bench device.)*
 
 ---
 

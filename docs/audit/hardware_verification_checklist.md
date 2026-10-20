@@ -2977,8 +2977,12 @@ called from `firmware/canary/src/main.cpp` `setup()`. Owner: U1.
        `[SETUP] QR` line, and each flasher's done card.
     4. Save the recovery kit from the dashboard.
     5. Power off the home router.
-    6. On the phone, join `SecuraCV-canary-XXXX` with the old key, then
-       with the new one.
+    6. On a phone that saved `SecuraCV-canary-XXXX` before the update,
+       open Wi-Fi settings and record whether it rejoins silently, prompts
+       for a key or reports a join failure. Then Forget the network
+       (iPhone: Settings → Wi-Fi → (i) → Forget This Network; Android:
+       long-press → Forget), join with the old key, Forget it again, and
+       join with the new one.
     7. Load `http://192.168.4.1/`.
     8. On one unit, hold BOOT for 10 s and release (credentials and
        settings reset), then repeat steps 3 and 4; then hold it to 30 s (the
@@ -2988,7 +2992,9 @@ called from `firmware/canary/src/main.cpp` `setup()`. Owner: U1.
       kit's `ap_password` show the same `cv-` key with 12 characters after
       the prefix;
     - the SSID is unchanged;
-    - the old key is refused and the new key joins;
+    - the old key is refused and the new key joins; the record of what
+      the saved phone did before the Forget goes in the artifact (the FAQ's
+      "Unable to join" entry says a phone can fail silently there);
     - `GET /api/wifi/status` shows `ap_auth: "wpa2"` on release and
       `"wpa2-wpa3"` on full (a `"wpa2"` there is F16's finding: record its
       `ap_auth_reason`);

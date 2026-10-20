@@ -27,6 +27,15 @@
 // 216, the WAP pads with '2' and render_password tops up with alphabet[i];
 // for a uniform HMAC that is a binomial tail of about 3e-10.
 //
+// Why it can refuse a buffer that is big enough. fleet_key's HMAC zeroes its
+// output when it fails (on the device, an allocation failure inside
+// mbedtls_md_hmac), and 32 zero bytes render as "cv-222222222222": one key
+// for every unit, on the network whose peers are handed the page token. So
+// this takes fleet_key::hmac_sha256_checked and refuses (false, "") when the
+// HMAC did not run; the result is [[nodiscard]], and setup() halts on a
+// refusal rather than raise the setup network on an empty or constant key.
+// test_ap_password_hmac_fail.cpp holds that with a failing HMAC().
+//
 // Pure: HMAC-SHA256 through fleet_key.h (mbedTLS on the device, OpenSSL on
 // the host, RFC 4231-tested in test_fleet_key.cpp) and the rendering through
 // provision_core.h's render_password. No Arduino, no NVS.
@@ -36,7 +45,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "fleet_key.h"       // hmac_sha256
+#include "fleet_key.h"       // hmac_sha256_checked
 #include "provision_core.h"  // render_password: the unambiguous alphabet
 
 namespace canary {
@@ -49,25 +58,31 @@ static constexpr size_t AP_PASSWORD_LEN = 3 + AP_PASSWORD_CHARS;    // "cv-" + 1
 
 /// Writes "cv-" + 12 characters, NUL-terminated, into `out`. Refuses (false)
 /// a null `out` or a `cap` below AP_PASSWORD_LEN + 1, writing "" when there
-/// is room for it: a truncated key would be a different, weaker key.
-inline bool derive_ap_password(const uint8_t (&privkey)[32], char* out, size_t cap) {
+/// is room for it: a truncated key would be a different, weaker key. Refuses
+/// the same way when the HMAC fails: a key rendered from its zeroed output
+/// would be the same on every unit.
+[[nodiscard]] inline bool derive_ap_password(const uint8_t (&privkey)[32], char* out,
+                                             size_t cap) {
   if (out == nullptr || cap < AP_PASSWORD_LEN + 1) {
     if (out != nullptr && cap >= 1) out[0] = '\0';
     return false;
   }
+  out[0] = '\0';
   uint8_t k[fleet_key::HASH_BYTES];
-  fleet_key::hmac_sha256(privkey, sizeof(privkey),
-                         reinterpret_cast<const uint8_t*>(AP_PASSWORD_DOMAIN),
-                         AP_PASSWORD_DOMAIN_LEN, k);
-  char enc[AP_PASSWORD_CHARS + 1];
-  render_password(k, sizeof(k), enc, sizeof(enc));
-  snprintf(out, cap, "cv-%s", enc);
+  const bool ran = fleet_key::hmac_sha256_checked(
+      privkey, sizeof(privkey), reinterpret_cast<const uint8_t*>(AP_PASSWORD_DOMAIN),
+      AP_PASSWORD_DOMAIN_LEN, k);
+  char enc[AP_PASSWORD_CHARS + 1] = {0};
+  if (ran) {
+    render_password(k, sizeof(k), enc, sizeof(enc));
+    snprintf(out, cap, "cv-%s", enc);
+  }
   // Wipe both transient copies (DCE-safe): the key lives on only in `out`.
   volatile uint8_t* vk = k;
   for (size_t i = 0; i < sizeof(k); i++) vk[i] = 0;
   volatile char* ve = enc;
   for (size_t i = 0; i < sizeof(enc); i++) ve[i] = 0;
-  return true;
+  return ran;
 }
 
 }  // namespace net

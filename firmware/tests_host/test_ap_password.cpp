@@ -22,6 +22,8 @@
 //     bind to the key parameter and its privkey does (static_asserts), so a
 //     revert of the call to the fingerprint is a compile error. The 32-byte
 //     public key still binds; that gap is the call site's to close.
+// A failed HMAC (refused, never rendered as a key) is
+// test_ap_password_hmac_fail.cpp's: it replaces HMAC() for its whole binary.
 //
 // Build/run: make -C firmware/tests_host (the Makefile cuts the WAP's
 // function and links OpenSSL).

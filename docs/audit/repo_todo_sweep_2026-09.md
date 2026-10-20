@@ -1854,10 +1854,11 @@ so — see D2 below.)
   provisioning receipt, `/api/status` and the serial log. (The TLS
   certificate's subject, `CN=securacv-<fp>`, would carry it too, but no
   flagship unit generates that certificate today: `securacv_network.cpp`
-  gates certificate generation on `mbedtls/x509write_crt.h`, a header
-  mbedTLS does not ship, as F337's decision found for F15.) The SSID alone
-  leaves most units 54^3, about 157,000, candidates for an offline crack of
-  one captured WPA2 handshake, and none more than 54^5. On the flagship, a
+  compiles its generator only under
+  `__has_include("mbedtls/x509write_crt.h")`, a header mbedTLS does not
+  ship; it declares the certificate writer in `mbedtls/x509_crt.h`.) The
+  SSID alone leaves most units 54^3, about 157,000, candidates for an
+  offline crack of one captured WPA2 handshake, and none more than 54^5. On the flagship, a
   peer on its own SoftAP is handed the page token, and the SoftAP comes back
   on every home-link drop. So anyone in radio range who had seen the
   fingerprint could join, load `GET /` and hold the bearer token.
@@ -1872,21 +1873,54 @@ so — see D2 below.)
   `firmware/common/network/ap_password.h`, which renders through
   `provision_core.h`'s `render_password`. The header takes the key as
   `const uint8_t (&)[32]`, so the 8-byte fingerprint no longer compiles as
-  its argument. canary-wap's derivation is the same function, and
-  `firmware/tests_host/test_ap_password.cpp` holds the two equal over 256
+  its argument. It is canary-wap's derivation, except in the padding of a
+  shortfall branch the header names (fewer than 12 of the 32 HMAC bytes
+  below 216, p ≈ 3e-10), and `firmware/tests_host/test_ap_password.cpp`
+  holds the two equal over 256
   keys (the WAP's cut verbatim out of the sketch), beside known answers, the
   format, every one-bit key change, the refusals and static_asserts on the
   real `DeviceIdentity` (its `pubkey_fp` does not bind, its `privkey` does).
   On the old derivation the suite fails 742 checks and then crashes on the
   null-buffer refusal, and a pointer-form header fails three of its
-  static_asserts. No marker keeps the old key: anyone who has seen the
+  static_asserts. A failed HMAC is refused, not rendered:
+  `fleet_key::hmac_sha256` zeroes its output on a failure (on the device,
+  an allocation failure inside `mbedtls_md_hmac`), and 32 zero bytes render
+  as `cv-222222222222` on every unit, so the derivation takes the new
+  `fleet_key::hmac_sha256_checked`, refuses with `false` and an empty key,
+  is `[[nodiscard]]`, and `setup()` halts on the refusal as it does on a
+  provisioning failure (an empty key would reach `WiFi.softAP()`, which
+  raises an open network). `firmware/tests_host/test_ap_password_hmac_fail.cpp`
+  defines a failing `HMAC()` and holds the refusal; on a derivation that
+  ignores the failure it fails 72 checks. No host suite compiles the halt in
+  `main.cpp`. No marker keeps the old key: anyone who has seen the
   fingerprint can compute it, so every unit in the field moves. The owner's
   setup-network key changes once, on update; the SSID does not. A recovery
   kit, saved phone network or printed card from before the update holds a
-  stale key. The serial banner, both flashers' done cards and a recovery kit
-  re-saved from the dashboard show the new one. `THREAT_MODEL.md`,
-  `SECURITY_MODEL.md`, `getting_started_canary.md`, `FEATURES.md`,
-  `LESSONS_LEARNED.md` and the roadmap are corrected. F338 later pins the
+  stale key, and a phone that saved the network may rejoin silently with
+  the old key and report a plain join failure, so the owner step is to
+  Forget the network on that phone and join with the new key. The serial
+  banner, both flashers' done cards and a recovery kit re-saved from the
+  dashboard show the new one. Both flashers' diagnostic report scrubbed
+  the `[SETUP] Setup network up` line but not the `[SETUP] QR
+  WIFI:…;P:<key>;;` line every setup surface prints beside it (the
+  flagship on every home-link drop too); `TAIL_REDACT` in
+  `canary-local/assets/flash-core.js` and `desktop/src/app.js` now covers
+  it, `flash.test.js` feeds it the real lines, and `desktop_parity.test.js`
+  holds the two lists equal. The rewritten recovery section of
+  `getting_started_canary.md` dropped two sentences that
+  `canary-local/tools/gen_wap.py` pinned, and the Lab's WAP page restated
+  them (a ~1 s BOOT press prints the key, a >3 s hold resets to a fresh
+  keypair), which the sketch does not do:
+  the generator now reads the gestures from the sketch's BOOT handler and
+  `onboarding_fsm.h` and pins the new section, `wap.json` is regenerated, and
+  `wap.test.js` holds the gestures to the sketch. `THREAT_MODEL.md`,
+  `SECURITY_MODEL.md`, `getting_started_canary.md`, `FAQ.md`,
+  `FIRMWARE_MAP.md`, `FEATURES.md`, `LESSONS_LEARNED.md`, the roadmap and
+  the `ScvNetworkManager::begin()` comment are corrected. Not changed here:
+  canary-wap's own `hmac_sha256()` (`canary_wap.ino`) discards mbedTLS's
+  return codes, so an allocation failure there leaves its output as stack
+  bytes, under the AP key and the API token alike; the sketch is this
+  item's parity reference and its fix is a WAP change. F338 later pins the
   mint statement in `setup()`. Host-tested; the PlatformIO compile is CI's;
   not run on a device (U1).
 

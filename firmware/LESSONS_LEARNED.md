@@ -457,9 +457,18 @@
   not a pointer, so a shorter published value (the 8-byte fingerprint)
   cannot be handed to it. A pointer parameter takes it without a word and
   reads 24 bytes past it.
+- **Rule:** A secret derived from a primitive that can fail must see the
+  failure. `fleet_key::hmac_sha256` zeroes its output and says nothing, and
+  32 zero bytes render as `cv-222222222222` on every unit: the review of
+  F350's first cut found the derivation returning that as a success. It now
+  takes `hmac_sha256_checked`, refuses on false, is `[[nodiscard]]`, and
+  `setup()` halts rather than raise the network on an empty key (the Arduino
+  core raises an open network on one) or a constant one.
 - **Regression check:** `firmware/tests_host/test_ap_password.cpp`
   static_asserts that `DeviceIdentity::pubkey_fp` does not bind and the
-  private key does, and holds the flagship's derivation equal to the WAP's.
+  private key does, and holds the flagship's derivation equal to the WAP's;
+  `test_ap_password_hmac_fail.cpp` defines a failing `HMAC()` and holds the
+  refusal.
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only

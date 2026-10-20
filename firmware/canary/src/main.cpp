@@ -1301,8 +1301,13 @@ void setup() {
 
   // The setup network's key: an HMAC of the private key, never anything the
   // device publishes (sweep F350). The array-reference parameter refuses the
-  // 8-byte fingerprint at compile time.
-  canary::net::derive_ap_password(device.privkey, g_ap_password, sizeof(g_ap_password));
+  // 8-byte fingerprint at compile time. A refusal (the HMAC failed) leaves
+  // g_ap_password "", and WiFi.softAP() raises an OPEN network on an empty
+  // key, so the boot stops here the way a provisioning failure does.
+  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, sizeof(g_ap_password))) {
+    Serial.println("[!!] Setup network key derivation failed - HALTING");
+    while (true) { delay(1000); }
+  }
   Serial.printf("[OK] AP password derived (device-unique)\n");
 
   // Setup watchdog

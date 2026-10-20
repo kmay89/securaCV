@@ -1350,6 +1350,25 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   ].join("\n");
   const r = buildDiagnosticReport({ logTail: tail });
   assert.ok(!r.includes("cv-supersecret1"), "no credential survives into the report");
+  // Every setup surface also prints its key inside a Wi-Fi QR payload each
+  // time the setup network comes up (onboarding_fsm.h qr_line, from the
+  // flagship's announce_setup_network on every raiseAp too), and on the
+  // flagship that key is the whole boundary for the page token (sweep F350).
+  // No other pattern above matches it: these are the lines a boot prints.
+  const qrTail = [
+    "[WIFI] Connection lost, raising AP",
+    '[SETUP] Setup network up: "SecuraCV-canary-AbCd"  password cv-e8Qun72aUeCc  (channel 1)',
+    "[SETUP] QR WIFI:T:WPA;S:SecuraCV-canary-AbCd;P:cv-e8Qun72aUeCc;;",
+    "[SETUP] QR WIFI:T:WPA;S:SecuraCV-wap-4dC2;P:cv-3jByJ6rHdhM2;;",
+    "WIFI:S:SecuraCV-sense-4dC2;T:WPA;P:k7Qm2xRt;;",     // a payload in another field order
+  ].join("\n");
+  const q = buildDiagnosticReport({ stage: "idle", logTail: qrTail });
+  for (const key of ["cv-e8Qun72aUeCc", "cv-3jByJ6rHdhM2", "k7Qm2xRt"]) {
+    assert.ok(!q.includes(key), `the setup network's key ${key} survives into the report`);
+  }
+  assert.ok(q.includes("[WIFI] Connection lost, raising AP"), "the diagnosis line is kept");
+  assert.strictEqual(sanitizeLogTail("[WIFI] AP raised on channel 1"), "[WIFI] AP raised on channel 1",
+    "a [WIFI] log line with no QR payload is not collateral damage");
   assert.ok(r.includes("[redacted: credential line]"), "redaction is visible, not silent");
   assert.ok(r.includes("wifi: PASS"), "selftest verdict rows are not collateral damage");
   assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives the scrub");
