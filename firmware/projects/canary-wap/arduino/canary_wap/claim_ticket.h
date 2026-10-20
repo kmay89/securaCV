@@ -21,9 +21,15 @@
  * bytes — esp_fill_random on the device, a fixed pattern in the tests),
  * no clock (millis() is a parameter). Touched from the loop task (mint)
  * and the httpd task (take), so the minted-at word goes through the
- * __atomic builtins exactly as provisioning_gate.h's State does, and take()
- * claims the ticket with one exchange BEFORE it compares — a second taker
- * on any task reads 0 and is refused, whatever it presented.
+ * __atomic builtins exactly as provisioning_gate.h's State does. A claim is
+ * spent only by a MATCH (sweep F342): take() loads the minted-at word,
+ * compares in constant time, and spends with one compare-and-swap of the
+ * word it loaded (spend_if_match()), so exactly one matching taker on any
+ * task gets true, and a wrong, short or truncated value changes nothing.
+ * It used to exchange the word to 0 before comparing, so any ?claim= from a
+ * host on the network spent the phone's claim: 128 random bits cannot be
+ * guessed in the TTL, so burning on a guess bounded nothing and handed that
+ * host a one-request denial. An expired claim is still burned.
  *
  * Consumed by the canary-wap sketch (and, in a follow-up, the flagship's
  * securacv_network); the WAP keeps a staged byte-identical copy next to its
@@ -57,10 +63,17 @@ struct Ticket {
 /// 0 is the "none" sentinel, so a mint at millis()==0 is stored as 1.
 inline uint32_t stamp(uint32_t now_ms) { return now_ms == 0 ? 1u : now_ms; }
 
-inline void wipe(Ticket& t) {
-  __atomic_store_n(&t.minted_at_ms, 0u, __ATOMIC_RELEASE);
+/// The hex zeroed through a volatile pointer, so the compiler cannot drop
+/// the stores. Leaves minted_at_ms alone: the caller has already cleared it
+/// (wipe()) or won the compare-and-swap that did (spend_if_match()).
+inline void wipe_hex(Ticket& t) {
   volatile char* b = t.hex;
   for (size_t i = 0; i < sizeof(t.hex); ++i) b[i] = 0;
+}
+
+inline void wipe(Ticket& t) {
+  __atomic_store_n(&t.minted_at_ms, 0u, __ATOMIC_RELEASE);
+  wipe_hex(t);
 }
 
 /// Mint a claim from `raw` (RAW_LEN random bytes the caller drew) at
@@ -105,18 +118,50 @@ inline bool hex_equal(const char* expected, const char* presented) {
   return diff == 0;
 }
 
-/// Spend the claim. The ticket is consumed by this call whatever the
-/// outcome — a match serves the receipt, a mismatch burns the claim (a
-/// guesser gets one guess per join, not thousands), an expired claim is
-/// burned too. Exactly one caller, on any task, can get true.
+/// Spend the claim minted at `seen` (the minted-at word the caller loaded),
+/// and only on a match:
+///   * `seen` 0: nothing outstanding, false;
+///   * `seen` past its TTL: the claim is burned (a compare-and-swap of `seen`
+///     to 0, the hex wiped only when that swap won), false;
+///   * `presented` does not match (hex_equal(): constant time, exactly
+///     HEX_LEN characters): false, and NOTHING changes;
+///   * a match: one compare-and-swap of `seen` to 0. It loses when the word
+///     moved since the load (a re-mint, an expiry sweep or another matching
+///     taker got there first): false. It wins exactly once: the hex is wiped
+///     and the answer is true.
+/// So a mismatch spends nothing and two matching takers on two tasks cannot
+/// both get true. The seam for a caller (and a test) that loads the word
+/// itself; take() is this with the word it loads now.
+inline bool spend_if_match(Ticket& t, uint32_t seen, const char* presented,
+                           uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
+  if (seen == 0) return false;
+  if ((uint32_t)(now_ms - seen) >= ttl_ms) {
+    uint32_t expect = seen;
+    if (__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+      wipe_hex(t);
+    }
+    return false;
+  }
+  if (!hex_equal(t.hex, presented)) return false;
+  uint32_t expect = seen;
+  if (!__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
+  wipe_hex(t);
+  return true;
+}
+
+/// Spend the claim, on a match only (sweep F342): a match serves the
+/// receipt and spends the claim; a wrong, short, empty or truncated value
+/// is refused and spends nothing (128 random bits cannot be guessed inside
+/// the TTL, so burning on a guess bounded nothing and let one stray request
+/// end the phone's pairing); an expired claim is refused and burned.
+/// Exactly one caller, on any task, can get true.
 inline bool take(Ticket& t, const char* presented, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
-  const uint32_t minted = __atomic_exchange_n(&t.minted_at_ms, 0u, __ATOMIC_ACQ_REL);
-  if (minted == 0) return false;
-  const bool fresh = (uint32_t)(now_ms - minted) < ttl_ms;
-  const bool match = hex_equal(t.hex, presented);
-  volatile char* b = t.hex;
-  for (size_t i = 0; i < sizeof(t.hex); ++i) b[i] = 0;
-  return fresh && match;
+  return spend_if_match(t, __atomic_load_n(&t.minted_at_ms, __ATOMIC_ACQUIRE), presented,
+                        now_ms, ttl_ms);
 }
 
 }  // namespace claim_ticket

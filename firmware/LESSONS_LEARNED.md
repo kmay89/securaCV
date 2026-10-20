@@ -1765,6 +1765,25 @@
   a 403 is final and points at Ready to pair on the Fleet tab and the
   recovery kit).
   Bench: not yet.
+- **Amended, 2026-10-19 (sweep F342):** "a wrong guess burns the claim"
+  was the wrong rule. A claim is 128 random bits that live 180 s: nobody
+  guesses that, so burning on a guess bounded nothing, and it handed any
+  host on the network a one-request denial. One stray or hostile `?claim=`
+  spent the phone's claim, the phone's own spend a moment later was `403`,
+  which the app rightly treats as final ("on the Wi-Fi, not paired"), and
+  the spend released the first-boot reboot hold under a phone that still
+  held a good claim. The fix: spend on a match, burn on expiry. `take()`
+  loads the minted-at word, compares in constant time, and spends with one
+  compare-and-swap of the word it loaded (`spend_if_match()`), so exactly
+  one matching taker wins and a mismatch changes nothing; the refusal's
+  health line is written once per 10 s at most. Rule: a single-use secret
+  should be spent by the act it authorizes, not by any attempt at it,
+  unless the secret is small enough that attempts are the threat; count the
+  bits before you add a burn. Regression check: `test_claim_ticket.cpp`'s
+  `a_mismatch_spends_nothing` (a thousand wrong values, then the right one
+  serves) and `a_spend_whose_stamp_changed_is_refused` (the seam), and
+  `test_receipt_grant.cpp`'s `test_receipt_wrong_claim_leaves_it_pending`
+  over the cut handler. Host-tested; not run on a device.
 - **Date learned:** 2026-10-07
 
 ### "Re-armed by a power cycle" was re-armed by every boot: the first-boot window and a firmware that restarts itself

@@ -42,8 +42,10 @@
 //     SoftAP setup's recovery-kit save mints it (sweep F289's residual; the
 //     writer, session_cookie_header(), is cut with the handlers, and
 //     test_session_cookie.cpp drives handle_ui's mint);
-//   - a wrong claim burns the claim (as before); a header that is not
-//     "Bearer " is no bearer;
+//   - a wrong claim is refused and spends nothing (sweep F342; before, it
+//     burned the phone's claim): the real claim then serves; a host that
+//     keeps sending wrong claims gets one health line per 10 s; a header
+//     that is not "Bearer " is no bearer;
 //   - the receipt's bearer is under every admin route's lockout (F289's
 //     follow-up; before, its compare recorded nothing, so the receipt was
 //     the one route where guessing the token cost nothing): a wrong or
@@ -214,6 +216,7 @@ static int g_http_server_obj = 0;
 static int g_https_server_obj = 0;
 static httpd_handle_t g_https_server = nullptr;
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+static uint32_t g_claim_refusal_logged_ms = 0;
 static uint32_t g_improv_claim_spent_at_ms = 0;
 
 static void secure_zero(void* p, size_t n) {
@@ -356,6 +359,7 @@ void reset_device() {
   WiFi = FakeWiFi{};
   g_provisioning_gate_opened_at = 0;
   canary::net::claim_ticket::wipe(g_improv_claim);
+  g_claim_refusal_logged_ms = 0;
   g_improv_claim_spent_at_ms = 0;
   g_served.clear();
   g_qr_payloads.clear();
@@ -612,7 +616,18 @@ void test_receipt_cookie_secure_over_https_only() {
   check_gate_refusal(refused.r);
 }
 
-void test_receipt_wrong_claim_burns_it() {
+// How many "setup-door claim did not match" health lines were written.
+size_t claim_refusal_lines() {
+  size_t n = 0;
+  for (const auto& l : g_health_lines) if (l.find("claim did not match") != std::string::npos) ++n;
+  return n;
+}
+
+// A wrong claim is refused and spends nothing (sweep F342). Before, it
+// burned the phone's pending claim: one stray or hostile ?claim= from any
+// host on the network, and the phone's own spend a moment later was 403,
+// which the app treats as final ("on the Wi-Fi, not paired").
+void test_receipt_wrong_claim_leaves_it_pending() {
   reset_device();
   mint_session();
   mint_claim();
@@ -620,10 +635,64 @@ void test_receipt_wrong_claim_burns_it() {
   q.cookie().query(std::string("claim=") + kClaimHex);
   CHECK(receipt(q) == 0);
   check_gate_refusal(q.r);
-  CHECK_MSG(!claim_pending(), "a wrong claim left the real one pending");
-  bool logged = false;
-  for (const auto& l : g_health_lines) if (l.find("claim did not match") != std::string::npos) logged = true;
-  CHECK(logged);
+  CHECK_MSG(claim_pending(), "a wrong claim spent the real one");
+  CHECK(claim_refusal_lines() == 1);
+  for (const auto& l : g_health_lines) {
+    CHECK_MSG(l.find("claim spent") == std::string::npos, "the refusal still says the claim was spent: " + l);
+  }
+  // A truncated claim (longer than the handler's buffer) and a short one:
+  // refused, the claim still pending.
+  Req long_one;
+  long_one.from(192, 168, 1, 21).query(std::string("claim=") + std::string(80, 'a'));
+  CHECK(receipt(long_one) == 0);
+  check_gate_refusal(long_one.r);
+  Req short_one;
+  short_one.from(192, 168, 1, 21).query("claim=abc");
+  CHECK(receipt(short_one) == 0);
+  CHECK_MSG(claim_pending(), "a truncated or short claim spent the real one");
+  CHECK(g_improv_claim_spent_at_ms == 0);   // the reboot runway is not armed by a refusal
+  // The phone's own spend then serves.
+  Req phone;
+  phone.query(std::string("claim=") + g_improv_claim.hex);
+  CHECK_MSG(receipt(phone) == 1, "the phone's claim was refused after a wrong one");
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!claim_pending());
+  CHECK(g_improv_claim_spent_at_ms != 0);
+}
+
+// The refusal's health line is written at most once per 10 s, so a host
+// that keeps sending wrong claims cannot fill the health log.
+void test_wrong_claims_log_once_per_ten_seconds() {
+  reset_device();
+  mint_claim();
+  Req first;
+  first.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(first) == 0);
+  stub_grant::now_ms += 9999;
+  Req second;
+  second.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(second) == 0);
+  CHECK_MSG(claim_refusal_lines() == 1, "two wrong claims inside 10 s wrote " +
+                                            std::to_string(claim_refusal_lines()) + " lines");
+  stub_grant::now_ms += 1;
+  Req third;
+  third.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(third) == 0);
+  CHECK_MSG(claim_refusal_lines() == 2, "a wrong claim 10 s after the logged one wrote no line");
+  CHECK(claim_pending());
+  // A clock of exactly 0 is still a logged time (stamp() stores it as 1),
+  // so the next wrong claim inside 10 s of it writes no line.
+  reset_device();
+  mint_claim();
+  stub_grant::now_ms = 0;
+  Req at_zero;
+  at_zero.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(at_zero) == 0);
+  stub_grant::now_ms = 5000;
+  Req after_zero;
+  after_zero.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(after_zero) == 0);
+  CHECK(claim_refusal_lines() == 1);
 }
 
 void test_receipt_bearer_shapes() {
@@ -914,13 +983,14 @@ void test_the_hand_over_clears_only_its_asker() {
   CHECK(receipt(held_right) == 0);
   check_lockout_refusal(held_right.r);
   CHECK_MSG(strikes(kHostA) == 3, "a refused request cleared its address");
-  // A wrong claim (spent, no match) and no tap: refused, nothing cleared.
+  // A wrong claim (no match: it spends nothing, sweep F342) and no tap:
+  // refused, nothing cleared.
   mint_claim();
   Req wrong_claim;
   wrong_claim.query(std::string("claim=") + kClaimHex);
   CHECK(receipt(wrong_claim) == 0);
   check_gate_refusal(wrong_claim.r);
-  CHECK(!claim_pending());
+  CHECK(claim_pending());
   CHECK(strikes(kHostA) == 3);
   CHECK(held(kHostA));
   // A tap that has timed out serves nothing and clears nothing.
@@ -2037,7 +2107,8 @@ int main() {
   test_receipt_cookie_beside_claim_is_the_claim();
   test_receipt_bare_tap_unchanged();
   test_receipt_cookie_secure_over_https_only();
-  test_receipt_wrong_claim_burns_it();
+  test_receipt_wrong_claim_leaves_it_pending();
+  test_wrong_claims_log_once_per_ten_seconds();
   test_receipt_bearer_shapes();
   test_receipt_wrong_bearer_is_a_strike();
   test_receipt_right_bearer_clears_the_count();

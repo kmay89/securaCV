@@ -941,8 +941,15 @@ static inline bool provisioning_gate_take() {
 // GET /api/provisioning-receipt?claim=<hex> on the home LAN — the third
 // grant of that route, between the bearer and the BOOT tap. The bearer
 // token never rides Bluetooth. Minted (loop task) and taken (httpd task)
-// through the header's own atomics; never read in place.
+// through the header's own atomics; never read in place. Spent only by a
+// match (sweep F342): a wrong ?claim= changes nothing.
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+
+// millis() (claim_ticket::stamp()ed, so never 0 once set) of the last
+// "setup-door claim did not match" health line: one line per 10 s at most,
+// so a host that keeps sending wrong claims cannot fill the health log.
+// 0 = none yet. httpd task only (the receipt handler).
+static uint32_t g_claim_refusal_logged_ms = 0;
 
 // The setup door's spent first-boot window, carried across SOFTWARE resets.
 // "Re-armed by a power cycle" means a power cycle: a never-provisioned unit
@@ -8746,9 +8753,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // convention). The WAP's actual order here: a valid bearer (the header,
   // never the session cookie, under the api_auth lockout) serves (the claim
   // and the tap left alone);
-  // else a claim the request presented is
-  // SPENT, match or not (a guesser gets one guess per join), and serves on
-  // a match, the tap left unspent for the owner's own page load; else the
+  // else a claim the request presented is spent on a match only, and
+  // serves, the tap left unspent for the owner's own page load (a wrong,
+  // short or truncated claim changes nothing, sweep F342); else the
   // BOOT tap, exactly as before. The contract's first question, a foreign
   // Host, is the flagship's (securacv_network's host guard answers it in
   // front of this route there); the WAP sketch has no Host guard on this
@@ -8776,15 +8783,20 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    and the address they serve has its backoff cleared (sweep F341,
   //    after step 3).
   //    (The lockout is all this decides. Any host on the network can still
-  //    spend a pending claim with one wrong ?claim=, or take an open tap by
-  //    asking first; both predate F289 and are the ledger's.)
+  //    take an open tap by asking first; that predates F289 and is the
+  //    ledger's, F342.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
-  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
-  //    take against the ticket the loop task minted, on this task.
+  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one take
+  //    against the ticket the loop task minted, on this task. A claim is
+  //    spent only by a match (claim_ticket::take(): load, constant-time
+  //    compare, one compare-and-swap of the word it loaded; sweep F342); a
+  //    wrong, short or truncated one changes nothing, so a stray or hostile
+  //    ?claim= neither ends the phone's pairing (its app treats a 403 as
+  //    final) nor releases the first-boot reboot hold under it.
   bool claim_served = false;
   {
     char qs[128];
@@ -8795,15 +8807,19 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       got = httpd_query_key_value(qs, "claim", presented, sizeof(presented));
     }
     // Presented at all — even one too long for the buffer (truncated: it can
-    // never match) — is presented: the take spends the claim either way.
+    // never match) — is presented, and compared: a value that does not
+    // match spends nothing.
     if (got == ESP_OK || got == ESP_ERR_HTTPD_RESULT_TRUNC) {
       presented[sizeof(presented) - 1] = '\0';
       claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());
       secure_zero(presented, sizeof(presented));
       secure_zero(qs, sizeof(qs));
-      if (!claim_served) {
+      if (!claim_served &&
+          (g_claim_refusal_logged_ms == 0 ||
+           (uint32_t)(millis() - g_claim_refusal_logged_ms) >= 10000)) {
+        g_claim_refusal_logged_ms = canary::net::claim_ticket::stamp(millis());
         log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
-                   "Provisioning receipt refused: setup-door claim did not match (claim spent)", nullptr);
+                   "Provisioning receipt refused: setup-door claim did not match", nullptr);
       }
     }
   }

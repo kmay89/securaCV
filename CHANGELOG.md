@@ -1,6 +1,26 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
+
+- **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
+  F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0
+  before it compared, so any `?claim=` on `GET /api/provisioning-receipt`
+  from any host on the network spent the claim the phone had just read over
+  the Bluetooth setup door. The phone's own spend a moment later was `403`,
+  which the iPhone app treats as final, so one stray or hostile request
+  ended the one-tap pairing "on the Wi-Fi, not paired", and the spend
+  released the first-boot reboot hold under a phone that still held a good
+  claim. A claim is 128 random bits that live 180 s, so burning on a guess
+  bounded nothing. `take()` now loads the word, compares in constant time,
+  and spends with one compare-and-swap of the word it loaded
+  (`spend_if_match()`): a wrong, short or truncated value changes nothing,
+  exactly one matching taker wins, and an expired claim is still burned. The
+  refusal's health line drops "(claim spent)" and is written once per 10 s
+  at most. Host-tested (`firmware/tests_host/test_claim_ticket.cpp`,
+  `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`); not
+  run on a device.
+
 ### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
 
 - **The flagship's dashboard tab no longer holds the owner's app at `429`,

@@ -151,8 +151,8 @@ read, then is withdrawn), good for **180 s**, spent by **one** HTTP request *on 
 LAN* that answers the same receipt the BOOT-tap route serves. Two factors,
 then: the encrypted link that provisioned, **and** presence on the Wi-Fi the
 device just joined. A phone that was only near the device gets a string that
-opens nothing from the street. A wrong guess burns the claim; an expired one
-is burned too; a second taker on any task reads nothing.
+opens nothing from the street. A wrong guess spends nothing; an expired one
+is burned; a second taker on any task reads nothing.
 
 ---
 
@@ -300,13 +300,20 @@ which answers the same receipt the BOOT-tap route serves —
 with `base_url` at the `.local` name (never the SoftAP address, which is dead
 once the AP drops). The rules, from `claim_ticket.h`:
 
-- `take()` claims the ticket with one atomic exchange **before** it compares,
-  so exactly one caller on any task can get `true`; a second reads 0.
+- `take()` loads the minted-at word, compares, and spends with **one
+  compare-and-swap of the word it loaded** (`spend_if_match()`), so exactly
+  one matching caller on any task can get `true`; a second finds the word
+  moved and is refused. A mismatch spends nothing (sweep F342; it used to
+  exchange the word to 0 before comparing, so any `?claim=` spent it).
 - The compare is constant time over all 32 characters; a presented string
   that is not exactly 32 characters is refused before the compare. The
   phone may upper-case it.
-- A match serves the receipt. A **mismatch burns the claim** (one guess per
-  join, not thousands). An **expired claim is burned too**. The TTL is
+- A match serves the receipt and spends the claim. A **mismatch spends
+  nothing**: 128 random bits cannot be guessed in 180 s, so burning on a
+  guess bounded nothing, and it let one stray or hostile request from a host
+  on the network end the phone's pairing (the app treats a `403` as final)
+  and release the first-boot reboot hold under it. A refused claim writes
+  one health line per 10 s at most. An **expired claim is burned**. The TTL is
   `claim_ticket::TTL_MS` = 180 000 ms: "the phone spends it within a second
   or two of reading it; three minutes covers a slow `.local` resolve and one
   retry, and is short enough that a claim read by a phone that then walked
@@ -416,7 +423,7 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 |---|---|---|---|
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
-| 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim whatever it answers** (a wrong guess burns it). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
+| 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
 | 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. |
 | — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). |
 
@@ -543,10 +550,6 @@ run on a device.
 What the lockout does not decide, and what stays open (all of it predates
 F289's follow-up; it is the ledger's, not a claim of this design):
 
-- **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
-  spent, match or not, so one wrong guess from a host on the network burns
-  a pending setup-door claim, and the phone that provisioned over the door
-  then needs the BOOT tap.
 - **Row 4 is spent by whoever asks first.** The tap has one consumer: a
   request from any host on the network inside its 30 s, a wrong bearer
   included, is served the receipt and spends the tap, and the owner's own
@@ -963,9 +966,9 @@ cannot speak to.
       3 s after the first is empty; a read from another link is refused.
 - [ ] `GET /api/provisioning-receipt?claim=<hex>` at the `.local` name
       serves the receipt with `base_url` at that name; the same claim a
-      second time is `403`; a wrong claim is `403` **and** burns the real
-      one; a claim after 180 s is `403`; the BOOT tap is still unspent after
-      a claim served.
+      second time is `403`; a wrong claim is `403` and the real one still
+      serves; a claim after 180 s is `403`; the BOOT tap is still unspent
+      after a claim served.
 - [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
       landing page's **Open dashboard** link minted is `403` on
       `GET /api/provisioning-receipt` and `401` on `GET /api/pairing-qr`,

@@ -237,7 +237,7 @@ service; the phone spends it on the home LAN with
 `GET /api/provisioning-receipt?claim=<hex>`, which answers the same receipt
 the BOOT-tap route serves. Two factors: the encrypted link that
 provisioned **and** presence on the Wi-Fi the device just joined. A wrong
-guess burns it; an expired one is burned too; a claim that serves leaves
+guess spends nothing; an expired one is burned; a claim that serves leaves
 the BOOT tap unspent. Not a bearer token, not a bond, not a pairing key.
 → [magic pairing (design)](design/magic_pairing.md)
 

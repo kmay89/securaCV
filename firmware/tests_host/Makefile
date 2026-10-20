@@ -198,7 +198,9 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
 # token ever riding Bluetooth — 16 random bytes minted on join success, read
 # once over the link that asked, spent by one GET on the home LAN. Mint
-# spelling, single use on match AND mismatch (one guess per join), the TTL,
+# spelling, single use on a match (a mismatch spends nothing, sweep F342;
+# the spend is one compare-and-swap of the word the taker loaded, so a
+# spend whose word moved is refused), the TTL (an expired claim is burned),
 # millis()==0 and the wrap, constant-time compare over the whole string.
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket

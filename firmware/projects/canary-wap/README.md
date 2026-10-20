@@ -232,8 +232,8 @@ pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
 **Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
-flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
-is burned too, and a claim that serves leaves the tap unspent.
+flagship's `auth_gate` does); a wrong guess spends nothing, an expired claim
+is burned, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
 the WAP just joined. **The receipt the claim buys names the steady-state
 address** — `https://<name>.local` with the certificate's `tls_cert_fp` pin:

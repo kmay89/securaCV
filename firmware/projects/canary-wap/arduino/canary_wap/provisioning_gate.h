@@ -193,7 +193,8 @@ inline ReceiptVerdict receipt_decide(bool foreign_host, BearerOk bearer_ok,
 // setup door once the join it asked for succeeded, presented as
 // ?claim=<hex>. `take_claim` is the firmware's claim_ticket::take hook —
 // called at most once, only when the Host passed and no bearer did, and
-// spending the claim whatever it answers (a wrong guess burns it). A claim
+// spending the claim only on a match (a wrong value spends nothing; an
+// expired claim is burned; sweep F342). A claim
 // that serves leaves the BOOT tap unspent, so the owner's own page load
 // still finds it; a spent or absent claim falls through to the tap exactly
 // as before, so every caller the three-grant overload admitted is admitted
