@@ -1143,11 +1143,14 @@ CI's. Owner: U1.
     new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
-## PlatformIO opera membership: a join needs a leave first, the paired heartbeat, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215) — on-device verification
+## PlatformIO opera membership: a join needs a leave first, the paired and periodic heartbeats, liveness from verified frames, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215, F324) — on-device verification
 
 Code: `mesh_session.cpp` (`execute_request`'s PAIR_JOIN refusal,
-OPERA_EXISTS; the one signed `HEARTBEAT` after NOTIFY_PAIRED and on the
-first `process()` pass after a boot that bound a member),
+OPERA_EXISTS; the signed `HEARTBEAT` after NOTIFY_PAIRED and on the
+first `process()` pass after a boot that bound a member, and since F324
+every 30 s ± 3 s from `process()`, `arm_heartbeat`; each member's
+liveness from its last verified frame, `verified_seen_ms` and
+`verified_state`),
 `handle_mesh_pair_join` (409 `opera_exists`) and the peers handler
 (`mesh_api::peer_views_from_status`) in
 `firmware/canary/lib/securacv_network/src/securacv_network.cpp`, and the
@@ -1179,10 +1182,31 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     CONNECTED with a `last_seen_sec` of a few seconds (before F162:
     OFFLINE, "never", until some opera frame), and the initiator's COMPLETE
     copies stop after the joiner's heartbeat (before: 149 copies over five
-    minutes). After the reboot the initiator hears the joiner once more at
-    the joiner's first loop pass when the router is on the softAP's channel
-    1, and not when it is not (F320, open).
+    minutes). After the reboot the initiator hears the joiner at the
+    joiner's first loop pass when the router is on the softAP's channel 1,
+    and otherwise within one heartbeat interval, about 33 s, of the
+    joiner's station joining its router (F320, bounded by F324).
   - Artifact: `docs/audit/repro/F162/paired-heartbeat/`.
+- [ ] **A quiet PlatformIO opera reads its members CONNECTED, and a gone one STALE then OFFLINE (F324)**
+  - Setup: two PlatformIO canaries (`[env:full]`) paired into an opera, on
+    the same router channel, serial on both, the API tokens; a third ESP32
+    as an ESP-NOW sniffer on that channel (and, for the last step, flashed
+    to send any ESP-NOW frame from a given MAC).
+  - Repro: leave both idle 10 minutes; read `GET /api/mesh` and
+    `GET /api/mesh/peers` on each, and log the sniffer's frames from each
+    Canary's MAC. Unplug one and read the other's `/api/mesh/peers` every
+    10 s for 6 minutes. Plug it back in, let it rejoin, unplug it again,
+    and this time have the third ESP32 send a junk frame from the unplugged
+    Canary's MAC every 30 s.
+  - Expected: after the idle 10 minutes both read `state` ACTIVE,
+    `peers_online` 1, the other CONNECTED with `last_seen_sec` of 34 or
+    less. The sniffer shows one signed heartbeat from each MAC every
+    27-33 s (plus one loop pass). After each unplug the other Canary reads
+    it STALE within about 90-100 s and OFFLINE within about 5 minutes, also
+    while the third ESP32 sends from its MAC. Before F324: CONNECTING, the
+    other OFFLINE with `last_seen_sec` about 600 after 10 idle minutes, and
+    nothing on the sniffer; with the spoofing ESP32, CONNECTED indefinitely.
+  - Artifact: `docs/audit/repro/F324/quiet-opera/`.
 - [ ] **The peers list is the session's, without flash encryption**
   - Setup: a PlatformIO canary in an opera, flashed without flash
     encryption.

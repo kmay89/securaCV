@@ -146,6 +146,105 @@ bool is_heartbeat(const std::vector<uint8_t>& f) {
              static_cast<uint8_t>(mesh_envelope::MsgType::HEARTBEAT);
 }
 
+/* F324: one heartbeat as a receiver takes it: where it went, its counter,
+ * and the signer's process() clock when it was signed (header timestamp). */
+struct Beat {
+  uint8_t  mac[6];
+  uint64_t counter;
+  uint32_t timestamp;
+};
+
+/* F324: what a running session sends on its own while nothing else
+ * happens, since it heartbeats on a timer: its periodic HEARTBEAT, and only
+ * that. Every frame in `outs` must be an empty signed HEARTBEAT that
+ * verifies under `pub`, carries `opera_id` and goes to one of the n_bound
+ * addresses in `bound`; to each address the counters strictly increase,
+ * and one round is one signed frame (a repeated counter repeats the bytes).
+ * A heartbeat to a pairing partner or an unbound member (F101), one signed
+ * by another key or under another opera, and any other frame fail here, so
+ * a silence check that admits heartbeats admits nothing else. Returns them
+ * in order. */
+std::vector<Beat> assert_only_member_heartbeats(const std::vector<OutFrame>& outs,
+                                                const uint8_t pub[mesh_crypto::PUBKEY_LEN],
+                                                const uint8_t opera_id[mesh_crypto::OPERA_ID_LEN],
+                                                const uint8_t (*bound)[6], size_t n_bound) {
+  std::vector<Beat> beats;
+  const OutFrame* prev = nullptr;
+  for (const auto& o : outs) {
+    assert(is_heartbeat(o.bytes));
+    mesh_envelope::Header h;
+    const uint8_t* payload = nullptr;
+    size_t payload_len = 99;
+    assert(mesh_envelope::parse_and_verify(o.bytes.data(), o.bytes.size(), pub, &h, &payload,
+                                           &payload_len));
+    assert(payload_len == 0);
+    assert(h.msg_type == static_cast<uint8_t>(mesh_envelope::MsgType::HEARTBEAT));
+    assert(std::memcmp(h.opera_id, opera_id, mesh_crypto::OPERA_ID_LEN) == 0);
+    bool to_member = false;
+    for (size_t b = 0; b < n_bound && !to_member; ++b) {
+      to_member = std::memcmp(o.mac, bound[b], 6) == 0;
+    }
+    assert(to_member);
+    for (auto it = beats.rbegin(); it != beats.rend(); ++it) {
+      if (std::memcmp(it->mac, o.mac, 6) == 0) {
+        assert(h.counter > it->counter);
+        break;
+      }
+    }
+    if (!beats.empty()) {
+      assert(h.counter >= beats.back().counter);
+      if (h.counter == beats.back().counter) assert(o.bytes == prev->bytes);
+    }
+    Beat b;
+    std::memcpy(b.mac, o.mac, 6);
+    b.counter   = h.counter;
+    b.timestamp = h.timestamp;
+    beats.push_back(b);
+    prev = &o;
+  }
+  return beats;
+}
+
+/* F324's spacing, from the constants, never typed: a heartbeat is due
+ * HEARTBEAT_INTERVAL_MS +/- HEARTBEAT_JITTER_MS after the one before and
+ * goes out on the first pass at or past that, so with passes `pass_ms`
+ * apart two in a row are kBeatGapMin to beat_gap_max(pass_ms) apart. */
+constexpr uint32_t kBeatGapMin =
+    mesh_session::HEARTBEAT_INTERVAL_MS - mesh_session::HEARTBEAT_JITTER_MS;
+constexpr uint32_t beat_gap_max(uint32_t pass_ms) {
+  return mesh_session::HEARTBEAT_INTERVAL_MS + mesh_session::HEARTBEAT_JITTER_MS + pass_ms;
+}
+constexpr uint32_t ceil_div(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
+
+/* The heartbeat times `times`, after one at `prev`, over the passes of
+ * [w0, w1] `pass_ms` apart: each gap, the first from `prev`, within the
+ * bounds above; none missing at the end (w1 - last < the longest gap); and
+ * their number between what all-longest and all-shortest gaps give,
+ * derived here. Returns that range in *n_min, *n_max for the PASS line. */
+void check_beat_spacing(const std::vector<uint32_t>& times, uint32_t prev, uint32_t w0,
+                        uint32_t w1, uint32_t pass_ms, size_t* n_min, size_t* n_max) {
+  const uint32_t lo = kBeatGapMin, hi = beat_gap_max(pass_ms);
+  uint32_t last = prev;
+  for (uint32_t t : times) {
+    assert(t >= w0 && t <= w1);
+    assert(t - last >= lo && t - last <= hi);
+    last = t;
+  }
+  assert(w1 - last < hi);
+  *n_min = (size_t)((w1 - prev) / hi) - (size_t)ceil_div(w0 - prev, lo) + 1;
+  *n_max = (size_t)((w1 - prev) / lo) - (size_t)ceil_div(w0 - prev, hi) + 1;
+  assert(times.size() >= *n_min && times.size() <= *n_max);
+}
+
+/* The times of the beats in `beats` that went to `mac`. */
+std::vector<uint32_t> beat_times_to(const std::vector<Beat>& beats, const uint8_t mac[6]) {
+  std::vector<uint32_t> v;
+  for (const auto& b : beats) {
+    if (std::memcmp(b.mac, mac, 6) == 0) v.push_back(b.timestamp);
+  }
+  return v;
+}
+
 /* A trusted member bound to `mac`. The opera senders reach bound members
  * only (F101), not a bare transport address, so a test that wants a send
  * to land adds one of these rather than mesh_transport::add_peer(). */
@@ -3984,9 +4083,14 @@ void test_pairing_over_the_air_with_a_pre_f97_initiator() {
     assert(g_paired_fired && g_paired_with_secret);
     assert(std::memcmp(g_paired_secret, S, 32) == 0);
     assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
-    const size_t sent = g_outs.size();
+    /* Nothing more, but the joiner's periodic heartbeat (F324): to the
+     * initiator, its one member, under the opera it just joined. */
+    g_outs.clear();
     for (uint32_t t = T0 + 20000; t < T0 + 40000; t += 500) mesh_session::process(t);
-    assert(g_outs.size() == sent);                               /* nothing more */
+    uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+    mesh_crypto::compute_opera_id(S, opera_id);
+    const uint8_t member[1][6] = {{mac_i[0], mac_i[1], mac_i[2], mac_i[3], mac_i[4], mac_i[5]}};
+    assert_only_member_heartbeats(g_outs, pub, opera_id, member, 1);
   }
   std::printf("PASS test_pairing_over_the_air_with_a_pre_f97_initiator"
               "  (both orders; an updated one a pass apart)\n");
@@ -5749,12 +5853,13 @@ std::vector<std::vector<uint8_t>> initiator_completes(const uint8_t S[32], const
 
 /* Through the session, both frames of the COMPLETE lost: nothing goes to
  * the joiner for 2 s, then exactly the same two frames, to it alone; the
- * joiner opens the copy. The copies go on (nothing heard it yet: this tree
- * sends nothing on a timer), a verified frame from another member does not
- * end them, and the joiner's own first verified frame does: nothing more
- * for the rest of the window. Fails on the code before F134 (no copy), and
- * with the heard check removed from on_opera_frame (copies to the window's
- * end). */
+ * joiner opens the copy. The copies go on (nothing heard it yet: the pure
+ * joiner here sends nothing, not even the heartbeat a session would), a
+ * verified frame from another member does not end them, and the joiner's
+ * own first verified frame does: nothing more for the rest of the window
+ * but this side's periodic heartbeats to its two members (F324). Fails on
+ * the code before F134 (no copy), and with the heard check removed from
+ * on_opera_frame (copies to the window's end). */
 void test_a_lost_complete_is_sent_again_through_the_session() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x34 + i);
@@ -5836,7 +5941,11 @@ void test_a_lost_complete_is_sent_again_through_the_session() {
   for (uint32_t t = T + 4100; t < T + mesh_pairing::COMPLETE_RESEND_WINDOW_MS + 5000; t += 500) {
     mesh_session::process(t);
   }
-  assert(g_outs.empty());
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t members[2][6] = {{mac_k[0], mac_k[1], mac_k[2], mac_k[3], mac_k[4], mac_k[5]},
+                                 {mac_j[0], mac_j[1], mac_j[2], mac_j[3], mac_j[4], mac_j[5]}};
+  assert_only_member_heartbeats(g_outs, pub, opera_id, members, 2);
   assert(mesh_session::pairing_state() == mesh_pairing::State::PAIRED);
   assert(g_failed_count == 0 && g_bound_calls.size() == 1);
   std::printf("PASS test_a_lost_complete_is_sent_again_through_the_session\n");
@@ -6143,6 +6252,14 @@ std::string status_body() {
 }
 
 bool has(const std::string& body, const char* frag) { return body.find(frag) != std::string::npos; }
+
+/* The first "last_seen_sec" in a peers body (F324's ages). */
+unsigned long last_seen_sec_of(const std::string& body) {
+  const char* key = "\"last_seen_sec\":";
+  const size_t at = body.find(key);
+  assert(at != std::string::npos);
+  return std::strtoul(body.c_str() + at + std::strlen(key), nullptr, 10);
+}
 
 /* The builder: the three fields come after every older one, so the body
  * without them is the old body byte for byte (a page that reads only the
@@ -6830,10 +6947,14 @@ void test_a_join_waits_for_a_leave() {
  *
  * One signed HEARTBEAT (registry 16, no payload) to every bound member, on
  * each side right after NOTIFY_PAIRED and once in the first running pass
- * after a boot restore that bound a member; nothing on a timer. Before F162
- * a PIO member sent nothing after it paired: the initiator's COMPLETE copies
- * ran their whole 5-minute window, and both sides read CONNECTING with the
- * other OFFLINE ("never") until one of them sent an opera frame. */
+ * after a boot restore that bound a member. Before F162 a PIO member sent
+ * nothing after it paired: the initiator's COMPLETE copies ran their whole
+ * 5-minute window, and both sides read CONNECTING with the other OFFLINE
+ * ("never") until one of them sent an opera frame. Since F324 the same
+ * heartbeat also goes on a timer, every HEARTBEAT_INTERVAL_MS +/-
+ * HEARTBEAT_JITTER_MS, each one re-arming it; the tests below admit those
+ * and nothing else (assert_only_member_heartbeats), and hold their spacing
+ * to the constants (check_beat_spacing). */
 
 /* Two booted sessions in two processes: mesh_session is a singleton, so the
  * joiner runs in a child of this process and the two trade every frame over
@@ -7059,10 +7180,15 @@ Joiner fork_joiner(const uint8_t j_pub[32], const uint8_t j_priv[32]) {
  * the joiner's reaches the initiator in the next pass and ends its COMPLETE
  * copies there, and no copy goes out after it (the first would be due 2 s
  * after the COMPLETE); both read ACTIVE and see the other CONNECTED, with a
- * real age, not OFFLINE "never". Then nothing more from either over ten
- * idle minutes: no recurring frame. On the code before F162 the joiner
- * sends no heartbeat, the copies run, and both read CONNECTING with the
- * other OFFLINE "never". */
+ * real age, not OFFLINE "never". Nothing more from either in the next ten
+ * seconds. Then ten idle minutes (F324): each side sends only heartbeats,
+ * each to the other's address, verified under the sender's key, spaced by
+ * the constants from its paired one, and both still read ACTIVE with the
+ * other CONNECTED and at most one longest gap old. On the code before F162
+ * the joiner sends no heartbeat, the copies run, and both read CONNECTING
+ * with the other OFFLINE "never"; before F324 not one frame went out in
+ * the ten minutes, and both read CONNECTING with the other OFFLINE, about
+ * 610 s old. */
 void test_two_paired_canaries_hear_each_other_at_once() {
   using namespace two_canaries;
   uint8_t S[32];
@@ -7102,6 +7228,16 @@ void test_two_paired_canaries_hear_each_other_at_once() {
   assert(count_heartbeats(sent_i, MAC_J) == 1 && sent_i.size() == 3);
   assert(is_heartbeat(sent_i.back().bytes));            /* after the COMPLETE */
   assert(count_heartbeats(sent_j, MAC_I) == 1 && sent_j.size() == 1);
+  /* Each paired heartbeat armed its side's timer (F324): the spacing below
+   * counts from these. */
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t to_j_mac[1][6] = {{MAC_J[0], MAC_J[1], MAC_J[2], MAC_J[3], MAC_J[4], MAC_J[5]}};
+  const uint8_t to_i_mac[1][6] = {{MAC_I[0], MAC_I[1], MAC_I[2], MAC_I[3], MAC_I[4], MAC_I[5]}};
+  const uint32_t paired_i =
+      assert_only_member_heartbeats({sent_i.back()}, i_pub, opera_id, to_j_mac, 1)[0].timestamp;
+  const uint32_t paired_j =
+      assert_only_member_heartbeats(sent_j, j_pub, opera_id, to_i_mac, 1)[0].timestamp;
 
   /* The next pass takes it; from then on neither side sends anything: no
    * copy at 2 s, none for the rest of the window. */
@@ -7128,15 +7264,41 @@ void test_two_paired_canaries_hear_each_other_at_once() {
     assert(!has(*p, "OFFLINE"));
   }
 
-  /* Ten idle minutes, a pass a second: not one frame from either. */
-  size_t idle = 0;
-  for (uint32_t t = 12000; t <= 12000 + 600000; t += 1000) {
+  /* Ten idle minutes, a pass a second: each side's heartbeats and nothing
+   * else (F324), each to the other, spaced from its paired one. */
+  const uint32_t W0 = 12000, W1 = 12000 + 600000, pass_ms = 1000;
+  std::vector<OutFrame> idle_i, idle_j;
+  for (uint32_t t = W0; t <= W1; t += pass_ms) {
     step(t, RT::NONE, RT::NONE);
-    idle += sent_i.size() + sent_j.size();
+    idle_i.insert(idle_i.end(), sent_i.begin(), sent_i.end());
+    idle_j.insert(idle_j.end(), sent_j.begin(), sent_j.end());
   }
-  assert(idle == 0);
+  const std::vector<Beat> beats_i = assert_only_member_heartbeats(idle_i, i_pub, opera_id, to_j_mac, 1);
+  const std::vector<Beat> beats_j = assert_only_member_heartbeats(idle_j, j_pub, opera_id, to_i_mac, 1);
+  size_t lo_i = 0, hi_i = 0, lo_j = 0, hi_j = 0;
+  check_beat_spacing(beat_times_to(beats_i, MAC_J), paired_i, W0, W1, pass_ms, &lo_i, &hi_i);
+  check_beat_spacing(beat_times_to(beats_j, MAC_I), paired_j, W0, W1, pass_ms, &lo_j, &hi_j);
+
+  /* Both still read the opera ACTIVE and the other CONNECTED, at most one
+   * longest gap old (a beat sent in the last pass lands in the next). */
+  joiner.report(W1, &body_j, &peers_j);
+  mesh_transport::test::set_now_ms(W1);
+  const std::string end_body_i = status_body();
+  const std::string end_peers_i = peers_body(W1);
+  const unsigned max_age_sec = beat_gap_max(pass_ms) / 1000;
+  for (const std::string* b : {&end_body_i, static_cast<const std::string*>(&body_j)}) {
+    assert(has(*b, "\"state\":\"ACTIVE\""));
+    assert(has(*b, "\"peers_total\":1,\"peers_online\":1"));
+  }
+  for (const std::string* p : {&end_peers_i, static_cast<const std::string*>(&peers_j)}) {
+    assert(has(*p, "\"state\":\"CONNECTED\",\"last_seen_sec\":"));
+    assert(!has(*p, "OFFLINE") && !has(*p, "STALE"));
+    assert(last_seen_sec_of(*p) <= max_age_sec);
+  }
   joiner.quit();
-  std::printf("PASS test_two_paired_canaries_hear_each_other_at_once\n");
+  std::printf("PASS test_two_paired_canaries_hear_each_other_at_once"
+              "  (idle 10 min: %zu heartbeats, %zu-%zu allowed; %zu, %zu-%zu)\n",
+              beats_i.size(), lo_i, hi_i, beats_j.size(), lo_j, hi_j);
 }
 
 /* A reboot: main.cpp registers the stored members and restore_peer_macs()
@@ -7144,10 +7306,15 @@ void test_two_paired_canaries_hear_each_other_at_once() {
  * exactly one heartbeat to each bound member, signed by this device under
  * the opera with a counter past the restored one, and to nobody else (not
  * a pairing partner whose address the transport holds: F101); a member the
- * restore could not bind gets none. Then nothing over an hour of passes,
- * and nothing either from a boot whose restore bound no member, nor from
- * one whose bound member is gone before the first pass (no counter spent
- * either). On the code before F162 the first pass sends nothing. */
+ * restore could not bind gets none. Then, over an hour of passes, only the
+ * periodic heartbeats (F324): to the two bound members, never to the
+ * partner or the unbound two, each member's rounds spaced from the boot one
+ * by the constants. Nothing at all, and no counter spent, from a boot whose
+ * restore bound no member, nor from one whose bound member is gone before
+ * the first pass. A mesh off at boot sends nothing while off, the boot
+ * heartbeat on its first pass after it is turned on, then the periodic
+ * ones from there. On the code before F162 the first pass sends nothing;
+ * before F324 nothing went out over the hour. */
 void test_a_reboot_announces_itself_once_to_each_member() {
   uint8_t S[32];
   for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x91 + i);
@@ -7196,9 +7363,26 @@ void test_a_reboot_announces_itself_once_to_each_member() {
   }
   mesh_session::cancel_pairing();
 
+  /* An hour of passes, the transport's clock moving with them as main.cpp's
+   * millis() does: the members' rounds and nothing else. */
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  assert(mesh_session::get_opera_id(opera_id));
+  const uint32_t W0 = 6000, W1 = 6000 + 3600000, pass_ms = 1000;
   g_outs.clear();
-  for (uint32_t t = 6000; t <= 6000 + 3600000; t += 1000) mesh_session::process(t);
-  assert(g_outs.empty());
+  for (uint32_t t = W0; t <= W1; t += pass_ms) {
+    mesh_transport::test::set_now_ms(t);
+    mesh_session::process(t);
+  }
+  const std::vector<Beat> boot = assert_only_member_heartbeats(beats, pub, opera_id, macs, 2);
+  const std::vector<Beat> hour = assert_only_member_heartbeats(g_outs, pub, opera_id, macs, 2);
+  assert(sent_to(mac_o) == 0 && sent_to(macs[2]) == 0);
+  size_t lo = 0, hi = 0;
+  for (int m = 0; m < 2; ++m) {
+    assert(boot[m].timestamp == 5000);
+    check_beat_spacing(beat_times_to(hour, macs[m]), boot[m].timestamp, W0, W1, pass_ms, &lo, &hi);
+  }
+  const size_t rounds = beat_times_to(hour, macs[0]).size();
+  assert(beat_times_to(hour, macs[1]).size() == rounds);   /* one frame per round, to each */
 
   /* A boot whose restore bound nobody owes nobody. */
   stand_up_session(S, pub, priv);
@@ -7209,9 +7393,10 @@ void test_a_reboot_announces_itself_once_to_each_member() {
   const uint8_t one_fp[1][8] = {{0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A}};   /* not a member (F120) */
   mesh_session::StoredMacVerdict v1[1];
   assert(mesh_session::restore_peer_macs(one_fp, one_mac, 1, v1) == 0);
+  const uint64_t ctr_none = mesh_session::outbound_counter();
   g_outs.clear();
   for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
-  assert(g_outs.empty());
+  assert(g_outs.empty() && mesh_session::outbound_counter() == ctr_none);
 
   /* F162's review: a boot whose one bound member is gone before the first
    * pass (main.cpp does nothing between the restore and the loop; this is
@@ -7244,17 +7429,25 @@ void test_a_reboot_announces_itself_once_to_each_member() {
   const uint8_t off_mac[1][6] = {{0x24, 0x0A, 0xC4, 0x16, 0x30, 0x0B}};
   mesh_session::StoredMacVerdict v2[1];
   assert(mesh_session::restore_peer_macs(off_fp, off_mac, 1, v2) == 1);
+  const uint64_t ctr_off = mesh_session::outbound_counter();
   g_outs.clear();
   for (uint32_t t = 1000; t <= 61000; t += 1000) mesh_session::process(t);
-  assert(g_outs.empty());
+  assert(g_outs.empty() && mesh_session::outbound_counter() == ctr_off);
   mesh_session::set_enabled(true);
   mesh_session::process(62000);
   assert(g_outs.size() == 1 && is_heartbeat(g_outs[0].bytes));
   assert(std::memcmp(g_outs[0].mac, off_mac[0], 6) == 0);
+  const uint32_t boot_beat =
+      assert_only_member_heartbeats(g_outs, pub, opera_id, off_mac, 1)[0].timestamp;
+  assert(boot_beat == 62000);
   g_outs.clear();
   for (uint32_t t = 63000; t <= 123000; t += 1000) mesh_session::process(t);
-  assert(g_outs.empty());
-  std::printf("PASS test_a_reboot_announces_itself_once_to_each_member\n");
+  const std::vector<Beat> after_on = assert_only_member_heartbeats(g_outs, pub, opera_id, off_mac, 1);
+  size_t lo_on = 0, hi_on = 0;
+  check_beat_spacing(beat_times_to(after_on, off_mac[0]), boot_beat, 63000, 123000, 1000, &lo_on,
+                     &hi_on);
+  std::printf("PASS test_a_reboot_announces_itself_once_to_each_member"
+              "  (an hour: %zu rounds, %zu-%zu allowed)\n", rounds, lo, hi);
 }
 
 void test_rest_pairing_requests() {
@@ -7649,7 +7842,11 @@ std::string live_status_body() {
 
 /* GET /api/mesh/peers as handle_mesh_peers built it before F161: the
  * session's peer links and the transport table read live, joined in the
- * handler. */
+ * handler. Since F324 the view's state, age and RSSI are the member's last
+ * verified frame's, not the transport entry's, so the two agree only where
+ * every frame from a member's address verified, as in the F161 tests that
+ * compare them; test_liveness_counts_only_verified_frames is where they
+ * part. */
 std::string live_peers_body(const uint8_t* pubkeys, size_t count, uint32_t now_ms) {
   mesh_session::PeerLink links[mesh_session::MAX_TRUSTED_PEERS];
   const size_t n_links = mesh_session::get_peer_links(links, mesh_session::MAX_TRUSTED_PEERS);
@@ -8198,6 +8395,398 @@ void test_status_reads_stay_whole_while_the_main_loop_runs() {
               reads.load());
 }
 
+/* ── F324 — a periodic heartbeat, and liveness from verified frames only ──
+ *
+ * A running session with an opera sends the empty signed HEARTBEAT to its
+ * bound members every HEARTBEAT_INTERVAL_MS +/- HEARTBEAT_JITTER_MS, every
+ * heartbeat re-arming the deadline; a stopped pass disarms it. A member's
+ * peer row (state, last_seen_sec, rssi) and GET /api/mesh's peers_online
+ * come from its last frame that passed the signature, opera and counter
+ * checks, never from the transport entry, which any frame from the address
+ * refreshes. */
+
+/* The two-Canary pairing, with the initiator's first PAIR_COMPLETE lost on
+ * the air. The joiner pairs from the 2 s copy and its heartbeat ends the
+ * copies, but the initiator's paired heartbeat reached it before it held
+ * the opera, so it reads the initiator OFFLINE "never" until the
+ * initiator's next heartbeat, which lands within one longest gap of the
+ * paired one: from then on the joiner reads ACTIVE and the initiator
+ * CONNECTED. Fails before F324: the joiner reads the initiator OFFLINE
+ * "never" for the whole run. */
+void test_a_lost_complete_is_healed_by_the_next_heartbeat() {
+  using namespace two_canaries;
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x6C + i);
+  uint8_t i_pub[32], i_priv[32], j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(i_pub, i_priv));
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  Joiner joiner = fork_joiner(j_pub, j_priv);
+  boot(i_pub, i_priv, S, 0);
+
+  using RT = mesh_session::RequestType;
+  mesh_session::RequestStatus st_i, st_j;
+  std::vector<OutFrame> to_i, to_j, sent_i, sent_j;
+  bool drop_complete = false;
+  size_t dropped = 0;
+  auto step = [&](uint32_t t, RT req_i, RT req_j) {
+    sent_i = pass(MAC_J, to_i, t, req_i, req_i == RT::PAIR_START ? S : nullptr, &st_i);
+    to_j = towards(sent_i, MAC_J);
+    for (auto it = to_j.begin(); drop_complete && it != to_j.end(); ++it) {
+      if (!it->bytes.empty() &&
+          it->bytes[0] == static_cast<uint8_t>(mesh_session::MsgType::PAIR_COMPLETE)) {
+        to_j.erase(it);
+        drop_complete = false;
+        ++dropped;
+        break;
+      }
+    }
+    sent_j = joiner.step(t, req_j, to_j, &st_j);
+    to_i = towards(sent_j, MAC_I);
+  };
+
+  step(1000, RT::PAIR_START, RT::PAIR_JOIN);
+  step(1100, RT::NONE, RT::NONE);
+  step(1200, RT::NONE, RT::NONE);
+  step(1300, RT::PAIR_CONFIRM, RT::PAIR_CONFIRM);
+  drop_complete = true;
+  step(1400, RT::NONE, RT::NONE);
+  assert(dropped == 1);
+  assert(g_paired_fired && mesh_session::trusted_peer_count() == 1);
+  assert(count_type(sent_i, mesh_session::MsgType::PAIR_COMPLETE) == 1);
+  assert(count_heartbeats(sent_i, MAC_J) == 1);   /* reaches a joiner not yet in the opera */
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t to_j_mac[1][6] = {{MAC_J[0], MAC_J[1], MAC_J[2], MAC_J[3], MAC_J[4], MAC_J[5]}};
+  std::vector<OutFrame> paired_beat;
+  for (const auto& f : sent_i) {
+    if (is_heartbeat(f.bytes)) paired_beat.push_back(f);
+  }
+  const uint32_t paired_i =
+      assert_only_member_heartbeats(paired_beat, i_pub, opera_id, to_j_mac, 1)[0].timestamp;
+
+  /* The copy pairs the joiner; its heartbeat ends the copies. */
+  size_t complete_copies = 0, joiner_beats = 0;
+  uint32_t t = 1500;
+  for (; t <= 1400 + 10000; t += 100) {
+    step(t, RT::NONE, RT::NONE);
+    complete_copies += count_type(sent_i, mesh_session::MsgType::PAIR_COMPLETE);
+    joiner_beats += count_heartbeats(sent_j, MAC_I);
+  }
+  assert(complete_copies == 1 && joiner_beats == 1);
+  std::string body_j, peers_j;
+  joiner.report(t, &body_j, &peers_j);
+  assert(has(body_j, "\"peers_total\":1,\"peers_online\":0"));
+  assert(has(body_j, "\"state\":\"CONNECTING\""));
+  assert(has(peers_j, "\"state\":\"OFFLINE\",\"last_seen_sec\":4294967295,"));
+  mesh_transport::test::set_now_ms(t);
+  assert(has(peers_body(t), "\"state\":\"CONNECTED\""));   /* the initiator heard the joiner */
+
+  /* The initiator's next heartbeat heals it, within one longest gap. */
+  const uint32_t pass_ms = 1000;
+  const uint32_t heal_by = paired_i + beat_gap_max(pass_ms);
+  std::vector<OutFrame> later_i;
+  for (t = 12000; t <= heal_by; t += pass_ms) {
+    step(t, RT::NONE, RT::NONE);
+    later_i.insert(later_i.end(), sent_i.begin(), sent_i.end());
+  }
+  const std::vector<Beat> beats = assert_only_member_heartbeats(later_i, i_pub, opera_id, to_j_mac, 1);
+  assert(beats.size() == 1);
+  assert(beats[0].timestamp - paired_i >= kBeatGapMin);
+  joiner.report(heal_by, &body_j, &peers_j);
+  assert(has(body_j, "\"state\":\"ACTIVE\""));
+  assert(has(body_j, "\"peers_total\":1,\"peers_online\":1"));
+  assert(has(peers_j, "\"state\":\"CONNECTED\",\"last_seen_sec\":"));
+  assert(last_seen_sec_of(peers_j) <= (heal_by - beats[0].timestamp) / 1000);
+  joiner.quit();
+  std::printf("PASS test_a_lost_complete_is_healed_by_the_next_heartbeat"
+              "  (healed %u ms after the paired heartbeat)\n",
+              (unsigned)(beats[0].timestamp - paired_i));
+}
+
+/* Every heartbeat re-arms the deadline, not only the periodic one. A
+ * session with a member bound arms it on its first pass; a pairing that
+ * completes 19 s later sends its paired heartbeat (F162) to both members,
+ * and the next one comes no sooner than kBeatGapMin after THAT, as one
+ * round to both, within one longest gap. A timer that only its own sends
+ * re-armed would fire 8-14 s after the paired one. Fails before F324 (no
+ * periodic heartbeat at all) and with the arm moved out of
+ * send_heartbeat() into the periodic branch. */
+void test_every_heartbeat_re_arms_the_timer() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xB5 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  reset_fake_main_nvs();
+  mesh_session::set_paired_callback(main_like_paired);
+  mesh_session::set_paired_peer_bound_callback(main_like_bound);
+  const uint8_t me[6]    = {0x24, 0x0A, 0xC4, 0x32, 0x80, 0x01};
+  const uint8_t mac_j[6] = {0x24, 0x0A, 0xC4, 0x32, 0x80, 0x02};
+  const uint8_t mac_k[6] = {0x24, 0x0A, 0xC4, 0x32, 0x80, 0x0B};
+  add_bound_member(mac_k);
+  const uint32_t first_pass = 1000, T0 = 20000, pass_ms = 500;
+  assert(T0 - first_pass < kBeatGapMin);   /* the pairing lands before the first deadline */
+  for (uint32_t t = first_pass; t < T0; t += pass_ms) mesh_session::process(t);
+  assert(g_outs.empty());
+  uint8_t j_pub[32], j_priv[32];
+  assert(mesh_crypto::ed25519_generate_keypair(j_pub, j_priv));
+  mesh_pairing::PairingContext cj;
+  initiator_completes(S, me, mac_j, j_pub, j_priv, T0, cj);   /* the paired heartbeat, both */
+  const uint32_t paired = T0 + 10;                             /* rest_confirm's pass */
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t members[2][6] = {{mac_k[0], mac_k[1], mac_k[2], mac_k[3], mac_k[4], mac_k[5]},
+                                 {mac_j[0], mac_j[1], mac_j[2], mac_j[3], mac_j[4], mac_j[5]}};
+  std::vector<OutFrame> beats_out;
+  for (uint32_t t = paired + pass_ms; t <= paired + beat_gap_max(pass_ms); t += pass_ms) {
+    g_outs.clear();
+    mesh_session::process(t);
+    for (const auto& o : g_outs) {
+      if (is_heartbeat(o.bytes)) beats_out.push_back(o);   /* the COMPLETE copies aside */
+    }
+  }
+  const std::vector<Beat> beats = assert_only_member_heartbeats(beats_out, pub, opera_id, members, 2);
+  assert(beats.size() == 2 && beats[0].counter == beats[1].counter);   /* one round, to both */
+  assert(beats[0].timestamp - paired >= kBeatGapMin);
+  mesh_session::cancel_pairing();
+  std::printf("PASS test_every_heartbeat_re_arms_the_timer  (%u ms after the paired one)\n",
+              (unsigned)(beats[0].timestamp - paired));
+}
+
+/* An hour of passes in each state that must send nothing: a session
+ * initialized but never started, one turned off (set_enabled(false)), one
+ * with no opera, one with an opera and no bound member. Not one frame and
+ * not one counter in any of them (F101 and F162's no-counter rule, now on a
+ * timer). Then the missing piece is supplied (started, turned on, the
+ * opera set, the member bound) and a heartbeat goes to the member within
+ * one longest gap: exactly one after a start or an enable (the stopped
+ * passes disarmed the timer, so the first running pass arms it afresh),
+ * and the first within one longest gap after an opera or a binding (the
+ * timer kept re-checking once an interval). The positive halves fail
+ * before F324 (no periodic send); the guard halves pin that the timer
+ * spends nothing it may not. */
+void test_no_periodic_heartbeat_without_a_running_opera() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x7D + i);
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t mac[1][6] = {{0x24, 0x0A, 0xC4, 0x32, 0x40, 0x01}};
+  const uint32_t pass_ms = 1000, hour = 3600000;
+  enum Case { NOT_STARTED, DISABLED, NO_OPERA, NO_BOUND_MEMBER };
+  const char* names[] = {"not started", "disabled", "no opera", "no bound member"};
+  for (int c = NOT_STARTED; c <= NO_BOUND_MEMBER; ++c) {
+    uint8_t pub[32], priv[32];
+    stand_up_session(c == NO_OPERA ? nullptr : S, pub, priv);
+    if (c == NOT_STARTED) {
+      /* Initialized, never started: the session as init() leaves it. */
+      mesh_session::deinit();
+      assert(mesh_session::init(pub, priv));
+      assert(mesh_session::set_opera_secret(S));
+      assert(!mesh_session::is_running());
+    }
+    uint8_t m_pub[32], m_priv[32], m_fp[8];
+    assert(mesh_crypto::ed25519_generate_keypair(m_pub, m_priv));
+    assert(mesh_session::register_trusted_peer(m_pub));
+    mesh_crypto::compute_fingerprint(m_pub, m_fp);
+    if (c != NO_BOUND_MEMBER) assert(mesh_session::bind_peer_mac(m_fp, mac[0]));
+    if (c == DISABLED) mesh_session::set_enabled(false);
+    const uint64_t ctr0 = mesh_session::outbound_counter();
+    g_outs.clear();
+    for (uint32_t t = pass_ms; t <= hour; t += pass_ms) {
+      mesh_transport::test::set_now_ms(t);
+      mesh_session::process(t);
+    }
+    assert(g_outs.empty() && mesh_session::outbound_counter() == ctr0);
+
+    const uint32_t E = hour + pass_ms;
+    switch (c) {
+      case NOT_STARTED:     assert(mesh_session::start()); break;
+      case DISABLED:        mesh_session::set_enabled(true); break;
+      case NO_OPERA:        assert(mesh_session::set_opera_secret(S)); break;
+      case NO_BOUND_MEMBER: assert(mesh_session::bind_peer_mac(m_fp, mac[0])); break;
+    }
+    std::vector<uint32_t> at;
+    for (uint32_t t = E; t <= E + beat_gap_max(pass_ms); t += pass_ms) {
+      mesh_transport::test::set_now_ms(t);
+      g_outs.clear();
+      mesh_session::process(t);
+      for (const auto& b : assert_only_member_heartbeats(g_outs, pub, opera_id, mac, 1)) {
+        at.push_back(b.timestamp);
+      }
+    }
+    assert(!at.empty() && at[0] - E < beat_gap_max(pass_ms));
+    if (c == NOT_STARTED || c == DISABLED) {
+      assert(at.size() == 1 && at[0] - E >= kBeatGapMin);
+    }
+    assert(mesh_session::outbound_counter() == ctr0 + at.size());
+    std::printf("  F324 %-15s: an hour silent, then a heartbeat %u ms after\n", names[c],
+                (unsigned)(at[0] - E));
+  }
+  std::printf("PASS test_no_periodic_heartbeat_without_a_running_opera\n");
+}
+
+/* A disable that spans more than 2^31 ms of the loop's clock. A deadline
+ * armed before it, compared after it, reads as about 24.8 days in the
+ * future (the signed difference wraps), so a session that kept it would
+ * send nothing for that long. The stopped passes disarm it, and the first
+ * running pass after the enable arms it afresh: exactly one heartbeat in
+ * the next longest gap. Fails before F324 (no timer) and without the
+ * stopped pass's disarm (none in that window). */
+void test_the_heartbeat_timer_survives_a_long_disable() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x8E + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  uint8_t opera_id[mesh_crypto::OPERA_ID_LEN];
+  mesh_crypto::compute_opera_id(S, opera_id);
+  const uint8_t mac[1][6] = {{0x24, 0x0A, 0xC4, 0x32, 0x50, 0x01}};
+  add_bound_member(mac[0]);
+  mesh_session::process(1000);   /* the first running pass arms the deadline */
+  assert(g_outs.empty());
+  mesh_session::set_enabled(false);
+  const uint32_t t0 = 1000 + beat_gap_max(1000) + 5000;   /* past any deadline armed at 1000 */
+  mesh_session::process(t0);
+  const uint32_t t1 = t0 + 0x80000000u + 5000;
+  mesh_transport::test::set_now_ms(t1);
+  mesh_session::process(t1);
+  assert(g_outs.empty());
+  mesh_session::set_enabled(true);
+  std::vector<uint32_t> at;
+  for (uint32_t t = t1; t - t1 <= beat_gap_max(1000); t += 1000) {
+    mesh_transport::test::set_now_ms(t);
+    g_outs.clear();
+    mesh_session::process(t);
+    for (const auto& b : assert_only_member_heartbeats(g_outs, pub, opera_id, mac, 1)) {
+      at.push_back(b.timestamp);
+    }
+  }
+  assert(at.size() == 1 && at[0] - t1 >= kBeatGapMin);
+  std::printf("PASS test_the_heartbeat_timer_survives_a_long_disable  (%u ms after the enable)\n",
+              (unsigned)(at[0] - t1));
+}
+
+/* One verified frame from a member at rssi -40, then once a minute for ten
+ * minutes a 3-byte junk frame at rssi -90 and a byte-identical replay of
+ * that verified frame, both from the member's own address. Neither passes
+ * the checks, so neither refreshes anything: the member reads STALE after
+ * 90 s and OFFLINE after 5 minutes, with the verified frame's age and RSSI,
+ * and the opera reads CONNECTING with peers_online 0. A fresh verified
+ * frame then reads it CONNECTED at once. Fails before F324: the transport
+ * stamp the junk refreshed made it CONNECTED, last_seen_sec 1, rssi -90,
+ * and the status ACTIVE with peers_online 1 (probed at 3e593a01). */
+void test_liveness_counts_only_verified_frames() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0x9F + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  TestMember m;
+  const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x32, 0x60, 0x01};
+  make_member(m, mac);
+  uint8_t verified[mesh_envelope::MAX_FRAME_LEN];
+  const size_t vlen = build_signed_session_frame(m.pub, m.priv, S, ++m.counter,
+                                                 mesh_envelope::MsgType::HEARTBEAT, nullptr, 0,
+                                                 verified, sizeof(verified));
+  assert(vlen == mesh_envelope::MIN_FRAME_LEN);
+  mesh_transport::test::set_now_ms(1000);
+  mesh_transport::test::inject_recv(mac, verified, vlen, -40);
+  mesh_transport::process();
+  mesh_session::process(1000);
+  assert(has(peer_row(1000, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,\"rssi\":-40,"));
+  assert(has(status_body(), "\"state\":\"ACTIVE\"") &&
+         has(status_body(), "\"peers_online\":1,"));
+
+  /* A round a minute from 61000 to 601000; at the second round's pass the
+   * verified frame is past STALE and short of OFFLINE. */
+  const uint8_t junk[3] = {mesh_envelope::OPERA_VERSION, 0xEE, 0xEE};
+  const uint32_t round_ms = 60000, last_round = 601000, read_at = 602000;
+  const uint32_t stale_at = 1000 + 2 * round_ms;
+  assert(stale_at - 1000 >= mesh_transport::PEER_STALE_AFTER_MS &&
+         stale_at - 1000 < mesh_transport::PEER_OFFLINE_AFTER_MS);
+  bool saw_stale = false;
+  for (uint32_t t = 2000; t <= read_at; t += 1000) {
+    mesh_transport::test::set_now_ms(t);
+    if (t <= last_round && (t - 1000) % round_ms == 0) {
+      mesh_transport::test::inject_recv(mac, junk, sizeof(junk), -90);
+      mesh_transport::test::inject_recv(mac, verified, vlen, -90);   /* the replay */
+    }
+    mesh_transport::process();
+    mesh_session::process(t);
+    if (t == stale_at) {
+      const std::string row = peer_row(t, m.pub);
+      assert(has(row, "\"state\":\"STALE\",") && has(row, "\"rssi\":-40,"));
+      assert(last_seen_sec_of(row) == (stale_at - 1000) / 1000);
+      assert(has(status_body(), "\"state\":\"CONNECTING\"") &&
+             has(status_body(), "\"peers_online\":0,"));
+      saw_stale = true;
+    }
+  }
+  assert(saw_stale);
+  /* The transport saw every frame: its entry is fresh, and unread. */
+  mesh_transport::Peer tp;
+  assert(mesh_transport::get_peer(mac, &tp) && tp.rssi_dbm == -90 &&
+         tp.state == mesh_transport::PeerState::ACTIVE);
+  const std::string row = peer_row(read_at, m.pub);
+  assert(has(row, "\"state\":\"OFFLINE\",") && has(row, "\"rssi\":-40,"));
+  assert(last_seen_sec_of(row) == (read_at - 1000) / 1000);   /* the verified frame's age */
+  assert(has(status_body(), "\"state\":\"CONNECTING\"") &&
+         has(status_body(), "\"peers_total\":1,\"peers_online\":0,"));
+
+  /* A fresh verified frame: CONNECTED at once, its own RSSI. */
+  uint8_t fresh[mesh_envelope::MAX_FRAME_LEN];
+  const size_t flen = build_signed_session_frame(m.pub, m.priv, S, ++m.counter,
+                                                 mesh_envelope::MsgType::HEARTBEAT, nullptr, 0,
+                                                 fresh, sizeof(fresh));
+  mesh_transport::test::inject_recv(mac, fresh, flen, -45);
+  mesh_transport::process();
+  mesh_session::process(read_at);
+  assert(has(peer_row(read_at, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,\"rssi\":-45,"));
+  assert(has(status_body(), "\"state\":\"ACTIVE\"") &&
+         has(status_body(), "\"peers_online\":1,"));
+  std::printf("PASS test_liveness_counts_only_verified_frames\n");
+}
+
+/* A member gone for longer than the 32-bit clock can count. Its age is an
+ * unsigned difference, so 2^32 ms (about 49.7 days) after its last
+ * verified frame it would read 0 again: CONNECTED and online, with nothing
+ * received. Every pass holds a heard member's age at 2^31 ms or under, so
+ * it stays OFFLINE, last seen about 24.8 days ago, and the opera
+ * CONNECTING. Passes here are 2^20 ms apart, far wider than the loop's.
+ * Fails before F324 (the transport entry's age wrapped: CONNECTED 10 s ago,
+ * peers_online 1) and on the verified stamp without the cap. */
+void test_a_long_gone_member_stays_offline_past_the_clock_wrap() {
+  uint8_t S[32];
+  for (size_t i = 0; i < sizeof(S); ++i) S[i] = (uint8_t)(0xA4 + i);
+  uint8_t pub[32], priv[32];
+  stand_up_session(S, pub, priv);
+  TestMember m;
+  const uint8_t mac[6] = {0x24, 0x0A, 0xC4, 0x32, 0x70, 0x01};
+  make_member(m, mac);
+  member_speaks(m, S, 1000, -40);
+  mesh_session::process(1000);
+  assert(has(peer_row(1000, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,"));
+  const uint32_t step_ms = 1u << 20;
+  uint32_t t = 1000;
+  for (uint64_t k = 0; k < (1ull << 32) / step_ms; ++k) {
+    t += step_ms;
+    mesh_transport::test::set_now_ms(t);
+    mesh_transport::process();
+    mesh_session::process(t);
+  }
+  assert(t == 1000);   /* the clock went all the way round */
+  t += 10000;          /* 10 s past the verified frame's own instant, 2^32 ms later */
+  mesh_transport::test::set_now_ms(t);
+  mesh_transport::process();
+  mesh_session::process(t);
+  const std::string row = peer_row(t, m.pub);
+  assert(has(row, "\"state\":\"OFFLINE\",") && has(row, "\"rssi\":-40,"));
+  assert(last_seen_sec_of(row) >= 0x7FFFFFFFu / 1000u);   /* about 24.8 days, held there */
+  assert(has(status_body(), "\"state\":\"CONNECTING\"") &&
+         has(status_body(), "\"peers_online\":0,"));
+  member_speaks(m, S, t, -44);
+  mesh_session::process(t);
+  assert(has(peer_row(t, m.pub), "\"state\":\"CONNECTED\",\"last_seen_sec\":0,\"rssi\":-44,"));
+  std::printf("PASS test_a_long_gone_member_stays_offline_past_the_clock_wrap\n");
+}
+
 int main() {
   std::srand(0xC51F0);
   /* F161: first, before anything publishes a status view. */
@@ -8332,6 +8921,13 @@ int main() {
   /* F199 — the peer list is the members the device holds. */
   test_the_peer_list_is_the_members_the_device_holds();
   test_status_reads_stay_whole_while_the_main_loop_runs();
+  /* F324 — a periodic heartbeat, and liveness from verified frames only. */
+  test_a_lost_complete_is_healed_by_the_next_heartbeat();
+  test_every_heartbeat_re_arms_the_timer();
+  test_no_periodic_heartbeat_without_a_running_opera();
+  test_the_heartbeat_timer_survives_a_long_disable();
+  test_liveness_counts_only_verified_frames();
+  test_a_long_gone_member_stays_offline_past_the_clock_wrap();
   std::printf("\nALL MESH_SESSION TESTS PASSED\n");
   return 0;
 }

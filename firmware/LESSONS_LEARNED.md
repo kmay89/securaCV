@@ -2368,6 +2368,47 @@
   tested the counter, not the trust decision.
 - **Date learned:** 2026-10
 
+### A transport's last-seen stamp is not liveness, and a presence signal needs a sender
+- **What happened:** The PlatformIO mesh reported each member's state,
+  `last_seen_sec`, RSSI and `peers_online` from the ESP-NOW transport's
+  peer entry (F324). Two things were wrong with that. First, nothing sent
+  on a timer: two healthy paired Canaries quiet for ten minutes both read
+  `CONNECTING` with the other `OFFLINE`, about 610 s old, and the web UI
+  said "Searching for opera members". Second, the transport stamps its
+  entry for any frame from a known address before the session verifies
+  anything, and ESP-NOW does not authenticate a source: a host probe sent a
+  3-byte junk frame and a replay of one verified frame from a quiet
+  member's address once a minute, and the member read `CONNECTED`,
+  `last_seen_sec` 1, the junk's RSSI, for ten minutes. Adding the heartbeat
+  alone would have made that worse, because it puts the member's address on
+  the air every 30 s for anyone to copy.
+- **Root cause:** Liveness was read from the layer that sees frames, not
+  from the layer that checks them. canary-wap had already put its stamp
+  after the signature and counter checks. And "a member is gone" can only
+  be told from "a member is quiet" if a healthy member is never quiet.
+- **Fix:** A jittered 30 s ± 3 s heartbeat that every heartbeat re-arms,
+  with a `static_assert` that one lost heartbeat cannot read `STALE`, and a
+  per-member `verified_seen_ms` and RSSI stamped in `on_opera_frame` after
+  the counter check, which the view and `online_peer_count` read instead of
+  the transport entry. Two edges the arithmetic hides: a deadline kept
+  across a disable longer than 2^31 ms reads as weeks in the future, so a
+  stopped pass drops it; and a 32-bit age wraps after about 49.7 days and
+  would read a long-gone member `CONNECTED` again, so every pass holds a
+  heard member's age at 2^31 ms or under.
+- **Regression check:** `test_mesh_session`:
+  `test_liveness_counts_only_verified_frames` (junk and a replay refresh
+  nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
+  minutes read `ACTIVE`/`CONNECTED`, the heartbeat spacing held to the
+  constants), `test_every_heartbeat_re_arms_the_timer`,
+  `test_the_heartbeat_timer_survives_a_long_disable`,
+  `test_a_long_gone_member_stays_offline_past_the_clock_wrap`; each fails
+  on the code before F324, and the last three on a mutant without the
+  re-arm, the stopped-pass drop and the age cap. Silence assertions that a
+  timer makes false were rewritten to admit only member heartbeats checked
+  by destination, signature, opera and counter
+  (`assert_only_member_heartbeats`), not deleted.
+- **Date learned:** 2026-10
+
 ### A pin on the order of a step is not a test of the step
 - **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
   member's radio address, and its ESP-NOW registration, at the source of

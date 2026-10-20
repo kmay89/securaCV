@@ -104,9 +104,11 @@ struct TrustedPeer {
   bool     in_use;
   /* Liveness (PR-8 follow-up, F70): a fully verified frame (signature +
    * opera_id + replay) has arrived from radio_mac since it was bound. Lets
-   * /api/mesh/peers join each member against the live transport table's
-   * liveness/RSSI at that address (the rows are this table's members since
-   * F199, not the stored pubkeys). There is no second,
+   * /api/mesh/peers report each member (the rows are this table's members
+   * since F199, not the stored pubkeys) from verified_seen_ms and
+   * verified_rssi below, as long as radio_mac is in the transport table;
+   * until F324 the row took the transport entry's liveness and RSSI at that
+   * address, which any frame from it refreshed. There is no second,
    * frame-recorded address: until F70 the session kept one here (`mac`,
    * the source of the last verified frame), any address in the transport
    * table could become it — a pairing partner's, another member's copied
@@ -115,6 +117,20 @@ struct TrustedPeer {
    * (on_opera_frame), so the only address a peer has is the one it is
    * bound to. Cleared when bind_peer_mac() moves the binding. */
   bool     heard;
+  /* F324: the transport-clock arrival time (mesh_transport::clock_ms, the
+   * instant drain_ring stamped the transport entry) and the RSSI of this
+   * peer's last frame that passed steps 3-6 of on_opera_frame: its own
+   * binding, the signature, the opera_id and the counter. Meaningful only
+   * while `heard`. The peer row's state, age and RSSI and
+   * online_peer_count() derive from these alone (verified_state), as
+   * canary-wap's mesh_network.cpp stamps liveness only after the same
+   * checks. The transport stamps its entry for ANY frame from the address,
+   * before anything is verified, and ESP-NOW does not authenticate a
+   * source, so until F324 a junk frame or a replay sent from a quiet
+   * member's address once a minute held it CONNECTED and online (probed:
+   * ten minutes, `last_seen_sec` 1, the junk's RSSI). */
+  uint32_t verified_seen_ms;
+  int8_t   verified_rssi;
   /* Verified TAMPER_ALERT frames from this peer (F11 residual). Counted
    * in dispatch_verified, i.e. only after signature + opera_id + replay
    * checks — the same trust argument as `heard` above. */
@@ -164,6 +180,15 @@ static uint32_t s_pairing_seq = 0;
  * it (send_heartbeat) and clears it, whether or not anything was sent.
  * Wiped by deinit(). */
 static bool s_boot_heartbeat_due = false;
+
+/* F324: the periodic heartbeat's deadline, on process()'s clock. Armed by
+ * arm_heartbeat(), which every send_heartbeat() call runs first, and by the
+ * first running pass; a stopped pass and deinit() disarm it, so a deadline
+ * set before a long disable is never compared against a clock that has
+ * since moved more than 2^31 ms (it would read as in the future, and the
+ * timer would stall for up to about 24.8 days). */
+static uint32_t s_next_heartbeat_ms = 0;
+static bool     s_heartbeat_armed   = false;
 
 /* Replay tombstones (review fix). A peer that leaves or is removed used to
  * take its last_counter with it; re-registering the same device into the
@@ -727,27 +752,53 @@ static size_t send_to_members(const uint8_t* frame, size_t len) {
   return sent;
 }
 
-/* F162: one signed HEARTBEAT (registry 16) with an empty payload to every
- * bound member (send_to_members, F101: never a pairing partner that is not
- * a member), sent at the two moments a member would otherwise sit unheard:
- * right after NOTIFY_PAIRED on each side of a pairing, and once in the
- * first running process() pass after a boot restore that bound a member.
- * That pass can come before the station joins its router (WiFi.begin() is
- * asynchronous; until then the radio sits on the softAP's channel), so on
- * a board whose router is on another channel the boot one can reach no
- * member, and nothing sends it again (spec §7.1).
+/* F324: the next periodic heartbeat is due HEARTBEAT_INTERVAL_MS after
+ * now_ms, give or take HEARTBEAT_JITTER_MS, drawn afresh each time (two
+ * random bytes; the modulo bias is a few parts in ten thousand, harmless
+ * for spacing). */
+static void arm_heartbeat(uint32_t now_ms) {
+  uint8_t r[2];
+  mesh_crypto::fill_random(r, sizeof(r));
+  const uint32_t draw = (uint32_t)r[0] | ((uint32_t)r[1] << 8);
+  s_next_heartbeat_ms = now_ms + HEARTBEAT_INTERVAL_MS - HEARTBEAT_JITTER_MS +
+                        draw % (2u * HEARTBEAT_JITTER_MS + 1u);
+  s_heartbeat_armed = true;
+}
+
+/* One signed HEARTBEAT (registry 16) with an empty payload to every bound
+ * member (send_to_members, F101: never a pairing partner that is not a
+ * member). Three callers: right after NOTIFY_PAIRED on each side of a
+ * pairing (F162), once in the first running process() pass after a boot
+ * restore that bound a member (F162), and process()'s periodic deadline
+ * (F324), every HEARTBEAT_INTERVAL_MS +/- HEARTBEAT_JITTER_MS while the
+ * session runs. Every call re-arms that deadline first, whatever its
+ * guards then decide, so the three share one spacing and a session with
+ * nothing to send re-checks once an interval, not on every pass.
  * A PIO receiver verifies it and drops it (dispatch_verified has no case
- * for it), which marks the sender heard from its binding: the initiator's
- * COMPLETE copies stop on the joiner's (F134), and each side's GET
- * /api/mesh reads ACTIVE and its peer row CONNECTED once the other's has
- * arrived. Never on a timer: canary-wap's 30 s cadence (F76) is its own,
- * and this tree adds no recurring frame, so no new periodic RF pattern.
- * The payload is empty, so the frame says nothing but "this member, this
- * opera, this counter". It goes through the transport's storm gate like
- * every send; this tree has no airtime governor. Nothing is signed, and
- * no counter spent, when no member is bound. Returns how many sends the
- * transport took. */
+ * for it), which stamps the sender's verified liveness at its binding
+ * (verified_seen_ms): the initiator's COMPLETE copies stop on the joiner's
+ * (F134), and each side's GET /api/mesh reads ACTIVE and its peer row
+ * CONNECTED once the other's has arrived, and goes on doing so while the
+ * opera is quiet. Before F324 there was no timer: a healthy opera quiet for
+ * 90 s read CONNECTING with its members STALE, and after 5 minutes OFFLINE.
+ * What the timer bounds: two of the longest intervals stay short of
+ * PEER_STALE_AFTER_MS (static_assert, mesh_session.h), so one lost
+ * heartbeat never reads STALE; a member that is gone reads STALE within
+ * about 90-100 s and OFFLINE within about 5 min. A joiner that lost the
+ * first COMPLETE pairs from a copy, but the initiator's paired heartbeat
+ * reached it before it held the opera and was dropped; it hears the
+ * initiator at the initiator's next heartbeat (F162's lost-COMPLETE case).
+ * And a boot heartbeat sent before the station joined
+ * its router (WiFi.begin() is asynchronous; until then the radio sits on
+ * the softAP's channel, F320) costs at most one interval: the next one goes
+ * on the settled channel. canary-wap sends its own at the same cadence
+ * (F76). The payload is empty, so the frame says nothing but "this member,
+ * this opera, this counter". It goes through the transport's storm gate
+ * like every send; this tree has no airtime governor. Nothing is signed,
+ * and no counter spent, while the session is stopped, with no opera, or
+ * when no member is bound. Returns how many sends the transport took. */
 static size_t send_heartbeat(uint32_t now_ms) {
+  arm_heartbeat(now_ms);
   if (!s_initialized || !s_running || !s_opera_id_set) return 0;
   bool any_bound = false;
   for (size_t i = 0; i < MAX_TRUSTED_PEERS && !any_bound; ++i) {
@@ -1026,7 +1077,7 @@ static void dispatch_verified(TrustedPeer&               peer,
  * the transport table. A frame from any other address never gets here,
  * however well it would verify (on_transport_unknown below says why). */
 static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_LEN],
-                           const uint8_t* data, size_t len) {
+                           const uint8_t* data, size_t len, int8_t rssi) {
   const uint8_t* env       = data;
   const size_t   env_len   = len;
   if (env_len < mesh_envelope::MIN_FRAME_LEN) return;
@@ -1096,12 +1147,19 @@ static void on_opera_frame(const uint8_t mac[mesh_transport::MESH_TRANSPORT_MAC_
    * /api/mesh/peers liveness join (at radio_mac). The frame writes no
    * address: only pairing and the boot restore bind one. */
   peer->heard = true;
+  /* F324: liveness from this frame alone. The same instant drain_ring
+   * stamped the transport entry for it, but past the counter check, so a
+   * replay, a junk frame or a forgery from this address never gets here. */
+  peer->verified_seen_ms = mesh_transport::clock_ms();
+  peer->verified_rssi    = rssi;
 
   /* F134: the member this device's COMPLETE copies are for is heard. It
    * signed a fresh frame under this opera, so it holds the opera_secret:
-   * no more copies. (Nothing on the wire acknowledges a COMPLETE, and this
-   * tree's members send nothing on a timer, so until it sends something
-   * the copies run to the end of their window.) */
+   * no more copies. (Nothing on the wire acknowledges a COMPLETE. The
+   * member's paired heartbeat (F162) normally ends them at once; a member
+   * that lost that one is heard at its next periodic heartbeat, F324, and
+   * one that sends nothing lets the copies run to the end of their
+   * window.) */
   if (s_copies_member_set && mesh_pairing::complete_resend_running(s_ctx) &&
       mesh_crypto::ct_equal(peer->sender_fp, s_copies_member_fp,
                             mesh_crypto::FINGERPRINT_LEN)) {
@@ -1161,7 +1219,7 @@ static bool handle_pair_frame(const uint8_t mac[6],
  * by the registry's static_asserts, so no frame can be both. */
 static void on_transport_recv(const uint8_t mac[6],
                               const uint8_t* data, size_t len,
-                              int8_t /*rssi*/) {
+                              int8_t rssi) {
   if (!s_running || data == nullptr || len < MSGTYPE_HEADER_LEN) return;
   const uint8_t first = data[0];
 
@@ -1175,7 +1233,7 @@ static void on_transport_recv(const uint8_t mac[6],
    * peer table + signature verify + replay check happen inside, and the
    * message type is read from the SIGNED header there. */
   if (first == mesh_envelope::OPERA_VERSION) {
-    on_opera_frame(mac, data, len);
+    on_opera_frame(mac, data, len, rssi);
     return;
   }
 }
@@ -1244,6 +1302,8 @@ void deinit() {
   forget_complete_copies_owner();
   s_pairing_seq = 0;
   s_boot_heartbeat_due = false;
+  s_heartbeat_armed    = false;   /* F324 */
+  s_next_heartbeat_ms  = 0;
   secure_zero(s_device_priv, sizeof(s_device_priv));
   s_paired_cb = nullptr;
   s_failed_cb = nullptr;
@@ -1446,6 +1506,41 @@ bool get_paired_peer_pubkey(uint8_t out[mesh_crypto::PUBKEY_LEN]) {
 
 static void drain_request(uint32_t now_ms);   /* REST request slot, below */
 
+/* F324: a member's liveness from the age of its last fully verified frame
+ * (verified_seen_ms) on the transport clock, by the transport's thresholds:
+ * OFFLINE past PEER_OFFLINE_AFTER_MS, STALE past PEER_STALE_AFTER_MS,
+ * ACTIVE otherwise. The unsigned difference reads right across a millis()
+ * wrap. Meaningful only for a peer that is `heard`. */
+static mesh_transport::PeerState verified_state(const TrustedPeer& p) {
+  const uint32_t age = mesh_transport::clock_ms() - p.verified_seen_ms;
+  if (age >= mesh_transport::PEER_OFFLINE_AFTER_MS) return mesh_transport::PeerState::OFFLINE;
+  if (age >= mesh_transport::PEER_STALE_AFTER_MS)   return mesh_transport::PeerState::STALE;
+  return mesh_transport::PeerState::ACTIVE;
+}
+
+/* F324: that age is a 32-bit difference, so a member unheard for 2^32 ms
+ * (about 49.7 days) would read 0 again: CONNECTED and online for 90 s, every
+ * 49.7 days, with nothing received. Every pass, stopped or not, holds each
+ * heard member's age at VERIFIED_AGE_CAP_MS (2^31 ms, about 24.8 days) or
+ * under by moving its stamp up, so it stays OFFLINE and its last_seen_sec
+ * stops at about 24.8 days instead of wrapping. The main loop runs a pass
+ * far more often than the 2^31 ms of headroom that leaves. The transport's
+ * own entry ages by the same arithmetic and keeps it; nothing reads it for
+ * liveness any more. */
+static constexpr uint32_t VERIFIED_AGE_CAP_MS = 0x80000000u;
+static_assert(VERIFIED_AGE_CAP_MS > mesh_transport::PEER_OFFLINE_AFTER_MS,
+              "a capped age still reads OFFLINE");
+static void cap_verified_ages() {
+  const uint32_t now = mesh_transport::clock_ms();
+  for (size_t i = 0; i < MAX_TRUSTED_PEERS; ++i) {
+    TrustedPeer& p = s_trusted_peers[i];
+    if (!p.in_use || !p.heard) continue;
+    if (now - p.verified_seen_ms > VERIFIED_AGE_CAP_MS) {
+      p.verified_seen_ms = now - VERIFIED_AGE_CAP_MS;
+    }
+  }
+}
+
 /* F33 part 6: a yielded removal, announced again (s_reannounce) once no
  * rotation is running: a rotation of our own naming the same device, to
  * every peer we still trust. The winner — which may never have heard our
@@ -1482,7 +1577,9 @@ void process(uint32_t now_ms) {
   /* A queued REST request runs first, and even while stopped: enabling
    * and leaving must work on a disabled mesh. */
   drain_request(now_ms);
+  cap_verified_ages();   /* F324: before any view reads them, stopped or not */
   if (!s_running) {
+    s_heartbeat_armed = false;   /* F324: re-armed on the first running pass */
     publish_status();   /* F161: a stopped or disabled session's view too */
     return;
   }
@@ -1490,6 +1587,13 @@ void process(uint32_t now_ms) {
    * (a mesh off at boot sends it on its first pass after it is enabled). */
   if (s_boot_heartbeat_due) {
     s_boot_heartbeat_due = false;
+    send_heartbeat(now_ms);
+  }
+  /* F324: the periodic heartbeat. The first running pass arms the deadline
+   * (unless a heartbeat above just did); each one sent re-arms it. */
+  if (!s_heartbeat_armed) {
+    arm_heartbeat(now_ms);
+  } else if ((int32_t)(now_ms - s_next_heartbeat_ms) >= 0) {
     send_heartbeat(now_ms);
   }
   mesh_revocation::expire(s_revoked, now_ms);
@@ -1657,8 +1761,10 @@ bool register_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]) {
       }
       /* No verified frame yet this registration — the liveness join
        * reports the peer OFFLINE until one arrives. */
-      s_trusted_peers[i].heard        = false;
-      s_trusted_peers[i].in_use       = true;
+      s_trusted_peers[i].heard            = false;
+      s_trusted_peers[i].verified_seen_ms = 0;   /* F324 */
+      s_trusted_peers[i].verified_rssi    = 0;
+      s_trusted_peers[i].in_use           = true;
       return true;
     }
   }
@@ -1846,7 +1952,10 @@ bool can_hold_partner(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN],
 
 /* Main loop: the live state as GET /api/mesh and /api/mesh/peers show it.
  * The member rows are get_peer_links() joined against the transport table,
- * exactly as handle_mesh_peers joined them on the httpd task before F161. */
+ * as handle_mesh_peers joined them on the httpd task before F161: a row is
+ * live while its binding is in the table. Its state, RSSI and age are the
+ * member's last fully verified frame's (verified_state; F324), not the
+ * table entry's, which any frame from the address refreshes. */
 static void build_status_view(StatusView* v) {
   memset(v, 0, sizeof(*v));   /* padding compares equal (loop_snapshot.h) */
   v->enabled   = s_enabled;
@@ -1880,15 +1989,17 @@ static void build_status_view(StatusView* v) {
     memcpy(m.fp, links[l].fp, mesh_crypto::FINGERPRINT_LEN);
     m.alerts_received = links[l].alerts_received;
     if (!links[l].mac_known) continue;   /* not heard this boot: OFFLINE, never */
+    const TrustedPeer* tp = find_trusted_peer(links[l].fp);
+    if (tp == nullptr) continue;          /* links are this table's members */
     for (size_t t = 0; t < n_live; ++t) {
       if (!live[t].in_use ||
           memcmp(live[t].mac, links[l].mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) != 0) {
         continue;
       }
       m.live         = true;
-      m.link_state   = live[t].state;
-      m.rssi_dbm     = live[t].rssi_dbm;
-      m.last_seen_ms = live[t].last_seen_ms;
+      m.link_state   = verified_state(*tp);
+      m.rssi_dbm     = tp->verified_rssi;
+      m.last_seen_ms = tp->verified_seen_ms;
       break;
     }
   }
@@ -1922,8 +2033,11 @@ size_t online_peer_count() {
     const TrustedPeer& p = s_trusted_peers[i];
     /* Not heard from its binding since it was bound (this boot). */
     if (!p.in_use || !p.heard || !p.radio_mac_set) continue;
+    /* F324: online by its own last verified frame, not by the table
+     * entry's state, which any frame from the address refreshes. */
+    if (verified_state(p) != mesh_transport::PeerState::ACTIVE) continue;
     for (size_t t = 0; t < n_live; ++t) {
-      if (live[t].in_use && live[t].state == mesh_transport::PeerState::ACTIVE &&
+      if (live[t].in_use &&
           memcmp(live[t].mac, p.radio_mac, mesh_transport::MESH_TRANSPORT_MAC_LEN) == 0) {
         ++online;
         break;

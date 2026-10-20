@@ -8842,6 +8842,11 @@ so — see D2 below.)
   joiner reads the initiator OFFLINE until the initiator's next frame (the
   joiner's own heartbeat still ends the copies). Rejected: a recurring
   heartbeat (a new periodic RF pattern; the maintainer's call, F324).
+  *Since F324 (2026-10-19):* a member heartbeats every 30 s ± 3 s, every
+  heartbeat (these two included) re-arming the deadline, so a joiner that
+  lost the first COMPLETE hears the initiator at the initiator's next
+  heartbeat, a lost paired heartbeat costs the copies about one interval,
+  and the boot one's loss (F320) one interval after association.
   Host-tested (`test_two_paired_canaries_hear_each_other_at_once`, two
   sessions in two processes with their frames carried between them;
   `test_a_reboot_announces_itself_once_to_each_member`;
@@ -8862,7 +8867,14 @@ so — see D2 below.)
   session call made when `WiFi.status()` first reads `WL_CONNECTED`, with a
   host test of the session half; keep a board with no router sending it at
   once. From code; host tests cannot see it (#1802).
-- [ ] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
+  *Since F324 (2026-10-19):* the harm is bounded to one heartbeat interval
+  after association. The next periodic heartbeat, 27-33 s after the boot
+  one and every 27-33 s after that, goes out on whatever channel the radio
+  is on then, so once the station has joined its router the members hear
+  this one within about 33 s (from code; the channel behavior is the F324
+  bench row). The `main.cpp` hook would save at most that interval; this
+  checkbox is left to its own decision.
+- [x] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
   member is heard once after it pairs and once after a boot (and the boot one
   can be lost before Wi-Fi association, F320), and otherwise only when it has
   an alert, a Beacon event or a rotation to send, so a quiet opera's members
@@ -8876,6 +8888,76 @@ so — see D2 below.)
   initiator could send its heartbeat once more when its COMPLETE copies stop
   on hearing the joiner after at least one copy went out. The maintainer's
   call (#1802).
+  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* a periodic heartbeat, and liveness from verified frames only. A
+  member sends the existing empty signed `HEARTBEAT` (registry 16) to its
+  bound members every 30 s ± 3 s (`HEARTBEAT_INTERVAL_MS`,
+  `HEARTBEAT_JITTER_MS` in `mesh_session.h`; the jitter is drawn afresh for
+  each interval, `arm_heartbeat`). It goes through `send_heartbeat`: members
+  only (F101), the storm gate, and nothing signed and no counter spent with
+  no member bound. It runs whenever the session runs with an opera, and
+  every heartbeat re-arms the deadline, the paired and boot ones (F162)
+  included. A `static_assert` keeps one lost heartbeat short of STALE
+  (2 × 33 s < 90 s). A stopped pass drops the deadline, so a disable longer
+  than 2^31 ms cannot leave one that reads as weeks in the future. Each
+  member's `GET /api/mesh/peers` state, `last_seen_sec` and `rssi`, and
+  `GET /api/mesh`'s `peers_online`, now come from the arrival of that
+  member's last frame that passed the signature, opera and counter checks
+  (`verified_seen_ms` and `verified_rssi`, stamped in `on_opera_frame` on
+  the transport clock, `mesh_transport::clock_ms()`), as on canary-wap
+  (`mesh_network.cpp`). Until now any frame from the member's address
+  refreshed them before verification (`mesh_transport.cpp` `drain_ring`).
+  On the old code a 3-byte junk frame and a replay sent from a quiet
+  member's address once a minute held it `CONNECTED`, `last_seen_sec` 1, the
+  junk's RSSI, and `peers_online` 1 for ten minutes; now it reads `STALE` at
+  two minutes and `OFFLINE`, 601 s old with the verified frame's RSSI, at
+  ten, and the opera `CONNECTING`. Without a timer, two healthy paired
+  Canaries quiet for ten minutes both read `CONNECTING`, the other
+  `OFFLINE` about 610 s old, and the web UI said "Searching for opera
+  members"; now they read `ACTIVE` and `CONNECTED`, at most 34 s old. A
+  member that is unplugged, crashed, out of range or jammed reads STALE
+  within about 90-100 s and OFFLINE within about 5 min, and a radio copying
+  its address cannot hide that without the member's key. One addition the
+  code needed beyond the decision: the age is a 32-bit difference, so a
+  member gone 2^32 ms (about 49.7 days) would read `CONNECTED` again for
+  90 s (the transport entry did the same at head); every pass, stopped or
+  not, now holds a heard member's age at 2^31 ms (`cap_verified_ages`), so
+  it stays `OFFLINE`, last seen about 24.8 days ago. A joiner that lost the
+  first COMPLETE hears the initiator at the initiator's next heartbeat, and
+  F320's lost boot heartbeat costs at most one interval after association.
+  A missed frame re-delivered from a copied address (spec §8.3) stays
+  dispatchable until the receiver hears the sender's next frame: about 33 s
+  or less on a working link. A jammer can stretch that, but the member then
+  reads STALE. Cost, from code: one counter per heartbeat (about 2.8
+  reservation writes a day), replay saves that now write moving counters
+  every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
+  nvs), one sign per 30 s per sender and at most 7 verifies per 30 s per
+  receiver. No wire change. The RF pattern is marginal: the only env with
+  the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
+  released image builds the mesh, so no OTA'd device changes. The owner
+  stops the frame by turning the mesh off. Rejected: the narrow
+  lost-COMPLETE re-send (one case of three); keeping it documented (the
+  dashboard stays wrong, liveness stays meaningless); counting
+  heard-this-boot as online (hides a removed sibling); the heartbeat without
+  verified liveness (the heartbeat would broadcast the address to copy);
+  skipping a heartbeat after other traffic (no measured need). Host-tested:
+  `test_mesh_session`, whose five silence assertions now admit only member
+  heartbeats checked by destination, signature, opera and per-destination
+  counter (`assert_only_member_heartbeats`), with their spacing held to the
+  constants (`check_beat_spacing`; in the seeded host run 20 heartbeats per
+  side in the quiet ten minutes, 17-22 allowed, and 117 rounds per member in
+  the hour, 105-133 allowed), and new cases for a lost COMPLETE healed, every heartbeat
+  re-arming the timer, no running opera (not started, disabled, no opera,
+  no bound member: an hour silent with no counter spent, then a heartbeat),
+  a disable past 2^31 ms, junk and a replay from a member's address, and an
+  age past the clock's wrap; each fails on the old code, and the re-arm,
+  long-disable and wrap cases on a mutant without the re-arm, the
+  stopped-pass drop and the age cap. The other 12 mesh suites are
+  unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
+  refused). The `[env:full]` compile is CI's; host-tested, not run on a
+  device. The on-air spacing and the STALE/OFFLINE transitions are a U1
+  bench row (`hardware_verification_checklist.md`).
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)

@@ -519,6 +519,8 @@ size_t broadcast(const uint8_t* data, size_t len) {
  * RECEIVE + AGING
  * ────────────────────────────────────────────────────────────────────────── */
 
+uint32_t clock_ms() { return now_ms(); }
+
 void set_recv_callback(RecvCallback cb) { s_recv_cb = cb; }
 void set_unknown_sender_callback(UnknownSenderCallback cb) { s_unknown_cb = cb; }
 void set_peer_state_callback(PeerStateCallback cb) { s_peer_state_cb = cb; }

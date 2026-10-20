@@ -955,7 +955,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     pairs, so the joiner's ends the initiator's copies within one pass; they
     run on only while the first COMPLETE is lost (until the joiner opens a
     copy and its heartbeat follows) or when that heartbeat cannot reach the
-    initiator (F320), and their whole window only then.
+    initiator (F320). Since F324 the joiner heartbeats every 30 s ± 3 s, so
+    a lost paired heartbeat costs about one more interval of copies (about
+    15 copies of two frames), not the whole window; the window runs out
+    only against a joiner that sends nothing in it.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or
@@ -971,8 +974,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   code before its fix and by mutation; an interop probe in scratch ran the pairing library
   against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
   CI's; not bench-verified.
-- **PlatformIO membership: a join needs a leave, a member says it paired,
-  the peers list is the session's (F136, F162, F199; host-tested only).**
+- **PlatformIO membership: a join needs a leave, a member says it paired
+  and keeps saying so, the peers list is the session's (F136, F162, F199,
+  F324; host-tested only).**
   - *A join on a Canary already in an opera is refused (F136).*
     `pair/join` with an opera held answers `409 opera_exists` before a
     pairing number is taken or any member, key or secret is touched; until
@@ -982,13 +986,53 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     pair with a second member of the opera it holds, so a changed radio
     address is Leave then Join (F319). canary-wap's join is unchanged
     (F318).
-  - *A member announces itself once (F162).* One signed `HEARTBEAT`
-    (registry 16, empty payload) to bound members only, right after
-    NOTIFY_PAIRED and once on the first pass after a boot that bound a
-    member; never to a pairing partner that is not a member, and never on
-    a timer (a recurring heartbeat would be a new periodic RF pattern;
-    whether to add one is the maintainer's open call, F324). A receiver handles it as any verified opera frame; it
-    discloses nothing an opera frame does not.
+  - *A member announces itself, and keeps doing so (F162, F324).* One
+    signed `HEARTBEAT` (registry 16, empty payload) to bound members only,
+    right after NOTIFY_PAIRED and once on the first pass after a boot that
+    bound a member (F162), and since F324 every 30 s ± 3 s while the
+    session runs with an opera, every heartbeat re-arming the deadline;
+    never to a pairing partner that is not a member, and nothing signed or
+    counter spent with no member bound. A receiver handles it as any
+    verified opera frame; it discloses nothing an opera frame does not
+    (the opera id, the sender's fingerprint, a counter, an uptime stamp),
+    and all of that is already on the air in every opera frame.
+    - *Accepted: a periodic radio emission.* A member's MAC is now on the
+      air every interval, which marks a device as a Canary in an opera to
+      anyone listening on its channel. That adds little to the RF pattern
+      of the only build with the mesh: `[env:full]` already broadcasts the
+      BLE status beacon continuously, and no released image builds the
+      mesh. The owner who wants no periodic frame turns the mesh off
+      (`POST /api/mesh/enable` with `false`): a stopped session sends
+      nothing and drops its deadline.
+    - *Liveness counts verified frames only (F324).* A member's peer row
+      (`state`, `last_seen_sec`, `rssi`) and `peers_online` come from its
+      last frame that passed the signature, opera and counter checks
+      (`verified_seen_ms`), as on canary-wap. Until F324 they were the
+      transport entry's, which any frame from the address refreshed before
+      verification, and ESP-NOW does not authenticate a source: a 3-byte
+      junk frame and a replay from a quiet member's MAC once a minute held
+      it `CONNECTED` and `peers_online` 1 for ten minutes (host-probed). A
+      heartbeat alone would have made that easy to aim (the member's MAC on
+      the air every 30 s), so an intruder who pulled a Canary could have
+      held it `CONNECTED` with a spare ESP32. Now it reads `STALE` within
+      about 90-100 s and `OFFLINE` within about 5 minutes whatever a radio
+      copying its address sends, unless that radio has the member's key.
+      An age past 2^31 ms is held there, so a member gone longer than the
+      32-bit clock can count does not read `CONNECTED` again when it wraps.
+    - *The replay window of a missed frame, bounded conditionally.* A frame
+      of a member's that the receiver missed stays dispatchable from a radio
+      copying the member's own address (spec §8.3) only until the receiver
+      hears the member's next frame: on a working link its next heartbeat,
+      about 33 s or less. A jammer that keeps the member's frames from the
+      receiver keeps it open, and the member then reads `STALE` within about
+      90 s. Not a flat 33 s bound.
+    - *Cost, from code.* One Ed25519 signature per interval per sender, and
+      at most 7 verifies per interval per receiver (eight members at most),
+      on the main loop; one outbound counter per heartbeat (a reservation
+      write per 1024, about 2.8 a day); the 5-minute replay-counter save
+      now writes counters that move (only on flash-encrypted boards). The
+      transport's 100-frame-a-second storm gate is untouched. The same
+      cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
     session holds, and reads no NVS on the HTTP task; a stored key the
@@ -996,7 +1040,7 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     always agree with `peers_total`.
   Pinned by host tests in `test_mesh_session` and `test_mesh_pairing`, by
   `check_canary_mesh_status.py` and the handlers' wiring test; the canary
-  build is CI's; not bench-verified (the F136, F162, F199 and F215 section
+  build is CI's; not bench-verified (the F136, F162, F199, F215 and F324 section
   of `docs/audit/hardware_verification_checklist.md`).
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the

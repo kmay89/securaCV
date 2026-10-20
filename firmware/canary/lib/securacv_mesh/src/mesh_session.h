@@ -392,6 +392,27 @@ bool has_opera_secret();
 
 constexpr uint64_t COUNTER_RESERVE_BLOCK = 1024;
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * PERIODIC HEARTBEAT  (F324)
+ *
+ * While the session runs, process() sends the empty signed HEARTBEAT
+ * (registry 16) to every bound member once per HEARTBEAT_INTERVAL_MS, the
+ * deadline drawn afresh after every heartbeat within +/- HEARTBEAT_JITTER_MS
+ * of it, so two members' timers do not lock into step. Every heartbeat
+ * re-arms it, the paired and boot ones (F162) included. A member reads
+ * STALE after PEER_STALE_AFTER_MS with no verified frame, so one lost
+ * heartbeat must not be enough: the assert below holds two of the longest
+ * intervals short of it. Each one spends an outbound counter (one
+ * reservation per COUNTER_RESERVE_BLOCK heartbeats, about 2.8 a day), and
+ * nothing is signed with no member bound.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t HEARTBEAT_INTERVAL_MS = 30000;
+constexpr uint32_t HEARTBEAT_JITTER_MS   = 3000;
+static_assert(2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS) < mesh_transport::PEER_STALE_AFTER_MS,
+              "one lost heartbeat must not read STALE");
+static_assert(HEARTBEAT_JITTER_MS < HEARTBEAT_INTERVAL_MS, "the jittered deadline stays ahead");
+
 typedef bool (*counter_reserve_fn)(uint64_t high_water);
 
 void     set_counter_reserve_handler(counter_reserve_fn fn);
@@ -587,11 +608,17 @@ size_t trusted_peer_count();
  *     rotation that forgets it, clear_trusted_peers() — leaves the transport
  *     table with it.
  * online_peer_count(): trusted peers heard from their binding (PeerLink
- * mac_known, above) whose binding is in the transport table in the ACTIVE
- * window — a peer bound at boot that has not been heard this boot is NOT
- * online, even though its fresh transport entry starts ACTIVE, and neither
- * is one re-bound and not yet heard at the new address. GET /api/mesh uses
- * it.
+ * mac_known, above) whose binding is in the transport table and whose last
+ * fully verified frame (signature, opera_id and counter checks passed)
+ * arrived from that binding less than PEER_STALE_AFTER_MS ago on the
+ * transport clock (mesh_transport::clock_ms) — a peer bound at boot that
+ * has not been heard this boot is NOT online, even though its fresh
+ * transport entry starts ACTIVE, and neither is one re-bound and not yet
+ * heard at the new address. Since F324 the transport's own entry state is
+ * not read: any frame from the address refreshes it before the session
+ * verifies anything, and ESP-NOW does not authenticate a source, so a
+ * radio copying a quiet member's address held it online with junk. GET
+ * /api/mesh uses it.
  * Threading: bind_peer_mac is main-loop only (it mutates both tables);
  * online_peer_count only reads, like get_peer_links(), on the main loop
  * too (the status routes read it from the published view, F161).
@@ -1152,8 +1179,13 @@ struct MemberView {
   /* Verified TAMPER_ALERT frames from it since it was registered (F11). */
   uint32_t alerts_received;
   /* Heard from its binding this boot (get_peer_links' mac_known) and that
-   * address is in the transport table: the three fields below are the
-   * table's entry. False: the peer list shows it OFFLINE, "never". */
+   * address is in the transport table: the three fields below are this
+   * member's last fully verified frame (F324): its age as a state (ACTIVE,
+   * STALE past PEER_STALE_AFTER_MS, OFFLINE past PEER_OFFLINE_AFTER_MS),
+   * its RSSI and its arrival time. A frame that fails verification or the
+   * counter check refreshes none of them; until F324 they were the
+   * transport entry's, which any frame from the address refreshed. False:
+   * the peer list shows it OFFLINE, "never". */
   bool                      live;
   mesh_transport::PeerState link_state;
   int8_t                    rssi_dbm;

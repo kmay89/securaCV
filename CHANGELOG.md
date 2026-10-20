@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap's one device type is `canary-wap` on every surface (sweep F294)
+### canary-wap's one device type is `canary-wap` on every surface, and the PlatformIO mesh keeps a quiet opera's members live with a jittered heartbeat (sweep F294, F324)
 
 - **Compatibility: on a WAP, REST `GET /api/status` `device_type` changes from
   `"canary"` to `"canary-wap"`, and so does the serial boot banner's Type line
@@ -28,6 +28,40 @@
   with the next WAP release. **Host-tested** (`figures.test.js`: seven new
   refusals, each of which the old reader let through, and the constant's
   read site; `wap.test.js`); the ESP32 compile is CI's; not run on a device.
+- **The PlatformIO mesh heartbeats on a timer, and a member's liveness counts
+  only verified frames (sweep F324; `[env:full]` builds only, no released
+  image changes).** A PlatformIO member now sends its empty signed
+  `HEARTBEAT` to its bound members every 30 s ± 3 s while the mesh runs with
+  an opera. Every heartbeat, the paired and boot ones of F162 included,
+  re-arms the deadline; nothing is signed and no counter spent with no member
+  bound; and turning the mesh off (`POST /api/mesh/enable` with `false`)
+  stops it. So a healthy, quiet opera reads `ACTIVE` with its members
+  `CONNECTED` and a real age, where it read `CONNECTING` ("Searching for
+  opera members...") with every member `OFFLINE`; a member that is
+  unplugged, crashed, out of range or jammed reads `STALE` within about
+  90-100 s and `OFFLINE` within about 5 minutes. Each member's
+  `GET /api/mesh/peers` `state`, `last_seen_sec` and `rssi`, and
+  `GET /api/mesh`'s `peers_online`, now come from its last frame that passed
+  the signature, opera and counter checks, as on canary-wap. Before, any
+  frame from its address refreshed them, so a junk frame and a replay from a
+  spare radio copying a quiet member's address held it `CONNECTED`
+  (host-probed). An age past 2^31 ms is held there, so a member gone longer
+  than the 32-bit clock can count stays `OFFLINE` instead of reading
+  `CONNECTED` again after about 49.7 days. A joiner that lost the first
+  `PAIR_COMPLETE` now hears the initiator at the initiator's next heartbeat,
+  and a boot heartbeat lost before Wi-Fi association (F320) costs at most one
+  interval. Cost, from code: one signature per 30 s per sender, at most 7
+  verifies per 30 s per receiver, and one outbound counter per heartbeat (a
+  reservation write about 2.8 times a day). No wire change: older PlatformIO
+  firmware verifies the heartbeat and drops it. Only `[env:full]` builds the
+  mesh; `[env:release]` and every env that extends it set
+  `FEATURE_MESH_NETWORK=0`, so no OTA'd device changes. **Host-tested**
+  (`test_mesh_session`: the five silence assertions a timer makes false now
+  admit only member heartbeats checked by destination, signature, opera and
+  counter, with their spacing held to the constants, and six new cases,
+  each failing on the old code; the other 12 mesh suites unchanged;
+  `check_canary_mesh_status.py`); the `[env:full]` compile is CI's; not run
+  on a device (a U1 bench row).
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
