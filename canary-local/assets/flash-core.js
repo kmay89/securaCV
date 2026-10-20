@@ -2177,10 +2177,11 @@ export function visionChecklistModel(parts) {
 // pastebin — see spec/invariants.md III), and the serial tail is scrubbed of
 // credential lines before it is included, because the WAP legitimately prints
 // its device-unique AP password to serial at boot ("[WIFI] AP started: …
-// (password: …)", acknowledged in build_config.h), every Canary prints the
-// same key inside a Wi-Fi QR payload each time its setup network comes up
-// ("[SETUP] QR WIFI:…;P:<key>;;", onboarding_fsm.h qr_line), and a report
-// someone is ASKED to paste must not carry it. Pure + testable; the desktop app mirrors
+// (password: …)", acknowledged in build_config.h), every setup surface prints
+// the same key inside a Wi-Fi QR payload when its setup network comes up
+// ("[SETUP] QR WIFI:…;P:<key>;;", onboarding_fsm.h qr_line; the WAP once, at
+// boot, the flagship again on every re-raise after a home-link drop), and a
+// report someone is ASKED to paste must not carry it. Pure + testable; the desktop app mirrors
 // this byte-for-byte in spirit (desktop_parity.test.js pins both sides).
 
 // Lines the serial tail may never carry into a report. Matched per line and

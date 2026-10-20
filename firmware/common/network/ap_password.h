@@ -32,9 +32,13 @@
 // mbedtls_md_hmac), and 32 zero bytes render as "cv-222222222222": one key
 // for every unit, on the network whose peers are handed the page token. So
 // this takes fleet_key::hmac_sha256_checked and refuses (false, "") when the
-// HMAC did not run; the result is [[nodiscard]], and setup() halts on a
-// refusal rather than raise the setup network on an empty or constant key.
-// test_ap_password_hmac_fail.cpp holds that with a failing HMAC().
+// HMAC did not run, and setup() halts on a refusal rather than raise the
+// setup network on an empty or constant key. test_ap_password_hmac_fail.cpp
+// holds the refusal over a failing primitive, built over fleet_key.h's
+// mbedTLS branch (the device's) and over its OpenSSL branch. [[nodiscard]]
+// only makes a discarded result a compiler warning (the flagship builds
+// without -Werror); no host suite compiles setup(), so nothing here holds the
+// call site, its argument or its halt.
 //
 // Pure: HMAC-SHA256 through fleet_key.h (mbedTLS on the device, OpenSSL on
 // the host, RFC 4231-tested in test_fleet_key.cpp) and the rendering through

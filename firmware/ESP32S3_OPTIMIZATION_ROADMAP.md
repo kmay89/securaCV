@@ -571,8 +571,9 @@ Genuinely solid. Gaps:
   Widening it from the fingerprint would not have helped: the device publishes the fingerprint,
   so the key was computable by anyone who had seen it, at any length. It is now an HMAC
   of the device private key, `cv-` + 12 (~69 bits), from
-  [`common/network/ap_password.h`](common/network/ap_password.h), the same derivation as
-  canary-wap's. Every unit's key changes once, on update, and no marker keeps the old one.
+  [`common/network/ap_password.h`](common/network/ap_password.h): canary-wap's derivation,
+  except in the padding of a shortfall branch the header names (p ≈ 3e-10). Every unit's key
+  changes once, on update, and no marker keeps the old one.
   Host-tested (`tests_host/test_ap_password.cpp`), not run on a device. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
   an OpenAPI description of the REST surface, USB-MSC evidence-drive (the `usb-onboard` env already

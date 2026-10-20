@@ -61,9 +61,12 @@ static constexpr const char* INFO_PEER = "peer";
 /// HMAC-SHA256 that says whether it ran. On a failure (on the device,
 /// mbedtls_md_hmac() reports one when it cannot allocate its context) `out`
 /// is zeroed and the answer is false. A caller that turns the output into a
-/// secret must take this form and refuse on false: 32 zero bytes are the same
-/// on every unit, so a key rendered from them is one key for all of them
-/// (ap_password.h, sweep F350).
+/// secret, a tag or an id must take this form and refuse on false: 32 zero
+/// bytes are the same on every unit, so a key rendered from them is one key
+/// for all of them (ap_password.h, sweep F350), and a tag compared against
+/// them accepts a frame that carries zeros. Every caller in this header does.
+/// tests_host/test_ap_password_hmac_fail.cpp and test_fleet_key_hmac_fail.cpp
+/// fail both branches below.
 inline bool hmac_sha256_checked(const uint8_t* key, size_t klen, const uint8_t* msg, size_t mlen,
                                 uint8_t out[HASH_BYTES]) {
 #if defined(ARDUINO)
@@ -83,44 +86,60 @@ inline bool hmac_sha256_checked(const uint8_t* key, size_t klen, const uint8_t* 
 #endif
 }
 
-/// The unchecked form the HKDF and tag paths below have always called: the
-/// same HMAC, zeroed output on a failure, nothing reported.
+/// The unchecked form: the same HMAC, zeroed output on a failure, nothing
+/// reported. Only for a caller with nothing secret riding on the output (the
+/// RFC 4231 vectors in test_fleet_key.cpp); nothing in this header calls it.
 inline void hmac_sha256(const uint8_t* key, size_t klen, const uint8_t* msg, size_t mlen,
                         uint8_t out[HASH_BYTES]) {
   (void)hmac_sha256_checked(key, klen, msg, mlen, out);
 }
 
-/// RFC 5869 HKDF-SHA256 (extract + expand). `olen` ≤ 255 * 32.
+namespace detail {
+/// Zero `n` bytes through a volatile pointer, so the store survives DCE.
+inline void wipe(void* p, size_t n) {
+  volatile uint8_t* v = static_cast<volatile uint8_t*>(p);
+  for (size_t i = 0; i < n; i++) v[i] = 0;
+}
+}  // namespace detail
+
+/// RFC 5869 HKDF-SHA256 (extract + expand). `olen` ≤ 255 * 32. False, with
+/// `okm` wiped, when any of its HMACs fails: an all-zero key reported as
+/// derived would be the same key on every node, and anyone can tag frames
+/// under it.
 inline bool hkdf_sha256(const uint8_t* salt, size_t slen, const uint8_t* ikm, size_t ilen,
                         const uint8_t* info, size_t infolen, uint8_t* okm, size_t olen) {
   if (okm == nullptr || olen == 0 || olen > 255 * HASH_BYTES) return false;
+  if (infolen > 255) return false;
   uint8_t prk[HASH_BYTES];
   static const uint8_t kZeroSalt[HASH_BYTES] = {0};
-  hmac_sha256(slen ? salt : kZeroSalt, slen ? slen : HASH_BYTES, ikm, ilen, prk);
+  bool ran = hmac_sha256_checked(slen ? salt : kZeroSalt, slen ? slen : HASH_BYTES, ikm, ilen, prk);
   uint8_t t[HASH_BYTES] = {0};  // T(0) is empty: the first round copies tlen == 0 bytes of it
   size_t tlen = 0;
   size_t done = 0;
   uint8_t counter = 1;
   uint8_t buf[HASH_BYTES + 255 + 1];
-  while (done < olen) {
+  while (ran && done < olen) {
     size_t o = 0;
     memcpy(buf + o, t, tlen); o += tlen;
-    if (infolen > 255) return false;
     if (info && infolen) { memcpy(buf + o, info, infolen); o += infolen; }
     buf[o++] = counter++;
-    hmac_sha256(prk, HASH_BYTES, buf, o, t);
+    ran = hmac_sha256_checked(prk, HASH_BYTES, buf, o, t);
     tlen = HASH_BYTES;
     const size_t take = (olen - done < HASH_BYTES) ? olen - done : HASH_BYTES;
     memcpy(okm + done, t, take);
     done += take;
   }
-  return true;
+  detail::wipe(prk, sizeof(prk));
+  detail::wipe(t, sizeof(t));
+  detail::wipe(buf, sizeof(buf));
+  if (!ran) detail::wipe(okm, olen);
+  return ran;
 }
 
 /**
  * @brief The bootstrap key from the household Wi-Fi. False on an open network
- * (no secret to derive from) or a bad SSID — the caller logs and leaves the
- * peer protocol off.
+ * (no secret to derive from), a bad SSID or a failed HMAC (`out` is then
+ * wiped) — the caller logs and leaves the peer protocol off.
  */
 inline bool derive_from_wifi(const char* ssid, const char* pass, uint8_t out[KEY_BYTES]) {
   if (out == nullptr || ssid == nullptr || ssid[0] == '\0') return false;
@@ -136,10 +155,14 @@ inline bool derive_from_wifi(const char* ssid, const char* pass, uint8_t out[KEY
 }
 
 /// Truncated HMAC-SHA256 over `msg` — the tag every peer frame carries.
-inline void tag(const uint8_t key[KEY_BYTES], const uint8_t* msg, size_t n, uint8_t out[TAG_BYTES]) {
+/// False, with `out` zeroed, when the HMAC did not run: a zero tag is no tag,
+/// so peer::encode() sends nothing and peer::decode() answers BadTag rather
+/// than compare a frame's tag against it.
+inline bool tag(const uint8_t key[KEY_BYTES], const uint8_t* msg, size_t n, uint8_t out[TAG_BYTES]) {
   uint8_t full[HASH_BYTES];
-  hmac_sha256(key, KEY_BYTES, msg, n, full);
+  const bool ran = hmac_sha256_checked(key, KEY_BYTES, msg, n, full);
   memcpy(out, full, TAG_BYTES);
+  return ran;
 }
 
 /// Constant-time compare.
@@ -150,17 +173,22 @@ inline bool tag_equal(const uint8_t a[TAG_BYTES], const uint8_t b[TAG_BYTES]) {
 }
 
 /// A short public id for logs and status — eight hex chars of SHA-256-HMAC
-/// of the key under a fixed label, never the key itself.
-inline void key_id_hex(const uint8_t key[KEY_BYTES], char out[9]) {
+/// of the key under a fixed label, never the key itself. False, with `out`
+/// set to "", when the HMAC did not run, rather than the id of a zero hash.
+inline bool key_id_hex(const uint8_t key[KEY_BYTES], char out[9]) {
   static const char kLabel[] = "securacv:fleet-key:id";
   uint8_t h[HASH_BYTES];
-  hmac_sha256(key, KEY_BYTES, (const uint8_t*)kLabel, sizeof(kLabel) - 1, h);
+  if (!hmac_sha256_checked(key, KEY_BYTES, (const uint8_t*)kLabel, sizeof(kLabel) - 1, h)) {
+    out[0] = '\0';
+    return false;
+  }
   static const char* hex = "0123456789abcdef";
   for (int i = 0; i < 4; i++) {
     out[2 * i] = hex[h[i] >> 4];
     out[2 * i + 1] = hex[h[i] & 0xf];
   }
   out[8] = '\0';
+  return true;
 }
 
 }  // namespace fleet_key

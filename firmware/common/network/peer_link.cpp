@@ -174,7 +174,13 @@ bool arm(const char* ssid, const char* pass) {
     how = "the household Wi-Fi";
   }
   if (!have) {
-    if (!s_warned_open) {
+    if (pass != nullptr && pass[0] != '\0') {
+      // A network with a password and still no key: a name or password
+      // derive_from_wifi() cannot take, or an HMAC that failed. Said on every
+      // join it happens on; the next join tries again.
+      Serial.println("[PEER] No fleet key: none could be derived from this network and the hub has "
+                     "handed none - the peer protocol stays OFF until the next join.");
+    } else if (!s_warned_open) {
       s_warned_open = true;
       Serial.println("[PEER] No fleet key: this network has no password and the hub has handed none - "
                      "the peer protocol stays OFF rather than running unauthenticated.");

@@ -1887,12 +1887,37 @@ so — see D2 below.)
   an allocation failure inside `mbedtls_md_hmac`), and 32 zero bytes render
   as `cv-222222222222` on every unit, so the derivation takes the new
   `fleet_key::hmac_sha256_checked`, refuses with `false` and an empty key,
-  is `[[nodiscard]]`, and `setup()` halts on the refusal as it does on a
-  provisioning failure (an empty key would reach `WiFi.softAP()`, which
-  raises an open network). `firmware/tests_host/test_ap_password_hmac_fail.cpp`
-  defines a failing `HMAC()` and holds the refusal; on a derivation that
-  ignores the failure it fails 72 checks. No host suite compiles the halt in
-  `main.cpp`. No marker keeps the old key: anyone who has seen the
+  and `setup()` halts on the refusal as it does on a provisioning failure (an
+  empty key would reach `WiFi.softAP()`, which raises an open network). Its
+  `[[nodiscard]]` makes a discarded result a compiler warning, not an error:
+  the flagship builds without `-Werror`.
+  `firmware/tests_host/test_ap_password_hmac_fail.cpp` holds the refusal over
+  a failing primitive (`tests_host/hmac_fail_seam.h`) and is built twice:
+  over `fleet_key.h`'s OpenSSL branch, and with `-DARDUINO` over a stub
+  `mbedtls/md.h` (`tests_host/stubs/mbedtls_md`, mbedTLS 2.28's declarations)
+  over its mbedTLS branch, the one the device ships, failing it with
+  `MBEDTLS_ERR_MD_ALLOC_FAILED` and with no SHA-256 info. (The review's
+  first cut failed OpenSSL's `HMAC()` only, so an inverted or disabled
+  device-branch refusal passed every host suite.) On a derivation that
+  ignores the failure each build fails 72 checks; the mbedTLS build also
+  fails an inverted, disabled or unzeroed device-branch refusal and an
+  inverted success, and over the working primitive derives the known answer.
+  No host suite compiles the halt in `main.cpp`, its argument or its result
+  check. The same header's other secrets had the same fault, and take the
+  checked form now too (nothing in `fleet_key.h` calls the unchecked one):
+  `hkdf_sha256` ignored both HMAC results, so `derive_from_wifi` handed
+  `peer_link` an all-zero fleet key as a success, kept until the next join,
+  and `tag()` wrote a zero tag that `peer::decode()` compared a frame's tag
+  against, so a frame carrying sixteen zero bytes was accepted with no key.
+  The HKDF now refuses and wipes its output when its extract or any expand
+  round fails, `tag()` returns `false`, `peer::encode()` sends nothing,
+  `peer::decode()` answers `BadTag`, and `key_id_hex` returns `false` with
+  `""` rather than the id of a zero hash; `peer_link`'s refusal line no
+  longer calls such a network open. These run on Sense, Vision and Sentinel,
+  not on the flagship. `firmware/tests_host/test_fleet_key_hmac_fail.cpp`,
+  built the same two ways, holds each; on the old header it does not compile
+  (`tag()` and `key_id_hex` returned nothing), and with those three checks
+  dropped it fails 20 checks in each build. No marker keeps the old key: anyone who has seen the
   fingerprint can compute it, so every unit in the field moves. The owner's
   setup-network key changes once, on update; the SSID does not. A recovery
   kit, saved phone network or printed card from before the update holds a
@@ -1913,16 +1938,37 @@ so — see D2 below.)
   keypair), which the sketch does not do:
   the generator now reads the gestures from the sketch's BOOT handler and
   `onboarding_fsm.h` and pins the new section, `wap.json` is regenerated, and
-  `wap.test.js` holds the gestures to the sketch. `THREAT_MODEL.md`,
+  `wap.test.js` holds the gestures to the sketch. The same page's serial
+  replay still said `Hold  BOOT (>3s) = factory reset`, a ready-banner line
+  `gen_wap.py` typed by hand: the banner's closing lines are now the
+  sketch's own `boot_line()` text, pinned and held to the BOOT handler's and
+  `onboarding_fsm.h`'s timings, and `wap.test.js` fails on the old replay.
+  `THREAT_MODEL.md`,
   `SECURITY_MODEL.md`, `getting_started_canary.md`, `FAQ.md`,
   `FIRMWARE_MAP.md`, `FEATURES.md`, `LESSONS_LEARNED.md`, the roadmap and
-  the `ScvNetworkManager::begin()` comment are corrected. Not changed here:
+  the `ScvNetworkManager::begin()` comment and the sketch's "DEVICE-UNIQUE
+  AP PASSWORD" banner comment are corrected. Not changed here:
   canary-wap's own `hmac_sha256()` (`canary_wap.ino`) discards mbedTLS's
   return codes, so an allocation failure there leaves its output as stack
   bytes, under the AP key and the API token alike; the sketch is this
-  item's parity reference and its fix is a WAP change. F338 later pins the
-  mint statement in `setup()`. Host-tested; the PlatformIO compile is CI's;
-  not run on a device (U1).
+  item's parity reference and its fix is a WAP change. Nor the flagship's
+  `nvs_load_key()` (`securacv_crypto.cpp`): it checks the stored private
+  key's length and then discards `getBytes()`' result, and the Arduino
+  core's `Preferences::getBytes()` leaves the buffer untouched when the read
+  fails, so an NVS error between those two reads would leave the zeroed
+  `DeviceIdentity` key in use. Its setup-network key is then the published
+  known answer `cv-3jByJ6rHdhM2`, and its token and Ed25519 identity come
+  from the same zero key. The fix is to require 32 bytes from `getBytes()`
+  and refuse an all-zero key, so `witness_provision_device()` halts; it is
+  recorded here, not made. F338 later pins the mint in `setup()`, and its
+  pin must hold the whole statement as it now reads, `if
+  (!canary::net::derive_ap_password(device.privkey, g_ap_password,
+  sizeof(g_ap_password))) { ... HALTING ...; while (true) { ... } }`: F338's
+  decision quotes the call as a bare statement ending in `;`, which
+  `main.cpp` no longer has, and a pin on the argument alone would pass a
+  deleted call, a discarded result or a dropped halt loop (no host suite or
+  guard reads that statement today, nor which 32-byte key it passes).
+  Host-tested; the PlatformIO compile is CI's; not run on a device (U1).
 
 ### Parity & sub-projects
 

@@ -461,14 +461,26 @@
   failure. `fleet_key::hmac_sha256` zeroes its output and says nothing, and
   32 zero bytes render as `cv-222222222222` on every unit: the review of
   F350's first cut found the derivation returning that as a success. It now
-  takes `hmac_sha256_checked`, refuses on false, is `[[nodiscard]]`, and
-  `setup()` halts rather than raise the network on an empty key (the Arduino
-  core raises an open network on one) or a constant one.
+  takes `hmac_sha256_checked` and refuses on false, and `setup()` halts
+  rather than raise the network on an empty key (the Arduino core raises an
+  open network on one) or a constant one. The second review found the same
+  header's HKDF reporting an all-zero fleet key as derived and its peer frame
+  tag letting a zero-tag frame through; both take the checked form now, and
+  nothing in `fleet_key.h` calls the unchecked one. `[[nodiscard]]` on the
+  derivation is a compiler warning on the device (the flagship builds
+  without `-Werror`), not a guard.
+- **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
+  device and OpenSSL on the host, and the first failure suite failed only
+  OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
+  with every host suite green and every CI compile clean. Build the failure
+  suite over the device branch too, against a stub of the library's header.
 - **Regression check:** `firmware/tests_host/test_ap_password.cpp`
   static_asserts that `DeviceIdentity::pubkey_fp` does not bind and the
   private key does, and holds the flagship's derivation equal to the WAP's;
-  `test_ap_password_hmac_fail.cpp` defines a failing `HMAC()` and holds the
-  refusal.
+  `test_ap_password_hmac_fail.cpp` and `test_fleet_key_hmac_fail.cpp` run
+  over a failing primitive (`tests_host/hmac_fail_seam.h`), each built over
+  the OpenSSL branch and, with `-DARDUINO` over `tests_host/stubs/mbedtls_md`,
+  over the mbedTLS one.
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only

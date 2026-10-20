@@ -444,7 +444,9 @@
       "    Dashboard   http://192.168.4.1",
       "",
       "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
-      "    Hold  BOOT (>3s)   = factory reset",
+      "    Token + WiFi credentials are printed above on every boot",
+      "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",
+      "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
       "    ------------------------------------------------"
     ],
     "join_line": "[OK] Setup complete \u2014 WiFi connected; rebooting after the provisioning grace window...",

@@ -1350,10 +1350,11 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   ].join("\n");
   const r = buildDiagnosticReport({ logTail: tail });
   assert.ok(!r.includes("cv-supersecret1"), "no credential survives into the report");
-  // Every setup surface also prints its key inside a Wi-Fi QR payload each
-  // time the setup network comes up (onboarding_fsm.h qr_line, from the
-  // flagship's announce_setup_network on every raiseAp too), and on the
-  // flagship that key is the whole boundary for the page token (sweep F350).
+  // Every setup surface also prints its key inside a Wi-Fi QR payload when
+  // its setup network comes up (onboarding_fsm.h qr_line: the WAP once, at
+  // boot; the flagship's announce_setup_network again on every raiseAp), and
+  // on the flagship that key is the whole boundary for the page token (sweep
+  // F350).
   // No other pattern above matches it: these are the lines a boot prints.
   const qrTail = [
     "[WIFI] Connection lost, raising AP",

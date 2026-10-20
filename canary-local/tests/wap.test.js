@@ -601,6 +601,18 @@ test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings
   assert.ok(!rec.password.some((st) => /press boot/i.test(st)), "no BOOT press prints the key");
   assert.ok(rec.factory.includes(`Hold BOOT ${resetMs / 1000} s`) && /identity is kept/.test(rec.factory) &&
     /No BOOT hold wipes/.test(rec.factory), "factory text: " + rec.factory);
+  // The serial replay on the same page says the same: the ready banner's BOOT
+  // lines are the sketch's own boot_line() text, and none calls the 3 s
+  // warning a reset (the replay once said "Hold  BOOT (>3s) = factory reset").
+  const readyBoot = data.serial.ready.filter((l) => /\bBOOT\b/.test(l));
+  assert.ok(readyBoot.length >= 2, "the ready banner names the BOOT gestures: " + readyBoot);
+  for (const l of readyBoot) {
+    assert.ok(ino.includes(`boot_line("${l}");`), `ready banner line is not the sketch's: ${l}`);
+  }
+  assert.ok(!data.serial.ready.some((l) => l.includes(`>${longMs / 1000}s`)),
+    `the serial replay calls the ${longMs / 1000} s warning a reset`);
+  assert.ok(readyBoot.some((l) => l.includes(`Hold BOOT ${resetMs / 1000}s`) && /factory reset/.test(l) &&
+    /identity kept/.test(l)), "the replay's factory reset is the " + resetMs / 1000 + " s hold that keeps the identity");
   // the download ritual ends in the mask ROM's real strap line (bench.js prints it)
   assert.ok(benchJs.includes("DOWNLOAD(USB/UART0)"));
   assert.ok(f.download_mode.rom_line.includes("DOWNLOAD(USB/UART0)"));

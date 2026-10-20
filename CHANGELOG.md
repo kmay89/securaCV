@@ -28,14 +28,35 @@
   unit.** `fleet_key.h`'s HMAC zeroes its output when it fails (on the device,
   an allocation failure inside `mbedtls_md_hmac`), and 32 zero bytes render as
   `cv-222222222222` on every unit. The derivation takes a new
-  `fleet_key::hmac_sha256_checked` and refuses (`false`, an empty key), its
-  result is `[[nodiscard]]`, and the flagship's `setup()` halts on a refusal,
-  as it does on a provisioning failure, rather than raise the setup network
-  on an empty key (which the Arduino core raises as an open network) or a
-  constant one. **Host-tested** (new `tests_host/test_ap_password_hmac_fail.cpp`
-  defines a failing `HMAC()`; on a derivation that ignores the failure both
-  test keys come out `cv-222222222222` and it fails 72 checks); the halt is in
-  `main.cpp`, which no host suite compiles; not run on a device.
+  `fleet_key::hmac_sha256_checked` and refuses (`false`, an empty key), and
+  the flagship's `setup()` halts on a refusal, as it does on a provisioning
+  failure, rather than raise the setup network on an empty key (which the
+  Arduino core raises as an open network) or a constant one. The result is
+  `[[nodiscard]]`, which on the device is a compiler warning, not an error
+  (the flagship builds without `-Werror`). **Host-tested on both of
+  `fleet_key.h`'s branches** (new `tests_host/test_ap_password_hmac_fail.cpp`
+  over a failing primitive, `tests_host/hmac_fail_seam.h`, built once over
+  the OpenSSL branch and once with `-DARDUINO` over a stub `mbedtls/md.h`
+  for the mbedTLS branch the device ships; on a derivation that ignores the
+  failure both test keys come out `cv-222222222222` and each build fails 72
+  checks, and the mbedTLS build also fails an inverted, disabled or unzeroed
+  device-branch refusal); the halt is in `main.cpp`, which no host suite
+  compiles; not run on a device.
+- **The peer protocol's fleet key and frame tag refuse a failed HMAC too
+  (Sense, Vision, Sentinel).** The same `fleet_key.h` derived the household
+  fleet key through an HKDF that ignored its HMAC results, so a failed HMAC
+  gave an all-zero fleet key reported as derived, kept until the next join,
+  and checked each peer frame against a tag that a failed HMAC left as
+  zeros, so a frame carrying sixteen zero bytes was accepted with no key.
+  The HKDF now refuses and wipes its output, a frame is neither sent under
+  nor accepted against a tag the HMAC could not compute (`BadTag`), and the
+  key id reads `""` instead of the id of a zero hash; nothing in the header
+  calls the unchecked HMAC now. **Host-tested** (new
+  `tests_host/test_fleet_key_hmac_fail.cpp`, built the same two ways: on the
+  old header it does not compile, and with its three return-value checks
+  dropped it fails 20 checks in each build); CI compiles the three
+  PlatformIO trees (`canary-sense-default` was also built with PlatformIO
+  for this change); not run on a device.
 - **Both flashers' diagnostic report drops the setup network's QR line.**
   Every setup surface prints its key a second time inside a Wi-Fi QR payload
   (`[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;`), the flagship on every home-link
@@ -68,12 +89,17 @@
   BOOT handler and `onboarding_fsm.h`, pins the rewritten recovery section of
   `getting_started_canary.md` (whose old sentences it had pinned), and
   `wap.json` is regenerated; `wap.test.js` holds the gestures to the sketch.
+  The page's serial replay said the same wrong thing in its ready banner
+  (`Hold  BOOT (>3s) = factory reset`, a line the generator typed by hand);
+  those lines are now the sketch's own `boot_line()` text, pinned, with their
+  timings held to the BOOT handler, and `wap.test.js` fails on the old one.
 - `THREAT_MODEL.md` Scenario 2 and its SoftAP row, `SECURITY_MODEL.md`'s
   access-point paragraph, `getting_started_canary.md` (the key's length, where
   each tree prints the current one, what a BOOT-hold reset keeps on each, and
   the Forget step), `FAQ.md`'s "Unable to join" entry, `FIRMWARE_MAP.md`,
-  `FEATURES.md`, `LESSONS_LEARNED.md`, the roadmap and the
-  `ScvNetworkManager::begin()` comment now say what the code does.
+  `FEATURES.md`, `LESSONS_LEARNED.md`, the roadmap, the
+  `ScvNetworkManager::begin()` comment and the WAP sketch's "DEVICE-UNIQUE AP
+  PASSWORD" banner comment now say what the code does.
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
