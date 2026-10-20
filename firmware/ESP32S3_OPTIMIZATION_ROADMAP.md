@@ -423,7 +423,8 @@ Untapped / issues:
   closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
-  marker first. The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
+  marker first. *(Update 2026-10-19, sweep F350: widened with no marker; see the AP password
+  item in §3.8.)* The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
   job) matches no source today; it stays as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
@@ -565,8 +566,15 @@ Genuinely solid. Gaps:
   tap (one tap = one page load or one receipt fetch, 30 s;
   [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
   home-LAN load gets the page without it. CI-compiled (#1704), no bench pass.
-- **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
-  to 10–12 chars from the same fingerprint for headroom. **[P2]**
+- **(fixed 2026-10-19, sweep F350)** ~~**AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2
+  floor — ~28.7 bits of entropy. Widen to 10–12 chars from the same fingerprint for headroom.~~
+  Widening it from the fingerprint would not have helped: the device publishes the fingerprint,
+  so the key was computable by anyone who had seen it, at any length. It is now an HMAC
+  of the device private key, `cv-` + 12 (~69 bits), from
+  [`common/network/ap_password.h`](common/network/ap_password.h): canary-wap's derivation,
+  except in the padding of a shortfall branch the header names (p ≈ 3e-10). Every unit's key
+  changes once, on update, and no marker keeps the old one.
+  Host-tested (`tests_host/test_ap_password.cpp`), not run on a device. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
   an OpenAPI description of the REST surface, USB-MSC evidence-drive (the `usb-onboard` env already
   proves the TinyUSB composite path). **[P2]**

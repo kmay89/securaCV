@@ -21,10 +21,10 @@
 //   * STA: PMF capable, not required — only written when the driver does not
 //     already say capable, so a live association is not needlessly restarted.
 //
-// NOT decided here (a separate maintainer decision): the canary (PIO) AP
-// passphrase is 8 characters ("cv-" + 5), derived from the key fingerprint on
-// every boot. Widening it silently changes the Wi-Fi password of every
-// provisioned device after an OTA; it needs a derivation-version marker first.
+// NOT decided here: the passphrase itself. Both trees' is "cv-" + 12
+// characters (15), an HMAC of the device private key (common/network/
+// ap_password.h on the canary (PIO) since sweep F350, canary_wap.ino's
+// derive_ap_password on the WAP), so it clears the 8-character floor below.
 #pragma once
 
 #include <stddef.h>

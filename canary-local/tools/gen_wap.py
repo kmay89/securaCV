@@ -83,6 +83,12 @@ def must(path: Path, needle: str, label: str) -> None:
         die(f"{label}: expected to find {needle!r} in {path.relative_to(REPO)} — firmware changed?")
 
 
+def must_words(path: Path, needle: str, label: str) -> None:
+    """Assert a sentence still exists in a prose file, however it is wrapped."""
+    if " ".join(needle.split()) not in " ".join(read(path).split()):
+        die(f"{label}: expected to find {needle!r} in {path.relative_to(REPO)} — doc changed?")
+
+
 def must_any(paths, needle: str, label: str) -> None:
     """Assert a literal exists in at least one of several source files."""
     if not any(needle in read(p) for p in paths):
@@ -468,6 +474,23 @@ for step in BOOT:
         must_any([INO, CSI_MQTT_CPP, BOOT_BANNER_CPP], src, f"boot log {src!r}")
         del step["src"]
 
+# The ready banner's closing lines, each the literal the sketch prints with
+# boot_line() (pinned, so a sketch edit fails here instead of the page going on
+# saying the old thing). The BOOT lines are the sketch's own summary of its
+# BOOT handler, which section 9 reads for the gestures card: a short press
+# opens the receipt gate, the 2-3 s hold prints the identity block, and the
+# factory reset is the 10 s hold that keeps the identity. (This scene once
+# said a >3 s hold was the factory reset; 3 s is only the "keep holding"
+# warning.)
+READY_TAIL = [
+    "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
+    "    Token + WiFi credentials are printed above on every boot",
+    "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",
+    "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
+]
+for line in READY_TAIL:
+    must(INO, f'boot_line("{line}");', "ready banner line")
+
 # The "ready" scene (device block) + the join-time line.
 READY = [
     "    ================================================",
@@ -490,8 +513,7 @@ READY = [
     f"    Password    {EX_PASS}",
     "    Dashboard   http://192.168.4.1",
     "",
-    "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
-    "    Hold  BOOT (>3s)   = factory reset",
+] + READY_TAIL + [
     "    ------------------------------------------------",
 ]
 must(INO, "[OK] Setup complete — WiFi connected; rebooting after the provisioning grace window...", "setup-complete line")
@@ -1128,10 +1150,55 @@ must(FW_README, "Hold BOOT button while connecting", "download-mode troubleshoot
 
 # ---- the two little buttons (constants from the .ino; rituals validated) --
 BOOT_GPIO = int(grab(INO, r"BOOT_BUTTON_GPIO\s*=\s*(\d+)", "BOOT_BUTTON_GPIO"))
+BOOT_HOLD_MS = int(grab(INO, r"BOOT_BUTTON_HOLD_MS\s*=\s*(\d+)", "BOOT_BUTTON_HOLD_MS"))
 BOOT_LONG_MS = int(grab(INO, r"BOOT_LONG_PRESS_MS\s*=\s*(\d+)", "BOOT_LONG_PRESS_MS"))
+GATE_TTL_MS = int(grab(INO, r"PROVISIONING_GATE_TTL_MS\s*=\s*(\d+)", "PROVISIONING_GATE_TTL_MS"))
 must(INO, "Press the BOOT button on the device to reveal the provisioning receipt.", "BOOT receipt hint")
-must(DOC, "Press the **BOOT** button on the device for ~1 second", "docs password recovery")
-must(DOC, "press and hold for **5 seconds** during power-up", "docs factory recovery")
+# What each gesture does, read from the loop's own handler: a short press opens
+# the provisioning gate (it prints no key), the medium hold prints the identity
+# block, BOOT_LONG_PRESS_MS is only the "keep holding" warning, and the factory
+# reset is the fleet's hold (onboarding_fsm.h Timing, stepped by reset_hold.h;
+# the sketch static_asserts the two equal). It keeps the identity, so the setup
+# network's name and key survive it, and the sketch arms no wipe stage.
+must(INO, "Short press: open provisioning gate", "BOOT short press opens the gate")
+must(INO, "Medium hold: print device info", "BOOT medium hold prints the identity")
+must(INO, "static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,",
+     "BOOT_LONG_PRESS_MS is the reset hold's warning, not the reset")
+must(INO, "canary::io::ResetHold{}.reset_ms == canary::net::onboard::Timing{}.factory_reset_hold_ms",
+     "the reset hold is the fleet's Timing")
+RESET_HOLD_MS = int(grab(ONBOARDING_FSM_H, r"factory_reset_hold_ms\s*=\s*(\d+);", "Timing.factory_reset_hold_ms"))
+# The ready banner states the same timings in its own words (READY_TAIL, pinned
+# to the sketch's boot_line() literals in section 5): hold it to these numbers,
+# so a banner that drifts from the handler fails here rather than on the page.
+for want, label in ((f"Press BOOT (<{BOOT_HOLD_MS // 1000}s)", "the short press"),
+                    (f"hold {BOOT_HOLD_MS // 1000}-{BOOT_LONG_MS // 1000}s = print identity", "the identity hold"),
+                    (f"receipt gate open {GATE_TTL_MS // 1000}s", "the gate's window"),
+                    (f"Hold BOOT {RESET_HOLD_MS // 1000}s      = factory reset", "the factory reset")):
+    if not any(want in line for line in READY_TAIL):
+        die(f"ready banner: {label} should read {want!r} (BOOT handler, onboarding_fsm.h) — "
+            f"canary_wap.ino's boot_line() text drifted from its timings")
+must(INO, "factory reset (credentials + settings, identity kept)", "the reset keeps the identity")
+if "wipe_ms" in read(INO):
+    die("canary_wap.ino arms a reset_hold.h wipe stage now: the recovery text below says it has none")
+# Where the setup network's name and key print on serial: the ready banner, the
+# AP-started line, and the `w` command.
+must(INO, 'boot_kv("WiFi AP",', "ready banner names the setup network")
+must(INO, 'boot_kv("Password",', "ready banner prints its key")
+must(INO, '"[WIFI] AP started: %s (password: %s)\\n"', "AP-started line prints the key")
+grab(INO, r"case 'w':\s*Serial\.printf\(\"WiFi AP: %s\\n\", g_device\.ap_ssid\);\s*"
+          r"Serial\.printf\(\"(Password): %s\\n\", g_device\.ap_password\);",
+     "serial w prints the setup network and its key")
+# docs/getting_started_canary.md §Recovering the password says the same, for a WAP.
+must_words(DOC, "The ready banner prints the setup network's name (`WiFi AP`) and its key (`Password`).",
+           "docs: the banner shows the key")
+must_words(DOC, "A WAP repeats them in its `[WIFI] AP started` line at boot, and its serial command `w` "
+                "prints both at any time.", "docs: the WAP's AP-started line and w command")
+must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate, which lets the "
+                f"dashboard hand over the recovery kit for {GATE_TTL_MS // 1000} seconds.",
+           "docs: a short press opens the gate")
+must_words(DOC, f"Held for {RESET_HOLD_MS // 1000} seconds, BOOT resets Wi-Fi and settings and keeps "
+                "the device's keypair", "docs: the reset keeps the keypair")
+must_words(DOC, "A WAP has no such stage, and no BOOT hold changes its key.", "docs: no wipe on a WAP")
 # the ROM's own download-mode strings, exactly as the bench emulator prints them
 must(BENCH_JS, "DOWNLOAD(USB/UART0)", "ROM download strap line")
 must(BENCH_JS, "waiting for download", "ROM waiting line")
@@ -1145,8 +1212,13 @@ FLASH = {
         {"id": "boot", "label": "BOOT", "gpio": BOOT_GPIO,
          "what": f"GPIO{BOOT_GPIO}, a strapping pin — the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
          "gestures": [
-             "short press (~1 s): prints the provisioning receipt — AP SSID + password — on serial",
-             f"hold >{BOOT_LONG_MS // 1000} s: factory reset (docs: hold 5 s during power-up if the device is unresponsive — new keypair, fresh credentials)",
+             f"short press (under {BOOT_HOLD_MS // 1000} s): opens the provisioning gate for "
+             f"{GATE_TTL_MS // 1000} s, so the dashboard can hand over the recovery kit (it prints no key)",
+             f"hold {BOOT_HOLD_MS // 1000}–{BOOT_LONG_MS // 1000} s: prints the identity block "
+             "(device ID, fingerprint, firmware) on serial",
+             f"hold {RESET_HOLD_MS // 1000} s: factory reset — Wi-Fi, broker and name are cleared, the identity "
+             f"is kept, so the setup network's name and key do not change (\"keep holding\" at "
+             f"{BOOT_LONG_MS // 1000} s; released before {RESET_HOLD_MS // 1000} s, nothing is reset)",
              "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher",
          ]},
         {"id": "reset", "label": "RESET",
@@ -1179,14 +1251,17 @@ FLASH = {
         "password": [
             "Plug the Canary into a computer with a USB-C cable",
             "Open a serial terminal at 115 200 baud on the new USB-CDC port",
-            "Press BOOT for ~1 second — the terminal prints the AP SSID and password",
+            "Restart it (RESET, or unplug it and plug it back in): the ready banner prints the setup "
+            "network's name (WiFi AP) and key (Password), and the boot's [WIFI] AP started line repeats them",
+            "Or type w in the terminal: it prints both at any time, without a restart",
         ],
-        "factory": f"Hold BOOT >{BOOT_LONG_MS // 1000} s while running — or 5 s during power-up — for a factory reset: "
-                   "fresh keypair, new credentials printed on serial",
+        "factory": f"Hold BOOT {RESET_HOLD_MS // 1000} s for a factory reset: Wi-Fi, broker and name are cleared "
+                   "and the identity is kept, so the setup network's name and key stay the same. No BOOT hold "
+                   "wipes a WAP's keypair.",
     },
     "sources": {
         "build_paths": "firmware/projects/canary-wap/README.md §Choose Your Build Path + §Troubleshooting",
-        "buttons": "canary_wap.ino BOOT_BUTTON_* constants",
+        "buttons": "canary_wap.ino BOOT_* constants and its loop()'s BOOT handler, onboarding_fsm.h Timing",
         "recovery": "docs/getting_started_canary.md §Recovering the password",
     },
 }

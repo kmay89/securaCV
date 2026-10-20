@@ -2,7 +2,8 @@
  * birth-stamp glue (cut out by cut_functions.awk) under test_chain_persist.cpp:
  * a Serial that keeps its last line and counts them, and a millis() the test
  * sets. securacv_witness.h includes <Arduino.h> for these and nothing else
- * the cut functions use. */
+ * the cut functions use. test_ap_password.cpp includes securacv_witness.h
+ * over it too, for the real DeviceIdentity's field types. */
 #ifndef STUB_WITNESS_GLUE_ARDUINO_H
 #define STUB_WITNESS_GLUE_ARDUINO_H
 

@@ -367,6 +367,9 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
     assert.match(src, /TAIL_REDACT[\s\S]{0,300}token/,
       `${name} scrub no longer covers token lines — the WAP prints "[PROV] API TOKEN : …" ` +
       "and quick-connect token JSON to serial (review on #1551)");
+    assert.match(src, /TAIL_REDACT[\s\S]{0,800}WIFI:/,
+      `${name} scrub no longer covers the "[SETUP] QR WIFI:…;P:<key>;;" line every setup ` +
+      "network prints, which carries the flagship's SoftAP key (sweep F350 review)");
     assert.match(src, /function macTail|export function macTail/,
       `${name} lost the MAC truncation`);
     assert.match(src, /add\("MAC tail", macTail\(info\.mac\)/,
@@ -376,6 +379,16 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
     assert.ok(!/add\("MAC", info\.mac\)/.test(src),
       `${name} report prints the full MAC again — a stable identifier in a pastebin`);
   }
+  // ...and the two lists are the same list: a pattern added to one frontend
+  // and not the other leaves half the users pasting the line it covers.
+  const redactList = (src) => {
+    const m = src.match(/const TAIL_REDACT = \[\n([\s\S]*?)\n\];/);
+    assert.ok(m, "TAIL_REDACT array not found");
+    return m[1].split("\n").map((ln) => ln.trim()).filter(Boolean)
+      .map((ln) => ln.match(/^(\/.+?\/[a-z]*),/)?.[1] ?? `<not a pattern: ${ln}>`);
+  };
+  assert.deepStrictEqual(redactList(appJs), redactList(flashCore),
+    "desktop app.js and browser flash-core.js scrub different serial lines");
 });
 
 test("parity wave 2: the board passport, the install verdict, and 'we've met this board'", () => {

@@ -119,9 +119,10 @@ public:
   //   device wizard to distinguish individual Canaries during browse.
   //   When null, the TXT record falls back to the mDNS hostname.
   // ap_password is REQUIRED — there is no compile-time default. Pass the
-  // device-unique credential (main.cpp derives it from the pubkey
-  // fingerprint); a shared fallback was removed so a forgotten password is
-  // a compile error rather than a known-password AP.
+  // device-unique credential (main.cpp derives it from the device private
+  // key, common/network/ap_password.h, and halts the boot when it cannot); a
+  // shared fallback was removed so a forgotten password is a compile error
+  // rather than a known-password AP.
   bool begin(const char* ap_ssid,
              const char* ap_password,
              const char* device_id = nullptr);

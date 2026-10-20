@@ -44,6 +44,7 @@ common/
 ├── mqtt/           # mqtt_offline_queue.h — the MQTT offline publish queue (pure logic)
 ├── network/        # Network modules
 │   ├── ap_security_policy.h     # what security the SoftAP and STA link ask the Wi-Fi driver for (F16; host-tested)
+│   ├── ap_password.h            # the SoftAP key: an HMAC of the device private key, `cv-` + 12, never from anything the device publishes, refused (false, "") when the HMAC fails; the canary (PIO) calls it, held equal to the WAP's own (F350; host-tested)
 │   ├── host_guard.h             # does the Host a request targeted name THIS device (the LAN pages' write guard)
 │   ├── tls_policy.h             # the canary's self-signed HTTPS decisions (F15; host-tested)
 │   ├── provision_core.h
