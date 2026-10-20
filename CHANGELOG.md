@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350)
+### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350, #1837)
 
 - **The `firmware/canary` flagship's SoftAP key is an HMAC of the device
   private key (sweep F350).** It had been `cv-` plus 5 characters of the

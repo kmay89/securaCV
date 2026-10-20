@@ -453,7 +453,7 @@
 - **Fix:** Both trees derive the key as an HMAC of the device private key
   under its own domain label (`securacv:ap-password:v1`), `cv-` + 12
   characters; the flagship's comes from `common/network/ap_password.h`.
-- **Rule:** A function that takes key material takes `const uint8_t (&)[32]`,
+- **Rule:** A function that takes a fixed-size private key takes `const uint8_t (&)[32]`,
   not a pointer, so a shorter published value (the 8-byte fingerprint)
   cannot be handed to it. A pointer parameter takes it without a word and
   reads 24 bytes past it.

@@ -791,7 +791,7 @@ recovery kit saved from the dashboard carries the key as `ap_password`
 (on the all-rounder Canary, **Settings → Save recovery kit**; on a WAP,
 the *Save your recovery kit* card after a BOOT-tap sign-in).
 
-A factory reset from the BOOT button keeps the key. Held for 10 seconds,
+The 10-second BOOT reset keeps the key. Held for 10 seconds,
 BOOT resets Wi-Fi and settings and keeps the device's keypair, and the
 key is made from that keypair. Only the all-rounder Canary has a longer
 stage: held to 30 seconds it wipes the keypair too, so the setup

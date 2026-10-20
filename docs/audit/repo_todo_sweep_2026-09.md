@@ -1865,7 +1865,7 @@ so — see D2 below.)
   `THREAT_MODEL.md` Scenario 2 stated that premise and marked it PASS.
   canary-wap fixed the same class earlier (`canary_wap.ino`
   `derive_ap_password`). Found while deciding F338.
-  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  *Done (#1837; decided 2026-10-19 under the maintainer's instruction to fix
   the remaining open items in best engineering practice and best value for
   the user and security):* the key is now HMAC-SHA256 of the device private
   key under `securacv:ap-password:v1`, 12 characters of the unambiguous
@@ -1959,16 +1959,37 @@ so — see D2 below.)
   `DeviceIdentity` key in use. Its setup-network key is then the published
   known answer `cv-3jByJ6rHdhM2`, and its token and Ed25519 identity come
   from the same zero key. The fix is to require 32 bytes from `getBytes()`
-  and refuse an all-zero key, so `witness_provision_device()` halts; it is
-  recorded here, not made. F338 later pins the mint in `setup()`, and its
+  and refuse an all-zero key, so `witness_provision_device()` halts. Both
+  are filed below, as F359 and F360. F338 later pins the mint in `setup()`, and its
   pin must hold the whole statement as it now reads, `if
   (!canary::net::derive_ap_password(device.privkey, g_ap_password,
   sizeof(g_ap_password))) { ... HALTING ...; while (true) { ... } }`: F338's
-  decision quotes the call as a bare statement ending in `;`, which
-  `main.cpp` no longer has, and a pin on the argument alone would pass a
+  plan, as first written, quoted the call as a bare statement ending in
+  `;`, which `main.cpp` no longer has, and a pin on the argument alone would pass a
   deleted call, a discarded result or a dropped halt loop (no host suite or
   guard reads that statement today, nor which 32-byte key it passes).
   Host-tested; the PlatformIO compile is CI's; not run on a device (U1).
+- [ ] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
+  codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
+  `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of
+  them, so a failure there (an allocation failure inside mbedTLS) leaves its
+  output as whatever the stack held. The SoftAP key (`derive_ap_password()`)
+  and the API token are both minted through it, so a failed HMAC gives a
+  key and a token nobody chose and the device cannot reproduce. The fix:
+  `hmac_sha256()` returns whether it ran, its output is zeroed on a failure,
+  and every caller fails closed (provisioning refuses, so a release build
+  starts no server), with a host test over a failing HMAC seam like
+  `firmware/tests_host/hmac_fail_seam.h`. Found by F350's review (#1837).
+- [ ] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
+  result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
+  private key's length, then reads it with `Preferences::getBytes()` and
+  ignores the count it returns; the Arduino core leaves the buffer untouched
+  when the read fails, so an NVS error between the two reads leaves the
+  zeroed `DeviceIdentity` key in use. That key's SoftAP key is the published
+  known answer `cv-3jByJ6rHdhM2`, and its token and Ed25519 identity come
+  from the same zero key. The fix: require 32 bytes from `getBytes()` and
+  refuse an all-zero key, so `witness_provision_device()` halts, with a host
+  case over the witness glue stubs. Found by F350's review (#1837).
 
 ### Parity & sub-projects
 
