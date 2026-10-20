@@ -122,8 +122,9 @@
   `api_auth_check_or_query()` (`/api/peek/stream`, `/api/peek/snapshot`,
   `/api/vault/download`) never read the lockout, so a right `?token=` was
   served inside a backoff and cleared it, and a wrong one was recorded during
-  it. It now runs one grant over the header or the `?token=`: `429` while
-  the address is held, one strike per request. `check_route_security.py` now
+  it. It now runs one grant over one candidate, the header when the request
+  sends one and the `?token=` only when it sends none: `429` while the
+  address is held, one strike per guessed token. `check_route_security.py` now
   fails any sketch file other than `api_auth.h` that calls
   `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
   The pair token's compares stay outside on purpose (the landing page hands
@@ -178,6 +179,41 @@
   another route and to a module, and which fails the sketch with the clear
   moved above the refusal or copied into the pairing QR, both of which the
   check before passed); the ESP32 compile is CI's; not run on a device (U1).
+- **The lockout's second review (F339, F340, F341, F343).** canary-wap's
+  `?token=` gate (`api_auth_check_or_query()`: `/api/peek/stream`,
+  `/api/peek/snapshot`, `/api/vault/download`) compared both the header
+  and the query token in its one grant and served the request if either
+  was right, so one strike bought two guesses there, about 63 a minute
+  from many addresses where the docs say about 30. It now compares the
+  header when one is sent and the query token only when none is (the query
+  exists for links that cannot set a header; no client sends both: the
+  dashboard's links carry the query, the iPhone app the header). A wrong
+  header beside the right query token is now a `401` and one strike. Tests
+  added for what no suite held: the gate's session cookie is served and
+  never frees a held address (adding a clear to that branch, or deleting
+  the branch, passed every suite); the right token with a tail is refused
+  by every compare on both firmwares (deleting any of the length checks
+  passed); the flagship takes the right token padded with spaces and
+  refuses a 128-byte header as too long (deleting the trim, or `>=` to
+  `>`, passed); the WAP's strike console line names no address (its
+  harness's `Serial.printf` now keeps what it prints); and
+  `auth_backoff.h`'s `remaining_ms()` asked first, and its count stopping
+  at 10 with a `Retry-After` of 61. The guards: the WAP's
+  `check_route_security.py` counts `auth_backoff.h`'s `record_success()`
+  as a clear beside `auth_record_success()`, fails any sketch file other
+  than `api_auth.h` that names `g_auth_table`, and plants each of its
+  clear rule's three conditions alone (38 plants); the flagship's suite
+  reads every file of `firmware/canary` and fails one outside
+  `lib/securacv_auth` that names `auth_get_instance` or `handedToken`, or
+  a file other than `securacv_network.cpp` that calls
+  `auth_handed_token()` (a direct `.handedToken()` or `.reset()` in a
+  handler passed both trees' checks). `THREAT_MODEL.md`'s auth-failure row
+  scopes "no credential is no strike" to the Canaries: the kernel counts a
+  missing token. **Host-tested** (`test_receipt_grant.cpp`, 1703 checks,
+  3 of which fail on the `?token=` gate before; `test_securacv_auth.cpp`,
+  171 checks; `test_auth_backoff.cpp`; each new test fails on the mutant
+  it was written for, and each mutant passed every suite before); the
+  ESP32 compile is CI's; not run on a device (U1).
 
 ### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350, #1837)
 

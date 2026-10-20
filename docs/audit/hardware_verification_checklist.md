@@ -2907,10 +2907,11 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     backoff is `429` with `Retry-After`. B's three are `200` at once, and the
     console prints no `[AUTH] Failed attempt` line for them. B's wrong bearer
     is `403` and holds only B. A's right token after the wait is `200`. In
-    step 6 no `Retry-After` exceeds `61`; the firmware before this change
-    announced `65` on the sixth. If B is `429` while A is held, the key fell
-    back to one bucket: check `request_peer_key()`'s dual-stack
-    `::ffff:a.b.c.d` path.
+    step 6 no `Retry-After` exceeds `61` (expect `2`, `4`, `8`, `16`, `32`,
+    `60`: each probe lands a few milliseconds after its strike); the
+    firmware before this change read `64` on the sixth. If B is `429` while
+    A is held, the key fell back to one bucket: check
+    `request_peer_key()`'s dual-stack `::ffff:a.b.c.d` path.
   - Artifact: `docs/audit/repro/F343/per-address/`.
 
 - [ ] **canary-wap: every bearer compare holds its own address (F339)**
@@ -2930,13 +2931,20 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
        (or `/api/peek/snapshot?token=<right token>`).
     3. At once, from B: the right token on `/api/csi/stream`.
     4. From A, after its `Retry-After`: the right token on `/api/csi/stream`.
+    5. On a unit with the link of step 2, from A: a wrong header beside the
+       right query token, `curl -s -D - -H 'Authorization: Bearer cv_wrong'
+       'http://<sta-ip>/api/vault/download?token=<right token>'` (or the
+       snapshot link).
   - Expected: A's wrong bearers are `401`, and the console prints
     `[AUTH] Failed attempt #1`, `#2` and `#3`. Inside A's backoff, A's right
     bearer and A's right `?token=` are `429` with `Retry-After`. B is `200`
-    at once, and A's right token after the wait is `200`. Before this
+    at once, and A's right token after the wait is `200`. Step 5 is `401`
+    and the console prints `[AUTH] Failed attempt #1`: beside a header the
+    query token is not compared, so one strike buys one guess. Before this
     change A's guesses armed nothing (no console line, and step 2's bearer
-    was `200`), and the `?token=` read no lockout at all:
-    `/api/vault/download` answered its own `400` (no `name=`), never `429`.
+    was `200`), the `?token=` read no lockout at all
+    (`/api/vault/download` answered its own `400`, no `name=`, never
+    `429`), and step 5 was served (the vault's `400`, the snapshot's `200`).
   - Artifact: `docs/audit/repro/F339/`.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification

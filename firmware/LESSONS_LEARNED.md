@@ -887,8 +887,12 @@
   which reads the lockout once, compares at most once and records the
   answer; a hold comes back through an optional `held` out-parameter, so a
   route that answers it `429` makes no second lockout read.
-  `api_auth_check_or_query()` runs that grant over the header or the
-  `?token=`, one strike per request.
+  `api_auth_check_or_query()` runs that grant over one candidate: the
+  header when the request sends one, the `?token=` only when it sends none.
+  The PR's review found the first version compared both in its one grant
+  and served the request if either was right, so one strike bought two
+  guesses on those links (about 63 a minute from many addresses, where the
+  docs say about 30).
 - **Regression check:** `tests_host/test_receipt_grant.cpp` (host; the CSI
   macro and `qr_scan_request_allowed()` cut from the sources),
   `tests_host/test_mqtt_reinit.cpp`, and `tests_host/check_route_security.py`,
@@ -897,7 +901,9 @@
 - **Rule:** a credential's compare lives beside its accounting, in one
   function every gate calls; the raw compare is private to that file, and a
   text check keeps it there. A long token bounds the guessing, but a compare
-  that costs nothing is still an oracle and a bypass of the backoff.
+  that costs nothing is still an oracle and a bypass of the backoff. One
+  strike buys one candidate: a gate that takes the credential from either
+  of two places compares one of them per request, never both.
 - **Date learned:** 2026-10
 
 ### A page that keeps a refused token strikes on every poll

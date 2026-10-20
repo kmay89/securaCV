@@ -43,13 +43,16 @@
  *
  * Build/run: make -C firmware/tests_host. */
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "canary_config.h"              // the real PROVISIONING_GATE_TTL_MS
 #include "log_level.h"                  // the real LogLevel / LogCategory
@@ -61,6 +64,9 @@
 #endif
 #if !defined(SECAUTH_NET_INC)
 #error "build with -DSECAUTH_NET_INC (the handlers cut from securacv_network.cpp)"
+#endif
+#if !defined(CANARY_FLAGSHIP_DIR)
+#error "build with -DCANARY_FLAGSHIP_DIR (firmware/canary, for the hand-over census)"
 #endif
 
 using BearerResult = canary::net::auth_backoff::BearerResult;
@@ -187,13 +193,28 @@ static void a_header_less_call_never_extends_a_backoff() {
  * the count. Another address's right bearer is served throughout. */
 static void credential_shaped_failures_still_strike() {
   std::printf("-- every credential-shaped failure is one strike, against its own address\n");
-  struct Case { const char* name; httpd_req_t req; const char* status; };
+  // `body`: the refusal's exact body. The header at the buffer's size (128
+  // bytes) is the first one refused as too long; one byte shorter is read
+  // whole and compared. The right token with a tail is the same 403 as any
+  // wrong one: the length check refuses it (a compare of only the token's
+  // own length would take it, and every shorter token fails at its NUL).
+  struct Case { const char* name; httpd_req_t req; const char* status; const char* body; };
   const std::string too_long = "Bearer " + std::string(SECURACV_AUTH_HEADER_BUF, 'a');
+  const std::string at_buf = "Bearer " + std::string(SECURACV_AUTH_HEADER_BUF - 7, 'a');
+  const std::string under_buf = "Bearer " + std::string(SECURACV_AUTH_HEADER_BUF - 8, 'a');
+  const char* const too_long_body =
+      "{\"error\":\"unauthorized\",\"hint\":\"Authorization header too long\"}";
+  const char* const forbidden = "{\"error\":\"forbidden\"}";
   Case cases[] = {
-    {"a wrong bearer", wrong_bearer(), "403 Forbidden"},
-    {"a wrong-length bearer", with_auth("Bearer cv_short"), "403 Forbidden"},
-    {"a non-Bearer scheme", with_auth(std::string("Basic ") + token()), "401 Unauthorized"},
-    {"an oversized header", with_auth(too_long), "401 Unauthorized"},
+    {"a wrong bearer", wrong_bearer(), "403 Forbidden", forbidden},
+    {"a wrong-length bearer", with_auth("Bearer cv_short"), "403 Forbidden", forbidden},
+    {"the right token with a tail", with_auth(std::string("Bearer ") + token() + "X"), "403 Forbidden",
+     forbidden},
+    {"a non-Bearer scheme", with_auth(std::string("Basic ") + token()), "401 Unauthorized",
+     "{\"error\":\"unauthorized\",\"hint\":\"Use 'Bearer <token>' format\"}"},
+    {"an oversized header", with_auth(too_long), "401 Unauthorized", too_long_body},
+    {"a header of exactly the buffer's 128 bytes", with_auth(at_buf), "401 Unauthorized", too_long_body},
+    {"a 127-byte header (read whole, compared)", with_auth(under_buf), "403 Forbidden", forbidden},
   };
   for (Case& c : cases) {
     fresh(100000);
@@ -201,6 +222,13 @@ static void credential_shaped_failures_still_strike() {
     const bool ok = auth_check(&c.req, token(), kHostA);
     std::snprintf(msg, sizeof(msg), "%s is refused %s", c.name, c.status);
     CHECK(!ok && c.req.status == c.status, msg);
+    std::snprintf(msg, sizeof(msg), "%s: the body is %s", c.name, c.body);
+    CHECK(c.req.body == c.body, msg);
+    std::snprintf(msg, sizeof(msg), "%s: through the grant it is WRONG", c.name);
+    fresh(100000);
+    CHECK(auth_bearer_grant(&c.req, token(), kHostA) == BearerResult::WRONG, msg);
+    fresh(100000);
+    auth_check(&c.req, token(), kHostA);
 
     g_host_millis = 100000 + 1999;
     httpd_req_t held = right_bearer();
@@ -226,6 +254,34 @@ static void credential_shaped_failures_still_strike() {
     httpd_req_t step = right_bearer();
     std::snprintf(msg, sizeof(msg), "%s: the success cleared the count (the next strike is 2 s again)", c.name);
     CHECK(!auth_check(&step, token(), kHostA) && step.resp_headers["Retry-After"] == "1", msg);
+  }
+}
+
+/* The right token is read trimmed: spaces after "Bearer " and after the
+ * token are not part of it (the WAP trims the same way), so the right token
+ * padded either side is served and clears the count, through the check and
+ * through the grant. */
+static void the_right_bearer_is_read_trimmed() {
+  std::printf("-- the right bearer, padded with spaces, is served\n");
+  const std::string padded[] = {std::string("Bearer ") + token() + "  ",
+                                std::string("Bearer   ") + token(),
+                                std::string("Bearer  ") + token() + " "};
+  for (const std::string& raw : padded) {
+    fresh(100000);
+    httpd_req_t one = wrong_bearer();
+    auth_check(&one, token(), kHostA);  // one strike, so a success has a count to clear
+    g_host_millis = 100000 + 2000;
+    httpd_req_t r = with_auth(raw);
+    CHECK(auth_check(&r, token(), kHostA) && r.sends == 0, "the padded right bearer is served by auth_check()");
+    httpd_req_t again = wrong_bearer();
+    auth_check(&again, token(), kHostA);
+    g_host_millis = 100000 + 2000 + 1999;
+    httpd_req_t step = right_bearer();
+    CHECK(!auth_check(&step, token(), kHostA) && step.resp_headers["Retry-After"] == "1",
+          "and it cleared the count (the next strike arms 2 s, not 4 s)");
+    fresh(100000);
+    httpd_req_t g = with_auth(raw);
+    CHECK(auth_bearer_grant(&g, token(), kHostA) == BearerResult::OK, "the padded right bearer is OK through the grant");
   }
 }
 
@@ -849,6 +905,41 @@ static void the_tap_paths_call_the_hand_over() {
       code, "static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {"));
   CHECK(page.find("}elseif(tap_spent){auth_handed_token(request_peer_ipv4(req));") != std::string::npos,
         "page_token_inject() hands over in its tap-spent branch");
+
+  // The hand-over census (review of F341): outside the auth library, nothing
+  // reaches AuthManager's table but through its wrappers, and only
+  // securacv_network.cpp's two sites above call the clear. A handler that
+  // called auth_get_instance().handedToken(...) or .reset() in GET / would
+  // free its asker's backoff with one page load between guesses, and the
+  // count above would not see it.
+  namespace fs = std::filesystem;
+  const fs::path root = CANARY_FLAGSHIP_DIR;
+  std::vector<std::string> offenders;
+  size_t scanned = 0;
+  for (const char* sub : {"src", "lib", "include"}) {
+    if (!fs::exists(root / sub)) continue;
+    for (const auto& e : fs::recursive_directory_iterator(root / sub)) {
+      if (!e.is_regular_file()) continue;
+      const std::string ext = e.path().extension().string();
+      if (ext != ".cpp" && ext != ".h" && ext != ".hpp" && ext != ".c" && ext != ".ino") continue;
+      const std::string rel = fs::relative(e.path(), root).generic_string();
+      if (rel.rfind("lib/securacv_auth/", 0) == 0) continue;
+      ++scanned;
+      const std::string text = strip_comments(read_file(e.path().string().c_str()));
+      for (const char* name : {"auth_get_instance", "handedToken"}) {
+        if (count_of(text, name, true) != 0) offenders.push_back(rel + " names " + name);
+      }
+      if (e.path().filename() != "securacv_network.cpp" && count_of(text, "auth_handed_token(", true) != 0) {
+        offenders.push_back(rel + " calls auth_handed_token()");
+      }
+    }
+  }
+  std::sort(offenders.begin(), offenders.end());
+  for (const std::string& o : offenders) std::printf("     census: %s\n", o.c_str());
+  CHECK(scanned > 20, "the census read firmware/canary's src, lib and include");
+  CHECK(offenders.empty(),
+        "outside lib/securacv_auth no file names auth_get_instance or handedToken, and only "
+        "securacv_network.cpp calls auth_handed_token()");
 }
 
 int main() {
@@ -860,6 +951,7 @@ int main() {
   header_less_requests_are_no_strike(kHostA, kHostB, "from two addresses");
   a_header_less_call_never_extends_a_backoff();
   credential_shaped_failures_still_strike();
+  the_right_bearer_is_read_trimmed();
   a_running_backoff_answers_429_first();
   one_sources_strikes_never_hold_another();
   the_overflow_holds_every_untracked_address();

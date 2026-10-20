@@ -59,10 +59,13 @@ to a fixed point, every function that calls one). What it reads:
     out-parameter, sweep F339), or tested against nullptr, and nothing else.
     Every module canary_wap.ino hands the token to has an entry.
   - The backoff's clear (sweep F341): auth_record_success() frees an
-    address's lockout slot. Outside api_auth.h (where the right bearer frees
-    it) only BACKOFF_CLEARS may call it, each once, at the top level of its
-    body after its OTHER_GRANTS refusal: a request that refusal answers (no
-    tap, no claim taken) clears nothing.
+    address's lockout slot, and so does auth_backoff.h's record_success()
+    it wraps. Outside api_auth.h (where the right bearer frees it) and the
+    staged auth_backoff.h (which defines it) only BACKOFF_CLEARS may call
+    either, each once, at the top level of its body after its OTHER_GRANTS
+    refusal: a request that refusal answers (no tap, no claim taken) clears
+    nothing. And the table itself (g_auth_table) is named in api_auth.h
+    only, so no file writes or clears it directly.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -72,7 +75,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and thirty-three plants that each fail it.
+run: a clean sketch that passes and thirty-eight plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -260,6 +263,20 @@ OTHER_GRANTS = {
 # auth_record_success() call, at the top level of its body, after its
 # OTHER_GRANTS refusal.
 BACKOFF_CLEARS = ("handle_provisioning_receipt",)
+# The clears it counts: api_auth.h's wrapper and auth_backoff.h's own
+# record_success(), however qualified (review of F341: a direct
+# canary::net::auth_backoff::record_success() passed the rule).
+BACKOFF_CLEAR_CALL = re.compile(r"\b(auth_record_success|record_success)\s*\(")
+# Where a clear is the mechanism itself, not a route: api_auth.h (the right
+# bearer frees its address) and the staged auth_backoff.h, which defines
+# record_success() and calls it from grant() (check_improv_sync.sh holds it
+# byte-identical to firmware/common/network/auth_backoff.h).
+BACKOFF_CLEAR_HOMES = (RAW_COMPARE_HOME, "auth_backoff.h")
+# The lockout table every file shares (api_auth.h's inline g_auth_table):
+# named in AUTH_TABLE_HOME only, so a route cannot free a backoff by writing
+# the table (`g_auth_table = {}`) or by handing it to auth_backoff.h itself.
+AUTH_TABLE = re.compile(r"\bg_auth_table\b")
+AUTH_TABLE_HOME = "api_auth.h"
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -1116,28 +1133,29 @@ def raw_compare_problems(sources: dict) -> list:
 
 
 def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> list:
-    """The backoff's clear (sweep F341): outside RAW_COMPARE_HOME, a call of
-    auth_record_success() (comments and string contents blanked) stands only
+    """The backoff's clear (sweep F341): outside BACKOFF_CLEAR_HOMES, a call of
+    auth_record_success() or of auth_backoff.h's record_success()
+    (BACKOFF_CLEAR_CALL; comments and string contents blanked) stands only
     in canary_wap.ino's `homes`, once each, at the top level of the body and
     after the handler's OTHER_GRANTS refusal (the `if` whose whole condition
     is that refusal and whose branch returns). So a request the refusal
     answers, handed no credential, clears nothing, and no other route can
-    free an address's backoff without a right bearer."""
+    free an address's backoff without a right bearer (auth_table_problems()
+    holds the table itself to api_auth.h)."""
     grants = OTHER_GRANTS if grants is None else grants
     problems, seen = [], {}
-    call = re.compile(r"\bauth_record_success\s*\(")
     for fname, text in sorted(sources.items()):
-        if fname == RAW_COMPARE_HOME:
+        if fname in BACKOFF_CLEAR_HOMES:
             continue
         blanked = _blank(text)
         funcs = functions(text, indented=True)
-        for m in call.finditer(blanked):
+        for m in BACKOFF_CLEAR_CALL.finditer(blanked):
             inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
             name = inner[0][1] if inner else None
             where = f"{fname}:{_line(blanked, m.start())}"
             if fname != "canary_wap.ino" or name not in homes:
                 problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
-                                f"calls auth_record_success(), which frees an address's backoff: "
+                                f"calls {m.group(1)}(), which frees an address's backoff: "
                                 f"outside {RAW_COMPARE_HOME} only {', '.join(homes)} may, after "
                                 f"its tap-and-claim refusal (BACKOFF_CLEARS)")
                 continue
@@ -1146,7 +1164,7 @@ def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> 
     for h in homes:
         sites = seen.get(h, [])
         if len(sites) != 1:
-            problems.append(f"{h}() calls auth_record_success() {len(sites)} times; BACKOFF_CLEARS "
+            problems.append(f"{h}() clears the backoff {len(sites)} times; BACKOFF_CLEARS "
                             f"holds it to once, after its tap-and-claim refusal")
             continue
         at, b, e, where = sites[0]
@@ -1155,10 +1173,32 @@ def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> 
         ends = [bspan[1] for pos, cond, _c, bspan, returns in _ifs(code)
                 if refusal and returns and _depth(code, pos) == 0
                 and _squash(cond) == _squash(refusal)]
-        if not ends or rel < min(ends) or _depth(code, rel) != 0:
-            problems.append(f"{where}: {h}() calls auth_record_success() other than at the top "
-                            f"level after its refusal `if ({refusal}) {{ ... return ...; }}`: a "
-                            f"request handed no credential must clear nothing")
+        why = ("it has no such refusal" if not ends
+               else "the clear comes before the refusal" if rel < min(ends)
+               else "the clear is inside a branch" if _depth(code, rel) != 0
+               else None)
+        if why:
+            problems.append(f"{where}: {h}() clears the backoff other than at the top level "
+                            f"after its refusal `if ({refusal}) {{ ... return ...; }}` ({why}): "
+                            f"a request handed no credential must clear nothing")
+    return problems
+
+
+def auth_table_problems(sources: dict) -> list:
+    """The lockout table (review of F341): outside AUTH_TABLE_HOME no sketch
+    file names g_auth_table in its code (comments and string contents
+    blanked). Every read and write of it goes through api_auth.h's
+    functions, so a route cannot free a backoff by assigning the table or by
+    handing it to auth_backoff.h's record_success() itself. No allowlist."""
+    problems = []
+    for fname, text in sorted(sources.items()):
+        if fname == AUTH_TABLE_HOME:
+            continue
+        blanked = _blank(text)
+        for m in AUTH_TABLE.finditer(blanked):
+            problems.append(f"{fname}:{_line(blanked, m.start())}: names g_auth_table, the lockout "
+                            f"table: outside {AUTH_TABLE_HOME} it is read and written only through "
+                            f"api_auth.h's functions")
     return problems
 
 
@@ -1439,6 +1479,31 @@ _FIX_PLANTS = (
     ("the backoff cleared inside the tap's refusal", "canary_wap.ino",
      "  }\n  auth_record_success(req);\n  send_kit(req);",
      "    auth_record_success(req);\n  }\n  send_kit(req);", "other than at the top level"),
+    # One plant for each of the three conditions alone (review of F341): the
+    # plant above trips the first two at once.
+    ("the backoff cleared at the top level above the refusal", "canary_wap.ino",
+     "  if (!claimed && !gate_take()) {\n    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
+     "  }\n  auth_record_success(req);\n",
+     "  auth_record_success(req);\n  if (!claimed && !gate_take()) {\n"
+     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n  }\n",
+     "the clear comes before the refusal"),
+    ("the backoff cleared inside a branch after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  if (claimed) {\n    auth_record_success(req);\n  }\n  send_kit(req);",
+     "the clear is inside a branch"),
+    ("the backoff cleared twice after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  auth_record_success(req);\n  auth_record_success(req);\n  send_kit(req);",
+     "handle_kit() clears the backoff 2 times"),
+    # The clear spelled without the wrapper, and the table written directly.
+    ("a route calling auth_backoff.h's record_success() itself", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  canary::net::auth_backoff::record_success(backoff_table(), auth_request_source(req));\n"
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls record_success()"),
+    ("a route clearing the lockout table", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");", "  g_auth_table = {};\n  return httpd_resp_sendstr(req, \"{}\");",
+     "names g_auth_table, the lockout table"),
     ("a second route clearing the backoff", "canary_wap.ino",
      "  return httpd_resp_sendstr(req, \"{}\");",
      "  auth_record_success(req);\n  return httpd_resp_sendstr(req, \"{}\");",
@@ -1465,7 +1530,8 @@ def _fixture_problems(sources: dict) -> list:
     and the backoff's clear, as main() runs them over the tree."""
     return (answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
             + raw_compare_problems(sources)
-            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"]))
+            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"])
+            + auth_table_problems(sources))
 
 
 def _assert_secret_rules() -> None:
@@ -1490,7 +1556,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 33, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 38, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1585,6 +1651,7 @@ def main() -> int:
     failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
     failures += raw_compare_problems(secret_sources)
     failures += backoff_clear_problems(secret_sources)
+    failures += auth_table_problems(secret_sources)
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

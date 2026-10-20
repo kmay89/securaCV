@@ -1739,8 +1739,9 @@ so — see D2 below.)
   - A right `?token=` was served inside a backoff and cleared it.
   - A wrong one was recorded during the backoff (before F343's saturating
     count, 250 of them wrapped the count and freed the backoff).
-  It now runs the same grant over the header or the `?token=`: `429` while
-  the address is held, one strike per request.
+  It now runs the same grant over one candidate, the header when the
+  request sends one and the `?token=` only when it sends none: `429` while
+  the address is held, one strike per guessed token.
   `check_route_security.py` now fails any sketch file other than `api_auth.h`
   that calls `api_auth_bearer_valid()` or `constant_time_compare()`. It has no
   allowlist. Its `MODULE_TOKEN_COPIES` reader takes a gate's token argument
@@ -1766,6 +1767,18 @@ so — see D2 below.)
   which deleting the grant's header half fails and every suite passed. The ESP32 compile is CI's; not
   run on a device (U1: the "every bearer compare holds its own address" row
   in `hardware_verification_checklist.md`).
+  *Review (2026-10-19, the PR's second round):* the `?token=` gate's one
+  grant was right if either the header or the query token was, so one
+  strike bought two guesses on those three routes (about 63 a minute from
+  many addresses, where `THREAT_MODEL.md` scenario 10 says about 30). Beside
+  a header the query token is no longer compared; no client sends both. A
+  wrong header beside the right query token is a `401` and one strike
+  (`test_or_query_counts_one_per_request`, 3 checks of which fail on the
+  gate before). Also added: the gate's session cookie is served and never
+  frees a held address (a clear added to that branch, or the branch
+  deleted, passed every suite), and the right token with a tail is refused
+  by every compare (each length check could be deleted with every suite
+  green). The bench row gains step 5. Host-tested; not run on a device.
 - [x] **F340 [code] The flagship's provisioning receipt compares its bearer
   silently.** `firmware/canary`'s `GET /api/provisioning-receipt` takes
   `bearer_present_and_valid()`, which goes through `auth_check_optional()` and
@@ -1866,6 +1879,16 @@ so — see D2 below.)
   tests over the page's own `api()` and pollers; 6 fail on the page before).
   The ESP32 compile is CI's; not run on a device or in a browser (U1: the
   flagship's bearer-lockout row in `hardware_verification_checklist.md`).
+  *Review (2026-10-19, the PR's second round):* three of `compare()`'s
+  edges had no test: the length check (only a shorter bearer was sent,
+  which fails at its NUL anyway; without the check the right token plus a
+  tail is taken), the trailing-space trim, and the 128-byte boundary of
+  the too-long refusal. `test_securacv_auth.cpp` now sends the right token
+  with a tail (`403`, a strike), the right token padded either side
+  (served, its count cleared), and headers of 128 and 127 bytes (the
+  "too long" `401`, and a compared `403`); deleting the check, deleting
+  the trim, or `>=` to `>` each fails it (171 checks). Host-tested; not run
+  on a device.
 - [x] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
@@ -1929,6 +1952,19 @@ so — see D2 below.)
   against this code. The ESP32 compile is CI's; not run on a device (U1:
   the receipt-lockout row and the flagship's bearer-lockout row in
   `hardware_verification_checklist.md`).
+  *Review (2026-10-19, the PR's second round):* both trees' guards held the
+  clear by its wrapper's name only. The WAP's `check_route_security.py` now
+  counts `auth_backoff.h`'s own `record_success()` as a clear, fails any
+  sketch file but `api_auth.h` that names `g_auth_table` (a
+  `g_auth_table = {}` or a direct `record_success()` in a handler passed),
+  and plants each of its three conditions (before the refusal, inside a
+  branch, more than once) alone, so deleting any one fails its self-test
+  (38 plants). `test_securacv_auth.cpp` reads every file of
+  `firmware/canary` and fails one outside `lib/securacv_auth` that names
+  `auth_get_instance` or `handedToken`, or a file other than
+  `securacv_network.cpp` that calls `auth_handed_token()` (a direct
+  `.handedToken()` or `.reset()` in `GET /` passed). No such call existed;
+  these close the guard gap, not an open path.
 - [ ] **F342 [decision] canary-wap: the receipt's claim and BOOT tap are spent
   by whoever asks first.** Any `?claim=` on `GET /api/provisioning-receipt` is
   spent, match or not (`claim_ticket::take()`), so one wrong guess from a host
@@ -2020,6 +2056,16 @@ so — see D2 below.)
   CI's; not run on a device (U1: the "one host's wrong bearers hold only
   that host" row in `hardware_verification_checklist.md`). Filed: F352
   (iOS, a reset unit's stale pairing).
+  *Review (2026-10-19, the PR's second round):* the strike's console line
+  is now read by a test: it prints the count and the backoff, with
+  " (shared overflow)" only for a strike that landed there, and names no
+  address (the receipt-grant harness's `Serial.printf` now keeps its
+  lines; printing the address, no line, or the overflow's count for a
+  tracked address each passed every suite). `test_auth_backoff.cpp` adds
+  `remaining_ms()` asked first on a Slot idle past 2^31 ms, and the count
+  stopping at 10 with a `Retry-After` of 61. The bench row's step 6 now
+  expects `2`, `4`, `8`, `16`, `32`, `60` (a probe lands after its strike),
+  and the firmware before read `64` there, not `65`.
 - [ ] **F344 [decision] canary-wap checks no Host on the post-setup landing
   page or the `?cv_pair=` exchange.** The Host is read only on the first-boot
   wizard's paths (`handle_ui()`'s setup branch and `request_host_is_direct()`,

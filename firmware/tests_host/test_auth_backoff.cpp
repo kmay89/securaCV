@@ -12,8 +12,9 @@
 //     it as free at once);
 //   * the window clears a count without anyone asking locked() first: two
 //     strikes 61 s apart arm 2 s, not 4 s;
-//   * the count saturates: 300 strikes leave 10 and the source held (the old
-//     uint8_t count wrapped to a clean 0 after 256);
+//   * the count saturates: 300 strikes leave 10 and the source held, and the
+//     429 at the last strike says 61 (the old uint8_t count wrapped to a
+//     clean 0 after 256);
 //   * the overflow: eight sources fill the Slots, a ninth strikes the shared
 //     overflow, and a tenth, untracked, is held while it runs and free once
 //     it ends; a tracked source is judged by its own Slot only; a settled
@@ -23,8 +24,9 @@
 //     HELD and its credential is never compared; the right one is OK and
 //     frees the Slot; a wrong one is WRONG and exactly one strike;
 //   * the edges a mutation found unpinned: a Slot left untouched for more
-//     than 2^31 ms reads free from locked() itself (its own settle, before
-//     the signed "still running" test flips); the overflow's count stands at
+//     than 2^31 ms reads free from locked() itself, and from remaining_ms()
+//     asked first (each its own settle, before the signed "still running"
+//     test flips); the overflow's count stands at
 //     exactly 60 s after its last strike and is gone 1 ms later, as a
 //     Slot's; and source 0 (the bucket every unnamed source shares) is found
 //     in its own live Slot, never in a freed one before it (a freed Slot
@@ -123,6 +125,14 @@ static void the_count_saturates_and_still_holds() {
         (unsigned)failures_of(t, kPhone, now), (unsigned)MAX_COUNT);
   CHECK(locked(t, kPhone, now), "and the source is held");
   CHECK(remaining_ms(t, kPhone, now) <= MAX_MS, "never past the cap");
+  // The numbers the console line and the 429 show, not only the constant:
+  // the count stops at 10, and the 429 read at the last strike's own
+  // millisecond announces 61, never more (a count that saturated at 6 or at
+  // 255 would pass the two checks above).
+  CHECK(failures_of(t, kPhone, now) == 10, "300 strikes leave a count of %u, want 10",
+        (unsigned)failures_of(t, kPhone, now));
+  CHECK(retry_after_s(remaining_ms(t, kPhone, now - 1)) == 61, "the 429 at the last strike says %lu, want 61",
+        retry_after_s(remaining_ms(t, kPhone, now - 1)));
 }
 
 static void the_overflow_bounds_what_the_slots_cannot_track() {
@@ -232,6 +242,13 @@ static void a_slot_idle_past_half_the_clock_reads_free() {
   CHECK(!locked(t, kPhone, later), "a Slot idle for 2^31 ms + 5 s reads held");
   CHECK(remaining_ms(t, kPhone, later) == 0, "and has %u ms left", (unsigned)remaining_ms(t, kPhone, later));
   CHECK(failures_of(t, kPhone, later) == 0, "its count is gone");
+  // remaining_ms() asked first, on a table nothing settled since the strike:
+  // its own settle frees the Slot before the signed test flips (without it
+  // the Slot reads 2^31 - 3000 ms left).
+  Table u{};
+  record_failure(u, kPhone, armed);
+  CHECK(remaining_ms(u, kPhone, later) == 0, "remaining_ms() first reads %u ms left on a Slot idle 2^31 ms + 5 s",
+        (unsigned)remaining_ms(u, kPhone, later));
 }
 
 // The overflow's window ends where a Slot's does: its count stands at

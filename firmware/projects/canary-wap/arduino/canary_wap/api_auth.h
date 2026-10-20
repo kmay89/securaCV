@@ -422,17 +422,19 @@ static bool api_auth_check_optional(httpd_req_t* req, const char* expected_token
 
 // GET /api/peek/stream, /api/peek/snapshot and /api/vault/download: a
 // browser link cannot set a header, so the token may ride `?<query_key>=`.
-// The cookie first (true, nothing recorded); then ONE grant over both
-// credentials, under the request's source's backoff (sweep F339): presented
-// when the request carries an Authorization header or the query key, right
-// when the header is the right bearer or the query value is the right token.
-// While the source is held it answers 429 with Retry-After and compares and
-// records nothing; a wrong header, a wrong ?token= or both on one request are
-// one strike; the right one clears that source's slot; no credential at all
-// is the 401 and no strike. Before, this read no lockout: a right ?token=
-// was served inside a backoff and cleared it, and a wrong one was recorded
-// during it (until F343's saturating count, 250 of them wrapped the count
-// back to a clean slot).
+// The cookie first (true, nothing recorded: it never clears a backoff,
+// api_auth_check()'s rule); then ONE grant, under the request's source's
+// backoff (sweep F339), over ONE candidate: the Authorization header when
+// the request carries one, the ?token= only when it carries none (the query
+// exists for links that cannot set a header). So each strike costs one
+// guessed token here too, as on every other route: a request that carried
+// both and was right if either matched tried two tokens for one strike. While
+// the source is held it answers 429 with Retry-After and compares and
+// records nothing; a wrong candidate is one strike; the right one clears
+// that source's slot; no credential at all is the 401 and no strike. Before,
+// this read no lockout: a right ?token= was served inside a backoff and
+// cleared it, and a wrong one was recorded during it (until F343's
+// saturating count, 250 of them wrapped the count back to a clean slot).
 
 static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token, const char* query_key = "token") {
   // Session-cookie auth grants access but must not reset the token
@@ -454,8 +456,8 @@ static bool api_auth_check_or_query(httpd_req_t* req, const char* expected_token
 
   const canary::net::auth_backoff::BearerResult r =
       api_auth_grant_presented(req, header || query, [&]() {
-        if (header && api_auth_bearer_valid(req, expected_token)) return true;
-        if (!query || expected_token == nullptr) return false;
+        if (header) return api_auth_bearer_valid(req, expected_token);
+        if (expected_token == nullptr) return false;
         const size_t token_len = strlen(token);
         const size_t expected_len = strlen(expected_token);
         return expected_len != 0 && token_len == expected_len &&

@@ -102,8 +102,11 @@
 //     over the header or the ?token=: inside a backoff a right ?token= is 429
 //     and clears nothing, a wrong one records nothing, 250 of them leave A
 //     held at its own count, B's right ?token= is served, a wrong header
-//     beside a wrong ?token= is one strike, and the right header alone is
-//     served and frees its address (before: the right ?token= was served
+//     beside a wrong ?token= is one strike, a wrong header beside the right
+//     ?token= is refused and one strike (the query is compared only when no
+//     header is sent: one candidate a strike), the right header alone is
+//     served and frees its address, and a cookie is served, records nothing
+//     and never frees a held address (before: the right ?token= was served
 //     inside the backoff and cleared it, the wrong ones were recorded during
 //     it);
 //   - api_auth.h's contract: api_auth_check() and api_auth_check_optional()
@@ -1383,10 +1386,16 @@ void test_query_token_is_held_by_the_backoff() {
   CHECK(strikes(kHostA) == 0);
 }
 
-// One request is one grant: a wrong header beside a wrong ?token= is one
-// strike (the 2 s first backoff); a wrong header beside the right ?token= is
-// served, and clears the count; neither, or a query without the key, is the
-// 401 and no strike.
+// One request is one grant over one candidate: the header when there is
+// one, the ?token= only when there is none. A wrong header beside a wrong
+// ?token= is one strike (the 2 s first backoff). A wrong header beside the
+// right ?token= is refused and is that strike too: the query is not
+// compared beside a header, so one strike buys one guessed token, as on
+// every other route (review of F339: a request that was right if either
+// matched tried two tokens for one strike, about 63 guesses a minute through
+// these links where the docs say 30). The right ?token= alone is served and
+// clears the count; neither, or a query without the key, is the 401 and no
+// strike.
 void test_or_query_counts_one_per_request() {
   reset_device();
   Req both;
@@ -1399,7 +1408,15 @@ void test_or_query_counts_one_per_request() {
   wait_out(kHostA);
   Req mixed;
   mixed.bearer(kWrong).query(std::string("token=") + kToken);
-  CHECK(api_auth_check_or_query(&mixed.r, kToken));
+  CHECK_MSG(!api_auth_check_or_query(&mixed.r, kToken),
+            "a wrong header beside the right ?token= was served: two candidates for one strike");
+  CHECK(mixed.r.status == "401 Unauthorized");
+  CHECK_MSG(strikes(kHostA) == 2, "a wrong header beside the right ?token= was not one strike");
+  wait_out(kHostA);
+  Req query_alone;
+  query_alone.query(std::string("token=") + kToken);
+  CHECK(api_auth_check_or_query(&query_alone.r, kToken));
+  CHECK(query_alone.r.sends == 0);
   CHECK(strikes(kHostA) == 0);
   Req bare;
   CHECK(!api_auth_check_or_query(&bare.r, kToken));
@@ -1431,6 +1448,123 @@ void test_or_query_serves_the_right_header_alone() {
   CHECK(after.r.sends == 0);
   CHECK_MSG(strikes(kHostA) == 0, "the right header alone left its address's count standing");
   CHECK(!held(kHostA));
+}
+
+// The cookie branch of the ?token= gate (review of F339): a valid cv_session
+// cookie is served and records nothing, so it never frees a held address. A
+// cookie that cleared the backoff would let a session holder free its own
+// address with one GET of a peek or vault link between bearer guesses on any
+// other route, and the per-address lockout would no longer limit it. The
+// dashboard's cookie-only <img> and download links rely on the branch, so
+// the cookie alone must be served (deleting the branch refuses them 401).
+void test_or_query_cookie_never_clears_the_backoff() {
+  reset_device();
+  mint_session();
+  Req c;
+  c.cookie();
+  CHECK_MSG(api_auth_check_or_query(&c.r, kToken), "the session cookie alone was refused on the ?token= gate");
+  CHECK_MSG(c.r.sends == 0, "the session cookie alone got an answer: " + c.r.status);
+  CHECK(strikes(kHostA) == 0);
+  arm_lockout(3);
+  Req held_c;
+  held_c.cookie();
+  CHECK_MSG(api_auth_check_or_query(&held_c.r, kToken), "the session cookie was refused inside its address's backoff");
+  CHECK(held_c.r.sends == 0);
+  CHECK_MSG(strikes(kHostA) == 3, "the session cookie changed its address's count");
+  CHECK_MSG(held(kHostA), "the session cookie freed its address's backoff");
+  // A cookie beside a wrong ?token=: the cookie decides, no strike, A still
+  // held at its own count.
+  Req beside;
+  beside.cookie().query(std::string("token=") + kWrong);
+  CHECK(api_auth_check_or_query(&beside.r, kToken));
+  CHECK(beside.r.sends == 0);
+  CHECK(strikes(kHostA) == 3 && held(kHostA));
+  // ...and A's next right bearer on an admin route is still the 429.
+  Req admin;
+  admin.bearer(kToken);
+  CHECK(!api_auth_check_bearer(&admin.r, kToken));
+  CHECK(admin.r.status == "429 Too Many Requests");
+}
+
+// The right token with a tail is a wrong token, through every compare that
+// reads one (review of F339, F343): each refuses a candidate whose length
+// differs from the device token's, and only that check refuses this one (a
+// shorter token already fails the byte compare at its NUL; a compare of the
+// device token's own length takes the right token plus anything after it).
+void test_a_token_with_a_tail_is_wrong() {
+  const std::string tailed = std::string(kToken) + "X";
+  // The receipt's grant (api_auth_bearer_grant() over api_auth_bearer_valid()).
+  reset_device();
+  Req receipt_q;
+  receipt_q.bearer(tailed.c_str());
+  CHECK_MSG(receipt(receipt_q) == 0, "the receipt took the right token with a tail");
+  check_gate_refusal(receipt_q.r);
+  CHECK(strikes(kHostA) == 1);
+  // The raw compare itself.
+  reset_device();
+  Req raw;
+  raw.bearer(tailed.c_str());
+  CHECK_MSG(!api_auth_bearer_valid(&raw.r, kToken), "api_auth_bearer_valid() took the right token with a tail");
+  // Every admin route's gate.
+  reset_device();
+  Req admin;
+  admin.bearer(tailed.c_str());
+  CHECK_MSG(!api_auth_check_bearer(&admin.r, kToken), "api_auth_check_bearer() took the right token with a tail");
+  CHECK(admin.r.status == "403 Forbidden");
+  CHECK(admin.r.resp == "{\"error\":\"forbidden\"}");
+  CHECK(strikes(kHostA) == 1);
+  // The ?token= link's query compare.
+  reset_device();
+  Req link;
+  link.query("token=" + tailed);
+  CHECK_MSG(!api_auth_check_or_query(&link.r, kToken), "the ?token= gate took the right token with a tail");
+  CHECK(link.r.status == "401 Unauthorized");
+  CHECK(strikes(kHostA) == 1);
+}
+
+// The strike's console line names no address (auth_backoff.h's contract:
+// addresses stay in RAM, and its callers never log one). It prints the
+// count and the backoff of the slot that took the strike, and " (shared
+// overflow)" only when the strike landed there.
+void test_the_strike_line_names_no_address() {
+  reset_device();
+  stub_grant::serial_lines.clear();
+  Req wrong;
+  wrong.bearer(kWrong);   // from kHostA, 192.168.1.20
+  CHECK(!api_auth_check_bearer(&wrong.r, kToken));
+  CHECK_MSG(stub_grant::serial_lines.size() == 1, "a strike printed " + std::to_string(stub_grant::serial_lines.size()) + " lines");
+  const std::string line = stub_grant::serial_lines.empty() ? "" : stub_grant::serial_lines.back();
+  CHECK_MSG(line == "[AUTH] Failed attempt #1. Lockout: 2000 ms\n", "the strike's line: " + line);
+  CHECK(line.find("192.168") == std::string::npos && line.find("c0a8") == std::string::npos &&
+        line.find("C0A8") == std::string::npos && line.find("3232235796") == std::string::npos);
+  // A second strike from A, once its backoff ended: A's own count.
+  wait_out(kHostA);
+  Req second;
+  second.bearer(kWrong);
+  CHECK(!api_auth_bearer_grant(&second.r, kToken));
+  CHECK_MSG(stub_grant::serial_lines.back() == "[AUTH] Failed attempt #2. Lockout: 4000 ms\n",
+            "the second strike's line: " + stub_grant::serial_lines.back());
+  // Eight more addresses fill the remaining slots and one strikes the
+  // overflow: its line carries the tag and the overflow's count, and still
+  // names no address.
+  for (uint8_t i = 1; i <= 7; ++i) {
+    Req q;
+    q.from(10, 0, 0, i).bearer(kWrong);
+    CHECK(!api_auth_check_bearer(&q.r, kToken));
+  }
+  CHECK_MSG(stub_grant::serial_lines.back() == "[AUTH] Failed attempt #1. Lockout: 2000 ms\n",
+            "a tracked address's first strike: " + stub_grant::serial_lines.back());
+  Req untracked;
+  untracked.from(10, 0, 0, 9).bearer(kWrong);
+  CHECK(!api_auth_check_bearer(&untracked.r, kToken));
+  CHECK(g_auth_table.overflow.failures == 1);
+  const std::string over = stub_grant::serial_lines.back();
+  CHECK_MSG(over == "[AUTH] Failed attempt #1 (shared overflow). Lockout: 2000 ms\n", "the overflow's line: " + over);
+  CHECK(over.find("10.0.0") == std::string::npos);
+  for (const std::string& l : stub_grant::serial_lines) {
+    CHECK_MSG(l.find("192.168") == std::string::npos && l.find("10.0.0") == std::string::npos,
+              "a console line names an address: " + l);
+  }
 }
 
 // The /api/csi/* routes' gate (CSI_AUTH_OR_RETURN, cut from
@@ -1881,6 +2015,9 @@ int main() {
   test_query_token_is_held_by_the_backoff();
   test_or_query_counts_one_per_request();
   test_or_query_serves_the_right_header_alone();
+  test_or_query_cookie_never_clears_the_backoff();
+  test_a_token_with_a_tail_is_wrong();
+  test_the_strike_line_names_no_address();
   test_csi_routes_account_every_bearer();
   test_qr_scan_fallback_is_accounted();
   test_api_auth_contract();

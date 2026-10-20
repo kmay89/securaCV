@@ -549,7 +549,10 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # the right one clears it. The receipt's grant (auth_bearer_grant) is
 # accounted and never compares a held bearer. securacv_network.cpp's path is
 # passed in for the text pins over its wiring (request_peer_ipv4 into both
-# gates), so the read fails closed. The two BOOT-tap paths that hand an
+# gates), so the read fails closed, and firmware/canary's for the hand-over
+# census (outside lib/securacv_auth no file names auth_get_instance or
+# handedToken, and only securacv_network.cpp calls auth_handed_token, both
+# read at run time, so a new file is read too). The two BOOT-tap paths that hand an
 # address the token (sweep F341) run for real: page_token_inject() and
 # handle_provisioning_receipt(), with bearer_present_and_valid() and
 # send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
@@ -1160,6 +1163,7 @@ $(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
 $(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
 	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
 	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
 
