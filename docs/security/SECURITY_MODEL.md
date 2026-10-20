@@ -318,6 +318,18 @@ that means the device, can spend your tap before you do. The decisions
 `receipt_decide`, and `host_guard.h` beside them) are host-tested, the handler glue is compiled by
 CI, and none of it is bench-tested yet.
 
+The flagship's API routes take the bearer under one lockout: a malformed or
+wrong bearer is a strike, and while the backoff it starts runs (2 s, doubling
+with each strike) every call to those routes is refused `429`. A request with
+no `Authorization` header is no strike (sweep F340), so a dashboard tab
+loaded without the token, which polls with no header, no longer holds the
+app's right token at `429`. The lockout is still one per device: a host that
+sends wrong bearers holds every caller while its backoff runs. The provisioning
+receipt still compares its bearer outside the lockout, and the device-wide
+request limit (120 requests a minute across the rate-limited routes) is
+shared too, so two open Status tabs reach it by themselves (F351). The rule
+is host-tested on the real `securacv_auth.cpp`; not bench-tested.
+
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a
 24-hour session cookie that signs that browser into the dashboard. That

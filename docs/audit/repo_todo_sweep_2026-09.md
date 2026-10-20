@@ -1721,6 +1721,37 @@ so — see D2 below.)
   shape F329 changed on the WAP. Count a wrong bearer there the same way, with
   a case beside `test_provisioning_gate.cpp`. From code. Found by the F289
   follow-up (#1832).
+  *Decision (2026-10-19; decided under the maintainer's instruction to fix
+  the remaining open items in best engineering practice):* implement, in two
+  commits of the PR that carries F343, F339 and F341. The filed defect
+  stands: the receipt and `GET /` compare their bearer through
+  `auth_check_optional()`, with no strike and no backoff read. The larger
+  defect: `AuthManager::check()` counted a request with no `Authorization`
+  header as a strike. The flagship page withholds the token on a
+  home-network load and polls `/api/status` every 2 s with no header, through
+  `auth_gate()`, and the lockout is one per device, so by default the
+  owner's own tab held every bearer caller, the iPhone app included, at
+  `429`; a probe refused 119 of 120 right-token polls. (1) First and alone: a
+  request with no credential is no strike, the WAP's `auth_logic.h` rule.
+  (2) After F343's `firmware/common/network/auth_backoff.h`: `AuthManager`
+  runs on that per-address table (2 s doubling, capped at 60 s), and
+  `securacv_network.cpp` passes each request's source address in
+  (`getpeername` through `sockaddr_ip4_host_order`, the WAP's key mapping);
+  `bearer_present_and_valid()` becomes the accounted grant, and a held bearer
+  on the receipt keeps today's `403` (the page's "tap BOOT"); the unused
+  stats API and `auth_check_optional()` go, and a build that sets a
+  `SECURACV_AUTH_*` backoff knob is an `#error`. The device-wide request
+  limit is F351. No doc says the flagship's LAN denial is closed.
+  *Part 1 done (2026-10-19):* `check()` answers a request with no
+  `Authorization` header `401` and records no strike; a malformed or wrong
+  credential is still one, the right one still clears the count, and while a
+  backoff runs every request is still the `429` first. Host-tested in the new
+  `firmware/tests_host/test_securacv_auth.cpp` over the real
+  `securacv_auth.cpp` (33 checks; the code before the change fails 6 of
+  them, and its ten-minute case of a token-less tab beside the app serves 1
+  of the app's 120 right-bearer calls, against all 120 after); the ESP32
+  compile is CI's; not run on a device (U1: the flagship's bearer-lockout row
+  in `hardware_verification_checklist.md`). The item stays open for part 2.
 - [ ] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
@@ -1842,6 +1873,20 @@ so — see D2 below.)
   parallel F325 gate, which wiped `c` and `buf` on its refusal only; that gate
   was dropped for #1835's, which wipes nothing, so the item now says what
   holds, and the decision is whether to wipe at all.
+- [ ] **F351 [decision] The flagship's request limit is one per device.**
+  `rate_limit_check()` (`firmware/canary/lib/securacv_network/src/securacv_network.cpp`)
+  counts every request in one 60 s window for the whole device: 120 requests
+  and 30 actions (`canary_config.h`'s `RATE_LIMIT_MAX_REQUESTS` and
+  `RATE_LIMIT_MAX_ACTIONS`). It runs before `auth_gate()` on 57 handlers. One
+  dashboard tab on the Status panel spends 60 a minute (`securacv_webui.cpp`
+  polls `/api/status` and `/api/sensing` every 2 s), so a second tab, or any
+  host on the network sending two requests a second, holds every
+  rate-limited route at `429 rate_limited` for everyone, the owner's app
+  included. The provisioning receipt has no rate limit. The per-address
+  table F343 adds for bearer strikes (`firmware/common/network/auth_backoff.h`)
+  is the shape a per-source budget could take. Decide whether the budget
+  stays per device, becomes per source, or both. From code; not probed.
+  Found by the F340 decision's security review, 2026-10-19.
 
 ### Parity & sub-projects
 

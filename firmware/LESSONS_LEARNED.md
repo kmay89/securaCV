@@ -763,6 +763,26 @@
 - **Regression check:** `tests_host/test_auth_logic.cpp` (host).
 - **Date learned:** 2026-07
 
+### A fix to one tree's auth is owed to the other tree's port of it
+- **What happened:** The flagship (`firmware/canary`) kept the bug above
+  after the WAP fixed it. Its `AuthManager::check()`, a port of the WAP's
+  `api_auth.h` (`firmware/canary/CONSOLIDATION.md`, Phase 1), never took that
+  fix: it counted a request with no `Authorization` header as a strike, and
+  its lockout is one per device. Its
+  dashboard withholds the token on a home-network load until a BOOT tap or
+  the recovery-kit token, so an open tab's token-less `/api/status` poll
+  every 2 s kept a backoff running and held the owner's iPhone app, right
+  token and all, at `429`: 119 of 120 calls over ten simulated minutes.
+- **Fix:** the same rule as the WAP's: a request with no credential is a
+  `401` and no strike; a malformed or wrong one still is (sweep F340).
+- **Regression check:** `firmware/tests_host/test_securacv_auth.cpp` (host,
+  over the real `securacv_auth.cpp`): the tab-and-app case and a header-less
+  call between a strike and the next try.
+- **Rule:** when a security fix lands in one tree, find the other tree's copy
+  of the same logic (`firmware/canary/CONSOLIDATION.md` names the ports) and
+  fix or file it in the same change.
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

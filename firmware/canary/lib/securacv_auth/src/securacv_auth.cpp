@@ -189,7 +189,10 @@ bool AuthManager::check(httpd_req_t* req, const char* expected_token) {
   // ── Extract Authorization header ──
   size_t auth_len = httpd_req_get_hdr_value_len(req, "Authorization");
   if (auth_len == 0) {
-    recordFailure();
+    // No strike: a request with no credential carries no guess (the WAP's
+    // rule, canary-wap's auth_logic.h). Counting it let the dashboard's own
+    // token-less tab, polling /api/status every 2 s, hold every bearer
+    // caller at 429 (sweep F340). A malformed or wrong one below still is.
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");

@@ -112,7 +112,8 @@
 // ════════════════════════════════════════════════════════════════════
 // API authentication lockout: lib/securacv_auth/src/securacv_auth.h
 // (SECURACV_AUTH_MAX_FAILURES 5, SECURACV_AUTH_LOCKOUT_BASE_MS 2 s,
-// SECURACV_AUTH_LOCKOUT_MAX_MS 5 min). Hardware watchdog:
+// SECURACV_AUTH_LOCKOUT_MAX_MS 5 min). A malformed or wrong bearer is a
+// strike; a request with no credential is none (sweep F340). Hardware watchdog:
 // canary_config.h's WATCHDOG_TIMEOUT_SEC. There is no periodic chain
 // re-verify: the boot self-test and the sign-then-verify on every record
 // are the checks (firmware/FEATURES.md, "Self-verification").

@@ -67,10 +67,15 @@ class AuthManager {
   AuthManager();
 
   // Check Bearer token on an esp_http_server request.
-  //   - Returns true on success.
-  //   - On failure, sends the appropriate error response (401/403/429),
-  //     records the failure, and returns false. The caller should return
-  //     ESP_OK immediately after a false return.
+  //   - Returns true on success, and clears the failure count.
+  //   - On failure, sends the appropriate error response (401/403/429)
+  //     and returns false. The caller should return ESP_OK immediately
+  //     after a false return.
+  //   - A malformed or wrong credential is one strike toward the lockout.
+  //     A request with no Authorization header is a 401 and no strike: it
+  //     carries no guess (sweep F340; the WAP's auth_logic.h rule).
+  //   - While a backoff runs every request is the 429, and nothing is
+  //     compared or recorded.
   bool check(httpd_req_t* req, const char* expected_token);
 
   // Same as check() but does NOT send an error response on failure.

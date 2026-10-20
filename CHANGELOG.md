@@ -1,6 +1,25 @@
 # Changelog
 
 ## [Unreleased]
+### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
+
+- **The flagship's dashboard tab no longer holds the owner's app at `429`
+  (sweep F340, part 1).** `AuthManager::check()`
+  (`firmware/canary/lib/securacv_auth`) counted a request with no
+  `Authorization` header as a strike toward its one per-device lockout. The
+  dashboard withholds the token on a home-network load until a BOOT tap or
+  the recovery-kit token, so an open tab's `/api/status` poll every 2 s,
+  which sends no header, kept a backoff running and refused the iPhone app's
+  right token: 119 of 120 calls over ten simulated minutes. A request with no
+  credential is now a `401` and no strike, the WAP's rule (`auth_logic.h`); a
+  malformed or wrong one is still a strike, and the right one still clears
+  the count. The lockout is still one per device, the receipt still compares
+  its bearer outside it, and the device-wide request limit is unchanged
+  (filed as F351). **Host-tested** (new
+  `firmware/tests_host/test_securacv_auth.cpp` over the real
+  `securacv_auth.cpp`, 33 checks, 6 of them failing before the change); the
+  ESP32 compile is CI's; not run on a device (U1).
+
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
 - **The broker move a session could make with the kept password (sweep F325)

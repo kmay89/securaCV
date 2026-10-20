@@ -2846,6 +2846,43 @@ device or in a browser. Owner: U1.
     receipt armed no backoff and the right token was served inside one.
   - Artifact: `docs/audit/repro/F289/receipt-lockout/`.
 
+## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
+
+Code: `AuthManager::check()` in
+`firmware/canary/lib/securacv_auth/src/securacv_auth.cpp`, reached through
+`auth_gate()` in `securacv_network.cpp`; the dashboard's `api()` in
+`securacv_webui.cpp`, which sends no `Authorization` header when the page
+carries no token. Host-tested (`firmware/tests_host/test_securacv_auth.cpp`,
+over the real `securacv_auth.cpp`: a request with no header is a `401` and no
+strike, a malformed or wrong one is still a strike); the compile is CI's;
+nothing here ran on a device. Owner: U1.
+
+- [ ] **Flagship: the dashboard tab arms no lockout (F340)**
+  - Setup: a `firmware/canary` unit on this firmware, set up and joined to
+    the home Wi-Fi, over plain HTTP (the release images serve no HTTPS, and
+    the HTTPS builds' certificate generator is compiled only where the core
+    has `mbedtls/x509write_crt.h`, `securacv_network.cpp`'s `__has_include`,
+    a header no installed core ships: mbedTLS declares its certificate
+    writer in `x509_crt.h`); host A, a laptop with a browser and
+    its developer tools; host B, the iPhone app or a second computer with
+    `curl` and the API token; one dashboard tab only (two tabs reach the
+    device-wide request limit by themselves, F351).
+  - Repro: on A, open `http://canary.local/` (or the unit's IP) without a
+    BOOT tap, so the page carries no token, and leave the Status panel open
+    for 5 minutes. Meanwhile, from B every 5 s: `curl -s -o /dev/null -w
+    '%{http_code}\n' -H "Authorization: Bearer <token>"
+    http://canary.local/api/status`. Then, once, from B: `curl -s -o
+    /dev/null -w '%{http_code}\n' -H "Authorization: Bearer cv_wrong"
+    http://canary.local/api/status; curl -s -D - -o /dev/null -H
+    "Authorization: Bearer <token>" http://canary.local/api/status`.
+  - Expected: for those 5 minutes B's polls are `200` (before this change
+    about 119 of 120 were `429`), and A's own calls in its Network panel are
+    `401`, never `429`. The wrong bearer is `403`, still a strike: the right
+    token right after it is `429` with a `Retry-After` header (while that
+    backoff runs every call is `429`, A's tab's too), and `200` again once
+    it has passed.
+  - Artifact: `docs/audit/repro/F340/`.
+
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`

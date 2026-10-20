@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 a request with no credential is no strike toward the lockout, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none; host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
