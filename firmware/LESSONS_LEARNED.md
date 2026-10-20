@@ -468,7 +468,15 @@
   tag letting a zero-tag frame through; both take the checked form now, and
   nothing in `fleet_key.h` calls the unchecked one. `[[nodiscard]]` on the
   derivation is a compiler warning on the device (the flagship builds
-  without `-Werror`), not a guard.
+  without `-Werror`), not a guard. The WAP had the same fault in its own
+  helper (sweep F359): `canary_wap.ino`'s `hmac_sha256()` checked none of
+  mbedTLS's answers, so a failed step left its output as the caller's
+  stack bytes, under the SoftAP key, the API token (stored in NVS for
+  every later boot) and the chain backup's HMAC. It now answers `bool` and
+  zeroes its output on a failure, and every caller refuses: provisioning
+  fails, the backup is not written. A zeroed output is only safe if every
+  reader refuses it, so a compare against it (the backup restore) must
+  refuse too, or a field of zeros passes.
 - **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
   device and OpenSSL on the host, and the first failure suite failed only
   OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
@@ -480,7 +488,11 @@
   `test_ap_password_hmac_fail.cpp` and `test_fleet_key_hmac_fail.cpp` run
   over a failing primitive (`tests_host/hmac_fail_seam.h`), each built over
   the OpenSSL branch and, with `-DARDUINO` over `tests_host/stubs/mbedtls_md`,
-  over the mbedTLS one.
+  over the mbedTLS one. For the WAP,
+  `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` fails each
+  mbedTLS step under the sketch's own helper and its callers, cut out of
+  the sketch, and fails a call anywhere in the sketch that drops the
+  helper's result.
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only

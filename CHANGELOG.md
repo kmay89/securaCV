@@ -1,6 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap refuses a failed HMAC instead of minting a key, a token or a backup from stack bytes (sweep F359)
+
+- **canary-wap's `hmac_sha256()` says whether it ran, and every caller
+  refuses when it did not (sweep F359).** The sketch's helper checked none of
+  mbedTLS's answers, so when a step failed (`mbedtls_md_setup()` answers
+  `MBEDTLS_ERR_MD_ALLOC_FAILED` when it cannot allocate) its output kept
+  whatever the caller's stack held. Three things were made from it: the
+  setup network's key, the API token (which provisioning then stored in NVS
+  for every later boot) and the HMAC of the chain backup on the SD card. Now
+  the helper returns `false`, zeroes its output and frees its context on a
+  failure. Provisioning fails instead of minting a token or a key: the token
+  is wiped, the key is empty (never `cv-222222222222`, what 32 zero bytes
+  render to on every unit), a release build raises no setup network, and a
+  development build falls back to its random `dev-` key. The hourly chain
+  backup writes nothing, so the last good `/CHAIN/backup.bin` survives
+  (before, it was replaced by one no restore accepts), and a restore refuses
+  rather than compare against the zeroed output. A working unit is
+  unchanged: the same key, token and backup bytes. **Host-tested** (new
+  `firmware/projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`: the
+  sketch's functions cut out of it over a stand-in for mbedTLS's streaming
+  HMAC that fails the lookup, the setup, the start, the update or the finish,
+  and over a fake SD card; it reads every sketch source for a call that
+  drops the result. With only the old code's two return types changed so
+  that it builds, it fails 129 of its 219 checks;
+  `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
+  256 keys still holds); the ESP32 compile is CI's; not run on a device.
+
 ### The flagship's setup network takes a key made from its private key, not its public fingerprint (sweep F350, #1837)
 
 - **The `firmware/canary` flagship's SoftAP key is an HMAC of the device

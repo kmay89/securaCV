@@ -310,7 +310,7 @@ FLEETKEY_BIN = $(BUILD_DIR)/test_fleet_key
 APPW_HDR      = ../common/network/ap_password.h ../common/network/fleet_key.h \
                 ../common/network/provision_core.h
 APPW_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
-APPW_WAP_SIGS = static void secure_zero(|static void derive_ap_password(
+APPW_WAP_SIGS = static void secure_zero(|static bool derive_ap_password(
 APPW_WAP_INC  = $(BUILD_DIR)/ap_password_wap.inc
 APPW_BIN      = $(BUILD_DIR)/test_ap_password
 # The same header over a failing HMAC primitive (hmac_fail_seam.h), which

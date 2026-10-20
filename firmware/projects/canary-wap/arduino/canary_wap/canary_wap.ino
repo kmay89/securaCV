@@ -1771,16 +1771,37 @@ static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
 // HMAC-SHA256 (using mbedtls)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void hmac_sha256(const uint8_t* key, size_t key_len,
+// True when every mbedTLS step ran (sweep F359). Each step can fail:
+// mbedtls_md_setup() answers MBEDTLS_ERR_MD_ALLOC_FAILED when it cannot
+// allocate the HMAC context, and after a failed step `out` is not (or not
+// wholly) written, so it would keep whatever the caller's stack held, bytes
+// nobody chose and this unit cannot make again after a reboot. On any failure `out` is zeroed and
+// the answer is false, and every caller refuses on false instead of using the
+// bytes: 32 zero bytes are the same on every unit (the flagship's
+// fleet_key::hmac_sha256_checked keeps the same rule, sweep F350). The context
+// is freed on every path. Declared [[nodiscard]] in data_mgmt_api.h, the first
+// declaration the compiler reads; tests_host/test_wap_hmac_fail.cpp fails
+// each step.
+static bool hmac_sha256(const uint8_t* key, size_t key_len,
                         const uint8_t* data, size_t data_len,
                         uint8_t out[32]) {
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (info == nullptr) {
+    memset(out, 0, 32);
+    return false;
+  }
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, key, key_len);
-  mbedtls_md_hmac_update(&ctx, data, data_len);
-  mbedtls_md_hmac_finish(&ctx, out);
+  int ret = mbedtls_md_setup(&ctx, info, 1);
+  if (ret == 0) ret = mbedtls_md_hmac_starts(&ctx, key, key_len);
+  if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, data, data_len);
+  if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, out);
   mbedtls_md_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1848,15 +1869,23 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
 // HKDF-STYLE API TOKEN DERIVATION (two-step key separation)
 // ════════════════════════════════════════════════════════════════════════════
 
+// False, with `token_str` wiped, when any of its three HMACs fails (sweep
+// F359): a token rendered from bytes an HMAC did not write is one nobody
+// chose, and provision_device() would store it in NVS, where every later boot
+// loads it. provision_device() refuses on false and stores nothing.
 static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) {
+  if (!token_str || token_str_len == 0) return false;
+
   // ── Step 1: Derive intermediate token-key (key separation) ────────────
   // The Ed25519 signing key NEVER directly touches the token derivation context.
   uint8_t token_key[32];
-  hmac_sha256(
-    privkey, 32,
-    (const uint8_t*)"securacv:token-key-derive:v1", 28,
-    token_key
-  );
+  if (!hmac_sha256(
+        privkey, 32,
+        (const uint8_t*)"securacv:token-key-derive:v1", 28,
+        token_key)) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 2: Derive actual API token from intermediate key + MAC ──────
   uint8_t mac[6];
@@ -1867,11 +1896,14 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   memcpy(token_input + 21, mac, 6);
 
   uint8_t token_hash[32];
-  hmac_sha256(
-    token_key, 32,
-    token_input, 27,
-    token_hash
-  );
+  if (!hmac_sha256(
+        token_key, 32,
+        token_input, 27,
+        token_hash)) {
+    secure_zero(token_key, sizeof(token_key));
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 3: Encode with rejection sampling ───────────────────────────
   // The encoder keeps ~84% of its input bytes, so 32 characters need ~38 on
@@ -1886,22 +1918,29 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   uint8_t token_input2[28];  // domain + MAC + block counter
   memcpy(token_input2, token_input, 27);
   token_input2[27] = 0x02;
-  hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
-  format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  const bool second_block = hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
+  if (second_block) {
+    format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  }
 
   // ── Wipe intermediate key material ───────────────────────────────────
   secure_zero(token_key, sizeof(token_key));
   secure_zero(token_hash, sizeof(token_hash));
   secure_zero(token_bytes, sizeof(token_bytes));
 
-  return strlen(token_str) >= 35;  // "cv_" + 32 chars
+  if (!second_block || strlen(token_str) < 35) {  // "cv_" + 32 chars
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE-UNIQUE AP PASSWORD (derived from the device private key)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+static bool derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+  if (!password || len == 0) return false;
   // Derive from the PRIVATE key, not the public fingerprint. The pubkey
   // fingerprint is published (serial banner, device_id suffix, /enroll page),
   // so the old fingerprint-derived password was recomputable by anyone who had
@@ -1909,9 +1948,17 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // the private key under its own domain label (same key-separation discipline
   // as derive_api_token) so the password is a real per-device secret.
   uint8_t pw_key[32];
-  hmac_sha256(privkey, 32,
-              (const uint8_t*)"securacv:ap-password:v1", 23,
-              pw_key);
+  if (!hmac_sha256(privkey, 32,
+                   (const uint8_t*)"securacv:ap-password:v1", 23,
+                   pw_key)) {
+    // A failed HMAC is refused, never rendered (sweep F359): its output is
+    // zeroed, and 32 zero bytes would render as "cv-222222222222" on every
+    // unit. "" is no password to every caller: provision_device() fails on
+    // the false, and resolve_ap_password() raises no SoftAP on "" in a
+    // release build.
+    password[0] = '\0';
+    return false;
+  }
 
   // 12 unambiguous chars ≈ 69 bits — far beyond offline WPA2 (PBKDF2) reach.
   // WPA2-PSK requires 8-63 ASCII chars; "cv-" + 12 = 15 fits ap_password[16].
@@ -1936,6 +1983,7 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // lives on only in the caller's buffer (g_device.ap_password) by design.
   secure_zero(encoded, sizeof(encoded));
   secure_zero(pw_key, sizeof(pw_key));
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -10779,9 +10827,11 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 #endif
   }
 
-  // Derive only when no valid password is currently present.
-  if (strlen(g_device.ap_password) < 8) {
-    derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
+  // Derive only when no valid password is currently present. A failed derive
+  // leaves "" (sweep F359), which the length test below refuses.
+  if (strlen(g_device.ap_password) < 8 &&
+      !derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "AP password not derived", "HMAC-SHA256 failed");
   }
 
   // Use either pre-existing or freshly derived device-unique password.
@@ -11244,8 +11294,14 @@ static bool provision_device() {
   }
 
   // ── Derive device-unique AP password ──
+  // A failed HMAC fails provisioning (sweep F359), as a failed token mint
+  // does: the key is "", g_device.initialized stays false, and so a release
+  // build raises no SoftAP (resolve_ap_password()).
   Serial.println("[PROV] Deriving device-unique AP password...");
-  derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
+  if (!derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    Serial.println("[!!] AP password derivation failed (HMAC-SHA256)");
+    return false;
+  }
 
   // Load operator-configurable runtime settings (Device tab). Clamped on
   // load, so the record loop, time-coarsening bucket, and log threshold are

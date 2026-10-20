@@ -1969,7 +1969,7 @@ so — see D2 below.)
   deleted call, a discarded result or a dropped halt loop (no host suite or
   guard reads that statement today, nor which 32-byte key it passes).
   Host-tested; the PlatformIO compile is CI's; not run on a device (U1).
-- [ ] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
+- [x] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
   codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
   `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of
   them, so a failure there (an allocation failure inside mbedTLS) leaves its
@@ -1980,6 +1980,59 @@ so — see D2 below.)
   and every caller fails closed (provisioning refuses, so a release build
   starts no server), with a host test over a failing HMAC seam like
   `firmware/tests_host/hmac_fail_seam.h`. Found by F350's review (#1837).
+  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* `hmac_sha256()` returns `bool`. It refuses when
+  `mbedtls_md_info_from_type()` finds no SHA-256 or when
+  `mbedtls_md_setup()`, `_hmac_starts()`, `_hmac_update()` or
+  `_hmac_finish()` answers non-zero, frees the context on every path, and
+  zeroes its output on a refusal. Its declaration in `data_mgmt_api.h`, the
+  first one the sketch's compiler reads, is `[[nodiscard]]`: a warning on
+  the device, which builds without `-Werror` (a line-start attribute on the
+  `.ino` definition would hide that head from the sketch's source guards,
+  which read function heads at column 0). Every caller refuses on `false`.
+  `derive_api_token()` returns `false` with the token buffer wiped when any
+  of its three HMACs fails; before, it returned a token, and
+  `provision_device()` stored it in NVS, where every later boot loads it.
+  `derive_ap_password()` now returns `bool` and leaves `""` on a failure,
+  never the `cv-222222222222` that 32 zero bytes render to on every unit;
+  `provision_device()` returns `false` on it, before `g_device.initialized`
+  is set, as it already did on a failed token mint, and
+  `resolve_ap_password()` logs the failure and reads the `""`, so a release
+  build raises no SoftAP and a development build falls back to its random
+  `dev-` key (the non-release posture F336 describes). The chain backup in
+  `data_mgmt_api.h` was the third caller. `backup_chain()` now writes nothing
+  on a failed HMAC, so the last good `/CHAIN/backup.bin` survives (before,
+  it was overwritten with stack bytes as its HMAC, which no restore
+  accepts), and `datamgmt::process()` goes on as it does after a failed
+  write. `restore_chain()` refuses with `Chain restore: HMAC compute failed`;
+  before, stack bytes failed the compare and it logged a tamper line, and
+  compared against the now-zeroed output a backup whose HMAC field is 32
+  zero bytes would pass. Both lines are the flagship's
+  `securacv_data_mgmt.cpp`'s. No caller is on a path that must not fail:
+  the two mints already fail provisioning, and the backup is periodic. A
+  working HMAC gives the same bytes as before: the known answers and
+  `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
+  256 keys hold (its stand-in HMAC and its cut follow the new signatures).
+  New `firmware/projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` runs
+  those functions, cut out of the sketch, over a stand-in for mbedTLS's
+  streaming HMAC (declared by `firmware/tests_host/stubs/mbedtls_md`, which
+  now carries the streaming API) that fails the lookup, the setup
+  (`MBEDTLS_ERR_MD_ALLOC_FAILED`), the start, the update or the finish of one
+  chosen HMAC, and over the fake SD card. It also reads every source in the
+  sketch directory: each call of the three uses its result, and
+  `provision_device()` returns `false` on either mint before it marks the
+  identity ready. The unchanged sketch does not build under it (the cut
+  finds no `static bool hmac_sha256(`); with only the two return types
+  changed, so it builds, it fails 129 of 219 checks, among them a failed
+  setup minting keys such as `cv-222222222wHN` from mostly-zero host stack
+  bytes and replacing the good backup. Mutants that drop the zeroing, the
+  start's, update's or finish's check, the free on a refusal, any caller's
+  check or `provision_device()`'s refusal each fail it. A dropped setup
+  check does not, since mbedTLS's next step refuses a context that was never
+  set up, and the stand-in does the same. `provision_device()` itself is not
+  driven; its refusals are source pins. Host-tested; the ESP32 compile is
+  CI's; not run on a device.
 - [ ] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
   result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
   private key's length, then reads it with `Preferences::getBytes()` and
