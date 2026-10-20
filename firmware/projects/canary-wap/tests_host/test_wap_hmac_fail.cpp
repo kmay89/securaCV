@@ -34,10 +34,17 @@
 //   - derive_api_token(): a known answer computed independently (Python's
 //     hmac over the same labels, MAC and encoder rule); false and the whole
 //     token buffer zeroed when any of its three HMACs fails at any step;
-//   - resolve_ap_password(): with no key yet and a failing HMAC, a release
-//     build answers false with "" and raises nothing, and a development build
-//     falls back to its random "dev-" key (the non-release posture sweep F336
-//     describes), neither keeping a derived key;
+//   - the two mints refuse a null or zero-length buffer before any HMAC
+//     runs, and derive_api_token() refuses and wipes a buffer too short for
+//     the 35-character token even when every HMAC ran (no caller passes one);
+//   - resolve_ap_password(): after a failed provisioning (g_device.initialized
+//     false, what provision_device() leaves when a mint refuses) both builds
+//     answer from its first branch and run no HMAC: a release build answers
+//     false and raises nothing, a development build falls back to its random
+//     "dev-" key (the non-release posture sweep F336 describes). With an
+//     initialized identity whose key is missing (a state provisioning no
+//     longer leaves) and a failing HMAC, its re-derive logs the failure and
+//     the same two answers follow, neither build keeping a derived key;
 //   - backup_chain(): a failing HMAC writes nothing, so the last good backup
 //     survives byte for byte (before, it was replaced by one no restore
 //     accepts); restore_chain(): a failing HMAC refuses, so a forged backup
@@ -440,6 +447,38 @@ static void api_token_refuses_any_failed_hmac() {
   }
 }
 
+// The two mints' own guards: a null or zero-length buffer is refused before
+// any HMAC runs, and a token buffer too short for the 35-character token is
+// refused and wiped even when every HMAC ran (no caller passes one: the
+// buffers are g_device's, 36 and 16 bytes).
+static void mints_refuse_a_buffer_they_cannot_fill() {
+  uint8_t k[32];
+  key_0x01(k);
+  char tok[36];
+  seam::arm(seam::Step::None);
+  CHECK_MSG(!derive_api_token(k, nullptr, sizeof(tok)), "derive_api_token(): a null buffer");
+  CHECK_MSG(seam::g_lookups == 0, "derive_api_token(): an HMAC ran for a null buffer");
+  std::memset(tok, 'Z', sizeof(tok));
+  CHECK_MSG(!derive_api_token(k, tok, 0), "derive_api_token(): a zero-length buffer");
+  CHECK_MSG(seam::g_lookups == 0, "derive_api_token(): an HMAC ran for a zero-length buffer");
+  CHECK_MSG(tok[0] == 'Z', "derive_api_token(): wrote into a zero-length buffer");
+
+  char pw[16];
+  CHECK_MSG(!derive_ap_password(k, nullptr, sizeof(pw)), "derive_ap_password(): a null buffer");
+  std::memset(pw, 'Z', sizeof(pw));
+  CHECK_MSG(!derive_ap_password(k, pw, 0), "derive_ap_password(): a zero-length buffer");
+  CHECK_MSG(pw[0] == 'Z', "derive_ap_password(): wrote into a zero-length buffer");
+  CHECK_MSG(seam::g_lookups == 0, "derive_ap_password(): an HMAC ran for an unusable buffer");
+
+  seam::arm(seam::Step::None);
+  std::memset(tok, 'Z', sizeof(tok));
+  CHECK_MSG(!derive_api_token(k, tok, 20), "derive_api_token(): a 20-byte buffer answered true");
+  CHECK_MSG(seam::g_lookups == 3, "derive_api_token(): three HMACs ran for the short buffer");
+  CHECK_MSG(all_zero(tok, 20), "derive_api_token(): a short token left in a 20-byte buffer: " +
+                                   std::string(tok, strnlen(tok, 20)));
+  CHECK_MSG(tok[20] == 'Z', "derive_api_token(): wrote past the 20 bytes it was given");
+}
+
 // ── resolve_ap_password() ───────────────────────────────────────────────────
 static void provisioned_without_a_key() {
   std::memset(&g_device, 0, sizeof(g_device));
@@ -488,6 +527,41 @@ static void resolve_ap_password_release_and_dev() {
     CHECK_MSG(g_device.ap_password[0] == '\0',
               "development build, " + what + ": kept \"" + g_device.ap_password + "\"");
     CHECK_MSG(logged("AP password not derived"), "development build, " + what + ": no log line");
+  }
+}
+
+// What a failed provisioning leaves (provision_device() refused a mint, so
+// g_device.initialized stays false): resolve_ap_password() answers from its
+// first branch and runs no HMAC. A release build refuses with "AP password
+// unavailable" and raises nothing; a development build uses its random
+// "dev-" key. The re-derive further down (checked and logged since F359) is
+// for an initialized identity whose key is missing, a state provisioning no
+// longer leaves.
+static void resolve_ap_password_after_a_failed_provisioning() {
+  for (int dev = 0; dev < 2; dev++) {
+    std::memset(&g_device, 0, sizeof(g_device));
+    key_0x01(g_device.privkey);
+    g_device.pubkey_fp[0] = 0x5a;
+    g_device.initialized = false;
+    g_log.clear();
+    seam::arm(seam::Step::None);
+    char out[32];
+    std::memset(out, 'Z', sizeof(out));
+    const bool ok = dev ? dev_build::resolve_ap_password(out, sizeof(out))
+                        : release_build::resolve_ap_password(out, sizeof(out));
+    const std::string b = dev ? "development build" : "release build";
+    CHECK_MSG(seam::g_lookups == 0, b + ": an HMAC ran for an identity not provisioned");
+    CHECK_MSG(g_device.ap_password[0] == '\0', b + ": kept \"" + g_device.ap_password + "\"");
+    CHECK_MSG(!logged("AP password not derived"), b + ": took the derive branch");
+    if (dev) {
+      CHECK_MSG(ok && std::strncmp(out, "dev-", 4) == 0 && std::strlen(out) == 12,
+                b + ": " + std::string(out, strnlen(out, sizeof(out))));
+      CHECK_MSG(logged("AP debug password generated"), b + ": no fallback line");
+    } else {
+      CHECK_MSG(!ok, b + ": answered true with " + std::string(out, strnlen(out, sizeof(out))));
+      CHECK_MSG(out[0] == 'Z', b + ": wrote a key");
+      CHECK_MSG(logged("AP password unavailable"), b + ": no refusal line");
+    }
   }
 }
 
@@ -748,7 +822,9 @@ int main() {
   ap_password_refuses_a_failed_hmac();
   api_token_known_answer();
   api_token_refuses_any_failed_hmac();
+  mints_refuse_a_buffer_they_cannot_fill();
   resolve_ap_password_release_and_dev();
+  resolve_ap_password_after_a_failed_provisioning();
   backup_keeps_the_last_good_one();
   restore_refuses_a_failed_hmac();
   sketch_text();

@@ -15,7 +15,8 @@
  * fails, so an NVS error between the two reads ran the boot on the zeroed
  * DeviceIdentity key: a signing key anyone holds, whose setup-network key is
  * the published known answer cv-3jByJ6rHdhM2 (test_ap_password.cpp), and
- * from which the API token is derived too. And every false meant "no key":
+ * from which, on a unit with no stored token, the API token is derived too.
+ * And every false meant "no key":
  * a failed open or a failed length lookup fell through to a new keypair,
  * stored over the identity the unit had.
  *
@@ -32,9 +33,10 @@
  *
  * It also reads the canary's sources (argv): witness_provision_device()
  * returns false on establish_identity_key() before it derives anything from
- * the key, setup() halts on that false, the one call of nvs_load_key() is
- * establish_identity_key()'s, and only securacv_crypto.cpp's load, probe and
- * store name the key's NVS entry.
+ * the key, setup() runs canary_pe::on_boot() (which makes the namespace)
+ * before it provisions and halts on that false, the one call of
+ * nvs_load_key() is establish_identity_key()'s, and only securacv_crypto.cpp's
+ * load, probe and store name the key's NVS entry.
  *
  * What this does not prove: ESP-IDF's NVS or Arduino's Preferences
  * themselves (the fakes answer as their 2.0.17 sources read), or anything on
@@ -217,9 +219,11 @@ static void test_the_policy_refuses_with_no_key_and_generates_none() {
 
 // ── a first boot: nothing stored, so a key is generated and stored ──────────
 //
-// No namespace yet (a unit fresh off an erase). IDF says so, and the load
-// answers Absent without a Preferences open, so it no longer logs Arduino's
-// "nvs_open failed: NOT_FOUND" either.
+// No namespace at all, which setup() never reaches: canary_pe::on_boot()
+// runs first on every boot and opens the namespace read-write, so a real
+// first boot meets a namespace with no key (the next case). This is the
+// fault-free erase with nothing in front of the load: IDF says nothing is
+// stored, and the load answers Absent without a Preferences open.
 static void test_a_first_boot_generates_and_stores_a_key() {
   fresh_world();
   uint8_t priv[32];
@@ -252,8 +256,11 @@ static void test_a_first_boot_generates_and_stores_a_key() {
   check_idle_and_clean();
 }
 
-// The namespace is there but holds no key (the 30 s BOOT wipe clears the
-// namespace's keys and leaves it): Absent too, so a key is generated.
+// The namespace is there but holds no key: a real first boot (on_boot()
+// made the namespace), or the 30 s BOOT wipe (it clears the namespace's keys
+// and leaves it). Absent too, so a key is generated, and IDF's lookup logs
+// nothing where Preferences' getBytesLength() logged "nvs_get_blob len fail:
+// privkey NOT_FOUND".
 static void test_a_namespace_with_no_key_generates_one() {
   fresh_world();
   host_key_nvs().ns_exists = true;
@@ -261,6 +268,7 @@ static void test_a_namespace_with_no_key_generates_one() {
   uint8_t priv[32];
   CHECK(nvs_load_key(priv) == KeyLoad::Absent);
   CHECK(all_zero(priv));
+  CHECK(host_key_nvs().ro_begins == 0 && host_key_nvs().failed_begins == 0);   // no Preferences read
   check_idle_and_clean();
   CHECK(establish_identity_key());
   CHECK(g_keygens == 1);
@@ -549,6 +557,13 @@ static void test_the_sources_halt_and_keep_one_road(const std::vector<std::strin
   CHECK(prov.find("nvs_load_key(") == std::string::npos);
   CHECK(prov.find("crypto_generate_keypair(") == std::string::npos);
   CHECK(prov.find("nvs_store_key(") == std::string::npos);
+
+  // setup() runs canary_pe::on_boot(), whose read-write open makes the
+  // namespace, before it provisions: a first boot's key read meets a
+  // namespace with no key in it.
+  const size_t pe_boot = main_cpp.find("\n  canary_pe::on_boot();\n");
+  CHECK(pe_boot != std::string::npos &&
+        pe_boot < main_cpp.find("  if (!witness_provision_device()) {\n"));
 
   // setup() halts on that false, and provisions once.
   CHECK(main_cpp.find("  if (!witness_provision_device()) {\n"

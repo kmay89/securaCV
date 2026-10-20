@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### The flagship halts on a stored identity key it cannot read, instead of running on a zero key or replacing it (sweep F360)
+### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from
   "could not read it", and only the first makes a new key (sweep F360).**
@@ -10,9 +10,9 @@
   leaves the buffer as it was when that read fails, so an NVS error between
   the two ran the boot on the zeroed key: an Ed25519 signing key anyone
   holds, whose setup-network key is the published known answer
-  `cv-3jByJ6rHdhM2`, and from which the API token is derived too. And every
-  failure read as "no key": a failed
-  open or length lookup, or a stored key of the wrong length, led to a new
+  `cv-3jByJ6rHdhM2`, and from which, on a unit with no stored token, the API
+  token is derived too. And every failure read as "no key": a failed open
+  or length lookup, or a stored key of the wrong length, led to a new
   keypair stored over the unit's identity. Now IDF's NVS is asked first
   whether a key is stored, and only its "not found" makes a new key. Any
   other error, a key that is not 32 bytes, a read that does not return all
@@ -22,15 +22,36 @@
   BOOT hold at power-on wipes the identity and starts fresh). The opt-in
   image's at-rest policy refusal no longer generates a key before the store
   refuses it. A working unit loads the same key as before; a first boot
-  generates one as before, and no longer logs Arduino's
-  `nvs_open failed: NOT_FOUND` for the key read. **Host-tested** (new
+  generates one as before, and no longer logs Preferences'
+  `nvs_get_blob len fail: privkey NOT_FOUND` for the key read (an
+  error-level line). **Host-tested** (new
   `firmware/tests_host/test_nvs_load_key.cpp`: the load, its probe, the
   store and the caller, cut out of the firmware, over a fake NVS that can
   fail the open, the length lookup, the session or the read, and built again
   as the opt-in image; against the old code, adapted only so that it builds,
-  it fails 186 of its 708 checks and the opt-in build 12 of 75); the
-  PlatformIO compile is CI's; not run on a device. The canary-wap's own key
-  load is not changed yet.
+  it fails 187 of its 710 checks and the opt-in build 12 of 76); the
+  PlatformIO compile is CI's; not run on a device.
+- **The canary-wap's key load takes the same rule, and its boot halts on a
+  key it cannot read (sweep F360).** Its `nvs_load_key()` had both faults.
+  A read that failed after the length check let provisioning go on with the
+  zeroed key, so a release unit raised its setup network under the
+  published `cv-3jByJ6rHdhM2` and signed records with a key anyone holds;
+  a failed open or length lookup replaced the identity. Now only IDF's
+  "not found" makes a new key, and a stored key the unit cannot read stops
+  the boot before anything signs or writes, with `[!!] PROVISIONING FAILED -
+  the stored identity key could not be read; HALTING, nothing written.
+  Power-cycle to retry; a clean install (full erase) starts a new identity`
+  on the serial console. The stored key is kept for the next boot; the BOOT
+  hold runs in the loop the halt never reaches, so a unit whose key stays
+  unreadable starts fresh only from a clean install in either flasher. It halts, where other provisioning failures go on (sweep F336),
+  because from there the boot record and the mesh would use the zeroed key
+  and the chain would restart at seq 0 over the stored one. A working unit
+  and a first boot are unchanged. **Host-tested** (the first-boot suite,
+  `firmware/projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`, now
+  runs the load, its probe, the store and the caller over a fake NVS that
+  can fail the length lookup, the session or the read; against the old
+  code, adapted only so that it builds, 10 of its 20 test functions fail);
+  the ESP32 compile is CI's; not run on a device.
 
 ### canary-wap refuses a failed HMAC instead of minting a key, a token or a backup from stack bytes (sweep F359)
 
@@ -55,7 +76,9 @@
   HMAC that fails the lookup, the setup, the start, the update or the finish,
   and over a fake SD card; it reads every sketch source for a call that
   drops the result. With only the old code's two return types changed so
-  that it builds, it fails 129 of its 219 checks;
+  that it builds, the suite as first written failed 129 of its 219 checks;
+  it now also holds the token and key mints' own buffer guards and the
+  setup network's answer after a failed provisioning, 245 checks in all;
   `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
   256 keys still holds); the ESP32 compile is CI's; not run on a device.
 

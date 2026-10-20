@@ -12,8 +12,23 @@
  * "nvs_open failed: ..." at error level for each (sweeps F125, F201).
  * fail_begin models NVS itself refusing every open (a fault, not a missing
  * namespace). begin() on a begun handle refuses, as Arduino's does. nvs.h
- * beside this file answers IDF's nvs_open() from the same store, and logs
- * nothing. The String Arduino.h comes from stubs/nvs_store. */
+ * beside this file answers IDF's nvs_open() and nvs_get_blob() from the same
+ * store, and logs nothing. The String Arduino.h comes from stubs/nvs_store.
+ *
+ * The key read's faults (sweep F360), each in force until clear():
+ *   prefs_begin_fails  Preferences' begin() refuses every open and IDF's
+ *                      nvs_open() does not: the session after a probe that
+ *                      succeeded (the shared handle's lock wait timed out,
+ *                      or NVS failed between the two).
+ *   length_fault       IDF's blob lookup fails with this error, and so
+ *                      getBytesLength() and getBytes(), which Arduino runs
+ *                      through it, answer 0.
+ *   read               what getBytes() of a blob does once its lookup has
+ *                      succeeded: Ok; Fails (answers 0, the buffer untouched:
+ *                      the F360 case); Garbles (fills the buffer with 0xA5,
+ *                      then answers 0, as IDF fills it before its data CRC
+ *                      check refuses); Short (copies all but the last byte
+ *                      and answers that count). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
 #define STUB_FIRST_BOOT_PREFERENCES_H
 
@@ -27,8 +42,10 @@
 #include <vector>
 
 #include "Arduino.h"
+#include "esp_err.h"
 
 struct HostFirstBootNvs {
+  enum class Read { Ok, Fails, Garbles, Short };
   struct Row {
     char type = 0;   // 'B' bool, 'U' u8, 'c' i8, 'S' u16, 'u' u32, 'L' ulong, 'b' blob, 's' string
     std::vector<uint8_t> bytes;
@@ -40,6 +57,12 @@ struct HostFirstBootNvs {
   int opens = 0;                       // begin() calls that opened
   int error_logs = 0;                  // failed begin()s: Preferences logs each
   int probes = 0;                      // nvs_open() calls (nvs.h), which log nothing
+  bool prefs_begin_fails = false;      // Preferences refuses every open; IDF does not
+  esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
+  Read read = Read::Ok;                // what a blob read does once its lookup succeeded
+  int blob_reads = 0;                  // getBytes() calls
+  uint32_t last_handle = 0;            // nvs.h's handles, each naming its namespace
+  std::map<uint32_t, std::string> handle_ns;   // open, not yet closed
 
   void clear() { *this = HostFirstBootNvs(); }
   bool has_namespace(const std::string& ns) const {
@@ -60,7 +83,8 @@ class Preferences {
   bool begin(const char* name, bool readOnly = false, const char* = nullptr) {
     host_nvs().begins++;
     if (started_ || name == nullptr) return false;
-    if (host_nvs().fail_begin || (readOnly && !host_nvs().has_namespace(name))) {
+    if (host_nvs().fail_begin || host_nvs().prefs_begin_fails ||
+        (readOnly && !host_nvs().has_namespace(name))) {
       host_nvs().error_logs++;          /* log_e("nvs_open failed: ...") */
       return false;
     }
@@ -96,13 +120,31 @@ class Preferences {
   uint32_t getULong(const char* key, uint32_t d = 0) { return scalar(key, 'L', d); }
   size_t getBytesLength(const char* key) {
     const HostFirstBootNvs::Row* r = find(key);
+    if (host_nvs().length_fault != ESP_OK) return 0;
     return (r != nullptr && r->type == 'b') ? r->bytes.size() : 0;
   }
+  // As Arduino-ESP32 2.0.17's: the length first, 0 when that is 0 or more
+  // than the buffer holds, then the read, 0 when it fails.
   size_t getBytes(const char* key, void* buf, size_t max_len) {
+    host_nvs().blob_reads++;
+    const size_t len = getBytesLength(key);
+    if (len == 0 || buf == nullptr || max_len == 0) return len;
+    if (len > max_len) return 0;
     const HostFirstBootNvs::Row* r = find(key);
-    if (r == nullptr || r->type != 'b' || buf == nullptr || r->bytes.size() > max_len) return 0;
-    memcpy(buf, r->bytes.data(), r->bytes.size());
-    return r->bytes.size();
+    switch (host_nvs().read) {
+      case HostFirstBootNvs::Read::Ok:
+        memcpy(buf, r->bytes.data(), len);
+        return len;
+      case HostFirstBootNvs::Read::Fails:
+        return 0;
+      case HostFirstBootNvs::Read::Garbles:
+        memset(buf, 0xA5, len);
+        return 0;
+      case HostFirstBootNvs::Read::Short:
+        memcpy(buf, r->bytes.data(), len - 1);
+        return len - 1;
+    }
+    return 0;
   }
   String getString(const char* key, String d = String()) {
     const HostFirstBootNvs::Row* r = find(key);

@@ -430,9 +430,12 @@ void crypto_print_key_at_rest() {
 // fault, and getBytesLength() answers 0 alike for a missing key and a failed
 // lookup. IDF answers ESP_ERR_NVS_NOT_FOUND for exactly the first, at the
 // open (no namespace) or at the lookup (no key in it), as health/boot_guard.h
-// reads it; any other error is NVS failing to say. ESP_OK sets *len. A
-// read-only open logs nothing, so a first boot no longer logs Preferences'
-// "nvs_open failed: NOT_FOUND" for the key read either.
+// reads it; any other error is NVS failing to say. ESP_OK sets *len. IDF
+// logs neither answer, so a first boot no longer logs Preferences'
+// "nvs_get_blob len fail: privkey NOT_FOUND" for the key read (an error-level
+// line, kept at Core Debug Level 1 and above). By then canary_pe::on_boot()
+// has opened the namespace read-write, so a first boot meets a namespace
+// with no key in it.
 static esp_err_t stored_key_length(size_t* len) {
   *len = 0;
   nvs_handle_t h;
@@ -452,7 +455,8 @@ static esp_err_t stored_key_length(size_t* len) {
 // as it was when its read fails, so an NVS error after the length check left
 // the zeroed DeviceIdentity key in use: a signing key every reader of this
 // source holds, whose setup-network key is the published known answer
-// cv-3jByJ6rHdhM2, and from which the API token is derived too.
+// cv-3jByJ6rHdhM2, and from which, on a unit with no stored token, the API
+// token is derived too.
 KeyLoad nvs_load_key(uint8_t priv[32]) {
   memset(priv, 0, 32);
   // Rule 2 of key_at_rest.h: an image that requires the key encrypted at rest

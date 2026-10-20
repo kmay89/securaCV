@@ -501,13 +501,16 @@
   was when that read fails, so an NVS error between the two reads ran the
   boot on the zeroed `DeviceIdentity` key: an Ed25519 signing key anyone
   holds, whose setup-network key is the published known answer
-  `cv-3jByJ6rHdhM2`, and from which the API token is derived too. And the
-  load answered one `false` for
+  `cv-3jByJ6rHdhM2`, and from which, on a unit with no stored token, the
+  API token is derived too. And the load answered one `false` for
   everything else: `witness_provision_device()` read it as "no key",
   generated a keypair and stored it over the old one, so a failed open or
   length lookup, or a stored key of the wrong length, replaced the unit's
   identity whenever the write after it landed (sweep F360, found by F350's
-  review).
+  review). The canary-wap's `nvs_load_key()` had both faults too: a read
+  that failed after the length check took a release unit through
+  provisioning on the zeroed key, so its SoftAP came up under
+  `cv-3jByJ6rHdhM2` and records were signed with it.
 - **Root cause:** Preferences cannot tell "nothing stored" from "NVS
   failed": its `begin()` fails alike on a namespace never created and on a
   fault, and `getBytesLength()` answers 0 alike for a missing key and a
@@ -519,21 +522,29 @@
   all 32 bytes, and a key of 32 zero bytes is refused.
   `establish_identity_key()` generates only on `Absent`, and on `Refused`
   provisioning stops, so `setup()` halts with nothing generated or written.
+  The canary-wap takes the same load and the same `establish_identity_key()`
+  shape; its `setup()` goes on after other provisioning failures, so it
+  halts on this one by name (`g_device.key_refused`), before the boot
+  record, the mesh or the chain can use the zeroed key.
 - **Rule:** A load that can fail answers three ways, and only "not there"
   may lead to a fresh secret. Never fall back to a new secret over a stored
   one: a refused read halts and leaves the stored value for the next boot
   (the owner's 30 s BOOT wipe is the way to start fresh). A read's count is
   part of its answer; a buffer the read may not have filled is zeroed
-  before anything sees it.
+  before anything sees it. And a refusal that does not halt is only as safe
+  as whatever runs after it: before choosing "return false and go on", read
+  what the boot does next with the buffer the refusal left.
 - **Regression check:** `firmware/tests_host/test_nvs_load_key.cpp` runs
   the load, its IDF probe, the store and `establish_identity_key()`, cut
   verbatim out of the firmware, over a fake NVS that Preferences and IDF
   read alike and that fails the open, the length lookup, the session or the
   read; built again as the opt-in image. It also holds
   `witness_provision_device()` to stopping on the refusal before it derives
-  anything, `setup()` to its halt, and `NVS_KEY_PRIV` to one owner. The
-  canary-wap's own `nvs_load_key()` (`canary_wap.ino`) has the same two
-  faults and is not changed yet.
+  anything, `setup()` to its halt, and `NVS_KEY_PRIV` to one owner. For the
+  canary-wap, `projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`
+  runs the sketch's load, probe, store and `establish_identity_key()` over
+  its first-boot fake NVS, which fails the length lookup, the session or the
+  read, and pins `setup()`'s halt.
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only

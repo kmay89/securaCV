@@ -1997,15 +1997,19 @@ so — see D2 below.)
   `derive_ap_password()` now returns `bool` and leaves `""` on a failure,
   never the `cv-222222222222` that 32 zero bytes render to on every unit;
   `provision_device()` returns `false` on it, before `g_device.initialized`
-  is set, as it already did on a failed token mint, and
-  `resolve_ap_password()` logs the failure and reads the `""`, so a release
-  build raises no SoftAP and a development build falls back to its random
-  `dev-` key (the non-release posture F336 describes). The chain backup in
-  `data_mgmt_api.h` was the third caller. `backup_chain()` now writes nothing
-  on a failed HMAC, so the last good `/CHAIN/backup.bin` survives (before,
-  it was overwritten with stack bytes as its HMAC, which no restore
-  accepts), and `datamgmt::process()` goes on as it does after a failed
-  write. `restore_chain()` refuses with `Chain restore: HMAC compute failed`;
+  is set, as it already did on a failed token mint. With `initialized`
+  false, `resolve_ap_password()` answers from its first branch and runs no
+  HMAC: a release build refuses (`AP password unavailable`) and raises no
+  SoftAP, and a development build uses its random `dev-` key (the
+  non-release posture F336 describes). Its own re-derive, for an initialized
+  identity whose key is missing, now checks the HMAC and logs `AP password
+  not derived` on a failure; no path leaves that state since this item, so
+  that branch is a defense. The chain backup in `data_mgmt_api.h` was the
+  third caller. `backup_chain()` now writes nothing on a failed HMAC, so the
+  last good `/CHAIN/backup.bin` survives (before, it was overwritten with
+  stack bytes as its HMAC, which no restore accepts), and
+  `datamgmt::process()` goes on as it does after a failed write.
+  `restore_chain()` refuses with `Chain restore: HMAC compute failed`;
   before, stack bytes failed the compare and it logged a tamper line, and
   compared against the now-zeroed output a backup whose HMAC field is 32
   zero bytes would pass. Both lines are the flagship's
@@ -2024,11 +2028,18 @@ so — see D2 below.)
   `provision_device()` returns `false` on either mint before it marks the
   identity ready. The unchanged sketch does not build under it (the cut
   finds no `static bool hmac_sha256(`); with only the two return types
-  changed, so it builds, it fails 129 of 219 checks, among them a failed
-  setup minting keys such as `cv-222222222wHN` from mostly-zero host stack
-  bytes and replacing the good backup. Mutants that drop the zeroing, the
-  start's, update's or finish's check, the free on a refusal, any caller's
-  check or `provision_device()`'s refusal each fail it. A dropped setup
+  changed, so it builds, the suite as first written failed 129 of its 219
+  checks, among them a failed setup minting keys such as `cv-222222222wHN`
+  from mostly-zero host stack bytes and replacing the good backup. It now
+  has 245: the two mints' own guards (a null or zero-length buffer is
+  refused before any HMAC runs, and `derive_api_token()` refuses and wipes a
+  buffer too short for the 35-character token even when every HMAC ran; no
+  caller passes either, the buffers being `g_device`'s 36 and 16 bytes), and
+  `resolve_ap_password()` after a failed provisioning in both builds.
+  Deleting either guard, or wiping the short buffer only when an HMAC
+  failed, fails it. Mutants that drop the zeroing, the start's, update's or
+  finish's check, the free on a refusal, any caller's check or
+  `provision_device()`'s refusal each fail it. A dropped setup
   check does not, since mbedTLS's next step refuses a context that was never
   set up, and the stand-in does the same. `provision_device()` itself is not
   driven; its refusals are source pins. Host-tested; the ESP32 compile is
@@ -2051,8 +2062,8 @@ so — see D2 below.)
   and stored it over the old one, so a failed read-only open or length
   lookup replaced the unit's identity whenever the write after it landed,
   and a stored key of any length but 32 was replaced the same way. A
-  refused read there
-  would have done the same. So `nvs_load_key()` now answers a `KeyLoad`,
+  refused read there would have done the same. So `nvs_load_key()` now
+  answers a `KeyLoad`,
   `Loaded`, `Absent` or `Refused`, and zeroes the buffer on any answer but
   `Loaded`. Preferences cannot tell "nothing stored" from "NVS failed" (its
   `begin()` fails alike on a namespace never created and on a fault, and
@@ -2077,34 +2088,101 @@ so — see D2 below.)
   Nothing is generated or written on that path, so a later boot that can
   read the key loads it; for a key that stays unreadable the owner's way
   out is the 30 s BOOT hold at power-on, which wipes the identity. A first
-  boot is unchanged, except that its key read no longer opens Preferences
-  on a namespace never created, so it no longer logs Arduino's
-  `nvs_open failed: NOT_FOUND` there. New
-  `firmware/tests_host/test_nvs_load_key.cpp` runs the load, the probe, the
-  store and `establish_identity_key()`, cut verbatim out of the two sources,
+  boot is unchanged. `canary_pe::on_boot()` runs before provisioning on
+  every boot and opens the namespace read-write, so the old key read always
+  found the namespace and met no key in it; what it logged was
+  `Preferences::getBytesLength()`'s `nvs_get_blob len fail: privkey
+  NOT_FOUND` (an error-level line, printed at Core Debug Level 1 and above,
+  `env:release` included). IDF's own lookup logs nothing, so that line is
+  gone; the `nvs_open failed: NOT_FOUND` a first boot after an erase still
+  logs is `on_boot()`'s own read-only open, which this item does not touch.
+  (An earlier draft of this amendment, its CHANGELOG entry and its commit
+  message named that open line as the one removed; the premise was wrong.)
+  New `firmware/tests_host/test_nvs_load_key.cpp` runs the load, the probe,
+  the store and `establish_identity_key()`, cut verbatim out of the two
+  sources,
   over a fake NVS (`tests_host/stubs/nvs_key`) that Preferences and IDF read
   alike and that can fail the read-only open, the length lookup, the
   session or the read (the buffer untouched, garbled or short); it is built
   twice, the second as the opt-in image. It also reads the canary tree:
   `witness_provision_device()` stops on `establish_identity_key()` before it
   derives anything, `setup()` halts on that, `establish_identity_key()`
-  holds the one call of the load, and only `securacv_crypto.cpp`'s probe,
-  load and store name `NVS_KEY_PRIV` (`canary_config.h` defines it,
+  holds the one call of the load, `setup()` runs `canary_pe::on_boot()`
+  before it provisions, and only `securacv_crypto.cpp`'s probe, load and
+  store name `NVS_KEY_PRIV` (`canary_config.h` defines it,
   `reset_scope_keys.h` lists it as kept). Against the old code, adapted only
   so that it builds (the `bool` as the enum, its caller's block moved
-  verbatim into `establish_identity_key()`), it fails 186 of 708 checks and
-  the opt-in build 12 of 75: among them the filed case loading as a key with
+  verbatim into `establish_identity_key()`), it fails 187 of 710 checks and
+  the opt-in build 12 of 76: among them the filed case loading as a key with
   the buffer still the zeroed one, a garbled read loading its `0xA5` bytes,
   and a failed open, a failed length lookup or a wrong-length key replaced
   by a new keypair. Mutants that drop the zeroing, the re-zeroing, the
   short-read, read-count or zero-key check, the probe, its close or its
   read-only open, that read a probe or length refusal as `Absent`, that
   generate over `Refused`, that ignore it in `witness_provision_device()` or
-  derive before it, or that drop `setup()`'s halt each fail it. Not changed
-  here: canary-wap's own `nvs_load_key()` (`canary_wap.ino`) has the same
-  two faults (it discards `getBytes()`' count and answers a failed open or
-  length lookup as no key); it is the WAP's and is not filed yet.
-  Host-tested; the PlatformIO compile is CI's; not run on a device.
+  derive before it, or that drop `setup()`'s halt each fail it.
+  The canary-wap's own `nvs_load_key()` (`canary_wap.ino`) had both faults,
+  and takes the same rule in this item. It discarded
+  `getBytes()`' count, and `g_device` is a zeroed static, so a read that
+  failed after the length check answered `true` over 32 zero bytes:
+  `provision_device()` went on and marked the identity ready, a release
+  build raised its SoftAP under that key's published known answer
+  `cv-3jByJ6rHdhM2` (the WAP derives as the flagship does;
+  `test_ap_password.cpp`'s parity), and records were signed with a key
+  anyone holds. And a failed session open, or a length lookup other than
+  32, answered `false`, and `provision_device()` generated a keypair and
+  stored it over the old one. Now its `nvs_load_key()` answers a `KeyLoad`
+  (one line among the sketch's types, above its first function, so the
+  prototype the Arduino builder hoists sees it) and zeroes the buffer on any
+  answer but `Loaded`; a new `stored_key_length()` asks IDF's `nvs_open()` /
+  `nvs_get_blob()`, and only `ESP_ERR_NVS_NOT_FOUND` is `Absent`. On this
+  sketch that answer comes at the open on a first boot after an erase (the
+  setup wizard only probes the namespace), and IDF logs nothing there, so
+  F201's quiet first boot holds. The key block moved into a new
+  `establish_identity_key()`, which generates only on `Absent`; on `Refused`
+  it sets `g_device.key_refused`, generates and writes nothing, and
+  `setup()` halts on that flag (`[!!] PROVISIONING FAILED - the stored
+  identity key could not be read; HALTING, nothing written. Power-cycle to
+  retry; a clean install (full erase) starts a new identity`); the BOOT hold
+  runs in the loop the halt never reaches, so a key that stays unreadable is
+  left only to a clean install. It halts rather than returning `false` and
+  going on, as `setup()` does after the other provisioning failures (F336):
+  from there the boot
+  attestation record and `mesh_network::init()` take `g_device.privkey` as
+  it is, which would be the zeroed key, and the chain starts again at seq 0,
+  which the reboot and deep-sleep paths persist over the stored one. The
+  halt comes before the watchdog, any radio, server or task. Its tests extend
+  `projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`, whose fake
+  NVS (`stubs/first_boot`) gains IDF's `nvs_get_blob()`, a namespace per
+  handle and the read faults (the session refused after the probe, the
+  length lookup failing, the read untouched, garbled or short): a stored key
+  loads unchanged, a namespace with no key generates one, and a read that
+  fails after the length check, a garbled or short read, a failed length
+  lookup, a key stored as another type, a key of 16, 31, 33 or 64 bytes, a
+  session that will not open and a key of 32 zero bytes are each refused
+  with NVS byte for byte as it was, nothing generated and every handle
+  closed; the next boot that can read the key loads it. An NVS fault now
+  logs two Preferences lines, not four, and prints the key read's refusal
+  naming IDF's error. Source pins hold `setup()`'s halt as the first thing
+  in its failure block, `provision_device()` stopping on the key before it
+  derives anything or marks the identity ready, the one call of the load
+  and `NVS_KEY_PRIV`'s three readers. Against the old load and key block,
+  adapted only so that they build (the `bool` as the enum, the block moved
+  verbatim into `establish_identity_key()`), 10 of the suite's 20 test
+  functions fail (each stops at its first failed check). Mutants that read a
+  probe fault or a wrong length as `Absent`, read `ESP_ERR_NVS_NOT_FOUND` as
+  `Refused`, skip the probe or its close, ignore the read's count, drop the
+  zeroing on entry or after a refused read, drop or narrow the zero-key
+  check, generate over `Refused`, drop the flag, take `Refused` as `Loaded`,
+  ignore `establish_identity_key()`'s answer, open the session read-write,
+  or drop `setup()`'s halt each fail it. canary-sense's and canary-vision's
+  `load_or_generate_keypair()` (`src/witness.cpp`, identical lines) check
+  the read's count and take a stored zero key as none, so they never sign
+  with the zero key, but a failed length lookup or read, like a stored zero
+  key, still draws a new key and stores it over the stored one: identity
+  churn, which Home Assistant shows as a changed fingerprint. They are not
+  changed here. Host-tested; the PlatformIO and
+  ESP32 compiles are CI's; not run on a device.
 
 ### Parity & sub-projects
 

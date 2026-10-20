@@ -846,7 +846,12 @@ clean: clean-wap-daily-summary
 # namespace (sweep F220): chirp_channel.cpp's load_settings() and
 # save_settings(), and the loop()'s self-test stamp read in canary_wap.ino
 # (its `if (!s_selftest_nvs_loaded) {` block, cut by line), through the real
-# nvs_store.h's NvsSession, whose read-only open now asks IDF first.
+# nvs_store.h's NvsSession, whose read-only open now asks IDF first. And the
+# key read fails closed (sweep F360, the canary's rule): stored_key_length(),
+# nvs_load_key(), nvs_store_key() and establish_identity_key(), with the
+# one-line KeyLoad enum, over the same fake NVS, which can also fail IDF's
+# blob lookup and Preferences' read: only IDF's ESP_ERR_NVS_NOT_FOUND may
+# lead to a new key, and a refused read writes nothing.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
@@ -867,10 +872,12 @@ $(FIRSTBOOT_PWR): $(SRC_DIR)/power_monitor.h $(FIRSTBOOT_CUT) Makefile
 $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	@test "$$(grep -cE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
 	  echo "canary_wap.ino: no single NVS_KEY_PRIV line for nvs_load_key()" >&2; exit 1; }
-	@grep -nE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino | \
+	@test "$$(grep -cE '^enum class KeyLoad : uint8_t \{ Loaded, Absent, Refused \};$$' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single one-line KeyLoad enum for nvs_load_key()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_PRIV +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
-	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
-	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+	awk -v 'sigs=static esp_err_t stored_key_length(|static KeyLoad nvs_load_key(|static bool nvs_store_key(|static bool establish_identity_key() {' \
+	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
 	awk -v 'sigs=static void load_settings() {|static void save_settings() {' -f $(FIRSTBOOT_CUT) \

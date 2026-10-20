@@ -2466,7 +2466,9 @@ Code: `firmware/projects/canary-wap/arduino/canary_wap/setup_wizard.h`
 (`load_nvs_state()`): each read-only open of `securacv` that can come before
 `provision_device()`'s key store creates the namespace asks IDF's
 `nvs_open()` first (`csi_module_settings_nvs::begin_read_only()` /
-`probe_namespace()`). Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
+`probe_namespace()`; the key read through its own `stored_key_length()`
+since F360, which asks `nvs_get_blob()` for the key's length too).
+Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
 whose `stubs/first_boot` NVS counts the error line Arduino-ESP32's
 `Preferences::begin()` logs for a namespace that is not there, with source
 pins holding `setup()`'s order); that IDF's `nvs_open()` answers

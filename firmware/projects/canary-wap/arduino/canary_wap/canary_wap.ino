@@ -701,6 +701,14 @@ struct WitnessRecord {
   bool        verified;
 };
 
+// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
+// one answer that may lead to a new key: IDF's NVS says nothing is stored.
+// Refused means a key is, or may be, stored and was not read or not used;
+// no new identity may be made over it. Declared here, among the types and
+// above the sketch's first function, so the prototype the Arduino builder
+// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
+
 struct DeviceIdentity {
   uint8_t  privkey[32];
   uint8_t  pubkey[32];
@@ -724,6 +732,7 @@ struct DeviceIdentity {
   bool     born_exact;    // False ⇒ first DATED, not born. Not a birthday.
   uint32_t key_born_ms;   // millis() when this boot generated the key…
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
+  bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -1626,21 +1635,75 @@ static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
                       WATCHDOG_TIMEOUT_SEC * 1000u,
               "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
 
-// The key read is the first session on "securacv" (setup_wizard::init() only
-// probes it), and on a first boot after an NVS erase it comes before
-// nvs_store_key() creates the namespace. An absent namespace answers "no key"
-// without a Preferences open and its NOT_FOUND line, as the refused open did
-// (sweep F201).
-static bool nvs_load_key(uint8_t priv[32]) {
-  if (csi_module_settings_nvs::probe_namespace(NVS_MAIN_NS) ==
-      csi_module_settings_nvs::NamespaceState::kAbsent) {
-    return false;
+// The stored private key's length, asked of IDF's NVS before Preferences
+// reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
+// failed": its begin() fails alike on a namespace never created and on a
+// fault, and getBytesLength() answers 0 alike for a missing key and a failed
+// lookup. IDF answers ESP_ERR_NVS_NOT_FOUND for exactly the first, at the
+// open (no namespace) or at the lookup (no key in it); any other error is NVS
+// failing to say. ESP_OK sets *len. The key read is the first session on
+// "securacv" (setup_wizard::init() only probes it), and on a first boot after
+// an NVS erase it comes before nvs_store_key() creates the namespace; IDF's
+// read-only open logs nothing there, so that boot still logs no NOT_FOUND
+// line for it (sweep F201).
+static esp_err_t stored_key_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_PRIV, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// Fails closed (sweep F360, the canary's rule): only a key NVS says is not
+// there answers Absent, and every other way the stored key goes unread or
+// unused answers Refused with priv zeroed, which establish_identity_key()
+// turns into a boot that setup() halts, writing nothing. Before, a failed
+// session open or a length lookup other than 32 answered false, and
+// provision_device() generated a keypair and stored it over the old one; and
+// the read's own count was discarded, so a read that failed after the length
+// check left g_device's zeroed key in use: provisioning went on, the SoftAP
+// came up under that key's published known answer cv-3jByJ6rHdhM2, and
+// records were signed with a key anyone holds.
+static KeyLoad nvs_load_key(uint8_t priv[32]) {
+  memset(priv, 0, 32);
+  size_t stored = 0;
+  const esp_err_t probe = stored_key_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] identity key not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
   }
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-  if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;
-  nvs->getBytes(NVS_KEY_PRIV, priv, 32);
-  return true;
+  if (stored != 32) {
+    Serial.printf("[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must return all 32 bytes. A refused one may have left
+  // the buffer as it was or partly written (IDF fills it before it checks the
+  // data's CRC), so it is zeroed again.
+  size_t got = 0;
+  {
+    NvsMainSession nvs(true);
+    if (nvs.isOpen()) got = nvs->getBytes(NVS_KEY_PRIV, priv, 32);
+  }
+  if (got != 32) {
+    memset(priv, 0, 32);
+    Serial.printf("[!!] identity key not loaded: the stored key could not be read (%u of 32 bytes)\n",
+                  (unsigned)got);
+    return KeyLoad::Refused;
+  }
+  // A drawn key is 32 zero bytes with odds of 2^-256, and those bytes are
+  // the zeroed buffer's, the one key whose every derivation is public.
+  uint8_t any = 0;
+  for (size_t i = 0; i < 32; i++) any |= priv[i];
+  if (any == 0) {
+    Serial.printf("[!!] identity key not loaded: the stored key is 32 zero bytes\n");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 static bool nvs_store_key(const uint8_t priv[32]) {
@@ -11231,6 +11294,51 @@ static bool start_wifi_ap() {
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
+// The identity key: the stored one, or, only when NVS says none is stored, a
+// new one generated and stored (sweep F360, the canary's rule). Any other
+// answer is a key that is, or may be, in NVS and was not read or not used:
+// nothing is generated or written, g_device.key_refused is set and the key
+// stays zeroed, and setup() halts on it before anything signs, so the stored
+// key, and the chain state beside it, are there for the next boot
+// (power-cycle to retry). It halts rather than going on as setup() does
+// after the other provisioning failures (sweep F336): from there the boot
+// attestation record and the mesh take g_device.privkey as it is, which here
+// is the zeroed key every derivation of is public, and the chain starts again
+// at seq 0, which the reboot and deep-sleep paths persist over the stored
+// one. Before, a failed read fell through to a new keypair stored over the
+// old one, and a read that failed after the length check ran the boot on the
+// zeroed key.
+static bool establish_identity_key() {
+  g_device.key_refused = false;
+  const KeyLoad stored = nvs_load_key(g_device.privkey);
+  if (stored == KeyLoad::Loaded) {
+    Serial.println("[PROV] Loaded existing keypair from NVS");
+    return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    g_device.key_refused = true;
+    Serial.println("[!!] Stored identity key not read: not replacing it, provisioning cannot "
+                   "continue (see the identity key line above)");
+    return false;
+  }
+  Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
+  if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
+    Serial.println("[!!] Keypair generation failed");
+    return false;
+  }
+  if (!nvs_store_key(g_device.privkey)) {
+    Serial.println("[!!] Failed to store keypair");
+    return false;
+  }
+  Serial.println("[PROV] Keypair stored in NVS");
+  g_device.first_boot = true;
+  // This boot made the key, so this boot is the only one that can honestly
+  // say how old it is when a clock finally arrives.
+  g_device.key_is_new = true;
+  g_device.key_born_ms = millis();
+  return true;
+}
+
 static bool provision_device() {
   Serial.println("[PROV] Provisioning device identity...");
 
@@ -11240,25 +11348,7 @@ static bool provision_device() {
   // Device identity (device_id / AP SSID / mDNS hostname) is derived from the
   // pubkey fingerprint, not the MAC (event_contract §10), so the keypair and its
   // fingerprint must exist before we name anything.
-  if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[PROV] Loaded existing keypair from NVS");
-  } else {
-    Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
-    if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
-      Serial.println("[!!] Keypair generation failed");
-      return false;
-    }
-    if (!nvs_store_key(g_device.privkey)) {
-      Serial.println("[!!] Failed to store keypair");
-      return false;
-    }
-    Serial.println("[PROV] Keypair stored in NVS");
-    g_device.first_boot = true;
-    // This boot made the key, so this boot is the only one that can honestly
-    // say how old it is when a clock finally arrives.
-    g_device.key_is_new = true;
-    g_device.key_born_ms = millis();
-  }
+  if (!establish_identity_key()) return false;
 
   // What we already know about when this key was born. Loaded before anything
   // can offer a clock, so the "already recorded" rule is in force from the
@@ -12013,6 +12103,16 @@ void setup() {
 
   // Provision device identity and crypto
   if (!provision_device()) {
+    // A stored identity key this boot could not read (sweep F360) halts here,
+    // as the canary halts: nothing below runs, so nothing signs with the
+    // zeroed key and nothing writes over the stored key or its chain. It is
+    // reached before the watchdog is set up and before any radio, server or
+    // task starts. The line goes to Serial only: the health log's ring is
+    // drained to the SD card by loop(), which never runs after this.
+    if (g_device.key_refused) {
+      Serial.println("[!!] PROVISIONING FAILED - the stored identity key could not be read; HALTING, nothing written. Power-cycle to retry; a clean install (full erase) starts a new identity");
+      while (true) { delay(1000); }
+    }
     Serial.println();
     Serial.println("[!!] PROVISIONING FAILED - HALTING");
     // Don't infinite loop - just log and continue with limited function
