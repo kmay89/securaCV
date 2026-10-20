@@ -1491,7 +1491,7 @@ jobs:
       - name: Check canary (PIO) route security (every route gated or allowlisted)
         # The canary tree's sibling of the step above, same matcher: every
         # route registerHttpHandlers() adds (the captive-probe loop
-        # included) must reach auth_gate / auth_check / auth_check_optional
+        # included) must reach auth_gate / auth_check / auth_bearer_grant
         # / provisioning_gate_take — in an if/return, not ignored, and not
         # below an unconditional return — or sit on the script's documented
         # public allowlist. The two HTML pages are public shells whose

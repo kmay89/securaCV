@@ -318,17 +318,30 @@ that means the device, can spend your tap before you do. The decisions
 `receipt_decide`, and `host_guard.h` beside them) are host-tested, the handler glue is compiled by
 CI, and none of it is bench-tested yet.
 
-The flagship's API routes take the bearer under one lockout: a malformed or
-wrong bearer is a strike, and while the backoff it starts runs (2 s, doubling
-with each strike) every call to those routes is refused `429`. A request with
-no `Authorization` header is no strike (sweep F340), so a dashboard tab
-loaded without the token, which polls with no header, no longer holds the
-app's right token at `429`. The lockout is still one per device: a host that
-sends wrong bearers holds every caller while its backoff runs. The provisioning
-receipt still compares its bearer outside the lockout, and the device-wide
-request limit (120 requests a minute across the rate-limited routes) is
-shared too, so two open Status tabs reach it by themselves (F351). The rule
-is host-tested on the real `securacv_auth.cpp`; not bench-tested.
+The flagship's bearer lockout is the WAP's table,
+`firmware/common/network/auth_backoff.h`, keyed by the request's socket peer
+(`request_peer_ipv4()`, never a header) (sweep F340). Every bearer it
+compares is accounted: the API routes through `auth_check()`, and the
+provisioning receipt and the page-token decision through the grant
+`auth_bearer_grant()`. A malformed or wrong bearer is a strike against its
+address. While that address's backoff runs, its API calls are refused `429`
+with `Retry-After`, and its bearer on the receipt is not compared and reads
+as none, so the receipt goes on to the BOOT tap: served if one is open,
+else its `403`, which the page reads as "tap BOOT". A request with no
+`Authorization` header is no strike, so a dashboard tab loaded without the
+token, which polls with no header, arms nothing. A host's wrong bearers hold
+only that host's address (F343). A browser that mistyped the token waits at
+most about 60 s. A host that strikes from 9 or more addresses within 60 s
+holds every untracked address while the shared overflow slot runs, and a tap
+does not clear that; then wait, change Wi-Fi from the iPhone's bonded
+Bluetooth lane, or hold BOOT 10 s. The flagship has no Bluetooth lane that
+changes its Wi-Fi, so there the fallbacks are to wait or the 10 s hold.
+Clients behind one address share a backoff. It does not close a deliberate
+denial from the LAN: the device-wide request limit (120 requests a minute
+across the rate-limited routes) is still one per device, so two open Status
+tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
+purge stay open. Host-tested on the real `securacv_auth.cpp`; not
+bench-tested.
 
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a

@@ -7,7 +7,10 @@
  * until the send), so a value that died before the send would show. Header
  * names match case-insensitively, as in ESP-IDF; a value longer than the
  * caller's buffer is copied cut short and answered
- * ESP_ERR_HTTPD_RESULT_TRUNC, as in ESP-IDF. */
+ * ESP_ERR_HTTPD_RESULT_TRUNC, as in ESP-IDF. Each read of a header's value
+ * is counted (value_reads), so a test can tell a request whose bearer was
+ * compared from one whose bearer was not (the lockout's HELD). The request
+ * carries no peer address: the library is handed its source explicitly. */
 #ifndef STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 #define STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 
@@ -34,6 +37,7 @@ struct HostCaseLess {
 typedef struct httpd_req {
   // The request, as the test builds it.
   std::map<std::string, std::string, HostCaseLess> headers;
+  int value_reads = 0;  // httpd_req_get_hdr_value_str() calls
 
   // The response, as the library sets it. The pointers are the caller's;
   // the send copies them into the strings below.
@@ -55,6 +59,7 @@ inline size_t httpd_req_get_hdr_value_len(httpd_req_t* r, const char* field) {
 
 inline esp_err_t httpd_req_get_hdr_value_str(httpd_req_t* r, const char* field,
                                              char* val, size_t val_size) {
+  r->value_reads++;
   auto it = r->headers.find(field);
   if (it == r->headers.end()) return ESP_ERR_NOT_FOUND;
   if (!val || val_size == 0) return ESP_FAIL;

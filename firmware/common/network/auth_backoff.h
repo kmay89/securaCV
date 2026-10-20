@@ -1,11 +1,16 @@
 // auth_backoff.h — the bearer lockout, one backoff per source address.
 //
 // Pure: <stdint.h> only, no Arduino, no httpd, no heap. Host-tested in
-// firmware/tests_host/test_auth_backoff.cpp. The canary-wap sketch compiles
-// only its own folder, so it stages a byte-identical copy
-// (firmware/scripts/check_improv_sync.sh holds the two equal), and its
-// api_auth.h holds the one Table every file of the sketch shares, keyed by
-// auth_request_source() (canary_wap.ino).
+// firmware/tests_host/test_auth_backoff.cpp. Two consumers, one table each:
+//   * The canary-wap sketch compiles only its own folder, so it stages a
+//     byte-identical copy (firmware/scripts/check_improv_sync.sh holds the
+//     two equal), and its api_auth.h holds the one Table every file of the
+//     sketch shares, keyed by auth_request_source() (canary_wap.ino).
+//   * The canary (PIO) tree reads this file by path (-I firmware/common):
+//     its AuthManager (lib/securacv_auth) holds that device's Table, keyed by
+//     request_peer_ipv4() (securacv_network.cpp), the same peer mapping
+//     (sweep F340). Host-tested over the real library in
+//     firmware/tests_host/test_securacv_auth.cpp.
 //
 // Why per address (sweep F343). The WAP's lockout used to be one backoff for
 // every caller, so one host's wrong bearers held every other host's right

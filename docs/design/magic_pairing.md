@@ -425,8 +425,10 @@ same order; the claim is inserted between the bearer and the tap and
 changes nothing for either. Host-tested in
 `firmware/tests_host/test_provisioning_gate.cpp`.
 
-Who asks row 1: the flagship's `auth_gate` answers the Host question ahead
-of every handler, so its receipt route runs all four rows. **The WAP sketch
+Who asks row 1: the flagship's receipt route asks it itself
+(`host_is_foreign`, the predicate its `auth_gate` asks ahead of every API
+handler, as `receipt_decide`'s first argument), and it runs rows 1, 2 and 4:
+the flagship has no setup-door claim. **The WAP sketch
 asks no Host question on this route today** (it has no `auth_gate`; its
 `/` page checks the Host header only to pick the first-boot wizard), so its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
@@ -459,6 +461,21 @@ the broker move, `test_mqtt_reinit.cpp` beside it. Adding
 the Host row to the WAP is a separate change, not a claim this document
 makes.
 
+On the flagship (`firmware/canary`), row 2 is under the same per-address
+lockout (sweep F340): `bearer_present_and_valid()` is the accounted grant
+`auth_bearer_grant()`, on the same `auth_backoff.h` table the WAP runs, keyed
+by `request_peer_ipv4()` (`getpeername`, through the same mapping). A wrong
+or malformed bearer is one strike against its address, the right one clears
+that address's count, and a held bearer is not compared and reads as no
+bearer: the request goes on to the tap and, with none open, gets the `403
+physical_confirmation_required` the page reads as "tap BOOT", never a `429`.
+A request with no credential is no strike, on the receipt and on every
+`auth_gate` route, so the dashboard tab loaded without the token arms
+nothing. The posture is the paragraph below; the flagship has no Bluetooth
+lane that changes its Wi-Fi, so there the fallbacks are to wait or the 10 s
+hold, and its request limit is still one per device (F351). Host-tested in
+`firmware/tests_host/test_securacv_auth.cpp`; not run on a device.
+
 **The backoff is per source address.** A host's wrong bearers hold
 only that host's address (F343). A browser that mistyped the token waits at
 most about 60 s. A host that strikes from 9 or more addresses within 60 s
@@ -468,9 +485,10 @@ Bluetooth lane, or hold BOOT 10 s.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
 sketch, with one table for every file of the sketch (`g_auth_table` in
-`api_auth.h`). It tracks 8 addresses, each with its own backoff: 2 s after
-the first strike, doubling, never more than 60 s, and cleared once that
-address sends no wrong token for a minute. An address that finds no free
+`api_auth.h`); the flagship reads it by path, its table held by
+`AuthManager` (sweep F340). It tracks 8 addresses, each with its own
+backoff: 2 s after the first strike, doubling, never more than 60 s, and
+cleared once that address sends no wrong token for a minute. An address that finds no free
 slot strikes one shared overflow slot, which holds every address without a
 slot of its own while it runs. The key is the request's socket peer, read by
 `request_peer_key()` (`getpeername`, never a header such as

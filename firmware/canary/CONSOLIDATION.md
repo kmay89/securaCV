@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 a request with no credential is no strike toward the lockout, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none; host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 the backoff is the WAP's own table, `firmware/common/network/auth_backoff.h`, read by path rather than ported: per source address (`request_peer_ipv4()`, the socket peer), 2 s doubling capped at 60 s, and a request with no credential is no strike, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none. The receipt's and the page's bearer is the accounted grant, `auth_bearer_grant()`, and `auth_check_optional()` is gone; host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
@@ -70,6 +70,12 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   - Exponential-backoff lockout state machine
   - Token redaction helper
   - `api_auth_check` / `api_auth_check_optional` for `esp_http_server`
+  - *(2026-10-19, sweep F340: the lockout state machine is no longer a
+    port. Both trees run `firmware/common/network/auth_backoff.h`, one
+    backoff per source address, so the next fix to it lands in both;
+    `auth_check()` takes the request's source, the silent
+    `auth_check_optional()` is replaced by the accounted
+    `auth_bearer_grant()`, and the unused stats API is gone.)*
 - Library is **not yet wired** into `securacv_network` — primitives first, integration review second.
 - `library.json` ships independently so existing PlatformIO builds ignore it until opted in.
 - Update [FEATURES.md](../FEATURES.md) dashboard to mark gap #1 as ⚠️ (library present, handlers not yet wired).

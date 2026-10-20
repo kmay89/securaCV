@@ -233,7 +233,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Camera init fail | Continue all other witnessing |
 | GPS no fix | Record events without location |
 | Chain verify fail | Create tamper event, alert user, keep recording |
-| Auth failure | Lock out the failing source address with exponential backoff, per address on the kernel and on the WAP (on the WAP at most 60 s per address, and a shared overflow slot bounds the addresses beyond its 8-address table: a host's wrong bearers hold only that host's address, F343); one backoff per device on the flagship (F340) |
+| Auth failure | Lock out the failing source address with exponential backoff, per address on the kernel and on both Canary firmwares (the WAP and the flagship run one table, `firmware/common/network/auth_backoff.h`: at most 60 s per address, and a shared overflow slot bounds the addresses beyond its 8-address table; a host's wrong bearers hold only that host's address, F343, F340). A request with no credential is no strike |
 | TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
 | Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
@@ -516,11 +516,11 @@ Future: randomized SSID rotation with owner-only discovery.
 **Result:** Token comparison uses constant-time function (volatile XOR
 accumulator). Response time is independent of how many characters match.
 Additionally, exponential backoff limits brute-force attempts. On the
-kernel and the WAP it is per source address; on the WAP at most nine
+kernel and on both Canary firmwares it is per source address; on the
+Canaries (the WAP and the flagship share `auth_backoff.h`) at most nine
 backoffs run at once (8 tracked addresses and a shared overflow), so a host
 with many addresses gets about 30 guesses a minute, and the token's ~184
-bits are the bound across addresses (F343). The flagship's is one per
-device (F340).
+bits are the bound across addresses (F343, F340).
 
 **PASS if:** Auth timing is constant regardless of input.
 

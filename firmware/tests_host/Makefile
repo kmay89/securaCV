@@ -508,15 +508,24 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # The canary's bearer check and its lockout (sweep F340): the REAL
 # canary/lib/securacv_auth/src/securacv_auth.cpp, compiled whole over
 # stubs/securacv_auth (a 32-bit millis() the test moves, a header-map httpd
-# request whose answers it reads, a token derive with no mbedtls) and the
-# real canary_config.h. A request with no Authorization header is a 401 and
-# no strike, so a dashboard tab loaded without the token arms no lockout;
-# a malformed or wrong credential is still one, and the right one clears it.
-SECAUTH_SRC  = ../canary/lib/securacv_auth/src/securacv_auth.cpp
-SECAUTH_HDRS = ../canary/lib/securacv_auth/src/securacv_auth.h \
-               ../canary/include/canary_config.h \
-               $(wildcard stubs/securacv_auth/*.h)
-SECAUTH_BIN  = $(BUILD_DIR)/test_securacv_auth
+# request whose answers it reads, a token derive with no mbedtls), the real
+# canary_config.h and the real common/network/auth_backoff.h it runs on. A
+# request with no Authorization header is a 401 and no strike, so a
+# dashboard tab loaded without the token arms no lockout; a malformed or
+# wrong credential is still one, against its own source address only, and
+# the right one clears it. The receipt's grant (auth_bearer_grant) is
+# accounted and never compares a held bearer. securacv_network.cpp's path is
+# passed in for the text pins over its wiring (request_peer_ipv4 into both
+# gates), so the read fails closed.
+SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
+SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
+                ../canary/include/canary_config.h \
+                ../common/network/auth_backoff.h \
+                $(wildcard stubs/securacv_auth/*.h)
+SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
+SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
+                -I ../canary/include -I ../common
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -1070,10 +1079,33 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
 
-$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) Makefile | $(BUILD_DIR)
-	$(call with_deps,$(CXX) $(CXXFLAGS) -I stubs/securacv_auth \
-	    -I ../canary/lib/securacv_auth/src -I ../canary/include \
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
+	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
+
+# The lockout's numbers are auth_backoff.h's (sweep F340). A build that
+# still sets one of the old per-device knobs meant to change a number the
+# library no longer reads, so securacv_auth.h stops it with an #error that
+# names the header. Each knob is compiled once and must be refused that way.
+# Nothing to run, and no dependency file (no -o).
+SECAUTH_OLD_KNOBS = SECURACV_AUTH_MAX_FAILURES SECURACV_AUTH_LOCKOUT_BASE_MS \
+                    SECURACV_AUTH_LOCKOUT_MAX_MS SECURACV_AUTH_FAILURE_WINDOW_MS
+.PHONY: run-secauth-knobs
+run-secauth-knobs: DEPFLAGS =
+run-secauth-knobs:
+	@for k in $(SECAUTH_OLD_KNOBS); do \
+	  if out=$$($(CXX) $(CXXFLAGS) -fsyntax-only $(SECAUTH_INCS) -D$$k=1 $(SECAUTH_SRC) 2>&1); then \
+	    echo "FAIL: -D$$k=1 compiled; securacv_auth.h must refuse it (#error)"; exit 1; \
+	  fi; \
+	  case "$$out" in \
+	    *"are gone (sweep F340)"*"firmware/common/network/auth_backoff.h"*) ;; \
+	    *) echo "FAIL: -D$$k=1 failed, but not with the #error naming auth_backoff.h:"; \
+	       echo "$$out"; exit 1 ;; \
+	  esac; \
+	done; \
+	echo "secauth: every old SECURACV_AUTH_* backoff knob is refused by its #error"
+run: run-secauth-knobs
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \

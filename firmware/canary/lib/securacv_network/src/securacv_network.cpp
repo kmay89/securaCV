@@ -25,8 +25,9 @@
 // once in firmware/tests_host.
 #include "network/host_guard.h"
 // getpeername()/getsockname() + the AP/STA netif addresses for the
-// interface-scoped page-token policy and the receipt's base_url (the address
-// the request actually arrived on).
+// interface-scoped page-token policy, the receipt's base_url (the address
+// the request actually arrived on) and the bearer lockout's source address
+// (request_peer_ipv4).
 #include <lwip/sockets.h>
 #include <esp_netif.h>
 #include <esp_timer.h>  // esp_timer_get_time: a 64-bit microsecond uptime
@@ -1316,6 +1317,15 @@ static bool host_is_foreign(httpd_req_t* req) {
 // A foreign Host (host_is_foreign) is refused first, before the token is
 // even looked at: a rebinding page that somehow holds a token still cannot
 // use it, and learns nothing about the provisioning state either.
+// The lockout is per source address (firmware/common/network/auth_backoff.h,
+// sweep F340): auth_check() is handed request_peer_ipv4(req), the socket
+// peer, so one host's wrong bearers hold only that host, and a request with
+// no Authorization header (the dashboard tab loaded without the token) is a
+// 401 and no strike.
+
+// The request's source address for the bearer lockout, defined beside
+// sockaddr_ip4_host_order below.
+static uint32_t request_peer_ipv4(httpd_req_t* req);
 
 // The answer every token-bearing route gives a foreign Host — auth_gate and
 // the provisioning receipt, which does not go through auth_gate — so the two
@@ -1341,7 +1351,7 @@ static bool auth_gate(httpd_req_t* req) {
     witness_get_health().http_errors++;
     return false;
   }
-  if (!auth_check(req, token)) {
+  if (!auth_check(req, token, request_peer_ipv4(req))) {
     witness_get_health().http_errors++;
     return false;
   }
@@ -1416,6 +1426,24 @@ static uint32_t sockaddr_ip4_host_order(const struct sockaddr_storage& ss) {
   return 0;
 }
 
+// The source address the bearer lockout keys this request by (sweep F340):
+// the socket's peer, read with getpeername and mapped by
+// sockaddr_ip4_host_order, the mapping the WAP's auth_request_source() uses
+// too (provisioning_gate::ipv4_host_order_from_addr), so both trees key a
+// client alike. Never a header: X-Forwarded-For and the rest are the
+// client's to write. 0 when the socket cannot say or the peer is a real
+// IPv6 address; 0 is the one bucket every such source shares
+// (auth_backoff.h). Kept in RAM by the table, never logged or answered.
+static uint32_t request_peer_ipv4(httpd_req_t* req) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return 0;
+  struct sockaddr_storage peer_ss;
+  socklen_t plen = sizeof(peer_ss);
+  memset(&peer_ss, 0, sizeof(peer_ss));
+  if (getpeername(fd, (struct sockaddr*)&peer_ss, &plen) != 0) return 0;
+  return sockaddr_ip4_host_order(peer_ss);
+}
+
 // Address + netmask of one default netif ("WIFI_AP_DEF" / "WIFI_STA_DEF"),
 // host order; both 0 when the netif is absent or has no address. esp_netif
 // reads the same on the IDF 4.4 (Arduino 2.0.17) and IDF 5.x cores — the
@@ -1460,14 +1488,21 @@ static bool from_ap_subnet(httpd_req_t* req) {
       ap_ip, ap_mask, sta_ip, sta_mask);
 }
 
-// A valid bearer on this request. Fails closed when the device credential
-// is not provisioned: AuthManager::checkOptional against an EMPTY expected
-// token would accept "Authorization: Bearer " (a zero-length constant-time
-// compare is equal), and here that would hand out the receipt.
+// A valid bearer on this request, through the accounted grant (sweep F340):
+// a malformed or wrong bearer is one strike against the request's source
+// address, the right one frees that address's backoff, and while the
+// address is held its bearer is not compared and reads as none (HELD is not
+// OK), so the receipt goes on to the BOOT tap and, with none open, answers
+// the 403 the page reads as "tap BOOT"; a 429 here would strand the owner.
+// Sends nothing. Fails closed when the device credential is not
+// provisioned: an EMPTY expected token must never meet a compare that a
+// bare "Authorization: Bearer " could pass, and here that would hand out
+// the receipt.
 static bool bearer_present_and_valid(httpd_req_t* req) {
   const char* token = auth_get_token();
   if (!token || token[0] == '\0') return false;
-  return auth_check_optional(req, token);
+  return auth_bearer_grant(req, token, request_peer_ipv4(req)) ==
+         AuthManager::BearerResult::OK;
 }
 
 // Dotted IPv4 of the interface this request arrived on (getsockname), so the
@@ -2368,7 +2403,10 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
 // included) gets FOREIGN_HOST before any grant is read — its bearer is not
 // even looked at, like auth_gate — and the BOOT tap is never taken for it.
 // Otherwise: inject while the first-boot wizard is active, for a
-// bearer-authenticated caller, for a peer inside the live SoftAP subnet, or
+// bearer-authenticated caller (the accounted grant, sweep F340: a wrong
+// bearer here is a strike against its address, and a held one reads as
+// none; a browser sends no Authorization header on a navigation, so a page
+// load never strikes), for a peer inside the live SoftAP subnet, or
 // by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
 // exactly one home-LAN page load (or, if the app asks first, one receipt
 // fetch; never both). The page that got the token holds the bearer, so its
@@ -2467,11 +2505,17 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //      before the gate is touched, so it can neither use a token nor spend
   //      the tap the owner meant for their own page load or app;
   //   2. a valid bearer always gets the receipt (the SPA's "Save recovery
-  //      kit" button, the iOS app re-syncing) — silently checked through
-  //      auth_check_optional(), no 401 on miss, refused outright while the
-  //      credential is unprovisioned — and leaves the gate alone;
-  //   3. no bearer: consume the physical gate in ONE atomic step (a second
-  //      poll, or a second consumer on another task, reads it closed).
+  //      kit" button, the iOS app re-syncing) and leaves the gate alone. It
+  //      is the accounted grant (bearer_present_and_valid, sweep F340): no
+  //      401 on a miss, but a wrong or malformed bearer is one strike
+  //      against its source address, and while that address's backoff runs
+  //      its bearer is not compared and reads as none. So a held bearer goes
+  //      on to the tap, never to a 429: the page reads this route's 403 as
+  //      "tap BOOT", and the tap is never held. Refused outright while the
+  //      credential is unprovisioned;
+  //   3. no valid bearer (none, a wrong one, or a held one): consume the
+  //      physical gate in ONE atomic step (a second poll, or a second
+  //      consumer on another task, reads it closed).
   const ReceiptVerdict verdict = receipt_decide(
       host_is_foreign(req),
       [req]() { return bearer_present_and_valid(req); },

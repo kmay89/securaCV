@@ -773,14 +773,27 @@
   the recovery-kit token, so an open tab's token-less `/api/status` poll
   every 2 s kept a backoff running and held the owner's iPhone app, right
   token and all, at `429`: 119 of 120 calls over ten simulated minutes.
+  The port missed the WAP's later fixes too: its provisioning receipt
+  compared the bearer through the silent `auth_check_optional()`, no strike
+  and no backoff read, the shape the WAP's F329 had closed; and it kept the
+  five-minute cap that never ran and the `now < until` that the 49.7-day
+  `millis()` wrap breaks, both of which F343 had just fixed on the WAP.
 - **Fix:** the same rule as the WAP's: a request with no credential is a
-  `401` and no strike; a malformed or wrong one still is (sweep F340).
+  `401` and no strike; a malformed or wrong one still is (sweep F340, part
+  1). Then the copy stopped being a copy (part 2): the flagship's
+  `AuthManager` runs `firmware/common/network/auth_backoff.h`, the WAP's own
+  table, read by path, keyed by the request's socket peer, and the receipt's
+  bearer is the accounted grant `auth_bearer_grant()`.
 - **Regression check:** `firmware/tests_host/test_securacv_auth.cpp` (host,
-  over the real `securacv_auth.cpp`): the tab-and-app case and a header-less
-  call between a strike and the next try.
+  over the real `securacv_auth.cpp` and `auth_backoff.h`): the tab-and-app
+  case, a header-less call between a strike and the next try, two hosts, the
+  receipt's grant, the wrap and the 61 s ceiling, and text pins over
+  `securacv_network.cpp`'s wiring.
 - **Rule:** when a security fix lands in one tree, find the other tree's copy
   of the same logic (`firmware/canary/CONSOLIDATION.md` names the ports) and
-  fix or file it in the same change.
+  fix or file it in the same change. Better: when both trees run the same
+  pure logic, put it in `firmware/common` once and have both read it, so
+  there is no second copy to forget.
 - **Date learned:** 2026-10
 
 ### A `static` in a header is one copy per .cpp, and one lockout for the device holds every caller

@@ -3,22 +3,54 @@
 ## [Unreleased]
 ### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
 
-- **The flagship's dashboard tab no longer holds the owner's app at `429`
-  (sweep F340, part 1).** `AuthManager::check()`
-  (`firmware/canary/lib/securacv_auth`) counted a request with no
-  `Authorization` header as a strike toward its one per-device lockout. The
-  dashboard withholds the token on a home-network load until a BOOT tap or
-  the recovery-kit token, so an open tab's `/api/status` poll every 2 s,
-  which sends no header, kept a backoff running and refused the iPhone app's
-  right token: 119 of 120 calls over ten simulated minutes. A request with no
-  credential is now a `401` and no strike, the WAP's rule (`auth_logic.h`); a
-  malformed or wrong one is still a strike, and the right one still clears
-  the count. The lockout is still one per device, the receipt still compares
-  its bearer outside it, and the device-wide request limit is unchanged
-  (filed as F351). **Host-tested** (new
-  `firmware/tests_host/test_securacv_auth.cpp` over the real
-  `securacv_auth.cpp`, 33 checks, 6 of them failing before the change); the
-  ESP32 compile is CI's; not run on a device (U1).
+- **The flagship's dashboard tab no longer holds the owner's app at `429`,
+  and its bearer lockout is the WAP's per-address table (sweep F340).**
+  `AuthManager::check()` (`firmware/canary/lib/securacv_auth`) counted a
+  request with no `Authorization` header as a strike toward its one
+  per-device lockout. The dashboard withholds the token on a home-network
+  load until a BOOT tap or the recovery-kit token, so an open tab's
+  `/api/status` poll every 2 s, which sends no header, kept a backoff running
+  and refused the iPhone app's right token: 119 of 120 calls over ten
+  simulated minutes. Part 1 made a request with no credential a `401` and no
+  strike, the WAP's rule (`auth_logic.h`). Part 2 moves `AuthManager` onto
+  `firmware/common/network/auth_backoff.h`, read by path, so both firmware
+  trees run one table: `securacv_network.cpp` reads each request's socket
+  peer (`request_peer_ipv4()`, `getpeername` through the WAP's mapping, never
+  a header) and passes it to `auth_check()` and to the new accounted grant,
+  `auth_bearer_grant()`. The filed defect is closed with it: the provisioning
+  receipt and the page-token decision compared their bearer through
+  `auth_check_optional()`, with no strike and no backoff read.
+  `bearer_present_and_valid()` is now the grant, so a wrong bearer there is a
+  strike against its address and a held one is not compared and reads as
+  none: the receipt answers its `403` (the page's "tap BOOT") or serves an
+  open tap, never a `429`. A host's wrong bearers hold only that host's
+  address (F343). A browser that mistyped the token waits at most about 60 s.
+  A host that strikes from 9 or more addresses within 60 s holds every
+  untracked address while the shared overflow slot runs, and a tap does not
+  clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth
+  lane, or hold BOOT 10 s. The flagship has no Bluetooth lane that changes
+  its Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Found on
+  the way and fixed with it, as on the WAP: the 5-minute cap never ran (the
+  60 s window cleared the count first, while the sixth strike announced
+  `Retry-After: 65`; it now never names more than 61), and `now < until`
+  freed a backoff armed just before the 49.7-day `millis()` wrap. An empty
+  expected token now matches no bearer inside the library too (every caller
+  already refused one first). The unused stats API (`AuthStats`, `stats()`,
+  `statsJson()`, `auth_stats_json()`) and `auth_check_optional()` are gone,
+  and a build that sets one of the old `SECURACV_AUTH_*` backoff knobs stops
+  at an `#error` naming the header. The 429 body is unchanged. The
+  device-wide request limit is unchanged (filed as F351), so two open Status
+  tabs still reach it by themselves, and no deliberate LAN denial is
+  claimed closed. **Host-tested** (`firmware/tests_host/test_securacv_auth.cpp`
+  over the real `securacv_auth.cpp` and `auth_backoff.h`, 97 checks: the code
+  before part 1 failed 6 of the suite's first 33, and the code before part 2,
+  its new calls adapted onto the old one-per-device `AuthManager`, fails 34
+  of the 97, among them B held by A's strikes, the receipt's 1000 free
+  guesses, the 65 s `Retry-After` and the backoff freed before the wrap; text
+  pins hold `securacv_network.cpp` to the wiring; a Makefile step proves each
+  old knob is refused; `check_route_security.py`'s self-test plants
+  `auth_bearer_grant()` before the Host check); the ESP32 compile is CI's;
+  not run on a device (U1).
 - **canary-wap: one host's wrong bearers no longer hold every other host
   (sweep F343).** The bearer lockout was one backoff for the whole device
   (`static AuthState g_auth` in `api_auth.h`), so a host that sent a wrong

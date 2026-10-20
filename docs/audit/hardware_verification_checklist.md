@@ -2914,39 +2914,59 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 
-Code: `AuthManager::check()` in
-`firmware/canary/lib/securacv_auth/src/securacv_auth.cpp`, reached through
-`auth_gate()` in `securacv_network.cpp`; the dashboard's `api()` in
-`securacv_webui.cpp`, which sends no `Authorization` header when the page
-carries no token. Host-tested (`firmware/tests_host/test_securacv_auth.cpp`,
-over the real `securacv_auth.cpp`: a request with no header is a `401` and no
-strike, a malformed or wrong one is still a strike); the compile is CI's;
-nothing here ran on a device. Owner: U1.
+Code: `AuthManager::check()` and `AuthManager::grant()` in
+`firmware/canary/lib/securacv_auth/src/securacv_auth.cpp`, on
+`firmware/common/network/auth_backoff.h` (the WAP's table, read by path),
+reached through `auth_gate()` and `bearer_present_and_valid()` in
+`securacv_network.cpp`, which pass `request_peer_ipv4()` (the socket peer);
+the dashboard's `api()` and `saveRecoveryKit()` in `securacv_webui.cpp`. The
+`api()` helper sends no `Authorization` header when the page carries no
+token. Host-tested (`firmware/tests_host/test_securacv_auth.cpp`, over the
+real `securacv_auth.cpp` and `auth_backoff.h`: a request with no header is a
+`401` and no strike, a malformed or wrong one is a strike against its own
+address only, the receipt's grant is accounted and never compares a held
+bearer, the 61 s ceiling, the wrap; text pins over `securacv_network.cpp`);
+the compile is CI's; nothing here ran on a device. Owner: U1.
 
-- [ ] **Flagship: the dashboard tab arms no lockout (F340)**
+- [ ] **Flagship: the dashboard tab arms no lockout, and one host's wrong bearers hold only that host (F340)**
   - Setup: a `firmware/canary` unit on this firmware, set up and joined to
     the home Wi-Fi, over plain HTTP (the release images serve no HTTPS, and
     the HTTPS builds' certificate generator is compiled only where the core
     has `mbedtls/x509write_crt.h`, `securacv_network.cpp`'s `__has_include`,
     a header no installed core ships: mbedTLS declares its certificate
-    writer in `x509_crt.h`); host A, a laptop with a browser and
-    its developer tools; host B, the iPhone app or a second computer with
-    `curl` and the API token; one dashboard tab only (two tabs reach the
-    device-wide request limit by themselves, F351).
-  - Repro: on A, open `http://canary.local/` (or the unit's IP) without a
-    BOOT tap, so the page carries no token, and leave the Status panel open
-    for 5 minutes. Meanwhile, from B every 5 s: `curl -s -o /dev/null -w
-    '%{http_code}\n' -H "Authorization: Bearer <token>"
-    http://canary.local/api/status`. Then, once, from B: `curl -s -o
-    /dev/null -w '%{http_code}\n' -H "Authorization: Bearer cv_wrong"
-    http://canary.local/api/status; curl -s -D - -o /dev/null -H
-    "Authorization: Bearer <token>" http://canary.local/api/status`.
-  - Expected: for those 5 minutes B's polls are `200` (before this change
-    about 119 of 120 were `429`), and A's own calls in its Network panel are
-    `401`, never `429`. The wrong bearer is `403`, still a strike: the right
-    token right after it is `429` with a `Retry-After` header (while that
-    backoff runs every call is `429`, A's tab's too), and `200` again once
-    it has passed.
+    writer in `x509_crt.h`); host A, a laptop with a browser and its
+    developer tools, and `curl`; host B, the iPhone app or a second computer
+    with `curl` and the API token; both on IPv4; one dashboard tab only (two
+    tabs reach the device-wide request limit by themselves, F351); no BOOT
+    tap during the row.
+  - Repro:
+    1. On A, open `http://canary.local/` (or the unit's IP) without a BOOT
+       tap, so the page carries no token, and leave the Status panel open
+       for 5 minutes. Meanwhile, from B every 5 s: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H "Authorization: Bearer <token>"
+       http://canary.local/api/status`.
+    2. From A, five times, 20 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://canary.local/api/provisioning-receipt`.
+    3. Right after the fifth, from A: the right token on `/api/status` and on
+       `/api/provisioning-receipt`, each with `-D -`. Then, at once, from B:
+       the right token on both.
+    4. From A, after the `Retry-After` step 3 named: the right token on
+       `/api/status`.
+  - Expected: for step 1's 5 minutes B's polls are `200` (before part 1 of
+    this change about 119 of 120 were `429`), and A's own calls in its
+    Network panel are `401`, never `429`. A's wrong bearers on the receipt
+    are `403` `physical_confirmation_required`, each one a strike. In step 3
+    A's right token is `429` with a `Retry-After` of at most `61` on
+    `/api/status`, and `403` `physical_confirmation_required` on the receipt
+    (the page's "tap BOOT": a held bearer is not compared and reads as none);
+    B is `200` on both. While A's backoff runs, A's open tab is `429` too:
+    the address is held, whatever it sends. A's right token in step 4 is
+    `200`. Before part 2,
+    A's wrong bearers on the receipt armed nothing, so A's right token in
+    step 3 was `200`, and a wrong bearer on `/api/status` held B too. If B is
+    ever `429` because of A, the peer read fell back to one bucket: check
+    `request_peer_ipv4()`'s dual-stack `::ffff:a.b.c.d` path.
   - Artifact: `docs/audit/repro/F340/`.
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification

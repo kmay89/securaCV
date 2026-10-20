@@ -1757,7 +1757,7 @@ so — see D2 below.)
   the change fails it at `csi_mqtt.cpp:2359`. The ESP32 compile is CI's; not
   run on a device (U1: the "every bearer compare holds its own address" row
   in `hardware_verification_checklist.md`).
-- [ ] **F340 [code] The flagship's provisioning receipt compares its bearer
+- [x] **F340 [code] The flagship's provisioning receipt compares its bearer
   silently.** `firmware/canary`'s `GET /api/provisioning-receipt` takes
   `bearer_present_and_valid()`, which goes through `auth_check_optional()` and
   records no strike (`lib/securacv_network/src/securacv_network.cpp`): the
@@ -1795,6 +1795,56 @@ so — see D2 below.)
   of the app's 120 right-bearer calls, against all 120 after); the ESP32
   compile is CI's; not run on a device (U1: the flagship's bearer-lockout row
   in `hardware_verification_checklist.md`). The item stays open for part 2.
+  *Done (2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice): the WAP's rule set on
+  the flagship, through the shared per-address table.*
+  The filed defect. The flagship's `GET /api/provisioning-receipt` and
+  `GET /` compared their bearer through `auth_check_optional()`, with no
+  strike and no backoff read.
+  The larger defect. `AuthManager::check()` counted a request with no
+  `Authorization` header as a strike. The flagship page withholds the token
+  on a home-network load and polls `/api/status` every 2 s with no header, so
+  the owner's own tab held every bearer caller at `429`. A probe refused 119
+  of 120 right-token polls.
+  What changed:
+  - A request with no credential is no strike. This is its own first commit
+    (part 1, above).
+  - The backoff is `firmware/common/network/auth_backoff.h`, read by path:
+    per source address, 2 s doubling, capped at 60 s, the same table and key
+    mapping as the WAP. `securacv_network.cpp` reads the address with
+    `getpeername` (`request_peer_ipv4()`, through `sockaddr_ip4_host_order`)
+    and passes it to `auth_check()` and `auth_bearer_grant()`.
+  - `bearer_present_and_valid()` is the accounted grant. A held bearer on the
+    receipt reads as none, so it gets the `403` "tap BOOT" or an open tap,
+    never a `429`.
+  - The unused stats API and `auth_check_optional()` are gone, and the
+    `SECURACV_AUTH_*` backoff knobs are an `#error`.
+  - Found on the way, as on the WAP (F343): the 5-minute cap never ran (the
+    sixth strike's `Retry-After` said 65 for a hold the window ended at
+    60 s; it now never says more than 61), and `now < until` freed a backoff
+    armed just before the `millis()` wrap. An empty expected token matches
+    no bearer inside the library either.
+  - `check_route_security.py` counts `auth_bearer_grant()` as a gate and as
+    a step that must not run before the Host check, with a self-test plant.
+    F338's flagship route-check tables, which are not in the tree yet, are
+    to be written against this API.
+  The posture: A host's wrong bearers hold only that host's address (F343).
+  A browser that mistyped the token waits at most about 60 s. A host that
+  strikes from 9 or more addresses within 60 s holds every untracked address
+  while the shared overflow slot runs, and a tap does not clear that; then
+  wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
+  10 s. The flagship has no Bluetooth lane that changes its Wi-Fi, so there
+  the fallbacks are to wait or the 10 s hold. Not closed: the device-wide
+  request limit, filed as F351; ARP spoofing; httpd's connection purge;
+  clients behind one address share a backoff.
+  Host-tested in `firmware/tests_host/test_securacv_auth.cpp` (97 checks over
+  the real `securacv_auth.cpp` and `auth_backoff.h`; the code before this
+  part, its new calls adapted onto the old one-per-device `AuthManager`,
+  fails 34 of them: two hosts, the receipt's grant, the overflow, the wrap,
+  the 61 s ceiling, the hand-over API F341 calls, and the text pins over
+  `securacv_network.cpp`'s wiring). The ESP32 compile is CI's; not run on a
+  device (U1: the flagship's bearer-lockout row in
+  `hardware_verification_checklist.md`).
 - [ ] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
