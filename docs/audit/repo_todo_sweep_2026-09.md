@@ -9276,8 +9276,9 @@ so — see D2 below.)
   run on a device; no new bench row.
   *Review of the Codex fix (2026-10-20):* the threat model's list of the
   reboots left open still bounded the second at "inside the 66 s", as did
-  the CHANGELOG, spec §14, the roadmap, `LESSONS_LEARNED.md`, main.cpp's
-  comment on the handler and round 3's list above. A refused second
+  the CHANGELOG, spec §14, the roadmap, `LESSONS_LEARNED.md` and main.cpp's
+  comment on the handler (round 3's list above says it too, and stays as
+  that round's record). A refused second
   save leaves the older counter saved until a save of the member's newer
   counter lands: the retry, 66 s after each refused try, or a 5-minute
   save that lands first (the test above shows the saved counter still the
@@ -9293,6 +9294,45 @@ so — see D2 below.)
   from the member's heartbeat to two deadlines later, then 1 s passes),
   at t0 and across the wrap, now fails on it (three calls on three passes)
   and passes on the code, which was right. Host-tested; not run on a
+  device.
+  *Second review of the Codex fix (2026-10-20):* the first reboot had the
+  same gap. A refused first save leaves nothing saved for the member until
+  its retry on the member's next verified frame lands, normally its next
+  heartbeat, 27 to 33 s later, so the first reboot left open is one before
+  that retry lands, not before the first frame lands (probed: the paired
+  heartbeat landed, its save refused, a reboot 10 s later; 133 of 133
+  frames the member signed before the pairing read `CONNECTED`). The
+  threat model said so in its list but closed the same sentence on
+  "milliseconds unless the first COMPLETE or the paired heartbeat was
+  lost"; the roadmap (its table row and §3) and `LESSONS_LEARNED.md` drew
+  the bound at the first frame alone, and the CHANGELOG and spec §14 named only that
+  bound for the reboot that still reopens it. All now say "or, when NVS
+  refused that save, before its retry lands". The window is the residual
+  the docs state, not a new one, and
+  `test_a_failed_first_counter_save_is_tried_again` now pins it (133 of
+  133 read `CONNECTED`), as `test_an_older_first_frame_is_saved_over_once_more`
+  pins the reboot before the first frame. The review also found the cost
+  of a save NVS keeps refusing unstated for a flash-encrypted board: each
+  verified frame of a member whose first save has not landed is one
+  refused write attempt, at the member's heartbeat pace normally, at the
+  pace of a copier replaying a recording of the member's frames this
+  receiver has not heard otherwise (as fast as the main loop verifies the
+  8 frames the transport queues at a time), bounded by the recording's
+  frames, each verifying once (probed: 400 calls for a 400-frame
+  recording in 50 passes; the code before the Codex fix ran it once). The
+  threat model's
+  cost bullet now says so; spacing the retry (one try per interval under
+  the heartbeat gap) was considered and not taken: the decision retries on
+  the next verified frame, the cost needs a board whose NVS already
+  refuses, and the recording bounds it; whether a refused write wears
+  flash was not checked on hardware. A retry deadline set up to 999 ms
+  early (`= now - 1`) passed every leg, whose passes ran on a 1 s grid;
+  the late-pass leg of `test_a_failed_second_save_is_tried_again_a_deadline_later`
+  now runs a pass 1 ms before the retry's deadline and fails on it. And
+  `mesh_session.h` said a refused second save ends when "a deadline finds
+  nothing moved", which cannot happen after a refusal (`counter_resave_above`
+  stays at the first save's); it now says a refused save is never dropped.
+  Docs, comments and tests; no code change. Host-tested; not run on a
   device.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s

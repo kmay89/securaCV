@@ -2244,7 +2244,8 @@ An implementation conforms to this specification if it:
   verified frame (or, for the second, 66 s later) rather than taken as
   done, so a reboot once the member's own counter is saved does
   not reopen what the member signed before a pairing; a reboot before the
-  member's first frame lands still does, and so does an older genuine
+  member's first frame lands, or before the retry of a first save NVS
+  refused lands, still does, and so does an older genuine
   frame of the member's landed first by a radio copying its address, then
   a reboot before the second save lands (66 s after the first, and 66 s
   more for each refused write), or before the next 5-minute save when the

@@ -9670,8 +9670,10 @@ void test_an_older_first_frame_is_saved_over_once_more() {
  * replay, junk or a forgery (the old code ran it once: this fails on the
  * second frame); a reboot after that retry, before either 66 s deadline,
  * restores the member's counter, and the frames it signed before the
- * pairing stay replays; the second save is armed from the save that
- * landed, not from the call that failed; a frame before any handler is
+ * pairing stay replays, while a reboot before that retry lands restores
+ * none and they read CONNECTED again (the residual the docs state, pinned,
+ * not fixed); the second save is armed from the save that landed, not from
+ * the call that failed; a frame before any handler is
  * installed leaves the counter unsaved too; and a handler that fails on
  * every call (main.cpp's on a board without flash encryption, which writes
  * no replay counter at all) runs once per verified frame of the member and
@@ -9765,6 +9767,36 @@ void test_a_failed_first_counter_save_is_tried_again() {
   }
   assert(relayed_connected == 0);
 
+  /* What stays open, and the docs say so: a reboot after the refused first
+   * save and before its retry on the member's next frame lands. Nothing is
+   * saved for the member yet, so the boot restores no counter for it, and
+   * the frames it signed before the pairing, relayed from its address with
+   * the member gone, hold it CONNECTED again (the review of the Codex fix:
+   * the roadmap and LESSONS_LEARNED.md named only a reboot before the
+   * first frame lands). */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  g_first_counter_fails = 1;
+  boot();
+  TestMember e;
+  make_member(e, mac);
+  std::vector<std::vector<uint8_t>> e_rec;
+  for (uint32_t k = 0; k < 3600000 / kBeatGapMin; ++k) e_rec.push_back(heartbeat(e));
+  deliver(heartbeat(e), t0);
+  assert(g_first_counters == 1 && g_nvs_counters.n == 0);   /* landed; its save refused */
+  idle(t0 + 10 * pass_ms);
+  assert(t0 + 10 * pass_ms < t1);   /* before the member's next heartbeat */
+  reboot_restoring(e);
+  assert(g_nvs_counters.n == 0);
+  const uint32_t e0 = t0 + 10 * pass_ms + mesh_transport::PEER_OFFLINE_AFTER_MS;
+  size_t reopened = 0;
+  for (size_t k = 0; k < e_rec.size(); ++k) {
+    const uint32_t at = e0 + (uint32_t)k * step;
+    deliver(e_rec[k], at);
+    if (has(peer_row(at, e.pub), "\"state\":\"CONNECTED\",")) ++reopened;
+  }
+  assert(reopened == e_rec.size());
+
   /* The second save is armed from the save that landed: R after t1, not
    * after the call at t0 that failed. */
   g_nvs_counters = SavedCounters{};
@@ -9834,9 +9866,10 @@ void test_a_failed_first_counter_save_is_tried_again() {
 
   std::printf("PASS test_a_failed_first_counter_save_is_tried_again"
               "  (a refused write saved on the member's next frame, %u ms later: %zu relayed"
-              " frames after a reboot, none refreshed it; every call refused: %zu calls for %zu"
-              " verified frames)\n",
-              (unsigned)(t1 - t0), rec.size(), g_first_counters, verified);
+              " frames after a reboot, none refreshed it; a reboot before that retry: %zu of"
+              " %zu read CONNECTED; every call refused: %zu calls for %zu verified frames)\n",
+              (unsigned)(t1 - t0), rec.size(), reopened, e_rec.size(), g_first_counters,
+              verified);
 }
 
 /* A failed second save is tried again a full FIRST_COUNTER_RESAVE_MS later
@@ -9848,14 +9881,16 @@ void test_a_failed_first_counter_save_is_tried_again() {
  * save is taken again R later, and then disarms once it lands; a pass
  * that comes late, two deadlines after the member's heartbeat, runs it
  * once and takes the retry R after itself, not after the deadline it
- * missed (none on the passes in between); and a handler that fails on
- * every call from the deadline on runs exactly once per R (no call on the
- * passes in between, none on the member's frames, whose first save
- * landed), at t0 = 1000 and with the clock wrapping between the first
- * save and the retries. Fails on the old code: no call after the
- * deadline's; the late-pass leg also on a retry deadline moved on by R
- * from the one it missed (`from_ms += R`), which then runs on three
- * passes in a row. */
+ * missed (none on the passes in between, nor 1 ms before it); and a
+ * handler that fails on every call from the deadline on runs exactly once
+ * per R (no call on the passes in between, none on the member's frames,
+ * whose first save landed), at t0 = 1000 and with the clock wrapping
+ * between the first save and the retries. Fails on the old code: no call
+ * after the deadline's; the late-pass leg also on a retry deadline moved
+ * on by R from the one it missed (`from_ms += R`), which then runs on
+ * three passes in a row, and on one set up to 999 ms early (`= now - 1`),
+ * which every 1 s pass let through until the second review of the Codex
+ * fix. */
 void test_a_failed_second_save_is_tried_again_a_deadline_later() {
   const uint32_t pass_ms = 1000;
   constexpr uint32_t R = mesh_session::FIRST_COUNTER_RESAVE_MS;
@@ -9949,6 +9984,8 @@ void test_a_failed_second_save_is_tried_again_a_deadline_later() {
       assert(g_first_counters == 2);   /* none on the passes after it */
     }
     g_first_counter_fails = 0;
+    idle(s0 + 4 * R - 1);   /* to the millisecond: R after that pass, not earlier */
+    assert(g_first_counters == 2);
     idle(s0 + 4 * R);
     assert(g_first_counters == 3 && saved_counter(l) == l_own);
     for (uint32_t dt = 4 * R + pass_ms; dt <= 6 * R; dt += pass_ms) idle(s0 + dt);

@@ -736,9 +736,11 @@ bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  *      stays unsaved, and the member's next frame that passes every check
  *      runs it again (until #1839's review a failed save was marked done);
  *   2. from process(), FIRST_COUNTER_RESAVE_MS after the true return of
- *      (1), if the member's counter has moved since. On false it runs again
+ *      (1), if the member's counter has moved since (a deadline that finds
+ *      it unmoved disarms with no call). On false it runs again
  *      FIRST_COUNTER_RESAVE_MS after that pass, and so on until it returns
- *      true or a deadline finds nothing moved.
+ *      true: a refused save is never dropped, since the counter it was to
+ *      save has moved past (1)'s by definition.
  * No false return is retried on the next pass, so a handler that always
  * fails runs at most once per verified frame of the member and once per
  * FIRST_COUNTER_RESAVE_MS. (main.cpp's returns false on every call on a
@@ -759,14 +761,14 @@ bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * restored no counter for the member, it is until the member's next
  * heartbeat is heard, longer while this device's station has not joined its
  * router, F320), and (1) then saves that older counter. (2) saves the
- * member's own newer one, so what stays open is a reboot before (1), which
- * finds nothing newer saved for the member (after a first pairing, no
- * counter at all), a reboot before (2), or every frame of the member's own
- * kept from this device until (2) (a jammer, or a station not yet on its
- * router's channel), after which the 5-minute save is the next to catch
- * up. Past the two saves that land, no frame adds one. A boot that
- * restored a non-zero counter for the member runs neither, so it costs no
- * write. The handler must not change the trusted table. */
+ * member's own newer one, so what stays open is a reboot before (1) returns
+ * true, which finds nothing newer saved for the member (after a first
+ * pairing, no counter at all), a reboot before (2) returns true, or every
+ * frame of the member's own kept from this device until (2) (a jammer, or
+ * a station not yet on its router's channel), after which the 5-minute
+ * save is the next to catch up. Past the two saves that land, no frame adds
+ * one. A boot that restored a non-zero counter for the member runs neither,
+ * so it costs no write. The handler must not change the trusted table. */
 typedef bool (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
 
 void set_first_counter_handler(first_counter_fn fn);

@@ -146,9 +146,11 @@ struct TrustedPeer {
    * resave_first_counters() runs the handler again FIRST_COUNTER_RESAVE_MS
    * after `counter_resave_from_ms` (the transport clock at the first save)
    * if last_counter has moved past `counter_resave_above` (what the first
-   * save wrote) by then. It disarms when nothing moved or the save lands;
-   * a save that fails moves `counter_resave_from_ms` to that pass, so it
-   * is tried once more FIRST_COUNTER_RESAVE_MS later. */
+   * save wrote) by then. It disarms when nothing moved by that deadline or
+   * the save lands; a save that fails moves `counter_resave_from_ms` to
+   * that pass, so it is tried again FIRST_COUNTER_RESAVE_MS later, and so
+   * on until one lands (`counter_resave_above` stays at the first save's,
+   * so a refused save's counter has still moved: it is never dropped). */
   bool     counter_resave_armed;
   uint32_t counter_resave_from_ms;
   uint64_t counter_resave_above;
@@ -1582,9 +1584,11 @@ static mesh_transport::PeerState verified_state(const TrustedPeer& p) {
  * later the member's own heartbeats have arrived unless they were lost (its
  * definition in mesh_session.h says how many it takes), so the handler runs
  * once more then if the counter has moved, and the save holds the newer
- * counter. It disarms when nothing moved or the save landed. A save that
- * failed (the handler returned false) is tried again FIRST_COUNTER_RESAVE_MS
- * after that pass, not on the next one, so a write that keeps failing costs
+ * counter. It disarms when nothing moved by that deadline or the save
+ * landed. A save that failed (the handler returned false) is tried again
+ * FIRST_COUNTER_RESAVE_MS after that pass, not on the next one, and so on
+ * until one lands (never dropped: its counter has moved past
+ * `counter_resave_above` by definition), so a write that keeps failing costs
  * one call per FIRST_COUNTER_RESAVE_MS, never one per pass (until #1839's
  * review it disarmed either way, and a failed write waited for the 5-minute
  * save). Every pass, stopped or not: the age is taken from the arming

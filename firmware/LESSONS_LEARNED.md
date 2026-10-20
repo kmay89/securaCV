@@ -2463,10 +2463,12 @@
   genuine frame a radio copying the member's address lands first passes,
   and the save held its old counter), so the save is now taken once more
   66 s later if the counter has moved. The residuals the docs state are a
-  reboot before the member's first frame lands (nothing saved for it yet),
-  a reboot before that second save lands, and, when the member's own
-  frames were kept out through the 66 s (a jammer, or after a boot a station not yet on its
-  router's channel, F320), a reboot before the next 5-minute save; review
+  reboot before the member's first frame lands, or, when NVS refused that
+  frame's save, before its retry on the member's next verified frame lands
+  (nothing saved for it yet), a reboot before that second save lands, and,
+  when the member's own frames were kept out through the 66 s (a jammer, or
+  after a boot a station not yet on its router's channel, F320), a reboot
+  before the next 5-minute save; review
   round 4 found the summaries naming only the middle one. And a save
   taken while the member was
   registered and unheard wrote it at 0, which the boot restore counted as a
@@ -2487,11 +2489,15 @@
   nothing). Its review found the docs still bounding that second reboot
   at "inside the 66 s": a refused second save leaves the older counter
   saved 66 s more for each refused try, so the reboot that restores it is
-  one before the second save lands. When a fix adds a periodic send, count what the send leaves on
-  the air for a recorder, not only what it tells the receiver; when a save
-  is meant to hold "the newest", ask what makes the value it saves the
-  newest; and when a step exists to make something durable, set "done"
-  from its result, not before the call.
+  one before the second save lands; its second review found the first
+  reboot with the same gap, bounded at the first frame's landing when a
+  refused first save leaves nothing saved until its retry lands. When a
+  fix adds a periodic send, count what the send leaves on the air for a
+  recorder, not only what it tells the receiver; when a save is meant to
+  hold "the newest", ask what makes the value it saves the newest; and
+  when a step exists to make something durable, set "done" from its
+  result, not before the call, and draw every bound the docs give at that
+  result, for each window they list, not at the step's start.
 - **Regression check:** `test_mesh_session`:
   `test_liveness_counts_only_verified_frames` (junk and a replay refresh
   nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet

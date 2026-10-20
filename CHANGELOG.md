@@ -84,12 +84,14 @@
   it at 0, which no longer counts as a saved counter. That narrows the
   pairing case rather than closing it. A reboot before the member's first
   frame lands (milliseconds after the bind normally, up to about 33 s when
-  the first `PAIR_COMPLETE` or the paired heartbeat is lost) restores no
-  counter for a newly paired member. And a radio copying the member's
-  address can land one of the member's older genuine frames before the
-  member's own first frame, the first save then holds that older counter,
-  and a reboot before the second save lands (66 s after the first, and
-  66 s more for each write NVS refused) restores it, as does one before
+  the first `PAIR_COMPLETE` or the paired heartbeat is lost), or, when NVS
+  refused that frame's save, before its retry on the member's next
+  verified frame lands, restores no counter for a newly paired member. And
+  a radio copying the member's address can land one of the member's older
+  genuine frames before the member's own first frame, the first save then
+  holds that older counter, and a reboot before the second save lands (66 s
+  after the first, and 66 s more for each write NVS refused) restores it, as
+  does one before
   the next 5-minute save when the member's own frames were kept out
   through the 66 s (`THREAT_MODEL.md`).
   An age past 2^31 ms is
@@ -120,9 +122,11 @@
   retried on the member's next verified frame and the second a full 66 s
   later, never on the next pass, each failing on the code the Codex review
   found, and the second also on a retry counted from the deadline a late
-  pass missed rather than from that pass; a flipped signature byte and a
-  frame under another opera in the liveness case; the documented 30 s ± 3 s
-  pinned at compile time; the other 12 mesh suites unchanged;
+  pass missed rather than from that pass, or set up to 999 ms early, the
+  first with a reboot before its retry lands pinned as still open; a flipped
+  signature byte and a frame under another opera in the liveness case; the
+  documented 30 s ± 3 s pinned at compile time; the other 12 mesh suites
+  unchanged;
   `check_canary_mesh_status.py`; `test_canary_mesh_first_counter_wiring.py`
   for main.cpp's half, which now fails on a handler or a persist that drops
   the save's result); the `[env:full]` compile is CI's; not run on a

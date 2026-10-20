@@ -1109,14 +1109,19 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         member's first frame lands (or, when NVS refused that save, before
         its retry on the member's next frame lands) finds nothing newer
         saved for it (after a first pairing, no counter at all), so
-        everything it signed before is fresh again, and nothing need be landed at the pairing (host-tested:
-        132 of 132 relayed frames read `CONNECTED`); after a pairing that
-        window is the one above, milliseconds unless the first COMPLETE or
-        the paired heartbeat was lost. One before a save of the member's
-        newer counter lands (the second save, 66 s after the first, and,
-        when NVS refused it, 66 s after each refused try; or a 5-minute
-        save, when one lands first), and, when the member's own frames were
-        kept out through the 66 s, one before the next 5-minute save,
+        everything it signed before is fresh again, and nothing need be
+        landed at the pairing (host-tested: 132 of 132 relayed frames read
+        `CONNECTED`; with that save refused and the reboot before its
+        retry, 133 of 133); after a pairing that window is the one above,
+        milliseconds unless the first COMPLETE or the paired heartbeat was
+        lost or NVS refused the first save, which holds it open until a
+        retry lands: on the member's next verified frame, normally its next
+        heartbeat 27 to 33 s later, about 33 s more for each refused write.
+        One before a save of the member's newer counter lands (the second
+        save, 66 s after the first, and, when NVS refused it, 66 s after each
+        refused try; or a 5-minute save, when one lands first), and, when the
+        member's own frames were kept out through the 66 s, one before the
+        next 5-minute save,
         restore the older counter, and everything the member signed after
         it is fresh again (host-tested: a reboot before the second save let
         132 relayed frames hold a gone member `CONNECTED` at every read;
@@ -1162,7 +1167,17 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       nothing: a counter snapshot per frame (the session's half host-tested,
       with a handler that fails on every call:
       `test_a_failed_first_counter_save_is_tried_again` and
-      `test_a_failed_second_save_is_tried_again_a_deadline_later`). The
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`). On a
+      flash-encrypted board whose NVS keeps refusing, each verified frame
+      of a member whose first save has not landed is one refused write
+      attempt (`Preferences::begin` and `putBytes` of the replay blob) on
+      top of the verify the frame already cost: normally one a heartbeat,
+      but a radio copying the member's address with a recording of the
+      member's frames this receiver has not heard sets the pace, as fast
+      as the main loop verifies what the transport queues (8 frames at a
+      time), bounded by the frames in the recording, since each verifies
+      once. It needs a board whose NVS already refuses the write; whether
+      a refused write wears flash was not checked on hardware. The
       transport's 100-frame-a-second storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
