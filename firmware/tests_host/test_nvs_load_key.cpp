@@ -170,7 +170,7 @@ static void check_refused_boot(const HostKeyNvs& before, const char* reason) {
   CHECK(all_zero(g_device.privkey));
   CHECK(!g_device.key_is_new);
   CHECK(printed(reason));
-  CHECK(printed("[!!] Stored identity key not read: not replacing it"));
+  CHECK(printed("[!!] Identity key not used: no new key is made in its place"));
   CHECK(!printed("Generating new keypair"));
   check_idle_and_clean();
 }
@@ -301,8 +301,11 @@ static void test_a_good_stored_key_loads_unchanged() {
 //
 // Preferences::getBytes() answers 0 and leaves the buffer as it was. Before,
 // the load answered true over the zeroed buffer, and the boot ran on the
-// all-zero key. Now it is Refused, the boot stops, NVS is unchanged, and the
-// next boot that reads the key gets the same one.
+// all-zero key. Now it is Refused, the boot stops, and this firmware writes
+// nothing, so a fault that leaves the entry in place (Read::Fails: a flash
+// read error, say) leaves the key for the next boot that can read it. (IDF
+// itself erases an entry whose data CRC fails, inside that read; this fake
+// does not model that.)
 static void test_a_failed_read_after_the_length_check_is_refused() {
   fresh_world();
   store(good_key());
@@ -319,7 +322,7 @@ static void test_a_failed_read_after_the_length_check_is_refused() {
   check_refused_boot(before,
                      "[!!] identity key not loaded: the stored key could not be read (0 of 32 bytes)");
 
-  // The stored identity is there for the next boot.
+  // The entry the fault left is there for the next boot.
   host_key_nvs().clear_faults();
   g_device = DeviceIdentity();
   CHECK(establish_identity_key());

@@ -17,14 +17,21 @@
   whether a key is stored, and only its "not found" makes a new key. Any
   other error, a key that is not 32 bytes, a read that does not return all
   32 bytes and a key of 32 zero bytes stop provisioning with a serial line
-  saying why, and the boot halts with nothing generated or written, so a
-  later boot that can read the key loads it (power-cycle to retry; the 30 s
-  BOOT hold at power-on wipes the identity and starts fresh). The opt-in
-  image's at-rest policy refusal no longer generates a key before the store
-  refuses it. A working unit loads the same key as before; a first boot
-  generates one as before, and no longer logs Preferences'
-  `nvs_get_blob len fail: privkey NOT_FOUND` for the key read (an
-  error-level line). **Host-tested** (new
+  saying why, and the boot halts with nothing generated or written by this
+  firmware. A fault that leaves the stored entry in place (a flash read
+  error, a session that will not open) so leaves the key for a later boot
+  that can read it. A corrupted entry does not stay: IDF itself erases an
+  entry whose data checksum fails, in the read it refuses. On every env
+  but `env:full` (core 2.0.17, IDF 4.4) the blob's index survives and each
+  later boot halts until the 30 s BOOT hold at power-on wipes the identity;
+  on `env:full` (core 3.x, IDF 5.x) the next boot halts as IDF drops the
+  index too, and the one after it finds no key and makes a new identity,
+  which is today's behavior, not a decision (read from IDF's source; not
+  run on a device). The opt-in image's at-rest policy refusal no longer
+  generates a key before the store refuses it. A working unit loads the
+  same key as before; a first boot generates one as before, and no longer
+  logs Preferences' `nvs_get_blob len fail: privkey NOT_FOUND` for the key
+  read (an error-level line). **Host-tested** (new
   `firmware/tests_host/test_nvs_load_key.cpp`: the load, its probe, the
   store and the caller, cut out of the firmware, over a fake NVS that can
   fail the open, the length lookup, the session or the read, and built again
@@ -39,19 +46,23 @@
   a failed open or length lookup replaced the identity. Now only IDF's
   "not found" makes a new key, and a stored key the unit cannot read stops
   the boot before anything signs or writes, with `[!!] PROVISIONING FAILED -
-  the stored identity key could not be read; HALTING, nothing written.
-  Power-cycle to retry; a clean install (full erase) starts a new identity`
-  on the serial console. The stored key is kept for the next boot; the BOOT
-  hold runs in the loop the halt never reaches, so a unit whose key stays
-  unreadable starts fresh only from a clean install in either flasher. It halts, where other provisioning failures go on (sweep F336),
+  the identity key could not be used (see the identity key line above);
+  HALTING, nothing written` on the serial console. What a later boot finds
+  is as on the flagship's `env:full` (the WAP builds on core 3.x): a fault
+  that left the entry in place, the key; a corrupted entry, which IDF
+  erased, one more halt and then a new identity. The WAP's BOOT hold keeps
+  the identity (it has no wipe stage), so a clean install in either
+  flasher is its only way to a new identity on purpose, halted or not. It
+  halts, where other provisioning failures go on (sweep F336),
   because from there the boot record and the mesh would use the zeroed key
   and the chain would restart at seq 0 over the stored one. A working unit
   and a first boot are unchanged. **Host-tested** (the first-boot suite,
   `firmware/projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`, now
   runs the load, its probe, the store and the caller over a fake NVS that
-  can fail the length lookup, the session or the read; against the old
-  code, adapted only so that it builds, 10 of its 20 test functions fail);
-  the ESP32 compile is CI's; not run on a device.
+  can fail the length lookup, the session or the read, and a key store that
+  fails; against the old code, adapted only so that it builds, 10 of its
+  first 20 test functions fail); the ESP32 compile is CI's; not run on a
+  device.
 
 ### canary-wap refuses a failed HMAC instead of minting a key, a token or a backup from stack bytes (sweep F359)
 
@@ -66,10 +77,15 @@
   failure. Provisioning fails instead of minting a token or a key: the token
   is wiped, the key is empty (never `cv-222222222222`, what 32 zero bytes
   render to on every unit), a release build raises no setup network, and a
-  development build falls back to its random `dev-` key. The hourly chain
-  backup writes nothing, so the last good `/CHAIN/backup.bin` survives
-  (before, it was replaced by one no restore accepts), and a restore refuses
-  rather than compare against the zeroed output. A working unit is
+  development build falls back to its random `dev-` key. The unit then goes
+  on, as after its other provisioning failures (sweep F336), and the two
+  mints now run after the witness chain's state is loaded, so the records
+  it goes on to sign under its own key continue the stored chain rather
+  than restart it at seq 1 from a head of zeros, a branch the next persist
+  would write over the stored one. The hourly chain backup writes nothing,
+  so the last good `/CHAIN/backup.bin` survives (before, it was replaced by
+  one no restore accepts), and a restore refuses rather than compare
+  against the zeroed output. A working unit is
   unchanged: the same key, token and backup bytes. **Host-tested** (new
   `firmware/projects/canary-wap/tests_host/test_wap_hmac_fail.cpp`: the
   sketch's functions cut out of it over a stand-in for mbedTLS's streaming
@@ -78,7 +94,10 @@
   drops the result. With only the old code's two return types changed so
   that it builds, the suite as first written failed 129 of its 219 checks;
   it now also holds the token and key mints' own buffer guards and the
-  setup network's answer after a failed provisioning, 245 checks in all;
+  setup network's answer after a failed provisioning, and runs
+  provisioning itself over a refused mint, 737 checks in all; with the
+  mints in their old place, ahead of the chain load, 190 of the
+  provisioning runs' checks fail;
   `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
   256 keys still holds); the ESP32 compile is CI's; not run on a device.
 

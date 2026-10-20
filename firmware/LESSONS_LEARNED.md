@@ -476,7 +476,13 @@
   zeroes its output on a failure, and every caller refuses: provisioning
   fails, the backup is not written. A zeroed output is only safe if every
   reader refuses it, so a compare against it (the backup restore) must
-  refuse too, or a field of zeros passes.
+  refuse too, or a field of zeros passes. And a refusal is only as safe as
+  what runs after it: the WAP's `setup()` goes on after a failed
+  provisioning (sweep F336), and its two mints came ahead of the chain
+  state's load, so a refused mint, which before could not happen, left the
+  boot record and `loop()` signing under the stored key from seq 1 on a
+  head of zeros, a branch the next persist wrote over the stored chain.
+  The mints now come after the load.
 - **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
   device and OpenSSL on the host, and the first failure suite failed only
   OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
@@ -491,8 +497,9 @@
   over the mbedTLS one. For the WAP,
   `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` fails each
   mbedTLS step under the sketch's own helper and its callers, cut out of
-  the sketch, and fails a call anywhere in the sketch that drops the
-  helper's result.
+  the sketch, fails a call anywhere in the sketch that drops the helper's
+  result, and runs `provision_device()` over a refused mint, holding the
+  chain state it leaves to the stored one.
 
 ### A key that could not be read is not a key that is absent
 - **What happened:** The flagship's `nvs_load_key()` checked the stored
@@ -528,8 +535,14 @@
   record, the mesh or the chain can use the zeroed key.
 - **Rule:** A load that can fail answers three ways, and only "not there"
   may lead to a fresh secret. Never fall back to a new secret over a stored
-  one: a refused read halts and leaves the stored value for the next boot
-  (the owner's 30 s BOOT wipe is the way to start fresh). A read's count is
+  one: a refused read halts, and the firmware writes nothing over the
+  stored value. That keeps it for the next boot only when the fault left
+  the entry in place; IDF itself erases an entry whose data CRC fails, in
+  the read it refuses, so on IDF 5.x such a unit halts once more and then,
+  finding no key, makes a new one. Know what the layer under you does on a
+  refusal before you promise what survives it. The way to start fresh on
+  purpose is the flagship's 30 s BOOT wipe, or a clean install on the
+  canary-wap, whose BOOT hold keeps the identity. A read's count is
   part of its answer; a buffer the read may not have filled is zeroed
   before anything sees it. And a refusal that does not halt is only as safe
   as whatever runs after it: before choosing "return false and go on", read

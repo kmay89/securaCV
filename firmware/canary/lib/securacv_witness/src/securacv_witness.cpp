@@ -168,12 +168,20 @@ static bool persist_chain_blob() {
 
 // The identity key: the stored one, or, only when NVS says none is stored, a
 // new one generated and stored (sweep F360). Any other answer is a key that
-// is, or may be, in NVS and was not read or not used: provisioning stops
-// there, so setup() halts, and nothing is generated or written, so the stored
-// key is left as it is for the next boot (power-cycle to retry; the 30 s BOOT
-// hold at power-on wipes the identity and starts fresh). Before, a failed
-// read fell through to a new keypair stored over the old one, and a read that
-// failed after the length check ran the boot on the zeroed key.
+// is, or may be, in NVS and was not read or not used (the opt-in image's
+// at-rest policy refuses before NVS is read, so there may be none):
+// provisioning stops there, so setup() halts, and nothing is generated or
+// written. A fault that leaves the entry in place (a flash read error, a
+// session that will not open) so leaves the key for a later boot that can
+// read it. A corrupted entry does not stay: IDF erases an entry whose data
+// CRC fails inside the read it refuses. On IDF 4.4 (core 2.0.17: every env
+// but env:full) the blob's index stays and every later boot halts on it; on
+// IDF 5.x (core 3.x, env:full) the next boot halts as IDF erases the index
+// too, and the boot after it finds no key and makes a new identity, which is
+// today's behavior, not a decision. The 30 s BOOT hold at power-on wipes the
+// identity and starts fresh. Before, a failed read fell through to a new
+// keypair stored over the old one, and a read that failed after the length
+// check ran the boot on the zeroed key.
 static bool establish_identity_key() {
   const KeyLoad stored = nvs_load_key(g_device.privkey);
   if (stored == KeyLoad::Loaded) {
@@ -181,8 +189,8 @@ static bool establish_identity_key() {
     return true;
   }
   if (stored != KeyLoad::Absent) {
-    Serial.println("[!!] Stored identity key not read: not replacing it, provisioning cannot "
-                   "continue (see the identity key line above)");
+    Serial.println("[!!] Identity key not used: no new key is made in its place, provisioning "
+                   "cannot continue (see the identity key line above)");
     return false;
   }
   Serial.println("[..] Generating new keypair...");

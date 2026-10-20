@@ -27,8 +27,11 @@
  *                      succeeded: Ok; Fails (answers 0, the buffer untouched:
  *                      the F360 case); Garbles (fills the buffer with 0xA5,
  *                      then answers 0, as IDF fills it before its data CRC
- *                      check refuses); Short (copies all but the last byte
- *                      and answers that count). */
+ *                      check refuses; IDF also erases that entry in the
+ *                      same read, which this fake does not: what the suite
+ *                      holds is that the sketch writes nothing); Short
+ *                      (copies all but the last byte and answers that
+ *                      count). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
 #define STUB_FIRST_BOOT_PREFERENCES_H
 

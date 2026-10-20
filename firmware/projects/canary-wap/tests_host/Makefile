@@ -1897,15 +1897,18 @@ clean: clean-mqtt-identity
 # cut_functions.awk). Under them: a stand-in for mbedTLS's streaming HMAC,
 # declared by firmware/tests_host/stubs/mbedtls_md and defined in the suite
 # over OpenSSL, that fails the step the test names; and the fake SD card
-# (stubs/sd_fake). It also reads every source in the sketch directory (the
-# path is passed in), so it re-runs on every `make`: each call of the three
-# uses its result.
+# (stubs/sd_fake). provision_device() is cut on its own too, over stand-ins
+# for everything it calls but the two mints, so a refused mint is run against
+# the chain state it leaves. It also reads every source in the sketch
+# directory (the path is passed in), so it re-runs on every `make`: each call
+# of the three uses its result.
 HMACFAIL_BIN     = test_wap_hmac_fail
 HMACFAIL_SRC     = test_wap_hmac_fail.cpp
 HMACFAIL_KEY     = test_wap_hmac_fail_key.inc
 HMACFAIL_RESOLVE = test_wap_hmac_fail_resolve.inc
 HMACFAIL_DM      = test_wap_hmac_fail_datamgmt.inc
-HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM)
+HMACFAIL_PROV    = test_wap_hmac_fail_prov.inc
+HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV)
 HMACFAIL_CUT     = ../../../tests_host/cut_functions.awk
 HMACFAIL_MD      = ../../../tests_host/stubs/mbedtls_md
 CUT_INCS        += $(HMACFAIL_INCS)
@@ -1923,6 +1926,10 @@ $(HMACFAIL_RESOLVE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk -v 'sigs=static bool resolve_ap_password(char* out_password, size_t out_len) {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
+$(HMACFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool provision_device() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
 $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	awk '/^static const (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
 	  END { if (n != 4) { print "data_mgmt_api.h: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
@@ -1931,12 +1938,13 @@ $(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
 
 $(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
-                 $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
+                 $(SRC_DIR)/chain_state.h $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
 	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \
 	  -I stubs/sd_fake -I $(HMACFAIL_MD) -I $(SRC_DIR) -I . \
 	  -DWAP_HMAC_KEY_INC='"$(HMACFAIL_KEY)"' \
 	  -DWAP_HMAC_RESOLVE_INC='"$(HMACFAIL_RESOLVE)"' \
 	  -DWAP_HMAC_DATAMGMT_INC='"$(HMACFAIL_DM)"' \
+	  -DWAP_HMAC_PROV_INC='"$(HMACFAIL_PROV)"' \
 	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HMACFAIL_SRC) -lcrypto
 
 .PHONY: run-wap-hmac-fail clean-wap-hmac-fail

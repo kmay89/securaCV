@@ -50,13 +50,23 @@
 //     accepts); restore_chain(): a failing HMAC refuses, so a forged backup
 //     whose HMAC field is 32 zero bytes is never accepted against the zeroed
 //     output;
+//   - provision_device(), cut verbatim too, over stand-ins for everything it
+//     calls but the two mints: a refused mint (either HMAC at any step) or a
+//     token whose store fails answers false with g_device.initialized false,
+//     and leaves the chain state as NVS holds it (or the genesis head,
+//     persisted), with nothing written over it. setup() goes on after that
+//     (sweep F336), and the boot record and loop() sign with the stored key,
+//     so a chain restarted at seq 0 from a zero head, which the mints left
+//     when they came ahead of the chain load, re-signed seq numbers the key
+//     had already used;
 //   - the sketch's text (every .ino, .h, .cpp and .c in the sketch directory,
 //     comments stripped): every call of hmac_sha256(), derive_api_token() and
 //     derive_ap_password() uses its result (the sketch builds without -Werror,
 //     so the [[nodiscard]] on data_mgmt_api.h's declaration is a warning
-//     there), and provision_device() returns false when either mint refuses.
-// Host-tested; not run on a device. provision_device() itself is not driven
-// (it needs the whole identity stack); its two refusals are source pins.
+//     there), provision_device() returns false when either mint refuses, and
+//     every return false in it but establish_identity_key()'s comes after
+//     the chain state is loaded.
+// Host-tested; not run on a device.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wap-hmac-fail
 
@@ -67,13 +77,17 @@
 #include <openssl/hmac.h>
 
 #include <cctype>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
+
+#include "chain_state.h"  // the sketch's {seq, head} blob, pure
 
 #include "FS.h"           // stubs/sd_fake
 #include "SD.h"           // stubs/sd_fake
@@ -88,6 +102,9 @@
 #endif
 #ifndef WAP_HMAC_DATAMGMT_INC
 #error "WAP_HMAC_DATAMGMT_INC must name the cut of data_mgmt_api.h (the Makefile passes it)"
+#endif
+#ifndef WAP_HMAC_PROV_INC
+#error "WAP_HMAC_PROV_INC must name the cut of provision_device() (the Makefile passes it)"
 #endif
 #ifndef WAP_SKETCH_DIR
 #error "WAP_SKETCH_DIR must name the sketch directory (the Makefile passes it)"
@@ -285,12 +302,29 @@ static bool logged(const char* message) {
   return false;
 }
 
-// The members of the sketch's DeviceIdentity the cut functions read.
+// The members of the sketch's DeviceIdentity the cut functions read, with
+// the sketch's sizes (sketch_text() holds the two buffers the mints fill to
+// them).
 struct DeviceIdentity {
   uint8_t privkey[32];
+  uint8_t pubkey[32];
   uint8_t pubkey_fp[8];
+  uint8_t chain_head[32];
+  uint32_t seq;
+  uint32_t seq_persisted;
+  uint32_t boot_count;
+  uint32_t boot_ms;
+  uint32_t log_seq;
+  uint32_t born_day;
+  bool born_exact;
   bool initialized;
+  char device_id[32];
+  char ap_ssid[33];
+  char mdns_hostname[40];
+  char api_token_str[36];
   char ap_password[16];
+  char fingerprint_hex[17];
+  bool first_boot;
 };
 static DeviceIdentity g_device;
 
@@ -667,6 +701,284 @@ static void restore_refuses_a_failed_hmac() {
   }
 }
 
+// ── provision_device() after a refused mint ─────────────────────────────────
+// provision_device(), cut verbatim, over stand-ins for everything it calls
+// but the two mints, which are the real ones above over the HMAC seam. NVS
+// is a map that outlives each call, as NVS outlives a reboot. The key is a
+// stand-in's (establish_identity_key() is test_wap_first_boot_nvs.cpp's),
+// and so are the public key, the fingerprint and the names derived from it.
+namespace prov {
+std::map<std::string, std::vector<uint8_t>> blobs;  // nvs_load_bytes()'s entries
+std::map<std::string, uint32_t> words;              // nvs_load_u32()'s entries
+std::string token;                                  // the stored API token ("" = none)
+bool store_token_fails = false;
+bool establish_fails = false;
+int config_loads = 0;
+int persists = 0;
+int token_stores = 0;
+std::string serial;
+
+void clear() {
+  blobs.clear();
+  words.clear();
+  token.clear();
+  store_token_fails = establish_fails = false;
+  config_loads = persists = token_stores = 0;
+  serial.clear();
+}
+}  // namespace prov
+
+struct HostSerial {
+  void println(const char* s) {
+    prov::serial += s;
+    prov::serial += '\n';
+  }
+  __attribute__((format(printf, 2, 3))) int printf(const char* fmt, ...) {
+    char line[256];
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = std::vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    prov::serial += line;
+    return n;
+  }
+};
+static HostSerial Serial;
+
+struct HostEsp {
+  uint32_t getFreeHeap() { return 123456; }
+};
+static HostEsp ESP;
+
+struct HostHealth {
+  bool crypto_healthy;
+  uint32_t min_heap;
+};
+static HostHealth g_health;
+
+static const char* NVS_KEY_SEQ = "seq";
+static const char* NVS_KEY_BOOTS = "boots";
+static const char* NVS_KEY_CHAIN = "chain";
+static const char* NVS_KEY_CHAINST = "chain_st";
+static const char* NVS_KEY_LOGSEQ = "logseq";
+static const char* NVS_KEY_BORN = "born_day";
+static const char* NVS_KEY_BORN_EX = "born_exact";
+
+static uint32_t nvs_load_u32(const char* key, uint32_t def = 0) {
+  auto it = prov::words.find(key);
+  return it == prov::words.end() ? def : it->second;
+}
+static bool nvs_store_u32(const char* key, uint32_t val) {
+  prov::words[key] = val;
+  return true;
+}
+static bool nvs_load_bytes(const char* key, uint8_t* out, size_t len) {
+  auto it = prov::blobs.find(key);
+  if (it == prov::blobs.end() || it->second.size() != len) return false;
+  std::memcpy(out, it->second.data(), len);
+  return true;
+}
+static bool nvs_load_token(char* token_str, size_t max_len) {
+  if (prov::token.empty() || prov::token.size() >= max_len) return false;
+  std::memcpy(token_str, prov::token.c_str(), prov::token.size() + 1);
+  return std::strlen(token_str) >= 35;
+}
+static bool nvs_store_token(const char* token_str) {
+  if (prov::store_token_fails) return false;
+  ++prov::token_stores;
+  prov::token = token_str;
+  return true;
+}
+
+static bool establish_identity_key() {
+  if (prov::establish_fails) return false;
+  key_0x01(g_device.privkey);
+  return true;
+}
+struct Ed25519 {
+  static void derivePublicKey(uint8_t pub[32], const uint8_t priv[32]) {
+    for (size_t i = 0; i < 32; i++) pub[i] = (uint8_t)(priv[i] ^ 0x5c);
+  }
+};
+static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) { std::memcpy(fp, pub, 8); }
+static void hex_to_str(char* out, const uint8_t* d, size_t n) {
+  for (size_t i = 0; i < n; i++) std::snprintf(out + 2 * i, 3, "%02X", d[i]);
+}
+static void generate_device_id(char* out, size_t cap) {
+  std::snprintf(out, cap, "wap-%02x%02x", g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+}
+static void generate_ap_ssid(char* out, size_t cap) {
+  std::snprintf(out, cap, "SecuraCV-wap-%02x%02x", g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+}
+static void generate_mdns_hostname(char* out, size_t cap) {
+  std::snprintf(out, cap, "canary-%02x%02x", g_device.pubkey_fp[0], g_device.pubkey_fp[1]);
+}
+static void config_load_runtime() { ++prov::config_loads; }
+
+// The sketch's layout (domain, a zero byte, the data), over OpenSSL.
+static void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+  EVP_MD_CTX* c = EVP_MD_CTX_new();
+  const uint8_t sep = 0x00;
+  unsigned int olen = 0;
+  EVP_DigestInit_ex(c, EVP_sha256(), nullptr);
+  EVP_DigestUpdate(c, domain, std::strlen(domain));
+  EVP_DigestUpdate(c, &sep, 1);
+  if (data && n > 0) EVP_DigestUpdate(c, data, n);
+  EVP_DigestFinal_ex(c, out, &olen);
+  EVP_MD_CTX_free(c);
+}
+
+// The persist's effect: the {seq, head} blob written, seq_persisted moved.
+static void persist_chain_state() {
+  ++prov::persists;
+  std::vector<uint8_t> blob(chain_state::BLOB_LEN);
+  if (!chain_state::encode(g_device.seq, g_device.chain_head, blob.data())) return;
+  prov::blobs[NVS_KEY_CHAINST] = blob;
+  g_device.seq_persisted = g_device.seq;
+}
+
+#include WAP_HMAC_PROV_INC
+
+static const uint32_t kStoredSeq = 1234;
+static const uint32_t kStoredBoots = 41;
+static const char kStoredToken[] = "cv_StoredTokenStoredTokenStoredToke";  // 35 characters
+
+// A provisioned unit's NVS: the {seq, head} blob (or none, for a chain that
+// starts at genesis), the boot count, and a stored API token (or none).
+static void stored_unit(bool with_chain, bool with_token, uint8_t (&head)[32]) {
+  prov::clear();
+  chain_head(head, 0x31);
+  if (with_chain) {
+    std::vector<uint8_t> blob(chain_state::BLOB_LEN);
+    chain_state::encode(kStoredSeq, head, blob.data());
+    prov::blobs[NVS_KEY_CHAINST] = blob;
+  }
+  prov::words[NVS_KEY_BOOTS] = kStoredBoots;
+  if (with_token) prov::token = kStoredToken;
+}
+
+// One provision_device() as setup() runs it: g_device is a zeroed static.
+static bool provision() {
+  std::memset(&g_device, 0, sizeof(g_device));
+  std::memset(&g_health, 0, sizeof(g_health));
+  prov::serial.clear();
+  return provision_device();
+}
+
+static void provision_device_completes() {
+  uint8_t head[32];
+  stored_unit(/*with_chain=*/true, /*with_token=*/true, head);
+  seam::arm(seam::Step::None);
+  CHECK_MSG(provision(), "a working unit: provisioning answered false");
+  CHECK_MSG(g_device.initialized && g_health.crypto_healthy, "a working unit: not marked ready");
+  CHECK_MSG(g_device.seq == kStoredSeq && g_device.seq_persisted == kStoredSeq,
+            "a working unit: seq " + std::to_string(g_device.seq));
+  CHECK_MSG(std::memcmp(g_device.chain_head, head, 32) == 0, "a working unit: not the stored head");
+  CHECK_MSG(std::string(g_device.api_token_str) == kStoredToken, "a working unit: not the stored token");
+  CHECK_MSG(std::string(g_device.ap_password) == "cv-e8Qun72aUeCc",
+            std::string("a working unit: the SoftAP key ") + g_device.ap_password);
+  CHECK_MSG(g_device.boot_count == kStoredBoots + 1 && prov::words[NVS_KEY_BOOTS] == kStoredBoots + 1,
+            "a working unit: the boot not counted");
+  CHECK_MSG(prov::config_loads == 1 && prov::persists == 0 && prov::token_stores == 0,
+            "a working unit: config, persist or token store");
+}
+
+// A refused mint (sweep F359), or a token whose store fails, after the key
+// is established: provisioning answers false and leaves g_device.initialized
+// false, and setup() goes on (sweep F336), so the boot attestation record
+// and loop() sign with this key. The chain they continue must be the stored
+// one: seq and head as NVS holds them and nothing persisted over them. With
+// the mints ahead of the chain load (F359 as first written), each of these
+// left seq 0, a head of 32 zero bytes and seq_persisted 0: the next records
+// re-signed seq 1, 2, ... under the stored key, and the persist ten records
+// on wrote that branch over the stored {seq, head}.
+static void a_refused_mint_keeps_the_stored_chain() {
+  struct Case {
+    std::string what;
+    bool token_stored;     // a unit that minted its token on an earlier boot
+    seam::Step fail;       // the failing HMAC's step
+    int pass_first;        // HMACs that run before it
+    bool store_token_fails;
+  };
+  std::vector<Case> cases;
+  for (seam::Step s : seam::kFailures) {
+    cases.push_back({std::string("the SoftAP key, ") + seam::name_of(s), true, s, 0, false});
+    for (int which = 0; which < 3; which++) {
+      cases.push_back({"the token, HMAC " + std::to_string(which + 1) + " of 3, " + seam::name_of(s),
+                       false, s, which, false});
+    }
+  }
+  cases.push_back({"the token's store fails", false, seam::Step::None, 0, true});
+
+  for (const Case& c : cases) {
+    for (int genesis = 0; genesis < 2; genesis++) {
+      const std::string what = c.what + (genesis ? ", a chain at genesis" : ", a stored chain");
+      uint8_t head[32];
+      stored_unit(/*with_chain=*/!genesis, c.token_stored, head);
+      prov::store_token_fails = c.store_token_fails;
+      std::vector<uint8_t> blob_before;
+      if (!genesis) blob_before = prov::blobs[NVS_KEY_CHAINST];
+      seam::arm(c.fail, c.pass_first);
+      const bool ok = provision();
+      CHECK_MSG(!ok, what + ": provisioning answered true");
+      CHECK_MSG(!g_device.initialized, what + ": the identity marked ready");
+      CHECK_MSG(g_device.ap_password[0] == '\0', what + ": a SoftAP key " + g_device.ap_password);
+      if (genesis) {
+        // The genesis head of this unit's device id, which the boot persists.
+        uint8_t expect_head[32];
+        sha256_domain("securacv:genesis:v1", reinterpret_cast<const uint8_t*>(g_device.device_id),
+                      std::strlen(g_device.device_id), expect_head);
+        CHECK_MSG(g_device.seq == 0 && g_device.seq_persisted == 0,
+                  what + ": seq " + std::to_string(g_device.seq));
+        CHECK_MSG(std::memcmp(g_device.chain_head, expect_head, 32) == 0,
+                  what + ": not the genesis head");
+        CHECK_MSG(prov::persists == 1, what + ": the genesis head not persisted");
+        std::vector<uint8_t> blob(chain_state::BLOB_LEN);
+        chain_state::encode(0, expect_head, blob.data());
+        CHECK_MSG(prov::blobs[NVS_KEY_CHAINST] == blob, what + ": the persisted blob");
+      } else {
+        CHECK_MSG(g_device.seq == kStoredSeq && g_device.seq_persisted == kStoredSeq,
+                  what + ": seq " + std::to_string(g_device.seq) + ", seq_persisted " +
+                      std::to_string(g_device.seq_persisted));
+        CHECK_MSG(std::memcmp(g_device.chain_head, head, 32) == 0,
+                  what + ": not the stored head" +
+                      (all_zero(g_device.chain_head, 32) ? " (32 zero bytes)" : ""));
+        CHECK_MSG(prov::persists == 0 && prov::blobs[NVS_KEY_CHAINST] == blob_before,
+                  what + ": the stored chain state written");
+      }
+      CHECK_MSG(g_device.boot_count == kStoredBoots + 1 &&
+                    prov::words[NVS_KEY_BOOTS] == kStoredBoots + 1,
+                what + ": this boot not counted");
+      CHECK_MSG(prov::config_loads == 1, what + ": the runtime settings not loaded");
+      if (c.token_stored) {
+        CHECK_MSG(std::string(g_device.api_token_str) == kStoredToken,
+                  what + ": not the stored token");
+      } else if (c.store_token_fails) {
+        CHECK_MSG(prov::token.empty(), what + ": a token stored");
+      } else {
+        CHECK_MSG(prov::token_stores == 0 && prov::token.empty(), what + ": a refused token stored");
+        CHECK_MSG(all_zero(g_device.api_token_str, sizeof(g_device.api_token_str)),
+                  what + ": the token buffer holds " + g_device.api_token_str);
+      }
+      CHECK_MSG(seam::g_live == 0, what + ": an HMAC context left allocated");
+    }
+  }
+}
+
+// A key that was not established stops provisioning before anything else
+// runs: nothing is named, counted or loaded (setup() halts on a refused key;
+// a first boot whose new key could not be stored is F58's pending call).
+static void a_key_not_established_stops_first() {
+  uint8_t head[32];
+  stored_unit(/*with_chain=*/true, /*with_token=*/false, head);
+  prov::establish_fails = true;
+  seam::arm(seam::Step::None);
+  CHECK_MSG(!provision(), "a key not established: provisioning answered true");
+  CHECK_MSG(seam::g_lookups == 0 && prov::config_loads == 0 && prov::persists == 0 &&
+                prov::words[NVS_KEY_BOOTS] == kStoredBoots && g_device.device_id[0] == '\0',
+            "a key not established: provisioning went on past it");
+}
+
 // ── the sketch's text ───────────────────────────────────────────────────────
 static std::string read_file(const std::string& path) {
   std::ifstream f(path, std::ios::binary);
@@ -808,11 +1120,42 @@ static void sketch_text() {
              "sizeof(g_device.ap_password))) {",
              "provision_device()'s SoftAP key");
   // Both mints run before the identity is marked ready, so a refusal leaves
-  // g_device.initialized false.
+  // g_device.initialized false; and after the chain state is loaded, so a
+  // refusal leaves the stored chain for the records setup() and loop() go on
+  // to sign (a_refused_mint_keeps_the_stored_chain() runs it). Every
+  // return false after the key is established comes after the chain load:
+  // the only refusal ahead of it is establish_identity_key()'s, which setup()
+  // halts on when NVS holds a key (test_wap_first_boot_nvs.cpp).
   const size_t ready = prov.find("g_device.initialized = true;");
   CHECK_MSG(ready != std::string::npos && prov.find("derive_ap_password(") < ready &&
                 prov.find("derive_api_token(") < ready,
             "provision_device(): a mint after g_device.initialized = true");
+  const std::string est = "if (!establish_identity_key()) return false;";
+  const size_t est_at = prov.find(est);
+  const size_t loaded = prov.find("g_device.seq_persisted = g_device.seq;");
+  CHECK_MSG(est_at != std::string::npos && loaded != std::string::npos && est_at < loaded &&
+                prov.find("chain_state::choose(") < loaded,
+            "provision_device(): the key, then the chain load");
+  for (const char* later : {"derive_api_token(", "nvs_store_token(", "derive_ap_password(",
+                            "g_device.initialized = true;"}) {
+    const size_t at = prov.find(later);
+    CHECK_MSG(at != std::string::npos && loaded < at,
+              std::string("provision_device(): ") + later + " ahead of the chain load");
+  }
+  int refusals = 0;
+  for (size_t at = prov.find("return false;"); at != std::string::npos;
+       at = prov.find("return false;", at + 1)) {
+    ++refusals;
+    const bool the_key = at == est_at + est.size() - std::string("return false;").size();
+    CHECK_MSG(the_key || at > loaded, "provision_device(): a return false at line " +
+                                          std::to_string(line_of(prov, at)) +
+                                          " of its body leaves the chain unloaded");
+  }
+  CHECK_MSG(refusals >= 4, "provision_device(): " + std::to_string(refusals) + " refusal(s)");
+  // The buffers the mints fill are the sizes this suite gives them.
+  CHECK_MSG(ino.find("char     api_token_str[36];") != std::string::npos &&
+                ino.find("char     ap_password[16];") != std::string::npos,
+            "canary_wap.ino: DeviceIdentity's api_token_str or ap_password changed size");
 }
 
 int main() {
@@ -827,6 +1170,9 @@ int main() {
   resolve_ap_password_after_a_failed_provisioning();
   backup_keeps_the_last_good_one();
   restore_refuses_a_failed_hmac();
+  provision_device_completes();
+  a_refused_mint_keeps_the_stored_chain();
+  a_key_not_established_stops_first();
   sketch_text();
   if (g_failures) {
     std::printf("test_wap_hmac_fail: %d of %d checks FAILED\n", g_failures, g_checks);

@@ -11298,16 +11298,22 @@ static bool start_wifi_ap() {
 // new one generated and stored (sweep F360, the canary's rule). Any other
 // answer is a key that is, or may be, in NVS and was not read or not used:
 // nothing is generated or written, g_device.key_refused is set and the key
-// stays zeroed, and setup() halts on it before anything signs, so the stored
-// key, and the chain state beside it, are there for the next boot
-// (power-cycle to retry). It halts rather than going on as setup() does
-// after the other provisioning failures (sweep F336): from there the boot
-// attestation record and the mesh take g_device.privkey as it is, which here
-// is the zeroed key every derivation of is public, and the chain starts again
-// at seq 0, which the reboot and deep-sleep paths persist over the stored
-// one. Before, a failed read fell through to a new keypair stored over the
-// old one, and a read that failed after the length check ran the boot on the
-// zeroed key.
+// stays zeroed, and setup() halts on it before anything signs. This firmware
+// writes nothing on that path, so a fault that leaves the entry in place (a
+// flash read error, a session that will not open) leaves the key, and the
+// chain state beside it, for a later boot that can read them. A corrupted
+// entry does not stay: IDF erases an entry whose data CRC fails inside the
+// read it refuses. On IDF 5.x (this sketch's core 3.x) the next boot still
+// finds the blob's index, so it halts again, and IDF erases the index in
+// that read; the boot after it finds no key and makes a new identity. That
+// is today's behavior, not a decision. It halts rather than going on as
+// setup() does after the other provisioning failures (sweep F336): from
+// there the boot attestation record and the mesh take g_device.privkey as it
+// is, which here is the zeroed key every derivation of is public, and the
+// chain starts again at seq 0, which the reboot and deep-sleep paths persist
+// over the stored one. Before, a failed read fell through to a new keypair
+// stored over the old one, and a read that failed after the length check ran
+// the boot on the zeroed key.
 static bool establish_identity_key() {
   g_device.key_refused = false;
   const KeyLoad stored = nvs_load_key(g_device.privkey);
@@ -11317,8 +11323,8 @@ static bool establish_identity_key() {
   }
   if (stored != KeyLoad::Absent) {
     g_device.key_refused = true;
-    Serial.println("[!!] Stored identity key not read: not replacing it, provisioning cannot "
-                   "continue (see the identity key line above)");
+    Serial.println("[!!] Identity key not used: no new key is made in its place, provisioning "
+                   "cannot continue (see the identity key line above)");
     return false;
   }
   Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
@@ -11366,32 +11372,6 @@ static bool provision_device() {
   generate_device_id(g_device.device_id, sizeof(g_device.device_id));
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
   generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
-
-  // ── Derive API token (HKDF-style, 2-step) ──
-  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
-  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
-    Serial.println("[PROV] Loaded existing API token from NVS");
-  } else {
-    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
-      Serial.println("[!!] API token derivation failed");
-      return false;
-    }
-    if (!nvs_store_token(g_device.api_token_str)) {
-      Serial.println("[!!] Failed to store API token");
-      return false;
-    }
-    Serial.println("[PROV] API token stored in NVS");
-  }
-
-  // ── Derive device-unique AP password ──
-  // A failed HMAC fails provisioning (sweep F359), as a failed token mint
-  // does: the key is "", g_device.initialized stays false, and so a release
-  // build raises no SoftAP (resolve_ap_password()).
-  Serial.println("[PROV] Deriving device-unique AP password...");
-  if (!derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
-    Serial.println("[!!] AP password derivation failed (HMAC-SHA256)");
-    return false;
-  }
 
   // Load operator-configurable runtime settings (Device tab). Clamped on
   // load, so the record loop, time-coarsening bucket, and log threshold are
@@ -11458,6 +11438,43 @@ static bool provision_device() {
   // first record. It runs after log_seq is loaded, so a report takes the
   // next health-log seq, not one the load would hand out again.
   if (genesis) persist_chain_state();
+
+  // The two mints come after the chain state. Each refuses a failed HMAC
+  // (sweep F359), and the token's store can fail too; any of the three
+  // returns false with g_device.initialized still false, and setup() goes on
+  // from there (sweep F336's posture), so the boot attestation record and
+  // loop() sign with g_device.privkey, the stored key. Loaded first, the
+  // chain continues from the stored {seq, head}. When the mints came first,
+  // a refusal left seq 0 and a head of 32 zero bytes: the next records were
+  // signed under this key at seq numbers it had already used, and the
+  // persist ten records on (or the reboot, safe-mode and deep-sleep paths)
+  // wrote that branch over the stored chain state.
+
+  // ── Derive API token (HKDF-style, 2-step) ──
+  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
+  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
+    Serial.println("[PROV] Loaded existing API token from NVS");
+  } else {
+    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
+      Serial.println("[!!] API token derivation failed");
+      return false;
+    }
+    if (!nvs_store_token(g_device.api_token_str)) {
+      Serial.println("[!!] Failed to store API token");
+      return false;
+    }
+    Serial.println("[PROV] API token stored in NVS");
+  }
+
+  // ── Derive device-unique AP password ──
+  // A failed HMAC fails provisioning (sweep F359), as a failed token mint
+  // does: the key is "", g_device.initialized stays false, and so a release
+  // build raises no SoftAP (resolve_ap_password()).
+  Serial.println("[PROV] Deriving device-unique AP password...");
+  if (!derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    Serial.println("[!!] AP password derivation failed (HMAC-SHA256)");
+    return false;
+  }
 
   g_device.boot_ms = millis();
   g_device.initialized = true;
@@ -12103,14 +12120,19 @@ void setup() {
 
   // Provision device identity and crypto
   if (!provision_device()) {
-    // A stored identity key this boot could not read (sweep F360) halts here,
-    // as the canary halts: nothing below runs, so nothing signs with the
+    // An identity key this boot could not read or use (sweep F360) halts
+    // here, as the canary halts: nothing below runs, so nothing signs with the
     // zeroed key and nothing writes over the stored key or its chain. It is
     // reached before the watchdog is set up and before any radio, server or
     // task starts. The line goes to Serial only: the health log's ring is
-    // drained to the SD card by loop(), which never runs after this.
+    // drained to the SD card by loop(), which never runs after this. Every
+    // other failure goes on (sweep F336). A refusal after the key is
+    // established comes after provision_device() has loaded the chain state,
+    // so the records below continue the stored chain; the only ones ahead of
+    // it are a new key that could not be made or stored, on a boot with no
+    // key stored (F58's pending halt-or-ephemeral call).
     if (g_device.key_refused) {
-      Serial.println("[!!] PROVISIONING FAILED - the stored identity key could not be read; HALTING, nothing written. Power-cycle to retry; a clean install (full erase) starts a new identity");
+      Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above); HALTING, nothing written");
       while (true) { delay(1000); }
     }
     Serial.println();

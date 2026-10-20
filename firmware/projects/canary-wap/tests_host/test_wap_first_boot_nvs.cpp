@@ -365,8 +365,8 @@ static int check_refused(const HostFirstBootNvs& before, const char* why) {
   CHECK(!g_device.key_is_new && !g_device.first_boot);
   CHECK(same_store(before, host_nvs()));
   CHECK(printed(why));
-  CHECK(printed("[!!] Stored identity key not read: not replacing it, provisioning cannot "
-                "continue (see the identity key line above)\n"));
+  CHECK(printed("[!!] Identity key not used: no new key is made in its place, provisioning "
+                "cannot continue (see the identity key line above)\n"));
   CHECK(!printed("[PROV] Generating Ed25519 keypair"));
   CHECK(!printed("[PROV] Loaded existing keypair from NVS"));
   return check_idle();
@@ -438,7 +438,9 @@ static int test_a_read_that_fails_after_the_length_check_is_refused() {
 }
 
 // A read that wrote the buffer and then refused (IDF fills it before its
-// CRC check), and a short read: refused, and the buffer zeroed again.
+// CRC check), and a short read: refused, and the buffer zeroed again. What
+// is held here is this firmware's side: it writes nothing. IDF also erases
+// an entry whose data CRC fails, inside that read; this fake keeps it.
 static int test_a_garbled_or_short_read_is_refused_and_zeroed() {
   for (HostFirstBootNvs::Read how : {HostFirstBootNvs::Read::Garbles, HostFirstBootNvs::Read::Short}) {
     host_nvs().clear();
@@ -549,7 +551,10 @@ static int test_a_key_with_one_byte_set_loads() {
   return 0;
 }
 
-// The next boot that can read the key loads it: the refusal kept it.
+// A read fault that leaves the entry in place: the next boot that can read
+// the key loads it, since the refusal wrote nothing. (A corrupted entry is
+// another case: IDF erases it in the refused read, which this fake does not
+// model.)
 static int test_a_refused_boot_keeps_the_key_for_the_next() {
   host_nvs().clear();
   store_key(32, kStoredKey);
@@ -559,6 +564,30 @@ static int test_a_refused_boot_keeps_the_key_for_the_next() {
   CHECK(establish());
   CHECK(all_bytes(g_device.privkey, kStoredKey));
   CHECK(!g_device.key_refused);
+  return check_idle();
+}
+
+// No key stored, and a read-write session that will not open (Preferences
+// refuses every open; IDF's probe still answers NOT_FOUND): a key is drawn,
+// its store fails, and provisioning stops without the flag setup() halts on,
+// since no stored key is at stake. Nothing is written and the boot does not
+// claim a stored key. Whether such a unit should halt or run on the key it
+// could not store is F58's pending call; this pins the answer the store's
+// failure gives provision_device().
+static int test_a_key_that_cannot_be_stored_fails_provisioning() {
+  host_nvs().clear();
+  host_nvs().prefs_begin_fails = true;
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens + 1);
+  CHECK(!g_device.key_refused);
+  CHECK(!g_device.key_is_new && !g_device.first_boot);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(printed("[PROV] Generating Ed25519 keypair"));
+  CHECK(printed("[!!] Failed to store keypair\n"));
+  CHECK(!printed("[PROV] Keypair stored in NVS"));
+  host_nvs().prefs_begin_fails = false;
   return check_idle();
 }
 
@@ -834,6 +863,7 @@ int main() {
   rc |= test_a_zero_key_is_refused();
   rc |= test_a_key_with_one_byte_set_loads();
   rc |= test_a_refused_boot_keeps_the_key_for_the_next();
+  rc |= test_a_key_that_cannot_be_stored_fails_provisioning();
   rc |= test_the_boot_runs_these_opens_in_this_order();
   rc |= test_a_refused_key_halts_the_boot();
   rc |= test_a_first_boot_logs_no_chirp_line();

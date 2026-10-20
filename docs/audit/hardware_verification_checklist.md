@@ -145,8 +145,9 @@ host tests assert they do, on real radio.
       `[!!] identity key not loaded: flash encryption required by this
       build but not active` (the load is refused before NVS is read, so it
       prints whether or not a default image had already stored a key), then
-      `[!!] Stored identity key not read: not replacing it, provisioning
-      cannot continue (see the identity key line above)`, then
+      `[!!] Identity key not used: no new key is made in its place,
+      provisioning cannot continue (see the identity key line above)`
+      (also printed whether or not a key is stored), then
       `Device provisioning failed - HALTING`. No keypair is generated (no
       `Generating new keypair` line; since sweep F360 the refusal is not
       read as "no key stored", so the `[!!] identity key not stored: ...`

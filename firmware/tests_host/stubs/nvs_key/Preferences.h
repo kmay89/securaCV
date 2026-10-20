@@ -25,7 +25,10 @@
  *                  succeeded: Ok; Fails (answers 0, the buffer untouched:
  *                  the F360 case); Garbles (fills the buffer with 0xA5,
  *                  then answers 0, as IDF fills it before its data CRC check
- *                  refuses); Short (copies 31 bytes, answers 31).
+ *                  refuses; IDF also erases that entry in the same read,
+ *                  which this fake does not: what the suite holds is that
+ *                  the firmware writes nothing); Short (copies 31 bytes,
+ *                  answers 31).
  * Every call counts. failed_begins is the error line Arduino's begin() logs
  * for each open it refuses; prefs_open is the handles begun and not ended. */
 #ifndef STUB_NVS_KEY_PREFERENCES_H
