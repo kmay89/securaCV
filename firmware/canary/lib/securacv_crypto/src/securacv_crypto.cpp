@@ -449,7 +449,8 @@ static esp_err_t stored_key_length(size_t* len) {
 // Fails closed (sweep F360): only a key NVS says is not there answers Absent,
 // and every other way the stored key goes unread or unused answers Refused
 // with priv zeroed, which witness_provision_device() turns into a halted boot
-// that writes nothing. Before, every failure answered false, and the caller
+// that generates no key and writes nothing over the stored one. Before,
+// every failure answered false, and the caller
 // generated and stored a new identity over whatever false meant. Worse, the
 // read's own answer was discarded: Preferences::getBytes() leaves the buffer
 // as it was when its read fails, so an NVS error after the length check left

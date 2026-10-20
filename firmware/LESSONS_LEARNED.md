@@ -528,7 +528,8 @@
   as `common/health/boot_guard.h` asks it, is `Absent`; the read must answer
   all 32 bytes, and a key of 32 zero bytes is refused.
   `establish_identity_key()` generates only on `Absent`, and on `Refused`
-  provisioning stops, so `setup()` halts with nothing generated or written.
+  provisioning stops, so `setup()` halts with no key generated and nothing
+  written to the key or the chain state.
   The canary-wap takes the same load and the same `establish_identity_key()`
   shape; its `setup()` goes on after other provisioning failures, so it
   halts on this one by name (`g_device.key_refused`), before the boot
@@ -539,11 +540,17 @@
   stored value. That keeps it for the next boot only when the fault left
   the entry in place; IDF itself erases an entry whose data CRC fails, in
   the read it refuses, so on IDF 5.x such a unit halts once more and then,
-  finding no key, makes a new one. Know what the layer under you does on a
-  refusal before you promise what survives it. The way to start fresh on
-  purpose is the flagship's 30 s BOOT wipe, or a clean install on the
-  canary-wap, whose BOOT hold keeps the identity. A read's count is
-  part of its answer; a buffer the read may not have filled is zeroed
+  finding no key, makes a new one, and it erases a key whose index entry
+  fails its header check before the key is asked for, so that boot makes a new
+  one at once. What the firmware can promise is narrower: it never writes over
+  a key IDF still reports as stored. Know what the layer under you does on
+  a refusal before you promise what survives it, and which answers it can
+  give at all: IDF's blob-size lookup, once the open succeeded, answers
+  only found, not found or a bad handle, so a test's other answers are ones
+  the load refuses for not knowing them, not ones a device sends today. The
+  way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean
+  install on the canary-wap, whose BOOT hold keeps the identity. A read's
+  count is part of its answer; a buffer the read may not have filled is zeroed
   before anything sees it. And a refusal that does not halt is only as safe
   as whatever runs after it: before choosing "return false and go on", read
   what the boot does next with the buffer the refusal left.

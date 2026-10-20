@@ -35,8 +35,12 @@
 //     hmac over the same labels, MAC and encoder rule); false and the whole
 //     token buffer zeroed when any of its three HMACs fails at any step;
 //   - the two mints refuse a null or zero-length buffer before any HMAC
-//     runs, and derive_api_token() refuses and wipes a buffer too short for
-//     the 35-character token even when every HMAC ran (no caller passes one);
+//     runs, and derive_api_token() refuses and wipes a buffer shorter than
+//     the 35-character token and its NUL before any HMAC runs, so a 1-, 2-,
+//     3-, 34- or 35-byte window inside a guarded array is refused with no
+//     byte written past it and a 36-byte one mints the known token (no
+//     caller passes a short one); format_api_token_string() writes nothing
+//     past the length it is given, from 0 to 40 bytes;
 //   - resolve_ap_password(): after a failed provisioning (g_device.initialized
 //     false, what provision_device() leaves when a mint refuses) both builds
 //     answer from its first branch and run no HMAC: a release build answers
@@ -482,9 +486,9 @@ static void api_token_refuses_any_failed_hmac() {
 }
 
 // The two mints' own guards: a null or zero-length buffer is refused before
-// any HMAC runs, and a token buffer too short for the 35-character token is
-// refused and wiped even when every HMAC ran (no caller passes one: the
-// buffers are g_device's, 36 and 16 bytes).
+// any HMAC runs, and a token buffer too short for the 35-character token and
+// its NUL is refused and wiped before any HMAC runs (no caller passes one:
+// the buffers are g_device's, 36 and 16 bytes).
 static void mints_refuse_a_buffer_they_cannot_fill() {
   uint8_t k[32];
   key_0x01(k);
@@ -507,10 +511,92 @@ static void mints_refuse_a_buffer_they_cannot_fill() {
   seam::arm(seam::Step::None);
   std::memset(tok, 'Z', sizeof(tok));
   CHECK_MSG(!derive_api_token(k, tok, 20), "derive_api_token(): a 20-byte buffer answered true");
-  CHECK_MSG(seam::g_lookups == 3, "derive_api_token(): three HMACs ran for the short buffer");
+  CHECK_MSG(seam::g_lookups == 0, "derive_api_token(): " + std::to_string(seam::g_lookups) +
+                                      " HMAC(s) ran for the short buffer");
   CHECK_MSG(all_zero(tok, 20), "derive_api_token(): a short token left in a 20-byte buffer: " +
                                    std::string(tok, strnlen(tok, 20)));
   CHECK_MSG(tok[20] == 'Z', "derive_api_token(): wrote past the 20 bytes it was given");
+}
+
+// A window of `len` bytes inside a guarded array: kGuard bytes of 'G' on
+// each side, the window itself filled with 'Z'. intact() holds every guard
+// byte, so a write before or past the window fails it.
+namespace {
+constexpr size_t kGuard = 48;
+struct Window {
+  char bytes[kGuard + 64 + kGuard];
+  size_t len;
+  explicit Window(size_t n) : len(n) {
+    std::memset(bytes, 'G', sizeof(bytes));
+    std::memset(bytes + kGuard, 'Z', n);
+  }
+  char* at() { return bytes + kGuard; }
+  bool intact() const {
+    for (size_t i = 0; i < kGuard; i++) {
+      if (bytes[i] != 'G') return false;
+    }
+    for (size_t i = kGuard + len; i < sizeof(bytes); i++) {
+      if (bytes[i] != 'G') return false;
+    }
+    return true;
+  }
+  std::string text() const { return std::string(bytes + kGuard, strnlen(bytes + kGuard, len)); }
+};
+}  // namespace
+
+// derive_api_token() over a 1-, 2-, 3-, 34-, 35- and 36-byte window (the
+// F359 review). Every window shorter than the token and its NUL (36) is
+// refused before any HMAC runs, with the window wiped, and no byte past it
+// is written: before, the 1- to 3-byte windows ran all three HMACs and the
+// formatter wrote "cv_" and a NUL past their end. The 36-byte window mints
+// the known token, with nothing written outside it.
+static void token_windows_are_never_overrun() {
+  uint8_t k[32];
+  key_0x01(k);
+  for (size_t len : {size_t(1), size_t(2), size_t(3), size_t(34), size_t(35), size_t(36)}) {
+    seam::arm(seam::Step::None);
+    Window w(len);
+    const bool ok = derive_api_token(k, w.at(), len);
+    const std::string what = "derive_api_token(), a " + std::to_string(len) + "-byte window";
+    CHECK_MSG(w.intact(), what + ": wrote outside it");
+    if (len < 36) {
+      CHECK_MSG(!ok, what + ": answered true with " + w.text());
+      CHECK_MSG(seam::g_lookups == 0,
+                what + ": " + std::to_string(seam::g_lookups) + " HMAC(s) ran");
+      CHECK_MSG(all_zero(w.at(), len), what + ": not wiped: " + w.text());
+    } else {
+      CHECK_MSG(ok, what + ": refused");
+      CHECK_MSG(w.text() == "cv_J2mAQ2t94sRjp9AeW8YWqmHt2cyv7sGB", what + ": " + w.text());
+      CHECK_MSG(seam::g_lookups == 3, what + ": " + std::to_string(seam::g_lookups) + " HMAC(s)");
+    }
+  }
+}
+
+// format_api_token_string() itself writes nothing past the length it is
+// given, whatever the length: no byte at 0, "" below "cv_" and its NUL, a
+// cut token from 4 to 35, the whole token at 36 and above. Before, a 1- to
+// 3-byte window took the prefix and a NUL past its end, and a 0-byte one
+// wrapped `out_len - 1` and took a whole token.
+static void the_token_formatter_stays_in_its_window() {
+  uint8_t in[64];
+  for (size_t i = 0; i < sizeof(in); i++) in[i] = (uint8_t)(i * 37 + 11);
+  Window whole(36);
+  format_api_token_string(in, sizeof(in), whole.at(), 36);
+  const std::string token = whole.text();
+  CHECK_MSG(token.size() == 35 && token.compare(0, 3, "cv_") == 0, "the whole token: " + token);
+  for (size_t len = 0; len <= 40; len++) {
+    Window w(len);
+    format_api_token_string(in, sizeof(in), w.at(), len);
+    const std::string what = "format_api_token_string(), a " + std::to_string(len) + "-byte window";
+    CHECK_MSG(w.intact(), what + ": wrote outside it");
+    if (len == 0) continue;
+    CHECK_MSG(std::memchr(w.at(), '\0', len) != nullptr, what + ": no NUL inside it");
+    const std::string want = len < 4 ? "" : token.substr(0, len - 1);
+    CHECK_MSG(w.text() == want, what + ": " + w.text());
+  }
+  Window none(4);
+  format_api_token_string(in, sizeof(in), nullptr, 4);
+  CHECK_MSG(none.intact() && none.text() == "ZZZZ", "format_api_token_string(): a null output");
 }
 
 // ── resolve_ap_password() ───────────────────────────────────────────────────
@@ -1166,6 +1252,8 @@ int main() {
   api_token_known_answer();
   api_token_refuses_any_failed_hmac();
   mints_refuse_a_buffer_they_cannot_fill();
+  token_windows_are_never_overrun();
+  the_token_formatter_stays_in_its_window();
   resolve_ap_password_release_and_dev();
   resolve_ap_password_after_a_failed_provisioning();
   backup_keeps_the_last_good_one();

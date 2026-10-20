@@ -1980,7 +1980,7 @@ so — see D2 below.)
   and every caller fails closed (provisioning refuses, so a release build
   starts no server), with a host test over a failing HMAC seam like
   `firmware/tests_host/hmac_fail_seam.h`. Found by F350's review (#1837).
-  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  *Done (#1840; decided 2026-10-19 under the maintainer's instruction to fix
   the remaining open items in best engineering practice and best value for
   the user and security):* `hmac_sha256()` returns `bool`. It refuses when
   `mbedtls_md_info_from_type()` finds no SHA-256 or when
@@ -2053,21 +2053,42 @@ so — see D2 below.)
   sketch directory: each call of the three uses its result, and
   `provision_device()` returns `false` on either mint before it marks the
   identity ready. The unchanged sketch does not build under it (the cut
-  finds no `static bool hmac_sha256(`); with only the two return types
-  changed, so it builds, the suite as first written failed 129 of its 219
-  checks, among them a failed setup minting keys such as `cv-222222222wHN`
-  from mostly-zero host stack bytes and replacing the good backup. It now
-  has 245: the two mints' own guards (a null or zero-length buffer is
-  refused before any HMAC runs, and `derive_api_token()` refuses and wipes a
-  buffer too short for the 35-character token even when every HMAC ran; no
-  caller passes either, the buffers being `g_device`'s 36 and 16 bytes), and
-  `resolve_ap_password()` after a failed provisioning in both builds.
-  Deleting either guard, or wiping the short buffer only when an HMAC
-  failed, fails it. Mutants that drop the zeroing, the start's, update's or
-  finish's check, the free on a refusal, any caller's check or
-  `provision_device()`'s refusal each fail it. A dropped setup
+  finds no `static bool hmac_sha256(`); with the two helpers only made to
+  answer `bool` (each its old body, then `return true;`), so it builds, the
+  suite as first written failed 129 of its 219 checks, among them a failed
+  setup minting keys such as `cv-22222222V5Kq` from mostly-zero host stack
+  bytes (they differ from build to build) and replacing the good backup.
+  The first review added the two mints' own guards (a null or zero-length
+  buffer is refused before any HMAC runs; no caller passes either, the
+  buffers being `g_device`'s 36 and 16 bytes) and `resolve_ap_password()`
+  after a failed provisioning in both builds. The final review found the
+  token mint's guard short: a 1-, 2- or 3-byte buffer passed it, all three
+  HMACs ran, and `format_api_token_string()` wrote `c`, `v`, `_` and a NUL
+  at index 3 before it looked at the length, so bytes past the buffer were
+  written before the `strlen` refusal fired (a zero length, which the guard
+  refused, would have wrapped the formatter's `out_len - 1` and let it write
+  a whole token). Now the formatter checks the length before it writes:
+  nothing for a null or zero-length output, `""` for one shorter than four
+  bytes. And `derive_api_token()` refuses a buffer shorter than the token and
+  its NUL (36 bytes) before any HMAC runs, wiping the bytes it was given; a
+  working token's bytes are unchanged. Two tests hold it:
+  `token_windows_are_never_overrun()` passes 1-, 2-, 3-, 34-, 35- and
+  36-byte windows inside a guarded array (no byte outside the window
+  written; each short window refused with no HMAC run and wiped; the
+  36-byte one the known token), and
+  `the_token_formatter_stays_in_its_window()` runs the formatter over every
+  length from 0 to 40 and a null output. Against the code before that fix
+  the null-output case crashes the run; with that case left out, 19 of 883
+  checks fail: 8 in the window test, 10 in the formatter test, and the
+  first review's 20-byte case, which now holds that no HMAC runs (it held
+  that all three did). Deleting the 36-byte refusal fails 9 checks, the
+  formatter's short-buffer `""` 9, and its null-or-zero return the 0-byte
+  window (and the null case crashes); deleting `derive_api_token()`'s null
+  check crashes the run. Mutants that drop the zeroing, the
+  start's, update's or finish's check, the free on a refusal, any caller's
+  check or `provision_device()`'s refusal each fail it. A dropped setup
   check does not, since mbedTLS's next step refuses a context that was never
-  set up, and the stand-in does the same. The review's repair cuts
+  set up, and the stand-in does the same. The second review's repair cuts
   `provision_device()` too and runs it over the same seam, with stand-ins
   for what it calls but the two mints and an NVS map that outlives each
   call: a unit with a stored chain and token, or a chain at genesis, whose
@@ -2078,11 +2099,11 @@ so — see D2 below.)
   written over the stored chain state, this boot counted and no refused
   token stored. Source pins hold the chain load ahead of both mints, the
   token's store and every `return false` but `establish_identity_key()`'s.
-  The suite has 737 checks; against the order this item first had (the
-  mints ahead of the chain load) 195 fail, 190 of them the runs (`seq` 0,
-  a head of zeros, the boot not counted), and moving either mint back
-  ahead of the load fails it. Host-tested; the ESP32 compile is CI's; not
-  run on a device.
+  The suite has 884 checks; against the order this item first had (the
+  mints ahead of the chain load) 195 fail, 189 of them in the runs (`seq`
+  0, a head of zeros, the boot not counted) and 6 in the source pins, and
+  moving either mint back ahead of the load fails it. Host-tested; the
+  ESP32 compile is CI's; not run on a device.
 - [x] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
   result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
   private key's length, then reads it with `Preferences::getBytes()` and
@@ -2093,7 +2114,7 @@ so — see D2 below.)
   from the same zero key. The fix: require 32 bytes from `getBytes()` and
   refuse an all-zero key, so `witness_provision_device()` halts, with a host
   case over the witness glue stubs. Found by F350's review (#1837).
-  *Done (#<PR>; decided 2026-10-19 under the maintainer's instruction to fix
+  *Done (#1840; decided 2026-10-19 under the maintainer's instruction to fix
   the remaining open items in best engineering practice and best value for
   the user and security):* the halt needed more than the two checks.
   `nvs_load_key()` answered one `false` for every failure, and
@@ -2126,26 +2147,58 @@ so — see D2 below.)
   from the key and `setup()` halts as it does on any provisioning failure.
   (That line first read `Stored identity key not read: not replacing it`;
   the review found it printed on every opt-in boot, a board with no stored
-  key included, since the policy refuses before NVS is read.) This
-  firmware generates and writes nothing on that path, so a fault that
-  leaves the entry in place (a flash read error, a session that will not
-  open, a lock wait that times out) leaves the key for a later boot that
-  can read it. A corrupted entry does not stay, and the first version of
-  this amendment said it did: IDF erases an entry whose data CRC fails
-  inside the read it refuses (`Page::readItem()`'s `eraseEntryAndSpan()`,
-  then `ESP_ERR_NVS_NOT_FOUND`). The blob's index survives that read, so
-  the next probe still answers 32. On IDF 4.4 (core 2.0.17, every flagship
-  env but `env:full`) the next read fails at `readMultiPageBlob()`'s size
-  assert before its cleanup, so the index stays and every boot halts until
-  the 30 s BOOT hold at power-on wipes the identity. On IDF 5.x (core 3.x:
-  `env:full`, and the canary-wap) that read erases the index and fails, so
-  the unit halts once more, and the boot after it finds no key, answers
-  `Absent` and makes a new identity, which Home Assistant shows as a
-  changed fingerprint. That third boot is today's behavior, not a decision;
-  whether a unit should halt on, or regenerate over, a key IDF has already
-  erased is not decided here. Read from IDF's source (v4.4.7 and
-  v5.5.1 `nvs_page.cpp` / `nvs_storage.cpp`); the host fakes keep a
-  garbled entry rather than erase it, and nothing ran on a device. A first
+  key included, since the policy refuses before NVS is read.) On that
+  path no key is generated and nothing is written to the key or the chain
+  state; the final review found the first wording ("generates and writes
+  nothing") too broad, since `setup()` has run `bootguard::begin()` and
+  `canary_pe::on_boot()` by then, which write the crash-loop count and the
+  power-event log (`pe_log`, and `pe_clean` cleared when it was set, in
+  the same `securacv` namespace) before the key is read. So a fault in the
+  read that leaves the entry in place (a flash read error there, a session
+  that will not open, a lock wait that times out) leaves the key for a
+  later boot that can read it. A corrupted entry does not stay, and the
+  first version of this amendment said it did: IDF erases an entry whose data
+  CRC fails inside the read it refuses (`Page::readItem()`'s
+  `eraseEntryAndSpan()`, then `ESP_ERR_NVS_NOT_FOUND`). The blob's index
+  survives that read, so the next probe still answers 32. On IDF 4.4 (core
+  2.0.17, every flagship env but `env:full`) the next read fails at
+  `readMultiPageBlob()`'s size assert before its cleanup, so the index stays
+  and every boot halts until the 30 s BOOT hold at power-on wipes the
+  identity. On IDF 5.x (core 3.x: `env:full`, and the canary-wap) that read
+  erases the index and fails, so the unit halts once more, and the boot after
+  it finds no key, answers `Absent` and makes a new identity, which Home
+  Assistant shows as a changed fingerprint. That third boot is today's
+  behavior, not a decision; whether a unit should halt on, or regenerate over,
+  a key IDF has already erased is not decided here. The probe itself meets
+  corruption first, and the final review found the fakes answering for IDF
+  what it does not say: once the open succeeded, IDF's size query
+  (`nvs_get_blob(h, key, nullptr, &len)`) answers only `ESP_OK`,
+  `ESP_ERR_NVS_NOT_FOUND` or `ESP_ERR_NVS_INVALID_HANDLE`
+  (`nvs_get_str_or_blob()`, then `Storage::getItemDataSize()` over
+  `Storage::findItem()`, which takes no answer from a page but `ESP_OK` and
+  ends `ESP_ERR_NVS_NOT_FOUND`). When the key's index entry fails
+  `checkHeaderConsistency()` (its header CRC on 4.4), IDF erases it
+  (`eraseEntryAndSpan()`) when it loads the page at `nvs_flash_init()`, or in
+  the probe's own scan if it got past that, and the scan goes on, so the probe
+  answers `ESP_ERR_NVS_NOT_FOUND`, the load `Absent`, and that same boot makes
+  a new identity, on IDF 4.4 and 5.x alike. A data chunk whose header fails is
+  erased the same way and leaves the index, so the probe answers 32 and the
+  read finds no chunk: on IDF 5.x that read erases the index (one halt, then a
+  new identity), and on 4.4 it stops at the size assert above (every boot
+  halts). A flash read error inside the probe's scan sets that page aside
+  (`PageState::INVALID`) for the rest of the boot and ends the same way,
+  reading as no key stored. And a `privkey` stored as another type is skipped
+  and answers `ESP_ERR_NVS_NOT_FOUND`, so `Absent` and a new key; harmless,
+  since every write of `privkey` in this repository's history is `putBytes()`
+  (`git log -G` over every ref this checkout holds, back to the root commit).
+  What holds in every case: the firmware never writes over a key IDF still
+  reports as stored. The fakes' `ESP_ERR_NVS_TYPE_MISMATCH` and `ESP_FAIL`
+  lookups stay, relabeled as answers IDF does not give today: the load
+  refuses them because it fails closed on an answer it does not know. Read
+  from IDF's source (v4.4.7 and v5.5.1 `nvs_page.cpp` / `nvs_storage.cpp` /
+  `nvs_api.cpp`, fetched at those tags for the final review, not on disk
+  here); the host fakes keep a garbled entry rather than erase it, and
+  nothing ran on a device. A first
   boot is unchanged. `canary_pe::on_boot()` runs before provisioning on
   every boot and opens the namespace read-write, so the old key read always
   found the namespace and met no key in it; what it logged was
@@ -2198,20 +2251,26 @@ so — see D2 below.)
   setup wizard only probes the namespace), and IDF logs nothing there, so
   F201's quiet first boot holds. The key block moved into a new
   `establish_identity_key()`, which generates only on `Absent`; on `Refused`
-  it sets `g_device.key_refused`, generates and writes nothing, and
+  it sets `g_device.key_refused`, generates no key and writes nothing, and
   `setup()` halts on that flag (`[!!] PROVISIONING FAILED - the identity
-  key could not be used (see the identity key line above); HALTING,
-  nothing written`; it first went on `Power-cycle to retry; a clean
-  install (full erase) starts a new identity`, advice the IDF erase above
-  makes wrong on this sketch's core 3.x, where a corrupted key's third boot
-  makes a new identity by itself). What survives a halt is as on the
-  flagship's `env:full`: a fault that leaves the entry, the key; a
-  corrupted entry, a new identity two boots on. The WAP's BOOT hold never
-  wipes the identity (it has no wipe stage: `factory_reset_by_hold()`
-  keeps it, and `gen_wap.py` fails the Lab build if the sketch arms one),
-  so a clean install in either flasher is its only way to a new identity
-  on purpose, halted or not; the halt removes no path that was there. It
-  halts rather than returning `false` and
+  key could not be used (see the identity key line above) - HALTING`, in
+  the flagship's `... - HALTING` form). It first went on `Power-cycle to
+  retry; a clean install (full erase) starts a new identity`, advice the
+  IDF erase above makes wrong on this sketch's core 3.x, where a corrupted
+  key's third boot makes a new identity by itself; then it ended
+  `HALTING, nothing written`, which the final review found too broad: on a
+  crash reset `safe_mode_check()` has written `hw_state`'s crash counters
+  before `provision_device()` runs. No key is generated, and nothing is
+  written to the key or the chain state. What survives a halt is as on the
+  flagship's `env:full`: after a fault in the read that leaves the entry,
+  the key; after an entry whose data CRC fails, a new identity two boots
+  on. A key whose index entry fails IDF's header check never halts: the probe
+  answers `ESP_ERR_NVS_NOT_FOUND` and that boot makes a new identity. The
+  WAP's BOOT hold never wipes the identity (it has no wipe stage:
+  `factory_reset_by_hold()` keeps it, and `gen_wap.py` fails the Lab build if
+  the sketch arms one), so a clean install in either flasher is its only way
+  to a new identity on purpose, halted or not; the halt removes no path that
+  was there. It halts rather than returning `false` and
   going on, as `setup()` does after the other provisioning failures (F336):
   from there the boot
   attestation record and `mesh_network::init()` take `g_device.privkey` as
@@ -2223,26 +2282,36 @@ so — see D2 below.)
   handle and the read faults (the session refused after the probe, the
   length lookup failing, the read untouched, garbled or short): a stored key
   loads unchanged, a namespace with no key generates one, and a read that
-  fails after the length check, a garbled or short read, a failed length
-  lookup, a key stored as another type, a key of 16, 31, 33 or 64 bytes, a
-  session that will not open and a key of 32 zero bytes are each refused
-  with nothing generated, every handle closed and the fake NVS byte for
-  byte as it was (that is, the sketch writes nothing; the fake keeps a
-  garbled entry where IDF would erase it); after a read fault that leaves
+  fails after the length check, a garbled or short read, a length lookup
+  that answers `ESP_FAIL` or (for a `privkey` stored as another type)
+  `ESP_ERR_NVS_TYPE_MISMATCH`, a key of 16, 31, 33 or 64 bytes, a session
+  that will not open and a key of 32 zero bytes are each refused with
+  nothing generated, every handle closed and the fake NVS byte for byte as
+  it was (that is, the key block writes nothing; the fake keeps a garbled
+  entry where IDF would erase it). The two lookup answers are ones IDF does
+  not give today (above: on a device a key of another type answers
+  `ESP_ERR_NVS_NOT_FOUND`); the load refuses them because it fails closed
+  on an answer it does not know, and the suite keeps them so a later IDF
+  that does give one meets a refusal. After a read fault that leaves
   the entry, the next boot that can read the key loads it. A case the
   review added holds the store's own refusal: with no key stored and a
   read-write session that will not open, a key is drawn, none is stored,
   `[PROV] Keypair stored in NVS` does not print and `key_refused` stays
   clear (deleting the `return false` after `[!!] Failed to store keypair`
-  passed the suite before it, and fails it now; the suite has 310 checks).
-  An NVS fault now logs two Preferences lines, not four, and prints the key read's refusal
-  naming IDF's error. Source pins hold `setup()`'s halt as the first thing
-  in its failure block, `provision_device()` stopping on the key before it
+  passed the suite before it, and fails it now; the suite had 310 checks
+  then, and the final review's pin on the halt's serial line makes 311).
+  An NVS fault now logs two Preferences lines, not four, and prints the key
+  read's refusal naming IDF's error. Source pins hold `setup()`'s halt as the
+  first thing in its failure block and the line it prints,
+  `provision_device()` stopping on the key before it
   derives anything or marks the identity ready, the one call of the load
   and `NVS_KEY_PRIV`'s three readers. Against the old load and key block,
   adapted only so that they build (the `bool` as the enum, the block moved
-  verbatim into `establish_identity_key()`), 10 of the suite's 20 test
-  functions fail (each stops at its first failed check). Mutants that read a
+  verbatim into `establish_identity_key()`, the cut no longer asking for
+  `stored_key_length()`), 9 of the suite's 21 test functions fail (each
+  stops at its first failed check; the 21st, review 2's store refusal,
+  passes there, since the old block already returned `false` on it).
+  Mutants that read a
   probe fault or a wrong length as `Absent`, read `ESP_ERR_NVS_NOT_FOUND` as
   `Refused`, skip the probe or its close, ignore the read's count, drop the
   zeroing on entry or after a refused read, drop or narrow the zero-key
@@ -2254,9 +2323,124 @@ so — see D2 below.)
   zero key as none, so they never sign with the zero key, but a failed
   length lookup or read, like a stored zero key, still draws a new key and
   stores it over the stored one: identity churn, which Home Assistant shows
-  as a changed fingerprint. They are not changed here; the session lead
-  files them. Host-tested; the PlatformIO and
-  ESP32 compiles are CI's; not run on a device.
+  as a changed fingerprint. They are not changed here; F362 below files
+  them, beside three more places the final review found that drop an
+  answer or read a failed read as nothing stored (F363, F364, F365).
+  Host-tested; the PlatformIO and ESP32 compiles are CI's; not run on a
+  device.
+- [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
+  store a new key over a stored one they fail to read.**
+  `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all
+  three projects) opens `securacv` read-write (`:60`; a failed open logs `NVS
+  unavailable — signing disabled this boot` and makes no key) and takes the
+  key only when `getBytesLength()` answers 32 (`:66`) and `getBytes()` answers
+  all 32 bytes (`:67`), and then only if it is not 32 zero bytes
+  (`:69`-`:76`). Every other outcome falls to `if (!have)` (`:78`), which
+  draws a new key and stores it with `putBytes()` (`:88`) over whatever
+  `privkey` held. So these three never sign with the zero key (they check the
+  read's count, unlike the flagship and the canary-wap before F360), but a
+  failed length lookup, a key of another length, a read that fails or comes
+  back short, and a stored zero key each replace the unit's identity, and
+  `getBytesLength()` answers 0 alike for a missing key and a failed lookup.
+  The harm is identity churn, not a key anyone holds: Home Assistant reads the
+  new key as `Fingerprint changed without rotation`, which the owner cannot
+  tell from tampering, and the old key is gone for good. Low severity on
+  secrecy, real cost in trust. The fix is F360's three-way answer: ask IDF's
+  `nvs_open()` / `nvs_get_blob()` first, as `common/health/boot_guard.h` and
+  the flagship's `stored_key_length()` do, so only `ESP_ERR_NVS_NOT_FOUND`
+  draws a key; every other answer, a wrong length and a short read disable
+  signing for the boot (the path a failed open and a failed persist already
+  take) and write nothing. Whether a stored zero key is refused (the
+  flagship's rule) or replaced is the decision half. A host case over a fake
+  NVS like `tests_host/stubs/nvs_key` for each project's cut. Found by #1840's
+  review (F360).
+- [ ] **F363 [code+decision] The flagship's and the canary-wap's
+  `nvs_load_bytes()` discard `getBytes()`' count, and a failed read reads as
+  nothing stored, so a boot can overwrite the stored chain state.** Both trees
+  have the helper: `securacv_crypto.cpp:546` and `canary_wap.ino:1785` each
+  answer `false` for a failed read-only open or a length other than `len`,
+  then call `getBytes()` and answer `true` whatever it returned. The chain
+  load is the caller, in the same shape in both (`securacv_witness.cpp:275` /
+  `:278`, `canary_wap.ino:11427` / `:11430`): the `{seq, head}` blob into an
+  uninitialized stack array, then the legacy head into another. A read that
+  fails after the length check leaves the array as the stack held it. For the
+  blob, `chain_state::decode()`'s version byte and CRC-16 refuse almost any
+  such bytes, so it reads as no blob; for the legacy head nothing checks, so
+  when `chain_state::choose()` takes the legacy pair (no valid blob, or a
+  legacy seq ahead of it) the chain continues from a head of stack bytes. And
+  `false` means both "not there" and "could not read": a failed open or length
+  lookup on both entries gives `Source::Genesis`, the seq from
+  `nvs_load_u32()` (which answers its default on a failed read too) and the
+  genesis head, and `if (genesis)` persists that over the stored blob
+  (`securacv_witness.cpp:321`, `canary_wap.ino:11473`). The records that
+  follow are signed under the stored key at seq numbers it already used, from
+  a different head: a branch only the SD reconciliation
+  (`witness_store::sd_wins()`) can undo, and only with a mounted card whose
+  log is ahead. Chain integrity, not secrecy; medium, since the chain is what
+  these devices exist to keep. The fix is the same three-way answer:
+  `nvs_load_bytes()` checks the count, zeroes the buffer on a refusal and
+  tells `Absent` (IDF's `ESP_ERR_NVS_NOT_FOUND`) from `Refused`, and a refused
+  chain read never persists a genesis head over the stored one. What the boot
+  does instead (halt as on a refused key, or run unpersisted until the blob
+  reads) is the decision. Host cases over the chain glue and
+  `test_chain_state.cpp`'s decision. Found by #1840's review (F360).
+- [ ] **F364 [code] The canary-wap's plain SHA-256 helpers discard mbedTLS's
+  return codes.** `sha256_raw()` and `sha256_domain()` (`canary_wap.ino:1580`,
+  `:1589`) and `beacon_channel.cpp`'s `ecdh_session_key()` (`:318`),
+  `compute_fingerprint()` (`:409`), `load_audit_log()` (`:711`) and
+  `chain_audit_entry()` (`:932`) call `mbedtls_sha256_starts()`, `_update()`
+  and `_finish()` and check none of them. So do `mesh_crypto.cpp`,
+  `mesh_network.cpp`, `chirp_channel.cpp`, `familiar.cpp`,
+  `vault_snapshot.cpp` and `securacv_ota.cpp`, and `usb_evidence_drive.cpp`
+  and `vault_snapshot.cpp` drop one-shot `mbedtls_sha256()`'s answer
+  (`ble_ota.cpp` and `rf_presence.cpp` check theirs). `mesh_crypto.cpp`'s note
+  that these calls return `void` "on arduino-esp32 2.0.x (this build)" is
+  stale: the sketch pins core 3.3.8, where they return `int`. Each helper uses
+  a stack context and allocates nothing itself. On the ESP32-S3's port (IDF
+  v5.5.1 `port/sha/core/esp_sha256.c`, `sha.c`) a call answers 0 except on the
+  DMA path, which an update of more than 256 bytes in one call takes
+  (`SHA_DMA_MODE_THRESHOLD` for the S3): there `esp_sha_dma()` answers -1 when
+  the first DMA operation cannot claim the shared crypto GDMA channels
+  (`esp_crypto_shared_gdma.c`, retried by every later one until it succeeds)
+  or when it cannot allocate an internal copy of a buffer that is not
+  DMA-capable. The update then returns without hashing those blocks, and
+  `_finish()` still writes all 32 bytes of a digest that skipped them: a wrong
+  hash, not stack bytes. Of `canary_wap.ino`'s callers, a record payload
+  longer than that (`create_witness_record()`, `:2831`) and the TLS
+  certificate's fingerprint (`:2144`) can take that path; the key fingerprint,
+  the chain link and the genesis head are short and run in block mode, which
+  has no failing path. The OTA image hash (`securacv_ota.cpp`, 4096-byte
+  updates) takes it too, and a wrong digest there fails the manifest compare,
+  so the image is refused. A wrong payload hash is a record that fails
+  verification, and a wrong certificate fingerprint fails a pin, so this is
+  low severity: detectable, no secret, and it needs the GDMA claim or the
+  allocation to fail. The fix: check each answer, zero the output and have
+  callers refuse, as `hmac_sha256()` does since F359, and correct the stale
+  note. A host case like `test_wap_hmac_fail.cpp`'s seam. Found by #1840's
+  review (F359).
+- [ ] **F365 [code] canary-wap: a failed token read reads as no token, and
+  provisioning stores a re-derived token over the stored one.**
+  `nvs_load_token()` (`canary_wap.ino:2089`) answers `false` for a session
+  that will not open, a length of 0 or one that does not fit, and, since it
+  discards `getBytes()`' count, for a read that fails (the buffer is
+  `g_device`'s zeroed static, so its `strlen >= 35` test fails).
+  `provision_device()` (`:11488`-`:11500`) takes every `false` as no token,
+  derives one and stores it over the stored one (`:11495`). Harmless while the
+  token is derived deterministically from the private key and the eFuse STA
+  MAC and a failed HMAC refuses first (F359), but only for a token today's
+  code would derive: the derivation has changed under stored tokens before
+  (#675 moved the alphabet from 57 to 54 characters and the rejection
+  threshold from 228 to 216, and the derivation's own comment names an earlier
+  24-byte input), so on a unit whose token was stored under an older
+  derivation one transient read failure replaces the bearer token every client
+  holds. Any rotation of the token added later (none exists on this tree;
+  F334's decision plans one for the WAP) would be undone the same way. Low
+  severity today (availability: the owner re-pairs clients, no secret leaks).
+  The fix is the same three-way answer: only `ESP_ERR_NVS_NOT_FOUND`
+  re-derives; any other answer fails provisioning with the stored token
+  untouched. It should land with or before the rotation. A host case beside
+  `test_wap_hmac_fail.cpp`'s provisioning runs. Found by #1840's review
+  (F359).
 
 ### Parity & sub-projects
 

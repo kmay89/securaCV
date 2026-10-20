@@ -433,9 +433,14 @@ static void test_a_failed_open_is_refused_not_replaced() {
   check_refused_boot(before, "NVS could not say whether one is stored (ESP_ERR_NO_MEM)");
 }
 
-// The length lookup failing (a flash read error, or a "privkey" stored as
-// another type): getBytesLength() answers 0 for it, exactly as for a missing
-// key, which is why the load asks IDF.
+// The length lookup answering neither ESP_OK nor ESP_ERR_NVS_NOT_FOUND:
+// getBytesLength() answers 0 for it, exactly as for a missing key, which is
+// why the load asks IDF. Of the three answers here, IDF's size query gives
+// only ESP_ERR_NVS_INVALID_HANDLE once the open succeeded; ESP_FAIL and
+// ESP_ERR_NVS_TYPE_MISMATCH it does not give today (a flash read error in its
+// lookup, or a "privkey" stored as another type, ends ESP_ERR_NVS_NOT_FOUND:
+// stubs/nvs_key/Preferences.h). They are refused because the load fails
+// closed on an answer it does not know.
 static void test_a_failed_length_lookup_is_refused_not_replaced() {
   for (esp_err_t fault : {ESP_FAIL, ESP_ERR_NVS_TYPE_MISMATCH, ESP_ERR_NVS_INVALID_HANDLE}) {
     fresh_world();

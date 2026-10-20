@@ -439,8 +439,9 @@ static int test_a_read_that_fails_after_the_length_check_is_refused() {
 
 // A read that wrote the buffer and then refused (IDF fills it before its
 // CRC check), and a short read: refused, and the buffer zeroed again. What
-// is held here is this firmware's side: it writes nothing. IDF also erases
-// an entry whose data CRC fails, inside that read; this fake keeps it.
+// is held here is the sketch's side: its key block writes nothing. IDF
+// also erases an entry whose data CRC fails, inside that read; this fake
+// keeps it.
 static int test_a_garbled_or_short_read_is_refused_and_zeroed() {
   for (HostFirstBootNvs::Read how : {HostFirstBootNvs::Read::Garbles, HostFirstBootNvs::Read::Short}) {
     host_nvs().clear();
@@ -458,9 +459,14 @@ static int test_a_garbled_or_short_read_is_refused_and_zeroed() {
   return 0;
 }
 
-// The length lookup fails (a fault, or "privkey" stored as another type).
-// Before, getBytesLength()'s 0 read as "no key": a keypair was generated
-// and stored over the identity.
+// The length lookup answers neither ESP_OK nor ESP_ERR_NVS_NOT_FOUND: here
+// ESP_FAIL, and ESP_ERR_NVS_TYPE_MISMATCH for a "privkey" stored as another
+// type. Neither is an answer IDF's size query gives once the open succeeded
+// (stubs/first_boot/nvs.h: on a device a key of another type answers
+// ESP_ERR_NVS_NOT_FOUND); the load refuses them because it fails closed on an
+// answer it does not know. Before, getBytesLength()'s 0 read as "no key"
+// whatever the lookup met: a keypair was generated and stored over the
+// identity.
 static int test_a_failed_length_lookup_is_refused() {
   host_nvs().clear();
   store_key(32, kStoredKey);
@@ -786,6 +792,11 @@ static int test_a_refused_key_halts_the_boot() {
   const size_t loop = block.find("while (true) { delay(1000); }");
   CHECK(halt != std::string::npos && loop != std::string::npos && halt < loop);
   CHECK(block.find('}', halt) > loop);           // the loop is inside the if's block
+  // The line it prints before the loop, as CHANGELOG.md quotes it.
+  const size_t said = block.find(
+      "Serial.println(\"[!!] PROVISIONING FAILED - the identity key could not be used (see the "
+      "identity key line above) - HALTING\");");
+  CHECK(said != std::string::npos && halt < said && said < loop);
   CHECK(block.find("Serial.println();") > loop);  // the block's first statement
   CHECK(block.find("log_health(") > loop);
 

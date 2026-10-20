@@ -1659,7 +1659,8 @@ static esp_err_t stored_key_length(size_t* len) {
 // Fails closed (sweep F360, the canary's rule): only a key NVS says is not
 // there answers Absent, and every other way the stored key goes unread or
 // unused answers Refused with priv zeroed, which establish_identity_key()
-// turns into a boot that setup() halts, writing nothing. Before, a failed
+// turns into a boot that setup() halts, with no key generated and nothing
+// written over the stored one. Before, a failed
 // session open or a length lookup other than 32 answered false, and
 // provision_device() generated a keypair and stored it over the old one; and
 // the read's own count was discarded, so a read that failed after the length
@@ -1894,8 +1895,21 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 
 // Rejection sampling: discard bytes >= 216 (216 = 54*4, evenly divisible)
 // This eliminates modular bias entirely.
+//
+// Writes nothing past out_len (the F359 review): a null or zero-length
+// output gets no byte, and one shorter than "cv_" and its NUL gets "" (its
+// first byte only). Before, the prefix's three bytes and a NUL went in
+// unchecked, so a 1-, 2- or 3-byte buffer was written past its end, and a
+// zero length wrapped `out_len - 1` and let the loop write a whole token.
+// derive_api_token() refuses a buffer short of the whole token first, so no
+// caller reaches either; the check here is this function's own.
 static void format_api_token_string(const uint8_t* input, size_t in_len,
                                     char* output, size_t out_len) {
+  if (output == nullptr || out_len == 0) return;
+  if (out_len < 4) {
+    output[0] = '\0';
+    return;
+  }
   size_t out_idx = 0;
   output[out_idx++] = 'c';
   output[out_idx++] = 'v';
@@ -1936,8 +1950,20 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
 // F359): a token rendered from bytes an HMAC did not write is one nobody
 // chose, and provision_device() would store it in NVS, where every later boot
 // loads it. provision_device() refuses on false and stores nothing.
+//
+// A buffer shorter than the token and its NUL (36 bytes: "cv_", 32
+// characters, NUL) is refused before any HMAC runs, with the bytes it was
+// given wiped (none, for a zero length); a null one is refused with nothing
+// written. Before (the F359 review), a 1- to 3-byte buffer ran all three
+// HMACs and the formatter wrote past its end. Every caller passes
+// g_device.api_token_str, 36 bytes; the length check after the format below
+// never fires for a buffer that size, and stays as a backstop.
 static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) {
-  if (!token_str || token_str_len == 0) return false;
+  if (token_str == nullptr) return false;
+  if (token_str_len < 36) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 1: Derive intermediate token-key (key separation) ────────────
   // The Ed25519 signing key NEVER directly touches the token derivation context.
@@ -11297,16 +11323,23 @@ static bool start_wifi_ap() {
 // The identity key: the stored one, or, only when NVS says none is stored, a
 // new one generated and stored (sweep F360, the canary's rule). Any other
 // answer is a key that is, or may be, in NVS and was not read or not used:
-// nothing is generated or written, g_device.key_refused is set and the key
-// stays zeroed, and setup() halts on it before anything signs. This firmware
-// writes nothing on that path, so a fault that leaves the entry in place (a
-// flash read error, a session that will not open) leaves the key, and the
-// chain state beside it, for a later boot that can read them. A corrupted
-// entry does not stay: IDF erases an entry whose data CRC fails inside the
-// read it refuses. On IDF 5.x (this sketch's core 3.x) the next boot still
-// finds the blob's index, so it halts again, and IDF erases the index in
-// that read; the boot after it finds no key and makes a new identity. That
-// is today's behavior, not a decision. It halts rather than going on as
+// no key is generated, nothing is written here, g_device.key_refused is set
+// and the key stays zeroed, and setup() halts on it before anything signs.
+// Nothing on that path writes the key or the chain state (safe_mode_check()
+// has written its own "hw_state" rows on a crash reset by then), so a fault
+// in the read that leaves the entry in place (a flash read error there, a
+// session that will not open) leaves the key, and the chain state beside
+// it, for a later boot that can read them. Corruption is IDF's to meet
+// first, and the sketch sees only its answer. An entry whose data CRC fails
+// IDF erases inside the read it refuses; on IDF 5.x (this sketch's core
+// 3.x) the next boot still finds the blob's index, so it halts again, and
+// IDF erases the index in that read; the boot after it finds no key and
+// makes a new identity. A key whose index entry fails IDF's header check is
+// erased before the key is asked for (when IDF loads the page, or in the
+// probe's own lookup), so the probe answers ESP_ERR_NVS_NOT_FOUND and that
+// same boot makes a new identity. Both are today's behavior, not a
+// decision; what holds throughout is that this sketch never writes over a
+// key IDF still reports as stored. It halts rather than going on as
 // setup() does after the other provisioning failures (sweep F336): from
 // there the boot attestation record and the mesh take g_device.privkey as it
 // is, which here is the zeroed key every derivation of is public, and the
@@ -12132,7 +12165,7 @@ void setup() {
     // it are a new key that could not be made or stored, on a boot with no
     // key stored (F58's pending halt-or-ephemeral call).
     if (g_device.key_refused) {
-      Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above); HALTING, nothing written");
+      Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above) - HALTING");
       while (true) { delay(1000); }
     }
     Serial.println();

@@ -3,7 +3,8 @@
  * nvs_open() of a namespace never created is ESP_ERR_NVS_NOT_FOUND (and logs
  * nothing), nvs_get_blob() of a key the namespace does not hold is
  * ESP_ERR_NVS_NOT_FOUND, and with a null buffer it answers the length. The
- * faults are Preferences.h's ro_open_fault and length_fault. Opens, closes
+ * faults are Preferences.h's ro_open_fault and length_fault (which says
+ * which of length_fault's answers IDF gives and which it does not). Opens, closes
  * and the handles left open are counted; the key load writes nothing through
  * IDF, so a read-write open is counted apart. */
 #ifndef STUB_NVS_KEY_NVS_H

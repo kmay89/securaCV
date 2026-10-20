@@ -22,14 +22,18 @@
  *                      or NVS failed between the two).
  *   length_fault       IDF's blob lookup fails with this error, and so
  *                      getBytesLength() and getBytes(), which Arduino runs
- *                      through it, answer 0.
+ *                      through it, answer 0. An answer IDF's lookup does
+ *                      not give once the open succeeded (nvs.h beside this
+ *                      file says which it does): kept to drive the key
+ *                      load's refusal of an answer it does not know.
  *   read               what getBytes() of a blob does once its lookup has
  *                      succeeded: Ok; Fails (answers 0, the buffer untouched:
  *                      the F360 case); Garbles (fills the buffer with 0xA5,
  *                      then answers 0, as IDF fills it before its data CRC
  *                      check refuses; IDF also erases that entry in the
  *                      same read, which this fake does not: what the suite
- *                      holds is that the sketch writes nothing); Short
+ *                      holds is that the sketch's key block writes
+ *                      nothing); Short
  *                      (copies all but the last byte and answers that
  *                      count). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H

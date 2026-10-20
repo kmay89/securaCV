@@ -16,10 +16,20 @@
  *   ro_open_fault  a read-only open fails with this error (IDF's answers it,
  *                  Preferences' begin() fails); read-write opens still work,
  *                  as after a transient fault a later write can survive.
- *   length_fault   the blob length lookup fails with this error (IDF's
- *                  nvs_get_blob() size query answers it; getBytesLength()
- *                  and so getBytes() answer 0). ESP_ERR_NVS_TYPE_MISMATCH
- *                  models a "privkey" stored as another type.
+ *   length_fault   the blob length lookup fails with this error (this
+ *                  fake's nvs_get_blob() size query answers it;
+ *                  getBytesLength() and so getBytes() answer 0). Once the
+ *                  open succeeded, IDF's size query answers only ESP_OK,
+ *                  ESP_ERR_NVS_NOT_FOUND or ESP_ERR_NVS_INVALID_HANDLE
+ *                  (v4.4.7 and v5.5.1 nvs_api.cpp nvs_get_str_or_blob(),
+ *                  nvs_storage.cpp Storage::findItem()): its lookup skips
+ *                  a key stored as another type, an entry it cannot read
+ *                  and one whose header fails its check (erasing that one
+ *                  first), and answers ESP_ERR_NVS_NOT_FOUND when nothing
+ *                  else matches. So ESP_FAIL and ESP_ERR_NVS_TYPE_MISMATCH
+ *                  here are answers IDF does not give today; the suite
+ *                  keeps them because the load fails closed on an answer it
+ *                  does not know, whatever a later IDF answers.
  *   begin_fails    Preferences' begin() refuses every open (IDF unaffected).
  *   read           what getBytes() does once its length lookup has
  *                  succeeded: Ok; Fails (answers 0, the buffer untouched:
@@ -27,8 +37,8 @@
  *                  then answers 0, as IDF fills it before its data CRC check
  *                  refuses; IDF also erases that entry in the same read,
  *                  which this fake does not: what the suite holds is that
- *                  the firmware writes nothing); Short (copies 31 bytes,
- *                  answers 31).
+ *                  the load and its caller write nothing); Short (copies
+ *                  31 bytes, answers 31).
  * Every call counts. failed_begins is the error line Arduino's begin() logs
  * for each open it refuses; prefs_open is the handles begun and not ended. */
 #ifndef STUB_NVS_KEY_PREFERENCES_H
