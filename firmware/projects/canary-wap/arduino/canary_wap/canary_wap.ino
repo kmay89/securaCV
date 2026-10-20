@@ -8772,7 +8772,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    of its bearers is compared (the 429 below, when the claim and the tap
   //    do not serve); another address's right token is served. The lockout
   //    never gates the claim or the tap: a page with a stale token, or a
-  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap,
+  //    and the address they serve has its backoff cleared (sweep F341,
+  //    after step 3).
   //    (The lockout is all this decides. Any host on the network can still
   //    spend a pending claim with one wrong ?claim=, or take an open tap by
   //    asking first; both predate F289 and are the ledger's.)
@@ -8837,6 +8839,15 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, body);
   }
+
+  // The claim or the tap has just handed this address the token, so its
+  // backoff ends as a right bearer's would (sweep F341): the client served
+  // here gets its next right-token call answered at once, not after up to
+  // 60 s of 429. The strike its header may have cost above stays the rule
+  // (one accounting for every route). Only this address's own slot is freed,
+  // never the shared overflow (auth_backoff.h). Every refusal returned
+  // above, so a request this route refuses clears nothing.
+  auth_record_success(req);
 
   // The claim matched, or the gate was open (and is now closed) — serve the
   // receipt with the same session cookie either way: the phone that

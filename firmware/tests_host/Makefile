@@ -516,16 +516,26 @@ CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
 # the right one clears it. The receipt's grant (auth_bearer_grant) is
 # accounted and never compares a held bearer. securacv_network.cpp's path is
 # passed in for the text pins over its wiring (request_peer_ipv4 into both
-# gates), so the read fails closed.
+# gates), so the read fails closed. The two BOOT-tap paths that hand an
+# address the token (sweep F341) run for real: page_token_inject() and
+# handle_provisioning_receipt(), with bearer_present_and_valid() and
+# send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
+# by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
+# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
+# the real AuthManager and the real provisioning_gate.h decisions.
 SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
 SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
                 ../canary/include/canary_config.h \
+                ../canary/include/log_level.h \
                 ../common/network/auth_backoff.h \
+                ../common/network/provisioning_gate.h \
                 $(wildcard stubs/securacv_auth/*.h)
 SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
 SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
 SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
                 -I ../canary/include -I ../common
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -1079,9 +1089,13 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
 
-$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) Makefile | $(BUILD_DIR)
+$(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
 	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
 	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
 
 # The lockout's numbers are auth_backoff.h's (sweep F340). A build that

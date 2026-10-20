@@ -9,8 +9,10 @@
  * caller's buffer is copied cut short and answered
  * ESP_ERR_HTTPD_RESULT_TRUNC, as in ESP-IDF. Each read of a header's value
  * is counted (value_reads), so a test can tell a request whose bearer was
- * compared from one whose bearer was not (the lockout's HELD). The request
- * carries no peer address: the library is handed its source explicitly. */
+ * compared from one whose bearer was not (the lockout's HELD). The library
+ * is handed its source explicitly and reads no peer; `peer` is the address
+ * the test's request_peer_ipv4() stand-in hands the handlers cut from
+ * securacv_network.cpp (the real one reads the socket with getpeername). */
 #ifndef STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 #define STUB_SECURACV_AUTH_ESP_HTTP_SERVER_H
 
@@ -38,6 +40,7 @@ typedef struct httpd_req {
   // The request, as the test builds it.
   std::map<std::string, std::string, HostCaseLess> headers;
   int value_reads = 0;  // httpd_req_get_hdr_value_str() calls
+  uint32_t peer = 0;    // the socket peer's IPv4, host order, for request_peer_ipv4()
 
   // The response, as the library sets it. The pointers are the caller's;
   // the send copies them into the strings below.
@@ -83,6 +86,16 @@ inline esp_err_t httpd_resp_set_type(httpd_req_t* r, const char* type) {
 inline esp_err_t httpd_resp_set_hdr(httpd_req_t* r, const char* field, const char* value) {
   r->resp_hdr_ptrs[field] = value;
   return ESP_OK;
+}
+
+typedef enum { HTTPD_500_INTERNAL_SERVER_ERROR = 500 } httpd_err_code_t;
+
+inline esp_err_t httpd_resp_sendstr(httpd_req_t* r, const char* str);
+
+// ESP-IDF's canned error answer: the status and the message, sent at once.
+inline esp_err_t httpd_resp_send_err(httpd_req_t* r, httpd_err_code_t, const char* msg) {
+  r->status_ptr = "500 Internal Server Error";
+  return httpd_resp_sendstr(r, msg);
 }
 
 inline esp_err_t httpd_resp_sendstr(httpd_req_t* r, const char* str) {

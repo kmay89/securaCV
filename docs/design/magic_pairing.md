@@ -449,12 +449,21 @@ address's backoff runs none of its bearers is compared, so a request from it
 that brings one gets `429` with `Retry-After` when the claim and the tap do
 not serve it. The lockout never gates rows 3 and 4: a page holding a stale
 token, or a backoff a guesser armed, is still served by the claim or a BOOT
-tap. The broker move's bearer is under the same per-address lockout (sweep
-F339): `POST /api/mqtt/config` compares it once per request through
-`api_auth_bearer_grant()`, so a wrong one is a strike against its address,
-beside the cookie too (the save then goes on as the session's, and the move
-gate still asks for the password), and a held one is not compared and,
-without the cookie, gets `429` with `Retry-After`; the posture is the
+tap. Two rules settle what a served request leaves behind (sweep F341). A
+wrong or malformed bearer is a strike against its address even when the
+claim or the tap then serves the request: one accounting rule for every
+route. And the claim or the tap that serves hands that address the token,
+so it ends that address's backoff as a right bearer would
+(`auth_record_success(req)`, after the route's refusals, so a refused
+request clears nothing): the phone or the page just served gets its next
+right-token call answered at once, not `429` for up to 60 s. It frees that
+address's own slot only, never another address's and never the shared
+overflow slot. The broker move's bearer is under the same per-address
+lockout (sweep F339): `POST /api/mqtt/config` compares it once per request
+through `api_auth_bearer_grant()`, so a wrong one is a strike against its
+address, beside the cookie too (the save then goes on as the session's, and
+the move gate still asks for the password), and a held one is not compared
+and, without the cookie, gets `429` with `Retry-After`; the posture is the
 per-address backoff below. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
 the broker move, `test_mqtt_reinit.cpp` beside it. Adding
@@ -469,6 +478,11 @@ or malformed bearer is one strike against its address, the right one clears
 that address's count, and a held bearer is not compared and reads as no
 bearer: the request goes on to the tap and, with none open, gets the `403
 physical_confirmation_required` the page reads as "tap BOOT", never a `429`.
+The same two rules hold there (sweep F341): a stale bearer the tap then
+serves is still a strike, and a BOOT tap that hands an address the token
+ends that address's backoff, on the receipt (`SERVE_TAP`) and on the page
+load the tap unlocks (`page_token_inject()`), both through
+`auth_handed_token()`, which frees its own slot only, never the overflow.
 A request with no credential is no strike, on the receipt and on every
 `auth_gate` route, so the dashboard tab loaded without the token arms
 nothing. The posture is the paragraph below; the flagship has no Bluetooth
@@ -478,10 +492,11 @@ hold, and its request limit is still one per device (F351). Host-tested in
 
 **The backoff is per source address.** A host's wrong bearers hold
 only that host's address (F343). A browser that mistyped the token waits at
-most about 60 s. A host that strikes from 9 or more addresses within 60 s
-holds every untracked address while the shared overflow slot runs, and a tap
-does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-Bluetooth lane, or hold BOOT 10 s.
+most about 60 s, or taps BOOT, which clears its address (F341). A host that
+strikes from 9 or more addresses within 60 s holds every untracked address
+while the shared overflow slot runs, and a tap does not clear that; then
+wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
+10 s.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
 sketch, with one table for every file of the sketch (`g_auth_table` in
@@ -495,7 +510,11 @@ slot of its own while it runs. The key is the request's socket peer, read by
 `X-Forwarded-For`) and mapped to its IPv4 by `auth_request_source()`; a real
 IPv6 peer, or a socket that cannot say, shares bucket 0. Rows 3 and 4 are
 never held: the dashboard's BOOT-tap wait sends no `Authorization` header,
-and a stale one beside the tap or the claim is served anyway.
+and a stale one beside the tap or the claim is served anyway, its address
+then cleared (F341). An address held only through the overflow stays held
+after the tap serves it: clearing the overflow would free every untracked
+address, the striker's included, and its next strike would re-arm it at
+once.
 
 Its limits. Clients behind one address share a backoff: a NAT, a reverse
 proxy, a VPN router, or one Mac running both the dashboard and the app. At
@@ -959,8 +978,10 @@ cannot speak to.
       routes: once it runs, the right token from the same host is `429`
       with `Retry-After` on the receipt and on `GET /api/pairing-qr`, a
       short BOOT tap inside that backoff still serves the receipt, and the
-      right token serves again once the backoff ends (F289's follow-up);
-      the right token from a second host is served throughout (F343).
+      right token from that host is served at once after the tap (the tap
+      cleared its address, F341), or once the backoff ends (F289's
+      follow-up); the right token from a second host is served throughout,
+      and the tap leaves that host's own count as it was (F343, F341).
 - [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
       link and a BOOT-tap receipt send carries `Secure`; on the first-boot
       SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none

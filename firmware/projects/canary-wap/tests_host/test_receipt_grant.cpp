@@ -55,6 +55,15 @@
 //     which serve a stale bearer, inside the backoff or out of it; a backoff
 //     that ends while the request is in the handler (after the held read,
 //     before the 429) still answers Retry-After 1, never a wrapped count;
+//   - the tap or the claim that serves ends the asking address's backoff
+//     (sweep F341; before, the client just served stayed held for up to
+//     60 s): A's right bearer straight after the tap, the claim, a stale
+//     bearer the tap served or a header-less tap wait is the receipt as
+//     BEARER, and the QR is served; a stale bearer's strike is still counted
+//     first; another host's slot (armed by a direct write, never by a
+//     receipt ask, which is the tap's own question, F342) keeps its count
+//     and its 429; an address held only through the shared overflow stays
+//     held; the 403, the 429, a wrong claim and a lapsed tap clear nothing;
 //   - the pairing QR on a cookie alone: 401 with the WWW-Authenticate
 //     challenge, no SVG, no token in the answer, no lockout strike (before:
 //     the SVG with the token); on a cookie beside a wrong bearer: 403 and a
@@ -736,9 +745,23 @@ void test_receipt_arming_guess_then_backoff() {
   CHECK(strikes(kHostA) == 2);
 }
 
+// A's right bearer on the receipt, sent at once: served as the bearer, the
+// tap left shut. The check every hand-over case below ends with.
+void check_right_bearer_served_at_once(const char* after) {
+  Req right;
+  right.bearer(kToken);
+  CHECK_MSG(receipt(right) == 1,
+            std::string("A's right bearer was held right after ") + after + " (no clear on the hand-over)");
+  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(right.r.status != "429 Too Many Requests");
+}
+
 void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   // A page holding a stale token, the backoff running (a guesser on the
-  // network, or the page's own earlier tries): the owner's tap serves it.
+  // network, or the page's own earlier tries): the owner's tap serves it,
+  // and the tap ends that address's backoff (sweep F341): the page just got
+  // the token, so its next right-token call is served at once. Before F341
+  // the count stayed at 5 and that call was 429 for the rest of the backoff.
   reset_device();
   arm_lockout(5);
   open_tap();
@@ -748,9 +771,11 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(!tap_open());
   CHECK(has_header(stale.r, "Set-Cookie"));
-  CHECK(strikes(kHostA) == 5);   // the tap clears no count
+  CHECK_MSG(strikes(kHostA) == 0, "the tap left the address it served its count");
+  CHECK(!held(kHostA));
+  check_right_bearer_served_at_once("the tap");
   // The right token inside the backoff, a tap open: served, as the tap (no
-  // bearer is compared while it runs).
+  // bearer is compared while it runs), and the address is cleared.
   reset_device();
   arm_lockout(5);
   open_tap();
@@ -758,7 +783,20 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   right.bearer(kToken);
   CHECK(receipt(right) == 1);
   CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
-  // The setup-door claim, a stale bearer beside it, the backoff running.
+  CHECK(strikes(kHostA) == 0);
+  check_right_bearer_served_at_once("a held right bearer the tap served");
+  // The dashboard's own wait: no header at all (requestFromDevice), the tap
+  // open, the address held by its earlier mistyped token. Served, cleared.
+  reset_device();
+  arm_lockout(4);
+  open_tap();
+  Req bare;
+  CHECK(receipt(bare) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(strikes(kHostA) == 0);
+  check_right_bearer_served_at_once("a header-less tap wait");
+  // The setup-door claim, a stale bearer beside it, the backoff running:
+  // served, and the phone's address is cleared the same way.
   reset_device();
   arm_lockout(5);
   mint_claim();
@@ -767,14 +805,130 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   CHECK_MSG(receipt(claim) == 1, "the lockout held the setup door's claim");
   CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(!claim_pending());
-  // Outside a backoff: the stale bearer is a strike, and the tap serves it.
+  CHECK_MSG(strikes(kHostA) == 0, "the claim left the address it served its count");
+  check_right_bearer_served_at_once("the claim");
+  // Outside a backoff: the stale bearer is a strike (the grant counts it
+  // before the tap is read: one rule for every route), the tap serves it,
+  // and the hand-over then clears the strike it cost. Before F341 the count
+  // stayed at 1 and A's right bearer straight after was 429.
   reset_device();
   open_tap();
   Req fresh;
   fresh.bearer(kWrong);
   CHECK_MSG(receipt(fresh) == 1, "a stale bearer kept the tap from serving");
   CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
-  CHECK(strikes(kHostA) == 1);
+  CHECK(strikes(kHostA) == 0);
+  check_right_bearer_served_at_once("a stale bearer the tap served");
+  // The QR shares the table: right after the tap, A's right token on it is
+  // served too.
+  reset_device();
+  arm_lockout(5);
+  open_tap();
+  Req tapped;
+  CHECK(receipt(tapped) == 1);
+  Req qr_right;
+  qr_right.bearer(kToken);
+  CHECK(handle_pairing_qr(&qr_right.r) == ESP_OK);
+  CHECK_MSG(qr_right.r.status != "429 Too Many Requests", "the QR held A right after the tap");
+  CHECK(g_qr_payloads.size() == 1);
+}
+
+// The hand-over clears the address it served and nothing else (sweep F341):
+// another host's own slot, the shared overflow, and every request this route
+// refuses are left as they were.
+void test_the_hand_over_clears_only_its_asker() {
+  // B is armed by a direct write to its slot, never by a receipt request
+  // (a second address asking for the receipt during the tap is the tap's
+  // own question, F342). A's tap leaves B's count, its backoff and its 429
+  // exactly where they were.
+  reset_device();
+  arm_lockout(3);
+  set_strikes(kHostB, 4, millis(), millis() + 16000);
+  open_tap();
+  Req a;
+  a.bearer(kWrong);
+  CHECK(receipt(a) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(strikes(kHostA) == 0);
+  CHECK_MSG(strikes(kHostB) == 4, "A's tap changed B's count");
+  CHECK(held(kHostB));
+  Req b;
+  b.bearer(kToken).from(192, 168, 1, 21);
+  CHECK(handle_pairing_qr(&b.r) == ESP_OK);
+  CHECK_MSG(b.r.status == "429 Too Many Requests", "A's tap freed B");
+  CHECK(header(b.r, "Retry-After") == "17");   // 16000 ms / 1000 + 1
+  // The claim likewise.
+  reset_device();
+  arm_lockout(3);
+  set_strikes(kHostB, 2, millis(), millis() + 4000);
+  mint_claim();
+  Req c;
+  c.query(std::string("claim=") + g_improv_claim.hex);
+  CHECK(receipt(c) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(strikes(kHostA) == 0);
+  CHECK(strikes(kHostB) == 2);
+  CHECK(held(kHostB));
+
+  // A held only through the shared overflow (eight other addresses hold
+  // every slot, and A's own strike landed in the overflow): the tap serves
+  // A, and A stays held. Clearing the overflow would free every untracked
+  // address, an attacker's included, and its next strike re-arms it at once.
+  reset_device();
+  for (uint8_t i = 0; i < canary::net::auth_backoff::SLOTS; ++i) {
+    set_strikes(0x0A000001u + i, 1, millis(), millis() + 2000);
+  }
+  Req into_overflow;
+  into_overflow.bearer(kWrong);
+  CHECK(receipt(into_overflow) == 0);   // A's strike: the overflow's
+  CHECK(strikes(kHostA) == 0);          // A has no slot of its own
+  CHECK(g_auth_table.overflow.failures == 1);
+  CHECK(held(kHostA));
+  open_tap();
+  Req a_tap;
+  CHECK(receipt(a_tap) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK_MSG(g_auth_table.overflow.failures == 1, "the tap cleared the shared overflow");
+  CHECK_MSG(held(kHostA), "an address held only through the overflow was freed by the tap");
+  Req a_right;
+  a_right.bearer(kToken);
+  CHECK(receipt(a_right) == 0);
+  check_lockout_refusal(a_right.r);
+  for (uint8_t i = 0; i < canary::net::auth_backoff::SLOTS; ++i) {
+    CHECK(strikes(0x0A000001u + i) == 1);   // the tracked slots untouched too
+  }
+
+  // Every refusal clears nothing. No tap and no claim: a header-less poll
+  // gets the 403 the BOOT-tap wait reads, a held bearer the 429.
+  reset_device();
+  arm_lockout(3);
+  Req bare;
+  CHECK(receipt(bare) == 0);
+  check_gate_refusal(bare.r);
+  Req held_right;
+  held_right.bearer(kToken);
+  CHECK(receipt(held_right) == 0);
+  check_lockout_refusal(held_right.r);
+  CHECK_MSG(strikes(kHostA) == 3, "a refused request cleared its address");
+  // A wrong claim (spent, no match) and no tap: refused, nothing cleared.
+  mint_claim();
+  Req wrong_claim;
+  wrong_claim.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(wrong_claim) == 0);
+  check_gate_refusal(wrong_claim.r);
+  CHECK(!claim_pending());
+  CHECK(strikes(kHostA) == 3);
+  CHECK(held(kHostA));
+  // A tap that has timed out serves nothing and clears nothing.
+  reset_device();
+  arm_lockout(3);
+  open_tap();
+  stub_grant::now_ms += PROVISIONING_GATE_TTL_MS;
+  set_strikes(kHostA, 3, millis(), millis() + 8000);
+  Req late;
+  CHECK(receipt(late) == 0);
+  check_gate_refusal(late.r);
+  CHECK(strikes(kHostA) == 3);
 }
 
 // The receipt reads the lockout (api_auth_bearer_held) before the claim and
@@ -1685,6 +1839,7 @@ int main() {
   test_receipt_lockout_holds_the_bearer();
   test_receipt_arming_guess_then_backoff();
   test_receipt_lockout_never_holds_the_tap_or_the_claim();
+  test_the_hand_over_clears_only_its_asker();
   test_receipt_lockout_answer_never_wraps();
   test_qr_cookie_alone_is_refused();
   test_qr_cookie_beside_wrong_bearer_is_refused();

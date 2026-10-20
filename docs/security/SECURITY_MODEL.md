@@ -329,14 +329,17 @@ with `Retry-After`, and its bearer on the receipt is not compared and reads
 as none, so the receipt goes on to the BOOT tap: served if one is open,
 else its `403`, which the page reads as "tap BOOT". A request with no
 `Authorization` header is no strike, so a dashboard tab loaded without the
-token, which polls with no header, arms nothing. A host's wrong bearers hold
-only that host's address (F343). A browser that mistyped the token waits at
-most about 60 s. A host that strikes from 9 or more addresses within 60 s
-holds every untracked address while the shared overflow slot runs, and a tap
-does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-Bluetooth lane, or hold BOOT 10 s. The flagship has no Bluetooth lane that
-changes its Wi-Fi, so there the fallbacks are to wait or the 10 s hold.
-Clients behind one address share a backoff. It does not close a deliberate
+token, which polls with no header, arms nothing. A BOOT tap that hands an
+address the token, on the receipt or on the page load it unlocks, ends that
+address's backoff as a right bearer would (sweep F341). A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or taps BOOT, which clears its address
+(F341). A host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
+or hold BOOT 10 s. The flagship has no Bluetooth lane that changes its
+Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Clients behind
+one address share a backoff. It does not close a deliberate
 denial from the LAN: the device-wide request limit (120 requests a minute
 across the rate-limited routes) is still one per device, so two open Status
 tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
@@ -371,11 +374,15 @@ session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever
 it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
 cookie would be dropped); host-tested, the ESP32 compile is CI's, not
 bench-tested. The WAP's lockout is per source address. A host's wrong
-bearers hold only that host's address (F343). A browser that mistyped the token waits at most about
-60 s. A host that strikes from 9 or more addresses within 60 s holds every
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or taps BOOT, which clears its address
+(F341). A host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
 clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
-or hold BOOT 10 s. The key is the request's socket peer address, never a
+or hold BOOT 10 s. A wrong bearer on the receipt is a strike even when the
+setup-door claim or the BOOT tap then serves it, and the claim or the tap
+that serves ends that address's backoff, as a right bearer would (sweep
+F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a
 deliberate denial from the LAN: a landing session can still reboot the unit
 (`POST /api/reboot`, which also clears the table, kept in RAM), and ARP

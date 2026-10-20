@@ -24,6 +24,19 @@
  * never compared. The text pins at the end hold securacv_network.cpp
  * (CANARY_NETWORK_CPP, passed in by the Makefile) to that wiring.
  *
+ * Sweep F341. A BOOT tap that hands an address the token ends that
+ * address's backoff, as a right bearer would: the receipt's SERVE_TAP and
+ * the page load the tap unlocks call auth_handed_token() with the request's
+ * source. Before, a browser that mistyped the token and then tapped in was
+ * served the token and held at 429 on its next call for the rest of the
+ * backoff. The clear frees that address's own slot only, never another's and
+ * never the shared overflow, and a refusal clears nothing. The two handlers
+ * run for real: page_token_inject() and handle_provisioning_receipt(), with
+ * bearer_present_and_valid() and send_host_refusal(), are cut verbatim out of
+ * securacv_network.cpp (SECAUTH_NET_INC, by cut_functions.awk) and driven
+ * over stand-ins for the Host, the setup state, the SoftAP test, the tap and
+ * the receipt writer.
+ *
  * Each case drives auth_check() the way auth_gate() does, and
  * auth_bearer_grant() the way bearer_present_and_valid() does, with the
  * token auth_load_or_derive() made, and reads what the library sent.
@@ -38,10 +51,16 @@
 #include <sstream>
 #include <string>
 
+#include "canary_config.h"              // the real PROVISIONING_GATE_TTL_MS
+#include "log_level.h"                  // the real LogLevel / LogCategory
+#include "network/provisioning_gate.h"  // the real page_token_decide / receipt_decide
 #include "securacv_auth.h"
 
 #if !defined(CANARY_NETWORK_CPP)
 #error "build with -DCANARY_NETWORK_CPP (the path of securacv_network.cpp, for the text pins)"
+#endif
+#if !defined(SECAUTH_NET_INC)
+#error "build with -DSECAUTH_NET_INC (the handlers cut from securacv_network.cpp)"
 #endif
 
 using BearerResult = canary::net::auth_backoff::BearerResult;
@@ -496,6 +515,179 @@ static void handed_token_frees_only_its_source() {
   CHECK(held_for(kHostB) > 0, "and so does every other untracked address");
 }
 
+/* ── The BOOT tap's hand-over, on the handlers cut from securacv_network.cpp
+ *    (sweep F341) ─────────────────────────────────────────────────────── */
+
+// Stand-ins for what the cut handlers call beside the auth library, which is
+// the real one. Each request carries its source in `peer`, the address the
+// real request_peer_ipv4() reads off the socket.
+struct HostHealth {
+  uint32_t http_requests = 0;
+  uint32_t http_errors = 0;
+};
+static HostHealth g_net_health;
+static HostHealth& witness_get_health() { return g_net_health; }
+static void log_health(LogLevel, LogCategory, const char*, const char* = nullptr) {}
+
+static bool g_foreign = false;       // host_is_foreign()'s verdict
+static bool g_setup_active = false;  // setup_is_active()
+static bool g_on_ap = false;         // from_ap_subnet()
+static bool g_tap = false;           // an unspent BOOT tap
+static int g_receipts_sent = 0;
+
+static bool host_is_foreign(httpd_req_t*) { return g_foreign; }
+static bool setup_is_active() { return g_setup_active; }
+static bool setup_is_first_boot() { return false; }
+static bool from_ap_subnet(httpd_req_t*) { return g_on_ap; }
+static bool provisioning_gate_take() {
+  const bool open = g_tap;
+  g_tap = false;
+  return open;
+}
+static uint32_t request_peer_ipv4(httpd_req_t* req) { return req->peer; }
+static esp_err_t send_provisioning_receipt(httpd_req_t* req) {
+  g_receipts_sent++;
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"token\":\"(the receipt)\"}");
+}
+
+#include SECAUTH_NET_INC
+
+using canary::net::provisioning_gate::PageToken;
+
+static void net_fresh(uint32_t now_ms) {
+  fresh(now_ms);
+  g_foreign = false;
+  g_setup_active = false;
+  g_on_ap = false;
+  g_tap = false;
+  g_receipts_sent = 0;
+}
+
+static httpd_req_t from(uint32_t source, httpd_req_t r) {
+  r.peer = source;
+  return r;
+}
+
+static void strike(uint32_t source) {
+  httpd_req_t w = wrong_bearer();
+  auth_check(&w, token(), source);
+}
+
+// `n` strikes from `source`, each sent once the backoff before it has run
+// out (as a client that waits out its Retry-After), so each one counts.
+static void strikes_from(uint32_t source, int n) {
+  for (int i = 0; i < n; i++) {
+    if (i) g_host_millis += (uint32_t)held_for(source) * 1000u;
+    strike(source);
+  }
+}
+
+// `source`'s right bearer through auth_gate's check, at once.
+static bool right_bearer_served(uint32_t source) {
+  httpd_req_t r = right_bearer();
+  return auth_check(&r, token(), source);
+}
+
+/* A browser that mistyped the token, held by its five strikes (32 s left),
+ * taps BOOT: the receipt's tap serves it the token, beside its stale bearer
+ * or with none, and its next right-bearer call is served at once. The page
+ * load the tap unlocks does the same. Before F341 that call was 429 for the
+ * rest of the backoff. Another host's backoff is left alone throughout. */
+static void the_tap_ends_the_backoff() {
+  std::printf("-- the BOOT tap ends the backoff of the address it serves\n");
+  net_fresh(2000000);
+  strikes_from(kHostA, 5);
+  CHECK(held_for(kHostA) == 33, "A's five wrong bearers hold it 32 s (Retry-After 33)");
+  strike(kHostB);
+  CHECK(held_for(kHostB) == 3, "B's wrong bearer holds B");
+  g_tap = true;
+  httpd_req_t stale = from(kHostA, wrong_bearer());
+  CHECK(handle_provisioning_receipt(&stale) == ESP_OK && g_receipts_sent == 1 && !g_tap &&
+            stale.status == "200 OK",
+        "the tap serves A the receipt, its stale bearer beside it (held, so not compared)");
+  CHECK(stale.value_reads == 0, "A's stale bearer was not read: A was held");
+  CHECK(right_bearer_served(kHostA), "A's right bearer right after the tap's receipt is served, not 429");
+  CHECK(held_for(kHostB) == 3, "B is still held, its backoff unchanged: A's tap freed only A");
+
+  // The dashboard's wait sends no header; the tap serves it all the same.
+  net_fresh(2100000);
+  strikes_from(kHostA, 3);
+  g_tap = true;
+  httpd_req_t bare = from(kHostA, no_header());
+  CHECK(handle_provisioning_receipt(&bare) == ESP_OK && g_receipts_sent == 1 && !g_tap,
+        "the tap serves A's header-less receipt fetch");
+  CHECK(right_bearer_served(kHostA), "A's right bearer after a header-less tap fetch is served at once");
+
+  // A stale bearer outside a backoff: its strike is counted (the grant reads
+  // it before the tap), the tap serves, and the hand-over then clears it.
+  net_fresh(2200000);
+  g_tap = true;
+  httpd_req_t fresh_stale = from(kHostA, wrong_bearer());
+  CHECK(handle_provisioning_receipt(&fresh_stale) == ESP_OK && g_receipts_sent == 1,
+        "the tap serves a stale bearer outside a backoff");
+  CHECK(fresh_stale.value_reads == 1, "that stale bearer was compared (one strike, then the tap)");
+  CHECK(right_bearer_served(kHostA), "and the strike it cost is cleared by the hand-over");
+
+  // GET /'s page load on a tap (no Authorization header on a navigation).
+  net_fresh(2300000);
+  strikes_from(kHostA, 4);
+  strike(kHostB);
+  g_tap = true;
+  httpd_req_t page = from(kHostA, no_header());
+  CHECK(page_token_inject(&page) == PageToken::INJECT && !g_tap,
+        "the tap hands A's page load the token and is spent");
+  CHECK(right_bearer_served(kHostA), "the page's first API call with that token is served at once");
+  CHECK(held_for(kHostB) == 3, "B is still held after A's page load");
+}
+
+/* The hand-over frees only the address's own slot. An address held only
+ * through the shared overflow (eight others hold every slot) stays held
+ * after a tap serves it: clearing the overflow would free every untracked
+ * address, an attacker's included, and its next strike re-arms it at once.
+ * And a refusal hands over nothing, so it clears nothing. */
+static void the_tap_clears_only_its_own_slot() {
+  std::printf("-- the hand-over clears no overflow and no refusal\n");
+  net_fresh(2400000);
+  for (uint32_t i = 0; i < 8; i++) strike(0x0A000001u + i);
+  strike(kHostA);
+  CHECK(held_for(kHostA) == 3, "A, untracked, is held through the overflow");
+  g_tap = true;
+  httpd_req_t bare = from(kHostA, no_header());
+  CHECK(handle_provisioning_receipt(&bare) == ESP_OK && g_receipts_sent == 1,
+        "the tap serves A while the overflow holds it");
+  CHECK(!right_bearer_served(kHostA), "A held only through the overflow stays held after the receipt's tap");
+  g_tap = true;
+  httpd_req_t page = from(kHostA, no_header());
+  CHECK(page_token_inject(&page) == PageToken::INJECT, "a tap hands A's page load the token");
+  CHECK(!right_bearer_served(kHostA), "and A stays held after the page load's tap too");
+  CHECK(held_for(0x0A000001u) == 3, "the tracked slots are untouched");
+
+  net_fresh(2500000);
+  strikes_from(kHostA, 3);
+  httpd_req_t none = from(kHostA, no_header());
+  CHECK(handle_provisioning_receipt(&none) == ESP_OK && g_receipts_sent == 0 &&
+            none.status == "403 Forbidden" &&
+            none.body.find("physical_confirmation_required") != std::string::npos,
+        "no tap: the receipt's 403");
+  CHECK(held_for(kHostA) == 9, "the refusal cleared nothing");
+  g_foreign = true;
+  g_tap = true;
+  httpd_req_t foreign = from(kHostA, no_header());
+  CHECK(handle_provisioning_receipt(&foreign) == ESP_OK && g_receipts_sent == 0 && g_tap &&
+            foreign.body == "{\"error\":\"host\"}",
+        "a foreign Host: 403 host, the tap left unspent");
+  httpd_req_t foreign_page = from(kHostA, no_header());
+  CHECK(page_token_inject(&foreign_page) == PageToken::FOREIGN_HOST && g_tap,
+        "a foreign Host's page load: no token, the tap left unspent");
+  CHECK(held_for(kHostA) == 9, "neither foreign answer cleared anything");
+  g_foreign = false;
+  g_tap = false;
+  httpd_req_t withheld = from(kHostA, no_header());
+  CHECK(page_token_inject(&withheld) == PageToken::WITHHOLD, "no tap: the page load is withheld");
+  CHECK(held_for(kHostA) == 9, "the withheld page load cleared nothing");
+}
+
 /* ── securacv_network.cpp's wiring (text pins) ────────────────────────── */
 
 static std::string read_file(const char* path) {
@@ -633,6 +825,32 @@ static void the_network_layer_passes_the_source() {
         "the receipt has no 429 branch: a held bearer reads as none, so the tap or the 403");
 }
 
+/* Where the hand-over sits (sweep F341): in the receipt's SERVE_TAP branch,
+ * before the receipt is sent, and in the page-token decision's tap-spent
+ * branch, with the request's source; nowhere else in the file. The handlers
+ * above run it; these pins hold its place against an edit that moves it
+ * under a refusal or drops the source. */
+static void the_tap_paths_call_the_hand_over() {
+  std::printf("-- securacv_network.cpp: both tap paths hand over\n");
+  const std::string code = strip_comments(read_file(CANARY_NETWORK_CPP));
+  CHECK(count_of(code, "auth_handed_token(", true) == 2 &&
+        count_of(squash(code), "auth_handed_token(request_peer_ipv4(req));", false) == 2,
+        "auth_handed_token() is called twice, each with request_peer_ipv4(req)");
+  const std::string receipt =
+      squash(body_of(code, "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {"));
+  CHECK(receipt.find("if(verdict==ReceiptVerdict::SERVE_TAP){"
+                     "auth_handed_token(request_peer_ipv4(req));"
+                     "constesp_err_tresult=send_provisioning_receipt(req);") != std::string::npos,
+        "the receipt's SERVE_TAP branch hands over before it sends the receipt");
+  CHECK(receipt.find("if(verdict==ReceiptVerdict::SERVE_BEARER){returnsend_provisioning_receipt(req);}") !=
+            std::string::npos,
+        "the SERVE_BEARER branch is unchanged (the grant already freed the address)");
+  const std::string page = squash(body_of(
+      code, "static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {"));
+  CHECK(page.find("}elseif(tap_spent){auth_handed_token(request_peer_ipv4(req));") != std::string::npos,
+        "page_token_inject() hands over in its tap-spent branch");
+}
+
 int main() {
   const uint8_t key[32] = {1};
   CHECK(auth_load_or_derive(key) && std::strlen(token()) == 35,
@@ -649,7 +867,10 @@ int main() {
   an_empty_expected_token_matches_nothing();
   the_lockout_survives_the_wrap_and_never_wraps();
   handed_token_frees_only_its_source();
+  the_tap_ends_the_backoff();
+  the_tap_clears_only_its_own_slot();
   the_network_layer_passes_the_source();
+  the_tap_paths_call_the_hand_over();
 
   if (g_fail) {
     std::printf("\n%d of %d checks FAILED\n", g_fail, g_checks);

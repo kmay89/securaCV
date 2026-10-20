@@ -1829,14 +1829,15 @@ so — see D2 below.)
     F338's flagship route-check tables, which are not in the tree yet, are
     to be written against this API.
   The posture: A host's wrong bearers hold only that host's address (F343).
-  A browser that mistyped the token waits at most about 60 s. A host that
-  strikes from 9 or more addresses within 60 s holds every untracked address
-  while the shared overflow slot runs, and a tap does not clear that; then
-  wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
-  10 s. The flagship has no Bluetooth lane that changes its Wi-Fi, so there
-  the fallbacks are to wait or the 10 s hold. Not closed: the device-wide
-  request limit, filed as F351; ARP spoofing; httpd's connection purge;
-  clients behind one address share a backoff.
+  A browser that mistyped the token waits at most about 60 s, or taps BOOT,
+  which clears its address (F341). A host that strikes from 9 or more
+  addresses within 60 s holds every untracked address while the shared
+  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
+  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. The flagship
+  has no Bluetooth lane that changes its Wi-Fi, so there the fallbacks are
+  to wait or the 10 s hold. Not closed: the device-wide request limit, filed
+  as F351; ARP spoofing; httpd's connection purge; clients behind one
+  address share a backoff.
   Host-tested in `firmware/tests_host/test_securacv_auth.cpp` (97 checks over
   the real `securacv_auth.cpp` and `auth_backoff.h`; the code before this
   part, its new calls adapted onto the old one-per-device `AuthManager`,
@@ -1845,7 +1846,7 @@ so — see D2 below.)
   `securacv_network.cpp`'s wiring). The ESP32 compile is CI's; not run on a
   device (U1: the flagship's bearer-lockout row in
   `hardware_verification_checklist.md`).
-- [ ] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
+- [x] **F341 [decision] canary-wap: a wrong bearer that the tap or the claim
   then serves still counts a strike.** Since F329 every wrong header on the
   receipt is one strike, even when the request goes on to be served by the
   BOOT tap or a setup-door claim. A strike only when the request is refused
@@ -1854,6 +1855,54 @@ so — see D2 below.)
   for a tap (the dashboard's `requestFromDevice()` sends none). Decide which;
   `test_receipt_grant.cpp` holds today's answer. Found by the F289 follow-up
   (#1832).
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice): keep the strike, and
+  clear an address that the claim or the tap hands the token to.*
+  The strike stays. A wrong or malformed bearer on
+  `GET /api/provisioning-receipt` is a strike against the address that sent
+  it, even when the setup-door claim or the BOOT tap then serves the
+  request: one accounting rule for every route.
+  Why the clear. After F343 the harm the entry named, other clients held,
+  was gone. What remained was a wait of up to 60 s for the client the tap or
+  the claim had just served: the strike adds to that address's count inside
+  the 60 s window, and a stale client has usually struck already. Meanwhile
+  the iPhone showed the Canary dark and the flagship dashboard looked
+  frozen.
+  *Done (2026-10-19):* the serve point now clears that address's backoff:
+  - on the WAP, `auth_record_success(req)` right after the receipt's refusal
+    block (`if (!claim_served && !provisioning_gate_take()) { ... }`, whose
+    `403`, `429` and `500` all return), so a refused request clears nothing,
+    and F342's planned `409` inside that block will clear nothing either;
+  - on the flagship, `auth_handed_token(request_peer_ipv4(req))` in the
+    receipt's `SERVE_TAP` branch, before the receipt is sent, and in
+    `page_token_inject()`'s tap-spent branch.
+  The address holds the token at that moment, so the clear grants nothing.
+  It frees only the address's own slot. A tap does not clear the shared
+  overflow that a host striking from nine or more addresses keeps running,
+  because the attacker's next strike would re-arm it; the lockout sentence
+  says so: A host's wrong bearers hold only that host's address (F343). A
+  browser that mistyped the token waits at most about 60 s, or taps BOOT,
+  which clears its address (F341). A host that strikes from 9 or more
+  addresses within 60 s holds every untracked address while the shared
+  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
+  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
+  Host-tested. `test_receipt_grant.cpp` (1635 checks; the sketch before the
+  change fails 25 of them): after the tap, the claim and a header-less tap
+  wait, A's right bearer gets the receipt as `BEARER` at once and the QR is
+  served; another host's count, armed by a direct slot write, is untouched;
+  an address held only through the overflow stays held; the `403`, the
+  `429`, a wrong claim and a lapsed tap clear nothing.
+  `firmware/tests_host/test_securacv_auth.cpp` (128 checks; the network
+  code before the change fails 7 of them) runs the flagship's
+  `handle_provisioning_receipt()` and `page_token_inject()`, cut verbatim
+  from `securacv_network.cpp`, on the real `AuthManager` and
+  `provisioning_gate.h`: the tap's receipt and the tap's page load each
+  leave A served at once, B and the overflow held, and a refusal or a
+  foreign Host clearing nothing; text pins hold both calls in place.
+  F338's flagship tables, which are not in the tree yet, are to be written
+  against this code. The ESP32 compile is CI's; not run on a device (U1:
+  the receipt-lockout row and the flagship's bearer-lockout row in
+  `hardware_verification_checklist.md`).
 - [ ] **F342 [decision] canary-wap: the receipt's claim and BOOT tap are spent
   by whoever asks first.** Any `?claim=` on `GET /api/provisioning-receipt` is
   spent, match or not (`claim_ticket::take()`), so one wrong guess from a host
@@ -1919,10 +1968,11 @@ so — see D2 below.)
   - The unused `auth_stats_json()` is deleted.
   The posture, in the sentence the docs use: A host's wrong bearers hold only
   that host's address (F343). A browser that mistyped the token waits at
-  most about 60 s. A host that strikes from 9 or more addresses within 60 s
-  holds every untracked address while the shared overflow slot runs, and a
-  tap does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-  Bluetooth lane, or hold BOOT 10 s.
+  most about 60 s, or taps BOOT, which clears its address (F341). A host
+  that strikes from 9 or more addresses within 60 s holds every untracked
+  address while the shared overflow slot runs, and a tap does not clear
+  that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or
+  hold BOOT 10 s.
   Not closed:
   - `POST /api/reboot` from any landing session, which also clears the RAM
     table;

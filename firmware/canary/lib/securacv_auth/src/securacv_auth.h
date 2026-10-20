@@ -19,7 +19,9 @@
  * on the REST endpoints, and its bearer_present_and_valid() (the provisioning
  * receipt, the page-token decision) calls auth_bearer_grant(). Both pass the
  * request's source address, request_peer_ipv4(): its socket peer, read with
- * getpeername, never a header.
+ * getpeername, never a header. The two paths that hand an address the token
+ * on a BOOT tap (the receipt's SERVE_TAP, the page-token decision's tap)
+ * call auth_handed_token() with that address (sweep F341).
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -92,9 +94,10 @@ class AuthManager {
   BearerResult grant(httpd_req_t* req, const char* expected_token, uint32_t source);
 
   // For a path that hands `source` the token without a bearer (the BOOT
-  // tap; sweep F341 wires those calls): its backoff ends as a right
-  // bearer's would. Frees only its own tracked slot, never the shared
-  // overflow (auth_backoff.h).
+  // tap: the receipt's SERVE_TAP and the page-token decision's tap in
+  // securacv_network.cpp, sweep F341): its backoff ends as a right bearer's
+  // would. Frees only its own tracked slot, never the shared overflow
+  // (auth_backoff.h): an address held only through the overflow stays held.
   void handedToken(uint32_t source);
 
   // Redact a token for logging: "cv_7kX9mN2p..." → "cv_7kX9****".

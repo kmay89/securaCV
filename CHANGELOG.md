@@ -24,15 +24,16 @@
   strike against its address and a held one is not compared and reads as
   none: the receipt answers its `403` (the page's "tap BOOT") or serves an
   open tap, never a `429`. A host's wrong bearers hold only that host's
-  address (F343). A browser that mistyped the token waits at most about 60 s.
-  A host that strikes from 9 or more addresses within 60 s holds every
-  untracked address while the shared overflow slot runs, and a tap does not
-  clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth
-  lane, or hold BOOT 10 s. The flagship has no Bluetooth lane that changes
-  its Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Found on
-  the way and fixed with it, as on the WAP: the 5-minute cap never ran (the
-  60 s window cleared the count first, while the sixth strike announced
-  `Retry-After: 65`; it now never names more than 61), and `now < until`
+  address (F343). A browser that mistyped the token waits at most about
+  60 s, or taps BOOT, which clears its address (F341). A host that strikes
+  from 9 or more addresses within 60 s holds every untracked address while
+  the shared overflow slot runs, and a tap does not clear that; then wait,
+  change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
+  The flagship has no Bluetooth lane that changes its Wi-Fi, so there the
+  fallbacks are to wait or the 10 s hold. Found on the way and fixed with
+  it, as on the WAP: the 5-minute cap never ran (the 60 s window cleared
+  the count first, while the sixth strike announced `Retry-After: 65`; it
+  now never names more than 61), and `now < until`
   freed a backoff armed just before the 49.7-day `millis()` wrap. An empty
   expected token now matches no bearer inside the library too (every caller
   already refused one first). The unused stats API (`AuthStats`, `stats()`,
@@ -64,13 +65,14 @@
   2 s after the first strike and doubling, plus one shared overflow slot that
   holds every address without a slot of its own while it runs. A host's wrong
   bearers hold only that host's address (F343). A browser that mistyped the
-  token waits at most about 60 s. A host that strikes from 9 or more
-  addresses within 60 s holds every untracked address while the shared
-  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
-  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. Clients behind
-  one address share a backoff, and a deliberate LAN denial is not closed (a
-  landing session's `POST /api/reboot` also clears the table; ARP spoofing,
-  httpd's connection purge; `magic_pairing.md` §3.7). Found on the way and
+  token waits at most about 60 s, or taps BOOT, which clears its address
+  (F341). A host that strikes from 9 or more addresses within 60 s holds
+  every untracked address while the shared overflow slot runs, and a tap
+  does not clear that; then wait, change Wi-Fi from the iPhone's bonded
+  Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a
+  backoff, and a deliberate LAN denial is not closed (a landing session's
+  `POST /api/reboot` also clears the table; ARP spoofing, httpd's
+  connection purge; `magic_pairing.md` §3.7). Found on the way and
   fixed with it: the `static` in the header gave `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
   `inline` table); the `uint8_t` count wrapped to a clean 0 after 256 strikes
@@ -123,6 +125,34 @@
   the route check's four new plants, and the tree before the change failing
   it at `csi_mqtt.cpp:2359`); the ESP32 compile is CI's; not run on a device
   (U1).
+- **A BOOT tap or the setup-door claim ends the backoff of the host it hands
+  the token to, on both firmwares (sweep F341).** A stale bearer that the
+  tap or the claim then serves is still a strike against its address (one
+  accounting rule for every route), but the client just served used to stay
+  held at `429` for up to 60 s afterwards, while the iPhone showed the
+  Canary dark and the flagship dashboard looked frozen. The serve point now
+  clears that address's backoff, as a right bearer does: on the WAP,
+  `auth_record_success(req)` right after the receipt's refusal block, so a
+  refused request clears nothing; on the flagship, `auth_handed_token()` in
+  the receipt's `SERVE_TAP` branch and on the page load a tap unlocks
+  (`page_token_inject()`). The address holds the token at that moment, so
+  the clear grants nothing. It frees that address's own slot only: another
+  host's count is untouched, and an address held only through the shared
+  overflow stays held, since clearing it would free the striker too. A
+  host's wrong bearers hold only that host's address (F343). A browser that
+  mistyped the token waits at most about 60 s, or taps BOOT, which clears
+  its address (F341). A host that strikes from 9 or more addresses within
+  60 s holds every untracked address while the shared overflow slot runs,
+  and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
+  bonded Bluetooth lane, or hold BOOT 10 s. **Host-tested**
+  (`test_receipt_grant.cpp`, 1635 checks, 25 of which fail on the sketch
+  before the change: the right bearer served at once after the tap, the
+  claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
+  128 checks, 7 of which fail on the network code before the change, its
+  receipt and page-token handlers cut from `securacv_network.cpp` and run
+  over the real `AuthManager`; both suites hold another host's count, the
+  overflow and every refusal unchanged); the ESP32 compile is CI's; not run
+  on a device (U1).
 
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 

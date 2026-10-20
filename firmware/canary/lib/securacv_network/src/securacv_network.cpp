@@ -2410,8 +2410,10 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
 // by SPENDING an unspent BOOT tap — taken, never peeked, so one tap unlocks
 // exactly one home-LAN page load (or, if the app asks first, one receipt
 // fetch; never both). The page that got the token holds the bearer, so its
-// "Save recovery kit" needs no second tap. Everything else (the home LAN)
-// gets the page without the credential.
+// "Save recovery kit" needs no second tap, and the tap that handed it the
+// token ends its address's backoff (auth_handed_token, sweep F341), so a
+// browser that mistyped the token is not held on its first API call.
+// Everything else (the home LAN) gets the page without the credential.
 static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {
   using canary::net::provisioning_gate::PageToken;
   using canary::net::provisioning_gate::page_token_decide;
@@ -2431,6 +2433,10 @@ static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* 
   if (verdict != PageToken::INJECT) {
     Serial.printf("[AUTH] page token withheld (%s)\n", why ? why : "");
   } else if (tap_spent) {
+    // The tap hands this address the token, so its backoff ends as a right
+    // bearer's would (sweep F341): the page just loaded is not held at 429
+    // on its first API call. Its own slot only, never the shared overflow.
+    auth_handed_token(request_peer_ipv4(req));
     Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate closed.");
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT gate");
   }
@@ -2515,7 +2521,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //      credential is unprovisioned;
   //   3. no valid bearer (none, a wrong one, or a held one): consume the
   //      physical gate in ONE atomic step (a second poll, or a second
-  //      consumer on another task, reads it closed).
+  //      consumer on another task, reads it closed). A tap that serves
+  //      also ends the asking address's backoff (auth_handed_token, sweep
+  //      F341): it holds the token now.
   const ReceiptVerdict verdict = receipt_decide(
       host_is_foreign(req),
       [req]() { return bearer_present_and_valid(req); },
@@ -2530,6 +2538,12 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     return send_provisioning_receipt(req);
   }
   if (verdict == ReceiptVerdict::SERVE_TAP) {
+    // The tap hands this address the token, so its backoff ends as a right
+    // bearer's would (sweep F341): a held bearer read as none above, and the
+    // strike a stale one cost stays the rule, but the client served here
+    // gets its next right-token call answered at once. Its own slot only,
+    // never the shared overflow. No refusal below reaches this.
+    auth_handed_token(request_peer_ipv4(req));
     const esp_err_t result = send_provisioning_receipt(req);
     Serial.println("[AUTH] Provisioning receipt served. Gate closed.");
     log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Provisioning receipt served", "BOOT gate");

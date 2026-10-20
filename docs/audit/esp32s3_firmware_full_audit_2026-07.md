@@ -151,10 +151,11 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   *(2026-10-19 note, sweep F343: the auth lockout is now per source address, the request's
   socket peer and never a header (`firmware/common/network/auth_backoff.h`, 8 tracked addresses
   plus a shared overflow, 2 s doubling capped at 60 s). A host's wrong bearers hold only that
-  host's address (F343). A browser that mistyped the token waits at most about 60 s. A host that
-  strikes from 9 or more addresses within 60 s holds every untracked address while the shared
-  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
-  bonded Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a backoff, and a
+  host's address (F343). A browser that mistyped the token waits at most about 60 s, or taps
+  BOOT, which clears its address (F341). A host that strikes from 9 or more addresses within
+  60 s holds every untracked address while the shared overflow slot runs, and a tap does not
+  clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
+  10 s. Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
   connection purge; `magic_pairing.md` §3.7). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*
