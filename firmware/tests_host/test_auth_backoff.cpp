@@ -21,7 +21,14 @@
 //     source leaves the overflow running;
 //   * grant(): no credential is NONE and records nothing; a held source is
 //     HELD and its credential is never compared; the right one is OK and
-//     frees the Slot; a wrong one is WRONG and exactly one strike.
+//     frees the Slot; a wrong one is WRONG and exactly one strike;
+//   * the edges a mutation found unpinned: a Slot left untouched for more
+//     than 2^31 ms reads free from locked() itself (its own settle, before
+//     the signed "still running" test flips); the overflow's count stands at
+//     exactly 60 s after its last strike and is gone 1 ms later, as a
+//     Slot's; and source 0 (the bucket every unnamed source shares) is found
+//     in its own live Slot, never in a freed one before it (a freed Slot
+//     reads source 0 too).
 
 #include "../common/network/auth_backoff.h"
 
@@ -213,6 +220,71 @@ static void grant_decides_in_order() {
   CHECK(calls == 0, "and its credential is never compared");
 }
 
+// locked() settles first. A Slot armed at `armed` and untouched until more
+// than 2^31 ms later reads `until_ms - now` as a positive int32_t again:
+// without its own settle, locked() read such a Slot as held, for up to
+// another 24.8 days, until the difference turned negative once more.
+static void a_slot_idle_past_half_the_clock_reads_free() {
+  Table t{};
+  const uint32_t armed = 5000;
+  record_failure(t, kPhone, armed);
+  const uint32_t later = armed + 0x80000000u + 5000u;
+  CHECK(!locked(t, kPhone, later), "a Slot idle for 2^31 ms + 5 s reads held");
+  CHECK(remaining_ms(t, kPhone, later) == 0, "and has %u ms left", (unsigned)remaining_ms(t, kPhone, later));
+  CHECK(failures_of(t, kPhone, later) == 0, "its count is gone");
+}
+
+// The overflow's window ends where a Slot's does: its count stands at
+// exactly WINDOW_MS after its last strike and is gone 1 ms later.
+static void the_overflow_window_ends_after_60_s_not_at() {
+  const uint32_t at = 10000;
+  const uint32_t untracked = ip4(10, 0, 2, 99);
+  for (int k = 0; k < 2; ++k) {
+    Table t{};
+    for (unsigned i = 1; i <= SLOTS; ++i) record_failure(t, ip4(10, 0, 2, i), at);
+    CHECK(record_failure(t, untracked, at) == BASE_MS, "the overflow's first strike");
+    CHECK(t.overflow.failures == 1, "struck the overflow");
+    const uint32_t now = at + WINDOW_MS + (uint32_t)k;
+    // A ninth address strikes again: a second strike while the count stands
+    // (4 s), a first once it is gone (2 s). The eight Slots, struck at the
+    // same moment, settle with it, so at +1 ms it takes a freed Slot instead.
+    const uint32_t armed = record_failure(t, untracked, now);
+    if (k == 0) {
+      CHECK(armed == 2 * BASE_MS, "at exactly 60 s the overflow's count stands: armed %u ms", (unsigned)armed);
+      CHECK(t.overflow.failures == 2, "the overflow counted %u", (unsigned)t.overflow.failures);
+    } else {
+      CHECK(armed == BASE_MS, "60 s + 1 ms clears the overflow's count: armed %u ms", (unsigned)armed);
+      CHECK(t.overflow.failures == 0, "the overflow still counts %u", (unsigned)t.overflow.failures);
+    }
+  }
+  // The overflow read alone, with every Slot still live: struck 1 ms after
+  // the Slots, it outlives them by 1 ms.
+  Table t{};
+  for (unsigned i = 1; i <= SLOTS; ++i) record_failure(t, ip4(10, 0, 2, i), at + 1);
+  record_failure(t, untracked, at + 1);
+  CHECK(locked(t, ip4(10, 0, 2, 200), at + 1), "the overflow holds an untracked source");
+  settle(t, at + 1 + WINDOW_MS);
+  CHECK(t.overflow.failures == 1, "at exactly 60 s the overflow is not settled");
+  settle(t, at + 1 + WINDOW_MS + 1);
+  CHECK(t.overflow.failures == 0, "1 ms later it is");
+}
+
+// A freed Slot is Slot{}: failures 0 and source 0. Source 0, the bucket every
+// source the caller cannot name shares (an unreadable socket, a real IPv6
+// peer), is a real key, so tracked() must never take a freed Slot for it.
+static void source_zero_is_found_in_its_own_slot_behind_a_freed_one() {
+  Table t{};
+  record_failure(t, kPhone, 1000);   // Slot 0
+  record_failure(t, 0, 1000);        // Slot 1
+  record_success(t, kPhone);         // Slot 0 freed: Slot{}, source 0
+  CHECK(failures_of(t, 0, 1001) == 1, "source 0's strike reads %u", (unsigned)failures_of(t, 0, 1001));
+  CHECK(locked(t, 0, 1001), "source 0 is held by its own Slot");
+  // Its second strike lands in its own Slot: 4 s, not a first strike in the
+  // freed one.
+  CHECK(record_failure(t, 0, 1000 + BASE_MS) == 2 * BASE_MS, "source 0's count split across two Slots");
+  CHECK(t.slot[0].failures == 0, "the freed Slot was taken");
+}
+
 int main() {
   the_schedule_doubles_to_the_window_and_stops();
   the_wrap_of_millis_ends_no_backoff_early();
@@ -222,6 +294,9 @@ int main() {
   a_success_frees_only_its_own_slot();
   one_hosts_strikes_hold_no_other_host();
   grant_decides_in_order();
+  a_slot_idle_past_half_the_clock_reads_free();
+  the_overflow_window_ends_after_60_s_not_at();
+  source_zero_is_found_in_its_own_slot_behind_a_freed_one();
 
   if (g_failures) {
     std::printf("test_auth_backoff: %d failure(s)\n", g_failures);

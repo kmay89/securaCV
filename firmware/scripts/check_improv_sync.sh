@@ -43,7 +43,14 @@ set -euo pipefail
 # own location):
 #   firmware/scripts/check_improv_sync.sh
 #
-# Exit 0 when every copy matches; exit 1 (with a diff) on drift.
+# Every file in the sketch folder that has a same-named file in
+# common/network is held by a PAIRS line here or by the sync script
+# HELD_ELSEWHERE names for it, which must name the file. So dropping a PAIRS
+# line, or staging a new header no script holds, fails here instead of
+# leaving a copy that drifts unseen.
+#
+# Exit 0 when every copy matches and every staged header is held; exit 1
+# (with a diff, or the header no script holds) otherwise.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -57,6 +64,19 @@ PAIRS=(
     "${COMMON}/claim_ticket.h|${WAP}/claim_ticket.h"
     "${COMMON}/provisioning_gate.h|${WAP}/provisioning_gate.h"
     "${COMMON}/auth_backoff.h|${WAP}/auth_backoff.h"
+)
+
+# The other common/network headers the sketch stages, each with the
+# firmware/scripts/ sync script that holds its copy (name|script).
+HELD_ELSEWHERE=(
+    "ap_security_policy.h|check_ap_security_sync.sh"
+    "mqtt_transport_logic.h|check_mqtt_transport_sync.sh"
+    "node_status.h|check_onboarding_sync.sh"
+    "onboarding_fsm.h|check_onboarding_sync.sh"
+    "provision_core.h|check_onboarding_sync.sh"
+    "wifi_credential_policy.h|check_wifi_credential_sync.sh"
+    "wifi_join_policy.h|check_onboarding_sync.sh"
+    "wifi_store.h|check_onboarding_sync.sh"
 )
 
 # The staged headers' names, from PAIRS, for the messages below.
@@ -85,11 +105,42 @@ for pair in "${PAIRS[@]}"; do
     fi
 done
 
+# Every same-named file is held: by PAIRS, or by its HELD_ELSEWHERE script.
+unheld=0
+for staged in "${WAP}"/*; do
+    name=$(basename "$staged")
+    [ -f "${COMMON}/${name}" ] || continue
+    held=""
+    for p in "${PAIRS[@]}"; do
+        [ "$(basename "${p##*|}")" = "$name" ] && held="PAIRS"
+    done
+    for h in "${HELD_ELSEWHERE[@]}"; do
+        [ "${h%%|*}" = "$name" ] || continue
+        script="${SCRIPT_DIR}/${h##*|}"
+        if [ -f "$script" ] && grep -qF -- "$name" "$script"; then
+            held="${h##*|}"
+        else
+            echo "::error::HELD_ELSEWHERE says ${h##*|} holds ${name}, and that script does not name it"
+        fi
+    done
+    if [ -z "$held" ]; then
+        echo "::error::${WAP}/${name} has a same-named file in common/network and no sync script holds it"
+        echo "         Add a PAIRS line here (or name the script that holds it in HELD_ELSEWHERE)."
+        unheld=1
+    fi
+done
+
+if [ "$unheld" -ne 0 ]; then
+    drift=1
+fi
+
 if [ "$drift" -ne 0 ]; then
     echo ""
     echo "Every common/network header the canary-wap sketch stages (${names})"
     echo "must be byte-identical to its canonical file under"
-    echo "${COMMON}."
+    echo "${COMMON},"
+    echo "and every staged file with a same-named one there must be held by PAIRS"
+    echo "or by the script HELD_ELSEWHERE names."
     echo "Re-stage a copy with: cp <canonical-path> <copy-path>"
     exit 1
 fi

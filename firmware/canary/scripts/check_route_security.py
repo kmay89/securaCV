@@ -28,7 +28,10 @@ every other gate):
     expression, or initializing a `const` local that one of those later
     reads. A bare `auth_gate(req);`, `(void)bearer_present_and_valid(req);`
     or a local nobody tests ignores the answer and is not a gate, and a
-    `return` inside a lambda body is the lambda deciding, not the handler;
+    `return` inside a lambda body is the lambda deciding, not the handler.
+    auth_bearer_grant() answers one of four (NONE / OK / WRONG / HELD), so
+    it counts only where its call is compared `== AuthManager::BearerResult::OK`
+    (`!= ...::WRONG` would serve a request with no header or a held one);
   * every `send_html_with_token(...)` call passes `page_token_inject(req)` as
     its third argument — never a literal `true`/`false` or anything else —
     and page_token_inject goes through provisioning_gate::page_token_decide
@@ -93,7 +96,8 @@ AUTH_MARKERS = (
     "auth_gate(",               # bearer, fail-closed 503 when unprovisioned
     "auth_check(",              # AuthManager bearer check (401/403/429), per source address
     "auth_bearer_grant(",       # the accounted grant (NONE/OK/WRONG/HELD), sends nothing;
-                                # the caller tests for OK and answers the rest (F340)
+                                # the caller tests for OK and answers the rest (F340):
+                                # it counts only compared `== AuthManager::BearerResult::OK`
     "bearer_present_and_valid(",  # auth_bearer_grant == OK + refuses an unprovisioned credential
     "provisioning_gate_take(",  # physical BOOT tap, one tap = one consumer
     "receipt_decide(",          # provisioning_gate::receipt_decide: the Host, then
@@ -462,6 +466,23 @@ def _statement_prefix(blanked: str, i: int) -> str:
 
 _DECIDING_PREFIX = re.compile(r"^(?:else\s+)?(?:if|while|switch)\s*\(|^return\b")
 _CONST_LOCAL = re.compile(r"^const\s+[\w:<>]+\s*[*&]?\s*([A-Za-z_]\w*)\s*=")
+# The markers whose result is not a yes or no: the comparison their call must
+# stand in to say yes. auth_bearer_grant()'s four values (NONE / OK / WRONG /
+# HELD) say yes only as OK, so `!= ...::WRONG` or `== ...::NONE` would serve a
+# request with no header, or a held one.
+_MARKER_YES = {
+    "auth_bearer_grant(": re.compile(r"\s*==\s*(?:AuthManager\s*::\s*)?BearerResult\s*::\s*OK\b"),
+}
+
+
+def _says_yes(blanked: str, marker: str, i: int) -> bool:
+    """True when the call of `marker` at `i` says yes or no by itself, or
+    stands in the one comparison _MARKER_YES names for it."""
+    yes = _MARKER_YES.get(marker)
+    if yes is None:
+        return True
+    close = _paren_close(blanked, i + len(marker) - 1)
+    return close >= 0 and yes.match(blanked, close + 1) is not None
 
 
 def first_deciding_marker(body: str, marker: str) -> int:
@@ -472,7 +493,8 @@ def first_deciding_marker(body: str, marker: str) -> int:
     local that a later if / while / switch condition or return expression
     reads. A bare call, a `(void)` cast, a non-const or unread local, and a
     `return` inside a lambda body (the lambda deciding, not the function)
-    discard the answer and do not count."""
+    discard the answer and do not count, and neither does a marker whose
+    answer is not a yes or no outside the comparison _MARKER_YES names."""
     blanked = blank_string_contents(body)
     start = 0
     while True:
@@ -480,7 +502,7 @@ def first_deciding_marker(body: str, marker: str) -> int:
         if i < 0:
             return -1
         start = i + 1
-        if in_lambda(blanked, i):
+        if in_lambda(blanked, i) or not _says_yes(blanked, marker, i):
             continue
         prefix = _statement_prefix(blanked, i)
         if _DECIDING_PREFIX.match(prefix):
@@ -1216,6 +1238,15 @@ def _assert_parser_robust() -> None:
         assert marker_decides("{ " + ok, next(m for m in AUTH_MARKERS if m in ok)), ok
     for bad in ("(void)bearer_present_and_valid(req); return send(req);",
                 "(void)auth_bearer_grant(req, t, request_peer_ipv4(req)); return send(req);",
+                # The grant's four values say yes only as OK (F340).
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) != "
+                "AuthManager::BearerResult::WRONG) return send(req);",
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+                "AuthManager::BearerResult::NONE) return send(req);",
+                "const AuthManager::BearerResult r = auth_bearer_grant(req, t, request_peer_ipv4(req));\n"
+                "  if (r != AuthManager::BearerResult::HELD) return send(req);",
+                "if (auth_bearer_grant(req, t, request_peer_ipv4(req)) == "
+                "AuthManager::BearerResult::OKAY) return send(req);",
                 "auth_gate(req); return ESP_OK;",
                 "bool ok = auth_gate(req); return send(req);",
                 "const bool ok = auth_gate(req); return send(req);",
