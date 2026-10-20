@@ -2464,8 +2464,8 @@
   and the save held its old counter), so the save is now taken once more
   66 s later if the counter has moved. The residuals the docs state are a
   reboot before the member's first frame lands (nothing saved for it yet),
-  a reboot inside those 66 s, and, when the member's own frames were kept
-  out through them (a jammer, or after a boot a station not yet on its
+  a reboot before that second save lands, and, when the member's own
+  frames were kept out through the 66 s (a jammer, or after a boot a station not yet on its
   router's channel, F320), a reboot before the next 5-minute save; review
   round 4 found the summaries naming only the middle one. And a save
   taken while the member was
@@ -2484,7 +2484,10 @@
   verified frame, and a false second save 66 s after the pass that failed,
   never on the next pass (on a board without flash encryption every save
   is refused before any write, so a retry costs a snapshot and writes
-  nothing). When a fix adds a periodic send, count what the send leaves on
+  nothing). Its review found the docs still bounding that second reboot
+  at "inside the 66 s": a refused second save leaves the older counter
+  saved 66 s more for each refused try, so the reboot that restores it is
+  one before the second save lands. When a fix adds a periodic send, count what the send leaves on
   the air for a recorder, not only what it tells the receiver; when a save
   is meant to hold "the newest", ask what makes the value it saves the
   newest; and when a step exists to make something durable, set "done"
@@ -2526,7 +2529,8 @@
   open). The Codex review: `test_a_failed_first_counter_save_is_tried_again`
   and `test_a_failed_second_save_is_tried_again_a_deadline_later` (each
   fails on the code it found; the second also on a retry taken on the next
-  pass, and the first on a second save armed from the call that failed),
+  pass and on one counted from the deadline a late pass missed, and the
+  first on a second save armed from the call that failed),
   and the wiring test fails on a handler or a persist that drops the
   result. Bounding each gap is not
   testing a jitter, a check derived from a constant cannot catch a change to

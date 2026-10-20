@@ -9845,12 +9845,17 @@ void test_a_failed_first_counter_save_is_tried_again() {
  * the 66 s deadline was never retried by the session, and the member's own
  * counter waited for the 5-minute save while the saved one was the older
  * frame's. The handler's false now moves the deadline to that pass, so the
- * save is taken again R later, and then disarms once it lands; and a
- * handler that fails on every call from the deadline on runs exactly once
- * per R (no call on the passes in between, none on the member's frames,
- * whose first save landed), at t0 = 1000 and with the clock wrapping
- * between the first save and the retries. Fails on the old code: no call
- * after the deadline's. */
+ * save is taken again R later, and then disarms once it lands; a pass
+ * that comes late, two deadlines after the member's heartbeat, runs it
+ * once and takes the retry R after itself, not after the deadline it
+ * missed (none on the passes in between); and a handler that fails on
+ * every call from the deadline on runs exactly once per R (no call on the
+ * passes in between, none on the member's frames, whose first save
+ * landed), at t0 = 1000 and with the clock wrapping between the first
+ * save and the retries. Fails on the old code: no call after the
+ * deadline's; the late-pass leg also on a retry deadline moved on by R
+ * from the one it missed (`from_ms += R`), which then runs on three
+ * passes in a row. */
 void test_a_failed_second_save_is_tried_again_a_deadline_later() {
   const uint32_t pass_ms = 1000;
   constexpr uint32_t R = mesh_session::FIRST_COUNTER_RESAVE_MS;
@@ -9917,6 +9922,38 @@ void test_a_failed_second_save_is_tried_again_a_deadline_later() {
     }
     assert(g_first_counters == 3 && saved_counter(q) == own);
 
+    /* A late pass: the main loop ran no pass from the member's heartbeat
+     * until two deadlines had gone by. That pass runs the handler once,
+     * and the write it refused is tried again R after that pass, not R
+     * after the deadline it missed: a retry counted from the missed
+     * deadline would run on each of the passes after it until it caught
+     * up, one NVS write a pass (the review of the Codex fix: a version
+     * that did so passed every leg above, whose passes all land on a
+     * deadline). */
+    g_nvs_counters = SavedCounters{};
+    g_first_counters = 0;
+    g_first_counter_fails = 0;
+    boot();
+    TestMember l;
+    make_member(l, mac);
+    deliver(heartbeat(l), s0);
+    const uint64_t l_first = l.counter;
+    assert(g_first_counters == 1 && saved_counter(l) == l_first);
+    deliver(heartbeat(l), s0 + kBeatGapMin);
+    const uint64_t l_own = l.counter;
+    g_first_counter_fails = SIZE_MAX;
+    idle(s0 + 3 * R);   /* the first pass since that heartbeat */
+    assert(g_first_counters == 2 && saved_counter(l) == l_first);   /* refused */
+    for (uint32_t dt = 3 * R + pass_ms; dt < 4 * R; dt += pass_ms) {
+      idle(s0 + dt);
+      assert(g_first_counters == 2);   /* none on the passes after it */
+    }
+    g_first_counter_fails = 0;
+    idle(s0 + 4 * R);
+    assert(g_first_counters == 3 && saved_counter(l) == l_own);
+    for (uint32_t dt = 4 * R + pass_ms; dt <= 6 * R; dt += pass_ms) idle(s0 + dt);
+    assert(g_first_counters == 3 && saved_counter(l) == l_own);   /* landed: disarmed */
+
     /* Every call from the deadline on refused: once per R, exactly. */
     g_nvs_counters = SavedCounters{};
     g_first_counters = 0;
@@ -9941,9 +9978,10 @@ void test_a_failed_second_save_is_tried_again_a_deadline_later() {
   assert(run(0u - 30000u) == persistent_calls);
   assert(persistent_calls == 10);
   std::printf("PASS test_a_failed_second_save_is_tried_again_a_deadline_later"
-              "  (a refused second save retried %u ms later; every call refused: %zu retries in"
-              " %u ms, one per %u ms, at t0 and across the wrap)\n",
-              (unsigned)R, persistent_calls, (unsigned)(10 * R), (unsigned)R);
+              "  (a refused second save retried %u ms later, and %u ms after a pass that came"
+              " late; every call refused: %zu retries in %u ms, one per %u ms, at t0 and across"
+              " the wrap)\n",
+              (unsigned)R, (unsigned)R, persistent_calls, (unsigned)(10 * R), (unsigned)R);
 }
 
 int main() {

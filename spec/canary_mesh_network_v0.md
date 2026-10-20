@@ -1748,18 +1748,20 @@ one heartbeat interval when the first COMPLETE or the paired heartbeat is
 lost, which a jammer can force; after a boot that restored no counter for
 the member, until the receiver hears its next heartbeat, which also waits
 for the receiver's station to join its router, F320), and the first save
-then holds that older counter; a reboot before the second save, or before
-the next 5-minute save when every frame of the member's own was kept out
-through the 66 s (by a jammer, or after a boot by a station not yet on its
-router's channel), restores it and reopens everything the member signed
-after it. One frame the
+then holds that older counter; a reboot before the second save lands (66 s
+after the first, and 66 s more for each refused write), or before the next
+5-minute save when every frame of the member's own was kept out through the
+66 s (by a jammer, or after a boot by a station not yet on its router's
+channel), restores it and reopens everything the member signed after it. One frame the
 receiver hears from the member itself makes every older one a replay.
 Nothing in the receive path tells a late frame from a fresh one (the signed
 header carries the sender's own clock, which no receiver checks); closing
 it needs a freshness check against that clock or a wire change. Host-tested
 (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its reboot,
-jammer and downtime legs, `test_a_members_first_counter_is_saved_at_once`
-and `test_an_older_first_frame_is_saved_over_once_more`).
+jammer and downtime legs, `test_a_members_first_counter_is_saved_at_once`,
+`test_an_older_first_frame_is_saved_over_once_more`,
+`test_a_failed_first_counter_save_is_tried_again` and
+`test_a_failed_second_save_is_tried_again_a_deadline_later`).
 
 So the relearn is withdrawn. A verified opera frame is **not** proof of
 its sender's radio address, and an implementation MUST NOT bind or re-bind
@@ -2244,8 +2246,9 @@ An implementation conforms to this specification if it:
   not reopen what the member signed before a pairing; a reboot before the
   member's first frame lands still does, and so does an older genuine
   frame of the member's landed first by a radio copying its address, then
-  a reboot inside the 66 s, or before the next 5-minute save when the
-  member's own frames were kept out through them (§8.3). A lost first COMPLETE heals at
+  a reboot before the second save lands (66 s after the first, and 66 s
+  more for each refused write), or before the next 5-minute save when the
+  member's own frames were kept out through the 66 s (§8.3). A lost first COMPLETE heals at
   the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
   station joined its router costs at most one interval after it joins
   (§7.1), and the §8.3 replay window of a missed frame closes at the

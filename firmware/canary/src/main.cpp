@@ -543,7 +543,8 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * again. That frame need not be the member's newest (a radio copying its
  * address can land an older one first), so the session calls this once
  * more FIRST_COUNTER_RESAVE_MS (66 s) later if the counter has moved; a
- * reboot inside those 66 s still restores the older counter. Returns
+ * reboot before that second save lands (66 s after the first, and 66 s
+ * more for each refused write) still restores the older counter. Returns
  * whether the save landed: on false the session tries the first save again
  * on the member's next verified frame, and the second one 66 s later, so
  * one failed NVS write does not wait for the 5-minute save (#1839's

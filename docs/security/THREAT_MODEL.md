@@ -1112,14 +1112,18 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         everything it signed before is fresh again, and nothing need be landed at the pairing (host-tested:
         132 of 132 relayed frames read `CONNECTED`); after a pairing that
         window is the one above, milliseconds unless the first COMPLETE or
-        the paired heartbeat was lost. One inside the 66 s, and, when the
-        member's own frames were kept out through the 66 s, one before the
-        next 5-minute save, restore the older counter, and everything the
-        member signed after it is fresh again (host-tested: a reboot before
-        the second save let 132 relayed frames hold a gone member
-        `CONNECTED` at every read; after it, at none, also when one
-        heartbeat of the member's own was lost and when the millis() clock
-        wrapped between the two saves). Those two take a recording of the
+        the paired heartbeat was lost. One before a save of the member's
+        newer counter lands (the second save, 66 s after the first, and,
+        when NVS refused it, 66 s after each refused try; or a 5-minute
+        save, when one lands first), and, when the member's own frames were
+        kept out through the 66 s, one before the next 5-minute save,
+        restore the older counter, and everything the member signed after
+        it is fresh again (host-tested: a reboot before the second save let
+        132 relayed frames hold a gone member `CONNECTED` at every read;
+        after it, at none, also when one heartbeat of the member's own was
+        lost and when the millis() clock wrapped between the two saves; a
+        refused second save leaves the older counter saved until its retry
+        lands 66 s later). Those two take a recording of the
         member's earlier frames, a radio copying its address at the pairing
         or the boot, and that reboot.
       One frame the receiver hears from the member itself makes every older
@@ -1129,9 +1133,11 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       that clock or a wire change. Host-tested
       (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its
       reboot, jammer and downtime legs,
-      `test_a_members_first_counter_is_saved_at_once` and
-      `test_an_older_first_frame_is_saved_over_once_more`); not run on a
-      device.
+      `test_a_members_first_counter_is_saved_at_once`,
+      `test_an_older_first_frame_is_saved_over_once_more`,
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`); not run
+      on a device.
     - *The replay window of a missed frame, bounded conditionally.* A frame
       of a member's that the receiver missed stays dispatchable from a radio
       copying the member's own address (spec §8.3) only until the receiver

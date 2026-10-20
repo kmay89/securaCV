@@ -9274,6 +9274,26 @@ so — see D2 below.)
   mesh suites pass unchanged; `check_canary_mesh_status.py` passes (68
   mutations refused). The `[env:full]` compile is CI's; host-tested, not
   run on a device; no new bench row.
+  *Review of the Codex fix (2026-10-20):* the threat model's list of the
+  reboots left open still bounded the second at "inside the 66 s", as did
+  the CHANGELOG, spec §14, the roadmap, `LESSONS_LEARNED.md`, main.cpp's
+  comment on the handler and round 3's list above. A refused second
+  save leaves the older counter saved until a save of the member's newer
+  counter lands: the retry, 66 s after each refused try, or a 5-minute
+  save that lands first (the test above shows the saved counter still the
+  first save's through every pass to the retry). All now say a reboot
+  before the second save lands, as spec §8.3 did; docs and a comment only.
+  The threat model's and spec §8.3's host-tested lists for the pairing case
+  now name the two tests. And those tests let through a retry deadline
+  counted from the one it missed (`counter_resave_from_ms +=
+  FIRST_COUNTER_RESAVE_MS` in place of `= now`), since every pass in them
+  landed on a deadline; after a main-loop stall that version runs the
+  handler on several passes in a row, one NVS write each. A late-pass leg
+  of `test_a_failed_second_save_is_tried_again_a_deadline_later` (no pass
+  from the member's heartbeat to two deadlines later, then 1 s passes),
+  at t0 and across the wrap, now fails on it (three calls on three passes)
+  and passes on the code, which was right. Host-tested; not run on a
+  device.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)

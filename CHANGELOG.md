@@ -88,9 +88,10 @@
   counter for a newly paired member. And a radio copying the member's
   address can land one of the member's older genuine frames before the
   member's own first frame, the first save then holds that older counter,
-  and a reboot inside the 66 s restores it, as does one before the next
-  5-minute save when the member's own frames were kept out through the
-  66 s (`THREAT_MODEL.md`).
+  and a reboot before the second save lands (66 s after the first, and
+  66 s more for each write NVS refused) restores it, as does one before
+  the next 5-minute save when the member's own frames were kept out
+  through the 66 s (`THREAT_MODEL.md`).
   An age past 2^31 ms is
   held there, so a member gone longer than the 32-bit clock can count stays
   `OFFLINE` instead of reading `CONNECTED` again after about 49.7 days. A joiner that lost the first
@@ -118,7 +119,8 @@
   before it pinned as still open; two for a save that fails, the first
   retried on the member's next verified frame and the second a full 66 s
   later, never on the next pass, each failing on the code the Codex review
-  found; a flipped signature byte and a
+  found, and the second also on a retry counted from the deadline a late
+  pass missed rather than from that pass; a flipped signature byte and a
   frame under another opera in the liveness case; the documented 30 s ± 3 s
   pinned at compile time; the other 12 mesh suites unchanged;
   `check_canary_mesh_status.py`; `test_canary_mesh_first_counter_wiring.py`
