@@ -416,9 +416,14 @@ static_assert(HEARTBEAT_JITTER_MS > 0, "a fixed deadline lets two members' timer
 
 /* How long after a member's first counter is saved the session saves it once
  * more (set_first_counter_handler, F324): two of the longest heartbeat
- * intervals, so the member's own heartbeats have reached this device by then
- * unless two in a row were lost. Below PEER_STALE_AFTER_MS by the first
- * assert above, and so well inside main.cpp's 5-minute replay save. */
+ * intervals. After the first save the member sends its next heartbeat
+ * within one of them and the one after within two (plus one of its
+ * main-loop passes per interval), so its own frames have reached this
+ * device by then unless two in a row were lost, or one was when both of its
+ * draws came out within a pass of their longest. Below PEER_STALE_AFTER_MS
+ * by the first assert above, and so well inside main.cpp's 5-minute replay
+ * save. test_mesh_session pins 66 s, the number the docs give, and times
+ * one lost heartbeat against it from the two constants above. */
 constexpr uint32_t FIRST_COUNTER_RESAVE_MS = 2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS);
 
 typedef bool (*counter_reserve_fn)(uint64_t high_water);
@@ -737,12 +742,17 @@ bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * (1) saves the counter of the first frame that verifies, which need not be
  * the member's newest. A radio copying the member's address can deliver one
  * of the member's older genuine frames before the member's own first frame
- * lands (from the bind to that frame is milliseconds normally, up to about
- * one heartbeat interval when the first COMPLETE or the paired heartbeat is
- * lost, which a jammer can force), and (1) then saves that older counter.
- * (2) saves the member's own newer one, so what stays open is a reboot
- * before (2), or a jammer that keeps every frame of the member's own from
- * this device until (2), after which the 5-minute save is the next to catch
+ * lands (after a pairing, from the bind to that frame is milliseconds
+ * normally, up to about one heartbeat interval when the first COMPLETE or
+ * the paired heartbeat is lost, which a jammer can force; after a boot that
+ * restored no counter for the member, it is until the member's next
+ * heartbeat is heard, longer while this device's station has not joined its
+ * router, F320), and (1) then saves that older counter. (2) saves the
+ * member's own newer one, so what stays open is a reboot before (1), which
+ * finds nothing newer saved for the member (after a first pairing, no
+ * counter at all), a reboot before (2), or every frame of the member's own
+ * kept from this device until (2) (a jammer, or a station not yet on its
+ * router's channel), after which the 5-minute save is the next to catch
  * up. No frame adds a save. A boot that restored a non-zero counter for the
  * member runs neither, so it costs no write. The handler must not change
  * the trusted table. */

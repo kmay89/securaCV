@@ -216,6 +216,15 @@ std::vector<Beat> assert_only_member_heartbeats(const std::vector<OutFrame>& out
 static_assert(mesh_session::HEARTBEAT_INTERVAL_MS == 30000 &&
                   mesh_session::HEARTBEAT_JITTER_MS == 3000,
               "spec §4.5 and §7.1: a member heartbeat every 30 s +/- 3 s");
+/* The same for the first-counter save's second half (review round 4): the
+ * threat model, spec §8.3 and main.cpp say 66 s, and the test that times it
+ * reads the constant, so it cannot catch a change to it. Its lost-heartbeat
+ * leg times the member's frames from the heartbeat constants instead, which
+ * catches a deadline too short to outlast one lost heartbeat; this pins the
+ * rest, a longer deadline being a longer window for the reboot the docs
+ * name. */
+static_assert(mesh_session::FIRST_COUNTER_RESAVE_MS == 66000,
+              "THREAT_MODEL, spec §8.3: the second first-counter save 66 s after the first");
 
 /* F324's spacing, from the constants, never typed: a heartbeat is due
  * HEARTBEAT_INTERVAL_MS +/- HEARTBEAT_JITTER_MS after the one before and
@@ -9385,24 +9394,32 @@ void test_a_members_first_counter_is_saved_at_once() {
  * it need not be the member's newest: the counter check is a high-water
  * mark, so any older genuine frame of the member's passes too, and a radio
  * copying the member's address can land one before the member's own first
- * frame. The window for that is from the bind to the member's own first
- * frame: milliseconds normally, up to about one heartbeat interval when the
- * first COMPLETE or the paired heartbeat is lost (test_a_lost_complete_is_
- * healed_by_the_next_heartbeat), which a jammer can force. The first save
- * then holds that older counter, and the member's own frames raise it in
- * RAM only. FIRST_COUNTER_RESAVE_MS later the handler runs once more, the
- * counter having moved, and the save holds the member's own: a receiver
- * rebooted after that restores it, and the older frames, relayed after the
- * member is gone, stay replays. Fails without the second save (review
- * round 3's probe: the save held counter 1, and 119 relayed frames held the
- * gone member CONNECTED at 119 of 119 reads).
+ * frame. The window for that runs until the member's own first frame lands:
+ * after a pairing, milliseconds normally, up to about one heartbeat
+ * interval when the first COMPLETE or the paired heartbeat is lost
+ * (test_a_lost_complete_is_healed_by_the_next_heartbeat), which a jammer
+ * can force; after a boot that restored no counter for the member, until
+ * the member's next heartbeat is heard, later still while this device's
+ * station has not joined its router (F320). The first save then holds
+ * that older counter, and the member's own frames raise it in RAM only.
+ * FIRST_COUNTER_RESAVE_MS later the handler runs once more, the counter
+ * having moved, and the save holds the member's own: a receiver rebooted
+ * after that restores it, and the older frames, relayed after the member
+ * is gone, stay replays. Fails without the second save (review round 3's
+ * probe: the save held counter 1, and 119 relayed frames held the gone
+ * member CONNECTED at 119 of 119 reads).
  * Pinned beside it: a reboot BEFORE the second save restores the older
- * counter, and the frames after it hold the gone member CONNECTED (the
- * residual the docs state); the second save is taken exactly
+ * counter, and the frames after it hold the gone member CONNECTED, and a
+ * reboot before the member's first frame lands restores no counter at all
+ * (the residuals the docs state); the second save is taken exactly
  * FIRST_COUNTER_RESAVE_MS after the first, not after the member's later
- * frames; it runs once; it writes nothing when the counter has not moved;
- * it runs while the session is stopped; and a member dropped before it
- * gets none. */
+ * frames; it outlasts one lost heartbeat of the member's own, timed from
+ * the heartbeat constants (review round 4: a deadline of 33 s or 45 s found
+ * nothing moved and kept counter 1), at t0 = 1000 and across the millis()
+ * wrap (a deadline taken as `now < from + R` fired at once there); it runs
+ * once; it writes nothing when the counter has not moved, and disarms then
+ * (a frame after the deadline adds no save); it runs while the session is
+ * stopped; and a member dropped before it gets none. */
 void test_an_older_first_frame_is_saved_over_once_more() {
   const uint32_t pass_ms = 1000;
   const uint32_t step = mesh_transport::PEER_STALE_AFTER_MS - pass_ms;
@@ -9508,6 +9525,71 @@ void test_an_older_first_frame_is_saved_over_once_more() {
   const size_t before_resave = relayed_connected(e, rec_e, t0 + R + mesh_transport::PEER_OFFLINE_AFTER_MS);
   assert(before_resave == rec_e.size() - 1);
 
+  /* The other residual: a reboot before the member's first frame lands.
+   * The paired heartbeat is lost and the receiver is unplugged 20 s after
+   * the bind: nothing was saved for the member, the boot restores no
+   * counter for it, and every frame it signed before the pairing verifies
+   * once more, the member gone. */
+  g_nvs_counters = SavedCounters{};
+  g_first_counters = 0;
+  boot();
+  TestMember b;
+  make_member(b, mac);
+  std::vector<std::vector<uint8_t>> rec_b;
+  for (uint32_t k = 0; k < 3600000 / kBeatGapMin; ++k) rec_b.push_back(heartbeat(b));
+  (void)heartbeat(b);   /* the paired heartbeat, lost */
+  for (uint32_t t = t0; t <= t0 + 20000; t += pass_ms) idle(t);
+  assert(g_first_counters == 0 && g_nvs_counters.n == 0);
+  reboot_restoring(b);
+  const size_t before_first =
+      relayed_connected(b, rec_b, t0 + 20000 + mesh_transport::PEER_OFFLINE_AFTER_MS);
+  assert(before_first == rec_b.size() - 1);
+
+  /* One lost heartbeat of the member's own (review round 4). The older frame
+   * lands first, the member's next heartbeat is lost, and the one after it
+   * lands two of the longest heartbeat intervals less one pass after the
+   * older frame: times from the heartbeat constants, not from R, so a
+   * deadline too short to outlast the one loss fails here (33 s, 45 s and
+   * 64 s found nothing moved and kept counter 1 saved; review round 4's
+   * probe then read the gone member CONNECTED at 119 of 119 reads after a
+   * reboot). The second save holds the member's own counter, and a reboot
+   * right after it leaves every relayed older frame a replay. Run twice: at
+   * t0 = 1000, and with the first save 30 s before the millis() wrap, the
+   * transport and session clocks wrapping between it and the deadline,
+   * where a deadline taken as `now < from + R` wraps to a small number and
+   * fires at once, before the member's frame (it fails here the same way). */
+  constexpr uint32_t kLongestGap =
+      mesh_session::HEARTBEAT_INTERVAL_MS + mesh_session::HEARTBEAT_JITTER_MS;
+  auto one_lost_own_heartbeat = [&](uint32_t s0) {
+    g_nvs_counters = SavedCounters{};
+    g_first_counters = 0;
+    boot();
+    TestMember l;
+    make_member(l, mac);
+    std::vector<std::vector<uint8_t>> rec_l;
+    for (uint32_t k = 0; k < 3600000 / kBeatGapMin; ++k) rec_l.push_back(heartbeat(l));
+    const uint32_t lost_dt = kLongestGap - pass_ms;
+    const uint32_t own_dt  = 2 * kLongestGap - pass_ms;
+    deliver(rec_l[0], s0);
+    assert(g_first_counters == 1 && saved_counter(l) == 1);
+    for (uint32_t dt = pass_ms; dt < lost_dt; dt += pass_ms) idle(s0 + dt);
+    (void)heartbeat(l);   /* sent at s0 + lost_dt, lost */
+    for (uint32_t dt = lost_dt; dt < own_dt; dt += pass_ms) idle(s0 + dt);
+    assert(g_first_counters == 1 && saved_counter(l) == 1);
+    deliver(heartbeat(l), s0 + own_dt);
+    const uint64_t own_l = l.counter;
+    for (uint32_t dt = own_dt + pass_ms; dt <= R; dt += pass_ms) idle(s0 + dt);
+    assert(g_first_counters == 2 && saved_counter(l) == own_l);
+    reboot_restoring(l);
+    const size_t connected =
+        relayed_connected(l, rec_l, s0 + R + mesh_transport::PEER_OFFLINE_AFTER_MS);
+    assert(connected == 0);
+    return rec_l.size() - 1;
+  };
+  const size_t lost_relayed = one_lost_own_heartbeat(t0);
+  const size_t wrap_relayed = one_lost_own_heartbeat(0u - 30000u);
+  assert(lost_relayed == wrap_relayed);
+
   /* Nothing moved: no second write. The member's own first frame, then
    * silence. */
   g_nvs_counters = SavedCounters{};
@@ -9518,6 +9600,12 @@ void test_an_older_first_frame_is_saved_over_once_more() {
   deliver(heartbeat(q), t0);
   assert(g_first_counters == 1 && saved_counter(q) == q.counter);
   for (uint32_t t = t0 + pass_ms; t <= t0 + 2 * R; t += pass_ms) idle(t);
+  assert(g_first_counters == 1);
+  /* And it disarmed at the deadline: the member's next frame, after it,
+   * moves the counter and adds no save (a resave left armed until the
+   * counter moved wrote here). */
+  deliver(heartbeat(q), t0 + 2 * R + pass_ms);
+  for (uint32_t t = t0 + 2 * R + 2 * pass_ms; t <= t0 + 3 * R; t += pass_ms) idle(t);
   assert(g_first_counters == 1);
 
   /* Stopped: the mesh turned off after the member's next frame, and the
@@ -9549,9 +9637,11 @@ void test_an_older_first_frame_is_saved_over_once_more() {
   assert(g_first_counters == 1);
 
   std::printf("PASS test_an_older_first_frame_is_saved_over_once_more"
-              "  (saved over %u ms after the first save: %zu relayed frames, none refreshed it;"
-              " a reboot before it: %zu of %zu)\n",
-              (unsigned)R, rec.size() - 1, before_resave, rec_e.size() - 1);
+              "  (saved over %u ms after the first save: %zu relayed frames, none refreshed it,"
+              " nor %zu after one lost own heartbeat, at t0 and across the wrap;"
+              " a reboot before it: %zu of %zu; before the first frame: %zu of %zu)\n",
+              (unsigned)R, rec.size() - 1, lost_relayed, before_resave, rec_e.size() - 1,
+              before_first, rec_b.size() - 1);
 }
 
 int main() {

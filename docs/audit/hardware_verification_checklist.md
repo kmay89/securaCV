@@ -1212,8 +1212,11 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     this row's). Last, on flash-encrypted boards: erase both boards' NVS
     (so neither holds the other's key or a replay tombstone), power both
     up, pair them within the first 4 minutes of the rebooting board's
-    uptime, and reboot it within a few seconds of the pairing confirmation;
-    its boot log reads `[OK] Restored 1/1 replay counters from NVS` (the
+    uptime, and reboot it within a few seconds of the pairing confirmation,
+    once its `GET /api/mesh/peers` reads the other CONNECTED (the save
+    follows the member's first frame there; a reboot before it restores no
+    counter, the threat model's residual); its boot log reads
+    `[OK] Restored 1/1 replay counters from NVS` (the
     first-counter save). The periodic replay save runs every 5 minutes of
     uptime (`main.cpp`'s timer starts at boot, not at the pairing), so a
     reboot minutes after a pairing can follow a periodic save and print the

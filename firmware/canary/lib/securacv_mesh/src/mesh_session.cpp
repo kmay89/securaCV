@@ -1570,9 +1570,10 @@ static mesh_transport::PeerState verified_state(const TrustedPeer& p) {
  * A member's first verified frame since its registration is saved at once,
  * but it may be one of the member's older genuine frames that a radio
  * copying its address landed before the member's own. FIRST_COUNTER_RESAVE_MS
- * later the member's own heartbeats have arrived unless two in a row were
- * lost, so the handler runs once more then if the counter has moved, and the
- * save holds the newer counter. Every pass, stopped or not: the age is taken
+ * later the member's own heartbeats have arrived unless they were lost (its
+ * definition in mesh_session.h says how many it takes), so the handler runs
+ * once more then if the counter has moved, and the save holds the newer
+ * counter; it disarms either way. Every pass, stopped or not: the age is taken
  * from the arming instant, so a pass at or after the deadline fires it
  * however long ago that was, up to 2^32 ms, which the main loop's pass rate
  * never approaches. One write at most per member per registration; nothing

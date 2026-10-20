@@ -71,17 +71,22 @@
   what it blocked holds it for as long as its stock lasts
   (`THREAT_MODEL.md`). The counter of a member's first frame that verifies
   is now persisted as soon as it lands, and once more 66 s later if it has
-  moved, so a receiver rebooted within 5 minutes of a pairing restores a
-  counter for the member, and the frames the member signed before the
-  pairing stay replays (before, it restored none, and 240 recorded frames
-  held a gone member `CONNECTED` 356 minutes, host-probed); a save taken
-  before the member was heard wrote it at 0, which no longer counts as a
-  saved counter. That narrows the pairing case rather than closing it: a
-  radio copying the member's address can land one of the member's older
-  genuine frames before the member's own first frame (milliseconds after
-  the bind normally, up to about 33 s when the first `PAIR_COMPLETE` or the
-  paired heartbeat is lost), the first save then holds that older counter,
-  and a reboot inside the 66 s restores it. An age past 2^31 ms is
+  moved, so a receiver rebooted within 5 minutes of a pairing, once the
+  member's first frame has landed there, restores a counter for the member,
+  and the frames the member signed before the pairing stay replays (before,
+  it restored none, and 240 recorded frames held a gone member `CONNECTED`
+  356 minutes, host-probed); a save taken before the member was heard wrote
+  it at 0, which no longer counts as a saved counter. That narrows the
+  pairing case rather than closing it. A reboot before the member's first
+  frame lands (milliseconds after the bind normally, up to about 33 s when
+  the first `PAIR_COMPLETE` or the paired heartbeat is lost) restores no
+  counter for a newly paired member. And a radio copying the member's
+  address can land one of the member's older genuine frames before the
+  member's own first frame, the first save then holds that older counter,
+  and a reboot inside the 66 s restores it, as does one before the next
+  5-minute save when the member's own frames were kept out through the
+  66 s (`THREAT_MODEL.md`).
+  An age past 2^31 ms is
   held there, so a member gone longer than the 32-bit clock can count stays
   `OFFLINE` instead of reading `CONNECTED` again after about 49.7 days. A joiner that lost the first
   `PAIR_COMPLETE` now hears the initiator at the initiator's next heartbeat,

@@ -2421,8 +2421,13 @@
   the member's newest (the counter check is a high-water mark, so an older
   genuine frame a radio copying the member's address lands first passes,
   and the save held its old counter), so the save is now taken once more
-  66 s later if the counter has moved, and a reboot inside those 66 s is
-  the residual the docs state. And a save taken while the member was
+  66 s later if the counter has moved. The residuals the docs state are a
+  reboot before the member's first frame lands (nothing saved for it yet),
+  a reboot inside those 66 s, and, when the member's own frames were kept
+  out through them (a jammer, or after a boot a station not yet on its
+  router's channel, F320), a reboot before the next 5-minute save; review
+  round 4 found the summaries naming only the middle one. And a save
+  taken while the member was
   registered and unheard wrote it at 0, which the boot restore counted as a
   saved counter, so the member's first frame after that boot saved nothing;
   a saved 0 no longer counts (no frame carries 0). When a fix adds a
@@ -2456,7 +2461,14 @@
   the first-counter case's saved-0 leg (fails on a restore that marks a
   saved 0 saved) and `test_an_older_first_frame_is_saved_over_once_more`
   (an older frame landed first: fails without the second save, and pins a
-  reboot before it as still open). Bounding each gap is not
+  reboot before it as still open). Review round 4: the 66 s pinned at
+  compile time beside the cadence, and that case's legs for one lost
+  heartbeat of the member's own, timed from the heartbeat constants rather
+  than from the deadline (a 33 s or 45 s deadline passed every suite), the
+  same across the millis() wrap (a `now < from + R` compare passed), a
+  frame after a deadline that found nothing moved (a save left armed until
+  the counter moved passed), and a reboot before the first frame (pinned
+  open). Bounding each gap is not
   testing a jitter, a check derived from a constant cannot catch a change to
   it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
   timer makes false were rewritten to admit only member heartbeats checked

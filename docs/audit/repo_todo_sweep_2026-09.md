@@ -8976,9 +8976,17 @@ so — see D2 below.)
   pass, stopped or not), so the save holds the member's own counter unless
   every frame of the member's own was kept out through those 66 s; at most
   two saves per registration, and no frame adds one. Still open, and stated
-  so in the threat model and spec §8.3: a reboot inside the 66 s, or, when
-  a jammer kept the member's own frames out through them, before the next
-  5-minute save. Persisting on every advancing frame in a window after the
+  so in the threat model and spec §8.3: a reboot before the member's first
+  frame lands, which finds nothing newer saved for it (after a first
+  pairing, no counter at all); a reboot inside the 66 s; and, when the
+  member's own frames were kept out through them (a jammer, or after a boot
+  that restored no counter for the member, a station not yet joined to its
+  router, F320), a reboot before the next 5-minute save. *Review round 4
+  (2026-10-20)* found the threat model's sentence introducing this list
+  still calling the pairing case closed, and the summaries (CHANGELOG,
+  roadmap, spec §14, `LESSONS_LEARNED.md`) naming only the reboot inside
+  the 66 s; all now name the three. Persisting on every advancing frame
+  in a window after the
   registration was rejected: a recorder replaying its stock in counter
   order would drive one NVS write per frame. And a save taken while a
   member was registered and unheard (another member's first counter, a
@@ -9053,7 +9061,16 @@ so — see D2 below.)
   `test_an_older_first_frame_is_saved_over_once_more` (fails without the
   second save; pins a reboot before it as still open, the second save's
   exact deadline, once only, nothing when the counter has not moved, a
-  stopped session, and a member dropped first). The other 12 mesh suites are
+  stopped session, and a member dropped first). Review round 4
+  (2026-10-20): `FIRST_COUNTER_RESAVE_MS` pinned at 66 s at compile time,
+  and legs of that case for one lost heartbeat of the member's own, timed
+  from the heartbeat constants (a 33 s, 45 s or 64 s deadline passed every
+  suite and fails there; 120 s and 299 s fail the pin), the same with the
+  clock wrapping between the two saves (a `now < from + R` compare passed),
+  a frame after a deadline that found nothing moved (a save left armed
+  until the counter moved passed), and a reboot before the member's first
+  frame (pinned open: 132 of 132 relayed frames `CONNECTED`). The other
+  12 mesh suites are
   unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
   refused). The `[env:full]` compile is CI's; host-tested, not run on a
   device. The on-air spacing and the STALE/OFFLINE transitions are a U1

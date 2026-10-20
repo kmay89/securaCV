@@ -1030,7 +1030,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
       about 90 s per frame, and then it reads `STALE` and `OFFLINE`. There
       is no fixed bound, after a reboot or otherwise: the hold is the size
       of the recorder's stock, and a radio near the member comes to hold
-      one three ways (a fourth, after a pairing, is closed):
+      one three ways, and a fourth, after a pairing, is narrowed but not
+      closed (the last below):
       - *Frames the member sent while the receiver was not listening.* A
         member heartbeats each bound member's address every interval
         whether or not that member is there (spec §7.1), so every heartbeat
@@ -1080,21 +1081,33 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         check is a high-water mark, so any older genuine frame of the
         member's passes too, and a radio copying the member's address can
         land one while the receiver holds the member registered and unheard.
-        That window runs from the bind to the member's own first frame:
-        milliseconds normally, up to about one heartbeat interval (33 s)
-        when the first COMPLETE or the paired heartbeat is lost, which a
-        jammer can force. The first save then holds the older counter, and
-        the member's own frames raise it in RAM only. The second save holds
-        the member's own counter unless every frame of the member's own was
-        kept from the receiver through those 66 s. So what stays open is a
-        reboot inside the 66 s, or, when a jammer kept the member's own
-        frames out through them, a reboot before the next 5-minute save:
-        either restores the older counter, and everything the member signed
-        after it is fresh again (host-tested: a reboot before the second
-        save let 132 relayed frames hold a gone member `CONNECTED` at every
-        read; after it, at none). It takes a recording of the member's
-        earlier frames, a radio copying its address at the pairing, and
-        that reboot.
+        That window runs until the member's own first frame lands: after a
+        pairing, milliseconds normally, up to about one heartbeat interval
+        (33 s) when the first COMPLETE or the paired heartbeat is lost,
+        which a jammer can force; after a boot that restored no counter for
+        the member, until the receiver hears the member's next heartbeat,
+        which also waits for the receiver's station to join its router (the
+        softAP's channel 1 until then, F320). The first save then holds the
+        older counter, and the member's own frames raise it in RAM only. The
+        second save holds the member's own counter unless every frame of the
+        member's own was kept from the receiver through those 66 s: lost,
+        jammed, or, after a boot, unheard by a station that had not yet
+        joined its router. So what stays open is three reboots. One before the
+        member's first frame lands finds nothing newer saved for it (after a
+        first pairing, no counter at all), so everything it signed before is
+        fresh again, and nothing need be landed at the pairing (host-tested:
+        132 of 132 relayed frames read `CONNECTED`); after a pairing that
+        window is the one above, milliseconds unless the first COMPLETE or
+        the paired heartbeat was lost. One inside the 66 s, and, when the
+        member's own frames were kept out through the 66 s, one before the
+        next 5-minute save, restore the older counter, and everything the
+        member signed after it is fresh again (host-tested: a reboot before
+        the second save let 132 relayed frames hold a gone member
+        `CONNECTED` at every read; after it, at none, also when one
+        heartbeat of the member's own was lost and when the millis() clock
+        wrapped between the two saves). Those two take a recording of the
+        member's earlier frames, a radio copying its address at the pairing
+        or the boot, and that reboot.
       One frame the receiver hears from the member itself makes every older
       one a replay. Nothing on the receive side tells a late frame from a
       fresh one: the signed header carries the sender's own clock, which no

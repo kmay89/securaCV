@@ -1732,16 +1732,22 @@ first frame that verifies as soon as it lands (the session's first-counter
 handler; also after a boot that restored no counter for the member, a saved
 0 included), and once more `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has
 moved. When that first frame is the member's own, as it normally is, a
-reboot at any point after it does not reopen those. This narrows the case
-rather than closing it: the first frame that verifies need not be the
-member's newest. A radio copying the member's address can land one of the
-member's older genuine frames before the member's own first frame (the
-window is milliseconds after the bind normally, up to about one heartbeat
-interval when the first COMPLETE or the paired heartbeat is lost, which a
-jammer can force), and the first save then holds that older counter; a
-reboot before the second save, or before the next 5-minute save when a
-jammer kept every frame of the member's own out through the 66 s, restores
-it and reopens everything the member signed after it. One frame the
+reboot at any point after it does not reopen those; a reboot before it,
+which finds nothing newer saved for the member (after a first pairing, no
+counter at all), does. This narrows the case rather than closing it: the
+first frame that verifies need not be the member's newest. A radio copying
+the member's address can land one of the member's older genuine frames
+before the member's own first frame (the window lasts until that frame
+lands: after a pairing, milliseconds after the bind normally, up to about
+one heartbeat interval when the first COMPLETE or the paired heartbeat is
+lost, which a jammer can force; after a boot that restored no counter for
+the member, until the receiver hears its next heartbeat, which also waits
+for the receiver's station to join its router, F320), and the first save
+then holds that older counter; a reboot before the second save, or before
+the next 5-minute save when every frame of the member's own was kept out
+through the 66 s (by a jammer, or after a boot by a station not yet on its
+router's channel), restores it and reopens everything the member signed
+after it. One frame the
 receiver hears from the member itself makes every older one a replay.
 Nothing in the receive path tells a late frame from a fresh one (the signed
 header carries the sender's own clock, which no receiver checks); closing
@@ -2228,9 +2234,11 @@ An implementation conforms to this specification if it:
   times as long as it lasted); and the counter of a member's first frame
   that verifies is persisted as soon as it lands and once more 66 s later
   if it has moved, so a reboot once the member's own counter is saved does
-  not reopen what the member signed before a pairing; an older genuine frame of the member's landed
-  first by a radio copying its address, then a reboot inside the 66 s,
-  still does (§8.3). A lost first COMPLETE heals at
+  not reopen what the member signed before a pairing; a reboot before the
+  member's first frame lands still does, and so does an older genuine
+  frame of the member's landed first by a radio copying its address, then
+  a reboot inside the 66 s, or before the next 5-minute save when the
+  member's own frames were kept out through them (§8.3). A lost first COMPLETE heals at
   the initiator's next heartbeat (§5.2), a boot heartbeat sent before the
   station joined its router costs at most one interval after it joins
   (§7.1), and the §8.3 replay window of a missed frame closes at the
