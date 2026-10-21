@@ -57,6 +57,12 @@ inline constexpr size_t HEX_LEN = 2 * RAW_LEN;
 /// and one retry, and is short enough that a claim read by a phone that
 /// then walked away dies on its own.
 inline constexpr uint32_t TTL_MS = 180000;
+/// How far AHEAD of the taker's clock a minted-at word may read and still be
+/// compared like a fresh claim (spend_if_match()): the gap between the
+/// httpd task's millis() read and its load of the word, where a mint on the
+/// loop task can land. A few milliseconds in practice; a second is far past
+/// any preemption, and far short of an age a claim reaches unswept.
+inline constexpr uint32_t AHEAD_SKEW_MS = 1000;
 
 struct Ticket {
   char hex[HEX_LEN + 1];
@@ -142,14 +148,17 @@ inline bool hex_equal(const char* expected, const char* presented) {
 /// and only on a match:
 ///   * `seen` 0: nothing outstanding, false;
 ///   * `seen` past its TTL: the claim is burned (a compare-and-swap of `seen`
-///     to 0, the hex wiped only when that swap won), false. A `seen` AHEAD
-///     of `now_ms` is not past it: take() is handed a clock its caller read
-///     before the load, and a mint on the loop task can land in between
-///     (the sketch's take(..., millis()) on the httpd task). Unsigned, that
-///     word reads 2^32 ms old and a wrong ?claim= would burn the phone's
-///     fresh claim. So a word up to 2^31 ms ahead is compared like a fresh
-///     one; the sweep keeps every word younger than its TTL plus one pass,
-///     so none is old enough to read as ahead;
+///     to 0, the hex wiped only when that swap won), false. A `seen` a
+///     moment AHEAD of `now_ms` (less than AHEAD_SKEW_MS) is not past it:
+///     take() is handed a clock its caller read before the load, and a mint
+///     on the loop task can land in between (the sketch's take(...,
+///     millis()) on the httpd task). Unsigned, that word reads 2^32 ms old
+///     and a wrong ?claim= would burn the phone's fresh claim, so it is
+///     compared like a fresh one. Every other age, from the TTL up to
+///     2^32 - AHEAD_SKEW_MS, is past it, so take() alone refuses a claim
+///     left unswept for any of that span (an earlier rule read every word
+///     up to 2^31 ms "ahead" and served one unswept for 24.8 days); only
+///     the wrap itself needs the owner's sweep;
 ///   * `presented` does not match (hex_equal(): constant time, exactly
 ///     HEX_LEN characters): false, and NOTHING changes;
 ///   * a match: one compare-and-swap of `seen` to 0. It loses when the word
@@ -163,7 +172,8 @@ inline bool spend_if_match(Ticket& t, uint32_t seen, const char* presented,
                            uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
   if (seen == 0) return false;
   const uint32_t age = now_ms - seen;
-  if ((int32_t)age >= 0 && age >= ttl_ms) {
+  const uint32_t ahead = seen - now_ms;
+  if (age >= ttl_ms && ahead >= AHEAD_SKEW_MS) {
     clear_if_unchanged(t, seen);   // burned; a re-mint since the load is left
     return false;
   }

@@ -38,10 +38,15 @@
 //     asks first and signs in on the next tap; the Settings save
 //     says the same instead of "HTTP 409"; neither sends the owner to the
 //     token box (on a cookie page it still takes the cookie's word), and
-//     the 10 s hold is said to clear what it clears; the
+//     the 10 s hold is said to clear what it clears; the dashboard's
+//     timeout line sends the owner to click before the press (its old
+//     "Press BOOT and click above" was the press-first order the arbiter
+//     cannot protect); the
 //     companion's Save asks first and keeps asking every 2 s for 30 s while
 //     the owner presses BOOT (403, 403, 200 saves; a 409 says another device
-//     asked and gives Save back; fifteen 403s say no press was seen), and
+//     asked and gives Save back; any other refusal ends the save with its
+//     status; sixteen 403s, the last at 30 s, say no press was seen), its
+//     Home Assistant step's no-session line says Save before BOOT, and
 //     its banner is on screen whenever it holds a line.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
@@ -413,6 +418,22 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.match(win.els.authStatus.textContent, /Didn't see a tap/);
   });
 
+  it("the timeout copy names the click before BOOT (sweep F342's second review)", async () => {
+    // The tap goes only to an address that asked from 10 s before it onward,
+    // so the retry must ask first. The old copy ("Press BOOT and click above
+    // to try again") led the owner to press while no page of theirs was
+    // asking, and a host watching /api/logs for the tap was then the first
+    // and only asker.
+    const { win, asked } = await dashboardTap([GATE_403]);
+    assert.equal(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 30, 'the 60 s budget');
+    const text = win.els.authStatus.textContent;
+    assert.equal(text, "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT.");
+    assert.equal(win.els.authStatus.className, 'auth-status error');
+    assert.ok(text.indexOf('Click') >= 0 && text.indexOf('Click') < text.indexOf('short-tap BOOT'),
+              'the click comes before the press');
+    assert.doesNotMatch(read(UI), /Press BOOT and click/);
+  });
+
   it('an answer that is not a receipt offers nothing', async () => {
     for (const body of ['{"ok":true}', '{"token":"cv_x"}']) {
       const { api, win } = await dashboardTap([{ status: 200, body }]);
@@ -746,10 +767,13 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
     assert.equal(win.els['wiz-ha-block'].style.display, 'none');
   });
-  it('no press in 30 s (fifteen 403s) saves nothing and says so', async () => {
+  it('no press in 30 s (sixteen 403s, the last at 30 s) saves nothing and says so', async () => {
+    // The asks go out at 0, 2, ..., 30 s, so a press up to 30 s after Save
+    // is asked for (fifteen asks ended at 28 s, and a press between 28 and
+    // 30 s heard "Didn't see a press" with the gate open).
     const { win, asked } = await wizardSave(GATE_403);
-    assert.equal(asked.length, 15);
-    assert.equal(win.timers.filter((ms) => ms === 2000).length, 14);
+    assert.equal(asked.length, 16);
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 15, 'the last ask goes out 30 s after the first');
     assert.equal(win.saved.length, 0);
     assert.equal(win.els['wiz-recovery-err'].textContent,
                  "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
@@ -762,6 +786,24 @@ describe("the wizard's close-out saves through the same builder", () => {
     const steps = [...block.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
     assert.deepEqual(steps, ['Tap <strong>Save my recovery kit</strong> below.',
                              'Within 30 seconds, short-press the <strong>BOOT</strong> button on your Canary.']);
+  });
+  it('an answer that is not 200, 403 or 409 (a 503 after the tap was spent) ends the save with its status', async () => {
+    // The receipt can refuse after it has spent the tap (503 no_address, 500
+    // out_of_memory); the page must say so, not keep asking for a press the
+    // device already took and end on "Didn't see a press".
+    const { win, asked } = await wizardSave([GATE_403, { status: 503, body: '{"error":"no_address"}' }, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 2, 'the asking stops at the 503');
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 'Could not fetch the recovery kit: HTTP 503. Try again, or save it later from the dashboard.');
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'on screen');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+  });
+  it("the Home Assistant step's no-session line sends the owner to Save before BOOT", () => {
+    const src = read(PWA);
+    assert.match(src, /This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT\./);
+    assert.doesNotMatch(src, /press BOOT, and save the kit/);
   });
   it('a 200 that is not a receipt saves nothing and says so', async () => {
     const { win } = await wizardSave({ status: 200, body: '{"ok":true}' });

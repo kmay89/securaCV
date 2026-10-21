@@ -63,7 +63,13 @@
 //     the BLE OTA break-glass take leaves nothing to take, and a take or a
 //     re-tap that lands between the tap step's judgment and its take
 //     refuses the request (403, nothing served; the re-tap left for the next
-//     ask); contention does
+//     ask), and a re-tap stored while a request that found no fresh stamp
+//     sits between its peek and its burn is kept and serves the next ask
+//     (the burn is take_exact() of the peeked stamp, never a close());
+//     every 403 says to start asking first, then short-tap BOOT, in its hint
+//     and its button, and never "short tap, then poll" (sweep F342's second
+//     review: that order hands the tap to a host that watches /api/logs);
+//     contention does
 //     not carry into a clean next tap; a socket that cannot say is refused
 //     with the tap left for the next asker; a held bearer still gets its
 //     429 under contention; the 409 clears no backoff; an expired tap is
@@ -76,7 +82,9 @@
 //     sketch without the sweep runs none), clear both past their TTLs, and
 //     2^32 ms + 1 s after them a bare request and the old ?claim= are both
 //     the 403; loop() holds both sweeps at its top level, after
-//     handle_serial_commands();
+//     handle_serial_commands(), with no return before them; the BOOT short
+//     press opens the gate through the header's open(), and no line touches
+//     the gate's word directly;
 //   - the receipt's bearer is under every admin route's lockout (F289's
 //     follow-up; before, its compare recorded nothing, so the receipt was
 //     the one route where guessing the token cost nothing): a wrong or
@@ -161,6 +169,8 @@
 
 #include "arduino_globals.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -524,10 +534,32 @@ void check_tap_contended(const httpd_req_t& r) {
   CHECK(!has_header(r, "Set-Cookie"));
 }
 
+// The answer when nothing admitted the request. Its words give the order the
+// arbiter protects (sweep F342's second review): the client asks first and
+// the press comes second, because a tap no client of the owner's is already
+// asking for goes to the first asker, and a host that watches /api/logs for
+// "Provisioning gate opened" is that asker. It used to say "short tap, then
+// poll within 30 seconds", which leads a curl user or a client into the
+// residual. The fields stay: error, hint, button, gate_ttl_seconds (the
+// dashboard and the Vision SPA read gate_ttl_seconds).
 void check_gate_refusal(const httpd_req_t& r) {
   CHECK(r.status == "403 Forbidden");
   CHECK(r.resp.find("\"error\":\"physical_confirmation_required\"") != std::string::npos);
   CHECK(r.resp.find("\"gate_ttl_seconds\":30") != std::string::npos);
+  json_strict::Value v;
+  CHECK_MSG(json_strict::parse(r.resp, &v), "the 403's body does not parse: " + r.resp);
+  const json_strict::Value* hint = v.get("hint");
+  const json_strict::Value* button = v.get("button");
+  const json_strict::Value* ttl = v.get("gate_ttl_seconds");
+  CHECK(ttl && ttl->kind == json_strict::Value::Number);
+  CHECK_MSG(hint && hint->kind == json_strict::Value::String &&
+                hint->text.find("Start asking for the receipt first, then short-tap BOOT") != std::string::npos,
+            "the 403's hint does not put the ask before the tap: " + r.resp);
+  CHECK_MSG(button && button->kind == json_strict::Value::String &&
+                button->text.find("ask first, then a short tap") != std::string::npos,
+            "the 403's button does not put the ask before the tap: " + r.resp);
+  CHECK_MSG(r.resp.find("short tap, then poll") == std::string::npos,
+            "the 403 says to tap first and poll after: " + r.resp);
   CHECK(!carries_secret(r));
   CHECK(!has_header(r, "Set-Cookie"));
 }
@@ -1351,6 +1383,51 @@ void test_a_take_lost_after_the_judgment_is_refused() {
   CHECK(receipt(a3) == 0);
   check_gate_refusal(a3.r);
   CHECK(g_served.size() == 1);
+}
+
+// The NO_TAP step's burn of an expired stamp is a compare-and-swap of the
+// stamp it peeked (take_exact()), never a close() of whatever the gate holds
+// by then: the loop task can sweep the old stamp and the BOOT handler store
+// the owner's re-tap while this request sits between its peek() and its
+// burn. With the gate closed there is nothing to burn, so the request
+// touches nothing. Either way the re-tap stays open and serves the next ask
+// once. A tap step that burned with close() (or closed unconditionally)
+// cleared the owner's fresh press on a stranger's request, and the next ask
+// heard 403.
+void test_a_retap_during_a_no_tap_ask_is_kept() {
+  for (int expired = 0; expired < 2; ++expired) {
+    const std::string why = expired ? " (an expired stamp peeked)" : " (the gate closed at the peek)";
+    reset_device();
+    const unsigned k = tap_step_clock_call();
+    if (expired) {
+      open_tap();
+      stub_grant::now_ms += PROVISIONING_GATE_TTL_MS + 5;
+    }
+    const uint32_t old_stamp = gate_stamp();
+    CHECK(expired ? old_stamp != 0 : old_stamp == 0);
+    const uint32_t retap = stub_grant::now_ms + 2;
+    const uint32_t at = stub_grant::now_ms + 3;
+    bool ran = false;
+    arm_millis_hook([&](unsigned i) -> uint32_t {
+      if (i != k) return stub_grant::now_ms;
+      ran = true;
+      canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+      return at;
+    });
+    Req a;
+    CHECK_MSG(receipt(a) == 0, "an ask that peeked no fresh stamp was served" + why);
+    disarm_millis_hook();
+    check_gate_refusal(a.r);
+    CHECK(ran);
+    CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read" + why);
+    CHECK_MSG(gate_stamp() == retap, "the re-tap was cleared by a NO_TAP ask" + why);
+    CHECK(g_served.empty());
+    stub_grant::now_ms += 100;
+    Req a2;
+    CHECK_MSG(receipt(a2) == 1, "the re-tap did not serve the next ask" + why);
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(gate_stamp() == 0);
+  }
 }
 
 // (b) A sole asker is served at once: no settle delay, the cookie with it.
@@ -2530,6 +2607,16 @@ std::string enclosing(const std::vector<std::string>& lines, size_t at) {
 }
 
 bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
+// `word` in `s` as a whole identifier: no identifier character on either side
+// ("returned" and "return_ms" are not `return`).
+bool has_word(const std::string& s, const char* word) {
+  const auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+  const size_t n = std::strlen(word);
+  for (size_t at = s.find(word); at != std::string::npos; at = s.find(word, at + 1)) {
+    if ((at == 0 || !ident(s[at - 1])) && (at + n >= s.size() || !ident(s[at + n]))) return true;
+  }
+  return false;
+}
 
 // ── loop()'s sweep (sweep F347) ──────────────────────────────────────────────
 // The two statements loop() runs every pass, spelled once: the harness runs
@@ -2632,6 +2719,12 @@ void test_sketch_text() {
   CHECK(has(take_for, "pg::take_exact(g_provisioning_gate, seen)"));
   CHECK_MSG(!has(take_for, "::take(") && !has(take_for, "provisioning_gate_take()"),
             "provisioning_gate_take_for() takes a stamp it did not judge");
+  // The NO_TAP step burns the expired stamp it peeked with a compare-and-
+  // swap, never a close() that would clear a re-tap stored since the peek
+  // (test_a_retap_during_a_no_tap_ask_is_kept drives the race).
+  CHECK_MSG(has_line(take_for, "  if (seen != 0) pg::take_exact(g_provisioning_gate, seen);"),
+            "the NO_TAP step does not burn exactly the stamp it peeked");
+  CHECK_MSG(!has(take_for, "close("), "provisioning_gate_take_for() closes the gate outright");
   const std::string ble = function_text(lines, "static bool ble_ota_break_glass_take() {");
   CHECK(!ble.empty());
   CHECK(has(ble, "provisioning_gate_take()"));
@@ -2642,6 +2735,14 @@ void test_sketch_text() {
     if (has(l, "static canary::net::provisioning_gate::State g_provisioning_gate")) ++gate_decls;
   }
   CHECK(gate_decls == 1);
+  // Every touch of the gate goes through the header (open() stores 0 as 1
+  // with a release store; peek(), take(), take_exact() and expire() are its
+  // atomics): no line reaches into the State's word.
+  std::string raw_gate_lines;
+  for (const auto& l : lines) {
+    if (has(l, "g_provisioning_gate.") || has(l, "&g_provisioning_gate")) raw_gate_lines += "\n" + rtrim(l);
+  }
+  CHECK_MSG(raw_gate_lines.empty(), "the sketch touches the gate's word directly:" + raw_gate_lines);
 
   // loop() sweeps the tap and the claim every pass (sweep F347): both
   // statements at its top level, after handle_serial_commands();.
@@ -2655,6 +2756,30 @@ void test_sketch_text() {
   CHECK_MSG(claim_at != std::string::npos, "loop() does not sweep the setup-door claim: " + kLoopSweepClaim);
   CHECK(serial_at != std::string::npos && gate_at != std::string::npos && serial_at < gate_at);
   CHECK(serial_at != std::string::npos && claim_at != std::string::npos && serial_at < claim_at);
+  // Nothing returns out of loop() before the sweeps run: every pass reaches
+  // them (the flagship's row holds its sweep as handle_boot_button()'s first
+  // statement; the WAP's sweeps sit mid-loop(), so the text before them is
+  // what must not return).
+  if (gate_at != std::string::npos && claim_at != std::string::npos) {
+    const std::string before = loop_fn.substr(0, std::min(gate_at, claim_at));
+    CHECK_MSG(!has_word(before, "return"), "loop() can return before it sweeps the tap and the claim");
+  }
+  // The BOOT short press opens the gate through the header's open(), the
+  // branch's first statement.
+  {
+    const std::string branch = "} else if (duration >= BOOT_SHORT_PRESS_MS) {\n";
+    const size_t at = loop_fn.find(branch);
+    CHECK_MSG(at != std::string::npos, "loop()'s BOOT short-press branch was not found");
+    if (at != std::string::npos) {
+      const std::vector<std::string> rest = split_lines(loop_fn.substr(at + branch.size()));
+      std::string first;
+      for (const auto& l : rest) {
+        if (!rtrim(l).empty()) { first = rtrim(l); break; }
+      }
+      CHECK_MSG(first == "      canary::net::provisioning_gate::open(g_provisioning_gate, millis());",
+                "the BOOT short press does not open the gate through the header: " + first);
+    }
+  }
   size_t gate_sweeps = 0, claim_sweeps = 0;
   for (const auto& l : lines) {
     if (has(l, "provisioning_gate::expire(")) ++gate_sweeps;
@@ -2733,6 +2858,7 @@ int main() {
   test_the_owner_retries_after_the_other_device_stops();
   test_a_served_retap_ends_the_contention();
   test_a_take_lost_after_the_judgment_is_refused();
+  test_a_retap_during_a_no_tap_ask_is_kept();
   test_unreadable_peer_is_refused_and_leaves_the_tap();
   test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
   test_an_expired_tap_is_burned_by_the_request_that_finds_it();

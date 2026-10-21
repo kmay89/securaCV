@@ -2911,6 +2911,18 @@
   `claim_ticket::take()` is handed `millis()` before it loads the word, so a
   mint in between read 2^32 ms old and a wrong value burned it; a word
   ahead of the clock is now compared like a fresh one.
+- **Found in the second review, same PR:** when a protection rests on an
+  order (the owner's client asks first, the press comes second), every line
+  that tells someone what to do is part of the protection. The dashboard's
+  timeout said "Press BOOT and click above to try again" and the WAP's
+  `403` said "short tap, then poll": followed as written, the press landed
+  with no client of the owner's asking, and a host reading the tap off
+  `/api/logs` was its only asker. Both now give the click first, pinned by
+  the receipt suite and `recovery_kit.test.js`. And an exception to a rule
+  should be as wide as the race it covers: "ahead of the clock" was first
+  every word up to 2^31 ms ahead, which served a claim left unswept for
+  24.8 days; it is now under a one-second skew, and every other age past
+  the TTL is burned.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

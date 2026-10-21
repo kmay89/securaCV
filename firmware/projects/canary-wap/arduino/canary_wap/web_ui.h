@@ -3063,7 +3063,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
       }
-      s.textContent = "Didn't see a tap. Press BOOT and click above to try again.";
+      // The retry asks first (sweep F342's second review): the tap goes only
+      // to an address that asked from 10 s before it onward, so a press made
+      // before the click is one no page of the owner's is asking for, and a
+      // host that watches /api/logs for the tap would be its only asker.
+      s.textContent = "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT.";
       s.className = 'auth-status error';
     }
 

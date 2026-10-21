@@ -1864,7 +1864,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
     say('Now short-press BOOT on your Canary.', true);
     save.disabled = true;
     const POLL_INTERVAL_MS = 2000;
-    const POLL_TICKS = 15;   // 15 asks, 2 s apart: 30 s for the press
+    const POLL_TICKS = 16;   // 16 asks, 2 s apart: at 0, 2, ..., 30 s, so a press up to 30 s after Save is asked for
     try {
       for (let i = 0; i < POLL_TICKS; i++) {
         if (i > 0) await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
@@ -1920,7 +1920,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         body: JSON.stringify(body),
       });
       if (cfg.status === 401) {
-        err.textContent = 'This needs the recovery-kit step first — go back, press BOOT, and save the kit.';
+        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT.';
         return;
       }
       if (!cfg.ok) {

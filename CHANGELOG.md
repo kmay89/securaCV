@@ -16,8 +16,10 @@
   and spends with one compare-and-swap of the word it loaded
   (`spend_if_match()`): a wrong, short or truncated value changes nothing,
   exactly one matching taker wins, and an expired claim is still burned (a
-  claim minted after the request read its clock is compared like a fresh
-  one, never burned as expired). The
+  claim minted less than a second after the request read its clock is
+  compared like a fresh one, never burned as expired; any other age past
+  the TTL is burned, so a claim left unswept is refused by `take()` itself
+  until a second before the 49.7-day wrap). The
   refusal's health line drops "(claim spent)" and is written once per 10 s
   at most. Host-tested (`firmware/tests_host/test_claim_ticket.cpp`,
   `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`); not
@@ -40,17 +42,25 @@
   and try again" works: the new click asks first and the next tap serves
   it. The `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
-  owner's is asking for goes to whoever asks first). The dashboard's copy
+  owner's is asking for goes to whoever asks first), and so does every
+  other line the owner or a client reads: the `403`'s hint and button
+  (they said "short tap, then poll within 30 seconds"), the dashboard's
+  timeout line ("Didn't see a tap. Click Use BOOT Tap Once again, then
+  short-tap BOOT."; it said "Press BOOT and click above"), and the
+  companion's Home Assistant step. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
   name and keeps the token. The
   first-boot companion's recovery-kit save now asks first and waits up to
-  30 s for the press ("Tap Save my recovery kit, then short-press BOOT"; the
-  old order still works), and its message banner is now on screen (the
-  handler set its text but never showed it). A sole asker is served at once,
-  as before. The asker is the socket peer (`request_peer_key()`, the read
-  the per-address lockout already keys on), and the serial console names
+  30 s for the press, its last ask 30 s after Save ("Tap Save my recovery
+  kit, then short-press BOOT"; the old order still works), and its message
+  banner is now on screen (the handler set its text but never showed it).
+  A sole asker is served at once, as before. The asker is the socket peer
+  (`request_peer_key()`, the read the per-address lockout already keys on),
+  and the serial console names
   both addresses while the health log names neither. Residuals: a tap no
-  client of the owner's was asking for still goes to the first asker; hosts
+  client of the owner's was asking for (a page or `curl` started after it,
+  or a tap pressed per an older page that says to press first, included)
+  still goes to the first asker; hosts
   behind one address are one asker; a host polling without pause makes every
   tap the owner's client is already asking for refuse, and then the
   recovery kit's token, the USB serial console and the 10 s BOOT hold

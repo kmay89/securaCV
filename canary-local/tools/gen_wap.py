@@ -1153,7 +1153,7 @@ BOOT_GPIO = int(grab(INO, r"BOOT_BUTTON_GPIO\s*=\s*(\d+)", "BOOT_BUTTON_GPIO"))
 BOOT_HOLD_MS = int(grab(INO, r"BOOT_BUTTON_HOLD_MS\s*=\s*(\d+)", "BOOT_BUTTON_HOLD_MS"))
 BOOT_LONG_MS = int(grab(INO, r"BOOT_LONG_PRESS_MS\s*=\s*(\d+)", "BOOT_LONG_PRESS_MS"))
 GATE_TTL_MS = int(grab(INO, r"PROVISIONING_GATE_TTL_MS\s*=\s*(\d+)", "PROVISIONING_GATE_TTL_MS"))
-must(INO, "Press the BOOT button on the device to reveal the provisioning receipt.", "BOOT receipt hint")
+must(INO, "Start asking for the receipt first, then short-tap BOOT on the device", "BOOT receipt hint (ask first)")
 # What each gesture does, read from the loop's own handler: a short press opens
 # the provisioning gate (it prints no key), the medium hold prints the identity
 # block, BOOT_LONG_PRESS_MS is only the "keep holding" warning, and the factory

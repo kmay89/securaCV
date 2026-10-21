@@ -1196,6 +1196,11 @@ static void a_peer_key_prints_as_ipv4_or_eight_groups() {
   const Peer wide = v4(255, 255, 255, 255);
   peer_key_text(wide.key, out, sizeof(out));
   CHECK(std::strcmp(out, "255.255.255.255") == 0, "the widest IPv4: %s", out);
+  // An octet of exactly 100 keeps its hundreds digit (192.168.100.x is a
+  // common home subnet).
+  const Peer hundred = v4(192, 168, 100, 5);
+  peer_key_text(hundred.key, out, sizeof(out));
+  CHECK(std::strcmp(out, "192.168.100.5") == 0, "an octet of 100: %s", out);
   const uint8_t ll[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
   CHECK(peer_key_text(ll, out, sizeof(out)) == 39, "IPv6: 39 characters");
   CHECK(std::strcmp(out, "fe80:0000:0000:0000:0211:22ff:fe33:4455") == 0, "IPv6: %s", out);
@@ -1209,6 +1214,11 @@ static void a_peer_key_prints_as_ipv4_or_eight_groups() {
   one_byte[9] = 1;
   peer_key_text(one_byte, out, sizeof(out));
   CHECK(std::strcmp(out, "0000:0000:0000:0000:0001:ffff:c0a8:0114") == 0, "byte 9 set: %s", out);
+  // The mapped prefix is ff ff at bytes 10 AND 11: a zero prefix with ff 00
+  // there (::ff00:c0a8:114) is a real IPv6 address.
+  const uint8_t ff00[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0x00, 192, 168, 1, 20};
+  CHECK(peer_key_text(ff00, out, sizeof(out)) == 39, "ff 00 at bytes 10-11: 39 characters");
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0000:ff00:c0a8:0114") == 0, "ff 00 at bytes 10-11: %s", out);
   char small[PEER_KEY_TEXT_CAP - 1];
   small[0] = 'x';
   CHECK(peer_key_text(kOwner.key, small, sizeof(small)) == 0 && small[0] == '\0',

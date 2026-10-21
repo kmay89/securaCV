@@ -2982,10 +2982,11 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
     - B prints `403`s, then `409`s (until about 10 s after A's page stopped asking, then `403`s again), and never `200`;
     - `/api/logs` has one "BOOT tap closed: two devices asked for the receipt" line, with no addresses;
     - the serial console names both addresses.
-  - With B still running, run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A and short-tap BOOT: A prints `403` bodies, then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
+  - With B still running, run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A and short-tap BOOT: A prints `403` bodies whose `hint` and `button` say to start asking first, then short-tap BOOT (never "short tap, then poll"), then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
   - Stop B, wait 10 s, and sign in on A again (within 30 s of the last tap, too): the page says "Listening for BOOT tap", not "Another device…", and A is signed in within about 2 s of the tap.
 - [ ] **A sole asker is served at once.**
-  - With laptop A alone, at `http://canary-<suffix>.local/`: **Use BOOT Tap Once**, then short-tap BOOT. A is signed in within about 2 s of the tap.
+  - With laptop A alone, at `http://canary-<suffix>.local/`: **Use BOOT Tap Once**, and do not tap. After 60 s the page says "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+  - Do as it says: **Use BOOT Tap Once**, then short-tap BOOT. A is signed in within about 2 s of the tap.
   - Short-tap BOOT and within 30 s run `curl -s http://canary-<suffix>.local/api/provisioning-receipt` from A: `200`. Repeat at `http://<STA address>/api/provisioning-receipt`: `200`.
 - [ ] **The first-boot recovery kit.**
   - Factory-reset (hold BOOT 10 s) and walk the companion to the recovery step at `http://canary.local` or `http://192.168.4.1`.

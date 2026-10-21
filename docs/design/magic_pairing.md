@@ -429,7 +429,7 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
 | 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. On the WAP it is served only to the sole address asking for it (`tap_arbitrate()`); a second address in the window closes the tap with `409 tap_contended`. |
-| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). |
+| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
 same order; the claim is inserted between the bearer and the tap and
@@ -578,8 +578,11 @@ never consumed unjudged. Both trees sweep the tap every loop pass
 serve again when `millis()` comes back round to it 49.7 days later. A `429`
 for a held bearer still comes before the `409`, and the `409` clears no
 backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
-companion's recovery-kit save now asks from the Save tap, so the owner's
-client is on record when the press lands:
+companion's recovery-kit save now asks from the Save tap, and every line
+the owner or a client reads gives that order (the `403`'s hint and button
+say to start asking first, then short-tap BOOT; the dashboard's timeout
+says to click again, then tap), so the owner's client is on record when
+the press lands:
 a host that polls the route, one that watches `/api/logs` for the tap, or
 one that delays the owner's next poll is refused loudly instead of handed
 the token, the SoftAP password and the pin. The serial console names both
@@ -588,7 +591,8 @@ addresses; the health log (readable by any session) names neither.
 What stays open, and is the ledger's, not a claim of this design:
 
 - A tap no client of the owner's was asking for (an accidental tap, a page
-  or `curl` started after it, BLE OTA break-glass) still goes to the first
+  or `curl` started after it, a tap pressed per a recipe or an older page
+  that says to press first, BLE OTA break-glass) still goes to the first
   asker.
 - Hosts behind one address (a NAT, an ARP spoofer, a page in the owner's own
   browser) are one asker.

@@ -13,8 +13,10 @@
 //     loaded (spend_if_match()), so a spend whose word moved since its load
 //     (a re-mint in between) is refused and leaves the new claim pending;
 //   * an expired claim is refused and burned, a wrong value against it too;
-//     a claim minted after the taker read its clock (the word reads ahead of
-//     now_ms) is compared like a fresh one, never burned as 2^32 ms old;
+//     a claim minted after the taker read its clock (the word reads less
+//     than AHEAD_SKEW_MS ahead of now_ms) is compared like a fresh one, never
+//     burned as 2^32 ms old, and a word a whole skew ahead, or an unswept
+//     claim 2^31 + 5 ms old, is refused and burned, its own hex included;
 //     millis()==0 is a real mint;
 //   * the 49-day wrap of millis() does not expire a fresh claim;
 //   * the sweep (sweep F347): expire() burns a claim at its TTL (the word
@@ -49,6 +51,13 @@ static int g_failures = 0;
 static const uint8_t kRaw[RAW_LEN] = {0x00, 0x01, 0x7f, 0x80, 0xab, 0xcd, 0xef, 0x10,
                                       0xff, 0xfe, 0x55, 0xaa, 0x12, 0x34, 0x56, 0x78};
 static const char* kHex = "00017f80abcdef10fffe55aa12345678";
+
+static bool hex_is_zero(const Ticket& t) {
+  for (size_t i = 0; i < sizeof(t.hex); ++i) {
+    if (t.hex[i] != 0) return false;
+  }
+  return true;
+}
 
 static void mint_is_32_lowercase_hex() {
   Ticket t{};
@@ -154,8 +163,8 @@ static void a_spend_whose_stamp_changed_is_refused() {
 // sketch's take(g_improv_claim, presented, millis()) on the httpd task), so a
 // mint on the loop task can land in between, and the word then reads ahead
 // of now_ms. Unsigned, that is 2^32 ms old: before, a wrong ?claim= in that
-// gap burned the phone's fresh claim. A word ahead of the clock is compared
-// like a fresh one, never burned.
+// gap burned the phone's fresh claim. A word less than AHEAD_SKEW_MS ahead
+// of the clock is compared like a fresh one, never burned.
 static void a_mint_after_the_takers_clock_is_compared_not_burned() {
   Ticket t{};
   mint(t, kRaw, 5002);   // the loop task mints 2 ms after the taker read 5000
@@ -175,6 +184,28 @@ static void a_mint_after_the_takers_clock_is_compared_not_burned() {
   mint(w, kRaw, 1000);
   CHECK(!take(w, "00000000000000000000000000000000", 1000 + TTL_MS), "expired: refused");
   CHECK(w.minted_at_ms == 0, "and burned");
+  // "Ahead" is the race it covers, a mint inside a moment of the taker's
+  // clock read (AHEAD_SKEW_MS), not half the clock (sweep F342's second
+  // review). An unswept claim 2^31 + 5 ms old read as 2^31 - 5 ms ahead and
+  // was compared like a fresh one, so its own hex was served; take()'s age
+  // check had refused every age from the TTL up to 2^32 before. It is
+  // refused and burned, the right hex included.
+  Ticket x{};
+  mint(x, kRaw, 1000);
+  const uint32_t half_clock = 1000u + 0x80000000u + 5u;
+  CHECK(!take(x, kHex, half_clock), "an unswept claim 2^31 + 5 ms old is refused, its own hex too");
+  CHECK(x.minted_at_ms == 0 && hex_is_zero(x), "and burned");
+  // The skew's edge: a word AHEAD_SKEW_MS - 1 ahead is compared, one
+  // AHEAD_SKEW_MS ahead is past the race and burned.
+  Ticket y{};
+  mint(y, kRaw, 20000);
+  CHECK(!take(y, "00000000000000000000000000000000", 20000 - (AHEAD_SKEW_MS - 1)), "just inside the skew: wrong refused");
+  CHECK(y.minted_at_ms != 0 && !hex_is_zero(y), "and nothing burned");
+  CHECK(take(y, kHex, 20000 - (AHEAD_SKEW_MS - 1)), "just inside the skew: right served");
+  Ticket z{};
+  mint(z, kRaw, 20000);
+  CHECK(!take(z, kHex, 20000 - AHEAD_SKEW_MS), "a word a whole skew ahead is refused, its own hex too");
+  CHECK(z.minted_at_ms == 0 && hex_is_zero(z), "and burned");
 }
 
 static void millis_zero_is_a_real_mint() {
@@ -224,13 +255,6 @@ static void a_fresh_mint_replaces_an_outstanding_claim() {
   mint(t, other, 2000);
   CHECK(!take(t, kHex, 2500), "the old claim is gone");
   CHECK(pending(t, 2500), "and the new one stays pending after that wrong value");
-}
-
-static bool hex_is_zero(const Ticket& t) {
-  for (size_t i = 0; i < sizeof(t.hex); ++i) {
-    if (t.hex[i] != 0) return false;
-  }
-  return true;
 }
 
 static void a_swept_claim_does_not_revive_after_the_wrap() {

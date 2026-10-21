@@ -8911,13 +8911,20 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit's token as a bearer, or read the token from the USB serial console.\"}");
     }
     // Derive the advertised TTL from the constant so the 403 contract
-    // and the gate behavior can never drift apart.
+    // and the gate behavior can never drift apart. The words give the order
+    // the arbiter protects (sweep F342's second review): the client asks
+    // first and the press comes second. A tap no client of the owner's is
+    // already asking for goes to the first asker, and a host that watches
+    // /api/logs for "Provisioning gate opened" is that asker, so the old
+    // "short tap, then poll within 30 seconds" led a curl user or a client
+    // into the one case the arbiter cannot protect. The fields are the old
+    // ones (the dashboard and the Vision SPA read gate_ttl_seconds).
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
-    char body[256];
+    char body[320];
     int n = snprintf(body, sizeof(body),
       "{\"error\":\"physical_confirmation_required\","
-      "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
-      "\"button\":\"BOOT (short tap, then poll within %lu seconds)\","
+      "\"hint\":\"Start asking for the receipt first, then short-tap BOOT on the device: the tap goes to the one address asking.\","
+      "\"button\":\"BOOT (ask first, then a short tap; the tap is held %lu seconds)\","
       "\"gate_ttl_seconds\":%lu}",
       ttl_s, ttl_s);
     if (n < 0 || (size_t)n >= sizeof(body)) {

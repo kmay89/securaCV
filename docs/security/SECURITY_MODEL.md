@@ -367,7 +367,8 @@ second address asked for the receipt in the ten seconds before the tap or
 during it, the tap is closed and both get `409 tap_contended` while the
 other keeps asking (up to the closed tap's thirty seconds; it ends ten
 seconds after the other's last ask), and the `409` tells the client to start
-its request first and keep it asking, then press BOOT (sweep F342;
+its request first and keep it asking, then press BOOT; the `403`, the
+dashboard and the companion give that order too (sweep F342;
 host-tested, not bench-tested) — in the pairing QR an operator fetches with
 the token, or on the serial console. The setup door's claim is spent only by
 a match, so a wrong `?claim=` from a host on the network no longer ends the
@@ -375,7 +376,8 @@ phone's pairing (F342). The tap's asker is the request's socket peer
 (`request_peer_key()`, the same read the per-address lockout keys on, F343),
 never a header. What the tap rule cannot see: a tap no client of the
 owner's was already asking for (an accidental tap, a page or `curl` started
-after it, BLE OTA break-glass) still goes to the first asker; hosts behind
+after it, a tap pressed per a recipe or an older page that says to press
+first, BLE OTA break-glass) still goes to the first asker; hosts behind
 one address (a NAT, an ARP spoofer, a page in the owner's own browser) are
 one asker; a host that keeps the WAP's one web server busy for more than
 ten seconds before the tap can hide the owner's client; and a host polling

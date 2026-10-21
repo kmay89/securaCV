@@ -2029,7 +2029,8 @@ so — see D2 below.)
   Residuals, in `SECURITY_MODEL.md`, `THREAT_MODEL.md` and
   `magic_pairing.md` §3.7:
   - a tap no client of the owner's was asking for (an accidental tap, a page
-    or `curl` started after it, BLE OTA break-glass) still goes to the first
+    or `curl` started after it, a tap pressed per a recipe or an older page
+    that says to press first, BLE OTA break-glass) still goes to the first
     asker;
   - hosts behind one address (NAT, an ARP spoofer, a page in the owner's own
     browser) are one asker;
@@ -2117,7 +2118,50 @@ so — see D2 below.)
     and `test_claim_ticket` fail 7 and 5 on the old behavior;
     `recovery_kit.test.js` is 41 tests, the old page failing the hold-copy
     pin. Host-tested; not run on a device.
-  Host-tested: `firmware/tests_host/test_claim_ticket.cpp` (the old header
+  - Second review fixes (same PR). Every place the owner or a client reads
+    the order now gives the click before the tap, the one order the arbiter
+    protects. The dashboard's 60 s timeout said "Press BOOT and click above
+    to try again", and the WAP's `403` said "short tap, then poll within 30
+    seconds": followed in that order, the press lands while no client of the
+    owner's is asking, and a host that read "Provisioning gate opened" off
+    `/api/logs` (any session reads it) asks once, is the sole asker and is
+    handed the token, the SoftAP password and the pin; the owner's click a
+    few seconds later hears `403`. Now the timeout says "Didn't see a tap.
+    Click Use BOOT Tap Once again, then short-tap BOOT."; the `403`'s
+    `hint` says "Start asking for the receipt first, then short-tap BOOT on
+    the device: the tap goes to the one address asking." and its `button`
+    "BOOT (ask first, then a short tap; the tap is held 30 seconds)" (same
+    fields, same `gate_ttl_seconds`; no in-tree client parses the two
+    texts; the body buffer is 320 bytes, and `gen_wap.py`'s hint check and
+    `check_wap_json_answers.py`'s two buffer mutations follow); the
+    companion's Home Assistant step's no-session line says
+    to tap Save, then short-press BOOT (it said "press BOOT, and save the
+    kit"; its banner is still the `#wiz-ha-err` one never shown, noted
+    above). The flagship's shared `build_gate_refusal_json()` keeps its
+    text until F354, as its tap still goes to the first asker. The
+    companion's save made 15 asks, the last at 28 s, under copy that says
+    30 s: it makes 16, the last at 30 s. `spend_if_match()`'s "ahead of the
+    clock" rule read every word up to 2^31 ms ahead as fresh, so a claim
+    left unswept for 24.8 days was served its own hex where the age check
+    had refused it; "ahead" is now under `AHEAD_SKEW_MS` (1 s), and every
+    other age from the TTL up to 2^32 - `AHEAD_SKEW_MS` is burned. Rows added where a
+    mutant survived: a re-tap stored between a NO_TAP ask's `peek()` and
+    its burn is kept and serves the next ask (a burn with `close()`, or an
+    unconditional close, cleared it), with the sketch pinned to
+    `take_exact()` there; the WAP's `loop()` cannot return before its two
+    sweeps, the BOOT short press opens the gate through the header's
+    `open()`, and no line of the sketch touches the gate's word directly;
+    `peer_key_text()` keeps an octet of 100 whole and prints a zero prefix
+    with ff 00 at bytes 10-11 in eight groups; the companion's save ends
+    with "HTTP 503" when the device refuses after the tap is spent. Counts
+    now: `test_receipt_grant.cpp` 2734 checks (the sketch before these
+    fixes fails 147, the `403`'s words; each of the four sketch mutants
+    fails the new rows besides), `test_claim_ticket.cpp` (the header before
+    fails 2), `recovery_kit.test.js` 44 tests (the pages before fail 3; the
+    `503` row fails on a save that keeps asking). Host-tested; not run on a
+    device.
+  Host-tested, counts at the tap commit (the review bullets above give the
+  final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
   `test_provisioning_gate.cpp` (the arbiter rows; the old header does not
   compile them), the WAP's `test_receipt_grant.cpp` (2120 checks; the
@@ -2370,7 +2414,7 @@ so — see D2 below.)
   check), `test_claim_ticket.cpp` (the swept claim's word and hex zeroed and
   its old hex refused 2^32 ms later, where the unswept twin serves; the old
   header: 9 compile errors), the WAP's `test_receipt_grant.cpp` (2151
-  checks; the sketch before this commit fails 21: `loop()` has no sweep, so
+  checks at that commit; the sketch before this commit fails 21: `loop()` has no sweep, so
   2^32 ms + 1 s after an untaken tap a bare request was served the receipt
   and the old `?claim=` took it too) and `test_session_cookie.cpp` (165
   checks over a new cut of the four slot functions; the store before this
@@ -2562,7 +2606,10 @@ so — see D2 below.)
   `tap_arbitrate()` for both; the page load is a load, not a poll, so the
   unlock banner must ask before the tap. It reads the request's peer
   through `provisioning_gate.h`'s existing `peer_key_from_addr()`, as the
-  WAP does. From code; not probed. Filed by F342, 2026-10-20.
+  WAP does. With it, the shared `build_gate_refusal_json()`'s `403` text
+  ("short tap, then poll within 30 seconds") takes the ask-first order the
+  WAP's own `403` gives since F342's second review. From code; not probed.
+  Filed by F342, 2026-10-20.
 - [ ] **F355 [code] Canary Vision's SPA polls a WAP's receipt it cannot read.**
   `startReceiptCapture` (`canary-vision/spa/app.js`) polls a WAP's
   `GET /api/provisioning-receipt` with no credential. The WAP's receipt
