@@ -1697,7 +1697,7 @@ so — see D2 below.)
   be out of reach of a browser that saw it. Pin it in
   `test_session_cookie.cpp` and a U1 row. From code; not run in a browser.
   Found by the F289 follow-up and the superseded F289 port's review (#1832).
-- [ ] **F338 [code+decision] The flagship's route check has no secret-answer
+- [x] **F338 [code+decision] The flagship's route check has no secret-answer
   rule.** `firmware/canary/scripts/check_route_security.py` holds the
   Host-first order and names every reader of `auth_get_token()` as an emitter
   or a comparer, and the flagship's receipt is decided by `receipt_decide` and
@@ -1706,6 +1706,114 @@ so — see D2 below.)
   bearer-only grant. Review whether the flagship needs one (it has no session
   cookie today, so F328's any-session class has no counterpart), and port what
   applies. From code. Found by the F289 follow-up (#1832).
+  *Done (2026-10-21, #<PR>; decided 2026-10-19 under the maintainer's
+  instruction to fix the remaining open items in best engineering practice
+  and best value for the user and security):*
+  `firmware/canary/scripts/check_route_security.py` now holds every answer
+  that carries a credential to its grant, on the flagship's own gates, as
+  F340 and F341 left them (#1838), with F350's mint (#1837) in the tree. No
+  firmware, route or wire change.
+  There is no live route path. On `f52bca62`, every gated route refuses with
+  `if (!auth_gate(req)) return ESP_OK;` (62 sites); the receipt takes a real
+  bearer or the BOOT tap; the pages inject the token only through
+  `page_token_decide`; and nothing under `firmware/canary/lib` or
+  `firmware/canary/src` reads or sets a cookie. The live credential path
+  found while deciding this item, the SoftAP password derived from the
+  public fingerprint, was F350.
+  The gap was in the guard. A mutation driver applied 51 edits to a private
+  copy of that tree: the check as F340 left it passed 47 of them, and the
+  new check fails all 51 (the other four were red on both: the two
+  controls, a public route sending the receipt and `/api/status` answering
+  `auth_get_token()`; a page tap lambda returning `true`; and a library
+  function reading `auth_get_token()`). Among the 47:
+  - a public `/api/fleet` answering the SoftAP password, directly or
+    through a helper;
+  - `/api/status` answering the SoftAP password, or gated by
+    `!setup_is_active() && !auth_gate(req)`;
+  - a receipt grant widened to `setup_is_active()` or a SoftAP peer;
+  - `page_token_inject`'s `bearer_ok`, `on_ap`, `setup_active` or tap
+    lambda widened;
+  - `bearer_present_and_valid` taking a `cv_session` cookie or passing an
+    empty token, and `auth_gate` passing during setup;
+  - a tap peek routed through the take hook, in either file;
+  - `POST /api/wifi/connect` gated by `!from_ap_subnet(req) && !auth_gate(req)`;
+  - `AuthManager::compare` accepting a session under `Authorization` or a
+    `?token=` query;
+  - `AuthManager::grant` comparing a held source, and `AuthManager::check`
+    dropping its lockout read;
+  - `auth_handed_token` called outside a served tap, on the page or the
+    receipt, and a handler reaching `auth_get_instance()`;
+  - the lockout keyed on `X-Forwarded-For`, and a `Set-Cookie` in either case;
+  - a new serial, BLE or MQTT sink of the AP password inside `setup()` or
+    `raiseAp()`;
+  - `setup()`'s mint handed `device.pubkey`, its result discarded, its halt
+    dropped or the call deleted, and the token mint's refusal dropped;
+  - a stale `'auth_check_optional('` left in `AUTH_MARKERS`.
+  What the rule holds (`check_bearer_only_answers`):
+  - **The three credentials.** The bearer token, the SoftAP password and
+    the TLS pin (public in every TLS handshake; held because the apps trust
+    it as the pin) are carried up the call graph from their stores, accessors
+    and derivers to the route handlers. Every reader is named. Each
+    device-side use is pinned by its reading statements (`SECRET_LOCAL_USES`,
+    6 functions, 22 statements, keyed by file and qualified function), and a
+    mint's statement runs through its refusal: `setup()`'s row holds
+    `if (!canary::net::derive_ap_password(device.privkey, g_ap_password,
+    sizeof(g_ap_password))) { ... HALTING ...; while (true) { ... } }`
+    whole, as the F350 review asked, and `auth_load_or_derive()`'s holds
+    `derive_api_token(privkey, ...)` with its refusal.
+  - **Each answer, with what it carries and its grant.** The receipt (token,
+    AP password, pin) hands `receipt_decide` exactly its bearer and tap
+    lambdas, and answers only under a `SERVE_*` test. `/api/status` (pin)
+    answers after `if (!auth_gate(req)) return ESP_OK;` at its own top level.
+    The pages, the captive probe and the port-80 redirect that reaches it
+    (token) answer only through `send_html_with_token(...,
+    page_token_inject(req))`; a public route may carry a credential only
+    that way.
+  - **The grant glue, pinned whole in one table** (`GLUE_DEFS`, 15 rows;
+    `host_is_foreign` moved in): `auth_gate`, `bearer_present_and_valid`,
+    `from_ap_subnet`, `page_token_inject` with its four inputs and F341's
+    clear, `provisioning_gate_take`, the hook setter, `main.cpp`'s take hook,
+    `AuthManager::check`, `grant`, `compare` and `handedToken`, and the
+    `auth_check`, `auth_bearer_grant` and `auth_handed_token` wrappers. The
+    failure prints the body as it now is, and `page_token_inject`'s names
+    SECURITY_MODEL.md's four unlocks and Phase 6.
+  - **The gate primitives** are called only where the census
+    (`GATE_CALL_SITES`, 13 rows) names them. Every `auth_gate` call is the
+    whole refusal; `auth_handed_token` runs on the receipt only under a
+    served verdict; only the three wrappers reach the AuthManager; and
+    `constantTimeCompare` runs only in `compare` (the decision named `check`
+    too; on this tree `check` calls it only through `compare`). Every
+    `AUTH_MARKERS` and `PRE_HOST_STEPS` name is a census row: F340 had
+    already taken `auth_check_optional` out of both lists and rule 1, and it
+    cannot come back silently.
+  - **The no-session premise** is checked: no cookie read or `Set-Cookie`;
+    request headers only `Authorization` in the auth lib and `Host` in the
+    network lib; a response header's name a literal; URL queries only in the
+    witness log's paging. A cookie, a session header, a query credential or
+    a header-keyed lockout fails, with a pointer to canary-wap's any-session
+    class (F328). `CONSOLIDATION.md`'s Phase 6 `cv_session` port must bring
+    that class with it.
+  The check uses one head parser (`function_defs`: a constructor is named
+  for its class, its initializer list included, where the old parser named
+  `ScvNetworkManager`'s body `m_peers_last_browse_ms`; a member is
+  `Class::name`) and one reader rule, which replaces the old `auth_get_token`
+  loop (rule 5 keeps its emitter-behind-the-Host half). 73 planted fixtures
+  (60 source edits, 13 table edits) each fail for their named reason before
+  the tree is read; the tree passes with its 83 registrations, in about 3 s.
+  The `/*` allowlist reasons now say what the port-80 redirect does (a probe
+  path answers as the probe, else 307).
+  Not ported, because nothing on the flagship corresponds: the any-session
+  fixed point, `OTHER_GRANTS` flags, module token copies and the broker
+  rule. Not tracked: the mesh opera secret, the STA password and the broker
+  password. Not pinned: `request_peer_ipv4` (F340's suite pins its text;
+  the premise refuses a header-keyed source).
+  This is a static text check: names are matched by spelling, a copy under
+  another name or a value passed as a parameter is not followed, a call by
+  bare name reaches every definition of that name (which errs toward
+  failing), and the shared `auth_backoff.h` arithmetic is
+  `test_auth_backoff.cpp`'s. An edit to pinned glue, a reading statement or
+  a census caller updates its row in the same review (F354's `tap_arbitrate`
+  adoption touches `page_token_inject` and `provisioning_gate_take`).
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

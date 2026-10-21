@@ -229,7 +229,16 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   is not on its documented public allowlist.
 - **Follow-up (Phase 6, with the web UI port):** the WAP's one-shot pair token
   + 24 h HttpOnly `cv_session` cookie (option A), so a home-LAN reload stops
-  needing a fresh BOOT tap each time.
+  needing a fresh BOOT tap each time. That port must bring canary-wap's
+  any-session class with it (`ANY_SESSION_GATES` in the WAP's route check,
+  sweep F328): a session is a gate the landing page's caller passes, so the
+  receipt, the page token and every other answer that carries a credential
+  must keep refusing it. Until then the flagship's route check
+  (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
+  `Set-Cookie`, any request header but `Authorization` (the auth lib) and
+  `Host`, and a URL query outside the witness log's paging, and it pins
+  `page_token_inject`'s four inputs whole, so a session cannot be added by
+  widening one of them.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

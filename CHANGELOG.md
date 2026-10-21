@@ -1,6 +1,62 @@
 # Changelog
 
 ## [Unreleased]
+### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338)
+
+- **`firmware/canary/scripts/check_route_security.py` gains the bearer-only
+  answer rule (`check_bearer_only_answers`), canary-wap's F328 rule ported to
+  the flagship's own gates.** No firmware, route or wire change, and no live
+  path was open: every gated route already refuses with `if
+  (!auth_gate(req)) return ESP_OK;`, the receipt takes a real bearer or the
+  BOOT tap, the pages inject the token only through `page_token_decide`, and
+  nothing reads or sets a cookie. The gap was the guard's. Of 51 edits a
+  mutation driver applied to a private copy of the tree, the check as F340
+  left it passed 47 and the new check fails all 51. The classes it now
+  fails:
+  - a route that answers the bearer token, the SoftAP password or the TLS pin
+    without being a `SECRET_ANSWERS` row with exactly what it carries (a
+    public `/api/fleet` answering the SoftAP password, directly or through a
+    helper; `/api/status` answering it beside the pin), and any function that
+    reads one without being named (a helper printing the SoftAP password);
+  - an answer outside its grant: `/api/status` answering before
+    `if (!auth_gate(req)) return ESP_OK;` at its own top level, the receipt
+    handing `receipt_decide` anything but its bearer and tap lambdas or
+    answering outside a `SERVE_*` test, a page answering other than through
+    `send_html_with_token(..., page_token_inject(req))`;
+  - an edit to the glue a grant runs through, pinned whole (15 bodies:
+    `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet`,
+    `page_token_inject`'s four inputs and F341's clear, the tap's take and
+    its hooks, `host_is_foreign`, and the lockout's `AuthManager::check`,
+    `grant`, `compare`, `handedToken` and their wrappers), so a session or a
+    peek cannot be added by widening one input;
+  - a gate primitive called where its census row does not say (an
+    `auth_gate` call that is not the whole refusal, as in
+    `!from_ap_subnet(req) && !auth_gate(req)` on `POST /api/wifi/connect`;
+    `auth_handed_token` outside a served tap; anything but the three
+    wrappers reaching the AuthManager), and an `AUTH_MARKERS` or
+    `PRE_HOST_STEPS` name that is no census row, such as a stale
+    `auth_check_optional(`;
+  - a device-side statement that reads a credential and is not in its
+    function's row (a serial, BLE or MQTT sink in `setup()` or `raiseAp()`),
+    with `setup()`'s mint pinned as the whole statement: the
+    `derive_ap_password(device.privkey, ...)` call, its refusal and its halt
+    (the F350 review), so a public-key argument, a discarded result, a
+    dropped halt or a deleted call fails;
+  - the no-session premise: a cookie read, a `Set-Cookie`, a request header
+    other than `Authorization` in the auth lib and `Host`, and a URL query
+    outside the witness log's paging, each pointing at canary-wap's
+    any-session class (F328), which CONSOLIDATION.md's Phase 6 `cv_session`
+    port must bring with it.
+  The head parser names a constructor for its class (it named
+  `ScvNetworkManager`'s body after its last initializer, `m_peers_last_browse_ms`)
+  and a member as `Class::name`. 73 planted fixtures each fail for their
+  named reason before the tree is read; the tree passes with its 83
+  registrations in about 3 s, and CodeQL 2.27.2's python-code-scanning
+  suite, run locally, reports nothing on the script (its clear-text-logging
+  query included). A static text check: names are matched by spelling,
+  and an edit to pinned glue or a pinned statement updates its row in the
+  same review (the failure prints the row as it now is).
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
