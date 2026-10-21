@@ -804,6 +804,173 @@
 - **Regression check:** `tests_host/test_auth_logic.cpp` (host).
 - **Date learned:** 2026-07
 
+### A fix to one tree's auth is owed to the other tree's port of it
+- **What happened:** The flagship (`firmware/canary`) kept the bug above
+  after the WAP fixed it. Its `AuthManager::check()`, a port of the WAP's
+  `api_auth.h` (`firmware/canary/CONSOLIDATION.md`, Phase 1), never took that
+  fix: it counted a request with no `Authorization` header as a strike, and
+  its lockout is one per device. Its
+  dashboard withholds the token on a home-network load until a BOOT tap or
+  the recovery-kit token, so an open tab's token-less `/api/status` poll
+  every 2 s kept a backoff running and held the owner's iPhone app, right
+  token and all, at `429`: 119 of 120 calls over ten simulated minutes.
+  The port missed the WAP's later fixes too: its provisioning receipt
+  compared the bearer through the silent `auth_check_optional()`, no strike
+  and no backoff read, the shape the WAP's F329 had closed; and it kept the
+  five-minute cap that never ran and the `now < until` that the 49.7-day
+  `millis()` wrap breaks, both of which F343 had just fixed on the WAP.
+- **Fix:** the same rule as the WAP's: a request with no credential is a
+  `401` and no strike; a malformed or wrong one still is (sweep F340, part
+  1). Then the copy stopped being a copy (part 2): the flagship's
+  `AuthManager` runs `firmware/common/network/auth_backoff.h`, the WAP's own
+  table, read by path, keyed by the request's socket peer, and the receipt's
+  bearer is the accounted grant `auth_bearer_grant()`.
+- **Regression check:** `firmware/tests_host/test_securacv_auth.cpp` (host,
+  over the real `securacv_auth.cpp` and `auth_backoff.h`): the tab-and-app
+  case, a header-less call between a strike and the next try, two hosts, the
+  receipt's grant, the wrap and the 61 s ceiling, and text pins over
+  `securacv_network.cpp`'s wiring.
+- **Rule:** when a security fix lands in one tree, find the other tree's copy
+  of the same logic (`firmware/canary/CONSOLIDATION.md` names the ports) and
+  fix or file it in the same change. Better: when both trees run the same
+  pure logic, put it in `firmware/common` once and have both read it, so
+  there is no second copy to forget.
+- **Date learned:** 2026-10
+
+### A `static` in a header is one copy per .cpp, and one lockout for the device holds every caller
+- **What happened:** The WAP's bearer lockout was `static AuthState g_auth`
+  in `api_auth.h`: one backoff for every caller, so a host that sent a wrong
+  bearer whenever the backoff was not running held every other host's right
+  token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
+  and the likeliest such host was the owner's own phone, polling a reset unit
+  with its old token. Because a `static` in a header is a separate object in
+  every translation unit that includes it, `canary_wap.ino`,
+  `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
+  strike one file's gate recorded never held another file's. Three more
+  defects sat in the same twenty lines: the `uint8_t` count wrapped to a
+  clean 0 after 256 strikes recorded inside a backoff; `millis() < until`
+  freed a backoff armed just before the 49.7-day wrap; and the documented
+  5-minute cap never ran, because the 60 s window cleared the count first,
+  while the sixth strike announced `Retry-After: 65` for a hold that ended at
+  60 s.
+- **Fix:** `firmware/common/network/auth_backoff.h` (sweep F343): one backoff
+  per source address (the socket peer, never a header; 8 slots plus a shared
+  overflow), the cap equal to the window, a saturating count, ages read
+  modulo 2^32. `api_auth.h` holds it as one C++17 `inline` variable.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp` (host);
+  `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` (two
+  hosts, the replay, and `api_auth_second_tu.cpp`, a second translation unit
+  over `api_auth.h` linked into the same binary, which fails if the table is
+  ever per file again).
+- **Rule:** shared mutable state in a header is `inline` (C++17), never
+  `static`, and only a test with a second translation unit proves it is
+  shared. A cap the clearing window never lets run is not a cap: state the
+  maximum the code reaches, and assert it (`static_assert(MAX_MS <=
+  WINDOW_MS)`).
+- **Date learned:** 2026-10
+
+### Every compare of a credential goes through the one function that counts it
+- **What happened:** The WAP's `api_auth_check_or_query()` (the camera
+  peek's and the vault download's `?token=` links) never read the bearer
+  lockout: a right `?token=` was served inside a backoff and cleared it, and
+  a wrong one was recorded during it, so a backoff never held these routes
+  and the count ran on without bound (until F343's saturating count, 250 of
+  them wrapped it back to a clean slot). Beside it, four gates compared a
+  bearer and recorded nothing at all: `CSI_AUTH_OR_RETURN` (every
+  `/api/csi/*` route), `csi_mqtt.cpp`'s `authorized()`, the broker move
+  gate's own second compare, and `qr_scan_request_allowed()`, each through
+  the silent `api_auth_check_optional()` or `api_auth_bearer_valid()`.
+- **Root cause:** each gate assembled the compare and its accounting itself,
+  and the silent compares were callable from any file of the sketch.
+- **Fix:** one grant (sweep F339): every bearer compare goes through
+  `auth_backoff::grant()` (`api_auth_grant_presented()` in `api_auth.h`),
+  which reads the lockout once, compares at most once and records the
+  answer; a hold comes back through an optional `held` out-parameter, so a
+  route that answers it `429` makes no second lockout read.
+  `api_auth_check_or_query()` runs that grant over one candidate: the
+  header when the request sends one, the `?token=` only when it sends none.
+  The PR's review found the first version compared both in its one grant
+  and served the request if either was right, so one strike bought two
+  guesses on those links (about 63 a minute from many addresses, where the
+  docs say about 30).
+- **Regression check:** `tests_host/test_receipt_grant.cpp` (host; the CSI
+  macro and `qr_scan_request_allowed()` cut from the sources),
+  `tests_host/test_mqtt_reinit.cpp`, and `tests_host/check_route_security.py`,
+  which fails any sketch file but `api_auth.h` that calls
+  `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
+- **Rule:** a credential's compare lives beside its accounting, in one
+  function every gate calls; the raw compare is private to that file, and a
+  text check keeps it there. A long token bounds the guessing, but a compare
+  that costs nothing is still an oracle and a bypass of the backoff. One
+  strike buys one candidate: a gate that takes the credential from either
+  of two places compares one of them per request, never both.
+- **Date learned:** 2026-10
+
+### A page that keeps a refused token strikes on every poll
+- **What happened:** The flagship's dashboard kept a token pasted into its
+  unlock banner whatever the device answered, and sent it on every 2 s poll.
+  A mistyped one was a strike each time its address's backoff ended, so the
+  count never had a clean minute to clear: it saturated, and the address
+  (that computer's other tabs and its curl too) stayed held at `429`, but
+  for the one poll a minute that struck again as each backoff ended, until
+  the page was reloaded. The docs said such
+  a browser waits at most about 60 s; the WAP's
+  page made that true by dropping a refused token (`secureFetch`), and the
+  flagship's did not.
+- **Fix:** `dropRefusedToken()` (sweep F340, the PR's review): a `401`, or a
+  `403 {"error":"forbidden"}`, to a request that carried the token drops it
+  and shows the banner again with "The Canary refused that token."; a `429`
+  (nothing compared) or the Host guard's `403` (never read) keeps it, and so
+  does an answer to a token the banner has since replaced. `api()` and the
+  two pollers that fetch with the token themselves all call it.
+- **Regression check:** `firmware/tests_host/test_canary_dashboard_gates.test.js`
+  (host, over the page's own functions): the drop, the keeps, the replaced
+  token, and a census that every fetch setting the bearer header is one of
+  the four it knows.
+- **Rule:** a client that polls with a credential drops it on the answer that
+  refuses it. The lockout's bound is what the server allows; whether a
+  person waits that bound or forever is the client's.
+- **Date learned:** 2026-10
+
+### A guess rate stated for a table in RAM holds only between reboots
+- **What happened:** `THREAT_MODEL.md` scenario 10 said a host with many
+  addresses gets about 30 bearer guesses a minute on both Canaries. That is
+  the bound `auth_backoff.h`'s nine backoffs allow while the table stands.
+  On the WAP the table is a RAM global, and any landing session can reboot
+  the unit (`POST /api/reboot`, `POST /api/safe-mode/retry` take the cookie
+  the landing page mints for any caller), which empties it: a guesser that
+  reboots after every few seconds of guessing gets about 37 a minute if the
+  unit is back 45 s later and about 155 if it is back in 5 s. The docs
+  listed the reboot as a denial left open, never as a reset of the guess
+  budget.
+- **Fix:** the docs state the bound between reboots and the rates with them
+  (lockout third review, F343); `test_auth_backoff.cpp` models both over the
+  real table, so a change to its numbers fails until the docs follow. The
+  token's entropy stays the real bound.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp`
+  (`the_documented_guess_rates_hold`, host).
+- **Rule:** a rate a security doc quotes comes from a test, and names every
+  way the state behind it resets: a reboot, a power cut, a route that clears
+  it. State held in RAM is reset by whoever can reboot the device.
+- **Date learned:** 2026-10
+
+### A must-not-compile check built with `-Werror` cannot tell `#error` from `#warning`
+- **What happened:** `run-secauth-knobs` proves `securacv_auth.h` refuses
+  the flagship's old backoff knobs: each `-D` must fail to compile with the
+  message that names `auth_backoff.h`. It compiled with the suite's
+  `CXXFLAGS`, which carry `-Werror`, so the `#error` turned into a
+  `#warning` still failed with the same message, and the check passed. The
+  flagship's PlatformIO envs build without `-Werror`, where that edit lets
+  a stale knob through with a warning.
+- **Fix:** the check compiles with `-Wno-error` and requires `#error` in
+  the output (lockout third review, F340).
+- **Regression check:** `make -C firmware/tests_host run-secauth-knobs`
+  (host; the `#warning` edit fails it).
+- **Rule:** a check that a build must fail runs with the flags the real
+  build uses, or with none that turn a warning into the failure it expects,
+  and it matches the diagnostic's kind, not only its text.
+- **Date learned:** 2026-10
+
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
   failing" on a healthy XIAO S3.

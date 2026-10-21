@@ -26,7 +26,12 @@
 //     subnet, unusable mask, AP down);
 //   * ipv4_host_order_from_addr unwraps the ::ffff:a.b.c.d address the
 //     dual-stack httpd socket really reports, and reads every true IPv6
-//     address as 0 (without it, every real request looked like "unknown").
+//     address as 0 (without it, every real request looked like "unknown");
+//   * peer_key_from_addr names one peer by one 16-byte key in either family
+//     (IPv4 as ::ffff:a.b.c.d, IPv6 as itself), refuses the unspecified
+//     address, an unknown family and a null pointer, and the IPv4 of every
+//     key it writes is the IPv4 ipv4_host_order_from_addr reads off the
+//     socket address itself: the WAP's per-address lockout keys on it.
 
 #include "../common/network/provisioning_gate.h"
 
@@ -483,6 +488,69 @@ static void real_ipv6_and_unknown_families_read_as_zero() {
   CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, nullptr) == 0, "null bytes (v6) → 0");
 }
 
+// ── socket address → one key per peer ──────────────────────────────────────
+
+static bool key_is(const uint8_t key[PEER_KEY_LEN], const uint8_t want[PEER_KEY_LEN]) {
+  return std::memcmp(key, want, PEER_KEY_LEN) == 0;
+}
+
+static void peer_key_names_one_peer_in_either_family() {
+  static_assert(PEER_KEY_LEN == 16, "a peer key is an IPv6 address's 16 bytes");
+  uint8_t key[PEER_KEY_LEN];
+
+  // AF_INET 192.168.1.37 and the dual-stack listener's ::ffff:192.168.1.37
+  // are one peer, one key.
+  const uint8_t v4[4] = {192, 168, 1, 37};
+  const uint8_t mapped[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 37};
+  CHECK(peer_key_from_addr(AddrFamily::IPV4, v4, key), "an IPv4 peer has a key");
+  CHECK(key_is(key, mapped), "IPv4 a.b.c.d keys as ::ffff:a.b.c.d");
+  CHECK(peer_key_from_addr(AddrFamily::IPV6, mapped, key), "a mapped peer has a key");
+  CHECK(key_is(key, mapped), "::ffff:a.b.c.d keys as itself");
+
+  // A real IPv6 peer keys as its own 16 bytes, global and link-local alike.
+  const uint8_t global[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  const uint8_t link_local[16] = {0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xFF, 0xFE, 0x33, 0x44, 0x55};
+  CHECK(peer_key_from_addr(AddrFamily::IPV6, global, key) && key_is(key, global), "2001:db8::1 is copied");
+  CHECK(peer_key_from_addr(AddrFamily::IPV6, link_local, key) && key_is(key, link_local), "fe80:: is copied");
+
+  // No peer at all: refused, and the key left zero.
+  const uint8_t zero16[16] = {0};
+  const uint8_t mapped_zero[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0};
+  const uint8_t zero4[4] = {0, 0, 0, 0};
+  std::memset(key, 0xAA, sizeof(key));
+  CHECK(!peer_key_from_addr(AddrFamily::IPV6, zero16, key), ":: is no peer");
+  CHECK(key_is(key, zero16), "a refused key is zeroed");
+  std::memset(key, 0xAA, sizeof(key));
+  CHECK(!peer_key_from_addr(AddrFamily::IPV6, mapped_zero, key), "::ffff:0.0.0.0 is no peer");
+  CHECK(key_is(key, zero16), "a refused key is zeroed");
+  CHECK(!peer_key_from_addr(AddrFamily::IPV4, zero4, key), "0.0.0.0 is no peer");
+  std::memset(key, 0xAA, sizeof(key));
+  CHECK(!peer_key_from_addr(AddrFamily::OTHER, v4, key), "an unknown family is refused");
+  CHECK(key_is(key, zero16), "a refused key is zeroed");
+  CHECK(!peer_key_from_addr(AddrFamily::IPV4, nullptr, key), "null bytes are refused");
+  CHECK(!peer_key_from_addr(AddrFamily::IPV4, v4, nullptr), "a null key is refused");
+
+  // The lockout's bucket and the address the socket names agree: the IPv4 of
+  // a key is the IPv4 of the address it was made from, and 0 (the shared
+  // bucket) for a real IPv6 peer.
+  const uint8_t v4b[4] = {10, 0, 0, 9};
+  const uint8_t* const v4s[] = {v4, v4b};
+  for (const uint8_t* a : v4s) {
+    CHECK(peer_key_from_addr(AddrFamily::IPV4, a, key), "keyed");
+    CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, key) == ipv4_host_order_from_addr(AddrFamily::IPV4, a),
+          "an IPv4 key's IPv4 is the address's");
+  }
+  CHECK(peer_key_from_addr(AddrFamily::IPV6, mapped, key) &&
+            ipv4_host_order_from_addr(AddrFamily::IPV6, key) == ipv4_host_order_from_addr(AddrFamily::IPV6, mapped),
+        "a mapped key's IPv4 is the address's");
+  CHECK(ipv4_host_order_from_addr(AddrFamily::IPV6, key) == ip4(192, 168, 1, 37), "and it is 192.168.1.37");
+  const uint8_t* const v6s[] = {global, link_local};
+  for (const uint8_t* a : v6s) {
+    CHECK(peer_key_from_addr(AddrFamily::IPV6, a, key) && ipv4_host_order_from_addr(AddrFamily::IPV6, key) == 0,
+          "a real IPv6 key's IPv4 is 0, the shared bucket");
+  }
+}
+
 // The whole AP test fed what the dual-stack socket really reports: before
 // the v4-mapped unwrap every request reached request_on_softap as 0/0 and
 // the AP unlock could never fire.
@@ -622,6 +690,7 @@ int main() {
   request_on_softap_needs_the_ap_interface_and_no_overlap();
   v4_and_v4_mapped_addresses_unwrap();
   real_ipv6_and_unknown_families_read_as_zero();
+  peer_key_names_one_peer_in_either_family();
   dual_stack_request_reaches_the_ap_test_intact();
   subnet_overlap_math();
   refusal_body_carries_the_ttl_and_refuses_truncation();

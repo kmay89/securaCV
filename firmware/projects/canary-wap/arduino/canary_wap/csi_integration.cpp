@@ -167,14 +167,24 @@ namespace {  /* re-open anonymous so the rest of the original block continues */
  *     for tooling: the Python listener, the canary-vision fleet UI, and
  *     similar. Same token surface as /api/status, /api/chain, etc.
  *
+ * The Bearer is compared under its address's lockout (api_auth.h's
+ * api_auth_check_optional(), the cookie or api_auth_bearer_grant(); sweep
+ * F339): a wrong one is one strike against the address that sent it, and
+ * none is compared while that address's backoff runs. Before, this compare
+ * recorded nothing, so a host could try tokens here with no backoff.
+ *
  * Failure paths:
  *   - g_api_token unset (init() refuses null tokens, so structurally
  *     unreachable today; defensive 503 protects future refactors that
  *     might register a route before init() completes).
+ *   - A Bearer from an address whose backoff runs → 429 + Retry-After
+ *     (api_auth_send_lockout(); the grant reports it through held_, with
+ *     no second lockout read). The iPhone keeps its token on it.
  *   - Neither cookie nor Bearer valid → 401 + WWW-Authenticate. The
  *     dashboard at / catches this and re-routes through the pair flow. */
 #define CSI_AUTH_OR_RETURN(req)                                       \
   do {                                                                \
+    bool held_ = false;                                               \
     if (!g_api_token) {                                               \
       httpd_resp_set_status((req), "503 Service Unavailable");        \
       httpd_resp_set_type((req), "application/json");                 \
@@ -185,7 +195,8 @@ namespace {  /* re-open anonymous so the rest of the original block continues */
       return ESP_OK;                                                  \
     }                                                                 \
     if (cv_session_validate((req))) break;                            \
-    if (api_auth_check_optional((req), g_api_token)) break;           \
+    if (api_auth_check_optional((req), g_api_token, &held_)) break;   \
+    if (held_) { api_auth_send_lockout((req)); return ESP_OK; }       \
     httpd_resp_set_status((req), "401 Unauthorized");                 \
     httpd_resp_set_type((req), "application/json");                   \
     httpd_resp_set_hdr((req), "WWW-Authenticate",                     \

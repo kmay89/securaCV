@@ -25,6 +25,12 @@
 // a setup-door claim answers the .local name whenever the device has one,
 // the STA down included (#1804's rule, which #1802 had narrowed to the STA
 // holding an address; old_authority() below models #1804's).
+//
+// Since sweep F343 it also pins the sketch's one reader of who sent a
+// request, request_peer_key() (getpeername, both families, through
+// provisioning_gate.h's peer_key_from_addr()), and the bearer lockout's
+// source built on it, auth_request_source(); test_receipt_grant runs the
+// latter.
 
 #include "arduino_globals.h"
 
@@ -711,6 +717,48 @@ void test_sketch_glue() {
         "return receipt_authority::ipv4_from_addr(receipt_authority::AddrFamily::IPV6,"
         "(const uint8_t*)&sin6->sin6_addr);}"
         "#endif return 0;}");
+
+  // The sketch's one reader of who sent a request (sweep F343): the socket's
+  // PEER address, read whole: getpeername (the sketch's only one), both
+  // families through provisioning_gate.h's peer_key_from_addr, the IPv6
+  // branch under lwIP's guard, a failed read false.
+  CHECK(ino.find("#include \"provisioning_gate.h\"") != std::string::npos);
+  const std::string peer = body_of(ino, "static bool request_peer_key(httpd_req_t* req, "
+                                        "uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {");
+  CHECK(squash(peer) ==
+        "static bool request_peer_key(httpd_req_t*req,uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]){"
+        "const int fd=httpd_req_to_sockfd(req);"
+        "if(fd<0)return false;"
+        "struct sockaddr_storage ss;"
+        "socklen_t len=sizeof(ss);"
+        "memset(&ss,0,sizeof(ss));"
+        "if(getpeername(fd,(struct sockaddr*)&ss,&len)!=0)return false;"
+        "if(ss.ss_family==AF_INET){"
+        "const struct sockaddr_in*sin=(const struct sockaddr_in*)&ss;"
+        "return canary::net::provisioning_gate::peer_key_from_addr("
+        "canary::net::provisioning_gate::AddrFamily::IPV4,(const uint8_t*)&sin->sin_addr.s_addr,out);}"
+        "#if defined(LWIP_IPV6)&&LWIP_IPV6 "
+        "if(ss.ss_family==AF_INET6){"
+        "const struct sockaddr_in6*sin6=(const struct sockaddr_in6*)&ss;"
+        "return canary::net::provisioning_gate::peer_key_from_addr("
+        "canary::net::provisioning_gate::AddrFamily::IPV6,(const uint8_t*)&sin6->sin6_addr,out);}"
+        "#endif return false;}");
+  CHECK(count_of(ino, R"(\bgetpeername\s*\()") == 1);
+  CHECK(count_of(ino, R"(\bgetsockname\s*\()") == 1);   // request_local_ipv4's
+  // The bearer lockout's source: that key's IPv4, through the function the
+  // canary tree's sockaddr_ip4_host_order() maps its peers with; defined
+  // once, and the sketch's only caller of the reader.
+  const std::string source = body_of(ino, "uint32_t auth_request_source(httpd_req_t* req) {");
+  CHECK(squash(source) ==
+        "uint32_t auth_request_source(httpd_req_t*req){"
+        "uint8_t key[canary::net::provisioning_gate::PEER_KEY_LEN];"
+        "if(!request_peer_key(req,key))return 0;"
+        "return canary::net::provisioning_gate::ipv4_host_order_from_addr("
+        "canary::net::provisioning_gate::AddrFamily::IPV6,key);}");
+  CHECK(count_of(ino, R"(\bstatic bool request_peer_key\()") == 1);
+  CHECK(count_of(ino, R"(\buint32_t auth_request_source\(httpd_req_t\* req\) \{)") == 1);
+  CHECK(count_of(ino, R"(\brequest_peer_key\()") == 2);      // the definition and auth_request_source
+  CHECK(count_of(ino, R"(\bauth_request_source\()") == 1);   // the definition (api_auth.h calls it)
 
   // Every input from where the device keeps it, once.
   const std::string reach = body_of(ino, "static receipt_authority::Inputs request_reach(httpd_req_t* req, "

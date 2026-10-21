@@ -34,6 +34,13 @@
 //     error". It now saves the answer as a JSON download. The answer this
 //     test feeds the page carries exactly the keys the handler writes, read
 //     from securacv_network.cpp.
+//   - A refused token (F340): the page kept a token the device refused and
+//     sent it on every poll, a strike each time its address's backoff ended,
+//     so a mistyped paste held that address at 429 until the page was
+//     reloaded. It now drops a token securacv_auth refused (a 401, or a 403
+//     {"error":"forbidden"}) and shows the unlock banner again; a 403
+//     {"error":"host"}, a 429 or an answer to a token since replaced keeps
+//     the one it has.
 // The functions are lifted out of the C++ raw string by literal markers that
 // stand in the page before and after these changes (so the old page runs
 // here and fails on what it does, not on a missing marker), and run against
@@ -72,9 +79,13 @@ const NOT_FOUND = { ok: false, success: false, error: "not found", unrouted: tru
 // all): lifted from the page and run against a stub fetch, so the refusal a
 // test feeds the panel is the one the page itself makes of it.
 const apiSrc = slice("    async function api(endpoint, method = 'GET', body = null) {", "\n    }\n") + "\n    }\n";
+// The page's token helpers, from tokenIsMissing() to unlockWithToken() (the
+// helpers api() reads the token through stand between the two).
+const tokenSrc = slice("    function tokenIsMissing()", "    function unlockWithToken() {");
 async function answerTo(res, url = "/api/peek/status") {
   const ctx = {
     API_BASE: "", CV_TOKEN: "", console: { error() {} },
+    document: { getElementById: () => null },
     fetch: async () => {
       if (res === "no answer") throw new TypeError("Failed to fetch");
       return { status: res.status, ok: res.status >= 200 && res.status < 300, redirected: !!res.redirected,
@@ -82,7 +93,7 @@ async function answerTo(res, url = "/api/peek/status") {
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(apiSrc + "\nglobalThis.__api = api;\n", ctx);
+  vm.runInContext(tokenSrc + apiSrc + "\nglobalThis.__api = api;\n", ctx);
   return ctx.__api(url);
 }
 // The GET "/*" fallback (handle_captive_catchall): a 404 page, or during
@@ -571,4 +582,129 @@ test("a refused export alerts the device's reason and saves nothing", async () =
   assert.deepStrictEqual(p.record.alerts, ["Export failed: forbidden"]);
   assert.deepStrictEqual(p.record.blobs, []);
   assert.deepStrictEqual(p.record.clicks, []);
+});
+
+// ── A refused token (F340) ───────────────────────────────────────────────
+
+// What securacv_auth answers a request that carried a token
+// (AuthManager::check(): a wrong one, a malformed one, an address held),
+// the Host guard's refusal (send_host_refusal(), which never reads the
+// token) and a route that served.
+const WRONG_403 = { status: 403, body: '{"error":"forbidden"}' };
+const MALFORMED_401 = { status: 401, body: '{"error":"unauthorized","hint":"Use \'Bearer <token>\' format"}' };
+const HOST_403 = { status: 403, body: '{"error":"host"}' };
+const HELD_429 = { status: 429, body: '{"error":"too_many_requests","retry_after_s":3}' };
+const SERVED_200 = { status: 200, body: '{"ok":true}' };
+
+const thumb = slice("    async function viRefreshThumb() {", "    function viStartThumb() {");
+const hero = slice("    async function refreshTimelineHero() {", "    function renderTimeline(records) {");
+
+// The page's token helpers, api() and the two pollers that fetch with the
+// token themselves, holding `token`, against a stub fetch that answers
+// `answer` (or answer(url, ctx)) and records the Authorization each request
+// carried. The banner starts hidden, as a page that holds a token shows it.
+function tokenPage(token, answer) {
+  const el = dom();
+  el("lanLockBanner").style.display = "none";
+  el("lanTokenRefused").style.display = "none";
+  const sent = [];
+  const ctx = {
+    API_BASE: "", CV_TOKEN: token, cameraReady: true, console: { error() {} },
+    document: { getElementById: el },
+    URL: { createObjectURL: () => "blob:0", revokeObjectURL() {} },
+    fetch: async (url, opts = {}) => {
+      sent.push((opts.headers || {}).Authorization || null);
+      const res = typeof answer === "function" ? answer(url, ctx) : answer;
+      return { status: res.status, ok: res.status >= 200 && res.status < 300, redirected: false,
+               text: async () => res.body, json: async () => JSON.parse(res.body),
+               arrayBuffer: async () => new ArrayBuffer(0), blob: async () => ({}) };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(tokenSrc + apiSrc + thumb + hero +
+                  "\nglobalThis.__t = { api, viRefreshThumb, refreshTimelineHero };\n", ctx);
+  return { ctx, el, sent };
+}
+const holds = (p) => !!(p.ctx.CV_TOKEN && p.ctx.CV_TOKEN.charAt(0) !== "_");
+
+for (const [name, res] of [["a wrong token (403 forbidden)", WRONG_403], ["a malformed one (401)", MALFORMED_401]]) {
+  test(`the token is dropped once the device refuses it as ${name}, and the banner asks again`, async () => {
+    const p = tokenPage("cv_typo", res);
+    await p.ctx.__t.api("/api/status");
+    assert.deepStrictEqual(p.sent, ["Bearer cv_typo"]);
+    assert.ok(!holds(p), `the page still holds the refused token: ${p.ctx.CV_TOKEN}`);
+    assert.strictEqual(p.el("lanLockBanner").style.display, "", "the unlock banner is back");
+    assert.strictEqual(p.el("lanTokenRefused").style.display, "", "and says the token was refused");
+    // Every poll after it carries no header: no strike, the address unheld
+    // once its one backoff has run (before: each poll struck again).
+    for (let i = 0; i < 30; ++i) await p.ctx.__t.api(i % 2 ? "/api/sensing" : "/api/status");
+    assert.deepStrictEqual(p.sent.slice(1), Array(30).fill(null), "a poll after the refusal sent the token");
+  });
+}
+
+for (const [name, res] of [["the Host guard's 403, which never read the token", HOST_403],
+                           ["a 429 (the address held: nothing compared)", HELD_429],
+                           ["a route that served", SERVED_200]]) {
+  test(`the token is kept on ${name}`, async () => {
+    const p = tokenPage("cv_right", res);
+    await p.ctx.__t.api("/api/status");
+    await p.ctx.__t.api("/api/status");
+    assert.deepStrictEqual(p.sent, ["Bearer cv_right", "Bearer cv_right"]);
+    assert.strictEqual(p.ctx.CV_TOKEN, "cv_right");
+    assert.strictEqual(p.el("lanLockBanner").style.display, "none");
+    assert.strictEqual(p.el("lanTokenRefused").style.display, "none");
+  });
+}
+
+test("a refusal of a token the banner has since replaced keeps the new one", async () => {
+  // The owner pastes the right token while a call with the old one is out.
+  const p = tokenPage("cv_typo", (url, ctx) => { ctx.CV_TOKEN = "cv_right"; return WRONG_403; });
+  await p.ctx.__t.api("/api/status");
+  assert.strictEqual(p.ctx.CV_TOKEN, "cv_right");
+  assert.strictEqual(p.el("lanTokenRefused").style.display, "none");
+});
+
+test("a page with no token changes nothing on a 401", async () => {
+  const p = tokenPage("", ROUTE_401);
+  await p.ctx.__t.api("/api/status");
+  assert.deepStrictEqual(p.sent, [null]);
+  assert.strictEqual(p.el("lanTokenRefused").style.display, "none", "no token was refused");
+});
+
+for (const [name, run] of [["the Vision thumbnail poll", (t) => t.viRefreshThumb()],
+                           ["the timeline's snapshot", (t) => t.refreshTimelineHero()]]) {
+  test(`${name}, which fetches with the token itself, drops a refused one too`, async () => {
+    const p = tokenPage("cv_typo", WRONG_403);
+    await run(p.ctx.__t);
+    assert.deepStrictEqual(p.sent, ["Bearer cv_typo"]);
+    assert.ok(!holds(p), `the page still holds the refused token: ${p.ctx.CV_TOKEN}`);
+    assert.strictEqual(p.el("lanTokenRefused").style.display, "");
+    const kept = tokenPage("cv_right", HELD_429);
+    await run(kept.ctx.__t);
+    assert.strictEqual(kept.ctx.CV_TOKEN, "cv_right", "a 429 keeps it");
+  });
+}
+
+test("the refusal line starts hidden inside the unlock banner, and an unlock hides it again", () => {
+  assert.ok(hiddenInMarkup("lanTokenRefused"));
+  const banner = src.slice(src.indexOf('id="lanLockBanner"'), src.indexOf("<!-- Status Panel -->"));
+  assert.ok(banner.includes('id="lanTokenRefused"'), "the line is in the banner");
+  const p = operaPage({});
+  p.el("lanTokenRefused").style.display = "";
+  p.el("lanTokenInput").value = "cv_again";
+  p.ctx.__t.unlockWithToken();
+  assert.strictEqual(p.el("lanTokenRefused").style.display, "none");
+});
+
+// Every fetch that sends the page's token is one of the three above, so a
+// fourth added later is asked to drop a refused token as they do.
+test("every fetch that carries the token drops a refused one", () => {
+  const sites = src.split("\n").filter((l) => /Authorization'\]\s*=\s*'Bearer '/.test(l));
+  assert.strictEqual(sites.length, 4, `the page sets the bearer header in ${sites.length} places:\n${sites.join("\n")}`);
+  for (const [fn, body] of [["api", apiSrc], ["viRefreshThumb", thumb], ["refreshTimelineHero", hero]]) {
+    assert.match(body, /dropRefusedToken\(sent,/, `${fn}() does not drop a refused token`);
+  }
+  // The fourth is saveRecoveryKit(): the receipt answers a refused bearer
+  // with the tap's 403 (physical_confirmation_required), which drops nothing.
+  assert.match(slice("    async function saveRecoveryKit() {", "    // API calls"), /Authorization'\] = 'Bearer '/);
 });

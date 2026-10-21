@@ -5,8 +5,10 @@
  * GUESSING expensive. A request that presents no credential at all carries
  * no guess — counting it lets any credential-less client (a dashboard tab
  * left open after its session cookie died, a captive-portal probe, an
- * unauthenticated page load) arm the global lockout and 429 the legitimate
- * operator's CORRECT token. That is a self-DoS, not brute-force protection.
+ * unauthenticated page load) arm the lockout and 429 the legitimate
+ * operator's CORRECT token (every caller's, when the lockout was one per
+ * device; since sweep F343 it is one per source address, auth_backoff.h, so
+ * the same browser's). That is a self-DoS, not brute-force protection.
  *
  * Malformed and wrong-token attempts still count: those are the shapes an
  * actual guesser produces, and exempting them would weaken the token gate.
