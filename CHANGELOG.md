@@ -24,7 +24,12 @@
   name), or no Host, with `403` and one fixed sentence: "This Canary answers
   only its own names. Open it at its .local name, its IP address, or the bare
   name your router gives it." No pair token, no session, the owner's link
-  unspent, and a live cookie under that name refused too. The receipt asks
+  unspent, and a live cookie under that name refused too. Every other
+  cookie route asks the same question before it reads the cookie, the live
+  camera, the vault download and `/api/pair/token` included: any host on
+  the home network can take a 24-hour session at the landing, and a page
+  can set that value for its own name, so closing the landing alone left
+  such a value working from a rebinding page. The receipt asks
   the same question first, in every mode, and answers `403
   {"error":"host"}` before it reads the bearer, takes the claim or judges the
   tap, so such a request is never a lockout strike, never an asker that
@@ -93,7 +98,8 @@
   certificate. So every WAP serves plain HTTP after setup and hands out no
   `tls_cert_fp` pin, and the flagship's HTTPS builds serve HTTP and say why in
   `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL, FEATURES.md, the WAP's
-  READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`, the captive
+  READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`,
+  `iphone_companion_app.md`, the captive
   portal test plan, the bench checklist, the flagship's getting-started
   guide, `firmware/README.md`'s `dev` row and the glossary's TLS pin no
   longer say otherwise (the broker password's provisioning request is plain

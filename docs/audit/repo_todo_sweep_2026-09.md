@@ -855,10 +855,18 @@ so — see D2 below.)
   the wizard's two names pass), asks the Host first on the receipt in every
   mode, and after setup on the landing, the `?cv_pair=` exchange, `/admin`,
   `/settings` and `/companion`; the setup branch's names are now exact
-  matches, not substrings. The bearer-gated API routes still read no Host:
-  F344 rejected a guard on every gate as defense in depth only, because a
-  rebinding page holds no cookie for its own name and no bearer. Left open
-  for the maintainer to close or narrow.
+  matches, not substrings. F344 rejected a guard on every gate as defense
+  in depth only, on the premise that a rebinding page holds no cookie for
+  its own name; its third review found that premise false (any host on the
+  LAN takes a session at the landing, and a page can set that value for its
+  own name with `document.cookie`), so the cookie validator behind every
+  cookie gate (`session_validate_cookie()`) now asks the Host too. What
+  this item still leaves open is the bearer: outside the receipt, the
+  bearer-gated API routes read no Host, so a rebinding page that holds the
+  bearer token itself is not refused (and a pair token's value carried off
+  the LAN works on `/api/wifi/connect` with no Host question for its ten
+  minutes, until F334 removes that road after setup). Left open for the
+  maintainer to close or narrow.
 - [ ] **F58 [decision] The canary's identity-key store still reports success
   whatever the write did.** `nvs_store_key()`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
@@ -2732,9 +2740,10 @@ so — see D2 below.)
     (the Host row, the exact setup names, or the cookie-or-bearer macro),
     with eight fixture plants. Before, a `/tune` that handed out the landing
     passed every check and suite. `GET /api/pair/token` mints with no Host
-    question, behind the cookie or the bearer, which a rebinding page holds
-    neither of; the comment above `request_host_names_device()` and the docs
-    no longer say every mint asks the Host.
+    question of its own, behind the cookie or the bearer; the comment above
+    `request_host_names_device()` and the docs no longer say every mint
+    asks the Host. (That this route was safe because a rebinding page holds
+    neither credential was wrong for the cookie: Review 3 below.)
   - F357 restated: `/api/wifi`, `/api/wifi/scan` and `/api/fleet` send
     `Access-Control-Allow-Origin: *`, so any page reads them at the IP, and
     the Host question cannot close that.
@@ -2787,6 +2796,70 @@ so — see D2 below.)
     `test_receipt_foreign_host_is_refused_first` does: sent after the tap,
     it could land after the owner's next ask had spent the tap, and a sketch
     without the Host row passed.
+  *Review 3 (2026-10-21, #<PR>):*
+  - The pages and the mints asked the Host, but the cookie validator did
+    not, and this PR's text said a rebinding page "holds no session for its
+    own name". It can hold one: any host on the LAN takes a 24-hour session
+    at the landing (an IP-literal Host passes), and a page can set that
+    value for its own name with `document.cookie`.
+    `session_validate_cookie()` (`csi_integration.cpp`) read the cookie and
+    the slot and no Host, and it is the cookie half of `api_auth_check()`,
+    `api_auth_check_optional()` and `api_auth_check_or_query()` (through
+    `cv_session_validate()`), `CSI_AUTH_OR_RETURN`, `/tune`, `/mqtt` and
+    `handle_ui()`'s dashboard branch. So a value carried off the LAN
+    reached the live camera, the vault download, every session admin route
+    and `GET /api/pair/token` (whose pair token `wifi_change_authorize()`
+    accepts on `/api/wifi/connect` and `/api/wifi/ap-only`) from a
+    rebinding page for its 24 hours. The path predates this PR; this PR's
+    text called it closed. The validator now asks `host_names_this_device()`
+    first (the Host read into 96 bytes; a missing or oversize one is
+    foreign), so every cookie route refuses a session under a name that
+    cannot mean the device. Owners lose nothing: `/` already refuses those
+    names, and a browser sends a host-only cookie only to the name that set
+    it. `test_session_cookie.cpp` cuts the real validator with
+    `hex_decode_to()`, `session_issue()` and `hex_encode()`: a session the
+    real store minted validates under the device's names (both cookie
+    names; IPv4 and IPv6 with ports, `.local`, the bare label, `.lan`,
+    `.home.arpa`, `.internal`, the 95-byte name) and is refused under
+    `evil.example` and the other rebinding names, the 108-byte one, the four
+    router names, an empty or blank Host and none. The validator before
+    fails 20 of 943. A text row holds `cv_session_validate()` to forwarding
+    to it, and it to being the cookie reader's one caller. SECURITY_MODEL,
+    THREAT_MODEL, `magic_pairing.md`, LESSONS_LEARNED, the CHANGELOG, the
+    WAP README, the sketch's comment, `check_route_security.py`'s comments
+    and F57's note say so, and the U1 row gains step 6. Still open under
+    F57: outside the receipt a bearer asks no Host, and a pair token's value
+    carried off the LAN works on `/api/wifi/connect` and `/api/wifi/ap-only`
+    for its ten minutes until F334 removes that road after setup. No new
+    number.
+  - `magic_pairing.md`'s recovery-kit paragraph, which this PR edits, still
+    said an installed WAP "speaks https", and so did
+    `iphone_companion_app.md`. Both now say no stock WAP serves https today
+    (F15) and that F256 waits on it.
+  - Review 2's "each half of the wildcard rule dropped now fails the
+    self-test" did not hold for `http_send_error`: a `MINT_WILDCARD_SEND`
+    without it passed all 53 plants and the tree. One more plant (a mint
+    site refusing through `http_send_error()`) fails it: 54 in all.
+  - `session_cookie_header()`'s `n < cap` had no row at its edge, so `<=`
+    passed both suites. `test_cookie_writer_budget` pins the comment's
+    figures: the HTTPS cookie is 140 bytes and the plain one 125, refused
+    in a buffer of exactly that size and written in one byte more. `<=`
+    fails 2 of 943.
+  - The `firmware.yml` step comment listed the staged headers without
+    `host_guard.h`; it now points at the script's `PAIRS`.
+    `firmware/common/README.md`'s `host_guard.h` line says a staged copy
+    sits by the WAP sketch.
+  - While the first-boot wizard runs, `/admin`, `/settings` and
+    `/companion` still serve under any Host (the decision kept setup-time
+    serving), and the receipt refuses such a Host. Both pollers
+    (`web_ui.h`'s BOOT-tap sign-in, `companion_pwa.h`'s kit save) read that
+    `403` as the BOOT gate's ask, so they ask for a press that never counts.
+    The comments above `send_foreign_host_page()` and in
+    `handle_legacy_ui()` said no BOOT-tap wait begins under a refused name;
+    they now say that holds after setup, and what happens during it. The
+    pollers are unchanged: reaching such a page during setup takes typing a
+    foreign name (the captive page has no links, and the wizard's two names
+    pass).
   Host-tested; not run against a browser or on a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST

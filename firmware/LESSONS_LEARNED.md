@@ -645,9 +645,14 @@
   receipt's BOOT tap and setup-door claim served any Host. It now stages the
   same header and asks it on every place that mints a session or a pair
   token for a caller holding no credential, or starts a sign-in, and first
-  on the receipt (`GET /api/pair/token` mints behind the cookie or the
-  bearer, which a rebinding page holds neither of, and asks no Host). It
-  takes no SoftAP
+  on the receipt. That alone kept a rebinding page from being handed a
+  session, not from holding one (the PR's third review): any host on the LAN
+  takes a 24-hour session at the landing, a page can set that value for its
+  own name with `document.cookie`, and the cookie validator read no Host, so
+  the value reached the live camera, every session admin route and `GET
+  /api/pair/token` from the rebinding page. The validator behind every
+  cookie route (`session_validate_cookie()`) now asks the same question
+  before it reads the cookie. It takes no SoftAP
   exemption: its captive DNS answers every name with the device too, so an
   exemption keyed on the interface would hand the rebinding path to anything
   on the SoftAP, and its wizard runs at two fixed names that pass anyway. Its
@@ -670,10 +675,14 @@
   a page that reached the device under another name; against a page that
   asks for the device's real name, a credential is kept only by an answer
   that grants no cross-origin read, so a route that hands one out sends no
-  CORS header.
+  CORS header. And closing the places that hand a credential out does not
+  close the places that take it: a host-only cookie is whatever a page on
+  that name sets, so the code that reads a session asks which name the
+  request was sent to, as the code that hands one out does.
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
   (the pages and the setup names, an oversize Host, the re-issue's
-  headers) and
+  headers, and the real cookie validator under the device's names and
+  foreign ones) and
   `test_receipt_grant.cpp` (the receipt's Host row);
   `projects/canary-wap/tests_host/check_route_security.py`'s `MINT_SITES`
   (every mint, after its gate, and none answering through the wildcard

@@ -458,9 +458,12 @@ claim (spent only on a match) and the same unspent tap, and its row 4 goes
 to one asker (below). After setup its `/` (the landing, its pair token and
 the `?cv_pair=` exchange), `/admin`, `/settings` and `/companion` ask the
 same question first and answer a foreign Host with a fixed `text/plain`
-`403`, so a DNS-rebinding page holds no session for its own name; during
-setup `/` sends to the wizard only a request for exactly `canary.local` or
-`192.168.4.1`. Its
+`403`, so a DNS-rebinding page is handed no session; and the cookie
+validator behind every cookie route (`session_validate_cookie()`) asks it
+before it reads the cookie, so a live session's value that such a page sets
+for its own name with `document.cookie` is refused too (F344's third
+review; before, the validator read no Host). During setup `/` sends to the
+wizard only a request for exactly `canary.local` or `192.168.4.1`. Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 session cookie (`cv_session`, or `__Host-cv_session` over HTTPS; sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
@@ -920,8 +923,9 @@ names. A kit saved before a rename is dialed at the new name. "The row's
 id" is a 16-bit suffix of the WAP's key fingerprint, so two WAPs in one
 home can share one, and then one's kit moves onto the other (the rebase's
 comment says what follows). The app has no BOOT-tap
-pairing over the LAN: an installed WAP speaks https with no pin the phone
-could hold it to before the first dial (F256).
+pairing over the LAN (F256). A WAP that served https would have no pin the
+phone could hold it to before the first dial, and no stock WAP serves https
+today (F15), so the item waits on F15.
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 `MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),

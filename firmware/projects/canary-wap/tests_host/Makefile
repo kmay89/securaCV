@@ -620,6 +620,11 @@ clean: clean-receipt-grant
 # (before: both were, on millis()), and eviction picks an expired slot, else
 # the oldest; and csi_integration.cpp's text (its path is passed in): both
 # slots carry issued_s, stamped from uptime_s() over esp_timer_get_time().
+# The same cut carries the REAL cookie validator (session_validate_cookie(),
+# with hex_decode_to(), session_issue() and hex_encode()), every cookie
+# gate's one question: a session the real store minted validates under a
+# Host that names the device and is refused under any other, however the
+# cookie got into the browser (review 3 of F344).
 SCOOKIE_BIN     = test_session_cookie
 SCOOKIE_SRC     = test_session_cookie.cpp
 SCOOKIE_UI_INC  = test_session_cookie_ui.inc
@@ -637,7 +642,7 @@ $(SCOOKIE_CSI_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
 
 $(SCOOKIE_SLOTS_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
-	awk -v 'sigs=PairSlot* pick_slot_for_issuance() {|PairSlot* find_slot(const uint8_t* token) {|SessionSlot* pick_session_slot_for_issuance() {|bool find_valid_session(const uint8_t* token) {|bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {' \
+	awk -v 'sigs=bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {|PairSlot* pick_slot_for_issuance() {|PairSlot* find_slot(const uint8_t* token) {|SessionSlot* pick_session_slot_for_issuance() {|bool find_valid_session(const uint8_t* token) {|bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {|bool session_validate_cookie(httpd_req_t* req) {|bool session_issue(char* hex_out, size_t out_cap) {|void hex_encode(const uint8_t* in, size_t len, char* out) {' \
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
 
 $(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC) $(SRC_DIR)/csi_integration.cpp arduino_globals.h $(wildcard stubs/receipt_grant/*.h)

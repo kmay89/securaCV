@@ -3736,14 +3736,17 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // caller holding no credential, or starts a sign-in: handle_ui after setup
 // (the landing, its pair token and the ?cv_pair exchange), /admin, /settings
 // and /companion after setup, and the provisioning receipt in every mode.
-// (GET /api/pair/token, csi_integration's handle_pair_token, mints one behind
-// the cookie or the bearer, which a rebinding page holds neither of, and asks
-// no Host; the setup branch and the wizard token's re-issue ask the narrower
+// (The setup branch and the wizard token's re-issue ask the narrower
 // request_host_is_setup_name().) check_route_security.py's MINT_SITES holds
-// every mint to those places, each after its gate. A rebinding page then
-// holds no cookie for its own name, so every cookie gate refuses it
-// unchanged. Asked before the response starts: esp_http_server purges the
-// request headers on the first send.
+// every mint to those places, each after its gate. That keeps a rebinding
+// page from being HANDED a session, not from holding one: any host on the
+// LAN can take a session at the landing, and a page can set that value for
+// its own name with document.cookie. So the validator behind every cookie
+// gate, csi_integration.cpp's session_validate_cookie(), asks the same
+// question first (review 3 of F344): GET /api/pair/token, which mints behind
+// the cookie or the bearer, refuses such a cookie too. Outside the receipt a
+// bearer asks no Host (F57's open question). Asked before the response
+// starts: esp_http_server purges the request headers on the first send.
 static bool request_host_names_device(httpd_req_t* req) {
   char host[96];
   if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
@@ -3753,8 +3756,15 @@ static bool request_host_names_device(httpd_req_t* req) {
 // The pages' one answer to a Host that cannot name this device: 403 and a
 // fixed sentence that says what to type instead, never cached. The body is
 // fixed text, never the Host and never a device value (no name, no address).
-// No sign-in starts here, so no BOOT-tap wait begins under a name the
-// receipt refuses.
+// After setup no sign-in starts here, so no BOOT-tap wait begins under a name
+// the receipt refuses. While the first-boot wizard runs, /admin, /settings and
+// /companion still serve under any Host (as before F344), and a receipt poll
+// from one loaded under a name the receipt refuses gets its 403
+// {"error":"host"}, which both pollers (web_ui.h's BOOT-tap sign-in,
+// companion_pwa.h's kit save) read as the gate's "ask registered": they ask
+// for a press the receipt will never count. Reaching one there takes typing
+// such a name: the captive page has no links, and the wizard's two names
+// pass.
 static esp_err_t send_foreign_host_page(httpd_req_t* req) {
   httpd_resp_set_status(req, "403 Forbidden");
   httpd_resp_set_type(req, "text/plain; charset=utf-8");
@@ -3944,7 +3954,9 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // for a direct route to device settings from the headline dashboard.
   // After setup a Host that cannot name this device gets the fixed 403 page
   // (sweep F344): its sign-in, and the BOOT-tap wait it starts, would run
-  // under a name the receipt refuses.
+  // under a name the receipt refuses. While the first-boot wizard runs the
+  // page serves under any Host, as before, so there such a wait can still
+  // begin (send_foreign_host_page() says when).
   g_health.http_requests++;
   if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);
   httpd_resp_set_type(req, "text/html");

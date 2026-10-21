@@ -67,10 +67,12 @@ to a fixed point, every function that calls one). What it reads:
     nothing. And the table itself (g_auth_table) is named in api_auth.h
     only, so no file writes or clears it directly.
   - The mints (sweep F344): session_issue(), pair_token_issue() and
-    send_pair_landing() hand their caller a session or a pair token, and a
-    DNS-rebinding page is kept from every cookie route only because no mint
-    answers it. Each call stands in a MINT_SITES function, after that
-    function's gate for it (handle_ui's and the receipt's Host row, the
+    send_pair_landing() hand their caller a session or a pair token, and no
+    mint may answer a DNS-rebinding page (the cookie gates also refuse a
+    session's value under such a name: session_validate_cookie() asks the
+    Host itself, test_session_cookie). Each call stands in a MINT_SITES
+    function, after that function's gate for it (handle_ui's and the
+    receipt's Host row, the
     setup branch's exact setup names, /api/pair/token's cookie-or-bearer
     macro), and each entry still has its call. A page, a wrapper or a
     global that mints anywhere else fails, by file and line. And no
@@ -88,7 +90,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
-run first, every run: a clean sketch that passes and fifty-three plants
+run first, every run: a clean sketch that passes and fifty-four plants
 that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
@@ -302,8 +304,9 @@ AUTH_TABLE_HOME = "api_auth.h"
 
 # The mints (sweep F344): a call of one hands its caller a dashboard session
 # (session_issue) or a pair token (pair_token_issue; send_pair_landing serves
-# one in the landing page). A DNS-rebinding page is kept from the cookie
-# routes only because no mint answers it, so every call stands in a
+# one in the landing page). No mint may answer a DNS-rebinding page (a
+# session's value it carries in anyway is refused by the cookie gates,
+# whose session_validate_cookie() asks the Host), so every call stands in a
 # MINT_SITES function, after that function's gate, and nowhere else:
 #   ("refusal", cond): after an `if` at the top level of the body whose
 #     whole condition is `cond` and whose branch returns;
@@ -335,8 +338,9 @@ MINT_SITES = {
         "pair_token_issue": ("refusal", "!setup_wizard::is_active()||!request_host_is_setup_name(req)"),
     },
     ("csi_integration.cpp", "handle_pair_token"): {
-        # GET /api/pair/token: the cookie or the bearer first, neither of
-        # which a rebinding page holds; it asks no Host.
+        # GET /api/pair/token: the cookie or the bearer first. The cookie
+        # half asks the Host (session_validate_cookie()); the bearer half
+        # asks none (F57's open question).
         "pair_token_issue": ("statement", "CSI_AUTH_OR_RETURN(req);"),
     },
     ("csi_integration.cpp", "send_pair_landing"): {
@@ -1764,6 +1768,10 @@ _FIX_PLANTS = (
      "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n",
      "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return http_send_json(req, hex);\n",
      "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a mint site refusing through the wildcard error sender", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) return http_send_error(req, 403, \"host\");",
+     "handle_landing() mints a session or a pair token and answers through http_send_error()"),
     ("a credential-gated mint naming the CORS header", "csi_integration.cpp",
      "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
      "  CSI_AUTH_OR_RETURN(req);\n  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n"
@@ -1811,7 +1819,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 53, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 54, "the module docstring counts the plants: update it"
 
 
 def main() -> int:

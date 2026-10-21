@@ -88,6 +88,18 @@
 //     either cut; csi_integration.cpp's text (its path is passed in) says the
 //     real slots carry issued_s only, stamped from uptime_s(), which reads
 //     esp_timer_get_time(), and that the constants mirrored here are its own.
+//   - every cookie gate's Host question (review 3 of F344): the REAL
+//     validator, session_validate_cookie(), cut with hex_decode_to(),
+//     session_issue() and hex_encode() into that namespace. A session the
+//     real store minted validates under the device's names and is refused
+//     under a rebinding page's, none, the oversize one and the router names
+//     the rule leaves out (before: it validated under all of them, so a
+//     value a page set for its own name with document.cookie passed every
+//     cookie gate); and csi_integration.cpp's text: the cv_session_validate()
+//     bridge forwards to it, and it is the cookie reader's one caller;
+//   - the cookie writer's budget: the HTTPS cookie is 140 bytes and the
+//     plain one 125, refused in a buffer of exactly that size and written in
+//     one byte more.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-session-cookie
 
@@ -324,6 +336,16 @@ SessionSlot g_session_slots[SESSION_SLOTS] = {};
 uint64_t g_clock_ms = 0;
 uint32_t uptime_s() { return (uint32_t)(g_clock_ms / 1000ULL); }
 
+// session_issue()'s entropy: a counter, so each session the real store
+// mints here differs from the last.
+uint8_t g_fill = 0;
+void esp_fill_random(void* buf, size_t len) {
+  uint8_t* p = static_cast<uint8_t*>(buf);
+  for (size_t i = 0; i < len; ++i) p[i] = (uint8_t)(++g_fill * 37u + i);
+}
+// Declared in csi_integration.h; its cut definition comes after its caller.
+void hex_encode(const uint8_t* in, size_t len, char* out);
+
 #include SESSION_COOKIE_SLOTS_INC
 }  // namespace slots
 
@@ -456,6 +478,31 @@ void test_https_name_is_host_prefixed_and_round_trips() {
       CHECK(handle_ui(&both) == ESP_OK);
       CHECK_MSG(g_dashboards == 1, "the HTTPS cookie behind a stale plain one did not reach the dashboard");
     }
+  }
+}
+
+// The writer's budget, as its comment states it: the HTTPS cookie is 140
+// bytes (18 for the name and "=", 64 hex, 50 of attributes, 8 for
+// "; Secure") and the plain one 125, each written only into a buffer that
+// also holds the NUL. A writer that took a buffer one byte short would send
+// the HTTPS cookie cut to "...; Secur", which a browser refuses for a
+// __Host- name, and the sign-in would fail without a word.
+void test_cookie_writer_budget() {
+  const std::string hex(64, 'a');
+  for (const bool tls : {true, false}) {
+    reset();
+    if (tls) https_up();
+    httpd_req_t r;
+    r.handle = tls ? g_https_server : g_http_server;
+    const size_t len = tls ? 140 : 125;
+    char out[160];
+    CHECK_MSG(!session_cookie_header(&r, hex.c_str(), out, len),
+              std::string("a ") + std::to_string(len) + "-byte buffer was said to hold the " + std::to_string(len) +
+                  "-byte cookie");
+    CHECK(session_cookie_header(&r, hex.c_str(), out, len + 1));
+    CHECK_MSG(std::strlen(out) == len, std::string("the cookie is ") + std::to_string(std::strlen(out)) +
+                                           " bytes, want " + std::to_string(len));
+    CHECK(session_cookie_header(&r, hex.c_str(), out, sizeof(out)));   // both callers pass 160
   }
 }
 
@@ -1119,6 +1166,75 @@ void test_eviction_across_the_mark() {
   CHECK(slots::pick_slot_for_issuance() == &slots::g_pair_slots[2]);
 }
 
+// ── every cookie gate asks the Host (review 3 of F344) ──────────────────────
+// The REAL validator, session_validate_cookie(), cut with hex_decode_to(),
+// session_issue() and hex_encode() into the slots namespace: the one
+// question behind every cookie gate (CSI_AUTH_OR_RETURN, api_auth_check(),
+// api_auth_check_optional(), api_auth_check_or_query() through the
+// cv_session_validate() bridge; /tune, /mqtt and handle_ui directly).
+// Closing the mints keeps a rebinding page from being HANDED a session, but
+// not from holding one: any host on the LAN can take a session at the
+// landing, and a rebinding page can set that value for its own name with
+// document.cookie. Before, the validator read the cookie and the slot and no
+// Host, so the value reached the live camera, the vault download, every
+// session admin route and GET /api/pair/token from evil.example for its
+// 24 h. Now a Host that cannot name the device (host_guard.h's rule, as the
+// pages ask it) is refused before the cookie is read.
+
+// GET with `cookie` under `host` (nullptr: no Host), through the real
+// validator.
+bool cookie_validates(const char* host, const std::string& cookie) {
+  httpd_req_t r;
+  r.handle = g_http_server;
+  if (host) r.req_hdrs["Host"] = host;
+  r.req_hdrs["Cookie"] = cookie;
+  return slots::session_validate_cookie(&r);
+}
+
+void test_every_cookie_gate_asks_the_host() {
+  clear_slots();
+  const uint64_t t = 7000000;
+  set_clock(t);
+  // A session the real store minted, as a LAN guest's ?cv_pair exchange at
+  // the device's IP would: 64 hex, sent back as a browser sends it.
+  char hex[65];
+  CHECK(slots::session_issue(hex, sizeof(hex)));
+  CHECK(std::strlen(hex) == 64);
+  const std::string plain = std::string("cv_session=") + hex;
+  const std::string prefixed = std::string("__Host-cv_session=") + hex;
+  set_clock(t + 6ULL * 60 * 60 * 1000);   // six hours on: well inside its 24 h
+  // The device's names: the session signs in, under either cookie name.
+  for (const char* host : {"192.168.1.50", "192.168.1.50:80", "canary-7916.local", "canary-7916.local:443",
+                           "CANARY-7916.LOCAL", "canary.local", "192.168.4.1", "[fe80::1]:443", "canary-7916",
+                           "canary-7916.lan", "canary-7916.home.arpa", "canary-7916.internal", LONGEST_HELD_HOST}) {
+    CHECK_MSG(cookie_validates(host, plain), std::string("Host ") + host + ": the live session was refused");
+    CHECK_MSG(cookie_validates(host, "theme=dark; " + prefixed),
+              std::string("Host ") + host + ": the live __Host- session was refused");
+  }
+  // A rebinding page's names, none, the 108-byte one, and the router names
+  // the rule leaves out: the same live value, set by the page itself for its
+  // own name, is refused (before: it validated, so every cookie gate let it
+  // in).
+  for (const char* host : kForeignHosts) {
+    CHECK_MSG(!cookie_validates(host, plain), host_label(host) + ": a live session validated under it");
+    CHECK_MSG(!cookie_validates(host, prefixed), host_label(host) + ": a live __Host- session validated under it");
+  }
+  for (const char* host : {"canary-7916.fritz.box", "canary-7916.localdomain", "canary-7916.home",
+                           "canary-7916.local.", "", "   "}) {
+    CHECK_MSG(!cookie_validates(host, plain), std::string("Host '") + host + "': a live session validated under it");
+  }
+  // Asking under a foreign name spends nothing: the owner's session still
+  // signs in under the device's name.
+  CHECK(cookie_validates("canary-7916.local", plain));
+  // The rest of the validator is unchanged: a value no slot holds, a
+  // malformed one, and the live one at 24 h are refused under the device's
+  // own name.
+  CHECK(!cookie_validates("canary-7916.local", "cv_session=" + std::string(64, 'f')));
+  CHECK(!cookie_validates("canary-7916.local", std::string("cv_session=") + std::string(hex).substr(0, 63)));
+  set_clock(t + kDayMs);
+  CHECK_MSG(!cookie_validates("canary-7916.local", plain), "the session still validated at 24 h");
+}
+
 // csi_integration.cpp with its comments stripped and its whitespace dropped,
 // for a text check that does not care how a line is aligned.
 std::string squeeze(const std::string& t) {
@@ -1204,6 +1320,16 @@ void test_store_text() {
               std::string(sig) + " does not stamp issued_s from uptime_s()");
     CHECK_MSG(body.find("millis()") == std::string::npos, std::string(sig) + " reads millis()");
   }
+  // Every cookie gate reaches the validator test_every_cookie_gate_asks_the_host
+  // drives (review 3 of F344): the bridge api_auth.h and CSI_AUTH_OR_RETURN
+  // call forwards to it, and it is the cookie reader's one caller.
+  const std::string bridge = fn_body(csi, "bool cv_session_validate(httpd_req_t* req) {");
+  CHECK_MSG(squeeze(bridge).find("returncsi_integration::session_validate_cookie(req);") != std::string::npos,
+            "cv_session_validate() no longer forwards to session_validate_cookie()");
+  CHECK_MSG(count_of(csi, "read_session_cookie_hex(") == 2,
+            "read_session_cookie_hex() has a caller other than session_validate_cookie()");
+  CHECK(fn_body(csi, "bool session_validate_cookie(httpd_req_t* req) {").find("read_session_cookie_hex(req, hex)") !=
+        std::string::npos);
 }
 
 }  // namespace
@@ -1213,6 +1339,7 @@ int main() {
   test_exchange_on_plain_http_boot_is_not_secure();
   test_exchange_on_port_80_beside_https_is_not_secure();
   test_https_name_is_host_prefixed_and_round_trips();
+  test_cookie_writer_budget();
   test_exchange_without_pair_token_mints_nothing();
   test_first_boot_setup_flow_unchanged();
   test_setup_name_is_exact();
@@ -1231,6 +1358,7 @@ int main() {
   test_session_lives_24_hours_at_any_uptime();
   test_pair_token_lives_10_minutes_at_any_uptime();
   test_eviction_across_the_mark();
+  test_every_cookie_gate_asks_the_host();
   test_store_text();
   if (g_failures) {
     std::printf("%d/%d checks FAILED\n", g_failures, g_checks);

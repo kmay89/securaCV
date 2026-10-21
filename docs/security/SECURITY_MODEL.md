@@ -379,20 +379,30 @@ receipt asks the same question first, in every mode, setup included, and
 answers `403 {"error":"host"}` before it reads the bearer, takes the claim
 or judges the tap, so such a request is never a strike (F343), never an
 asker for the tap (F342), spends nothing and clears nothing (F341). A
-DNS-rebinding page then holds no session for its own name, so it reaches
-neither the dashboard, the live camera nor the vault download, and it is
-never handed the receipt. Two differences from the flagship. There is no
+DNS-rebinding page is then handed no session and no receipt. Nor can it use
+a session carried in: any host on the LAN can take a 24-hour session at the
+landing, and a page can set that value for its own name with
+`document.cookie`, so the cookie validator behind every cookie route
+(`session_validate_cookie()`, which `api_auth.h`'s checks and
+`CSI_AUTH_OR_RETURN` reach through `cv_session_validate()`) asks the same
+Host question before it reads the cookie (F344's third review). Before, it
+read no Host, and such a value reached the dashboard, the live camera, the
+vault download, every session admin route and `GET /api/pair/token` (whose
+pair token then authorized `/api/wifi/connect`) from the rebinding page for
+its 24 hours. Two differences from the flagship. There is no
 SoftAP exemption, because the WAP's captive DNS sends every name to the
 device; its wizard runs at `canary.local` or `192.168.4.1`, which both pass,
 and the setup branch and the wizard token's re-issue now match exactly those
 two names, in any case and with any port, rather than any name that contains
-one of them. And only the places that mint a session or a pair token for a
-caller holding no credential, or start a sign-in, ask it, not every API
-route: a route behind the cookie refuses a rebinding page because that page
-holds no cookie, and `GET /api/pair/token`, which mints a pair token behind
-the cookie or the bearer, asks no Host for the same reason
-(`check_route_security.py`'s `MINT_SITES` lists every place that mints,
-each with the gate it must pass first). Refused after
+one of them. And the question is asked by the places that mint a session or
+a pair token for a caller holding no credential (`check_route_security.py`'s
+`MINT_SITES` lists every place that mints, each with the gate it must pass
+first), the pages that start a sign-in and the cookie, not by every API
+route as the flagship asks it: outside the receipt a bearer asks no Host,
+so a rebinding page that holds the bearer token itself is F57's open
+question, and a pair token's value carried off the LAN is read with no Host
+on `/api/wifi/connect` and `/api/wifi/ap-only` for its ten minutes, until
+the owner-authority PR (F334) removes that road after setup. Refused after
 setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
 `.home`), a name with a trailing dot, a public split-horizon name, and a
 reverse proxy that forwards a public Host; use the `.local` name, the IP or

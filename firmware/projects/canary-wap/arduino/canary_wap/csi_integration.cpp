@@ -37,6 +37,7 @@
 #include "csi_event_log.h"        // SD-backed event persistence + backfill
 #include "csi_event_egress.h"     // committed events -> SD log + MQTT, in id order
 #include "api_auth.h"             // api_auth_check() — Bearer token gate
+#include "host_guard.h"           // the cookie gates' Host question (staged copy of firmware/common/network; F344)
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -1794,7 +1795,32 @@ bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
 
 namespace csi_integration {
 
+/* The one question behind every cookie gate: CSI_AUTH_OR_RETURN and
+ * api_auth.h's api_auth_check(), api_auth_check_optional() and
+ * api_auth_check_or_query() through the cv_session_validate() bridge
+ * below, and /tune, /mqtt and handle_ui directly.
+ *
+ * The Host first (review 3 of sweep F344): a Host that cannot name this
+ * device (host_guard.h's rule, the one canary_wap.ino's
+ * request_host_names_device() asks on the pages and the receipt) is no
+ * session, whatever the cookie holds. Closing the places that mint keeps a
+ * DNS-rebinding page from being HANDED a session, not from holding one: any
+ * host on the LAN takes a session at the landing, and a page can set that
+ * value for its own name with document.cookie. Before, this read the cookie
+ * and the slot and no Host, so a value carried off the LAN reached the live
+ * camera, the vault download, every session admin route and GET
+ * /api/pair/token from a rebinding page for its 24 h. A session is never
+ * tied to the name it was minted under: a browser sends a host-only cookie
+ * only to the name that set it, and every name the device mints under is
+ * one this rule accepts. A missing Host, or one too long for the buffer, is
+ * foreign (a truncated header is never read as a name). Asked before the
+ * response starts, as the cookie is: esp_http_server purges the request
+ * headers on the first send. */
 bool session_validate_cookie(httpd_req_t* req) {
+  if (!req) return false;
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  if (!canary::net::host_names_this_device(host)) return false;
   char hex[SESSION_TOK_HEX_LEN + 1];
   if (!read_session_cookie_hex(req, hex)) return false;
   uint8_t raw[SESSION_TOK_BYTES];
