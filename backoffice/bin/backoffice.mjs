@@ -96,7 +96,13 @@ const main = async () => {
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
     }
     case 'demo': {
-      if (!hasOperator(db)) { const secret = setupOperator(db, flags.password || 'demo-password-change-me'); for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p); out(`Operator set with password "${flags.password || 'demo-password-change-me'}". Authenticator secret: ${secret} — or run \`backoffice code\` for the current code.`); }
+      if (!hasOperator(db)) {
+        // The password is never echoed: either it is the one you just typed, or the documented demo default.
+        const usingDefault = !flags.password;
+        setupOperator(db, usingDefault ? 'demo-password-change-me' : flags.password);
+        for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
+        out(`Operator set with ${usingDefault ? 'the demo password: demo-password-change-me' : 'the password you passed'}. Run \`backoffice code\` for the authenticator code.`);
+      }
       out(await seedDemo(db, cfg));
       return out('Demo data loaded. Now: backoffice serve  → http://127.0.0.1:' + cfg.port + '/  (log in with the password above and `backoffice code`)');
     }
