@@ -47,7 +47,15 @@
 //     asked and gives Save back; any other refusal ends the save with its
 //     status; sixteen 403s, the last at 30 s, say no press was seen), its
 //     Home Assistant step's no-session line says Save before BOOT, and
-//     its banner is on screen whenever it holds a line.
+//     its banner is on screen whenever it holds a line;
+//   * the companion's save belongs to the step on screen (#1842's Codex
+//     review): Do this later or Run again while it runs aborts the ask out
+//     and asks nothing more, and nothing is saved or shown after, a save
+//     tapped once the step is back is its own, and every function that
+//     hides the step stops the save first; a fetch that rejects (a Wi-Fi
+//     blip) is followed by more asks until the sixteen are spent, a later
+//     200 is still served, the press line waits for the first 403, and a
+//     save the device never answered says so.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -806,36 +814,98 @@ describe("the offer speaks the wizard's words", () => {
 });
 
 describe("the wizard's close-out saves through the same builder", () => {
-  // The Save handler against a device answering `answers` in turn (the last
-  // repeats; one answer is every answer), each 2 s sleep run at once.
-  function wizardSave(answers) {
+  // The close-out chain's recovery code as companion_pwa.h ships it: from
+  // its section comment through the Save handler (the running save's state,
+  // the step's exits and the two buttons' wiring), and showRunning(), the
+  // pane change Run again starts with.
+  function closeOutCode(src) {
+    const chain = src.match(/\n( {2}\/\/ ── Recovery kit \+ optional Home Assistant \(close-out chain\)[\s\S]*?\n {2}\$w\('wiz-recovery-save'\)\.addEventListener\('click', async \(\) => \{[\s\S]*?\n {2}\}\);\n)/);
+    if (!chain) throw new Error("the close-out chain's recovery code was not found in companion_pwa.h");
+    const running = src.match(/\n( {2}function showRunning\(\) \{[\s\S]*?\n {2}\}\n)/);
+    if (!running) throw new Error('showRunning was not found in companion_pwa.h');
+    return kitBlock(src, 'companion_pwa.h') + '\n' + running[1] + chain[1];
+  }
+  // A browser's answer to an ask, or to a body read, whose signal was
+  // aborted while it was out.
+  const aborted = () => new DOMException('The operation was aborted.', 'AbortError');
+  // Tap Save on a recovery step that is on screen, against a device
+  // answering `answers` in turn (the last repeats; one answer is every
+  // answer; BLIP is an ask that never reached the device), each 2 s sleep
+  // run at once. `on.ask(n, page)` acts while ask n (from 0) is out,
+  // `on.wait(n, page)` during the sleep before it and `on.body(n, page)`
+  // while its body is read: page.skip() taps Do this later, page.rerun()
+  // starts Run again (showRunning()), page.back() puts the step on screen
+  // again (as Run again's next result does) and taps Save, and page.ui()
+  // reads every element and every save. As a browser's, fetch rejects an
+  // ask whose signal was aborted while it was out, and a body read too. It
+  // settles once every save tapped has.
+  function wizardSave(answers, on = {}) {
     const queue = Array.isArray(answers) ? answers : [answers];
     const src = read(PWA);
-    const m = src.match(/\$w\('wiz-recovery-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
-    if (!m) throw new Error('the wiz-recovery-save handler was not found in companion_pwa.h');
-    const ids = ['wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done', 'wiz-recovery-skip', 'wiz-ha-block'];
+    const ids = ['wiz-recovery-block', 'wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done',
+                 'wiz-recovery-skip', 'wiz-ha-block', 'wiz-multi-block', 'wiz-step-5-running', 'wiz-step-5-result'];
     const win = fakeWindow(ids);
+    for (const el of Object.values(win.els)) {
+      el.listeners = [];
+      el.addEventListener = (type, fn) => { if (type === 'click') el.listeners.push(fn); };
+    }
+    win.els['wiz-recovery-block'].style.display = 'block';
+    const click = (id) => win.els[id].listeners.map((fn) => fn());
+    const ui = () => ({
+      els: Object.fromEntries(ids.map((id) => {
+        const el = win.els[id];
+        return [id, { display: el.style.display, text: el.textContent, classes: [...el.classList.set].sort(),
+                      disabled: !!el.disabled }];
+      })),
+      saved: win.saved.length,
+      blobs: win.URL.made.length,
+    });
+    const saves = [];
+    const tapSave = () => {
+      const handlers = click('wiz-recovery-save');
+      assert.equal(handlers.length, 1, 'Save has one click handler');
+      saves.push(handlers[0]);
+    };
+    const back = () => { win.els['wiz-recovery-block'].style.display = 'block'; tapSave(); };
+    const page = { skip: () => click('wiz-recovery-skip'), rerun: () => ctx.showRunning(), back, ui };
     const asked = [];
     // The banner as each ask leaves: what the owner sees while Save asks.
     const banners = [];
     const ctx = {
       $w: (id) => win.els[id],
       fetch: async (url, opts) => {
-        const answer = queue[Math.min(asked.length, queue.length - 1)];
+        const n = asked.length;
+        const answer = queue[Math.min(n, queue.length - 1)];
         const err = win.els['wiz-recovery-err'];
         banners.push({ text: err.textContent, show: err.classList.contains('show'), note: err.classList.contains('note') });
-        asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled });
-        return { status: answer.status, ok: answer.status === 200, text: async () => answer.body };
+        asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled,
+                     abortedAtSend: !!(opts && opts.signal && opts.signal.aborted) });
+        if (on.ask) on.ask(n, page);
+        if (opts && opts.signal && opts.signal.aborted) throw aborted();
+        if (answer.blip) throw new TypeError('Failed to fetch');   // the ask never reached the device
+        return {
+          status: answer.status, ok: answer.status === 200,
+          text: async () => {
+            if (on.body) on.body(n, page);
+            if (opts && opts.signal && opts.signal.aborted) throw aborted();
+            return answer.body;
+          },
+        };
       },
-      Promise,
+      Promise, AbortController,
       requestAnimationFrame: () => {}, focusActiveStepHeading: () => {},
       document: win.document, Blob: win.Blob, URL: win.URL, JSON, Error,
     };
     ctx.window = ctx;
-    ctx.setTimeout = (fn, ms) => { win.timers.push(ms); fn(); };
-    const code = kitBlock(src, 'companion_pwa.h') + '\n;(' + m[1] + ')';
-    const handler = vm.runInNewContext(code, ctx, { filename: 'wizard.recovery_save.js' });
-    return handler().then(() => ({ win, asked, banners }));
+    ctx.setTimeout = (fn, ms) => {
+      win.timers.push(ms);
+      if (ms === 2000 && on.wait) on.wait(asked.length, page);
+      fn();
+    };
+    vm.runInNewContext(closeOutCode(src), ctx, { filename: 'wizard.recovery_close_out.js' });
+    tapSave();
+    const settled = async () => { for (let i = 0; i < saves.length; i++) await saves[i]; };
+    return settled().then(() => ({ win, asked, banners, ui }));
   }
   it('a served receipt is saved by RecoveryKit.save, exactly as served', async () => {
     const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
@@ -945,7 +1015,163 @@ describe("the wizard's close-out saves through the same builder", () => {
   it('the handler builds no download of its own', () => {
     const src = read(PWA);
     const m = src.match(/\$w\('wiz-recovery-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
-    assert.match(m[1], /RecoveryKit\.save\(window, await r\.text\(\)\)/);
+    // What it saves is the body it read off the answer, after it checked
+    // that the step is still on screen.
+    assert.match(m[1], /const text = await r\.text\(\);\n\s*if \(!live\(\)\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(!RecoveryKit\.save\(window, text\)\)/);
     assert.doesNotMatch(m[1], /new Blob|createObjectURL|\.download\s*=/);
+  });
+
+  // Leaving the step stops its save (#1842's Codex review). Before, Do this
+  // later and Run again left the loop asking from a hidden step for up to
+  // 30 s: a later BOOT tap went to it, the kit downloaded, and the Home
+  // Assistant block came back after the owner had moved on.
+  const SERVED = { status: 200, body: RECEIPT };
+  // The owner's screen after the step was left, and the asks, the saves
+  // and the screen once the save has settled.
+  async function leaveDuring(when, n, how, answers = [GATE_403, GATE_403, SERVED]) {
+    let left = null;
+    const { win, asked, ui } = await wizardSave(answers, {
+      [when]: (at, page) => { if (at === n && !left) { page[how](); left = page.ui(); } },
+    });
+    assert.ok(left, 'the step was left');
+    return { win, asked, left, now: ui() };
+  }
+  function leftIdle(win) {
+    assert.equal(win.els['wiz-recovery-err'].textContent, '', 'the banner is put away with the step');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false);
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is given back for a return to the step');
+  }
+  it('Do this later while an ask is out aborts it, and nothing is asked, saved or shown after (Codex review)', async () => {
+    const { win, asked, left, now } = await leaveDuring('ask', 1, 'skip');
+    assert.equal(asked.length, 2, 'no ask after Do this later');
+    assert.ok(asked[1].opts.signal && asked[1].opts.signal.aborted, 'the ask that was out is aborted');
+    assert.ok(asked.every((q) => !q.abortedAtSend), 'no ask left with its signal already aborted');
+    assert.equal(win.saved.length, 0, 'nothing downloaded');
+    assert.deepEqual(now, left, 'the save touched nothing on the page after the step was left');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-block'].style.display, 'none');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later during the wait between asks stops the save before its next ask', async () => {
+    const { win, asked, left, now } = await leaveDuring('wait', 2, 'skip');
+    assert.equal(asked.length, 2, 'the ask after the wait never leaves');
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left);
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later while the receipt is read saves nothing and says nothing', async () => {
+    const { win, asked, left, now } = await leaveDuring('body', 1, 'skip', [GATE_403, SERVED]);
+    assert.equal(asked.length, 2);
+    assert.equal(win.saved.length, 0, 'the receipt read as the step was left is not downloaded');
+    assert.deepEqual(now, left, 'no "Could not fetch" either');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Run again during the save stops it as Do this later does', async () => {
+    const { win, asked, left, now } = await leaveDuring('ask', 1, 'rerun');
+    assert.equal(asked.length, 2);
+    assert.ok(asked[1].opts.signal.aborted);
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left);
+    assert.ok(win.els['wiz-step-5-result'].classList.contains('hidden'), 'Run again hid the result pane');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('a save left and started again is a new save: the first one\'s end touches nothing of it', async () => {
+    // Do this later during the first save's wait, then the step is back and
+    // Save is tapped before that wait has run out: the first save wakes
+    // after the second has asked, and must leave the second's Save disabled
+    // and its banner alone.
+    const { win, asked, banners } = await wizardSave([GATE_403, GATE_403, GATE_403, SERVED], {
+      wait: (n, page) => { if (n === 1) { page.skip(); page.back(); } },
+    });
+    assert.equal(asked.length, 4, "the first save's one ask, then the second save's three");
+    assert.ok(asked.slice(1).every((q) => q.disabled === true), 'Save stays disabled while the second save asks');
+    assert.ok(asked[0].opts.signal.aborted && !asked[1].opts.signal.aborted, 'each save asks on its own signal');
+    assert.deepEqual(banners.slice(1).map((b) => b.text),
+                     ["Asking your Canary first. Don't press BOOT yet.", 'Now short-press BOOT on your Canary.',
+                      'Now short-press BOOT on your Canary.']);
+    assert.equal(win.saved.length, 1, 'the second save downloads the kit once');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('every pane change that hides the recovery step stops its save first', () => {
+    // The rows above drive Do this later and Run again; this holds every
+    // other function that hides the step, or the pane it sits in, to the
+    // same first line, so an exit added later cannot leave a save asking.
+    const src = read(PWA);
+    const hides = [...src.matchAll(/\$w\('wiz-recovery-block'\)\.style\.display\s*=\s*'none'|\$w\('wiz-step-5-result'\)\.classList\.add\('hidden'\)/g)];
+    const fns = new Set();
+    for (const h of hides) {
+      const head = src.lastIndexOf('\n  function ', h.index);
+      assert.ok(head > 0, 'a hide outside a function at ' + h.index);
+      const name = src.slice(head + 12, src.indexOf('(', head));
+      fns.add(name);
+      const firstLine = src.slice(src.indexOf('{\n', head) + 2).split('\n')[0];
+      assert.match(firstLine, /^ {4}stopKitSave\(\);/, name + ' stops the save before it hides the step');
+    }
+    assert.deepEqual([...fns].sort(), ['showFinishLinks', 'showMultiBlock', 'showResult', 'showRunning']);
+    assert.match(src, /\$w\('wiz-recovery-skip'\)\.addEventListener\('click', showMultiBlock\);/);
+    assert.match(src, /\$w\('wiz-st-rerun'\)\.addEventListener\('click', runSelfTest\);/);
+    assert.match(src, /async function runSelfTest\(\) \{\n {4}showRunning\(\);/);
+  });
+
+  // A rejected fetch is a blip, not an answer (#1842's Codex review), as the
+  // dashboard's BOOT-tap sign-in treats it. Before, the first one (a Wi-Fi
+  // channel switch or reassociation once the Canary has joined the home
+  // network) ended the whole window with "Could not fetch the recovery kit",
+  // even after the first 403 had told the owner to press BOOT, so the tap
+  // was left for whoever asked next.
+  const WAIT_LINE = "Asking your Canary first. Don't press BOOT yet.";
+  const PRESS_LINE = 'Now short-press BOOT on your Canary.';
+  it('a fetch that rejects mid-window is followed by more asks, and a later 200 is served (Codex review)', async () => {
+    const { win, asked, banners } = await wizardSave([GATE_403, BLIP, BLIP, GATE_403, SERVED]);
+    assert.equal(asked.length, 5, 'it asked on through both blips');
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 4, 'a blip waits its 2 s like any other ask');
+    assert.deepEqual(banners.map((b) => b.text), [WAIT_LINE, PRESS_LINE, PRESS_LINE, PRESS_LINE, PRESS_LINE],
+                     'the press line stays up through the blips');
+    assert.equal(win.saved.length, 1);
+    assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
+    assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false);
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('blips before the device has answered keep "don\'t press yet" up until its first 403', async () => {
+    const { win, asked, banners } = await wizardSave([BLIP, BLIP, GATE_403, GATE_403, SERVED]);
+    assert.equal(asked.length, 5);
+    assert.deepEqual(banners.map((b) => b.text), [WAIT_LINE, WAIT_LINE, WAIT_LINE, PRESS_LINE, PRESS_LINE]);
+    assert.equal(win.saved.length, 1);
+  });
+  it('a save the device never answered spends its sixteen asks and says the Canary did not answer', async () => {
+    const { win, asked } = await wizardSave(BLIP);
+    assert.equal(asked.length, 16);
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 15);
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Your Canary didn't answer. Tap Save again, and short-press BOOT only when this note says to. " +
+                 'You can also save it later from the dashboard.');
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'));
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('blips after the press line end, at thirty seconds, as a missed press does', async () => {
+    const { win, asked } = await wizardSave([GATE_403, BLIP]);
+    assert.equal(asked.length, 16);
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+  });
+  it('after a blip, a 409 or a refusal still ends the save on that answer', async () => {
+    const contended = await wizardSave([BLIP, GATE_403, BLIP, TAP_409, SERVED]);
+    assert.equal(contended.asked.length, 4, 'the asking stops at the 409');
+    assert.equal(contended.win.saved.length, 0);
+    assert.match(contended.win.els['wiz-recovery-err'].textContent, CONTENDED);
+    const refused = await wizardSave([GATE_403, BLIP, { status: 503, body: '{"error":"no_address"}' }, SERVED]);
+    assert.equal(refused.asked.length, 3, 'the asking stops at the 503');
+    assert.equal(refused.win.saved.length, 0);
+    assert.equal(refused.win.els['wiz-recovery-err'].textContent,
+                 'Could not fetch the recovery kit: HTTP 503. Try again, or save it later from the dashboard.');
   });
 });

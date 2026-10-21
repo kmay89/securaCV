@@ -60,8 +60,9 @@
   started guide's sentence and the Lab's BOOT card said a short press lets
   the dashboard hand over the recovery kit for 30 seconds; they now say the
   press hands it to the one page already asking, so click **Use BOOT Tap
-  Once** first. Both pages say to press only once the device has answered their
-  first ask ("Asking the Canary first. Don't press BOOT yet." until then),
+  Once** first. Both pages say to press only once the device has answered
+  one of their asks with `403` ("Asking the Canary first. Don't press BOOT
+  yet." until then; an ask that never reached the device is asked again),
   so a press made as the instruction appears cannot land before the
   page's ask has reached the device. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
@@ -71,6 +72,15 @@
   kit", then short-press BOOT when its note says to; the old order still
   works), and its message
   banner is now on screen (the handler set its text but never showed it).
+  The save stops when its step is left (**Do this later** or **Run
+  again** while it asks): an ask in flight is aborted and no other
+  follows, so a later BOOT tap is not claimed by a page the owner has
+  moved on from, no kit downloads and the Home Assistant step does not
+  come back. An ask that never reaches the device (the phone's Wi-Fi
+  dropping for a moment, as it can once the Canary has joined the home
+  network) is asked again 2 s later, as the dashboard's sign-in does, and no longer ends the
+  save; a save the device never answers ends "Your Canary didn't
+  answer", not "Didn't see a press".
   A sole asker is served at once, as before. The asker is the socket peer
   (`request_peer_key()`, the read the per-address lockout already keys on),
   and the serial console names

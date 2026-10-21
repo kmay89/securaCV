@@ -3185,6 +3185,19 @@
   an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
   maps to, passed every suite; rows with IPv6 askers that differ only in the
   prefix, or share the owner's last four bytes, now fail both.
+- **Found in Codex's review, same PR:** a poll that can claim a one-time
+  grant belongs to the screen that started it. The companion's kit save
+  kept asking from a step the owner had skipped, so the next BOOT tap went
+  to a page nobody was looking at, the kit downloaded unasked and the
+  hidden Home Assistant step came back. Every function that hides the step
+  now stops the save first (an `AbortController` for the ask in flight,
+  and a check after every await that it is still the running save), and a
+  row holds every such function to that first line, so an exit added
+  later cannot forget it. And a poll's error path has to tell no answer
+  from an answer: a fetch that rejected (a Wi-Fi blip) ended the whole
+  window, though the dashboard's poll of the same route already asked on
+  through one. Two copies of one loop drift; the companion now follows the
+  dashboard's rules, each with a row.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

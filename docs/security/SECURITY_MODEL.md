@@ -376,7 +376,7 @@ closed with `409` again (the poller case below). The `409` tells the client
 to start its request first and keep it asking, then press BOOT; the `403`,
 the dashboard and the companion give that order too, their `409` text
 included (the click, or the tap on Save, before the press), and both pages
-say to press only once the device has answered their first ask
+say to press only once the device has answered one of their asks with `403`
 (host-tested, not bench-tested). The setup door's claim is spent only by
 a match, so a wrong `?claim=` from a host on the network no longer ends the
 phone's pairing (F342). The tap's asker is the request's socket peer

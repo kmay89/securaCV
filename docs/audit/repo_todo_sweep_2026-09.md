@@ -2329,6 +2329,59 @@ so — see D2 below.)
       `recovery_kit.test.js` 48 tests, the page before these fixes failing
       1; `wap.test.js` 33, the `wap.json` before failing 1. Host-tested;
       not run on a device.
+  - Codex review fixes (same PR). Two findings on the companion's kit save,
+    the loop this PR added; only `companion_pwa.h` (and its gzip copy)
+    changes in the firmware.
+    - Leaving the step did not stop the save. **Do this later** stays
+      enabled while Save asks, and the loop had nothing to stop it, so a
+      skip (or **Run again**) left it asking from the hidden step for up
+      to 30 s: a BOOT tap made after the owner moved on went to it, the kit
+      downloaded unasked, and the Home Assistant block came back. Every
+      function that hides the step (`showMultiBlock()`, `showRunning()`,
+      `showResult()`, `showFinishLinks()`) now calls `stopKitSave()` first,
+      which aborts the ask in flight (one `AbortController` per save) and
+      puts the step back to idle (banner cleared, Save enabled), and the
+      save checks after every await that it is still the running save, so
+      it asks, saves and writes nothing once the step is left. An ask
+      already on the wire may still be judged by the device; the page drops
+      its answer.
+    - A rejected fetch ended the whole window: the outer `catch` turned the
+      first one (the phone's Wi-Fi dropping for a moment once the Canary
+      has joined the home network) into "Could not fetch the recovery kit",
+      even after the first `403` had told the owner to press, and left the
+      tap to whoever asked next. A rejected fetch now waits its 2 s and is
+      asked again until the 16 asks are spent, as the dashboard's
+      `requestFromDevice()` treats it; the press line waits for the first
+      `403` rather than the first ask, and a save the device never answered
+      ends "Your Canary didn't answer…", not "Didn't see a press", as the
+      dashboard's does. Any answer other than `403` still ends the save (a
+      `409`, a served receipt, a `503`), and so does a body read that fails
+      after an answer; the dashboard asks on through other statuses, and
+      the companion's `503` row has held it to ending on them since the
+      second review. The four docs that said both pages say to press only
+      once the device has answered "their first ask" now say "one of their
+      asks with `403`".
+    - Rows in `recovery_kit.test.js`, whose companion harness now runs the
+      close-out chain's recovery code whole (the save's state, the step's
+      exits, both buttons' wiring and `showRunning()`) instead of the Save
+      handler alone: **Do this later** while an ask is out, during the wait
+      and while the receipt is read; **Run again** while an ask is out; a
+      save tapped once the step is back is its own (the first save's end
+      leaves the second's Save disabled); every function that hides the
+      step calls `stopKitSave()` first; a blip mid-window, then a later
+      `200` served; blips before the first `403`; sixteen blips; blips
+      after the press line; a `409` and a `503` after a blip. Counts now:
+      59 tests; the companion before these fixes fails 12 (the 11 new
+      rows, and the save-body pin, which now holds the step check between
+      the body read and the save). Each of 11 mutants of the fix fails at
+      least one row: a stop that does not abort, one that leaves the
+      banner, the stop missing from `showRunning()`, `showResult()` or
+      `showFinishLinks()`, no check after the wait, a blip that ends the
+      save, the press line on the first ask, no "didn't answer" line, and
+      an unguarded `catch` or `finally`. `web_assets_gz.h` regenerated (the
+      companion's gzip is 48,370 bytes, 47,381 before; the dashboard's is
+      64,938, unchanged); `gen_wap.py` leaves `wap.json` unchanged and
+      `gen_csp.py --check` passes. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

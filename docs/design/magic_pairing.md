@@ -593,11 +593,12 @@ instruction a WAP page or answer gives puts the ask first (the `403`'s hint and 
 say to start asking first, then short-tap BOOT; the dashboard's timeout
 says to click again, then tap; both pages' `409` text says to wait 10 s,
 then click **Use BOOT Tap Once** again, or tap Save again, and only then
-press). Both pages say to press only once the device has answered their
-first ask ("Asking the Canary first. Don't press BOOT yet." until then), so
-a press that follows the page cannot land before the page's ask has
-reached the device (a TLS handshake, a blip or a busy server can hold the
-first ask back). So the owner's client is on record when the press lands:
+press). Both pages say to press only once the device has answered one of
+their asks with `403` ("Asking the Canary first. Don't press BOOT yet."
+until then; an ask that never reached the device is asked again), so a
+press that follows the page cannot land before the page's ask has reached
+the device (a TLS handshake, a blip or a busy server can hold the first ask
+back). So the owner's client is on record when the press lands:
 a host that polls the route, one that watches `/api/logs` for the tap, or
 one that delays the owner's next poll is refused loudly instead of handed
 the token, the SoftAP password and the pin. The serial console names both

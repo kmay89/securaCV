@@ -1696,12 +1696,14 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   }
 
   function showRunning() {
+    stopKitSave();   // Run again leaves the recovery step: its save stops
     $w('wiz-step-5-running').classList.remove('hidden');
     $w('wiz-step-5-result').classList.add('hidden');
     requestAnimationFrame(() => focusActiveStepHeading());
   }
 
   function showResult(j) {
+    stopKitSave();   // a new result redraws the step, so no save outlives it
     $w('wiz-step-5-running').classList.add('hidden');
     $w('wiz-step-5-result').classList.remove('hidden');
     const v = verdict(j);
@@ -1818,6 +1820,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // and "Open this one's dashboard" paths both end at the same place
   // (the mDNS/IP link-row + Finish), so factor that out.
   function showFinishLinks() {
+    stopKitSave();   // this pane hides the recovery step
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display      = 'none';
     $w('wiz-multi-block').style.display   = 'none';
@@ -1845,7 +1848,40 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // fetch downloads the receipt JSON and issues the session cookie that the
   // MQTT endpoints accept, which is why the Home Assistant block is only
   // revealed after a save.
+  //
+  // The save belongs to the step on screen (#1842's Codex review). Every
+  // pane change that hides the step (Do this later, Run again, a new
+  // self-test result, the finish links) calls stopKitSave() first, which
+  // aborts the ask in flight and puts the step back to idle, and the loop
+  // checks after every await that it is still the running save. So no ask
+  // leaves a hidden step: a BOOT tap made after the owner moved on goes to
+  // no page of theirs, no kit is downloaded, and the Home Assistant block
+  // is not shown again. An ask already on the wire when the step is left
+  // may still be judged by the device (and spend a tap that has landed);
+  // the page drops its answer unread.
+  //
+  // A rejected fetch is a blip, not an answer (#1842's Codex review): the
+  // phone's Wi-Fi can drop for a moment once the Canary has joined the home
+  // network (a channel switch, a reassociation). As the dashboard's BOOT-tap
+  // sign-in does (web_ui.h requestFromDevice()), the save then waits its 2 s
+  // and asks again until its 16 asks are spent, and a save the device never
+  // answered says so instead of "Didn't see a press". Only a rejected fetch
+  // is a blip: any answer other than 403 ends the save as before (a 409, a
+  // served receipt, a 503 after the tap was spent), and so does a body read
+  // that fails once the device has answered.
+  let kitSave = null;   // the running save's AbortController, or null
+  function stopKitSave() {
+    const ctl = kitSave;
+    if (!ctl) return;
+    kitSave = null;
+    ctl.abort();
+    const err = $w('wiz-recovery-err');
+    err.textContent = '';
+    err.classList.remove('show', 'note');
+    $w('wiz-recovery-save').disabled = false;
+  }
   function showMultiBlock() {
+    stopKitSave();   // Do this later (and the Home Assistant step's Skip) leave the step
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display       = 'none';
     $w('wiz-multi-block').style.display    = 'block';
@@ -1864,16 +1900,33 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
       err.classList.toggle('note', !!note);
       err.classList.toggle('show', !!msg);
     };
+    const ctl = new AbortController();
+    kitSave = ctl;
+    // False once stopKitSave() has run: from then on this save asks
+    // nothing, saves nothing and writes nothing on the page.
+    const live = () => kitSave === ctl;
     say("Asking your Canary first. Don't press BOOT yet.", true);
     save.disabled = true;
     const POLL_INTERVAL_MS = 2000;
     const POLL_TICKS = 16;   // 16 asks, 2 s apart: at 0, 2, ..., 30 s, so a press up to 30 s after Save is asked for
+    let answered = false;    // the device has answered an ask with 403, so the banner says to press
     try {
       for (let i = 0; i < POLL_TICKS; i++) {
         if (i > 0) await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
-        const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (!live()) return;
+        let r;
+        try {
+          r = await fetch('/api/provisioning-receipt', { cache: 'no-store', signal: ctl.signal });
+        } catch (_) {
+          if (!live()) return;   // aborted because the step was left
+          continue;              // a blip: the ask never reached the device, so ask again
+        }
+        if (!live()) return;
         if (r.status === 403) {   // no press yet: ask again, and now say to press
-          if (i === 0) say('Now short-press BOOT on your Canary.', true);
+          if (!answered) {
+            answered = true;
+            say('Now short-press BOOT on your Canary.', true);
+          }
           continue;
         }
         if (r.status === 409) {
@@ -1887,9 +1940,11 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
           return;
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        if (!live()) return;
         // The same builder the dashboard's BOOT-tap sign-in saves with
         // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
-        if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
+        if (!RecoveryKit.save(window, text)) throw new Error('not a recovery kit');
         say('');
         $w('wiz-recovery-done').style.display = 'block';
         save.style.display = 'none';
@@ -1898,11 +1953,19 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         requestAnimationFrame(() => focusActiveStepHeading());
         return;
       }
-      say("Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+      // A save that never said to press does not say it missed one.
+      say(answered
+        ? "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds."
+        : "Your Canary didn't answer. Tap Save again, and short-press BOOT only when this note says to. " +
+          'You can also save it later from the dashboard.');
     } catch (e) {
+      if (!live()) return;
       say('Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again, or save it later from the dashboard.');
     } finally {
-      save.disabled = false;
+      if (live()) {
+        kitSave = null;
+        save.disabled = false;
+      }
     }
   });
 
