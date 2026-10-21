@@ -456,8 +456,11 @@ stated, bounded to coarse claims, and revocable.
   sheds its key (a clean install, a full erase in either flasher, is its way
   to a new identity). The `firmware/canary` flagship's 10 s hold keeps the
   identity key and the chain state too; only its further stage, BOOT held
-  on to 30 s, sheds them, by clearing its NVS namespace. Neither hold erases
-  the SD card.
+  on to 30 s, sheds them, by clearing its NVS namespace. That clear does not
+  remove the key's bytes: NVS only marks each entry erased, and the bytes
+  stay in flash until NVS erases that page to reuse it, so on the default
+  tier a full erase in either flasher is what removes the key. Neither hold
+  erases the SD card.
 
 **LIMITATION:** A sufficiently resourced adversary with physical access
 can potentially bypass ESP32 secure boot (active area of research).

@@ -2732,7 +2732,12 @@ to https. The rows below use https; on an http-only build (or one whose
 - [ ] **The dashboard offers the recovery kit, signed out (BOOT tap) and signed in (Settings), and the kit pairs the iPhone**
   - Setup: a canary-wap set up through the Bluetooth setup door (so its
     wizard's close-out never ran), a laptop browser with no session for it
-    (a private window), the iPhone app with the WAP under **Ready to pair**.
+    (close every private window, then open a new one: Chrome and Firefox
+    share one private session, and its cookies, across the private windows
+    that are open, so a window opened beside an earlier row's signed-in one
+    resumes it and never shows **Use BOOT Tap Once**; or delete the site's
+    `cv_session` in the developer tools, Application, then Cookies), the
+    iPhone app with the WAP under **Ready to pair**.
   - Repro: open `https://canary-<suffix>.local/settings` (accept the
     certificate warning), choose **Use BOOT Tap Once**, short-tap BOOT; on
     the card, choose **Save my recovery kit**, with the browser's network
@@ -2872,11 +2877,15 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
     up, a second unit (or this one after a factory reset) at its first-boot
     SoftAP setup, a browser with developer tools, `curl`.
-  - Repro: in a private window open `https://canary-<suffix>.local/` and
+  - Repro: close every private window (they share one private session and
+    its cookies), then in a new one open `https://canary-<suffix>.local/` and
     follow **Open dashboard**; in the developer tools (Network, then
     Application, Cookies) read the `Set-Cookie` of the `/?cv_pair=` answer
-    and the stored cookie's flags. Sign in once more with **Use BOOT Tap
-    Once** and read the receipt's `Set-Cookie`. On the first-boot unit, join
+    and the stored cookie's flags. Delete that `cv_session` there (with a
+    live session the page resumes it and shows the sign-in only after a
+    refused call), open `https://canary-<suffix>.local/settings`, sign in
+    once more with **Use BOOT Tap Once** and read the receipt's
+    `Set-Cookie`. On the first-boot unit, join
     its SoftAP, run the setup page at `http://192.168.4.1` to its recovery-kit
     save, and read that answer's `Set-Cookie` and whether the cookie is
     stored. Last, `curl -sk -o /dev/null -w '%{http_code}\n' -H "Cookie:

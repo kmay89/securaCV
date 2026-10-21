@@ -1866,9 +1866,10 @@ so — see D2 below.)
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
   from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. The flagship
   has no Bluetooth lane that changes its Wi-Fi, so there the fallbacks are
-  to wait or the 10 s hold. Not closed: the device-wide request limit, filed
-  as F351; ARP spoofing; httpd's connection purge; clients behind one
-  address share a backoff.
+  to wait or the 10 s hold. (Amended by #1842, the WAP's half of that
+  sentence: see F343's posture below.) Not closed: the device-wide request
+  limit, filed as F351; ARP spoofing; httpd's connection purge; clients
+  behind one address share a backoff.
   Host-tested in `firmware/tests_host/test_securacv_auth.cpp` (97 checks over
   the real `securacv_auth.cpp` and `auth_backoff.h`; the code before this
   part, its new calls adapted onto the old one-per-device `AuthManager`,
@@ -1945,7 +1946,8 @@ so — see D2 below.)
   which clears its address (F341). A host that strikes from 9 or more
   addresses within 60 s holds every untracked address while the shared
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
-  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
+  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. (Amended by
+  #1842: see F343's posture below.)
   Host-tested. `test_receipt_grant.cpp` (1642 checks; the sketch before the
   change fails 25 of them): after the tap, the claim and a header-less tap
   wait, A's right bearer gets the receipt as `BEARER` at once and the QR is
@@ -2390,7 +2392,8 @@ so — see D2 below.)
       records and health log on SD and the token, and no hold sheds its
       key; the flagship's 10 s hold keeps the key and the chain, and only
       its 30 s stage clears them (its NVS namespace); neither erases the
-      SD card.
+      SD card. (Amended by the final review's second round, below: the
+      clear leaves the key's bytes in flash.)
     - Three places still gave the receipt's take of the tap as
       `provisioning_gate_take()` or its one exchange: the BLE break-glass
       comment in `canary_wap.ino`, `magic_pairing.md` 3.7's row 4 and the
@@ -2429,6 +2432,43 @@ so — see D2 below.)
       that ask; it fails with the check removed.
     - Counts now: `test_receipt_grant.cpp` 6266 checks;
       `recovery_kit.test.js` 60 tests. Host-tested; not run on a device.
+  - Final review fixes, second round (same PR). No firmware changes.
+    - The per-address lockout's ways out (F343's posture, in
+      `SECURITY_MODEL.md` twice, `magic_pairing.md` §3.7 and the F340, F341
+      and F343 entries) still offered the 10 s hold as an equal way out
+      from under a host striking from 9 or more addresses, with no word of
+      the first-come setup door the hold reopens (the fifth review's
+      bullet above). On the WAP they now name changing Wi-Fi from the
+      iPhone's bonded Bluetooth lane to a network that host is not on
+      first, then waiting until it stops, and say the hold empties the
+      table but reopens that door, so it is for a host known to be on the
+      network only, with the phone ready. "Or taps BOOT, which clears its
+      address" is now "signs in with Use BOOT Tap Once": the WAP clears an
+      address only when the tap is served to that address's own ask
+      (`auth_record_success()` after the take), and a bare tap goes to
+      whoever asks. The flagship's text keeps waiting or the hold: its tree
+      has no Bluetooth setup door. F343's entry has the amendment.
+    - `THREAT_MODEL.md` Scenario 4: the flagship's 30 s stage clears its
+      NVS namespace (`Preferences::clear()`, `nvs_erase_all()`), and NVS
+      only marks each entry erased (`Page::eraseEntryAndSpan()` in IDF
+      4.4.7 and 5.5.1), so the key's bytes stay in flash until NVS erases
+      that page to reuse it; on the default tier a full erase in either
+      flasher is what removes the key. The CHANGELOG says so too.
+    - The receipt's truncated-claim branch had no row that told it apart:
+      with `|| got == ESP_ERR_HTTPD_RESULT_TRUNC` deleted every suite
+      passed, because a value that never reaches `take()` spends nothing
+      either, and the branch's one other effect is the refusal's health
+      line. A row now sends the phone's own claim with 48 more characters
+      and, 10 s later, 80 characters, and counts a line for each; with the
+      branch deleted it fails 2 checks.
+    - Two older bench rows, the F257 row's Setup and the session cookie
+      row, relied on "a private window" for a page that needs no
+      `cv_session`; they now close every private window or delete the
+      cookie. The CHANGELOG quoted the dashboard's "Asking the Canary
+      first" as both pages' line; the companion's says "Asking your Canary
+      first".
+    - Counts now: `test_receipt_grant.cpp` 6302 checks. Host-tested; not
+      run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2501,6 +2541,22 @@ so — see D2 below.)
   address while the shared overflow slot runs, and a tap does not clear
   that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or
   hold BOOT 10 s.
+  *Amended 2026-10-21 (#1842, F342's final review, second round):* on the
+  WAP that sentence offered the 10 s hold as an equal way out with the
+  striking host on the network, and the hold reopens the first-boot setup
+  door, which goes to whichever Bluetooth client connects first (F342's
+  entry above), so a host also in radio range could take it and keep the
+  token. And a tap clears an address only when it is served to that
+  address's own ask, so a bare tap goes to whoever is asking. The WAP's
+  sentence the docs use now: a browser that mistyped the token waits at
+  most about 60 s, or signs in with Use BOOT Tap Once, which clears its
+  address when the tap is served to that browser's ask (F341); under a host
+  striking from 9 or more addresses, change Wi-Fi from the iPhone's bonded
+  Bluetooth lane to a network that host is not on, or wait until it stops;
+  holding BOOT 10 s empties the table (it is in RAM, and the release
+  restarts the unit), but it reopens that door, so it is for a host known
+  to be on the network only, with the phone ready. The flagship has no
+  Bluetooth setup door, so its fallbacks stay to wait or the 10 s hold.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:

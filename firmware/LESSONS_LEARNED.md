@@ -3198,6 +3198,17 @@
   window, though the dashboard's poll of the same route already asked on
   through one. Two copies of one loop drift; the companion now follows the
   dashboard's rules, each with a row.
+- **Found in the final review's second round, same PR:** a rule found for
+  one list of ways out governs every list. The fifth review's fix judged
+  the poller's ways out against the poller and left the lockout's, a
+  paragraph or two away in the same files, offering the same 10 s hold as
+  an equal way out from under a host striking from nine or more addresses.
+  A search for the advice ("hold BOOT 10 s") finds both lists; a search
+  for the scenario finds one. And a branch whose only remaining effect is
+  a log line needs a row that counts the line: the receipt reads a
+  truncated `?claim=` as presented, and since a value that never reaches
+  the compare spends nothing either, deleting the branch passed every
+  suite until a row counted the refusal's health line.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

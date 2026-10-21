@@ -800,6 +800,42 @@ void test_wrong_claims_log_once_per_ten_seconds() {
   CHECK(claim_refusal_lines() == 1);
 }
 
+// A claim too long for the handler's 40-byte buffer comes back from
+// httpd_query_key_value() as ESP_ERR_HTTPD_RESULT_TRUNC, and the handler
+// counts it as presented: compared (it can never match), refused, nothing
+// spent, and the refusal's health line written as for a wrong claim of the
+// right length. The line is the only thing that tells a handler that reads
+// TRUNC as "no claim" apart: a value that never reaches take() spends
+// nothing either, so a host sending over-long claims would leave no trace
+// in /api/logs. Each ask here starts 10 s after the last line, so each one
+// is due its own. The first is the phone's own claim with more after it.
+void test_a_truncated_claim_is_logged_and_spends_nothing() {
+  reset_device();
+  mint_claim();
+  Req padded;
+  padded.from(192, 168, 1, 21).query(std::string("claim=") + g_improv_claim.hex + std::string(48, 'a'));
+  CHECK(receipt(padded) == 0);
+  check_gate_refusal(padded.r);
+  CHECK_MSG(claim_refusal_lines() == 1, "a truncated claim wrote " + std::to_string(claim_refusal_lines()) +
+                                            " refusal lines");
+  CHECK_MSG(claim_pending(), "a truncated claim spent the real one");
+  stub_grant::now_ms += 10000;
+  Req long_one;
+  long_one.from(192, 168, 1, 21).query(std::string("claim=") + std::string(80, 'a'));
+  CHECK(receipt(long_one) == 0);
+  check_gate_refusal(long_one.r);
+  CHECK_MSG(claim_refusal_lines() == 2, "two truncated claims 10 s apart wrote " +
+                                            std::to_string(claim_refusal_lines()) + " refusal lines");
+  CHECK(claim_pending());
+  CHECK(g_improv_claim_spent_at_ms == 0);
+  // The phone's own spend then serves.
+  Req phone;
+  phone.query(std::string("claim=") + g_improv_claim.hex);
+  CHECK(receipt(phone) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!claim_pending());
+}
+
 void test_receipt_bearer_shapes() {
   // A lowercase scheme, a Basic header, an empty bearer, a header too long
   // for the buffer: no bearer, and each one strike (the shapes a guesser
@@ -3038,6 +3074,7 @@ int main() {
   test_receipt_cookie_secure_over_https_only();
   test_receipt_wrong_claim_leaves_it_pending();
   test_wrong_claims_log_once_per_ten_seconds();
+  test_a_truncated_claim_is_logged_and_spends_nothing();
   test_two_hosts_in_one_tap_are_both_refused();
   test_sole_asker_is_served_at_once();
   test_first_asker_after_the_tap_loses_to_a_waiting_owner();

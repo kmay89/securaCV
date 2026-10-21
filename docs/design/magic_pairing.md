@@ -505,17 +505,25 @@ load the tap unlocks (`page_token_inject()`), both through
 A request with no credential is no strike, on the receipt and on every
 `auth_gate` route, so the dashboard tab loaded without the token arms
 nothing. The posture is the paragraph below; the flagship has no Bluetooth
-lane that changes its Wi-Fi, so there the fallbacks are to wait or the 10 s
-hold, and its request limit is still one per device (F351). Host-tested in
+lane that changes its Wi-Fi and no Bluetooth setup door, so there the
+fallbacks are to wait or the 10 s hold, and its request limit is still one
+per device (F351). Host-tested in
 `firmware/tests_host/test_securacv_auth.cpp`; not run on a device.
 
 **The backoff is per source address.** A host's wrong bearers hold
 only that host's address (F343). A browser that mistyped the token waits at
-most about 60 s, or taps BOOT, which clears its address (F341). A host that
-strikes from 9 or more addresses within 60 s holds every untracked address
-while the shared overflow slot runs, and a tap does not clear that; then
-wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
-10 s.
+most about 60 s, or signs in with the BOOT tap (on the WAP, **Use BOOT Tap
+Once**), which clears its address when the tap is served to it (F341). A
+host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that. On the WAP, then change Wi-Fi from the iPhone's bonded
+Bluetooth lane to a network that host is not on, or wait until it stops.
+Holding BOOT 10 s empties the table (it is in RAM, and the release
+restarts the unit), but the hold also reopens the first-boot setup door,
+which goes to whichever Bluetooth client connects first (the polling
+host's ways out, below), so it is for a host known to be on the network
+only, with the phone ready. The flagship's fallbacks are in the paragraph
+above.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
 sketch, with one table for every file of the sketch (`g_auth_table` in

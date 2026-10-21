@@ -345,9 +345,9 @@ bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or taps BOOT, which clears its address
 (F341). A host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
-clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
-or hold BOOT 10 s. The flagship has no Bluetooth lane that changes its
-Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Clients behind
+clear that. The flagship has no Bluetooth lane that changes its Wi-Fi and
+no Bluetooth setup door, so there the fallbacks are to wait or the 10 s
+hold; the WAP's ways out are in its lockout paragraph below. Clients behind
 one address share a backoff. It does not close a deliberate
 denial from the LAN: the device-wide request limit (120 requests a minute
 across the rate-limited routes) is still one per device, so two open Status
@@ -434,12 +434,18 @@ it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
 cookie would be dropped); host-tested, the ESP32 compile is CI's, not
 bench-tested. The WAP's lockout is per source address. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
-token waits at most about 60 s, or taps BOOT, which clears its address
-(F341). A host that strikes from 9 or more addresses within 60 s holds every
+token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
+clears its address when the tap is served to that browser's ask (F341). A
+host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
-clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
-or hold BOOT 10 s. A wrong bearer on the receipt is a strike even when the
-setup-door claim or the BOOT tap then serves it, and the claim or the tap
+clear that; then change Wi-Fi from the iPhone's bonded Bluetooth lane to a
+network that host is not on, or wait until it stops. Holding BOOT 10 s
+empties the table (it is in RAM, and the release restarts the unit), but
+the hold also reopens the first-boot setup door, which goes to whichever
+Bluetooth client connects first (the tap paragraph above), so it is for a
+host known to be on the network only, with the phone ready. A wrong bearer
+on the receipt is a strike even when the setup-door claim or the BOOT tap
+then serves it, and the claim or the tap
 that serves ends that address's backoff, as a right bearer would (sweep
 F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a

@@ -66,7 +66,9 @@
   press hands it to the one page already asking, so click **Use BOOT Tap
   Once** first. Both pages say to press only once the device has answered
   one of their asks with `403` ("Asking the Canary first. Don't press BOOT
-  yet." until then; an ask that never reached the device is asked again),
+  yet." on the dashboard and "Asking your Canary first. Don't press BOOT
+  yet." on the companion until then; an ask that never reached the device
+  is asked again),
   so a press made as the instruction appears cannot land before the
   page's ask has reached the device. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
@@ -110,7 +112,18 @@
   images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
   reset destroys all data, and it now says what each device's hold keeps
   (the WAP's keeps the identity key, the chain, the SD records and the
-  token; only the flagship's 30 s stage sheds the key).
+  token; only the flagship's 30 s stage sheds the key, and NVS leaves the
+  erased key's bytes in flash until it reuses the page, so on the default
+  tier a full erase in either flasher is what removes it). The per-address
+  lockout's ways out (F343, in its entry below) still offered the 10 s hold
+  as an equal way out from under a host striking from 9 or more addresses.
+  For the WAP, `SECURITY_MODEL.md`, `magic_pairing.md` §3.7 and the ledger
+  now name changing Wi-Fi from the iPhone's bonded Bluetooth lane to a
+  network that host is not on first, and say the hold reopens the same
+  first-come setup door, so it is for a host known to be on the network
+  only, with the phone ready; a browser that mistyped the token signs in
+  with Use BOOT Tap Once there, since a tap clears only the address it is
+  served to (F341).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 
