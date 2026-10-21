@@ -505,9 +505,13 @@ load the tap unlocks (`page_token_inject()`), both through
 A request with no credential is no strike, on the receipt and on every
 `auth_gate` route, so the dashboard tab loaded without the token arms
 nothing. The posture is the paragraph below; the flagship has no Bluetooth
-lane that changes its Wi-Fi and no Bluetooth setup door, so there the
-fallbacks are to wait or the 10 s hold, and its request limit is still one
-per device (F351). Host-tested in
+lane that changes its Wi-Fi and no Bluetooth setup door, so there the way
+out from under a host striking from 9 or more addresses is to wait until it
+stops, or to hold BOOT 10 s and set the unit up on a network that host is
+not on (the hold empties the table, in RAM, and clears the saved networks;
+set up on the same network again, the host's next strikes from nine
+addresses hold every untracked address again), and its request limit is
+still one per device (F351). Host-tested in
 `firmware/tests_host/test_securacv_auth.cpp`; not run on a device.
 
 **The backoff is per source address.** A host's wrong bearers hold
@@ -517,13 +521,19 @@ Once**), which clears its address when the tap is served to it (F341). A
 host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
 clear that. On the WAP, then change Wi-Fi from the iPhone's bonded
-Bluetooth lane to a network that host is not on, or wait until it stops.
-Holding BOOT 10 s empties the table (it is in RAM, and the release
-restarts the unit), but the hold also reopens the first-boot setup door,
-which goes to whichever Bluetooth client connects first (the polling
-host's ways out, below), so it is for a host known to be on the network
-only, with the phone ready. The flagship's fallbacks are in the paragraph
-above.
+Bluetooth lane to a network that host is not on (the overflow's backoff
+then ends at most 60 s after that host's last strike), or wait until it
+stops. The 10 s BOOT hold is no way out from under that host: it empties
+the table (it is in RAM, and the release restarts the unit), as any restart
+does, but once the unit is set up on the same network again, the host's
+next strikes from nine addresses hold every untracked address again, the
+owner's among them, and the claim that pairs the phone does not clear the
+overflow (it frees only the served address's own slot), so the phone ends
+paired and held. The hold helps only with a setup onto a network that host
+is not on, which the bonded lane does without it, and without reopening
+the first-boot setup door, which goes to whichever Bluetooth client
+connects first (the polling host's ways out, below). The flagship's
+fallbacks are in the paragraph above.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
 sketch, with one table for every file of the sketch (`g_auth_table` in
@@ -606,7 +616,9 @@ press). The companion's BLE OTA line for a v1 manifest ("short-tap BOOT
 within 30 s before Start") stays press-first: that tap is the break-glass
 (below), which no receipt client is asking for. Both pages say to press
 only once the device has answered one of their asks with `403` ("Asking
-the Canary first. Don't press BOOT yet." until then; an ask that never reached the device is asked again), so a
+the Canary first. Don't press BOOT yet." on the dashboard and "Asking your
+Canary first. Don't press BOOT yet." on the companion until then; an ask
+that never reached the device is asked again), so a
 press that follows the page cannot land before the page's ask has reached
 the device (a TLS handshake, a blip or a busy server can hold the first ask
 back). So the owner's client is on record when the press lands:

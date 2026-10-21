@@ -3209,6 +3209,21 @@
   truncated `?claim=` as presented, and since a value that never reaches
   the compare spends nothing either, deleting the branch passed every
   suite until a row counted the refusal's health line.
+- **Found in the final review's third round, same PR:** a reset is a way
+  out only if the attacker cannot simply do again what it did. The second
+  round kept the 10 s hold in the lockout's list because it empties the
+  table, and judged it only against the setup door it reopens; but the host
+  that filled the table is still on the network, and once the unit is set
+  up there again its next strikes from nine addresses fill the slots and
+  arm the overflow, while the claim that pairs the phone frees only the
+  phone's own slot. The way out is the one that takes away the attacker's
+  reach (a network that host is not on), which on the WAP the bonded
+  Bluetooth lane gives with no hold. Run the attack again from the state
+  the remedy leaves before listing it. And a sentence in the security model
+  needs a row of its own even when it reads as obvious: "a served tap
+  clears only the contention, not the addresses" had none, and clearing
+  both at a TAKE, which hands a host that asks first after the owner's next
+  tap the token, passed every suite.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

@@ -346,9 +346,14 @@ token waits at most about 60 s, or taps BOOT, which clears its address
 (F341). A host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
 clear that. The flagship has no Bluetooth lane that changes its Wi-Fi and
-no Bluetooth setup door, so there the fallbacks are to wait or the 10 s
-hold; the WAP's ways out are in its lockout paragraph below. Clients behind
-one address share a backoff. It does not close a deliberate
+no Bluetooth setup door, so there the way out is to wait until that host
+stops. Its 10 s hold empties the table (it is in RAM, and the release
+restarts the unit) and clears the saved networks, but it gets the owner out
+only if the unit is then set up on a network that host is not on: set up on
+the same network again, the host's next strikes from nine addresses hold
+every untracked address again, the owner's among them. The WAP's ways out
+are in its lockout paragraph below. Clients behind one address share a
+backoff. It does not close a deliberate
 denial from the LAN: the device-wide request limit (120 requests a minute
 across the rate-limited routes) is still one per device, so two open Status
 tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
@@ -439,11 +444,18 @@ clears its address when the tap is served to that browser's ask (F341). A
 host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
 clear that; then change Wi-Fi from the iPhone's bonded Bluetooth lane to a
-network that host is not on, or wait until it stops. Holding BOOT 10 s
-empties the table (it is in RAM, and the release restarts the unit), but
-the hold also reopens the first-boot setup door, which goes to whichever
-Bluetooth client connects first (the tap paragraph above), so it is for a
-host known to be on the network only, with the phone ready. A wrong bearer
+network that host is not on (the overflow's backoff then ends at most 60 s
+after that host's last strike), or wait until it stops. The 10 s BOOT hold
+is no way out from under that host: it empties the table (it is in RAM,
+and the release restarts the unit), as any restart does, but once the unit
+is set up on the same network again, the host's next strikes from nine
+addresses hold every untracked address again, the owner's among them, and
+the claim that pairs the phone does not clear the overflow (it frees only
+the served address's own slot, F341), so the phone ends paired and held.
+The hold helps only with a setup onto a network that host is not on, which
+the bonded lane does without it, and without reopening the first-boot setup
+door, which goes to whichever Bluetooth client connects first (the tap
+paragraph above). A wrong bearer
 on the receipt is a strike even when the setup-door claim or the BOOT tap
 then serves it, and the claim or the tap
 that serves ends that address's backoff, as a right bearer would (sweep

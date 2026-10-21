@@ -2778,8 +2778,13 @@ handler; every refusal test fails with the gate reverted).
 
 - [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
-    on the home network with no session for it (a private window), `curl`,
-    the API token from a recovery kit.
+    on the home network with no session for it (close every private window,
+    then open a new one: Chrome and Firefox share one private session, and
+    its cookies, across the private windows that are open, so a window
+    opened beside an earlier row's signed-in one resumes that session, and
+    `/` then serves it the dashboard, not the landing page with **Open
+    dashboard**; or delete the site's `cv_session` in the developer tools,
+    Application, then Cookies), `curl`, the API token from a recovery kit.
   - Repro: open `https://canary-<suffix>.local/` and follow **Open
     dashboard** (the `?cv_pair=` link): the dashboard loads on the
     `cv_session` cookie. From the browser's developer tools (Application,

@@ -47,7 +47,9 @@
 //     quiet for the lookback (to the millisecond), so a retry 10 s after the
 //     other device stopped is NO_TAP and its next tap serves, while two
 //     addresses still asking hear it to the closed tap's TTL; a re-tap
-//     served to anyone ends it; the same address never contends with
+//     served to anyone ends it, and the ask it was served to stays on
+//     record, so a host asking first after the owner's next tap is
+//     contended by it; the same address never contends with
 //     itself; the record fails closed across a 49.7-day silence; and a peer
 //     key prints as a.b.c.d (only behind a zero prefix) or as eight hex
 //     groups;
@@ -1311,6 +1313,27 @@ static void a_served_retap_ends_the_contention() {
   CHECK(h.closed_by == 2, "both taps closed (%d)", h.closed_by);
 }
 
+// (6d) A served tap clears the contention, not the addresses: the ask it
+// was served to stays on record. The owner is served, taps again 1.5 s
+// later, and a host asks first after that re-tap: the owner's served ask is
+// 2 s old, inside the lookback, so the host is CONTENDED and nothing more is
+// served. A TAKE that also forgot the askers handed that host the re-tap
+// (the token, the SoftAP password and the pin); SECURITY_MODEL.md states
+// this rule ("a served tap clears only the contention, not the addresses").
+static void a_served_ask_stays_on_record_for_the_next_tap() {
+  Bench b;
+  open(b.gate, 100000);
+  CHECK(b.ask(kOwner, 100500) == TapVerdict::TAKE, "the owner is served");
+  CHECK(b.arb.recent.has && std::memcmp(b.arb.recent.key, kOwner.key, PEER_KEY_LEN) == 0 &&
+            b.arb.recent.last_ms == 100500,
+        "and its ask stays on record");
+  open(b.gate, 102000);
+  CHECK(b.ask(kOther, 102500) == TapVerdict::CONTENDED,
+        "a host asking first after the re-tap, the served owner 2 s before it: CONTENDED");
+  CHECK(b.served == 1, "served %d", b.served);
+  CHECK(b.closed_by == 1 && peek(b.gate) == 0, "and the re-tap is closed (%d)", b.closed_by);
+}
+
 // (7) The same address asking again and again never contends with itself.
 static void the_same_address_never_contends() {
   Bench b;
@@ -1446,6 +1469,7 @@ int main() {
   a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();
   the_409_ends_when_the_other_address_goes_quiet();
   a_served_retap_ends_the_contention();
+  a_served_ask_stays_on_record_for_the_next_tap();
   the_same_address_never_contends();
   a_stamp_that_moved_since_the_peek_is_not_taken();
   a_stale_record_fails_closed_across_the_wrap();

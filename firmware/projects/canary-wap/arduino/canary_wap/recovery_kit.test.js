@@ -508,6 +508,20 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.doesNotMatch(read(UI), /'Now short-tap BOOT on the device\. Listening for 60 seconds\.'/);
   });
 
+  it("the press line waits for a 403, not for any answer (sweep F342's final review)", async () => {
+    // The docs say both pages say to press only once the device has
+    // answered one of their asks with 403. Any other answer (a 503 or a
+    // 500, in http_send_error()'s shape) keeps the line at "Don't press
+    // BOOT yet"; the press line follows the first 403.
+    for (const early of [{ status: 503, body: '{"ok":false,"error":"no_address"}' },
+                         { status: 500, body: '{"ok":false,"error":"out_of_memory"}' }]) {
+      const { statusAtAsk } = await dashboardTap([early, GATE_403, { status: 200, body: RECEIPT }]);
+      assert.equal(statusAtAsk.length, 3, String(early.status));
+      assert.match(statusAtAsk[1], /^Asking the Canary first\. Don't press BOOT yet/, 'after a ' + early.status + ': ' + statusAtAsk[1]);
+      assert.match(statusAtAsk[2], /^Now short-tap BOOT on the device\./, 'after the 403');
+    }
+  });
+
   it('an answer that is not a receipt offers nothing', async () => {
     for (const body of ['{"ok":true}', '{"token":"cv_x"}']) {
       const { api, win } = await dashboardTap([{ status: 200, body }]);

@@ -12,11 +12,13 @@
 // BOOT button — I'm ready, start" button. That button set a state variable and
 // did nothing else. The firmware DOES gate a receipt behind a BOOT tap
 // (canary-wap and the flagship `firmware/canary` serve
-// GET /api/provisioning-receipt for 30 s after the tap, 403 before it) — but
-// the receipt a WAP writes points at its own setup-network address, and a
-// display serves exactly four API routes, none of them a pairing route. So
-// the primary action on the primary onboarding screen was a spinner that
-// could never finish for most of the fleet.
+// GET /api/provisioning-receipt for 30 s after the tap, 403 before it; the
+// WAP serves it only to the one address asking, and answers 409
+// tap_contended when a second address asked in the 10 s before the tap or
+// during it, F342) — but the receipt a WAP writes points at its own
+// setup-network address, and a display serves exactly four API routes, none
+// of them a pairing route. So the primary action on the primary onboarding
+// screen was a spinner that could never finish for most of the fleet.
 //
 // It now says what is actually true of the device in front of you, and offers
 // an action only where one exists. For a WAP that joined but never paired

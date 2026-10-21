@@ -115,15 +115,20 @@
   token; only the flagship's 30 s stage sheds the key, and NVS leaves the
   erased key's bytes in flash until it reuses the page, so on the default
   tier a full erase in either flasher is what removes it). The per-address
-  lockout's ways out (F343, in its entry below) still offered the 10 s hold
-  as an equal way out from under a host striking from 9 or more addresses.
-  For the WAP, `SECURITY_MODEL.md`, `magic_pairing.md` §3.7 and the ledger
-  now name changing Wi-Fi from the iPhone's bonded Bluetooth lane to a
-  network that host is not on first, and say the hold reopens the same
-  first-come setup door, so it is for a host known to be on the network
-  only, with the phone ready; a browser that mistyped the token signs in
-  with Use BOOT Tap Once there, since a tap clears only the address it is
-  served to (F341).
+  lockout's ways out (F343, in its entry below) offered the 10 s hold as a
+  way out from under a host striking from 9 or more addresses, and it is
+  not one while that host keeps striking: the hold empties the table, as
+  any restart does, but once the unit is set up on the same network again
+  the host's next strikes from nine addresses hold every untracked address
+  again, and the claim that pairs the phone does not clear that, so the
+  phone ends paired and held. `SECURITY_MODEL.md`, `magic_pairing.md` §3.7
+  and the ledger now say so for both trees. On the WAP the way out is
+  changing Wi-Fi from the iPhone's bonded Bluetooth lane to a network that
+  host is not on, which needs no hold and does not reopen the first-come
+  setup door, or waiting until it stops; on the flagship it is waiting, or
+  the hold followed by a setup onto a network that host is not on. A
+  browser that mistyped the token signs in with Use BOOT Tap Once on the
+  WAP, since a tap clears only the address it is served to (F341).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 

@@ -1866,7 +1866,7 @@ so — see D2 below.)
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
   from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. The flagship
   has no Bluetooth lane that changes its Wi-Fi, so there the fallbacks are
-  to wait or the 10 s hold. (Amended by #1842, the WAP's half of that
+  to wait or the 10 s hold. (Amended by #1842, both halves of that
   sentence: see F343's posture below.) Not closed: the device-wide request
   limit, filed as F351; ARP spoofing; httpd's connection purge; clients
   behind one address share a backoff.
@@ -2105,7 +2105,8 @@ so — see D2 below.)
     tap, as the pages' "wait 10 seconds, and try again" and two bench rows
     prescribe, stopped on its first poll before the press. Now an ask inside
     the closed tap's TTL is CONTENDED only while an address other than the
-    asker asked within the lookback, and a served tap clears the record (the
+    asker asked within the lookback, and a served tap clears the contention
+    (`contended_tap`), not the askers (the
     asks after a re-tap served to someone were `409` "the tap was closed"
     although the token had just been handed out). The `409`'s hint said
     "wait 10 seconds, then tap BOOT again", which under a poller hands the
@@ -2442,7 +2443,8 @@ so — see D2 below.)
       iPhone's bonded Bluetooth lane to a network that host is not on
       first, then waiting until it stops, and say the hold empties the
       table but reopens that door, so it is for a host known to be on the
-      network only, with the phone ready. "Or taps BOOT, which clears its
+      network only, with the phone ready (the third round, below, takes the
+      hold out of that list). "Or taps BOOT, which clears its
       address" is now "signs in with Use BOOT Tap Once": the WAP clears an
       address only when the tap is served to that address's own ask
       (`auth_record_success()` after the take), and a bare tap goes to
@@ -2469,6 +2471,50 @@ so — see D2 below.)
       first".
     - Counts now: `test_receipt_grant.cpp` 6302 checks. Host-tested; not
       run on a device.
+  - Final review fixes, third round (same PR). No firmware source changes:
+    two test rows, docs, and a comment in the iPhone app.
+    - The lockout's ways out still listed the 10 s hold, on the WAP for a
+      host known to be on the network and on the flagship as an equal
+      fallback, and it is no way out while that host keeps striking. The
+      hold empties the table, as any restart does, but once the unit is set
+      up on the same network again the host's next strikes from nine
+      addresses fill the eight slots and arm the overflow, and the claim
+      or tap that pairs the phone frees only the served address's own slot,
+      so the phone ends paired and held. Measured on a host build against
+      the real `auth_backoff.h`: from an empty table, a host striking once a
+      second from nine rotating addresses and the owner sending the right
+      bearer every 2 s, the owner's first held poll comes 9.5 s after the
+      host resumes, and 47 of its 60 polls in 120 s are held (46 of 60 with
+      no restart at all). `SECURITY_MODEL.md`, `magic_pairing.md` §3.7, the
+      CHANGELOG and F340's and F343's posture now say so for both trees:
+      on the WAP the way out is the bonded Bluetooth lane to a network that
+      host is not on (no hold, no reopened setup door), or waiting; on the
+      flagship, waiting, or the hold followed by a setup onto a network
+      that host is not on. F343's entry has the amendment.
+    - No row held that a served tap keeps the askers on record
+      (`SECURITY_MODEL.md`: "a served tap clears only the contention, not
+      the addresses"): clearing both entries at a TAKE passed every suite,
+      and it hands a host that asks first after the owner's next tap the
+      token. A row in `test_provisioning_gate.cpp` serves the owner, re-taps
+      1.5 s later and has a host ask first; it fails 4 checks under that
+      mutant. Clearing only `prior` at a TAKE stays equivalent outside the
+      49.7-day wrap (at a TAKE, `prior`'s last ask is before the tap's
+      lookback, so it can contend no later tap). The first review's bullet
+      above said "a served tap clears the record"; it clears the contention.
+    - No row held the dashboard's press line to a `403`: keying it to any
+      answer passed every page test. A row in `recovery_kit.test.js` answers
+      a `503`, then a `500`, before the `403`; under that mutant it fails
+      and the other 60 pass.
+    - Nits: the F289 bench row's Setup and two rows in
+      `canary_settings_access_validation.md` relied on "a private window"
+      for a page that needs no `cv_session`; they now close every private
+      window or delete the cookie, and the BOOT-tap row opens `/settings`
+      for its auth modal. `magic_pairing.md` §3.7 quoted the dashboard's
+      "Asking the Canary first" as both pages' line. The iPhone app's
+      `PairView.swift` header said the WAP serves the receipt for 30 s after
+      a tap; it now adds that it serves the one address asking (F342).
+    - Counts now: `recovery_kit.test.js` 61 tests; `test_receipt_grant.cpp`
+      6302 checks. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2548,15 +2594,35 @@ so — see D2 below.)
   entry above), so a host also in radio range could take it and keep the
   token. And a tap clears an address only when it is served to that
   address's own ask, so a bare tap goes to whoever is asking. The WAP's
-  sentence the docs use now: a browser that mistyped the token waits at
-  most about 60 s, or signs in with Use BOOT Tap Once, which clears its
-  address when the tap is served to that browser's ask (F341); under a host
-  striking from 9 or more addresses, change Wi-Fi from the iPhone's bonded
-  Bluetooth lane to a network that host is not on, or wait until it stops;
-  holding BOOT 10 s empties the table (it is in RAM, and the release
-  restarts the unit), but it reopens that door, so it is for a host known
-  to be on the network only, with the phone ready. The flagship has no
-  Bluetooth setup door, so its fallbacks stay to wait or the 10 s hold.
+  sentence the docs used after that round: a browser that mistyped the
+  token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
+  clears its address when the tap is served to that browser's ask (F341);
+  under a host striking from 9 or more addresses, change Wi-Fi from the
+  iPhone's bonded Bluetooth lane to a network that host is not on, or wait
+  until it stops; holding BOOT 10 s empties the table (it is in RAM, and
+  the release restarts the unit), but it reopens that door, so it is for a
+  host known to be on the network only, with the phone ready. The flagship
+  has no Bluetooth setup door, so its fallbacks stayed to wait or the 10 s
+  hold.
+  *Amended again 2026-10-21 (#1842, F342's final review, third round):*
+  the hold is no way out from under a host that keeps striking, on either
+  tree. It empties the table, as any restart does, but once the unit is set
+  up on the same network again the host's next strikes from nine addresses
+  fill the eight slots and arm the overflow, which holds every untracked
+  address, the owner's among them; and the claim or tap that pairs the
+  phone frees only the served address's own slot, never the overflow, so
+  the phone ends paired and held. The hold helps only with a setup onto a
+  network that host is not on. The sentence the docs use now: on the WAP,
+  change Wi-Fi from the iPhone's bonded Bluetooth lane to a network that
+  host is not on (no hold, and the first-boot setup door stays shut; the
+  overflow's backoff then ends at most 60 s after that host's last strike),
+  or wait until it stops, and the hold is named as no way out; on the
+  flagship, which has no Bluetooth lane that changes its Wi-Fi, wait until
+  it stops, or hold BOOT 10 s and set the unit up on a network that host
+  is not on. `test_auth_backoff.cpp`'s overflow row starts from the empty
+  table a restart leaves: eight sources fill the slots, a ninth strikes the
+  overflow, a tenth untracked source is held, and a success from it frees
+  nothing.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
