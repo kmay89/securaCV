@@ -166,35 +166,76 @@ static bool persist_chain_blob() {
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
+// The identity key: the stored one, or, only when NVS says none is stored, a
+// new one generated and stored (sweep F360). Any other answer is a key that
+// is, or may be, in NVS and was not read or not used (the opt-in image's
+// at-rest policy refuses before NVS is read, so there may be none):
+// provisioning stops there, so setup() halts, with no key generated and
+// nothing written to the key or the chain state. (setup() has already run
+// bootguard::begin() and canary_pe::on_boot(), which write rows of their
+// own: the crash-loop count, the power-event log.)
+// A fault in the read that leaves the entry in place (a session that will
+// not open, a flash read error while IDF copies the data) so leaves the key
+// for a later boot that can read it. Corruption is IDF's to meet first, and
+// the firmware sees only its answer. An entry whose data CRC fails IDF
+// erases inside the read it refuses, leaving the blob's index, so that boot
+// halts. On IDF 4.4 (core 2.0.17: every env but env:full) the index stays
+// and every later boot halts on it; on IDF 5.5 (core 3.3.8, env:full) the
+// next boot's nvs_flash_init() erases an index whose data is gone, so that
+// boot finds no key and makes a new identity. A data chunk whose header
+// fails IDF's check is erased when IDF loads the page: on IDF 4.4 every boot
+// then halts as above, and on IDF 5.5 the same init erases the index, so the
+// probe answers ESP_ERR_NVS_NOT_FOUND. A key whose index entry fails the
+// check is erased before the key is read (when IDF loads the page, or in the
+// probe's own lookup), and a flash read error in that lookup sets the page
+// aside for the boot; either way the probe answers ESP_ERR_NVS_NOT_FOUND.
+// Each NOT_FOUND here sends that same boot down the first-boot path, a new
+// identity, with no halt. All of it is today's behavior, not a decision.
+// What holds throughout: this firmware never writes over a key IDF still
+// reports as stored. The 30 s BOOT hold at power-on wipes the identity and
+// starts fresh. Before, a failed read fell through to a new keypair stored
+// over the old one, and a read that failed after the length check, before
+// IDF copied anything into the buffer, ran the boot on the zeroed key.
+static bool establish_identity_key() {
+  const KeyLoad stored = nvs_load_key(g_device.privkey);
+  if (stored == KeyLoad::Loaded) {
+    Serial.println("[OK] Loaded existing keypair from NVS");
+    return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    Serial.println("[!!] Identity key not used: no new key is made in its place, provisioning "
+                   "cannot continue (see the identity key line above)");
+    return false;
+  }
+  Serial.println("[..] Generating new keypair...");
+  if (!crypto_generate_keypair(g_device.privkey, g_device.pubkey)) {
+    Serial.println("[!!] Keypair generation failed");
+    return false;
+  }
+  if (!nvs_store_key(g_device.privkey)) {
+    // nvs_store_key already printed WHY: either NVS failed, or this image
+    // requires the key encrypted at rest and its NVS is not (key_at_rest
+    // rule 2 — flash encryption alone does not count) — in which case
+    // halting here, before any identity exists, is the point.
+    Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
+                   "(see the identity key line above)");
+    return false;
+  }
+  Serial.println("[OK] New keypair generated and stored");
+  // This boot made the key, so this boot is the only one that can honestly
+  // say how old it is when a clock finally arrives.
+  g_device.key_is_new = true;
+  g_device.key_born_ms = millis();
+  return true;
+}
+
 bool witness_provision_device() {
   Serial.println("[..] Provisioning device identity...");
 
   // Establish the keypair FIRST: the device ID / AP SSID are derived from the
   // pubkey fingerprint (never the MAC — event_contract §10 / privacy Invariant
   // III), so the fingerprint must exist before we build those handles.
-  if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[OK] Loaded existing keypair from NVS");
-  } else {
-    Serial.println("[..] Generating new keypair...");
-    if (!crypto_generate_keypair(g_device.privkey, g_device.pubkey)) {
-      Serial.println("[!!] Keypair generation failed");
-      return false;
-    }
-    if (!nvs_store_key(g_device.privkey)) {
-      // nvs_store_key already printed WHY: either NVS failed, or this image
-      // requires the key encrypted at rest and its NVS is not (key_at_rest
-      // rule 2 — flash encryption alone does not count) — in which case
-      // halting here, before any identity exists, is the point.
-      Serial.println("[!!] Failed to store keypair — provisioning cannot continue "
-                     "(see the identity key line above)");
-      return false;
-    }
-    Serial.println("[OK] New keypair generated and stored");
-    // This boot made the key, so this boot is the only one that can honestly
-    // say how old it is when a clock finally arrives.
-    g_device.key_is_new = true;
-    g_device.key_born_ms = millis();
-  }
+  if (!establish_identity_key()) return false;
 
   // Where that key sleeps, said once per boot. Tier 0 (plaintext NVS) is the
   // accepted default — docs/design/hardware_root_of_trust.md §8 — so this is a

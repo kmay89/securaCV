@@ -2346,7 +2346,7 @@ so — see D2 below.)
   neither is marked `.lost` (the same file). The fix is to stop
   polling a row that answers `403` and offer re-pair or remove. From code;
   not run. Found by the F343 decision's owner review, 2026-10-19.
-- [ ] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
+- [x] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
   codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
   `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of
   them, so a failure there (an allocation failure inside mbedTLS) leaves its
@@ -2357,7 +2357,138 @@ so — see D2 below.)
   and every caller fails closed (provisioning refuses, so a release build
   starts no server), with a host test over a failing HMAC seam like
   `firmware/tests_host/hmac_fail_seam.h`. Found by F350's review (#1837).
-- [ ] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
+  *Done (#1840; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* `hmac_sha256()` returns `bool`. It refuses when
+  `mbedtls_md_info_from_type()` finds no SHA-256 or when
+  `mbedtls_md_setup()`, `_hmac_starts()`, `_hmac_update()` or
+  `_hmac_finish()` answers non-zero, frees the context on every path, and
+  zeroes its output on a refusal. Its declaration in `data_mgmt_api.h`, the
+  first one the sketch's compiler reads, is `[[nodiscard]]`: a warning on
+  the device, which builds without `-Werror` (a line-start attribute on the
+  `.ino` definition would hide that head from the sketch's source guards,
+  which read function heads at column 0). Every caller refuses on `false`.
+  `derive_api_token()` returns `false` with the token buffer wiped when any
+  of its three HMACs fails; before, it returned a token, and
+  `provision_device()` stored it in NVS, where every later boot loads it.
+  `derive_ap_password()` now returns `bool` and leaves `""` on a failure,
+  never the `cv-222222222222` that 32 zero bytes render to on every unit;
+  `provision_device()` returns `false` on it, before `g_device.initialized`
+  is set, as it already did on a failed token mint. With `initialized`
+  false, `resolve_ap_password()` answers from its first branch and runs no
+  HMAC: a release build refuses (`AP password unavailable`) and raises no
+  SoftAP, and a development build uses its random `dev-` key (the
+  non-release posture F336 describes). Its own re-derive, for an initialized
+  identity whose key is missing, now checks the HMAC and logs `AP password
+  not derived` on a failure; no path leaves that state since this item, so
+  that branch is a defense. The chain backup in `data_mgmt_api.h` was the
+  third caller. `backup_chain()` now writes nothing on a failed HMAC, so the
+  last good `/CHAIN/backup.bin` survives (before, it was overwritten with
+  stack bytes as its HMAC, which no restore accepts), and
+  `datamgmt::process()` goes on as it does after a failed write.
+  `restore_chain()` refuses with `Chain restore: HMAC compute failed`;
+  before, stack bytes failed the compare and it logged a tamper line, and
+  compared against the now-zeroed output a backup whose HMAC field is 32
+  zero bytes would pass. Both lines are the flagship's
+  `securacv_data_mgmt.cpp`'s. The backup is periodic, so a skipped one
+  costs nothing the next does not make up. The two mints are on the boot's
+  path, and the review of this item found that the first version answered
+  the decision's risk line wrongly ("the two mints already fail
+  provisioning"): the token mint's `return false` was there but could not
+  be reached (the old `derive_api_token()` answered `strlen >= 35`, which
+  the formatter's top-up makes true for any input bytes), and
+  `derive_ap_password()`, which runs on every boot of a provisioned unit,
+  was `void`. So this item added two ways into a failed provisioning, and
+  `setup()` does not halt on one (F336's posture: it goes on, and the boot
+  attestation record and `loop()` sign with `g_device.privkey`, the stored
+  key). Both mints came ahead of the chain-state load, so a refusal left
+  `seq` 0, a head of 32 zero bytes and `seq_persisted` 0: the next records
+  were signed under the stored key at seq numbers it had already used, from
+  a zero head, and the persist ten records on (`SD_PERSIST_INTERVAL`), or
+  the reboot route, the safe-mode pre-reboot hook or the deep-sleep path,
+  wrote that branch over the stored `{seq, head}`, which only a mounted SD
+  card whose log was ahead could put back. Now `provision_device()` loads
+  the runtime settings, the chain state, the boot count and the health-log
+  seq (and persists a genesis head) before either mint, so a refused mint,
+  or a token whose store fails (F58/F336's older way into the same state),
+  returns `false` with the stored chain loaded: the records the boot goes
+  on to sign continue it, and a release build still raises no SoftAP. The
+  only refusal ahead of the chain load is `establish_identity_key()`'s:
+  `setup()` halts on a key NVS holds and could not be read (F360, below),
+  and the rest are a boot with no key stored whose new key could not be
+  stored (F58's pending halt-or-ephemeral call, left as it is). A
+  working HMAC gives the same bytes as before: the known answers and
+  `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
+  256 keys hold (its stand-in HMAC and its cut follow the new signatures).
+  New `firmware/projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` runs
+  those functions, cut out of the sketch, over a stand-in for mbedTLS's
+  streaming HMAC (declared by `firmware/tests_host/stubs/mbedtls_md`, which
+  now carries the streaming API) that fails the lookup, the setup
+  (`MBEDTLS_ERR_MD_ALLOC_FAILED`), the start, the update or the finish of one
+  chosen HMAC, and over the fake SD card. It also reads every source in the
+  sketch directory: each call of the three uses its result, and
+  `provision_device()` returns `false` on either mint before it marks the
+  identity ready. The unchanged sketch does not build under it (the cut
+  finds no `static bool hmac_sha256(`); with the two helpers only made to
+  answer `bool` (each its old body, then `return true;`), so it builds, the
+  suite as first written failed 129 of its 219 checks, among them a failed
+  setup minting keys such as `cv-22222222V5Kq` from mostly-zero host stack
+  bytes (they differ from run to run of one binary) and replacing the good
+  backup.
+  The first review added the two mints' own guards (a null or zero-length
+  buffer is refused before any HMAC runs; no caller passes either, the
+  buffers being `g_device`'s 36 and 16 bytes) and `resolve_ap_password()`
+  after a failed provisioning in both builds. The final review found the
+  token mint's guard short: a 1-, 2- or 3-byte buffer passed it, all three
+  HMACs ran, and `format_api_token_string()` wrote `c`, `v`, `_` and a NUL
+  at index 3 before it looked at the length, so bytes past the buffer were
+  written before the `strlen` refusal fired (a zero length, which the guard
+  refused, would have wrapped the formatter's `out_len - 1` and let it write
+  a whole token). Now the formatter checks the length before it writes:
+  nothing for a null or zero-length output, `""` for one shorter than four
+  bytes. And `derive_api_token()` refuses a buffer shorter than the token and
+  its NUL (36 bytes) before any HMAC runs, wiping the bytes it was given; a
+  working token's bytes are unchanged. Two tests hold it:
+  `token_windows_are_never_overrun()` passes 1-, 2-, 3-, 34-, 35- and
+  36-byte windows inside a guarded array (no byte outside the window
+  written; each short window refused with no HMAC run and wiped; the
+  36-byte one the known token), and
+  `the_token_formatter_stays_in_its_window()` runs the formatter over every
+  length from 0 to 40 and, in a child process, a null output, so a write
+  through it is a failed check rather than a crash of the suite (as the
+  final review first wrote it, the call ran in the suite's own process,
+  where its check held whatever the formatter did and only a crash caught a
+  regression); since the final review's third round,
+  `mints_refuse_a_buffer_they_cannot_fill()` runs both mints' null-buffer
+  calls in a child the same way. Against the code before the buffer fix 20
+  of 884 checks fail: 8 in the window test, 10 in the formatter's windows, the null
+  output (the child dies on signal 11), and the first review's 20-byte case,
+  which now holds that no HMAC runs (it held that all three did). Deleting
+  the 36-byte refusal fails 9 checks, the formatter's short-buffer `""` 9,
+  and its null-or-zero return 2 (the 0-byte window and the null output);
+  deleting `derive_api_token()`'s null check fails 2 (the null call's two
+  checks, the child dying on signal 11) and `derive_ap_password()`'s 1,
+  where before the third round either deletion crashed the run. Mutants
+  that drop the zeroing, the start's, update's or finish's check, the free
+  on a refusal, any caller's check or `provision_device()`'s refusal each
+  fail it. A dropped setup check does not, since mbedTLS's next step
+  refuses a context that was never set up, and the stand-in does the same.
+  The second review's repair cuts `provision_device()` too and runs it over
+  the same seam, with stand-ins for what it calls but the two mints and an
+  NVS map that outlives each call: a unit with a stored chain and token, or
+  a chain at genesis, whose SoftAP-key HMAC fails at any of the five steps,
+  whose token mint fails at any step of any of its three HMACs, or whose
+  token store fails, answers `false`, leaves `initialized` false and no
+  SoftAP key, and holds the stored `seq` and head (or the genesis head,
+  persisted), with nothing written over the stored chain state, this boot
+  counted and no refused token stored. Source pins hold the chain load ahead
+  of both mints, the token's store and every `return false` but
+  `establish_identity_key()`'s. The suite has 884 checks; against the order
+  this item first had (the mints ahead of the chain load) 195 fail, 189 of
+  them in the runs (`seq` 0, a head of zeros, the boot not counted) and 6 in
+  the source pins, and moving either mint back ahead of the load fails it.
+  Host-tested; the ESP32 compile is CI's; not run on a device.
+- [x] **F360 [code] The flagship's `nvs_load_key()` discards `getBytes()`'s
   result.** `nvs_load_key()` (`securacv_crypto.cpp`) checks the stored
   private key's length, then reads it with `Preferences::getBytes()` and
   ignores the count it returns; the Arduino core leaves the buffer untouched
@@ -2367,6 +2498,412 @@ so — see D2 below.)
   from the same zero key. The fix: require 32 bytes from `getBytes()` and
   refuse an all-zero key, so `witness_provision_device()` halts, with a host
   case over the witness glue stubs. Found by F350's review (#1837).
+  *Done (#1840; decided 2026-10-19 under the maintainer's instruction to fix
+  the remaining open items in best engineering practice and best value for
+  the user and security):* the halt needed more than the two checks.
+  `nvs_load_key()` answered one `false` for every failure, and
+  `witness_provision_device()` read it as "no key": it generated a keypair
+  and stored it over the old one, so a failed read-only open or length
+  lookup replaced the unit's identity whenever the write after it landed,
+  and a stored key of any length but 32 was replaced the same way. A
+  refused read there would have done the same. So `nvs_load_key()` now
+  answers a `KeyLoad`, `Loaded`, `Absent` or `Refused`, and zeroes the
+  buffer on any answer but `Loaded`. Preferences cannot tell "nothing
+  stored" from "NVS failed" (its `begin()` fails alike on a namespace never
+  created and on a fault, and `getBytesLength()` answers 0 alike for a
+  missing key and a failed lookup), so a new `stored_key_length()` asks
+  IDF's `nvs_open()` / `nvs_get_blob()` first, as
+  `common/health/boot_guard.h` does: only `ESP_ERR_NVS_NOT_FOUND`, at the
+  namespace or at the key, is `Absent`. Any other error, a stored key that
+  is not 32 bytes, a Preferences read that does not answer all 32 bytes (the
+  filed case; the buffer is zeroed again, as a refused read may have written
+  part of it) and a key of 32 zero bytes are `Refused`, each with an `[!!]
+  identity key not loaded: ...` line. So is the opt-in image's at-rest
+  policy refusal (`SECURACV_REQUIRE_FLASH_ENCRYPTION=1`): before, it read as
+  no key, a keypair was generated, and only the store's own refusal kept it
+  out of NVS; now none is generated, and bench row K1's expected lines say
+  so. The key block moved into a new `establish_identity_key()`
+  (`securacv_witness.cpp`), which generates only on `Absent`. On `Refused`
+  it prints `[!!] Identity key not used: no new key is made in its place,
+  provisioning cannot continue` and returns `false`, so
+  `witness_provision_device()` returns before it names or derives anything
+  from the key and `setup()` halts as it does on any provisioning failure.
+  (That line first read `Stored identity key not read: not replacing it`;
+  the review found it printed on every opt-in boot, a board with no stored
+  key included, since the policy refuses before NVS is read.) On that
+  path no key is generated and nothing is written to the key or the chain
+  state; the final review found the first wording ("generates and writes
+  nothing") too broad, since `setup()` has run `bootguard::begin()` and
+  `canary_pe::on_boot()` by then, which write the crash-loop count and the
+  power-event log (`pe_log`, and `pe_clean` cleared when it was set, in
+  the same `securacv` namespace) before the key is read. So a fault in the
+  read that leaves the entry in place (a session that will not open, a lock
+  wait that times out, a flash read error while IDF copies the data) leaves
+  the key for a later boot that can read it. A corrupted entry does not
+  stay, and the first version of this amendment said it did. IDF copies the
+  data into the caller's buffer before it checks the data's CRC, and on a
+  mismatch it erases that chunk (`Page::readItem()` on 4.4 and 5.5.1,
+  `Page::readVariableLengthItemData()` on 5.5.4, each `eraseEntryAndSpan()`
+  and then `ESP_ERR_NVS_NOT_FOUND`); `Storage::readMultiPageBlob()` returns
+  before its own cleanup, so the blob's index survives the read and that
+  boot halts. On IDF 4.4 (core 2.0.17, every flagship env but `env:full`)
+  nothing erases the index after that: each later probe answers 32, each
+  later read finds no chunk and fails at `readMultiPageBlob()`'s size
+  assert (`ESP_FAIL`), which comes before its cleanup there, and every boot
+  halts until the 30 s BOOT hold at power-on wipes the identity. On IDF 5.5
+  (core 3.3.8, on IDF 5.5.4: `env:full`, and the canary-wap) the next
+  boot's `nvs_flash_init()` erases it: `Storage::init()` runs
+  `eraseMismatchedBlobIndexes()`, which erases an index whose surviving
+  data chunks no longer match its chunk count or size, so that boot's probe
+  answers `ESP_ERR_NVS_NOT_FOUND`, the load `Absent`, and the unit makes a
+  new identity, which Home Assistant shows as a changed fingerprint: one
+  halt, then a new identity. (Until the final review's second round this
+  amendment said the unit halted once more first; that reading missed the
+  init's cleanup, which v4.4.7 does not have.) That boot is today's
+  behavior, not a decision; whether a unit should halt on, or regenerate
+  over, a key IDF has already erased is not decided here. The probe itself
+  meets corruption first, and the final review found the fakes answering
+  for IDF what it does not say: once the open succeeded, IDF's size query
+  (`nvs_get_blob(h, key, nullptr, &len)`) answers only `ESP_OK`,
+  `ESP_ERR_NVS_NOT_FOUND` or `ESP_ERR_NVS_INVALID_HANDLE`
+  (`nvs_get_str_or_blob()`, then `Storage::getItemDataSize()` over
+  `Storage::findItem()`, which takes no answer from a page but `ESP_OK` and
+  ends `ESP_ERR_NVS_NOT_FOUND`). When the key's index entry fails
+  `checkHeaderConsistency()` (its header CRC on 4.4), IDF erases it
+  (`eraseEntryAndSpan()`) when it loads the page at `nvs_flash_init()`, or
+  in the probe's own scan if it got past that, and the scan goes on, so the
+  probe answers `ESP_ERR_NVS_NOT_FOUND`, the load `Absent`, and that same
+  boot takes the first-boot path, a new identity, on IDF 4.4 and 5.5 alike.
+  A data chunk whose header fails is erased when IDF loads the page, and the
+  index is left there: on IDF 5.5 the same init's
+  `eraseMismatchedBlobIndexes()` erases the index too, so the probe answers
+  `ESP_ERR_NVS_NOT_FOUND` and that boot makes a new identity with no halt;
+  on 4.4 the probe answers 32 and every read stops at the size assert above
+  (every boot halts). A flash read error inside the probe's scan sets that
+  page aside (`Page::findItem()` marks it `PageState::INVALID`) for the rest
+  of the boot, and `Storage::findItem()` goes on to the next page, so the
+  probe answers `ESP_ERR_NVS_NOT_FOUND`, reading as no key stored: that
+  boot takes the first-boot path, and the old entry stays on the page set
+  aside (what a later boot that reads that page again makes of two stored
+  keys is not traced here). A flash read error in the read's own lookup of
+  the data chunk ends that lookup `ESP_ERR_NVS_NOT_FOUND` the same way: on
+  4.4 the size assert returns before the cleanup, so the entry stays for a
+  later boot; on 5.5 `readMultiPageBlob()`'s cleanup (`eraseMultiPageBlob()`)
+  erases the index when it sits on a page the error did not set aside, so
+  that boot halts and the next makes a new identity. And a `privkey` stored
+  as another type is skipped and answers `ESP_ERR_NVS_NOT_FOUND`, so
+  `Absent` and a new key; harmless, since no image wrote `privkey` but with
+  `putBytes()`: `git log -G` for a `put<Type>()` or `nvs_set_<type>()` call
+  naming it finds only `putBytes()`, over main's whole history (1929
+  commits, `e90d11c8` of 2026-01-21 through `46a4bbe1`, searched in a full
+  clone, since this checkout is shallow, grafted at `8f47e7b9`) and this
+  branch's commits. What holds in every case: the firmware never writes
+  over a key IDF still reports as stored. The fakes'
+  `ESP_ERR_NVS_TYPE_MISMATCH` and `ESP_FAIL` lookups stay, relabeled as
+  answers IDF does not give today: the load refuses them because it fails
+  closed on an answer it does not know. Read from IDF's source (v4.4.7,
+  which core 2.0.17 builds on, v5.5.4, which core 3.3.8 builds on, and
+  v5.5.1: `nvs_page.cpp`, `nvs_storage.cpp` and `nvs_api.cpp`, fetched at
+  those tags, not on disk here); the host fakes keep a garbled entry
+  rather than erase it, and nothing ran on a device. A first
+  boot is unchanged. `canary_pe::on_boot()` runs before provisioning on
+  every boot and opens the namespace read-write, so the old key read always
+  found the namespace and met no key in it; what it logged was
+  `Preferences::getBytesLength()`'s `nvs_get_blob len fail: privkey
+  NOT_FOUND` (an error-level line, printed at Core Debug Level 1 and above,
+  `env:release` included). IDF's own lookup logs nothing, so that line is
+  gone; the `nvs_open failed: NOT_FOUND` a first boot after an erase still
+  logs is `on_boot()`'s own read-only open, which this item does not touch.
+  (An earlier draft of this amendment, its CHANGELOG entry and its commit
+  message named that open line as the one removed; the premise was wrong.)
+  New `firmware/tests_host/test_nvs_load_key.cpp` runs the load, the probe,
+  the store and `establish_identity_key()`, cut verbatim out of the two
+  sources, over a fake NVS (`tests_host/stubs/nvs_key`) that Preferences and
+  IDF read alike and that can fail the read-only open, the length lookup,
+  the session or the read (the buffer untouched, garbled or short); it is
+  built twice, the second as the opt-in image. It also reads the canary
+  tree: `witness_provision_device()` stops on `establish_identity_key()`
+  before it derives anything, `setup()` halts on that,
+  `establish_identity_key()` holds the one call of the load, `setup()` runs
+  `canary_pe::on_boot()` before it provisions, and only
+  `securacv_crypto.cpp`'s probe, load and store name `NVS_KEY_PRIV`
+  (`canary_config.h` defines it, `reset_scope_keys.h` lists it as kept).
+  Against the old code, adapted to build and to keep its shape (the `bool`
+  as the enum, its caller's block moved verbatim into
+  `establish_identity_key()`, the probe, which the old code
+  did not have, removed, and `NvsManager::getBytesLength()`, which the old
+  load called, added to the cut) and run over the canary tree's sources as
+  `make run` runs it, it fails 187 of 710 checks and the opt-in build 12 of
+  76: among them the filed case loading as a key with
+  the buffer still the zeroed one, a garbled read loading its `0xA5` bytes,
+  and a failed open, a failed length lookup or a wrong-length key replaced
+  by a new keypair. Mutants that drop the zeroing, the re-zeroing, the
+  short-read, read-count or zero-key check, the probe, its close or its
+  read-only open, that read a probe or length refusal as `Absent`, that
+  generate over `Refused`, that ignore it in `witness_provision_device()` or
+  derive before it, or that drop `setup()`'s halt each fail it.
+  The canary-wap's own `nvs_load_key()` (`canary_wap.ino`) had both faults,
+  and takes the same rule in this item. It discarded
+  `getBytes()`' count, and `g_device` is a zeroed static, so a read that
+  failed after the length check, before IDF copied anything into the buffer,
+  answered `true` over 32 zero bytes: `provision_device()` went on and
+  marked the identity ready, a release build raised its SoftAP under that
+  key's published known answer `cv-3jByJ6rHdhM2` (the WAP derives as the
+  flagship does; `test_ap_password.cpp`'s parity), and records were signed
+  with a key anyone holds. And a failed session open, or a length lookup
+  other than 32, answered `false`, and `provision_device()` generated a
+  keypair and stored it over the old one. Now its `nvs_load_key()` answers a
+  `KeyLoad` (one line among the sketch's types, above its first function, so
+  the prototype the Arduino builder hoists sees it) and zeroes the buffer on
+  any answer but `Loaded`; a new `stored_key_length()` asks IDF's
+  `nvs_open()` / `nvs_get_blob()`, and only `ESP_ERR_NVS_NOT_FOUND` is
+  `Absent`. On this sketch that answer comes at the open on a first boot
+  after an erase (the setup wizard only probes the namespace), and IDF logs
+  nothing there, so F201's quiet first boot holds. The key block moved into
+  a new `establish_identity_key()`, which generates only on `Absent`; on
+  `Refused` it sets `g_device.key_refused`, generates no key and writes
+  nothing, and `setup()` halts on that flag (`[!!] PROVISIONING FAILED - the
+  identity key could not be used (see the identity key line above) -
+  HALTING`, in the flagship's `... - HALTING` form). It first went on
+  `Power-cycle to retry; a clean install (full erase) starts a new
+  identity`, advice the IDF erase above makes wrong on this sketch's core
+  3.3.8, where a corrupted key's next boot makes a new identity by itself;
+  then it ended `HALTING, nothing written`, which the final review found too
+  broad: on a crash reset `safe_mode_check()` has written `hw_state`'s crash
+  counters before `provision_device()` runs. No key is generated, and
+  nothing is written to the key or the chain state. What survives a halt is
+  as on the flagship's `env:full`: after a fault in the read that leaves the
+  entry, the key; after an entry whose data CRC fails, a new identity on the
+  next boot. A key whose index entry or data chunk fails IDF's header check,
+  or whose page a flash read error in the probe's lookup sets aside, never
+  halts: the probe answers `ESP_ERR_NVS_NOT_FOUND` and that boot makes a new
+  identity. The WAP's BOOT hold never wipes the identity (it has no wipe
+  stage: `factory_reset_by_hold()` keeps it, and `gen_wap.py` fails the Lab
+  build if the sketch arms one), so a clean install in either flasher is
+  its only way to a new identity on purpose, halted or not; the halt
+  removes no path that was there. It halts rather than returning `false`
+  and going on, as `setup()` does after the other provisioning failures
+  (F336): from there the boot attestation record and `mesh_network::init()`
+  take `g_device.privkey` as it is, which would be the zeroed key, and the
+  chain starts again at seq 0, which the reboot and deep-sleep paths persist
+  over the stored one. The halt comes before the watchdog, any radio, server
+  or task. Its tests extend
+  `projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`, whose fake
+  NVS (`stubs/first_boot`) gains IDF's `nvs_get_blob()`, a namespace per
+  handle and the read faults (the session refused after the probe, the
+  length lookup failing, the read untouched, garbled or short): a stored key
+  loads unchanged, a namespace with no key generates one, and a read that
+  fails after the length check, a garbled or short read, a length lookup
+  that answers `ESP_FAIL` or (for a `privkey` stored as another type)
+  `ESP_ERR_NVS_TYPE_MISMATCH`, a key of 16, 31, 33 or 64 bytes, a session
+  that will not open and a key of 32 zero bytes are each refused with
+  nothing generated, every handle closed and the fake NVS byte for byte as
+  it was (that is, the key block writes nothing; the fake keeps a garbled
+  entry where IDF would erase it). The two lookup answers are ones IDF does
+  not give today (above: on a device a key of another type answers
+  `ESP_ERR_NVS_NOT_FOUND`); the load refuses them because it fails closed
+  on an answer it does not know, and the suite keeps them so a later IDF
+  that does give one meets a refusal. After a read fault that leaves
+  the entry, the next boot that can read the key loads it. A case the
+  review added holds the store's own refusal: with no key stored and a
+  read-write session that will not open, a key is drawn, none is stored,
+  `[PROV] Keypair stored in NVS` does not print and `key_refused` stays
+  clear (deleting the `return false` after `[!!] Failed to store keypair`
+  passed the suite before it, and fails it now; the suite had 310 checks
+  then, and the final review's pin on the halt's serial line makes 311).
+  An NVS fault now logs two Preferences lines, not four, and prints the key
+  read's refusal naming IDF's error. Source pins hold `setup()`'s halt as the
+  first thing in its failure block and the line it prints,
+  `provision_device()` stopping on the key before it
+  derives anything or marks the identity ready, the one call of the load
+  and `NVS_KEY_PRIV`'s three readers. Against the old load and key block,
+  adapted to build and to keep the old code's shape (the `bool` as the enum,
+  the block moved verbatim into `establish_identity_key()`, and
+  `stored_key_length()`, which the old code did not have, removed from the
+  sketch and the cut), 9 of the suite's 21 test functions fail, each at its
+  first failed check; the 15th to run, review 2's store refusal
+  (`test_a_key_that_cannot_be_stored_fails_provisioning()`), passes there,
+  since the old block already returned `false` on it. (With
+  `stored_key_length()` left in the sketch and only the cut not asking for
+  it, a tenth fails: the pin on `NVS_KEY_PRIV`'s three readers counts
+  four.) Mutants that read a probe fault or a wrong length as `Absent`, read `ESP_ERR_NVS_NOT_FOUND` as
+  `Refused`, skip the probe or its close, ignore the read's count, drop the
+  zeroing on entry or after a refused read, drop or narrow the zero-key
+  check, generate over `Refused`, drop the flag, take `Refused` as `Loaded`,
+  ignore `establish_identity_key()`'s answer, open the session read-write,
+  or drop `setup()`'s halt each fail it. canary-sense's, canary-vision's
+  and canary-sentinel's `load_or_generate_keypair()` (`src/witness.cpp`,
+  identical lines in all three) check the read's count and take a stored
+  zero key as none, so they never sign with the zero key, but a failed
+  length lookup or read, like a stored zero key, still draws a new key and
+  stores it over the stored one: identity churn, which Home Assistant shows
+  as a changed fingerprint. They are not changed here; F362 below files
+  them, beside three more places the final review found that drop an
+  answer or read a failed read as nothing stored (F363, F364, F365).
+  Host-tested; the PlatformIO and ESP32 compiles are CI's; not run on a
+  device.
+- [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
+  store a new key over a stored one they fail to read.**
+  `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all
+  three projects) opens `securacv` read-write (`:60`; a failed open logs `NVS
+  unavailable — signing disabled this boot` and makes no key) and takes the
+  key only when `getBytesLength()` answers 32 (`:66`) and `getBytes()` answers
+  all 32 bytes (`:67`), and then only if it is not 32 zero bytes
+  (`:69`-`:76`). Every other outcome falls to `if (!have)` (`:78`), which
+  draws a new key and stores it with `putBytes()` (`:88`) over whatever
+  `privkey` held. So these three never sign with the zero key (they check the
+  read's count, unlike the flagship and the canary-wap before F360), but a
+  failed length lookup, a key of another length, a read that fails or comes
+  back short, and a stored zero key each replace the unit's identity, and
+  `getBytesLength()` answers 0 alike for a missing key and a failed lookup.
+  The harm is identity churn, not a key anyone holds: Home Assistant reads the
+  new key as `Fingerprint changed without rotation`, which the owner cannot
+  tell from tampering, and the old key is gone for good. Low severity on
+  secrecy, real cost in trust. The fix is F360's three-way answer: ask IDF's
+  `nvs_open()` / `nvs_get_blob()` first, as `common/health/boot_guard.h` and
+  the flagship's `stored_key_length()` do, so only `ESP_ERR_NVS_NOT_FOUND`
+  draws a key; every other answer, a wrong length and a short read disable
+  signing for the boot (the path a failed open and a failed persist already
+  take) and write nothing. Whether a stored zero key is refused (the
+  flagship's rule) or replaced is the decision half. A host case over a fake
+  NVS like `tests_host/stubs/nvs_key` for each project's cut. Found by
+  F360's review (#1840).
+- [ ] **F363 [code+decision] The flagship's and the canary-wap's
+  `nvs_load_bytes()` discard `getBytes()`' count, and a failed read reads as
+  nothing stored, so a boot can overwrite the stored chain state; canary-sense,
+  canary-vision and canary-sentinel read a failed chain read the same way.**
+  Both trees have the helper: `securacv_crypto.cpp:552` and
+  `canary_wap.ino:1790` each answer `false` for a failed read-only open or a
+  length other than `len`, then call `getBytes()` and answer `true` whatever
+  it returned. The chain load is the caller, in the same shape in both
+  (`securacv_witness.cpp:280` / `:283`, `canary_wap.ino:11436` / `:11439`):
+  the `{seq, head}` blob into an uninitialized stack array, then the legacy
+  head into another. A read that fails after the length check leaves the
+  array as the stack held it, or holding the bytes IDF copied from the
+  stored entry when the data's CRC failed (IDF copies the data into the
+  buffer before it checks it; when only the CRC field was hit, those are
+  the stored bytes, and the load goes on as if the read had worked). For
+  the blob, `chain_state::decode()`'s version byte and CRC-16 refuse almost
+  any other bytes, so it reads as no blob; for the
+  legacy head nothing checks, so when `chain_state::choose()` takes the
+  legacy pair (no valid blob, or a legacy seq ahead of it) the chain
+  continues from a head nothing checked: the stack's bytes, or the bytes
+  IDF copied before the CRC refused them. And `false` means both "not
+  there" and "could not read": a failed open or length
+  lookup on both entries gives `Source::Genesis`, the seq from
+  `nvs_load_u32()` (which answers its default on a failed read too) and the
+  genesis head, and `if (genesis)` persists that over the stored blob
+  (`securacv_witness.cpp:326`, `canary_wap.ino:11482`). The likeliest road
+  there is on a unit that never had the legacy pair: a blob read that fails
+  after its length check, whose bytes `decode()` refuses, with no legacy
+  entry, reaches `Source::Genesis` the same way. The records that follow are
+  signed under the stored key at seq numbers it already used, from a
+  different head: a branch only the SD reconciliation
+  (`witness_store::sd_wins()`) can undo, and only with a mounted card whose
+  log is ahead. canary-sense's, canary-vision's and canary-sentinel's
+  `load_or_start_chain()` (`src/witness.cpp:108`-`:128`, the same lines in
+  all three projects) check the read's count, so they never adopt what a
+  refused read left in the buffer, but they take any failed open, length
+  lookup or read as no chain: the head starts again at genesis and
+  `s_length` at 0, and the next record's `persist_chain()` (sense `:243`,
+  vision `:236`, sentinel `:240`) writes them over the stored head and
+  length. Chain integrity, not secrecy; medium, since the chain is what
+  these devices exist to keep. The fix is the same three-way answer:
+  `nvs_load_bytes()` checks the count, zeroes the buffer on a refusal and
+  tells `Absent` (IDF's `ESP_ERR_NVS_NOT_FOUND`) from `Refused`, the three
+  projects' chain load does the same, and a refused chain read never
+  persists a genesis head over the stored one. What the boot does instead
+  (halt as on a refused key, or run unpersisted until the chain reads) is
+  the decision. Host cases over the chain glue and `test_chain_state.cpp`'s
+  decision. Found by F360's review (#1840).
+- [ ] **F364 [code] The canary-wap's plain SHA-256 helpers discard mbedTLS's
+  return codes.** `sha256_raw()` and `sha256_domain()` (`canary_wap.ino:1580`,
+  `:1589`) and `beacon_channel.cpp`'s `ecdh_session_key()` (`:318`),
+  `compute_fingerprint()` (`:409`), `load_audit_log()` (`:711`) and
+  `chain_audit_entry()` (`:932`) call `mbedtls_sha256_starts()`, `_update()`
+  and `_finish()` and check none of them. So do `mesh_crypto.cpp`,
+  `mesh_network.cpp`, `chirp_channel.cpp`, `familiar.cpp`,
+  `vault_snapshot.cpp` and `securacv_ota.cpp`; `ble_ota.cpp` checks its
+  three. Four callers drop one-shot `mbedtls_sha256()`'s answer:
+  `usb_evidence_drive.cpp:91`, `vault_snapshot.cpp:109`,
+  `device_pseudonym.h:57` (its own `sha256_raw()`, under `device_id_hex()`,
+  the salted pseudonym in the device-info answer) and `wifi_presence.h:111`
+  (`hash_mac()`, under `FEATURE_WIFI_PRESENCE`); `rf_presence.cpp:184`
+  checks its own. That is every call in the sketch directory (`grep -rnE
+  '\bmbedtls_sha256(_(starts|update|finish))?\s*\('` over its `.ino`, `.cpp`
+  and `.h` files). `mesh_crypto.cpp`'s note that these calls return `void`
+  "on arduino-esp32 2.0.x (this build)" is stale: the sketch pins core
+  3.3.8, where they return `int`. `sha256_raw()`, `sha256_domain()` and
+  the four `beacon_channel.cpp` helpers each hash on a stack context and
+  allocate nothing themselves (`securacv_ota.cpp`'s image hash mallocs a
+  4096-byte read buffer, which it checks and frees). On the ESP32-S3's
+  port (IDF v5.5.1 and v5.5.4 `port/sha/core/esp_sha256.c`, the same file
+  in both, and `sha.c`, whose two differences change no answer on either
+  chip: an aligned copy for flash-encrypted external memory, which neither
+  the S3's nor the C3's `soc_caps.h` enables, and the cache write-back of
+  PSRAM buffers, which the S3 builds, moved from `esp_sha_dma()` into
+  `esp_sha_dma_process()`, in both versions run before the DMA starts and
+  its result ignored) a call answers 0 except on the DMA path. An update takes it when the 64-byte
+  multiple it hashes in one call, after topping up any bytes already
+  buffered, is more than `SHA_DMA_MODE_THRESHOLD` (`SHA_ALIGN_DOWN()` and
+  `sha_operation_mode()`, `esp_sha_internal.h`): 256 on the S3, so 320
+  bytes or more of whole blocks, and 128 on the ESP32-C3 the sketch's
+  `XIAO_ESP32C3` compile leg builds for (`firmware.yml:553`), so 192 or
+  more. There `esp_sha_dma()` answers -1 when the first DMA operation
+  cannot claim the shared crypto GDMA channels (`esp_crypto_shared_gdma.c`,
+  retried by every later one until it succeeds) or when it cannot allocate
+  an internal copy of a buffer that is not DMA-capable. The update then
+  returns without hashing those blocks, and `_finish()` still writes all 32
+  bytes of a digest that skipped them: a wrong hash, not stack bytes. Of
+  `canary_wap.ino`'s callers, a record payload that long
+  (`create_witness_record()`, `:2836`) and the TLS certificate's
+  fingerprint (`:2149`) can take that path; the key fingerprint, the chain
+  link, the genesis head, the pseudonym and the Wi-Fi presence hash are
+  short (the last two under 100 bytes) and run in block mode, which has no
+  failing path. The OTA image hash (`securacv_ota.cpp`, 4096-byte updates)
+  takes it too, and a wrong digest there fails the manifest compare, so the
+  image is refused. A wrong payload hash is a record that fails
+  verification, and a wrong certificate fingerprint fails a pin, so this is
+  low severity: detectable, no secret, and it needs the GDMA claim or the
+  allocation to fail. The fix: check each answer, zero the output and have
+  callers refuse, as `hmac_sha256()` does since F359, and correct the stale
+  note. A host case like `test_wap_hmac_fail.cpp`'s seam. Found by F359's
+  review (#1840).
+- [ ] **F365 [code] canary-wap: a failed token read reads as no token, and
+  provisioning stores a re-derived token over the stored one.**
+  `nvs_load_token()` (`canary_wap.ino:2094`) answers `false` for a session
+  that will not open or a length of 0 or one that does not fit, and it
+  discards `getBytes()`' count, so what a failed read answers depends on
+  what IDF left in the buffer. A read that fails before IDF copies anything
+  leaves `g_device`'s zeroed static as it was, its `strlen >= 35` test
+  fails, and the answer is `false`. A read whose data CRC fails is
+  different: IDF copies the stored chunk into the buffer, then erases it and
+  answers `ESP_ERR_NVS_NOT_FOUND`, `Preferences::getBytes()` answers 0, and
+  the 35 bytes IDF copied pass the `strlen` test unless one of them is
+  zero, so the load answers `true`: `Loaded existing API token from NVS`,
+  and for that boot the bearer token is those bytes, which no client holds
+  when the data itself was corrupted (a corrupted CRC over intact data
+  copies the stored token). The next boot's `nvs_flash_init()` erases the
+  orphaned index (IDF 5.5's `eraseMismatchedBlobIndexes()`, F360), the
+  length reads 0, and the token is re-derived and stored.
+  `provision_device()` (`:11497`-`:11509`) takes every `false` as no token,
+  derives one and stores it over the stored one (`:11504`). Harmless while
+  the token is derived deterministically from the private key and the eFuse
+  STA MAC and a failed HMAC refuses first (F359), but only for a token
+  today's code would derive: the derivation has changed under stored tokens
+  before (#675 moved the alphabet from 57 to 54 characters and the rejection
+  threshold from 228 to 216, and the derivation's own comment names an
+  earlier 24-byte input), so on a unit whose token was stored under an older
+  derivation one transient read failure replaces the bearer token every
+  client holds. A bearer-token rotation, which nothing on this tree
+  implements or files yet, would be undone the same way. Low severity today
+  (availability: clients fail for a boot or the owner re-pairs them; no
+  secret leaks). The fix is the same three-way answer, and the read's count
+  covers both outcomes: only `ESP_ERR_NVS_NOT_FOUND` re-derives, a read that
+  does not answer the whole token refuses whatever the buffer holds, and any
+  refusal fails provisioning with the stored token untouched. It should land
+  with or before any rotation. A host case beside `test_wap_hmac_fail.cpp`'s
+  provisioning runs. Found by F359's review (#1840).
 
 ### Parity & sub-projects
 
@@ -9367,6 +9904,11 @@ so — see D2 below.)
   joiner reads the initiator OFFLINE until the initiator's next frame (the
   joiner's own heartbeat still ends the copies). Rejected: a recurring
   heartbeat (a new periodic RF pattern; the maintainer's call, F324).
+  *Since F324 (2026-10-19):* a member heartbeats every 30 s ± 3 s, every
+  heartbeat (these two included) re-arming the deadline, so a joiner that
+  lost the first COMPLETE hears the initiator at the initiator's next
+  heartbeat, a lost paired heartbeat costs the copies about one interval,
+  and the boot one's loss (F320) one interval after association.
   Host-tested (`test_two_paired_canaries_hear_each_other_at_once`, two
   sessions in two processes with their frames carried between them;
   `test_a_reboot_announces_itself_once_to_each_member`;
@@ -9387,7 +9929,14 @@ so — see D2 below.)
   session call made when `WiFi.status()` first reads `WL_CONNECTED`, with a
   host test of the session half; keep a board with no router sending it at
   once. From code; host tests cannot see it (#1802).
-- [ ] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
+  *Since F324 (2026-10-19):* the harm is bounded to one heartbeat interval
+  after association. The next periodic heartbeat, 27-33 s after the boot
+  one and every 27-33 s after that, goes out on whatever channel the radio
+  is on then, so once the station has joined its router the members hear
+  this one within about 33 s (from code; the channel behavior is the F324
+  bench row). The `main.cpp` hook would save at most that interval; this
+  checkbox is left to its own decision.
+- [x] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
   member is heard once after it pairs and once after a boot (and the boot one
   can be lost before Wi-Fi association, F320), and otherwise only when it has
   an alert, a Beacon event or a rotation to send, so a quiet opera's members
@@ -9401,6 +9950,340 @@ so — see D2 below.)
   initiator could send its heartbeat once more when its COMPLETE copies stop
   on hearing the joiner after at least one copy went out. The maintainer's
   call (#1802).
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* a periodic heartbeat, and liveness from verified frames only. A
+  member sends the existing empty signed `HEARTBEAT` (registry 16) to its
+  bound members every 30 s ± 3 s (`HEARTBEAT_INTERVAL_MS`,
+  `HEARTBEAT_JITTER_MS` in `mesh_session.h`; the jitter is drawn afresh for
+  each interval, `arm_heartbeat`). It goes through `send_heartbeat`: members
+  only (F101), the storm gate, and nothing signed and no counter spent with
+  no member bound. It runs whenever the session runs with an opera, and
+  every heartbeat re-arms the deadline, the paired and boot ones (F162)
+  included. A `static_assert` keeps one lost heartbeat short of STALE
+  (2 × 33 s < 90 s). A stopped pass drops the deadline, so a disable longer
+  than 2^31 ms cannot leave one that reads as weeks in the future. Each
+  member's `GET /api/mesh/peers` state, `last_seen_sec` and `rssi`, and
+  `GET /api/mesh`'s `peers_online`, now come from the arrival of that
+  member's last frame that passed the signature, opera and counter checks
+  (`verified_seen_ms` and `verified_rssi`, stamped in `on_opera_frame` on
+  the transport clock, `mesh_transport::clock_ms()`), as on canary-wap
+  (`mesh_network.cpp`). Until now any frame from the member's address
+  refreshed them before verification (`mesh_transport.cpp` `drain_ring`).
+  On the old code a 3-byte junk frame and a replay sent from a quiet
+  member's address once a minute held it `CONNECTED`, `last_seen_sec` 1, the
+  junk's RSSI, and `peers_online` 1 for ten minutes; now it reads `STALE` at
+  two minutes and `OFFLINE`, 601 s old with the verified frame's RSSI, at
+  ten, and the opera `CONNECTING`. Without a timer, two healthy paired
+  Canaries quiet for ten minutes both read `CONNECTING`, the other
+  `OFFLINE` about 610 s old, and the web UI said "Searching for opera
+  members"; now they read `ACTIVE` and `CONNECTED`, at most 34 s old. A
+  member that is unplugged, crashed, out of range or jammed reads STALE
+  within about 90-100 s and OFFLINE within about 5 min while junk, forgeries
+  and replays of frames the receiver has heard are all a radio copying its
+  address sends. *Not covered (review rounds 1 and 2, 2026-10-20):* any
+  genuine frame of the member's that the receiver did NOT hear passes every
+  check whenever it arrives from the member's address (the counter check is
+  a high-water mark) and refreshes its liveness: a recorder that sends such
+  frames one under every 90 s holds a member that is gone `CONNECTED` about
+  90 s each, then it reads STALE and OFFLINE, and nothing bounds the stock.
+  Round 1 named two sources and capped the reboot case at about 18 minutes;
+  round 2 found the largest, which needs no jammer. A member heartbeats a
+  bound member's address whether or not that member is listening
+  (`send_to_members`), so every heartbeat it sends while the receiver is
+  off, booting, out of range or on another channel is one the receiver never
+  heard, and a passive recorder near the member keeps it. Relayed once the
+  receiver is back, they hold a gone member `CONNECTED` about three times as
+  long as the receiver was down (host-tested from a real sending session:
+  an hour down, 117 frames, 10414 s; probed on the round-1 head: 177
+  minutes). Before F324 a member sent nothing on a timer, so a downtime left
+  nothing to keep. After a receiver reboot the frames heard since its last
+  5-minute replay-counter save add to that (`main.cpp` saves on that timer
+  and on revoke, leave and rekey, and no restart path saves first): at most
+  12 heartbeats one save interval holds (more if the member sent other
+  frames in it), about 18 minutes on their own, and a receiver that reboots
+  more often than every 5 minutes never advances its saved counter. A
+  jammer that keeps the member's frames from the receiver and sends them
+  late holds it `CONNECTED` for as long as its stock lasts, with no STALE
+  between. Nothing on the receive side tells a late frame from a fresh one;
+  the signed header's timestamp is the sender's own clock and no receiver
+  checks it. Closing this needs a freshness check against that clock or a
+  wire change; neither is made here or filed under a number. A
+  `persist_replay_counters()` before the deliberate restarts
+  would narrow the reboot case to unclean ones; not done here, and not
+  filed under a number of its own. *Narrowed in review rounds 2 and 3, not
+  closed:* pairing persisted no replay counter, so a receiver rebooted
+  before its first 5-minute save after a pairing (paired on the bench,
+  unplugged to mount)
+  restored none for the new member, and every frame the member had signed
+  under the opera was fresh again (probed: 240 recorded frames held it
+  `CONNECTED` 356 minutes). mesh_session now runs a first-counter handler
+  (`set_first_counter_handler`) on a member's first frame that passes every
+  check since it was registered with no saved counter (a pairing, a re-pair
+  from its replay tombstone, a boot that restored none for it), and
+  main.cpp's `on_mesh_first_counter` persists the replay counters then; a
+  counter the boot restored marks it saved (a non-zero one since round 3,
+  below), so a boot costs no write. *Review round 3 (2026-10-20)* found
+  that save holding less than it claimed, twice. The first frame that verifies need not be the member's
+  newest: the counter check is a high-water mark, so a radio copying the
+  member's address that lands one of the member's older genuine frames
+  while the receiver holds it registered and unheard (milliseconds after
+  the bind normally, up to about 33 s when the first COMPLETE or the paired
+  heartbeat is lost, which a jammer can force) got that older counter
+  saved, and a reboot before the next 5-minute save reopened everything
+  after it (probed: counter 1 saved, 119 relayed frames held the gone
+  member `CONNECTED` at 119 of 119 reads). The session now runs the
+  handler once more `FIRST_COUNTER_RESAVE_MS` (2 × (30 + 3) s = 66 s) after
+  the first save if the counter has moved (`resave_first_counters`, every
+  pass, stopped or not), so the save holds the member's own counter unless
+  every frame of the member's own was kept out through those 66 s; at most
+  two saves per registration, and no frame adds one. Still open, and stated
+  so in the threat model and spec §8.3: a reboot before the member's first
+  frame lands, which finds nothing newer saved for it (after a first
+  pairing, no counter at all); a reboot inside the 66 s; and, when the
+  member's own frames were kept out through them (a jammer, or after a boot
+  that restored no counter for the member, a station not yet joined to its
+  router, F320), a reboot before the next 5-minute save. *Review round 4
+  (2026-10-20)* found the threat model's sentence introducing this list
+  still calling the pairing case closed, and the summaries (CHANGELOG,
+  roadmap, spec §14, `LESSONS_LEARNED.md`) naming only the reboot inside
+  the 66 s; all now name the three. Persisting on every advancing frame
+  in a window after the
+  registration was rejected: a recorder replaying its stock in counter
+  order would drive one NVS write per frame. And a save taken while a
+  member was registered and unheard (another member's first counter, a
+  leave, the 5-minute save) wrote it at 0, which `restore_replay_counter()`
+  counted as a saved counter, so the member's first frame after that boot
+  saved nothing (probed: the handler fired 0 times, then 120 relayed frames
+  held it `CONNECTED` at 120 of 120 reads); a restored 0 no longer marks it
+  saved, as no frame carries counter 0. Neither is filed under a new
+  number. One addition the
+  code needed beyond the decision: the age is a 32-bit difference, so a
+  member gone 2^32 ms (about 49.7 days) would read `CONNECTED` again for
+  90 s (the transport entry did the same at head); every pass, stopped or
+  not, now holds a heard member's age at 2^31 ms (`cap_verified_ages`), so
+  it stays `OFFLINE`, last seen about 24.8 days ago. A joiner that lost the
+  first COMPLETE hears the initiator at the initiator's next heartbeat, and
+  F320's lost boot heartbeat costs at most one interval after association.
+  A missed frame re-delivered from a copied address (spec §8.3) stays
+  dispatchable until the receiver hears the sender's next frame: about 33 s
+  or less on a working link. A jammer can stretch that, and one that also
+  sends the blocked frames late keeps the member `CONNECTED` while it does
+  (above). Cost, from code: one counter per heartbeat (about 2.8
+  reservation writes a day), replay saves that now write moving counters
+  every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
+  nvs), one sign per 30 s per sender and at most 8 heartbeat verifies per
+  30 s per receiver (one per bound member; `MAX_TRUSTED_PEERS` is 8), and
+  at most two replay-counter saves that land per pairing (the Codex
+  amendment below). No wire change. The RF pattern is
+  marginal: the only env with
+  the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
+  released image builds the mesh, so no OTA'd device changes. The owner
+  stops the frame by turning the mesh off. Rejected: the narrow
+  lost-COMPLETE re-send (one case of three); keeping it documented (the
+  dashboard stays wrong, liveness stays meaningless); counting
+  heard-this-boot as online (hides a removed sibling); the heartbeat without
+  verified liveness (the heartbeat would broadcast the address to copy);
+  skipping a heartbeat after other traffic (no measured need). Host-tested:
+  `test_mesh_session`, whose five silence assertions now admit only member
+  heartbeats checked by destination, signature, opera and per-destination
+  counter (`assert_only_member_heartbeats`), with their spacing held to the
+  constants (`check_beat_spacing`; in the seeded host run 20 heartbeats per
+  side in the quiet ten minutes, 17-22 allowed, and 117 rounds per member in
+  the hour, 105-133 allowed), and new cases for a lost COMPLETE healed, every heartbeat
+  re-arming the timer, no running opera (not started, disabled, no opera,
+  no bound member: an hour silent with no counter spent, then a heartbeat),
+  a disable past 2^31 ms, junk and a replay from a member's address, and an
+  age past the clock's wrap; each fails on the old code, and the re-arm,
+  long-disable and wrap cases on a mutant without the re-arm, the
+  stopped-pass drop and the age cap. Review round 1 (2026-10-20) added
+  cases for seven mutants every suite let through:
+  `test_the_heartbeat_spacing_holds_across_the_millis_wrap` (a plain
+  `now >= deadline` signs a heartbeat on every pass near the wrap: 28 in
+  400 s where 13 go), `test_each_heartbeat_deadline_is_drawn_afresh` (in
+  the seeded run an hour's gaps span 27.1-32.9 s with 52 distinct values; a
+  deadline fixed at 27, 30 or 33 s, or drawn once, gives one value),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), a stopped leg of the wrap case (the age cap on
+  a stopped pass), and `test_a_frame_the_receiver_has_not_heard_still_counts_as_live`,
+  which pins the figures of the not-covered note above (12 frames since
+  the save, 1069 s `CONNECTED`). Review round 2 (2026-10-20): that case's
+  downtime leg (a sending session run for an hour, then its heartbeats
+  relayed to the rebooted receiver: 117 frames, 10414 s, 2.89 times the
+  downtime, held between the bounds the gap limits give);
+  `test_a_members_first_counter_is_saved_at_once` (fails without the save:
+  the first recorded frame reads the gone member live), with
+  `scripts/tests/test_canary_mesh_first_counter_wiring.py` holding
+  main.cpp's half; a flipped signature byte and a frame signed under another
+  opera in the liveness case (a stamp in either check's failure branch
+  passed every suite); and the documented 30 s ± 3 s pinned at compile time,
+  with `static_assert(HEARTBEAT_JITTER_MS > 0)` in `mesh_session.h` (a
+  jitter of 0 and a 40 s interval passed every suite, since every check
+  derives its bounds from the constants). Review round 3 (2026-10-20): the
+  first-counter case's saved-0 leg (fails on the round-2 restore) and
+  `test_an_older_first_frame_is_saved_over_once_more` (fails without the
+  second save; pins a reboot before it as still open, the second save's
+  exact deadline, once only, nothing when the counter has not moved, a
+  stopped session, and a member dropped first). Review round 4
+  (2026-10-20): `FIRST_COUNTER_RESAVE_MS` pinned at 66 s at compile time,
+  and legs of that case for one lost heartbeat of the member's own, timed
+  from the heartbeat constants (a 33 s, 45 s or 64 s deadline passed every
+  suite and fails there; 120 s and 299 s fail the pin), the same with the
+  clock wrapping between the two saves (a `now < from + R` compare passed),
+  a frame after a deadline that found nothing moved (a save left armed
+  until the counter moved passed), and a reboot before the member's first
+  frame (pinned open: 132 of 132 relayed frames `CONNECTED`). The other
+  12 mesh suites are
+  unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
+  refused). The `[env:full]` compile is CI's; host-tested, not run on a
+  device. The on-air spacing and the STALE/OFFLINE transitions are a U1
+  bench row (`hardware_verification_checklist.md`).
+  *Codex review on #1839 (2026-10-20), P2; fixed in the same PR:* the
+  first-counter save was marked done before it ran. `on_opera_frame`
+  cleared `counter_unsaved` and armed the second save before it called a
+  `void` handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so an NVS write that
+  failed once (`Preferences::begin` or `putBytes`) was not retried by the
+  session: a failed first save waited for the second save 66 s later, or,
+  with the counter unmoved by then, for the next 5-minute save, and a
+  failed second save (`resave_first_counters` disarmed either way) for the
+  5-minute save. A reboot in between restored an older counter or none,
+  the window the save exists to narrow. `first_counter_fn` now returns
+  `bool`, true when the replay counters were persisted:
+  `on_mesh_first_counter` returns `persist_replay_counters()`, which
+  returns `save_replay_counters()`'s result (true with nothing to save;
+  its other callers cast it to `void`). The flag clears and the second
+  save arms only on true, so on false, or with no handler, the counter
+  stays unsaved and the member's next verified frame tries again; a second
+  save that returns false moves its deadline to that pass and is tried
+  again `FIRST_COUNTER_RESAVE_MS` later, never on the next pass. The "at
+  most two saves per registration" above now means two that land; a failed
+  one costs one more call, on the member's next verified frame or 66 s
+  later. `save_replay_counters()` refuses every call on a board without
+  flash encryption, which writes no `replay_ctrs` at all, so there the
+  first save is tried on each of the member's verified frames: a counter
+  snapshot each and no write, accepted. Rejected: retrying on every
+  `process()` pass after a failed second save (a hot loop on a unit whose
+  NVS keeps failing); leaving it (the 5-minute save does catch up, but the
+  window reopens on exactly the failure the save should survive).
+  Host-tested: `test_a_failed_first_counter_save_is_tried_again` (one
+  refused write retried on the member's next verified frame, and not on a
+  pass of its own, a replay, junk or a forgery; a reboot after that retry
+  keeps the 133 frames the member signed before the pairing replays; the
+  second save armed from the save that landed; a frame before any handler
+  is installed; a handler refusing every call runs once per verified frame,
+  23 calls for 23 frames in ten minutes, and never arms the second save)
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (a
+  refused second save retried 66 s later, then disarmed; one refusing
+  every call runs exactly once per 66 s, ten times in 660 s, at t0 and
+  across the clock's wrap). Each fails on the code the review found (run
+  with a shim that drops the handler's result, as the old `void` typedef
+  did); the second also on a retry taken on the next pass and on a failed
+  save left armed with its old deadline, the first on a second save armed
+  from the call that failed. `test_canary_mesh_first_counter_wiring.py`
+  now pins `static bool on_mesh_first_counter(...) { (void)fp; return
+  persist_replay_counters(); }` and a `static bool` persist that returns
+  the save's result and true with nothing to save, and fails on the old
+  shape and on a handler or a persist that drops the result. The other 12
+  mesh suites pass unchanged; `check_canary_mesh_status.py` passes (68
+  mutations refused). The `[env:full]` compile is CI's; host-tested, not
+  run on a device; no new bench row.
+  *Review of the Codex fix (2026-10-20):* the threat model's list of the
+  reboots left open still bounded the second at "inside the 66 s", as did
+  the CHANGELOG, spec §14, the roadmap, `LESSONS_LEARNED.md` and main.cpp's
+  comment on the handler (round 3's list above says it too, and stays as
+  that round's record). A refused second
+  save leaves the older counter saved until a save of the member's newer
+  counter lands: the retry, 66 s after each refused try, or a 5-minute
+  save that lands first (the test above shows the saved counter still the
+  first save's through every pass to the retry). All now say a reboot
+  before the second save lands, as spec §8.3 did; docs and a comment only.
+  The threat model's and spec §8.3's host-tested lists for the pairing case
+  now name the two tests. And those tests let through a retry deadline
+  counted from the one it missed (`counter_resave_from_ms +=
+  FIRST_COUNTER_RESAVE_MS` in place of `= now`), since every pass in them
+  landed on a deadline; after a main-loop stall that version runs the
+  handler on several passes in a row, one NVS write each. A late-pass leg
+  of `test_a_failed_second_save_is_tried_again_a_deadline_later` (no pass
+  from the member's heartbeat to two deadlines later, then 1 s passes),
+  at t0 and across the wrap, now fails on it (three calls on three passes)
+  and passes on the code, which was right. Host-tested; not run on a
+  device.
+  *Second review of the Codex fix (2026-10-20):* the first reboot had the
+  same gap. A refused first save leaves nothing saved for the member until
+  its retry on the member's next verified frame lands, normally its next
+  heartbeat, 27 to 33 s later, so the first reboot left open is one before
+  that retry lands, not before the first frame lands (probed: the paired
+  heartbeat landed, its save refused, a reboot 10 s later; 133 of 133
+  frames the member signed before the pairing read `CONNECTED`). The
+  threat model said so in its list but closed the same sentence on
+  "milliseconds unless the first COMPLETE or the paired heartbeat was
+  lost"; the roadmap (its table row and §3) and `LESSONS_LEARNED.md` drew
+  the bound at the first frame alone, and the CHANGELOG and spec §14 named only that
+  bound for the reboot that still reopens it. All now say "or, when NVS
+  refused that save, before its retry lands". The window is the residual
+  the docs state, not a new one, and
+  `test_a_failed_first_counter_save_is_tried_again` now pins it (133 of
+  133 read `CONNECTED`), as `test_an_older_first_frame_is_saved_over_once_more`
+  pins the reboot before the first frame. The review also found the cost
+  of a save NVS keeps refusing unstated for a flash-encrypted board: each
+  verified frame of a member whose first save has not landed is one
+  refused write attempt, at the member's heartbeat pace normally, at the
+  pace of a copier replaying a recording of the member's frames this
+  receiver has not heard otherwise (as fast as the main loop verifies the
+  8 frames the transport queues at a time), bounded by the recording's
+  frames, each verifying once (probed: 400 calls for a 400-frame
+  recording in 50 passes; the code before the Codex fix ran it once). The
+  threat model's
+  cost bullet now says so; spacing the retry (one try per interval under
+  the heartbeat gap) was considered and not taken: the decision retries on
+  the next verified frame, the cost needs a board whose NVS already
+  refuses, and the recording bounds it; whether a refused write wears
+  flash was not checked on hardware. A retry deadline set up to 999 ms
+  early (`= now - 1`) passed every leg, whose passes ran on a 1 s grid;
+  the late-pass leg of `test_a_failed_second_save_is_tried_again_a_deadline_later`
+  now runs a pass 1 ms before the retry's deadline and fails on it. And
+  `mesh_session.h` said a refused second save ends when "a deadline finds
+  nothing moved", which cannot happen after a refusal (`counter_resave_above`
+  stays at the first save's); it now says a refused save is never dropped.
+  Docs, comments and tests; no code change. Host-tested; not run on a
+  device.
+  *Third review of the Codex fix (2026-10-21):* #1838 landed on main
+  after this branch last merged it, and both add a new top section under
+  the CHANGELOG's `[Unreleased]`, so the PR conflicted, and GitHub runs no
+  `pull_request` workflow on a PR with a merge conflict: a push would have
+  left it at zero check runs, the `[env:full]` compile among them. main is
+  merged in again with a merge commit, both sections kept, this PR's
+  first. A refused first save whose member then goes quiet (its own frames
+  kept from the receiver after the paired heartbeat: lost, or jammed) is
+  retried by no pass (`resave_first_counters` acts only after a save that
+  landed), so that window lasts until the member's next verified frame or
+  the next 5-minute save that lands, as every pairing's did before F324.
+  The threat model, spec §8.3 and §14, the CHANGELOG, the roadmap and
+  `LESSONS_LEARNED.md` bounded it by the member's next verified frame
+  alone, and main.cpp's comment on the handler said a failed write does
+  not wait for the 5-minute save; they, and `mesh_session.h`'s handler
+  contract, now name the quiet case and the 5-minute save that bounds it. A
+  timed retry of a refused first save (one call per 66 s while the counter
+  is unsaved) was considered and not taken: the decision retries on the
+  next verified frame; the case needs a refused NVS write, which no sender
+  can cause, the member's frames kept out after it and a reboot inside the
+  window, all at once; it is no regression (the code before
+  the Codex fix waited for the 5-minute save there too); and on a board
+  without flash encryption, where no save lands, it would add a call per
+  66 s for every member for as long as it runs.
+  `test_a_failed_first_counter_save_is_tried_again` now pins the window:
+  290 s of passes with the member quiet run the handler on none of them,
+  a reboot then reads 133 of 133 frames the member signed before the
+  pairing `CONNECTED`, and with a 5-minute save landed before the reboot,
+  none. And the second save's first deadline was pinned only to 1 s: an
+  arm up to 999 ms early (`counter_resave_from_ms = verified_seen_ms -
+  999`, or `- 1`) passed every leg, whose passes ran on a 1 s grid.
+  `test_an_older_first_frame_is_saved_over_once_more` and the "armed from
+  the save that landed" leg of `test_a_failed_first_counter_save_is_tried_again`
+  now run a pass 1 ms before that deadline, and each fails on it alone.
+  Docs, comments and tests; no code change. Host-tested; not run on a
+  device.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)
@@ -12885,7 +13768,11 @@ so — see D2 below.)
   tree the page logic tests pass on the committed dist (1004 pass, 4 skipped,
   the four `LAB_CORES=native` only). Host-tested; not bench-tested on a
   display that sees a WAP. Found here: F294, A89 and C19.
-- [ ] **F294 [decision] The WAP publishes two device types.**
+  *Since F294 (2026-10-19):* the sketch's `DEVICE_TYPE` constant is
+  `"canary-wap"` too, and `wire_types.mjs` reads it as a third agreeing site
+  beside the mDNS `dt` and the MQTT status, so `"canary"` is no longer a WAP
+  type anywhere in the sketch.
+- [x] **F294 [decision] The WAP publishes two device types.**
   `canary_wap.ino`'s `DEVICE_TYPE` is `"canary"`, which REST `/api/status`,
   the signed record's `device_type` and the boot banner carry (the same string
   `firmware/canary` uses), while mDNS `dt` and the MQTT status say
@@ -12893,6 +13780,60 @@ so — see D2 below.)
   whether `DEVICE_TYPE` becomes `"canary-wap"` (a signed-record field change a
   verifier may pin) or the split is documented beside the record format. Found
   by F258 (#1802).
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* `DEVICE_TYPE` is `"canary-wap"`. The premise that it is a
+  signed-record field a verifier may pin was wrong. The BOOT attestation's
+  CBOR payload is built in a stack buffer (`boot_payload[256]`), hashed with
+  `sha256_domain("securacv:fw:payload:v1")` and discarded:
+  `create_witness_record` keeps only its length and hash, and `WitnessRecord`
+  has no payload field. The SD line, the BLE line, `/api/v1/witness` and every
+  verifier (`tools/verify_witness_log.py`, `witness_page.h`, the iOS
+  ChainVerifier) see only the payload hash (`spec/witness_api_v1.md` §4.2
+  and §5). No reader can see the value, and no record key changed. The old
+  `"canary"` was the flagship's word. It contradicted the same `/api/status`
+  body's `node_status.node`, the mDNS `dt`, the MQTT status, `/api/fleet`'s
+  `product` and the BLE Improv device info, which all say `"canary-wap"`. No
+  in-tree client acted on it: iOS `WapStatus` decodes it and ignores it, and
+  its fixture already expected `"canary-wap"`. `node_status.node` and
+  `/api/fleet`'s `self.product` now read the constant, as REST
+  `device_type`, the boot banner and the BOOT attestation already did, so
+  every surface but the literal wire sites reads it (`figures.test.js` held
+  the first two to it and refused a literal handed to either, review round
+  1, 2026-10-20; review round 2, 2026-10-20, found REST `device_type` and
+  the attestation could go back to a literal `"canary"` with every gate
+  green, and the test now holds all five readers, once each, none handed a
+  literal). The sketch still spells `"canary-wap"` at the declaration and in
+  the three mDNS `dt` records, by design: the reader requires a literal
+  there. `wire_types.mjs` reads the constant as a third agreeing site
+  (`constString`: one declaration, one string literal, and any other
+  assignment to the name refused, whether `=`, a compound assignment, `++`
+  or `--`; the check is lexical, so a write through a pointer to the
+  constant is not seen; since round 2 a `static const char* const` or
+  `static constexpr const char*` declaration is read as the declaration, the
+  stronger form, where round 1's reader refused it as an assignment), so
+  `gen_figures.mjs --check` holds the constant and the literal sites (the
+  three mDNS `dt` calls and the two MQTT status strings) to one value and
+  refuses any future split between them, by file and line.
+  Improv's firmware-name string (`ble_improv.cpp`) stays a literal outside
+  that check, since that file cannot see the sketch's constant.
+  `figures.test.js` pins the constant, holds its declaration line among the
+  read sites, and adds fourteen refusals (the constant set back to
+  `"canary"`, handed a name, declared twice, repointed, moved by `+=` or
+  `-=`, by a prefix `++` or `--` and by a postfix `++` or `--`, declared as
+  a choice or a concatenation of two literals, gone to a `#define`, and a
+  const-pointer declaration set back to `"canary"`), each of which the old
+  reader let through, plus cases that a longer name (`WAP_DEVICE_TYPE`) and
+  a `==` are not writes and that both const-pointer declarations are read.
+  `wap.json` is regenerated (`device_type` and the boot preview's Type line).
+  The figure outputs, the Home Assistant data, the CSP, `web_assets_gz.h` and
+  the emulator dist are unchanged. The BOOT record's `payload_len` (REST
+  `/api/witness`) and `plen` (the BLE witness export) grow by 4 bytes (240 B
+  worst case, with a 31-character device id, of its 256 B buffer). There is
+  no `FIRMWARE_VERSION` bump: the value reaches devices with the next WAP
+  release (CHANGELOG [Unreleased] names the REST change for out-of-tree
+  readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
+  is CI's; nothing to bench.
 
 ---
 
