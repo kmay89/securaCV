@@ -445,12 +445,22 @@ changes nothing for either. Host-tested in
 Who asks row 1: the flagship's receipt route asks it itself
 (`host_is_foreign`, the predicate its `auth_gate` asks ahead of every API
 handler, as `receipt_decide`'s first argument), and it runs rows 1, 2 and 4:
-the flagship has no setup-door claim. **The WAP sketch
-asks no Host question on this route today** (it has no `auth_gate`; its
-`/` page checks the Host header only to pick the first-boot wizard), so its
-`handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim (spent only on a match) and the
-same unspent tap, and its row 4 goes to one asker (below). Its
+the flagship has no setup-door claim. The WAP asks row 1 too (sweep F344),
+with the same `host_guard.h` (`request_host_names_device()`), as the first
+statement of `handle_provisioning_receipt`, in every mode, setup included,
+and with no SoftAP exemption: the WAP's captive DNS sends every name to the
+device, and its wizard asks at `canary.local` or `192.168.4.1`, which both
+pass. A foreign or missing Host gets `403 {"error":"host"}` before the bearer
+is read, the claim taken or the tap judged, so it is never a strike, never
+an asker for the tap, spends no claim and clears nothing. Then it runs rows
+2, 3 and 4 — bearer, claim, tap — in that order, with the same single-use
+claim (spent only on a match) and the same unspent tap, and its row 4 goes
+to one asker (below). After setup its `/` (the landing, its pair token and
+the `?cv_pair=` exchange), `/admin`, `/settings` and `/companion` ask the
+same question first and answer a foreign Host with a fixed `text/plain`
+`403`, so a DNS-rebinding page holds no session for its own name; during
+setup `/` sends to the wizard only a request for exactly `canary.local` or
+`192.168.4.1`. Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 `cv_session` cookie (sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
@@ -485,9 +495,9 @@ the move gate still asks for the password), and a held one is not compared
 and, without the cookie, gets `429` with `Retry-After`; the posture is the
 per-address backoff below. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
-the broker move, `test_mqtt_reinit.cpp` beside it. Adding
-the Host row to the WAP is a separate change, not a claim this document
-makes.
+the broker move, `test_mqtt_reinit.cpp` beside it; the WAP's Host row in
+`test_receipt_grant.cpp` too, and its pages' Host question in
+`test_session_cookie.cpp`. Not run on a device or against a browser.
 
 On the flagship (`firmware/canary`), row 2 is under the same per-address
 lockout (sweep F340): `bearer_present_and_valid()` is the accounted grant

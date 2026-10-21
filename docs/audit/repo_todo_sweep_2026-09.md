@@ -827,6 +827,16 @@ so — see D2 below.)
   browser by `canary.local` / `192.168.4.1`. Decide which interface and which
   names the WAP trusts, then port it with its route checker. Found in the
   wave-7 receipt review (F56).
+  *Note (2026-10-21, F344):* F344 answers this item's question for the
+  pages and the receipt: the WAP stages `host_guard.h`, takes no SoftAP or
+  interface exemption (its captive DNS sends every name to the device, and
+  the wizard's two names pass), asks the Host first on the receipt in every
+  mode, and after setup on the landing, the `?cv_pair=` exchange, `/admin`,
+  `/settings` and `/companion`; the setup branch's names are now exact
+  matches, not substrings. The bearer-gated API routes still read no Host:
+  F344 rejected a guard on every gate as defense in depth only, because a
+  rebinding page holds no cookie for its own name and no bearer. Left open
+  for the maintainer to close or narrow.
 - [ ] **F58 [decision] The canary's identity-key store still reports success
   whatever the write did.** `nvs_store_key()`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
@@ -1233,6 +1243,9 @@ so — see D2 below.)
   Still open and deliberate: the landing page keeps minting a session for
   any LAN host (the dashboard's reads and writes, the audit's MEDIUM), and
   the WAP's receipt still asks no Host question (§3.7).
+  *Amended 2026-10-21 (F344):* the WAP's receipt now asks the Host question
+  first, in every mode, and after setup the landing page mints its pair token
+  and its session only for a Host that names the device (§3.7).
   *Amended 2026-10-19 (the merge sweep, F289's third road):* the Done text's
   "searched for other answers carrying the token or the SoftAP password:
   none" held, and the broker password had a third road that no answer
@@ -2343,6 +2356,11 @@ so — see D2 below.)
   `hardware_verification_checklist.md`, over plain HTTP; the first two gate
   the next WAP release). Filed: F354 (the flagship adopting the arbiter) and
   F355 (the Canary Vision SPA's tap capture against a WAP).
+  *Note (2026-10-21, F344):* the allow-listed `Host` this entry's options
+  named landed with F344, once, as the receipt's first statement: a foreign
+  Host is refused before the arbiter records it as an asker, so it neither
+  wins a tap nor contends one (`test_receipt_foreign_host_is_refused_first`).
+  This item adds no second refusal.
 - [x] **F343 [decision] canary-wap: one lockout per device, so a host on the
   network can hold the receipt's bearer at 429.** `g_auth` is one backoff for
   every caller: a host that sends one wrong bearer whenever the backoff is not
@@ -2456,7 +2474,7 @@ so — see D2 below.)
   before it is served and clears the count. Deleting either strike, the
   trailing trim, or `>=` to `>` passed every suite before (1703 checks)
   and fails it now (1740). Host-tested; not run on a device.
-- [ ] **F344 [decision] canary-wap checks no Host on the post-setup landing
+- [x] **F344 [decision] canary-wap checks no Host on the post-setup landing
   page or the `?cv_pair=` exchange.** The Host is read only on the first-boot
   wizard's paths (`handle_ui()`'s setup branch and `request_host_is_direct()`,
   for the wizard's pair-token re-issue), so after setup, on a unit served
@@ -2471,6 +2489,106 @@ so — see D2 below.)
   `THREAT_MODEL.md` line that the WAP's session posture covers whatever
   reaches it by any name. Predates F289. Found by the F289 follow-up's review
   and the superseded F289 port's review (#1832).
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security):*
+  The WAP carries the shared `firmware/common/network/host_guard.h` as a
+  byte-identical copy, pinned by one more `PAIRS` line in
+  `check_improv_sync.sh`. `request_host_names_device()` is the one
+  predicate, with no SoftAP exemption, because the WAP's captive DNS sends
+  every name to the device. After setup, `/`, `/?cv_pair=`, `/admin`,
+  `/settings` and `/companion` answer a foreign or missing Host with a fixed
+  `text/plain` `403`: no pair token, no session, the owner's token unspent,
+  and a live cookie under that name refused too. `GET
+  /api/provisioning-receipt` asks the same question first, in every mode,
+  and answers `403 {"error":"host"}` (`receipt_decide`'s row 1), before any
+  bearer is read, so no address is struck (F343), no claim is spent, no tap
+  is taken or contended (F342), and nothing is cleared (F341). The setup
+  branch and the wizard token's re-issue match `canary.local` or
+  `192.168.4.1` exactly, through `host_authority_name()`, not by substring.
+  The entry had three things wrong:
+  - plain HTTP after setup is every stock unit's posture, not a fallback:
+    the certificate generator is gated on `mbedtls/x509write_crt.h`, which no
+    pinned core ships (F15), and every unit is also plain HTTP during setup's
+    post-join window (120 s, longer while a claim is pending), when the
+    wizard asks for the BOOT tap;
+  - the receipt was not bearer-only: its tap and its claim served any Host;
+  - "an HTTPS unit's redirect and certificate stop it" covered no stock unit.
+  Why severity high: a rebinding page's session read the live camera and the
+  vault download (`api_auth_check_or_query` takes the cookie first); the
+  landing's pair token alone authorizes `/api/wifi/connect` (the
+  owner-authority PR's F334 removes that road after setup; it is open until
+  then, but the pair token now goes only to a Host that names the device);
+  and around a BOOT tap or a claim, the receipt handed over the bearer.
+  The rule is the flagship's and the display's; #1833's strict own-name rule
+  was not used, because it refuses router aliases the shared rule accepts.
+  Refused names, which the docs list: router FQDNs under other suffixes
+  (`.fritz.box`, `.localdomain`, `.home`), trailing-dot names, public
+  split-horizon names, and public-Host reverse proxies; owners use the
+  `.local` name, the IP or the bare router name. Residuals: blind requests at
+  the IP from a cross-site page (they spend no claim, close the tap from
+  another address rather than take it, can still use up an open tap from the
+  owner's own browser, and can churn pair tokens); the public allowlist routes
+  answering any Host (F357); widening the shared suffix list (F356).
+  *Done (2026-10-21, #<PR>):* the first commit of the PR that carries F337.
+  - `firmware/projects/canary-wap/arduino/canary_wap/host_guard.h` is a
+    byte-identical copy of the canonical header, held by a `PAIRS` line and
+    a comment entry in `check_improv_sync.sh` (main already had the
+    script's one list of staged headers, so nothing else there changed; no
+    workflow edit). The canonical file is unchanged.
+  - `canary_wap.ino` gains `request_host_names_device()` (Host into 96
+    bytes; missing or too long is foreign), `send_foreign_host_page()` (`403`,
+    `text/plain; charset=utf-8`, `Cache-Control: no-store`, the fixed
+    sentence "This Canary answers only its own names. Open it at its .local
+    name, its IP address, or the bare name your router gives it.") and
+    `request_host_is_setup_name()` (`host_authority_name()`, then an exact
+    `canary.local` or `192.168.4.1`). `handle_ui()` asks the setup names in
+    its setup branch and the device's names right after it, ahead of the
+    cookie; `handle_legacy_ui()` and `handle_companion_html()` ask after
+    setup, first thing after the request count; `handle_wifi_pair_token()`
+    asks the setup names, and `request_host_is_direct()` is gone. The
+    receipt's first statement is the Host row, and its grant comment states
+    the whole order (Host, bearer, claim, tap, then the clear and the mint).
+    No generated file, wire format or emulator input moved.
+  - `check_route_security.py`'s reasons for `handle_ui`, `handle_legacy_ui`,
+    `handle_wifi_pair_token`, `/admin` and `/companion` say so (202
+    registrations, green).
+  - One more owner effect, from the decision's risks: the captive DNS runs
+    for the SoftAP's whole life, so after setup a captive mini-browser on
+    the SoftAP that loads a foreign root (`/` under the probe's own name)
+    gets the `403` sentence instead of the landing page. The probe paths
+    themselves are still answered by `handle_captive_probe`, and the
+    phone's browser at `192.168.4.1` or `canary.local` gets the landing
+    (the U1 row checks the iOS and Android sheets).
+  Host-tested: `test_session_cookie.cpp` (706 checks; the cut now carries
+  the three helpers, `handle_legacy_ui()` and `handle_companion_html()`
+  over the staged header, and the landing stand-in mints a pair token as
+  the real one does). The sketch before this commit fails 235 of 684: the
+  foreign Hosts (`evil.example`, with a port, `canary.local.evil.example`,
+  `canary-7916.local.evil.example`, `192.168.1.50.nip.io`, none) were handed
+  the landing and a pair token, their exchange minted a session and spent
+  the owner's token, a live cookie under them got the dashboard, `/settings`
+  and `/companion` served them, the four router names outside the rule were
+  served, `CANARY.LOCAL:80` got the captive page, `canary.local.evil.example`
+  and `192.168.4.1.evil.example` were sent to the wizard with a token, and
+  the text checks. That run leaves out the one row that calls
+  `request_host_is_setup_name()` directly, which the old sketch does not
+  define (the full file's cut fails there). Every household name
+  (`.local`, `canary.local`, upper case, IPv4 and IPv6 with and without a
+  port, `192.168.4.1`, the bare label, `.lan`, `.home.arpa`, `.internal`)
+  lands and exchanges on both. `test_receipt_grant.cpp` (3818 checks;
+  `Req` sends `Host: canary-7916.local` unless a row names another, and every
+  `g_served` read is guarded): the sketch before fails 114, for
+  `evil.example`, `canary.local.evil.example` and no Host, where the open
+  tap, the right claim and the right bearer served the receipt, a wrong
+  bearer was a strike, a wrong claim logged, an ask before the tap made the
+  owner's next ask `409`, and a held address got `429`; the device's names
+  are served by the tap on both. `test_receipt_authority.cpp` (544, its
+  `request_reach(` and `request_local_ipv4(` counts unchanged) and
+  `check_arduino_globals.py` stay green. The ESP32 compile is CI's; not run
+  against a browser, a rebinding resolver or a device (U1: the F344 row in
+  `hardware_verification_checklist.md`, over plain HTTP). Filed: F356 and
+  F357.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's
@@ -2788,6 +2906,31 @@ so — see D2 below.)
   Verify in a browser, then fix it or say in `canary-vision/docs/discovery.md`
   that a WAP is not paired from the SPA. From code; not run. Filed by F342,
   2026-10-20.
+- [ ] **F356 [code+decision] The shared Host rule refuses router names some
+  households use.** `firmware/common/network/host_guard.h` accepts an IP
+  literal, a single label, and `.local`, `.lan`, `.internal` and
+  `.home.arpa` names, and refuses everything else: a name with one trailing
+  dot (`canary-7916.local.`), the router suffixes `.home` (a TLD ICANN has not
+  delegated) and `.localdomain` (no TLD at all), and FRITZ!Box's `.fritz.box`.
+  Since F344 the WAP answers those with its fixed `403` page after setup and
+  its receipt refuses them; the flagship serves its page under them without
+  the token and refuses its API, and the display refuses its writes and its
+  CSRF token. Decide whether to widen the canonical header to accept a
+  single trailing dot and `.home` and `.localdomain`, and decide on
+  `.fritz.box`, for all three products, with rows in
+  `firmware/tests_host/test_host_guard.cpp` and the staged copies cp'd. From
+  code; not probed. Filed by F344, 2026-10-21.
+- [ ] **F357 [decision] canary-wap: the public allowlist routes answer any
+  Host.** After F344 the places that mint a session or a pair token, or start
+  a sign-in, refuse a Host that cannot name the device, but `GET /api/wifi`
+  (the station SSID and IP, the SoftAP's name and clients), `/api/wifi/scan`
+  (nearby networks), `/api/selftest` and `/api/device-info` stay on the
+  route check's public allowlist and answer any Host, so on a plain-HTTP
+  unit (every stock unit after setup, F15) a DNS-rebinding page can read
+  them. Decide whether they ask the Host question too (the wizard reaches
+  them at `canary.local` or `192.168.4.1`, which pass, and after setup the
+  dashboard at the device's own names) or stay public by any name. From
+  code; not probed. Filed by F344, 2026-10-21.
 - [x] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
   codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
   `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of

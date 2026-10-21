@@ -17,8 +17,9 @@
 //
 // This runs the REAL api_auth.h and the handlers cut verbatim out of
 // canary_wap.ino (handle_provisioning_receipt, handle_pairing_qr, the gate
-// they spend, provisioning_gate_take, and the cookie writer the receipt
-// sends, session_cookie_header; firmware/tests_host/
+// they spend, provisioning_gate_take, the receipt's Host question,
+// request_host_names_device, and the cookie writer the receipt sends,
+// session_cookie_header; firmware/tests_host/
 // cut_functions.awk) over stubs/receipt_grant (a request with headers and a
 // query string, a response the test reads) and stand-ins for what else they
 // call: the receipt writer (recording the grant that admitted the request
@@ -74,6 +75,19 @@
 //     with the tap left for the next asker; a held bearer still gets its
 //     429 under contention; the 409 clears no backoff; an expired tap is
 //     burned by the request that finds it;
+//   - the Host first (sweep F344): request_host_names_device(), cut with
+//     the handlers over the sketch's staged host_guard.h, is the receipt's
+//     first statement. A Host that cannot name this device (evil.example, a
+//     name that only contains canary.local, no Host at all) gets 403
+//     {"error":"host"}, no cookie, no secret: the tap stays open, a claim
+//     presented right or wrong stays pending, no bearer is compared and no
+//     strike recorded, a held address hears the Host refusal and keeps its
+//     backoff, and no asker is recorded, so the owner asking next from
+//     another address is served the tap, not 409 (before: the tap, the claim
+//     and the bearer served it, and a wrong bearer was a strike). The
+//     device's names (.local, an IP with or without a port, the bare label,
+//     .lan) are served. Every request here carries Host canary-7916.local
+//     unless a row names another;
 //   - the tap and the claim do not come back when millis() wraps (sweep
 //     F347; before, a tap nobody took served the receipt again 49.7 days
 //     after the press, and a claim read but never spent took it with its
@@ -184,6 +198,7 @@
 
 #include "Arduino.h"           // stubs/receipt_grant
 #include "esp_http_server.h"   // stubs/receipt_grant
+#include "host_guard.h"        // the sketch's staged copy: the receipt's Host question calls it
 #include "log_level.h"         // the sketch's LogLevel / LogCategory
 #include "receipt_authority.h"
 #include "claim_ticket.h"
@@ -474,7 +489,22 @@ struct Req {
     r.peer_ok = false;
     return *this;
   }
-  Req() { r.handle = &g_http_server_obj; }
+  // The Host the request targeted (default: the device's .local name, as
+  // the dashboard, the companion and the apps reach it); nullptr sends none.
+  // Separate from the peer: the receipt asks the Host first (sweep F344),
+  // the tap's arbiter and the lockout read the socket's peer.
+  Req& host(const char* h) {
+    if (h) {
+      r.req_hdrs["Host"] = h;
+    } else {
+      r.req_hdrs.erase("Host");
+    }
+    return *this;
+  }
+  Req() {
+    r.handle = &g_http_server_obj;
+    r.req_hdrs["Host"] = "canary-7916.local";
+  }
 };
 
 // The owner's short press, as the sketch's button handler makes it.
@@ -651,7 +681,7 @@ void test_receipt_bare_tap_unchanged() {
   open_tap();
   Req q;
   CHECK(receipt(q) == 1);
-  CHECK(g_served[0] == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served[0] == receipt_authority::Grant::BOOT_TAP);
   CHECK(has_header(q.r, "Set-Cookie"));
   CHECK(!tap_open());
   // A tap older than its TTL is no tap.
@@ -689,7 +719,7 @@ void test_receipt_cookie_secure_over_https_only() {
   Req tap;
   tap.on(g_https_server);
   CHECK(receipt(tap) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   const std::string tls = header(tap.r, "Set-Cookie");
   CHECK_MSG(tls.size() > 8 && tls.find(attrs + "; Secure") != std::string::npos &&
                 tls.compare(tls.size() - 8, 8, "; Secure") == 0,
@@ -701,7 +731,7 @@ void test_receipt_cookie_secure_over_https_only() {
   Req claim;
   claim.on(g_https_server).query(std::string("claim=") + g_improv_claim.hex);
   CHECK(receipt(claim) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(header(claim.r, "Set-Cookie").find(attrs + "; Secure") != std::string::npos);
   // HTTPS up, but this answer on the plain server: no Secure.
   reset_device();
@@ -758,7 +788,7 @@ void test_receipt_wrong_claim_leaves_it_pending() {
   Req phone;
   phone.query(std::string("claim=") + g_improv_claim.hex);
   CHECK_MSG(receipt(phone) == 1, "the phone's claim was refused after a wrong one");
-  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(!claim_pending());
   CHECK(g_improv_claim_spent_at_ms != 0);
 }
@@ -817,7 +847,7 @@ void test_receipt_bearer_shapes() {
   Req padded;
   padded.authorization(std::string("Bearer   ") + kToken + "  ");
   CHECK(receipt(padded) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BEARER);
 }
 
 // A backoff running now for host A: `failures` strikes, the last one just
@@ -861,7 +891,7 @@ void test_receipt_right_bearer_clears_the_count() {
   Req right;
   right.bearer(kToken);
   CHECK(receipt(right) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BEARER);
   CHECK_MSG(strikes(kHostA) == 0, "a right bearer on the receipt left the count standing");
 }
 
@@ -897,7 +927,7 @@ void test_receipt_lockout_holds_the_bearer() {
   Req later;
   later.bearer(kToken);
   CHECK(receipt(later) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BEARER);
   CHECK(strikes(kHostA) == 0);
 }
 
@@ -928,7 +958,7 @@ void check_right_bearer_served_at_once(const char* after) {
   right.bearer(kToken);
   CHECK_MSG(receipt(right) == 1,
             std::string("A's right bearer was held right after ") + after + " (no clear on the hand-over)");
-  CHECK(g_served.back() == receipt_authority::Grant::BEARER);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BEARER);
   CHECK(right.r.status != "429 Too Many Requests");
 }
 
@@ -944,7 +974,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   Req stale;
   stale.bearer(kWrong);
   CHECK_MSG(receipt(stale) == 1, "the lockout held the owner's BOOT tap");
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(!tap_open());
   CHECK(has_header(stale.r, "Set-Cookie"));
   CHECK_MSG(strikes(kHostA) == 0, "the tap left the address it served its count");
@@ -958,7 +988,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   Req right;
   right.bearer(kToken);
   CHECK(receipt(right) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(strikes(kHostA) == 0);
   check_right_bearer_served_at_once("a held right bearer the tap served");
   // The dashboard's own wait: no header at all (requestFromDevice), the tap
@@ -968,7 +998,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   open_tap();
   Req bare;
   CHECK(receipt(bare) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(strikes(kHostA) == 0);
   check_right_bearer_served_at_once("a header-less tap wait");
   // The setup-door claim, a stale bearer beside it, the backoff running:
@@ -979,7 +1009,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   Req claim;
   claim.bearer(kWrong).query(std::string("claim=") + g_improv_claim.hex);
   CHECK_MSG(receipt(claim) == 1, "the lockout held the setup door's claim");
-  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(!claim_pending());
   CHECK_MSG(strikes(kHostA) == 0, "the claim left the address it served its count");
   check_right_bearer_served_at_once("the claim");
@@ -992,7 +1022,7 @@ void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   Req fresh;
   fresh.bearer(kWrong);
   CHECK_MSG(receipt(fresh) == 1, "a stale bearer kept the tap from serving");
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(strikes(kHostA) == 0);
   check_right_bearer_served_at_once("a stale bearer the tap served");
   // The QR shares the table: right after the tap, A's right token on it is
@@ -1024,7 +1054,7 @@ void test_the_hand_over_clears_only_its_asker() {
   Req a;
   a.bearer(kWrong);
   CHECK(receipt(a) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(strikes(kHostA) == 0);
   CHECK_MSG(strikes(kHostB) == 4, "A's tap changed B's count");
   CHECK(held(kHostB));
@@ -1041,7 +1071,7 @@ void test_the_hand_over_clears_only_its_asker() {
   Req c;
   c.query(std::string("claim=") + g_improv_claim.hex);
   CHECK(receipt(c) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(strikes(kHostA) == 0);
   CHECK(strikes(kHostB) == 2);
   CHECK(held(kHostB));
@@ -1063,7 +1093,7 @@ void test_the_hand_over_clears_only_its_asker() {
   open_tap();
   Req a_tap;
   CHECK(receipt(a_tap) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK_MSG(g_auth_table.overflow.failures == 1, "the tap cleared the shared overflow");
   CHECK_MSG(held(kHostA), "an address held only through the overflow was freed by the tap");
   Req a_right;
@@ -1249,7 +1279,7 @@ void test_the_owner_retries_after_the_other_device_stops() {
   stub_grant::now_ms += 1000;
   Req a_served;
   CHECK_MSG(receipt(a_served) == 1, "the owner's retry was not served after the other device stopped");
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(has_header(a_served.r, "Set-Cookie"));
   CHECK(tap_closed_lines() == 1);
 }
@@ -1498,7 +1528,7 @@ void test_sole_asker_is_served_at_once() {
   stub_grant::now_ms += 500;
   Req a;
   CHECK(receipt(a) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   CHECK(a.r.status == "200 OK");
   CHECK(has_header(a.r, "Set-Cookie"));
   CHECK(!tap_open() && gate_stamp() == 0);
@@ -1661,12 +1691,12 @@ void test_what_counts_as_an_ask() {
     if (shape == 0) b.bearer(kToken);
     else b.query(std::string("claim=") + g_improv_claim.hex);
     CHECK(receipt(b) == 1);
-    CHECK(g_served.back() == (shape == 0 ? receipt_authority::Grant::BEARER
-                                         : receipt_authority::Grant::SETUP_DOOR_CLAIM));
+    CHECK(!g_served.empty() && g_served.back() == (shape == 0 ? receipt_authority::Grant::BEARER
+                                                              : receipt_authority::Grant::SETUP_DOOR_CLAIM));
     CHECK(tap_open());
     Req a;
     CHECK_MSG(receipt(a) == 1, std::string("B's right ") + (shape ? "claim" : "bearer") + " contended the owner's tap");
-    CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   }
 }
 
@@ -1707,7 +1737,7 @@ void test_contention_does_not_carry_into_a_clean_next_tap() {
   stub_grant::now_ms += 500;
   Req a_retap;
   CHECK_MSG(receipt(a_retap) == 1, "contention carried into a clean next tap");
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
   // A re-tap while B is still asking: closed again.
   reset_device();
   Req a0;
@@ -1743,7 +1773,7 @@ void test_unreadable_peer_is_refused_and_leaves_the_tap() {
   CHECK_MSG(gate_stamp() != 0, "a socket that cannot say spent the tap");
   Req a;
   CHECK(receipt(a) == 1);
-  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
 }
 
 // (h) A bearer the backoff holds still gets its 429 under contention, not
@@ -1781,6 +1811,108 @@ void test_an_expired_tap_is_burned_by_the_request_that_finds_it() {
   CHECK(receipt(a) == 0);
   check_gate_refusal(a.r);
   CHECK_MSG(gate_stamp() == 0, "an expired stamp survived the request that found it");
+}
+
+// ── the Host question (sweep F344) ───────────────────────────────────────────
+
+// The receipt's answer to a Host that cannot name this device: 403 and
+// exactly {"error":"host"} (the flagship's body), not cached, no cookie, no
+// secret.
+void check_host_refusal(const httpd_req_t& r, const std::string& why) {
+  CHECK_MSG(r.status == "403 Forbidden", why + ": answered " + r.status);
+  CHECK_MSG(r.resp == "{\"error\":\"host\"}", why + ": body " + r.resp);
+  CHECK(r.type == "application/json");
+  CHECK(header(r, "Cache-Control") == "no-store");
+  CHECK_MSG(!has_header(r, "Set-Cookie"), why + ": a cookie was set");
+  CHECK_MSG(!carries_secret(r), why + ": the answer carries a secret");
+}
+
+// The receipt asks the Host first, in every mode, before the bearer is read,
+// the claim is taken or the tap is judged. A DNS-rebinding page (its own
+// name re-pointed at the WAP), a name that only contains canary.local, and a
+// request with no Host are refused, and leave everything as they found it:
+// the tap open, the claim pending, no strike against their address (F343),
+// no asker recorded for the tap's arbiter (F342). Before, each was the
+// receipt's caller like any other: the tap and the claim served it (the
+// token, the SoftAP password), a wrong bearer was a strike, and an ask
+// before the tap contended the owner's.
+void test_receipt_foreign_host_is_refused_first() {
+  for (const char* host : {"evil.example", "canary.local.evil.example", (const char*)nullptr}) {
+    const std::string why = host ? std::string("Host ") + host : std::string("no Host");
+    // An open tap: refused, and the tap stays open. The owner then asks
+    // from another address under the device's name and is served.
+    reset_device();
+    open_tap();
+    Req foreign;
+    foreign.host(host);
+    CHECK_MSG(receipt(foreign) == 0, why + ": a foreign Host was served the owner's tap");
+    check_host_refusal(foreign.r, why + " at an open tap");
+    CHECK_MSG(tap_open(), why + ": the foreign request spent the tap");
+    Req owner;
+    owner.from(192, 168, 1, 21);
+    CHECK_MSG(receipt(owner) == 1, why + ": the owner, asking after a foreign request, answered " + owner.r.status);
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(tap_closed_lines() == 0);
+    // A foreign ask before the tap is no asker: the owner, asking after
+    // the tap from another address, is served, not 409.
+    reset_device();
+    Req early;
+    early.host(host).from(192, 168, 1, 21);
+    CHECK(receipt(early) == 0);
+    check_host_refusal(early.r, why + " before the tap");
+    stub_grant::now_ms += 1000;
+    open_tap();
+    stub_grant::now_ms += 100;
+    Req owner_after;
+    CHECK_MSG(receipt(owner_after) == 1,
+              why + ": a foreign ask before the tap contended the owner's (" + owner_after.r.status + ")");
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(tap_closed_lines() == 0);
+    // A pending claim, presented right or wrong: refused, still pending,
+    // nothing logged.
+    for (int right = 0; right < 2; ++right) {
+      reset_device();
+      mint_claim();
+      Req claim;
+      claim.host(host).query(std::string("claim=") + (right ? g_improv_claim.hex : kClaimHex));
+      CHECK(receipt(claim) == 0);
+      check_host_refusal(claim.r, why + (right ? " with the right claim" : " with a wrong claim"));
+      CHECK_MSG(claim_pending(), why + ": the foreign request spent the claim");
+      CHECK(g_improv_claim_spent_at_ms == 0);
+      CHECK(claim_refusal_lines() == 0);
+    }
+    // A right or a wrong bearer: refused, never compared, no strike.
+    for (const char* tok : {kToken, kWrong}) {
+      reset_device();
+      Req bearer;
+      bearer.host(host).bearer(tok);
+      CHECK(receipt(bearer) == 0);
+      check_host_refusal(bearer.r, why + (tok == kToken ? " with the right bearer" : " with a wrong bearer"));
+      CHECK_MSG(strikes(kHostA) == 0, why + ": the foreign request's bearer was a strike");
+      CHECK(!held(kHostA));
+      CHECK(g_served.empty());
+    }
+    // An address already held: the Host refusal, not the lockout's 429, and
+    // its backoff exactly as it was.
+    reset_device();
+    arm_lockout(3);
+    Req held_bearer;
+    held_bearer.host(host).bearer(kToken);
+    CHECK(receipt(held_bearer) == 0);
+    check_host_refusal(held_bearer.r, why + " from a held address");
+    CHECK(strikes(kHostA) == 3 && held(kHostA));
+  }
+  // The device's names, as the dashboard, the companion and the apps reach
+  // it: served by the tap.
+  for (const char* host : {"canary-7916.local", "192.168.1.50", "192.168.4.1:80", "canary-7916", "canary-7916.lan"}) {
+    reset_device();
+    open_tap();
+    Req q;
+    q.host(host);
+    CHECK_MSG(receipt(q) == 1, std::string("Host ") + host + " was not served by the tap: " + q.r.status);
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(has_header(q.r, "Set-Cookie"));
+  }
 }
 
 // ── the pairing QR ───────────────────────────────────────────────────────────
@@ -2858,6 +2990,20 @@ void test_sketch_text() {
   // cookie bridge; the pairing QR's names only the bearer-only gate.
   const std::string receipt_fn = function_text(lines, "static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {");
   CHECK(!receipt_fn.empty());
+  // The Host question is the handler's first statement after the request
+  // count (sweep F344), so it runs before the bearer is read, the claim is
+  // taken and the tap is judged.
+  {
+    std::vector<std::string> code;
+    for (const auto& l : split_lines(receipt_fn)) if (!rtrim(l).empty()) code.push_back(rtrim(l));
+    CHECK(code.size() > 2 && code[1] == "  g_health.http_requests++;");
+    CHECK_MSG(code.size() > 2 && code[2] == "  if (!request_host_names_device(req)) {",
+              "the receipt's first statement is not the Host question: " + (code.size() > 2 ? code[2] : std::string()));
+    const size_t host_at = receipt_fn.find("request_host_names_device(req)");
+    CHECK(host_at != std::string::npos && host_at < receipt_fn.find("api_auth_bearer_held(req)") &&
+          host_at < receipt_fn.find("claim_ticket::take(") && host_at < receipt_fn.find("provisioning_gate_take_for("));
+    CHECK(has(receipt_fn, "return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"host\\\"}\");"));
+  }
   CHECK(has(receipt_fn, "api_auth_bearer_grant(req, g_device.api_token_str)"));
   CHECK(has(receipt_fn, "api_auth_bearer_held(req)"));
   CHECK_MSG(!has(receipt_fn, "api_auth_check_optional("), "the receipt takes the cookie again");
@@ -3038,6 +3184,7 @@ int main() {
   test_unreadable_peer_is_refused_and_leaves_the_tap();
   test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
   test_an_expired_tap_is_burned_by_the_request_that_finds_it();
+  test_receipt_foreign_host_is_refused_first();
   test_receipt_stale_tap_and_claim_do_not_revive_after_the_wrap();
   test_receipt_bearer_shapes();
   test_receipt_wrong_bearer_is_a_strike();

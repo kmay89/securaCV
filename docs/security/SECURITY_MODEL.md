@@ -365,6 +365,43 @@ as a bearer, to a phone spending the setup door's claim, or for thirty
 seconds after a short BOOT tap — and also in the pairing QR an operator
 fetches with the token, or on the serial console.
 
+Since sweep F344 the WAP asks the flagship's Host question too, in fewer
+places and with no exemption. After setup, the landing page `/`, its
+one-tap link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer
+only a Host that can name this device (`host_guard.h`: an IP address, a
+`.local` name, a single label, or a `.lan`, `.internal` or `.home.arpa`
+name). Any other Host, or none, gets `403` and one fixed `text/plain`
+sentence ("This Canary answers only its own names. Open it at its .local
+name, its IP address, or the bare name your router gives it."): no pair
+token is handed out, no session is minted, the owner's link stays unspent,
+and a live cookie sent under that name is refused too. The provisioning
+receipt asks the same question first, in every mode, setup included, and
+answers `403 {"error":"host"}` before it reads the bearer, takes the claim
+or judges the tap, so such a request is never a strike (F343), never an
+asker for the tap (F342), spends nothing and clears nothing (F341). A
+DNS-rebinding page then holds no session for its own name, so it reaches
+neither the dashboard, the live camera nor the vault download, and it is
+never handed the receipt. Two differences from the flagship. There is no
+SoftAP exemption, because the WAP's captive DNS sends every name to the
+device; its wizard runs at `canary.local` or `192.168.4.1`, which both pass,
+and the setup branch and the wizard token's re-issue now match exactly those
+two names, in any case and with any port, rather than any name that contains
+one of them. And only the places that mint a session or a pair token, or
+start a sign-in, ask it, not every API route: a route behind the cookie
+refuses a rebinding page because that page holds no cookie. Refused after
+setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
+`.home`), a name with a trailing dot, a public split-horizon name, and a
+reverse proxy that forwards a public Host; use the `.local` name, the IP or
+the bare router name instead (widening the shared list is F356). What it
+leaves: the public allowlist routes (`/api/wifi`, `/api/wifi/scan`,
+`/api/selftest`, `/api/device-info`) still answer any Host (F357), and a
+cross-site page can still send requests at the IP address (an IP literal
+passes) without reading the answers: they spend no claim, from another
+address they close an open tap rather than take it (F342), from the
+owner's own browser they can still use up an open tap, and they can churn
+pair tokens. That is a denial of service, not a way to the token.
+Host-tested; not run against a browser or on a device.
+
 Since sweep F342 the tap goes to the one address asking for it: when a
 second address asked for the receipt in the ten seconds before the tap or
 during it, the tap is closed and an asker gets `409 tap_contended` while an

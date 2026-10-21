@@ -41,6 +41,17 @@ set -euo pipefail
 #                     2 s doubling capped at 60 s. api_auth.h holds the one
 #                     table. Host-tested by
 #                     firmware/tests_host/test_auth_backoff.cpp.
+#   host_guard.h    — does the Host a request targeted name THIS device (an
+#                     IP literal, a .local name, a single label, or a .lan,
+#                     .internal or .home.arpa name)? The rule the flagship
+#                     (securacv_network) and the display (glass_web) already
+#                     apply; the WAP asks it first on the post-setup pages
+#                     and the ?cv_pair exchange, and on the provisioning
+#                     receipt in every mode (sweep F344), and reads the
+#                     setup branch's exact canary.local / 192.168.4.1 match
+#                     through its host_authority_name(). Host-tested by
+#                     firmware/tests_host/test_host_guard.cpp. The display
+#                     stages its own copy (canary-display/setup.sh).
 #
 # Canonical:  firmware/common/network/<name>
 # Copies:     firmware/projects/canary-wap/arduino/canary_wap/<same name>
@@ -70,6 +81,7 @@ PAIRS=(
     "${COMMON}/claim_ticket.h|${WAP}/claim_ticket.h"
     "${COMMON}/provisioning_gate.h|${WAP}/provisioning_gate.h"
     "${COMMON}/auth_backoff.h|${WAP}/auth_backoff.h"
+    "${COMMON}/host_guard.h|${WAP}/host_guard.h"
 )
 
 # The other common/network headers the sketch stages, each with the

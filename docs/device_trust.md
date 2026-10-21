@@ -316,9 +316,10 @@ name, token, `tls_cert_fp` where TLS is on). So pairing a phone through
 the door takes **both** the encrypted link that handed over the Wi-Fi
 **and** presence on the Wi-Fi the device just joined; a phone that was
 only near the device holds a string that opens nothing from the street. The
-receipt route decides in a fixed order — on the flagship a foreign `Host`
-is refused first (the WAP asks no Host question on this route today), then
-a valid bearer serves, then the claim, then an unspent BOOT tap
+receipt route decides in a fixed order — a foreign `Host` is refused first
+(on the flagship outside its own access point; on the WAP in every mode,
+since sweep F344), then a valid bearer serves, then the claim, then an
+unspent BOOT tap
 (`provisioning_gate::receipt_decide`) — a wrong claim spends nothing, an
 expired one is burned, and a claim that serves leaves the BOOT tap unspent for the
 owner's own page load. What the phone pins afterwards (the key from

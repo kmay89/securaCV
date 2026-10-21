@@ -525,8 +525,10 @@ clean: clean-receipt-authority
 # The receipt's and the pairing QR's grants (sweep F289): the REAL api_auth.h
 # and handle_provisioning_receipt(), handle_pairing_qr(),
 # provisioning_gate_take(), provisioning_gate_take_for() (the BOOT tap's one
-# asker, sweep F342) and session_cookie_header() (the receipt's
-# cookie, Secure over HTTPS only) cut verbatim out of canary_wap.ino
+# asker, sweep F342), request_host_names_device() (the receipt's first
+# question, the Host, over the sketch's staged host_guard.h; sweep F344) and
+# session_cookie_header() (the receipt's cookie, Secure over HTTPS only) cut
+# verbatim out of canary_wap.ino
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with headers and a query string) and stand-ins for the two writers, the
 # session mint, the health log and the Wi-Fi facts, beside the sketch's own
@@ -556,7 +558,7 @@ RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(RGRANT_CSI_INC): $(SRC_DIR)/csi_integration.cpp Makefile
@@ -583,7 +585,12 @@ run: run-receipt-grant
 clean: clean-receipt-grant
 
 # The dashboard's session cookie (sweep F289's residual): handle_ui() and
-# session_cookie_header() cut verbatim out of canary_wap.ino, and
+# session_cookie_header() cut verbatim out of canary_wap.ino, with the Host
+# question's three helpers (request_host_names_device(),
+# send_foreign_host_page(), request_host_is_setup_name(), over the sketch's
+# staged host_guard.h) and the two other pages that ask it after setup,
+# handle_legacy_ui() (/admin, /settings) and handle_companion_html()
+# (/companion) (sweep F344), and
 # read_session_cookie_hex() out of csi_integration.cpp
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with the server it arrived on) and stand-ins for the wizard flag, the
@@ -592,8 +599,12 @@ clean: clean-receipt-grant
 # on a plain-HTTP boot (the first-boot SoftAP setup); the reader takes the
 # cookie NAMED cv_session, never "xcv_session=" or a value holding it. It also
 # reads the sketch's text (its path is passed in): the attributes are spelled
-# once, and both Set-Cookie sites send that spelling. The receipt's own mint
-# site is driven in test_receipt_grant.cpp. And the two token stores' clock
+# once, and both Set-Cookie sites send that spelling. After setup a Host that
+# cannot name the device gets the fixed 403 on '/', the ?cv_pair exchange,
+# /admin, /settings and /companion, a live cookie included; the setup branch
+# and the wizard token's re-issue match canary.local or 192.168.4.1 exactly.
+# The receipt's own mint site is driven in test_receipt_grant.cpp. And the
+# two token stores' clock
 # (sweep F347): the slot functions (pick_slot_for_issuance(), find_slot(),
 # pick_session_slot_for_issuance(), find_valid_session() and their ct_eq())
 # cut verbatim out of csi_integration.cpp into a namespace the harness opens
@@ -612,7 +623,7 @@ SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
 CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC)
 
 $(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
-	awk -v 'sigs=static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {' \
+	awk -v 'sigs=static bool request_host_names_device(httpd_req_t* req) {|static esp_err_t send_foreign_host_page(httpd_req_t* req) {|static bool request_host_is_setup_name(httpd_req_t* req) {|static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {|static esp_err_t handle_legacy_ui(httpd_req_t* req) {|static esp_err_t handle_companion_html(httpd_req_t* req) {' \
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(SCOOKIE_CSI_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile

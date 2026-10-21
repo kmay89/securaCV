@@ -170,6 +170,7 @@
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
 #include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
+#include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
@@ -3712,6 +3713,69 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
   return httpd_resp_send(req, (const char*)gz, gz_len);
 }
 
+// ── The Host question (sweep F344) ──────────────────────────────────────────
+// Does the Host this request targeted name THIS device? host_guard.h's rule
+// (firmware/common/network, staged here byte-identical and held by
+// check_improv_sync.sh; host-tested by firmware/tests_host/
+// test_host_guard.cpp), the one the flagship (securacv_network's
+// host_is_foreign) and the display (glass_web) already apply: an IP literal
+// (no DNS was involved, so nothing was rebound), or a name public DNS cannot
+// mint (a .local, .lan, .internal or .home.arpa name, or a single label the
+// LAN resolver answers). A DNS-rebinding page (http://evil.example whose name
+// is re-pointed at this device's LAN address) arrives under its own name and
+// fails. A missing Host, or one too long for the buffer, is foreign.
+//
+// No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
+// DNS answers every name with the device (setup_wizard.h), so an exemption
+// would hand the rebinding path back to anything on the SoftAP, and the
+// WAP's wizard runs only at canary.local or 192.168.4.1, which both pass.
+//
+// Asked first by every place that mints a session or a pair token, or starts
+// a sign-in: handle_ui after setup (the landing, its pair token and the
+// ?cv_pair exchange), /admin, /settings and /companion after setup, and the
+// provisioning receipt in every mode. A rebinding page then holds no cookie
+// for its own name, so every cookie gate refuses it unchanged. Asked before
+// the response starts: esp_http_server purges the request headers on the
+// first send.
+static bool request_host_names_device(httpd_req_t* req) {
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  return canary::net::host_names_this_device(host);
+}
+
+// The pages' one answer to a Host that cannot name this device: 403 and a
+// fixed sentence that says what to type instead, never cached. The body is
+// fixed text, never the Host and never a device value (no name, no address).
+// No sign-in starts here, so no BOOT-tap wait begins under a name the
+// receipt refuses.
+static esp_err_t send_foreign_host_page(httpd_req_t* req) {
+  httpd_resp_set_status(req, "403 Forbidden");
+  httpd_resp_set_type(req, "text/plain; charset=utf-8");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, "This Canary answers only its own names. Open it at its .local name, its IP address, or the bare name your router gives it.");
+}
+
+// The first-boot setup's own two names, exactly: canary.local (every WAP
+// claims it over mDNS) or the SoftAP's 192.168.4.1, with any port and in any
+// case (host_authority_name() trims, drops the port and lowercases). Asked by
+// handle_ui's setup branch and by the wizard token's re-issue
+// (handle_wifi_pair_token), because the token they mint authorizes the Wi-Fi
+// join. Before, a substring test admitted any name that merely CONTAINED one
+// of the two (canary.local.evil.example, 192.168.4.1.evil.example), which the
+// captive DNS also resolves to the device, and missed CANARY.LOCAL.
+// Deliberately narrower than request_host_names_device(): every other name
+// the captive DNS sends here (a captive-portal probe's, another IP,
+// canary-<suffix>.local, a single label) gets the static instruction page,
+// because redirecting a captive mini-browser to the wizard is the white
+// screen that branch exists to prevent.
+static bool request_host_is_setup_name(httpd_req_t* req) {
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  char name[96];
+  if (canary::net::host_authority_name(host, name, sizeof(name)) == 0) return false;
+  return strcmp(name, "canary.local") == 0 || strcmp(name, "192.168.4.1") == 0;
+}
+
 // The cv_session cookie's Set-Cookie value, written into `out` (`cap`
 // bytes): the one spelling of its attributes for both places that mint a
 // session (handle_ui's ?cv_pair exchange and the receipt's BOOT-tap or
@@ -3749,7 +3813,13 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
   // tabbed admin dashboard is reachable at /admin via handle_legacy_ui().
   //
-  // Three branches:
+  // After the first-boot setup branch (Branch 0 below), the Host question
+  // comes first (sweep F344): a Host that cannot name this device
+  // (request_host_names_device(), host_guard.h's rule) gets the fixed 403
+  // page, before any branch below runs. So a DNS-rebinding page is handed no
+  // pair token, its ?cv_pair mints no session and leaves the owner's token
+  // unspent, and a live cookie sent under that name is refused too. Then
+  // three branches:
   //   1. cv_session cookie present and valid → serve the dashboard HTML
   //      as-is. The page's in-page fetches authenticate via the cookie
   //      (HttpOnly + SameSite=Strict, sent automatically by browsers),
@@ -3767,19 +3837,14 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // Branch 0: first-boot setup. canary.local (or the 192.168.4.1 fallback link)
   // should land on the setup wizard — but the captive DNS hijack points *every*
   // domain at this IP, so captive-portal assistants probing the root of foreign
-  // domains also hit "/". Gate on the Host header: only a request that actually
-  // asked for canary.local / 192.168.4.1 is the user's real browser, so mint a
-  // token and redirect it to the wizard. Anything else gets the plain static
-  // page — redirecting a captive mini-browser to the SPA is the white screen
-  // this PR exists to fix.
+  // domains also hit "/". Gate on the Host header: only a request that asked
+  // for exactly canary.local or 192.168.4.1 (request_host_is_setup_name(),
+  // sweep F344; before, any Host that merely contained one of them) is the
+  // user's real browser, so mint a token and redirect it to the wizard.
+  // Anything else gets the plain static page — redirecting a captive
+  // mini-browser to the SPA is the white screen this branch exists to prevent.
   if (setup_wizard::is_active()) {
-    char host[64] = {0};
-    bool direct = false;
-    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK) {
-      direct = (strstr(host, "canary.local") != nullptr) ||
-               (strstr(host, "192.168.4.1") != nullptr);
-    }
-    if (direct) {
+    if (request_host_is_setup_name(req)) {
       char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
       if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
         char location[128];
@@ -3805,6 +3870,10 @@ static esp_err_t handle_ui(httpd_req_t* req) {
       return httpd_resp_send(req, CAPTIVE_PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
     }
   }
+
+  // The Host question (sweep F344), ahead of the cookie: a refused name gets
+  // the fixed page whether or not it carries a live session.
+  if (!request_host_names_device(req)) return send_foreign_host_page(req);
 
   // Branch 1: existing valid session.
   if (csi_integration::session_validate_cookie(req)) {
@@ -3841,7 +3910,11 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // the canary-wap fleet keeps a familiar surface for power-user tasks
   // (camera peek, witness export, fine-grained tabs), and at /settings
   // for a direct route to device settings from the headline dashboard.
+  // After setup a Host that cannot name this device gets the fixed 403 page
+  // (sweep F344): its sign-in, and the BOOT-tap wait it starts, would run
+  // under a name the receipt refuses.
   g_health.http_requests++;
+  if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);
   httpd_resp_set_type(req, "text/html");
   return send_gzip_html(req, CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN);
 }
@@ -3851,10 +3924,14 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
 // shipping — no auth needed (the page itself just renders; the BLE
 // characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
 // drive-by visitor can load the HTML but can't see device state without
-// pairing first).
+// pairing first). After setup a Host that cannot name this device gets the
+// fixed 403 page instead (sweep F344), as '/' and /settings do; while the
+// first-boot wizard runs, the page serves under any Host, as before. The
+// service worker and the manifest are left as they were.
 
 static esp_err_t handle_companion_html(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);
   httpd_resp_set_type(req, "text/html; charset=utf-8");
   // Cache aggressively in the browser; the service worker will revalidate
   // network-first when it can reach us, so updates land within one visit.
@@ -6776,28 +6853,18 @@ static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
   return found;
 }
 
-// A request that asked for the device by its real name (vs a captive-portal
-// assistant probing a hijacked foreign domain). Same gate the "/" redirect
-// uses before minting a pairing token into the wizard URL.
-static bool request_host_is_direct(httpd_req_t* req) {
-  char host[64] = {0};
-  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
-    return false;
-  }
-  return (strstr(host, "canary.local") != nullptr) ||
-         (strstr(host, "192.168.4.1") != nullptr);
-}
-
 // Re-issue a pairing token to the live wizard. The URL token is RAM-backed
 // (10-min TTL, wiped on reboot, 4-slot eviction); without this, a stale
 // token dead-ends the user at "setup link expired" even with a correct
 // password. Answers ONLY while the first-boot wizard is active and only to
-// a direct-Host browser — the same posture as the "/" redirect that minted
-// the original token. The AP itself remains the security boundary
-// (companion_pwa.h wizard doc block); the token stays a UX gate.
+// a browser that asked for exactly canary.local or 192.168.4.1
+// (request_host_is_setup_name(), sweep F344) — the same gate the "/"
+// redirect that minted the original token asks. The AP itself remains the
+// security boundary (companion_pwa.h wizard doc block); the token stays a UX
+// gate.
 static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   g_health.http_requests++;
-  if (!setup_wizard::is_active() || !request_host_is_direct(req)) {
+  if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {
     httpd_resp_set_status(req, "404 Not Found");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
@@ -8951,25 +9018,43 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // The grants, in order — the contract is provisioning_gate.h's four-grant
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
   // (firmware/common/network, staged in the sketch; the handler spells the
-  // order out because its tap step is the WAP's own). The WAP's actual
-  // order here: a valid bearer (the header, never the session cookie, under
-  // the api_auth lockout) serves (the claim and the tap left alone); else a
-  // claim the request presented is spent on a match only, and serves, the
-  // tap left unspent for the owner's own page load (a wrong, short or
-  // truncated claim changes nothing, sweep F342); else the BOOT tap, served
-  // to the sole address asking for it (provisioning_gate_take_for(): a
-  // second address that asked in the ten seconds before the tap or during
-  // it closes the tap, 409 tap_contended, sweep F342). The contract's first
-  // question, a foreign Host, is the flagship's (securacv_network's host
-  // guard answers it in front of this route there); the WAP sketch has no
-  // Host guard on this route and does not ask it yet. When it does (the
-  // ledger's F344), that question is the first statement after
-  // g_health.http_requests++ above: a request whose Host cannot name the
-  // device is refused there, before the bearer is read and before the tap
-  // arbiter records it as an asker, so it can never be served and never
-  // contends the owner's tap.
+  // order out because its tap step is the WAP's own):
+  //   1. the Host (sweep F344): a Host that cannot name this device is
+  //      refused, 403 {"error":"host"}, in every mode, setup included;
+  //   2. the bearer: a valid `Authorization: Bearer` header serves, never
+  //      the session cookie; every compare is accounted per source address
+  //      (sweeps F343, F339); the claim and the tap are left alone;
+  //   3. the claim: a ?claim= from the Bluetooth setup door is spent on a
+  //      match only, and serves, the tap left unspent for the owner's own
+  //      page load (a wrong, short or truncated claim changes nothing, sweep
+  //      F342);
+  //   4. the BOOT tap, served to the sole address asking for it
+  //      (provisioning_gate_take_for(): a second address that asked in the
+  //      ten seconds before the tap or during it closes the tap, 409
+  //      tap_contended, sweep F342);
+  //   then the claim or the tap that served clears its asker's backoff
+  //   (sweep F341), and the session is minted with the receipt.
 
-  // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
+  // 1. The Host first (sweep F344): host_guard.h's rule, as '/' and the
+  //    sign-in pages ask it after setup and the flagship asks it in front of
+  //    this route (its auth gate's host_is_foreign). It comes before the
+  //    bearer is read, the claim is taken and the tap is judged, so a
+  //    request under a name that cannot mean this device (a DNS-rebinding
+  //    page's, around a BOOT tap or the post-join setup window) is never
+  //    compared, never a strike against its address (F343), never an asker
+  //    to the tap's arbiter (it neither wins the tap nor contends the
+  //    owner's, F342), spends no claim, and clears nothing (F341). The body
+  //    is the flagship's, the shape of this route's other 403 (no "ok").
+  //    No SoftAP exemption: the WAP's captive DNS sends every name here,
+  //    and its wizard asks at canary.local or 192.168.4.1, which both pass.
+  if (!request_host_names_device(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, "{\"error\":\"host\"}");
+  }
+
+  // 2. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
   //    the bearer: a real `Authorization: Bearer <token>` header,
   //    constant-time compared (api_auth_bearer_grant), never the cv_session
   //    cookie (sweep F289). The landing page at / mints that cookie's
@@ -8989,14 +9074,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    never gates the claim or the tap: a page with a stale token, or a
   //    backoff a guesser armed, is still served by the claim or a BOOT tap,
   //    and the address they serve has its backoff cleared (sweep F341,
-  //    after step 3).
-  //    (The lockout is all this decides. Who gets the tap is step 3's.)
+  //    after step 4).
+  //    (The lockout is all this decides. Who gets the tap is step 4's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
-  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one take
+  // 3. A claim from the Bluetooth setup door (?claim=<32 hex>): one take
   //    against the ticket the loop task minted, on this task. A claim is
   //    spent only by a match (claim_ticket::take(): load, constant-time
   //    compare, one compare-and-swap of the word it loaded; sweep F342); a
@@ -9030,7 +9115,7 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     }
   }
 
-  // 3. No valid token, no good claim — the physical gate, for ONE asker
+  // 4. No valid token, no good claim — the physical gate, for ONE asker
   //    (sweep F342): provisioning_gate_take_for() records this request's
   //    peer, judges the tap (tap_arbitrate()) and takes exactly the stamp
   //    it judged (one compare-and-swap; the BLE OTA break-glass hook

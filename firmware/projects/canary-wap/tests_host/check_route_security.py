@@ -117,9 +117,11 @@ AUTH_MARKERS = (
 # the check so the list can't rot.
 PUBLIC_ALLOWLIST = {
     # Pages/static assets: the HTML is public, every API it calls is gated.
-    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated",
+    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated; "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/settings"): "same page as /admin",
-    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing)",
+    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing); "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/companion-sw.js"): "service worker for /companion",
     ("GET", "/companion-manifest.webmanifest"): "PWA manifest",
     ("GET", "/manifest.webmanifest"): "PWA manifest (sense dashboard)",
@@ -162,12 +164,16 @@ PUBLIC_ALLOWLIST = {
 # Handlers that gate internally in ways the marker scan can't attribute to
 # a single route (multi-branch pages). Name → reason.
 SELF_GATING_HANDLERS = {
-    "handle_ui": "cookie → dashboard; else pair-landing; wizard branch Host-gated",
-    "handle_legacy_ui": "serves static HTML only",
+    "handle_ui": "after setup the Host must name this device (host_guard.h), "
+        "else 403; cookie → dashboard; else pair-landing; wizard branch "
+        "exact-Host-gated (canary.local or 192.168.4.1)",
+    "handle_legacy_ui": "static HTML; after setup a Host that cannot name "
+        "this device gets 403",
     "handle_captive_probe": "returns fixed probe responses",
     "handle_https_redirect": "301 to https at the request's Host when it is an IP literal or the device's own name, else receipt_authority.h's address (503 when it has none); no data",
     "handle_tune_page": "session-cookie check, 302 to / when absent",
-    "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
+    "handle_wifi_pair_token": "gated on setup_wizard::is_active + exact setup "
+        "Host (canary.local or 192.168.4.1)",
 }
 
 

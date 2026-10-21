@@ -607,6 +607,28 @@
   Against rebinding that side is the device's own identity, never a second
   header from the same request.
 - **Date:** 2026-09
+- **Amended, 2026-10-21 (sweep F344):** the third Canary that serves a LAN
+  page, the canary-wap, asked no Host question after setup: its landing page
+  handed a rebinding page a pair token, its `?cv_pair=` exchange minted that
+  page a session (which reads the live camera), and the provisioning
+  receipt's BOOT tap and setup-door claim served any Host. It now stages the
+  same header and asks it on every place that mints a session or a pair
+  token or starts a sign-in, and first on the receipt. It takes no SoftAP
+  exemption: its captive DNS answers every name with the device too, so an
+  exemption keyed on the interface would hand the rebinding path to anything
+  on the SoftAP, and its wizard runs at two fixed names that pass anyway. Its
+  first-boot setup branch had a second fault of the same kind:
+  `strstr(host, "canary.local")` admitted `canary.local.evil.example`, which
+  that same captive DNS resolves to the device, and the token it minted
+  authorizes the Wi-Fi join.
+- **Rule:** A name test is an equality on the parsed authority (trimmed, the
+  port dropped, lowercased: `host_authority_name()`), never a substring of
+  the raw header. And an exemption that is safe on one product is not safe
+  by default on another: check what answers DNS there before copying it.
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the pages and the setup names) and `test_receipt_grant.cpp` (the receipt's
+  Host row); `firmware/scripts/check_improv_sync.sh` holds the staged copy
+  byte-identical to the canonical header.
 
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into

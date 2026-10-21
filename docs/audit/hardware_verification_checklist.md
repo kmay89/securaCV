@@ -3052,6 +3052,38 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
   - Expect: the iPhone ends paired; once the WAP is back on the home Wi-Fi, every answer B gets is `403` (while the WAP restarts into first-boot setup, B's requests get no HTTP answer); `/api/logs` shows at most one "setup-door claim did not match" line per 10 s; the serial console's boot receipt shows the same token as before the hold.
 - Artifact: `docs/audit/repro/F342/`.
 
+## canary-wap: a foreign Host gets no session, no pair token and no receipt (F344) — on-device verification
+
+Host-tested (`test_session_cookie`, `test_receipt_grant`; the rule itself
+in `firmware/tests_host/test_host_guard.cpp`). Not yet proven on a device:
+that esp_http_server hands the handlers the Host a real client sent, and
+that the captive sheets still render. Every row runs over plain HTTP, the
+stock WAP's posture after setup (no stock WAP serves HTTPS, F15); repeat the
+first row with `curl -sik https://…` once one does. `curl -H 'Host: …'`
+replaces the Host curl would send for the URL. Not run against a browser or
+a rebinding resolver; a browser's local-network prompt may block some
+cases before the device sees them. Code: `request_host_names_device()`,
+`send_foreign_host_page()`, `request_host_is_setup_name()`, `handle_ui()`,
+`handle_legacy_ui()`, `handle_companion_html()`, `handle_wifi_pair_token()`
+and `handle_provisioning_receipt()` in `canary_wap.ino`, over the staged
+`host_guard.h`. Owner: U1.
+
+- [ ] **canary-wap: a foreign Host gets no session, no pair token and no receipt (F344)**
+  - Setup: a stock unit on this firmware, set up and joined to the home Wi-Fi; a laptop with `curl` on the same network.
+  - After setup:
+    1. `curl -si -H 'Host: evil.example' http://<STA address>/` answers `403 Forbidden`, `Content-Type: text/plain; charset=utf-8`, the body "This Canary answers only its own names. Open it at its .local name, its IP address, or the bare name your router gives it.", no `Set-Cookie`, and no `cv_pair` anywhere in the body.
+    2. `-H 'Host: canary-<suffix>.local'`, `-H 'Host: canary-<suffix>'` and `-H 'Host: canary-<suffix>.lan'` answer the landing page ("Welcome to your Canary"), and so does the bare `http://<STA address>/`. `-H 'Host: canary-<suffix>.fritz.box'` answers the `403` sentence.
+    3. Take a token from a real landing (`curl -s http://<STA address>/ | grep -o 'cv_pair=[0-9a-f]*' | head -1`), then `curl -si -H 'Host: evil.example' 'http://<STA address>/?cv_pair=<token>'`: the `403` sentence and no `Set-Cookie`. Then `curl -si 'http://<STA address>/?cv_pair=<token>'` (the device's own address as the Host): `302` to `/` with one `Set-Cookie: cv_session=…`, so the token was still good.
+    4. `curl -si -H 'Host: evil.example' --compressed http://<STA address>/settings` and `…/companion` answer the `403` sentence; with the device's own address they answer the pages.
+    5. Start `while :; do curl -s http://canary-<suffix>.local/api/provisioning-receipt; echo; sleep 2; done` (the owner's ask), short-tap BOOT after its first `403`, and right after the tap send `curl -si -H 'Host: evil.example' http://<STA address>/api/provisioning-receipt` from a second laptop: that answers `403` with the body exactly `{"error":"host"}`, and the owner's loop is served the receipt at its next ask, not `409 tap_contended`. `/api/logs` has no "BOOT tap closed" line.
+  - Setup window: factory-reset (hold BOOT 10 s), run the wizard at `http://canary.local` until the Wi-Fi join succeeds, and within 120 s of the join send the two `evil.example` requests above to `http://<STA address>/` and, with BOOT tapped, to `/api/provisioning-receipt`: both answer `403` as above, and the wizard's own recovery-kit step at `canary.local` still succeeds.
+  - The SoftAP after setup (its captive DNS runs for the AP's whole life): join `SecuraCV-XXXX` from an iPhone and an Android phone. A captive sheet that opens shows the probe's answer or the `403` sentence, never a blank page; the phone's browser at `http://192.168.4.1/` and `http://canary.local/` gets the landing page.
+  - First boot, on a fresh unit:
+    - the iOS and Android captive sheets still show the static "open canary.local" instruction page;
+    - `http://canary.local` and `http://192.168.4.1` (and `http://CANARY.LOCAL`) open the wizard;
+    - `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/` returns the static instruction page (`200`, no `Location`), and `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/api/wifi/pair-token` answers `404 {"ok":false}`.
+  - Artifact: `docs/audit/repro/F344/`.
+
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 
 Code: `AuthManager::check()` and `AuthManager::grant()` in

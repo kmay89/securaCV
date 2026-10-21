@@ -1,6 +1,50 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap answers its pages, the receipt and the setup mints only to a Host that names it (sweep F344)
+
+- **A DNS-rebinding page gets no session, no pair token and no receipt from
+  a WAP (sweep F344).** After setup the WAP read no `Host` header: its
+  landing page `/` handed any caller a one-tap pair token, the `?cv_pair=`
+  exchange minted a 24-hour session for any Host, and the provisioning
+  receipt's BOOT tap and setup-door claim served any Host. Every stock WAP
+  serves plain HTTP after setup (its certificate generator is gated on a
+  header no pinned core ships, F15), so a page on another site whose name is
+  re-pointed at the WAP's address could load those as its own origin: a
+  session that reads the live camera and the vault download, a pair token
+  that authorizes `/api/wifi/connect` (the owner-authority PR, F334, removes
+  that road after setup), and around a BOOT tap or the post-join setup
+  window, the bearer token and the SoftAP password. The WAP now stages the
+  shared `firmware/common/network/host_guard.h` that the flagship and the
+  display already use (byte-identical, held by `check_improv_sync.sh`).
+  After setup, `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion`
+  answer a Host that cannot name the device (anything but an IP address, a
+  `.local` name, a single label, or a `.lan`, `.internal` or `.home.arpa`
+  name), or no Host, with `403` and one fixed sentence: "This Canary answers
+  only its own names. Open it at its .local name, its IP address, or the bare
+  name your router gives it." No pair token, no session, the owner's link
+  unspent, and a live cookie under that name refused too. The receipt asks
+  the same question first, in every mode, and answers `403
+  {"error":"host"}` before it reads the bearer, takes the claim or judges the
+  tap, so such a request is never a lockout strike, never an asker that
+  contends the owner's tap, and spends nothing. Unlike the flagship there is
+  no SoftAP exemption, because the WAP's captive DNS sends every name to the
+  device. Names that now get the `403` page after setup: a router name under
+  another suffix (`canary-x.fritz.box`, `.localdomain`, `.home`), a name with
+  a trailing dot, a public split-horizon name, and a reverse proxy that
+  forwards a public Host; use the `.local` name, the IP or the bare router
+  name. Host-tested (`test_session_cookie.cpp`, `test_receipt_grant.cpp`);
+  not run against a browser or on a device.
+- **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
+  (sweep F344).** `/`'s setup branch and the wizard token's re-issue
+  (`/api/wifi/pair-token`) tested the Host by substring, so a name that
+  merely contained one of them (`canary.local.evil.example`), which the
+  captive DNS also resolves to the device, was sent to the wizard with a
+  token that authorizes the Wi-Fi join, and `CANARY.LOCAL` was not. Both now
+  match the two names exactly, in any case and with any port; every other
+  name still gets the static "open canary.local" page and no token.
+  Host-tested; not run on a device.
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep

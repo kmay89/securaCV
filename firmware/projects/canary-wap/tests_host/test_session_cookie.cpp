@@ -36,6 +36,24 @@
 //     live session>" gets the landing page, not the dashboard;
 //   - the sketch's text: the cookie's attributes are spelled once, in
 //     session_cookie_header(), and both Set-Cookie sites send its output;
+//   - the Host question (sweep F344): request_host_names_device(),
+//     send_foreign_host_page() and request_host_is_setup_name() are cut with
+//     handle_ui, and so are handle_legacy_ui() (/admin, /settings) and
+//     handle_companion_html() (/companion), over the sketch's staged
+//     host_guard.h. After setup, a Host that cannot name this device (a
+//     rebinding page's evil.example, a name that only contains canary.local,
+//     a router name under another suffix, a trailing dot, no Host) gets the
+//     fixed text/plain 403 on '/', '/?cv_pair=', /admin, /settings and
+//     /companion: no landing, no pair token, no session, the owner's token
+//     left unspent, and a live cookie under that name refused too (before:
+//     each was served, and the exchange minted a session). Every name a
+//     household uses (the .local name, any IP with or without a port, the
+//     bare router name, .lan, .internal, .home.arpa) still lands and
+//     exchanges. With setup active, the wizard redirect and its token answer
+//     exactly canary.local or 192.168.4.1, any port, any case (before: any
+//     Host that contained one of them, and not CANARY.LOCAL); every other
+//     name gets the captive page and no token, and /companion serves under
+//     any Host as before;
 //   - the two token stores' clock (sweep F347): the slot functions cut
 //     verbatim out of csi_integration.cpp (pick_slot_for_issuance(),
 //     find_slot(), pick_session_slot_for_issuance(), find_valid_session(),
@@ -65,6 +83,7 @@
 
 #include "Arduino.h"           // stubs/receipt_grant
 #include "esp_http_server.h"   // stubs/receipt_grant
+#include "host_guard.h"        // the sketch's staged copy: the cut Host helpers call it
 
 #ifndef SESSION_COOKIE_UI_INC
 #error "SESSION_COOKIE_UI_INC must name the cut of canary_wap.ino (the Makefile passes it)"
@@ -131,14 +150,25 @@ inline bool is_active() { return g_active; }
 static const char CAPTIVE_PORTAL_HTML[] = "<p>Open canary.local</p>";
 static const uint8_t CSI_DASHBOARD_HTML_GZ[] = {0x1f, 0x8b, 0x08};
 static const size_t CSI_DASHBOARD_HTML_GZ_LEN = sizeof(CSI_DASHBOARD_HTML_GZ);
+// The two other gzip pages: /admin and /settings (handle_legacy_ui), and
+// /companion (handle_companion_html).
+static const uint8_t CANARY_UI_HTML_GZ[] = {0x1f, 0x8b, 0x08, 0x01};
+static const size_t CANARY_UI_HTML_GZ_LEN = sizeof(CANARY_UI_HTML_GZ);
+static const uint8_t COMPANION_HTML_GZ[] = {0x1f, 0x8b, 0x08, 0x02};
+static const size_t COMPANION_HTML_GZ_LEN = sizeof(COMPANION_HTML_GZ);
 
+// Each page the gzip writer sent, by which one.
 static int g_dashboards = 0;
+static int g_admin_pages = 0;
+static int g_companion_pages = 0;
 static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_len) {
-  (void)gz;
   (void)gz_len;
-  ++g_dashboards;
+  const char* body = "<?>";
+  if (gz == CSI_DASHBOARD_HTML_GZ) { ++g_dashboards; body = "<dashboard>"; }
+  if (gz == CANARY_UI_HTML_GZ) { ++g_admin_pages; body = "<admin>"; }
+  if (gz == COMPANION_HTML_GZ) { ++g_companion_pages; body = "<companion>"; }
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-  return httpd_resp_sendstr(req, "<dashboard>");
+  return httpd_resp_sendstr(req, body);
 }
 
 namespace csi_integration {
@@ -149,6 +179,7 @@ constexpr size_t PAIR_TOKEN_HEX_LEN = 64;
 static std::string g_live_session;
 static std::string g_live_pair;
 static int g_sessions_issued = 0;
+static int g_pair_tokens_issued = 0;
 static int g_landings = 0;
 
 // The real reader, then the one live session: the dashboard branch's
@@ -167,6 +198,7 @@ bool session_issue(char* hex_out, size_t out_cap) {
 }
 bool pair_token_issue(char* hex_out, size_t out_cap) {
   if (!hex_out || out_cap < PAIR_TOKEN_HEX_LEN + 1) return false;
+  ++g_pair_tokens_issued;
   g_live_pair.assign(PAIR_TOKEN_HEX_LEN, 'c');
   std::memcpy(hex_out, g_live_pair.c_str(), PAIR_TOKEN_HEX_LEN + 1);
   return true;
@@ -176,8 +208,12 @@ bool pair_token_consume(const char* hex) {
   g_live_pair.clear();   // one-shot
   return true;
 }
+// The landing mints a pair token for its one-tap link, as the real one does
+// (csi_integration.cpp's send_pair_landing()).
 bool send_pair_landing(httpd_req_t* req) {
   ++g_landings;
+  char pair[PAIR_TOKEN_HEX_LEN + 1];
+  pair_token_issue(pair, sizeof(pair));
   httpd_resp_set_type(req, "text/html");
   httpd_resp_sendstr(req, "<landing>");
   return true;
@@ -240,8 +276,11 @@ void reset() {
   csi_integration::g_live_session.clear();
   csi_integration::g_live_pair.clear();
   csi_integration::g_sessions_issued = 0;
+  csi_integration::g_pair_tokens_issued = 0;
   csi_integration::g_landings = 0;
   g_dashboards = 0;
+  g_admin_pages = 0;
+  g_companion_pages = 0;
 }
 
 // The HTTPS server up, as a steady-state boot with a certificate starts it.
@@ -257,13 +296,15 @@ int header_count(const httpd_req_t& r, const char* name) {
   return n;
 }
 
-// GET /?cv_pair=<the live pair token> on `server`; the request it answered.
-httpd_req_t pair_exchange(httpd_handle_t server) {
+// GET /?cv_pair=<the live pair token> on `server`, under `host` (the
+// device's .local name unless a test names another); the request it
+// answered.
+httpd_req_t pair_exchange(httpd_handle_t server, const char* host = "canary-7916.local") {
   char pair[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
   CHECK(csi_integration::pair_token_issue(pair, sizeof(pair)));
   httpd_req_t r;
   r.handle = server;
-  r.req_hdrs["Host"] = "canary-7916.local";
+  r.req_hdrs["Host"] = host;
   r.query = std::string("cv_pair=") + pair;
   CHECK(handle_ui(&r) == ESP_OK);
   CHECK(r.sends == 1);
@@ -314,6 +355,7 @@ void test_exchange_without_pair_token_mints_nothing() {
   https_up();
   httpd_req_t r;
   r.handle = g_https_server;
+  r.req_hdrs["Host"] = "canary-7916.local";
   r.query = std::string("cv_pair=") + std::string(64, 'd');   // never issued
   CHECK(handle_ui(&r) == ESP_OK);
   CHECK(header_count(r, "Set-Cookie") == 0);
@@ -323,28 +365,227 @@ void test_exchange_without_pair_token_mints_nothing() {
 
 void test_first_boot_setup_flow_unchanged() {
   // The SoftAP's first boot runs HTTP-only, and / sends the phone's own
-  // browser to the wizard with a pair token: no cookie, as before.
-  for (const char* host : {"canary.local", "192.168.4.1"}) {
+  // browser to the wizard with a pair token: no cookie, as before. The two
+  // setup names match exactly, with any port and in any case (sweep F344;
+  // before, CANARY.LOCAL:80 got the captive page: the substring test was
+  // case-sensitive).
+  for (const char* host : {"canary.local", "CANARY.LOCAL:80", "192.168.4.1", "192.168.4.1:80"}) {
     reset();
     setup_wizard::g_active = true;
     httpd_req_t r;
     r.handle = g_http_server;
     r.req_hdrs["Host"] = host;
     CHECK(handle_ui(&r) == ESP_OK);
-    CHECK(r.status == "302 Found");
-    CHECK(header(r, "Location") == "/companion?token=" + std::string(64, 'c'));
+    CHECK_MSG(r.status == "302 Found", std::string("setup Host ") + host + " answered " + r.status);
+    CHECK_MSG(header(r, "Location") == "/companion?token=" + std::string(64, 'c'),
+              std::string("setup Host ") + host + " was not sent to the wizard");
     CHECK(header_count(r, "Set-Cookie") == 0);
   }
-  // A captive-portal probe for a foreign Host gets the static page.
+  // A captive-portal probe for a foreign Host, another address, the
+  // device's own steady-state names, and a name that only CONTAINS one of the
+  // two setup names (the captive DNS resolves every one of them to the
+  // device) get the static page and no pair token (before: the last two were
+  // redirected to the wizard with a token, which authorizes the Wi-Fi join).
+  for (const char* host : {"captive.apple.com", "connectivitycheck.gstatic.com", "10.0.0.5",
+                           "canary-7916.local", "canary-7916", "canary.local.evil.example",
+                           "192.168.4.1.evil.example"}) {
+    reset();
+    setup_wizard::g_active = true;
+    httpd_req_t probe;
+    probe.handle = g_http_server;
+    probe.req_hdrs["Host"] = host;
+    CHECK(handle_ui(&probe) == ESP_OK);
+    CHECK_MSG(probe.status == "200 OK", std::string("setup probe ") + host + " answered " + probe.status);
+    CHECK_MSG(probe.resp == CAPTIVE_PORTAL_HTML, std::string("setup probe ") + host + " was not given the captive page");
+    CHECK_MSG(csi_integration::g_pair_tokens_issued == 0,
+              std::string("setup probe ") + host + " was minted a pair token");
+    CHECK(header_count(probe, "Set-Cookie") == 0);
+  }
+  // No Host at all: the captive page.
   reset();
   setup_wizard::g_active = true;
-  httpd_req_t probe;
-  probe.handle = g_http_server;
-  probe.req_hdrs["Host"] = "captive.apple.com";
-  CHECK(handle_ui(&probe) == ESP_OK);
-  CHECK(probe.status == "200 OK");
-  CHECK(probe.resp == CAPTIVE_PORTAL_HTML);
-  CHECK(header_count(probe, "Set-Cookie") == 0);
+  httpd_req_t bare;
+  bare.handle = g_http_server;
+  CHECK(handle_ui(&bare) == ESP_OK);
+  CHECK(bare.resp == CAPTIVE_PORTAL_HTML);
+  CHECK(csi_integration::g_pair_tokens_issued == 0);
+}
+
+// The setup branch's question on its own (request_host_is_setup_name()):
+// the same two lists, and the shapes around them.
+bool setup_name(const char* host) {
+  httpd_req_t r;
+  if (host) r.req_hdrs["Host"] = host;
+  return request_host_is_setup_name(&r);
+}
+void test_setup_name_is_exact() {
+  for (const char* host : {"canary.local", "CANARY.LOCAL:80", "Canary.Local", "192.168.4.1", "192.168.4.1:80",
+                           " canary.local ", "canary.local:443"}) {
+    CHECK_MSG(setup_name(host), std::string("not a setup name: ") + host);
+  }
+  for (const char* host : {"captive.apple.com", "connectivitycheck.gstatic.com", "10.0.0.5", "canary-7916.local",
+                           "canary-7916", "canary.local.evil.example", "192.168.4.1.evil.example",
+                           "xcanary.local", "canary.local.", "192.168.4.10", "192.168.4.1x", "", "[::1]"}) {
+    CHECK_MSG(!setup_name(host), std::string("a setup name: '") + host + "'");
+  }
+  CHECK(!setup_name(nullptr));                                   // no Host
+  CHECK(!setup_name(std::string(120, 'a').c_str()));             // too long for the buffer
+}
+
+// ── the Host question after setup (sweep F344) ───────────────────────────────
+
+const char* const kRefusedPage =
+    "This Canary answers only its own names. Open it at its .local name, its IP address, or the bare name your router gives it.";
+
+// The fixed refusal: 403, text/plain, not cached, the one sentence, no
+// cookie, nothing else sent.
+void check_foreign_host_page(const httpd_req_t& r, const std::string& why) {
+  CHECK_MSG(r.status == "403 Forbidden", why + ": answered " + r.status);
+  CHECK_MSG(r.type == "text/plain; charset=utf-8", why + ": type " + r.type);
+  CHECK_MSG(header(r, "Cache-Control") == "no-store", why + ": Cache-Control " + header(r, "Cache-Control"));
+  CHECK_MSG(r.resp == kRefusedPage, why + ": body " + r.resp);
+  CHECK_MSG(header_count(r, "Set-Cookie") == 0, why + ": a cookie was set");
+  CHECK_MSG(r.sends == 1, why + ": sent " + std::to_string(r.sends) + " times");
+}
+
+// A DNS-rebinding page's names, and a request with no Host at all.
+const char* const kForeignHosts[] = {"evil.example", "evil.example:80", "canary.local.evil.example",
+                                     "canary-7916.local.evil.example", "192.168.1.50.nip.io", nullptr};
+std::string host_label(const char* host) { return host ? std::string("Host ") + host : std::string("no Host"); }
+
+void test_foreign_host_gets_no_pair_token_and_no_session() {
+  for (const char* host : kForeignHosts) {
+    const std::string why = host_label(host);
+    // '/': no landing, no pair token (before: the landing and its token).
+    reset();
+    httpd_req_t landing;
+    landing.handle = g_http_server;
+    if (host) landing.req_hdrs["Host"] = host;
+    CHECK(handle_ui(&landing) == ESP_OK);
+    check_foreign_host_page(landing, why + " on /");
+    CHECK_MSG(csi_integration::g_landings == 0, why + ": the landing was served");
+    CHECK_MSG(csi_integration::g_pair_tokens_issued == 0, why + ": a pair token was minted");
+    // '/?cv_pair=<the owner's live token>': no cookie, no session, and the
+    // token still good for the owner (before: a session, the token spent).
+    reset();
+    char pair[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+    CHECK(csi_integration::pair_token_issue(pair, sizeof(pair)));
+    httpd_req_t exchange;
+    exchange.handle = g_http_server;
+    if (host) exchange.req_hdrs["Host"] = host;
+    exchange.query = std::string("cv_pair=") + pair;
+    CHECK(handle_ui(&exchange) == ESP_OK);
+    check_foreign_host_page(exchange, why + " on /?cv_pair=");
+    CHECK_MSG(csi_integration::g_sessions_issued == 0, why + ": the exchange minted a session");
+    CHECK_MSG(csi_integration::g_live_pair == pair, why + ": the owner's pair token was spent");
+    // The owner's own exchange under the device's name still takes it.
+    httpd_req_t owner;
+    owner.handle = g_http_server;
+    owner.req_hdrs["Host"] = "canary-7916.local";
+    owner.query = std::string("cv_pair=") + pair;
+    CHECK(handle_ui(&owner) == ESP_OK);
+    CHECK_MSG(owner.status == "302 Found" && header_count(owner, "Set-Cookie") == 1,
+              why + ": the owner's token no longer exchanged");
+    // A live session sent under that name: refused, not the dashboard.
+    reset();
+    const std::string live(64, '7');
+    csi_integration::g_live_session = live;
+    httpd_req_t cookie;
+    cookie.handle = g_http_server;
+    if (host) cookie.req_hdrs["Host"] = host;
+    cookie.req_hdrs["Cookie"] = "cv_session=" + live;
+    CHECK(handle_ui(&cookie) == ESP_OK);
+    check_foreign_host_page(cookie, why + " with a live cookie");
+    CHECK_MSG(g_dashboards == 0, why + ": a live cookie under a foreign name was served the dashboard");
+  }
+}
+
+// Every name a household reaches its device by still lands, and its
+// exchange sets exactly one cookie.
+void test_every_name_the_household_uses_still_lands() {
+  for (const char* host : {"canary-7916.local", "canary-7916.local:443", "canary.local", "CANARY-7916.LOCAL",
+                           "192.168.1.50", "192.168.1.50:80", "192.168.4.1", "[fe80::1]", "[fe80::1]:443",
+                           "canary-7916", "canary-7916.lan", "canary-7916.home.arpa", "canary-7916.internal"}) {
+    const std::string why = std::string("Host ") + host;
+    reset();
+    httpd_req_t landing;
+    landing.handle = g_http_server;
+    landing.req_hdrs["Host"] = host;
+    CHECK(handle_ui(&landing) == ESP_OK);
+    CHECK_MSG(csi_integration::g_landings == 1 && landing.resp == "<landing>", why + ": no landing (" + landing.status + ")");
+    reset();
+    const httpd_req_t r = pair_exchange(g_http_server, host);
+    CHECK_MSG(r.status == "302 Found" && header_count(r, "Set-Cookie") == 1,
+              why + ": the exchange answered " + r.status + " with " +
+                  std::to_string(header_count(r, "Set-Cookie")) + " cookie(s)");
+    CHECK(csi_integration::g_sessions_issued == 1);
+  }
+}
+
+// Router names under a suffix the shared rule does not list, and a
+// trailing-dot name: the documented trade (sweep F344; F356 weighs widening
+// the rule). Before, each was served the landing.
+void test_router_names_outside_the_rule_get_the_refusal() {
+  for (const char* host : {"canary-7916.fritz.box", "canary-7916.localdomain", "canary-7916.home",
+                           "canary-7916.local."}) {
+    const std::string why = std::string("Host ") + host;
+    reset();
+    httpd_req_t landing;
+    landing.handle = g_http_server;
+    landing.req_hdrs["Host"] = host;
+    CHECK(handle_ui(&landing) == ESP_OK);
+    check_foreign_host_page(landing, why + " on /");
+    CHECK_MSG(csi_integration::g_pair_tokens_issued == 0, why + ": a pair token was minted");
+    reset();
+    char pair[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
+    CHECK(csi_integration::pair_token_issue(pair, sizeof(pair)));
+    httpd_req_t exchange;
+    exchange.handle = g_http_server;
+    exchange.req_hdrs["Host"] = host;
+    exchange.query = std::string("cv_pair=") + pair;
+    CHECK(handle_ui(&exchange) == ESP_OK);
+    check_foreign_host_page(exchange, why + " on /?cv_pair=");
+    CHECK(csi_integration::g_sessions_issued == 0);
+  }
+}
+
+// GET <page> under `host` (nullptr: no Host), through `handler`.
+httpd_req_t page(esp_err_t (*handler)(httpd_req_t*), const char* host) {
+  httpd_req_t r;
+  r.handle = g_http_server;
+  if (host) r.req_hdrs["Host"] = host;
+  CHECK(handler(&r) == ESP_OK);
+  return r;
+}
+
+// /admin and /settings (one handler) and /companion after setup: a foreign
+// Host gets the fixed page; the device's names get the page. While the
+// first-boot wizard runs, both serve under any Host, as before.
+void test_pages_refuse_a_foreign_host_after_setup() {
+  for (const char* host : kForeignHosts) {
+    const std::string why = host_label(host);
+    reset();
+    check_foreign_host_page(page(handle_legacy_ui, host), why + " on /admin and /settings");
+    CHECK_MSG(g_admin_pages == 0, why + ": /settings was served");
+    check_foreign_host_page(page(handle_companion_html, host), why + " on /companion");
+    CHECK_MSG(g_companion_pages == 0, why + ": /companion was served");
+  }
+  for (const char* host : {"canary-7916.local", "192.168.1.50", "canary-7916", "canary-7916.lan"}) {
+    reset();
+    CHECK_MSG(page(handle_legacy_ui, host).resp == "<admin>", std::string("/settings under ") + host);
+    CHECK_MSG(page(handle_companion_html, host).resp == "<companion>", std::string("/companion under ") + host);
+    CHECK(g_admin_pages == 1 && g_companion_pages == 1);
+  }
+  for (const char* host : {"canary.local", "192.168.4.1", "captive.apple.com", "evil.example"}) {
+    reset();
+    setup_wizard::g_active = true;
+    CHECK_MSG(page(handle_companion_html, host).resp == "<companion>",
+              std::string("/companion during setup under ") + host);
+    CHECK_MSG(page(handle_legacy_ui, host).resp == "<admin>", std::string("/settings during setup under ") + host);
+  }
+  reset();
+  setup_wizard::g_active = true;
+  CHECK(page(handle_companion_html, nullptr).resp == "<companion>");
 }
 
 // ── the whole-name read ──────────────────────────────────────────────────────
@@ -416,6 +657,7 @@ void test_dashboard_branch_reads_the_whole_name() {
   csi_integration::g_live_session = kLive;
   httpd_req_t lookalike;
   lookalike.handle = g_http_server;
+  lookalike.req_hdrs["Host"] = "canary-7916.local";
   lookalike.req_hdrs["Cookie"] = "xcv_session=" + kLive;
   CHECK(handle_ui(&lookalike) == ESP_OK);
   CHECK_MSG(g_dashboards == 0, "xcv_session=<live> was served the dashboard");
@@ -425,6 +667,7 @@ void test_dashboard_branch_reads_the_whole_name() {
   csi_integration::g_live_session = kLive;
   httpd_req_t behind;
   behind.handle = g_http_server;
+  behind.req_hdrs["Host"] = "canary-7916.local";
   behind.req_hdrs["Cookie"] = "xcv_session=" + kOther + "; cv_session=" + kLive;
   CHECK(handle_ui(&behind) == ESP_OK);
   CHECK_MSG(g_dashboards == 1, "the real session behind a lookalike was not served the dashboard");
@@ -468,6 +711,33 @@ void test_sketch_text() {
   CHECK(ui.find("httpd_resp_set_hdr(req, \"Set-Cookie\", cookie_hdr)") != std::string::npos);
   CHECK(receipt.find(call) != std::string::npos);
   CHECK(receipt.find("httpd_resp_set_hdr(req, \"Set-Cookie\", cookie_hdr)") != std::string::npos);
+
+  // The Host question (sweep F344). The sketch stages host_guard.h.
+  CHECK_MSG(ino.find("\n#include \"host_guard.h\"") != std::string::npos, "canary_wap.ino does not include host_guard.h");
+  // handle_ui asks the setup names exactly, then the device's names before
+  // the cookie branch, and nothing in it tests a Host by substring.
+  const std::string gate = "  if (!request_host_names_device(req)) return send_foreign_host_page(req);";
+  CHECK(ui.find("    if (request_host_is_setup_name(req)) {") != std::string::npos);
+  CHECK_MSG(ui.find(gate) != std::string::npos, "handle_ui does not ask the Host question after setup");
+  CHECK_MSG(ui.find(gate) < ui.find("csi_integration::session_validate_cookie(req)") &&
+                ui.find("if (setup_wizard::is_active()) {") < ui.find(gate),
+            "handle_ui's Host question is not between the setup branch and the cookie");
+  CHECK_MSG(ui.find("strstr(") == std::string::npos, "handle_ui tests the Host by substring again");
+  // The wizard token's re-issue asks the same exact setup names; the old
+  // substring helper is gone from the sketch.
+  const std::string reissue = fn_body(ino, "static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {");
+  CHECK(!reissue.empty());
+  CHECK_MSG(reissue.find("if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {") != std::string::npos,
+            "the wizard token's re-issue does not ask the exact setup names");
+  CHECK_MSG(ino.find("request_host_is_direct") == std::string::npos, "request_host_is_direct() is back");
+  // /admin, /settings and /companion ask it after setup, first thing after
+  // the request count.
+  for (const char* sig : {"static esp_err_t handle_legacy_ui(httpd_req_t* req) {",
+                          "static esp_err_t handle_companion_html(httpd_req_t* req) {"}) {
+    const std::string body = fn_body(ino, sig);
+    CHECK_MSG(body.find("  g_health.http_requests++;\n  if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);\n") != std::string::npos,
+              std::string(sig) + " does not ask the Host question first after setup");
+  }
 }
 
 // ── the token stores' clock (sweep F347) ─────────────────────────────────────
@@ -700,6 +970,11 @@ int main() {
   test_exchange_on_port_80_beside_https_is_not_secure();
   test_exchange_without_pair_token_mints_nothing();
   test_first_boot_setup_flow_unchanged();
+  test_setup_name_is_exact();
+  test_foreign_host_gets_no_pair_token_and_no_session();
+  test_every_name_the_household_uses_still_lands();
+  test_router_names_outside_the_rule_get_the_refusal();
+  test_pages_refuse_a_foreign_host_after_setup();
   test_reader_takes_the_cookie_named_cv_session();
   test_reader_never_takes_a_longer_name_or_a_value();
   test_reader_finds_the_real_cookie_behind_a_lookalike();
