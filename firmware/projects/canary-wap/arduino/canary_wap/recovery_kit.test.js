@@ -39,8 +39,10 @@
 //     says the same instead of "HTTP 409"; neither sends the owner to the
 //     token box (on a cookie page it still takes the cookie's word), and
 //     the 10 s hold is said to clear what it clears, the dashboard's
-//     saying to check its Bluetooth switch first (a saved Bluetooth-off
-//     outlives the hold, #1843); the dashboard's
+//     saying to check its Bluetooth switch first, before the hold's own
+//     sentence, and how its sign-in reaches that switch (a saved
+//     Bluetooth-off outlives the hold and everything the hold calls,
+//     #1843); the dashboard's
 //     timeout line sends the owner to click before the press (its old
 //     "Press BOOT and click above" was the press-first order the arbiter
 //     cannot protect); the
@@ -61,6 +63,10 @@
 //     blip) is followed by more asks until the sixteen are spent, a later
 //     200 is still served, the press line waits for the first 403, and a
 //     save the device never answered says so.
+//
+// Both harnesses answer 409 past ASK_CAP asks, so a page loop that stops
+// counting its asks fails rows by name; their timers run at once, so
+// without the cap such a loop hung the run, past node:test's own timeout.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -246,7 +252,9 @@ function dashboard(answers, routes = {}) {
         return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' };
       }
       statusAtAsk.push(win.els.authStatus.textContent);
-      const a = queue[Math.min(polls++, queue.length - 1)];
+      // Past ASK_CAP polls the device says 409, which ends the sign-in: a
+      // poll that stopped counting fails by name instead of hanging.
+      const a = polls >= ASK_CAP ? (polls++, TAP_409) : queue[Math.min(polls++, queue.length - 1)];
       if (a.blip) throw new TypeError('Failed to fetch');   // the ask never reached the device
       return { status: a.status, ok: a.status >= 200 && a.status < 300,
                json: async () => JSON.parse(a.body), text: async () => a.body };
@@ -280,6 +288,9 @@ const CONTENDED = /^Another device on your network asked for this Canary's keys 
 // A request that never reached the device (a network blip, a TLS handshake
 // that failed): fetch rejects.
 const BLIP = { blip: true };
+// More asks than either page makes (the companion's sixteen, the
+// dashboard's thirty per sign-in): from here the harnesses answer 409.
+const ASK_CAP = 64;
 // The retry each page's 409 names (sweep F342's fourth review): the click
 // that asks first, then the press. The sign-in's own button, and the
 // Settings save, whose next 403 opens the sign-in.
@@ -619,16 +630,22 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.ok(d.api);
   });
 
-  it("the contention copy says to check Bluetooth before the hold, by a switch the dashboard has (#1843)", () => {
+  it("the contention copy says to check Bluetooth before the hold, by a switch the dashboard has and the sign-in can reach (#1843)", async () => {
     // Any landing session can turn the WAP's Bluetooth off (F346), a saved
     // setting the hold leaves alone, and while it is off every link is
     // dropped: followed then, the advice clears the Wi-Fi and leaves the
-    // iPhone app nothing to set up. So the copy says to look first.
+    // iPhone app nothing to set up. So the copy says to look first, and
+    // first in time as in words (#1843's fourth review: the check used to
+    // follow the hold's sentence, so it was read after the step it guards).
     const fn = uiFunction(read(UI), 'tapContendedText');
     const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
-    const check = text.indexOf('Before the hold, check that Bluetooth Enabled is on under Settings → Bluetooth: ' +
-                               'the hold does not turn it back on, and with it off the iPhone app cannot set the Canary up.');
-    assert.ok(check > text.indexOf('hold BOOT for 10 seconds'), text);
+    const check = text.indexOf('Last, check that Bluetooth Enabled is on under Settings → Bluetooth (');
+    const reach = text.indexOf("(if this page is asking you to sign in, first open the Canary's main page, " +
+                               'choose Open dashboard, then Settings there): ');
+    const why = text.indexOf('the hold below does not turn it back on, and with it off the iPhone app cannot set the Canary up. ');
+    const hold = text.indexOf('Then, with your iPhone ready: hold BOOT for 10 seconds');
+    assert.ok(check > text.indexOf('USB console') && reach > check && why > reach && hold > why, text);
+    assert.equal(text.indexOf('hold BOOT'), hold + 'Then, with your iPhone ready: '.length, 'no hold is named before the check');
     // The switch it names, where it says: Settings, then Bluetooth, then
     // the Bluetooth Enabled toggle in that sub-panel.
     const ui = read(UI);
@@ -640,13 +657,87 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.ok(panel > 0 && sw > panel && (next < 0 || sw < next), 'the Bluetooth Enabled switch sits in Settings → Bluetooth');
     assert.match(ui.slice(sw, next < 0 ? undefined : next), /id="btEnabled" onchange="toggleBtEnabled\(\)"/);
     // "Does not turn it back on": the hold's own function leaves Bluetooth's
-    // saved switch alone (canary_wap.ino factory_reset_by_hold()).
+    // saved switch alone (canary_wap.ino factory_reset_by_hold()), and so
+    // does every function it calls to clear (#1843's fourth review: a
+    // `remove("bt_enabled")`, or a clear of the whole "securacv" namespace,
+    // in one of them passed the row that read the hold alone, and the
+    // restart would then read Bluetooth's default, on). Their comments are
+    // cut first: wifi_clear_credentials() talks about the setup door.
     const ino = read(path.join(__dirname, 'canary_wap.ino'));
-    const at = ino.indexOf('static void factory_reset_by_hold() {');
-    assert.ok(at > 0, 'factory_reset_by_hold() not found');
-    const hold = ino.slice(at, ino.indexOf('\n}\n', at));
-    assert.match(hold, /wifi_clear_credentials\(\)/, 'the cut is the hold');
-    assert.doesNotMatch(hold, /bluetooth|BT_ENABLED|bt_enabled/i);
+    const body = (src, sig, file) => {
+      const at = src.indexOf(sig);
+      assert.ok(at >= 0, sig + ' not found in ' + file);
+      return src.slice(at, src.indexOf('\n}\n', at));
+    };
+    const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const resetHold = body(ino, 'static void factory_reset_by_hold() {', 'canary_wap.ino');
+    assert.doesNotMatch(resetHold, /bluetooth|BT_ENABLED|bt_enabled/i);
+    const callees = [
+      ['canary_wap.ino', 'static bool wifi_clear_credentials() {', /\n {2}wifi_clear_credentials\(\);/, resetHold],
+      ['csi_mqtt.cpp', 'bool config_clear() {', /csi_mqtt::config_clear\(\)/, resetHold],
+      ['setup_wizard.h', 'inline bool reset_to_first_boot() {', /setup_wizard::reset_to_first_boot\(\)/, resetHold],
+    ];
+    const clearWifi = body(ino, 'static bool wifi_clear_credentials() {', 'canary_wap.ino');
+    callees.push(['canary_wap.ino', 'static void wifi_raise_ap() {', /\n {2}wifi_raise_ap\(\);/, clearWifi]);
+    for (const [file, sig, call, caller] of callees) {
+      assert.match(caller, call, sig + ' is called on the hold\'s way');
+      const fnBody = code(body(file === 'canary_wap.ino' ? ino : read(path.join(__dirname, file)), sig, file));
+      assert.doesNotMatch(fnBody, /bluetooth|\bbt_|BT_|\.clear\s*\(|nvs_erase|eraseAll/i,
+        sig + ' touches a Bluetooth key or clears a whole namespace');
+    }
+    // The way there from the sign-in, which covers the page and holds no
+    // session (no control closes it, and a signed-out /api/bluetooth is
+    // refused): the main page's Open dashboard link takes a landing session
+    // (handle_ui's branch 2 consumes its cv_pair and sets the cookie), the
+    // headline dashboard's Settings button opens /settings, which serves
+    // this page, and there the session resumes, the overlay is put away and
+    // the Settings panel is the one on screen.
+    const landing = read(path.join(__dirname, 'csi_integration.cpp'));
+    assert.ok(landing.includes('"<a class=\\"enter\\" href=\\"/?cv_pair=%s\\">Open dashboard</a>"'), 'the landing page\'s link');
+    assert.match(ino, /httpd_query_key_value\(qs, "cv_pair", pair_hex, sizeof\(pair_hex\)\) == ESP_OK\n\s+&& csi_integration::pair_token_consume\(pair_hex\)\) \{[\s\S]*?httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\);/);
+    const head = read(path.join(__dirname, 'csi_dashboard_html.h'));
+    assert.match(head, /<button class="iconbtn" id="settingsBtn" data-tip="settingsBtn">Settings<\/button>/);
+    assert.match(head, /getElementById\('settingsBtn'\)\.addEventListener\('click', \(\) => \{[^}]*window\.location\.href = '\/settings';\n\}\);/);
+    assert.match(ino, /\.uri = "\/settings", \.method = HTTP_GET, \.handler = handle_legacy_ui \}/);
+    assert.match(body(ino, 'static esp_err_t handle_legacy_ui(httpd_req_t* req) {', 'canary_wap.ino'),
+                 /return send_gzip_html\(req, CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN\);/);
+    const panelAt = (pathname) => vm.runInNewContext(uiFunction(ui, 'initialPanelFromPath') + '\n;initialPanelFromPath()',
+                                                     { window: { location: { pathname } } });
+    assert.equal(panelAt('/settings'), 'settings');
+    assert.equal(panelAt('/admin'), 'status');
+    const resume = async (ok) => {
+      const els = { authOverlay: { classList: fakeClassList() }, authStatus: { textContent: '', className: '' } };
+      let started = 0;
+      const ctx = { API_BASE: '', document: { getElementById: (id) => els[id] },
+                    fetch: async () => ({ ok }), startDashboard: () => { started++; } };
+      vm.runInNewContext(uiFunction(ui, 'hideAuthModal') + uiFunction(ui, 'resumeExistingSession', true), ctx);
+      const resumed = await vm.runInNewContext('resumeExistingSession()', ctx);
+      return { resumed, hidden: els.authOverlay.classList.contains('hidden'), started };
+    };
+    assert.deepEqual(await resume(true), { resumed: true, hidden: true, started: 1 }, 'a session puts the sign-in away');
+    assert.deepEqual(await resume(false), { resumed: false, hidden: false, started: 0 }, 'and nothing else does on load');
+  });
+
+  it("the iPhone's set-it-up-again advice checks Bluetooth before it forgets the Wi-Fi (#1843)", () => {
+    // PairView's "No recovery kit?" advice reopens the same setup door
+    // through Forget Wi-Fi, which leaves the saved Bluetooth switch as the
+    // hold does (its handler is wifi_clear_credentials(), which the row
+    // above reads), so it says to check the switch first, as the
+    // dashboard's copy does (#1843's fourth review).
+    const swift = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Views/PairView.swift'));
+    const m = swift.match(/Text\("(Or set it up again from this phone: [^"]*)"\)/);
+    assert.ok(m, 'PairView\'s set-it-up-again advice not found');
+    const advice = m[1];
+    const check = advice.indexOf('first check that Bluetooth Enabled is on under Settings → Bluetooth ' +
+                                 '(forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it)');
+    const forget = advice.indexOf('then forget its Wi-Fi there');
+    assert.ok(check > 0 && forget > check, advice);
+    assert.equal(advice.indexOf('forget its Wi-Fi'), forget + 'then '.length, 'no forget is named before the check');
+    const ino = read(path.join(__dirname, 'canary_wap.ino'));
+    const at = ino.indexOf('static esp_err_t handle_wifi_forget(httpd_req_t* req) {');
+    assert.ok(at > 0);
+    assert.match(ino.slice(at, ino.indexOf('\n}\n', at)), /\n {2}wifi_clear_credentials\(\);/);
+    assert.match(ino, /\.uri = "\/api\/wifi\/forget", \.method = HTTP_POST, \.handler = handle_wifi_forget_auth \}/);
   });
 });
 
@@ -944,7 +1035,11 @@ describe("the wizard's close-out saves through the same builder", () => {
       $w: (id) => win.els[id],
       fetch: async (url, opts) => {
         const n = asked.length;
-        const answer = queue[Math.min(n, queue.length - 1)];
+        // Past ASK_CAP the device says 409, which ends any save: a loop
+        // that stopped counting its asks (every timer here runs at once, so
+        // node:test's timeout never fires) fails its rows by name instead
+        // of hanging the run (#1843's fourth review).
+        const answer = n >= ASK_CAP ? TAP_409 : queue[Math.min(n, queue.length - 1)];
         const err = win.els['wiz-recovery-err'];
         banners.push({ text: err.textContent, show: err.classList.contains('show'), note: err.classList.contains('note') });
         asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled,

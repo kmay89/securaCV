@@ -121,9 +121,12 @@ hold keeps; and the per-address lockout's ways out.
   the hold (F346), a saved setting the hold keeps, under which every link
   is dropped, so no phone reaches the door: a denial, not a takeover, in
   which the kit's token and the console still work. The dashboard's advice
-  now says to check that Bluetooth Enabled is on under Settings, Bluetooth
-  before the hold. The docs that said
-  otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  now says, before the hold's own sentence, to check that Bluetooth Enabled
+  is on under Settings, Bluetooth, and how its sign-in, which covers the
+  page with no session, gets there (the main page, Open dashboard, then
+  Settings); the iPhone app's "No recovery kit?" advice says to check it
+  before forgetting the WAP's Wi-Fi, which leaves it as the hold does. The
+  docs that said otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
   credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
@@ -131,9 +134,12 @@ hold keeps; and the per-address lockout's ways out.
   images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
   reset destroys all data, and it now says what each device's hold keeps
   (the WAP's keeps the identity key, the chain, the SD records, the token,
-  the HTTPS certificate the iPhone app pins and its private key, and the
-  Bluetooth bonds; only the flagship's 30 s stage sheds the key, and
-  NVS leaves an erased entry's bytes in flash until it reuses the page, so
+  the HTTPS certificate the iPhone app pins and its private key, the
+  Bluetooth bonds, the Opera mesh's member list and, on a board with flash
+  encryption on, the mesh's secret, id and revocations and the Beacon
+  channel's X25519 key, member set and audit ring; only the flagship's
+  30 s stage sheds the key, and NVS leaves an erased
+  entry's bytes in flash until it reuses the page, so
   the flagship's key, and the saved Wi-Fi passwords and broker login the
   WAP's hold removes from NVS, stay there in plaintext on every tier today,
   since flash encryption does not cover NVS and the NVS encryption that
@@ -157,15 +163,21 @@ hold keeps; and the per-address lockout's ways out.
   leaves it alone: it can mint sessions until the owner's is evicted, and
   a host also in radio range can bond a Bluetooth peer of its own through
   its session and write the WAP back to a network it is on over the bonded
-  lane. The iPhone's bonded Bluetooth lane is no way out today: the iPhone
-  app never dials a WAP's lane (ledger A65, open). Once that is settled the
-  lane holds only while that host leaves it alone, and taking it away needs
-  no radio: any landing session can turn the WAP's Bluetooth off, a saved
-  setting that restarts and the 10 s hold keep, under which every link is
-  dropped, or delete the phone's bond, and a host's own bonded peer can
-  keep the owner's write refused for as long as it keeps writing. On the
-  flagship the way out is waiting, or
-  the hold followed by a setup onto a network that host is not on. A
+  lane. And it lasts only while the new network stays up: the WAP keeps
+  the networks it joined before, the host's among them, and goes back to
+  one on its own when the new network is not found twice running (a
+  hotspot turned off, a network out of range); no route forgets one saved
+  network, so only Forget Wi-Fi or the hold drop them, and both reopen the
+  first-come setup door. The iPhone's bonded Bluetooth lane is no way out
+  today: the iPhone app never dials a WAP's lane (ledger A65, open). Once
+  that is settled the lane holds only while that host leaves it alone and
+  the new network stays up, and taking it away needs no radio: any landing
+  session can turn the WAP's Bluetooth off, a saved setting that restarts
+  and the 10 s hold keep, under which every link is dropped, or delete
+  the phone's bond, and a host's own bonded peer can keep the owner's
+  write refused for as long as it keeps writing. On the flagship the way
+  out is waiting, or the hold followed by a setup onto a network that host
+  is not on. A
   browser that mistyped the token signs in with Use BOOT Tap Once on the
   WAP, since a tap clears only the address it is served to (F341).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,

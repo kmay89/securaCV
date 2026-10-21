@@ -63,8 +63,11 @@ the device, an adversary with sufficient power WILL extract it.
 
 Every item above is a statement about
 *software* paths. It is not a claim that the key survives an adversary who
-takes the device to a bench: flash encryption is an opt-in tier, so on a
-default Canary the key is recoverable by reading the flash directly. What
+takes the device to a bench: the key lives in NVS, which flash encryption
+(an opt-in tier) does not cover, and the NVS encryption that would is not
+available under `framework = arduino`, which every released firmware tree
+builds with, so on every tier today the key is recoverable by reading the
+flash directly, on a fused board too (Scenario 4 below). What
 that does and does not buy an attacker — forward forgery yes, rewriting
 anchored history no — is stated in
 [`SECURITY_MODEL.md`](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
@@ -472,7 +475,14 @@ stated, bounded to coarse claims, and revocable.
   again; the iPhone app pins that certificate, so a seizer who reads the key
   can present the WAP's own certificate to it), and the Bluetooth bonds:
   each bonded phone's keys stay in NVS, plaintext in flash as the rest of it
-  is, and a bonded peer keeps the lane that changes the WAP's Wi-Fi.
+  is, and a bonded peer keeps the lane that changes the WAP's Wi-Fi. It
+  keeps the Opera mesh's member list too, and on a board with flash
+  encryption on, the only board `mesh_network.cpp` and `beacon_channel.cpp`
+  write them on (the O2 bullet in the Opera mesh section and the Beacon
+  channel section below), the mesh's secret, id and revocations and the Beacon
+  channel's X25519 private key, member set and audit ring: plaintext in
+  NVS the same way, so a seizer of a fused board who reads its flash after
+  the hold has the mesh secret.
   Removing the paired phones (`DELETE /api/bluetooth/paired` one at a time
   or `/api/bluetooth/paired/all`) forgets their bonds, which ends a bonded
   peer's lane, but those are NVS entries erased the same way, so the keys'
@@ -533,7 +543,9 @@ the original chain state.
 **Result:** Acknowledged risk. Mitigated by:
 - No outbound connections (compromised chip has no exfiltration channel)
 - Secure boot (firmware integrity verified) — opt-in secure-provisioning tier only
-- Flash encryption (data at rest protected) — opt-in secure-provisioning tier only
+- Flash encryption (the app image at rest; not NVS, where the keys and the
+  saved passwords stay plaintext on every tier today, Scenario 4) — opt-in
+  secure-provisioning tier only
 - Future: open-source RISC-V silicon
 
 **DOCUMENTED LIMITATION:** Disclosed to users in SECURITY_MODEL.md.

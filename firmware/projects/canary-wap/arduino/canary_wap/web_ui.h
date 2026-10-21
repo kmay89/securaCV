@@ -3022,17 +3022,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // radio range that connects (magic_pairing.md §2.2), so a host on the
     // network that is also in range can take that door, spend its claim
     // and keep the token the hold kept. The kit and the console carry no
-    // such exposure.
+    // such exposure. The Bluetooth check comes before the hold, in time as
+    // in words (#1843's fourth review): any landing session can save
+    // Bluetooth off (F346), the hold keeps that, and with it off no phone
+    // reaches the door. The sign-in that shows this text covers the page
+    // and holds no session, so it says how to reach Settings from there:
+    // the main page's Open dashboard takes a session, and the headline
+    // dashboard's Settings opens /settings on its Settings panel.
     function tapContendedText(retry) {
       return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
              'Close any other Canary pages and wait 10 seconds, then ' + retry + ' ' +
              'If this keeps happening: the iPhone app can pair from your recovery kit, or the USB console prints ' +
-             'the token each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
+             'the token each time the Canary starts. Last, check that Bluetooth Enabled is on under ' +
+             'Settings → Bluetooth (if this page is asking you to sign in, first open the Canary\'s main page, ' +
+             'choose Open dashboard, then Settings there): the hold below does not turn it back on, and with it ' +
+             'off the iPhone app cannot set the Canary up. Then, with your iPhone ready: hold BOOT for 10 seconds ' +
              '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
              'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
-             'first phone or computer nearby that connects. Before the hold, check that Bluetooth Enabled is on ' +
-             'under Settings → Bluetooth: the hold does not turn it back on, and with it off the iPhone app ' +
-             'cannot set the Canary up.';
+             'first phone or computer nearby that connects.';
     }
 
     async function requestFromDevice() {

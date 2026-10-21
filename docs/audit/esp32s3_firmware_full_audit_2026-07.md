@@ -165,9 +165,13 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   lockout, F346), or waiting until it stops. That holds only while that host leaves it alone:
   it can mint sessions until the owner's is evicted, and a host also in radio range can bond a
   Bluetooth peer of its own and write the WAP back to a network it is on over the bonded lane.
-  The iPhone's bonded Bluetooth lane is no way out today: the iPhone app never dials a WAP's
-  lane (ledger A65, open). Once that is settled the lane holds only while that host leaves it
-  alone, and taking it away needs no radio: any landing session can turn the WAP's Bluetooth
+  And it lasts only while the new network stays up: the WAP keeps the networks it joined
+  before, the host's among them, and goes back to one on its own when the new network is not
+  found twice running; no route forgets one saved network, so only Forget Wi-Fi or the hold
+  drop them, and both reopen the first-come setup door. The iPhone's bonded Bluetooth lane is
+  no way out today: the iPhone app never dials a WAP's lane (ledger A65, open). Once that is
+  settled the lane holds only while that host leaves it alone and the new network stays up, and
+  taking it away needs no radio: any landing session can turn the WAP's Bluetooth
   off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
   `magic_pairing.md` §3.7 has the whole posture.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's

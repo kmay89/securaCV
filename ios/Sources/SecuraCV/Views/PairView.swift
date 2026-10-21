@@ -121,7 +121,7 @@ struct PairView: View {
                         Text("Its own page saves a recovery kit (canary-recovery-kit.json): start the save there (Save my recovery kit, or Use BOOT Tap Once), then short-tap BOOT when the page says to. That file is its key.")
                     }
                     Section {
-                        Text("Or set it up again from this phone: forget its Wi-Fi on its own page (Use BOOT Tap Once there lets you in), then bring it near this phone — the card pairs it in one tap. For half an hour after that, Bluetooth setup goes to the first phone or computer nearby that connects, so have this phone ready first.")
+                        Text("Or set it up again from this phone: on its own page (Use BOOT Tap Once there lets you in), first check that Bluetooth Enabled is on under Settings → Bluetooth (forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it), then forget its Wi-Fi there and bring it near this phone — the card pairs it in one tap. For half an hour after that, Bluetooth setup goes to the first phone or computer nearby that connects, so have this phone ready first.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

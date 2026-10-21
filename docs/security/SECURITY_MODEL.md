@@ -466,11 +466,23 @@ also in radio range can bond a Bluetooth peer of its own (the peer starts
 the pairing, and its session reads the passkey from `GET /api/bluetooth`
 and confirms it) and write the WAP's Wi-Fi over the bonded lane
 (`ble_provision.cpp`'s CREDS), joining it back to a network that host is
-on. The iPhone's bonded Bluetooth lane is no way out today: the iPhone app
-dials only a Canary that advertises the console service, which a WAP does
-not, so it never writes a WAP's CREDS (ledger A65, open). Once A65 is
-settled the lane would move the WAP with no browser, but only while that
-host leaves it alone, and taking it away needs no radio. Any landing
+on. And the move lasts only while the new network stays up. The WAP keeps
+every network it has joined (up to four, `wifi_store.h`), the striking
+host's among them, and when the one it is on is not found twice running (a
+phone's hotspot turned off, a network out of range, one that is down when
+the WAP starts) it tries the next saved one, in turn, with no act of the
+owner's, and stays on the host's network once it joins it. No route
+forgets one saved network (`wifi_store::remove()` has no caller): Forget
+Wi-Fi (`POST /api/wifi/forget`, which the owner's landing session reaches
+under the lockout) and the 10 s hold drop them all, and each reopens the
+first-come setup door, so the move sticks only after Forget Wi-Fi and a
+setup onto the new network. The iPhone's bonded Bluetooth lane is no way
+out today: the iPhone app dials only a Canary that advertises the console
+service, which a WAP does not, so it never writes a WAP's CREDS (ledger
+A65, open). Once A65 is settled the lane would move the WAP with no
+browser, but only while that host leaves it alone and the new network
+stays up (it saves through the same paths), and taking it away needs no
+radio. Any landing
 session can turn the WAP's Bluetooth off (`POST /api/bluetooth/disable`),
 a saved setting that restarts and the 10 s hold keep, under which every
 Bluetooth link is dropped; or delete every bond, the owner's phone's
@@ -488,10 +500,12 @@ is set up on the same network again, the host's next strikes from nine
 addresses hold every untracked address again, the owner's among them, and
 the claim that pairs the phone does not clear the overflow (it frees only
 the served address's own slot, F341), so the phone ends paired and held.
-The hold helps only with a setup onto a network that host is not on, which
-the owner's browser does without it, and without reopening the first-boot
-setup door, which goes to whichever Bluetooth client connects first (the
-tap paragraph above). A wrong bearer
+The hold helps only with a setup onto a network that host is not on. The
+owner's browser makes that move without it, and without reopening the
+first-boot setup door, which goes to whichever Bluetooth client connects
+first (the tap paragraph above), but that move keeps the host's network
+saved; the hold, or Forget Wi-Fi, followed by that setup drops it, and
+reopens that door. A wrong bearer
 on the receipt is a strike even when the setup-door claim or the BOOT tap
 then serves it, and the claim or the tap
 that serves ends that address's backoff, as a right bearer would (sweep
@@ -792,9 +806,12 @@ mitigations, but they are **off unless you turn them on** — see
 
 ### Physical Access
 Physical possession of the device enables forensic analysis of the
-SD card and flash storage. On a device in its default configuration this
-includes recovering the device's private key; the section below states
-exactly what that does and does not let an attacker do.
+SD card and flash storage. On every released firmware tree today this
+includes recovering the device's private key, on every tier: they build
+with `framework = arduino`, where NVS encryption is not available, so the
+key is plaintext in NVS on a board with flash encryption fused too. The
+section below states exactly what that does and does not let an attacker
+do.
 
 ### GPS Spoofing
 The device cannot independently verify GPS signals. A sophisticated
@@ -814,13 +831,15 @@ not necessarily *what happened* in full detail.
 
 ### Physical extraction and the flash-encryption default
 
-**The honest statement: on a Canary in its default configuration, someone
-who takes the device away and opens it up can read the private key out of
-the flash chip.**
+**The honest statement: someone who takes a Canary away and opens it up
+can read the private key out of the flash chip, in its default
+configuration and, today, on a board with flash encryption fused too (the
+key is in NVS, which flash encryption does not cover: `key_at_rest`
+below).**
 
-This is a deliberate default, not an oversight, and the trade is worth
-understanding because it is the one place where "keys never leave the
-device" needs an asterisk.
+Leaving flash encryption off by default is deliberate, not an oversight,
+and the trade is worth understanding because it is the one place where
+"keys never leave the device" needs an asterisk.
 
 ESP32-family chips support Secure Boot and flash encryption, which together
 make the firmware image unreadable and stop unsigned firmware running.

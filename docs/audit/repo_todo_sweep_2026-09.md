@@ -2726,7 +2726,10 @@ so — see D2 below.)
       switch where it names it (Settings, the Bluetooth sub-panel, the
       Bluetooth Enabled toggle wired to `toggleBtEnabled()`), and
       `factory_reset_by_hold()` free of any Bluetooth key; the copy before
-      this fails it.
+      this fails it. (Corrected by #1843's fourth review: after the hold's
+      sentence was the wrong place, on a sign-in that covers Settings, and
+      the row read the hold's own function only; the fourth round, below,
+      moves the check before the hold and walks the sign-in's way to it.)
     - The second round's bullet said F346's note and `LESSONS_LEARNED.md`
       named the owner's own route; neither did. Both do now.
     - Counts now: `recovery_kit.test.js` 65 tests, the sketch's
@@ -2734,6 +2737,102 @@ so — see D2 below.)
       is 65,017 bytes, 64,941 before; the companion's 48,621, unchanged);
       `gen_wap.py` leaves `wap.json` unchanged and `gen_csp.py --check`
       passes. Host-tested; not run on a device.
+  - Follow-up review fixes, fourth round (#1843). In the firmware, one
+    passage of the dashboard's copy (`web_ui.h`, and its gzip copy); rows,
+    the iPhone app's copy and docs besides.
+    - The owner's browser moves the WAP to a network the striking host is
+      not on, and every list of the WAP's ways out from under that host
+      named that move as if it stuck. It does not: `handle_wifi_connect()`
+      saves only the current pair, and the proven join adds the new network
+      to the saved-networks ring (`wifi_store_note_joined()`,
+      `wifi_store::add()`), which keeps every network already there (up to
+      four, `MAX_NETWORKS`), the host's among them. When the new network is
+      not found twice running, the FAILED retry's
+      `wifi_store_rotate_if_due()` adopts the next saved one
+      (`wifi_store::pick()`'s round-robin, no scan in hand), and the
+      CONNECTED transition writes it back as the current pair: the WAP is
+      on the host's network again with no act of the owner's, and stays
+      there. A host probe over the sketch's `wifi_store.h` (`add("HomeA")`,
+      `add("HotspotB")`, then `pick()` after B) prints `count=2
+      last_good=HotspotB` and `HomeA` next. No route forgets one saved
+      network (`wifi_store::remove()` has no caller); Forget Wi-Fi
+      (`POST /api/wifi/forget`) and the 10 s hold clear the whole ring
+      through `wifi_clear_credentials()`, and each re-arms the first-come
+      setup door. The lane, once A65 is settled, saves through the same
+      paths (`ble_request_wifi_provisioning()`). `SECURITY_MODEL.md`,
+      `magic_pairing.md` §3.7, the CHANGELOG's F342 section,
+      `SECURITY-AUDIT.md`'s and `esp32s3_firmware_full_audit_2026-07.md`'s
+      F343 notes, F343's posture (a sixth amendment, below, and its
+      not-closed list), F346's note and `LESSONS_LEARNED.md` now say the
+      move lasts only while the new network stays up, and that only Forget
+      Wi-Fi or the hold, then a setup onto the new network, drop the old
+      one, at the price of that door. No forget-one route was added: it
+      would be a new route on the WAP's budget, and a decision, not a
+      review fix. `test_docs_claims.py` holds the claims to the code (the
+      ring's size and its free-slot add, the saves that leave the ring
+      alone, the two-NotFound rotation before the retry, no
+      `wifi_store::remove(` anywhere in the sketch, Forget Wi-Fi and the
+      hold through `wifi_clear_credentials()`, which drops the ring and
+      re-arms the door) and bans the retired sentences.
+    - The dashboard's Bluetooth check (`tapContendedText()`) followed the
+      hold's sentence, so it was read after the step it guards, and it
+      named a switch the sign-in that shows it cannot reach: the BOOT-tap
+      sign-in writes it into `#authOverlay`, which covers the page
+      (`position: fixed; inset: 0`) with no control that closes it, on a
+      page with no session, where `GET /api/bluetooth` is refused. The copy
+      now reads "Last, check that Bluetooth Enabled is on under Settings →
+      Bluetooth (if this page is asking you to sign in, first open the
+      Canary's main page, choose Open dashboard, then Settings there): the
+      hold below does not turn it back on, and with it off the iPhone app
+      cannot set the Canary up. Then, with your iPhone ready: hold BOOT for
+      10 seconds …". The row now holds the check before any hold, and walks
+      that way: the landing page's Open dashboard link, `handle_ui()`'s
+      branch 2 setting the cookie, the headline dashboard's Settings button
+      opening `/settings`, the route serving this page, `initialPanelFromPath()`
+      choosing Settings there, and `resumeExistingSession()` putting the
+      sign-in away only when `/api/status` answers. The copy before fails it.
+    - The row's "the hold does not turn it back on" read
+      `factory_reset_by_hold()` alone, so a `remove("bt_enabled")` in
+      `wifi_clear_credentials()` or `setup_wizard::reset_to_first_boot()`
+      passed every suite. The row now reads every function the hold calls
+      to clear (those two, `csi_mqtt::config_clear()`, and
+      `wifi_raise_ap()`, which `wifi_clear_credentials()` calls), comments
+      cut, for a Bluetooth key or a whole-namespace clear. Either mutant
+      fails it now, as do a `prefs.clear()` in `reset_to_first_boot()` and
+      a `"bt_enabled"` in `config_clear()`'s keys.
+    - The iPhone app's "No recovery kit?" advice (`PairView.swift`) reopens
+      the same door through Forget Wi-Fi, which leaves the saved Bluetooth
+      switch too, and said nothing of it; it now says to check Bluetooth
+      Enabled under Settings, Bluetooth on the WAP's page first. A row in
+      `recovery_kit.test.js` holds the check before the forget, and Forget
+      Wi-Fi to `wifi_clear_credentials()`; the copy before fails it. The
+      bench row "A wrong claim spends nothing, and the 10 s hold is a way
+      out under a poller" now checks the switch before the hold.
+    - `THREAT_MODEL.md`'s principle scope ("on a default Canary the key is
+      recoverable"), Scenario 8's "Flash encryption (data at rest
+      protected)", the beacon spec's threat row ("readable from flash on a
+      device without flash encryption") and `SECURITY_MODEL.md`'s physical
+      access paragraph and honest statement each tied the key's exposure to
+      the default tier, against the third round's correction; each now says
+      the key is plaintext in NVS on every tier today (every released tree
+      builds with `framework = arduino`), and `test_docs_claims.py` bans
+      the retired sentences. Scenario 4's list of what the WAP's hold keeps,
+      and the CHANGELOG's copy of it, now name the Opera mesh's member list
+      and, on a fused board, the mesh's secret, id and revocations and the
+      Beacon channel's X25519 key, set and audit ring, which
+      `mesh_network.cpp` and `beacon_channel.cpp` write only there.
+    - Both `recovery_kit.test.js` harnesses run every timer at once, so a
+      page loop that stopped counting its asks (a failed request that did
+      not use up one of the companion's sixteen, or one of the dashboard's
+      thirty) never yielded to node:test's timeout and the run hung; past
+      64 asks (`ASK_CAP`) both now answer `409`, and either mutant fails
+      named rows (the companion's 3, the dashboard's 1).
+    - Counts now: `recovery_kit.test.js` 66 tests, the sketch's
+      `*.test.js` 192, `test_docs_claims.py` 12. `web_assets_gz.h`
+      regenerated (the dashboard's gzip is 65,263 bytes, 65,017 before; the
+      companion's 48,621, unchanged); `gen_wap.py` leaves `wap.json`
+      unchanged and `gen_csp.py --check` passes. Host-tested; not run on a
+      device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2905,6 +3004,23 @@ so — see D2 below.)
   to a network that host is not on, or wait until it stops, with those
   caveats; the iPhone's lane is named as no way out until A65 is settled,
   and with the caveats above for when it is. From code; not probed.
+  *Amended a sixth time 2026-10-21 (#1843's fourth review):* the browser's
+  move lasts only while the new network stays up. The WAP keeps every
+  network it has joined (`wifi_store.h`, up to four), the striking host's
+  among them, and when the network it is on is not found twice running (a
+  phone's hotspot turned off, a guest network out of range, one down when
+  the WAP starts) `wifi_store_rotate_if_due()` moves it on to the next
+  saved one, in turn, with no act of the owner's, and it stays on the
+  host's network once it joins it. No route forgets one saved network;
+  Forget Wi-Fi and the 10 s hold drop them all through
+  `wifi_clear_credentials()`, and each re-arms the first-come setup door.
+  The lane, once A65 is settled, saves through the same paths. The
+  sentence the docs use now: on the WAP, change its Wi-Fi from a browser to
+  a network that host is not on, or wait until it stops, with the caveats
+  above, and the move lasts only while that network stays up; it sticks
+  only after Forget Wi-Fi and a setup onto the new network, which reopens
+  that door. From code and a host probe of `wifi_store.h`; not run on a
+  device.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
@@ -2915,7 +3031,12 @@ so — see D2 below.)
   - httpd's LRU purge;
   - clients behind one address share a backoff;
   - a cross-site `<img src=...?token=x>` holds the visiting browser's own
-    address.
+    address;
+  - a WAP moved off the striking host's network keeps that network saved
+    and goes back to it when the new one is not found twice running; no
+    route forgets one saved network (`wifi_store::remove()` has no caller),
+    so dropping it takes Forget Wi-Fi or the hold, both of which reopen the
+    first-come setup door (sixth amendment, above).
   Host-tested in `test_receipt_grant.cpp` (916 checks; run against the code
   before the change, with the suite's few state helpers pointed at the old
   `g_auth`, 26 of them fail: two hosts, the replay at 0 of 86, one table
@@ -3023,6 +3144,10 @@ so — see D2 below.)
   browser can turn Bluetooth back on, or move the WAP with no Bluetooth at
   all. That browser is the WAP's way out under F343's lockout while the
   iPhone app does not reach a WAP's lane (A65). From code; not probed.
+  *(2026-10-21, #1843's fourth review:)* that move keeps the network the
+  host is on saved, and the WAP goes back to it when the new network is not
+  found twice running; only Forget Wi-Fi or the hold drop it (F343's sixth
+  amendment). From code; not probed.
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,
@@ -16913,6 +17038,10 @@ so — see D2 below.)
   `ble_improv.cpp`), and its GAP name defaults to `SecuraCV-Canary`
   (`bluetooth_channel.cpp`); whether a WAP is listed there is for the same
   bench.
+  *(2026-10-21, #1843's fourth review:)* the browser's move, and the lane's
+  once this is settled, lasts only while the new network stays up: the WAP
+  keeps the network it left saved and goes back to it when the new one is
+  not found twice running (F343's sixth amendment).
 - [ ] **A66 [code+human] AccessorySetupKit spike for the nearby card.** On iOS
   18, AccessorySetupKit shows a system picker for a matched accessory and
   grants Bluetooth access to that device alone, in place of the app-wide

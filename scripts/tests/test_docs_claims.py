@@ -138,6 +138,37 @@ BANNED = (
      "not a move there); the WAP's 403 password_needed is for the session "
      "alone and counts the TLS mode and the CA as moves — each device's rule "
      "is stated under its own name"),
+    # Retired by #1843's fourth review: a tier qualifier that told a reader
+    # the secure tier hides the key. Flash encryption does not cover NVS, and
+    # NVS encryption is not available under framework = arduino, which every
+    # released tree builds with.
+    ("flash encryption is an opt-in tier, so on a default Canary the key is "
+     "recoverable by reading the flash directly",
+     "the key is plaintext in NVS on every tier today, on a fused board too "
+     "(THREAT_MODEL.md Scenario 4)"),
+    ("Flash encryption (data at rest protected)",
+     "flash encryption protects the app image at rest, not NVS, where the "
+     "keys and the saved passwords stay plaintext on every tier today"),
+    ("on a Canary in its default configuration, someone who takes the device "
+     "away and opens it up can read the private key out of the flash chip",
+     "the private key is readable off the flash chip in the default "
+     "configuration and, today, on a board with flash encryption fused too"),
+    ("On a device in its default configuration this includes recovering the "
+     "device's private key",
+     "on every released firmware tree today, on every tier: the key is "
+     "plaintext in NVS on a fused board too"),
+    # Retired by #1843's fourth review: the owner's browser moves the WAP to
+    # a network the striking host is not on, but the WAP keeps that host's
+    # network saved and goes back to it when the new one is not found twice
+    # running (wifi_store_rotate_if_due); only Forget Wi-Fi or the hold drop it.
+    ("The hold helps only with a setup onto a network that host is not on, "
+     "which the owner's browser does without it",
+     "the browser's move keeps the host's network saved; the hold, or Forget "
+     "Wi-Fi, followed by that setup drops it, and reopens the setup door"),
+    ("Once A65 is settled the lane would move the WAP with no browser, but "
+     "only while that host leaves it alone, and taking it away needs no radio.",
+     "the lane would hold only while that host leaves it alone and the new "
+     "network stays up (it saves through the same paths as the browser)"),
 )
 
 # Sentences retired from documents the gate above does not scan whole (the
@@ -178,6 +209,39 @@ RETIRED_IN = (
      "session",
      "behind the pair token, which the session can mint, and a code in front "
      "of the camera, which it cannot"),
+    # #1843's fourth review: the same two retirements as BANNED's, where the
+    # spec and the design doc carried them, and the lane's hold-time in the
+    # three copies of the F342 posture that left out the saved networks.
+    ("spec/beacon_channel_v0.md",
+     "readable from flash on a device without flash encryption",
+     "readable from flash on every tier today, since it is plaintext in NVS "
+     "(THREAT_MODEL.md Scenario 4)"),
+    ("docs/design/magic_pairing.md",
+     "The hold helps only with a setup onto a network that host is not on, "
+     "which the owner's browser does without it",
+     "the browser's move keeps the host's network saved; the hold, or Forget "
+     "Wi-Fi, followed by that setup drops it, and reopens the setup door"),
+    ("docs/design/magic_pairing.md",
+     "Once A65 is settled the lane would move the WAP with no browser, but "
+     "only while that host leaves it alone, and taking it away needs no radio.",
+     "the same, while the new network stays up"),
+    ("CHANGELOG.md",
+     "Once that is settled the lane holds only while that host leaves it "
+     "alone, and taking it away needs no radio",
+     "only while that host leaves it alone and the new network stays up"),
+    ("docs/security/SECURITY-AUDIT.md",
+     "Once that is settled the lane holds only while that host leaves it "
+     "alone, and taking it away needs no radio",
+     "the same"),
+    ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
+     "Once that is settled the lane holds only while that host leaves it "
+     "alone, and taking it away needs no radio",
+     "the same"),
+    ("firmware/LESSONS_LEARNED.md",
+     "under the lockout), while that host leaves it alone (the next three "
+     "bullets).",
+     "while that host leaves it alone and the new network stays up (the next "
+     "four bullets)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -210,6 +274,20 @@ MUST_PASS = [
     "On the WAP, the same save from the dashboard session alone is refused "
     "`403 password_needed` when it moves the host, port, TLS mode or CA; the "
     "bearer, or the password typed again, moves it (sweep F289).",
+    # The tier and way-out prose that replaced #1843's fourth-review bans.
+    "so on every tier today the key is recoverable by reading the flash "
+    "directly, on a fused board too (Scenario 4 below)",
+    "Flash encryption (the app image at rest; not NVS, where the keys and the "
+    "saved passwords stay plaintext on every tier today, Scenario 4)",
+    "someone who takes a Canary away and opens it up can read the private key "
+    "out of the flash chip, in its default configuration and, today, on a "
+    "board with flash encryption fused too",
+    "On every released firmware tree today this includes recovering the "
+    "device's private key, on every tier",
+    "The hold helps only with a setup onto a network that host is not on. The "
+    "owner's browser makes that move without it",
+    "Once A65 is settled the lane would move the WAP with no browser, but only "
+    "while that host leaves it alone and the new network stays up",
 ]
 # The replacements of the RETIRED_IN sentences, which share most of their
 # words with what they replaced.
@@ -225,6 +303,15 @@ MUST_PASS_IN = [
     "that token",
     "behind the pair token, which the session can mint (`GET /api/pair/token` "
     "takes the cookie), and a code in front of the camera, which it cannot",
+    "A holder of one member's Ed25519 private key — readable from flash on "
+    "every tier today: it is plaintext in NVS, which flash encryption does not "
+    "cover",
+    "but that move keeps the host's network saved; the hold, or Forget Wi-Fi, "
+    "followed by that setup drops it, and reopens that door",
+    "Once that is settled the lane holds only while that host leaves it alone "
+    "and the new network stays up, and taking it away needs no radio",
+    "under the lockout), while that host leaves it alone and the new network "
+    "stays up (the next four bullets).",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -253,6 +340,19 @@ MUST_FAIL = [
     "re-point the bridge at another host, port, TLS mode or CA while keeping the\n"
     "stored password; that save needs the bearer or the password typed again\n"
     "(sweep F289). This is compile-tested, host-tested, not yet bench-tested.",
+    "takes the device to a bench: flash encryption is an opt-in tier, so on a\n"
+    "default Canary the key is recoverable by reading the flash directly. What",
+    "- Flash encryption (data at rest protected) — opt-in secure-provisioning tier only",
+    "**The honest statement: on a Canary in its default configuration, someone\n"
+    "who takes the device away and opens it up can read the private key out of\n"
+    "the flash chip.**",
+    "SD card and flash storage. On a device in its default configuration this\n"
+    "includes recovering the device's private key; the section below states",
+    "The hold helps only with a setup onto a network that host is not on, which\n"
+    "the owner's browser does without it, and without reopening the first-boot",
+    "not, so it never writes a WAP's CREDS (ledger A65, open). Once A65 is\n"
+    "settled the lane would move the WAP with no browser, but only while that\n"
+    "host leaves it alone, and taking it away needs no radio. Any landing",
 ]
 # And the RETIRED_IN sentences as they stood, wrapped.
 MUST_FAIL_IN = [
@@ -272,6 +372,17 @@ MUST_FAIL_IN = [
     "  still re-points the broker with the stored password — behind the pair\n"
     "  token and a code in front of the camera, not the session; named in the\n"
     "  ledger.",
+    "| One member's stolen device key forging solo frames | The solo path's "
+    "BOOT-button and no-fresh-cosigner gates run on the originating device and "
+    "nothing about them is on the wire (§6.2 security note). A holder of one "
+    "member's Ed25519 private key — readable from flash on a device without "
+    "flash encryption — can sign a solo ALERT",
+    "  app never dials a WAP's lane (ledger A65, open). Once that is settled the\n"
+    "  lane holds only while that host leaves it alone, and taking it away needs\n"
+    "  no radio: any landing session can turn the WAP's Bluetooth off, a saved",
+    "  browser gives with no hold (its landing session reaches\n"
+    "  `POST /api/wifi/connect` under the lockout), while that host leaves it\n"
+    "  alone (the next three bullets). Run the attack again from the state",
 ]
 
 
@@ -456,6 +567,51 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertIn("if (bearer) return false;", gate)
         self.assertIn("if (before.tls_mode != after.tls_mode) return true;", gate)
         self.assertIn("return ca_in_body;", gate)
+
+    def test_a_wap_move_keeps_the_old_networks_and_only_a_forget_drops_them(self):
+        # #1843's fourth review: the docs say the owner's browser moves the
+        # WAP off a striking host's network only while the new network stays
+        # up, because the WAP keeps the networks it joined and moves on to
+        # them in turn, and that no route forgets one network, so only
+        # Forget Wi-Fi or the hold drop them, each re-arming the setup door.
+        # Each half held to the code: a route that forgets one network, or a
+        # move that drops the ring, fails here until the docs follow.
+        ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
+        store = (WAP / "wifi_store.h").read_text(encoding="utf-8")
+        # The ring keeps up to four, and a new network takes a free slot.
+        self.assertIn("static constexpr uint8_t MAX_NETWORKS = 4;", store)
+        add = body_after(store, "inline bool add(Store& s, const char* ssid, const char* pass) {", r"\n}\n")
+        self.assertIn("if (s.count < MAX_NETWORKS) {\n      idx = s.count++;", add)
+        # A proven join adds to the ring; a save (the connect route's, the
+        # lane's) writes the current pair only.
+        joined = body_after(ino, "static void wifi_store_note_joined(const char* ssid, const char* pass) {", r"\n}\n")
+        self.assertIn("canary::net::wifi_store::add(g_wifi_store, ssid, pass)", joined)
+        for sig in ("static bool wifi_save_credentials() {",
+                    "static esp_err_t handle_wifi_connect(httpd_req_t* req) {",
+                    "bool ble_request_wifi_provisioning(const char* ssid, const char* password) {"):
+            with self.subTest(fn=sig):
+                self.assertNotIn("wifi_store", body_after(ino, sig, r"\n}\n"))
+        # Two NotFounds running move the retry on to the next saved network.
+        rotate = body_after(ino, "static void wifi_store_rotate_if_due() {", r"\n}\n")
+        self.assertIn("g_wifi_notfound_streak < 2", rotate)
+        self.assertIn("canary::net::wifi_store::pick(g_wifi_store, nullptr, nullptr, 0, cur)", rotate)
+        self.assertIn("wifi_store_adopt(next);", rotate)
+        failed = body_after(ino, "    case WIFI_PROV_FAILED:\n      // Attempt reconnection periodically", r"\n      break;\n")
+        self.assertLess(failed.index("wifi_store_rotate_if_due();"), failed.index("wifi_connect_to_home();"))
+        # No route forgets one network: nothing in the sketch calls remove().
+        for f in sorted(WAP.iterdir()):
+            if f.suffix in (".ino", ".cpp", ".h"):
+                with self.subTest(file=f.name):
+                    self.assertNotIn("wifi_store::remove(", f.read_text(encoding="utf-8", errors="replace"))
+        # Forget Wi-Fi and the hold drop the whole ring, and re-arm the door.
+        clear = body_after(ino, "static bool wifi_clear_credentials() {", r"\n}\n")
+        self.assertIn("nvs->remove(canary::net::wifi_store::NVS_KEY);", clear)
+        self.assertIn("canary::net::wifi_store::init(g_wifi_store);", clear)
+        self.assertIn("g_improv_window_magic = 0;", clear)
+        for sig in ("static esp_err_t handle_wifi_forget(httpd_req_t* req) {",
+                    "static void factory_reset_by_hold() {"):
+            with self.subTest(fn=sig):
+                self.assertIn("\n  wifi_clear_credentials();", body_after(ino, sig, r"\n}\n"))
 
 
 if __name__ == "__main__":

@@ -535,12 +535,24 @@ host also in radio range can bond a Bluetooth peer of its own (the peer
 starts the pairing, and its session reads the passkey from
 `GET /api/bluetooth` and confirms it) and write the WAP's Wi-Fi over the
 bonded lane (`ble_provision.cpp`'s CREDS, `WRITE_ENC | WRITE_AUTHEN`),
-joining it back to a network that host is on. The iPhone's bonded
-Bluetooth lane is no way out today: the iPhone app dials only a Canary
-that advertises the console service, which a WAP does not, so it never
-writes a WAP's CREDS (ledger A65, open). Once A65 is settled the lane
-would move the WAP with no browser, but only while that host leaves it
-alone, and taking it away needs no radio. Any landing session can turn the
+joining it back to a network that host is on. And the move lasts only
+while the new network stays up. The WAP keeps every network it has joined
+(up to four, `wifi_store.h`), the striking host's among them, and when the
+one it is on is not found twice running (a phone's hotspot turned off, a
+network out of range, one that is down when the WAP starts) it tries the
+next saved one, in turn (`wifi_store_rotate_if_due()`), with no act of the
+owner's, and stays on the host's network once it joins it. No route
+forgets one saved network (`wifi_store::remove()` has no caller): Forget
+Wi-Fi (`POST /api/wifi/forget`, which the owner's landing session reaches
+under the lockout) and the 10 s hold drop them all, and each reopens the
+first-come setup door, so the move sticks only after Forget Wi-Fi and a
+setup onto the new network. The iPhone's bonded Bluetooth lane is no way
+out today: the iPhone app dials only a Canary that advertises the console
+service, which a WAP does not, so it never writes a WAP's CREDS (ledger
+A65, open). Once A65 is settled the lane would move the WAP with no
+browser, but only while that host leaves it alone and the new network
+stays up (it saves through the same paths), and taking it away needs no
+radio. Any landing session can turn the
 WAP's Bluetooth off (`POST /api/bluetooth/disable`), a saved setting that
 restarts and the 10 s hold keep, under which every Bluetooth link is
 dropped; or delete every bond, the owner's phone's included
@@ -559,9 +571,11 @@ next strikes from nine addresses hold every untracked address again, the
 owner's among them, and the claim that pairs the phone does not clear the
 overflow (it frees only the served address's own slot), so the phone ends
 paired and held. The hold helps only with a setup onto a network that host
-is not on, which the owner's browser does without it, and without
+is not on. The owner's browser makes that move without it, and without
 reopening the first-boot setup door, which goes to whichever Bluetooth
-client connects first (the polling host's ways out, below). The flagship's
+client connects first (the polling host's ways out, below), but that move
+keeps the host's network saved; the hold, or Forget Wi-Fi, followed by
+that setup drops it, and reopens that door. The flagship's
 fallbacks are in the paragraph above.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP

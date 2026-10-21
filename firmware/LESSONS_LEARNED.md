@@ -3220,12 +3220,13 @@
   reach (a network that host is not on), which on the WAP the owner's own
   browser gives with no hold (its landing session reaches
   `POST /api/wifi/connect` under the lockout), while that host leaves it
-  alone (the next three bullets). Run the attack again from the state
-  the remedy leaves before listing it. And a sentence in the security model
-  needs a row of its own even when it reads as obvious: "a served tap
-  clears only the contention, not the addresses" had none, and clearing
-  both at a TAKE, which hands a host that asks first after the owner's next
-  tap the token, passed every suite.
+  alone and the new network stays up (the next four bullets). Run the
+  attack again from the state the remedy leaves before listing it. And a
+  sentence in the security model needs a row of its own even when it reads
+  as obvious: "a served tap clears only the contention, not the
+  addresses" had none, and clearing both at a TAKE, which hands a host
+  that asks first after the owner's next tap the token, passed every
+  suite.
 - **Found in #1843's first review:** a search for the advice has to run
   over the whole tree, not over the hunks the diff already touches. The
   second round's own bullet says a search for "hold BOOT 10 s" finds both
@@ -3267,6 +3268,28 @@
   NVS, whose encryption is not available under `framework = arduino`, so
   the erased Wi-Fi and broker passwords, the bonds and both trees' keys are
   plaintext on the flash chip of a fused board too.
+- **Found in #1843's fourth review:** the state a remedy leaves includes
+  what the device will do from it on its own. The third review ran the
+  attack again from the moment after the move (the WAP on a network the
+  striking host is not on) and stopped there; but the move keeps the
+  host's network saved (`wifi_store.h` keeps up to four), and the WAP's own
+  recovery, a network not found twice running moving on to the next saved
+  one, takes it back there with no act of the owner's once a hotspot is
+  turned off or a guest network drops. Read the device's fallbacks
+  (retries, rotation, what a boot loads) before calling a move permanent:
+  here only Forget Wi-Fi or the hold drop the old network, and both reopen
+  the first-come setup door. A precondition belongs before the step it
+  guards and where the reader can act on it: the dashboard's Bluetooth
+  check followed the hold's sentence, on a sign-in that covers Settings and
+  holds no session, and its row pinned that order; it now comes first and
+  says how the sign-in reaches the switch, and the row walks that way.
+  A row that reads one function for a property has to read the functions
+  it calls to change state: the hold's row read `factory_reset_by_hold()`
+  alone, so a `remove("bt_enabled")` in `wifi_clear_credentials()` or
+  `setup_wizard::reset_to_first_boot()` passed it. And a harness whose
+  timers run at once needs a bound of its own: a page loop that stopped
+  counting its asks never yielded to node:test's timeout, so the run hung
+  rather than failing a row; both harnesses now answer `409` past 64 asks.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
