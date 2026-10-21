@@ -1735,7 +1735,10 @@ moved. A save that fails (the replay-counter write refused) is tried again
 rather than taken as done: the first on the member's next frame that
 verifies (never on a pass of its own), the second 66 s after the pass that
 failed (never on the next one); on a board without flash encryption, which
-writes no replay counter at all, every try is refused and writes nothing. When that first
+writes no replay counter at all, every try is refused and writes nothing.
+So when the member's own frames are kept from the receiver after a refused
+first save (lost, or jammed), nothing is saved for it until the member's
+next verified frame or the next 5-minute save that lands. When that first
 frame is the member's own, as it normally is, a reboot at any point after
 its save lands does not reopen those; a reboot before that, which finds
 nothing newer saved for the member (after a first pairing, no counter at
@@ -2245,7 +2248,9 @@ An implementation conforms to this specification if it:
   done, so a reboot once the member's own counter is saved does
   not reopen what the member signed before a pairing; a reboot before the
   member's first frame lands, or before the retry of a first save NVS
-  refused lands, still does, and so does an older genuine
+  refused lands (on the member's next verified frame, or, with the member's
+  frames kept out after the refusal, the next 5-minute save that lands),
+  still does, and so does an older genuine
   frame of the member's landed first by a radio copying its address, then
   a reboot before the second save lands (66 s after the first, and 66 s
   more for each refused write), or before the next 5-minute save when the

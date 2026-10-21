@@ -2632,7 +2632,9 @@
   66 s later if the counter has moved. The residuals the docs state are a
   reboot before the member's first frame lands, or, when NVS refused that
   frame's save, before its retry on the member's next verified frame lands
-  (nothing saved for it yet), a reboot before that second save lands, and,
+  (nothing saved for it yet; no pass retries it, so with the member's frames
+  kept out after the refusal, until the next 5-minute save that lands), a
+  reboot before that second save lands, and,
   when the member's own frames were kept out through the 66 s (a jammer, or
   after a boot a station not yet on its router's channel, F320), a reboot
   before the next 5-minute save; review
@@ -2703,7 +2705,10 @@
   and `test_a_failed_second_save_is_tried_again_a_deadline_later` (each
   fails on the code it found; the second also on a retry taken on the next
   pass and on one counted from the deadline a late pass missed, and the
-  first on a second save armed from the call that failed),
+  first on a second save armed from the call that failed), with a pass
+  1 ms before each 66 s deadline (each fails on a deadline armed up to
+  999 ms early) and a reboot before a refused first save's retry lands,
+  also with the member quiet for 290 s (pinned open),
   and the wiring test fails on a handler or a persist that drops the
   result. Bounding each gap is not
   testing a jitter, a check derived from a constant cannot catch a change to

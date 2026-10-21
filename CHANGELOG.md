@@ -86,7 +86,10 @@
   frame lands (milliseconds after the bind normally, up to about 33 s when
   the first `PAIR_COMPLETE` or the paired heartbeat is lost), or, when NVS
   refused that frame's save, before its retry on the member's next
-  verified frame lands, restores no counter for a newly paired member. And
+  verified frame lands, restores no counter for a newly paired member; no
+  pass retries that save, so with the member's own frames kept out after
+  the refusal (lost, or jammed) it waits for the member's next verified
+  frame or the next 5-minute save that lands. And
   a radio copying the member's address can land one of the member's older
   genuine frames before the member's own first frame, the first save then
   holds that older counter, and a reboot before the second save lands (66 s
@@ -117,13 +120,16 @@
   figures above for a frame the receiver did not hear, with a reboot, a
   jammer and an hour's downtime from a real sending session; one for the
   first-counter save, failing without it or when a saved 0 counts as
-  saved; one for its second save, failing without it, with the reboot
-  before it pinned as still open; two for a save that fails, the first
+  saved; one for its second save, failing without it or on a deadline
+  armed up to 999 ms early, with the reboot before it pinned as still
+  open; two for a save that fails, the first
   retried on the member's next verified frame and the second a full 66 s
   later, never on the next pass, each failing on the code the Codex review
   found, and the second also on a retry counted from the deadline a late
   pass missed rather than from that pass, or set up to 999 ms early, the
-  first with a reboot before its retry lands pinned as still open; a flipped
+  first with a reboot before its retry lands pinned as still open, also
+  after 290 s of passes with the member quiet, none of which retries it,
+  and closed by a 5-minute save that lands; a flipped
   signature byte and a frame under another opera in the liveness case; the
   documented 30 s ± 3 s pinned at compile time; the other 12 mesh suites
   unchanged;

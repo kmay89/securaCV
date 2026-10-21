@@ -9711,6 +9711,42 @@ so — see D2 below.)
   stays at the first save's); it now says a refused save is never dropped.
   Docs, comments and tests; no code change. Host-tested; not run on a
   device.
+  *Third review of the Codex fix (2026-10-21):* #1838 landed on main
+  after this branch last merged it, and both add a new top section under
+  the CHANGELOG's `[Unreleased]`, so the PR conflicted, and GitHub runs no
+  `pull_request` workflow on a PR with a merge conflict: a push would have
+  left it at zero check runs, the `[env:full]` compile among them. main is
+  merged in again with a merge commit, both sections kept, this PR's
+  first. A refused first save whose member then goes quiet (its own frames
+  kept from the receiver after the paired heartbeat: lost, or jammed) is
+  retried by no pass (`resave_first_counters` acts only after a save that
+  landed), so that window lasts until the member's next verified frame or
+  the next 5-minute save that lands, as every pairing's did before F324.
+  The threat model, spec §8.3 and §14, the CHANGELOG, the roadmap and
+  `LESSONS_LEARNED.md` bounded it by the member's next verified frame
+  alone, and main.cpp's comment on the handler said a failed write does
+  not wait for the 5-minute save; they, and `mesh_session.h`'s handler
+  contract, now name the quiet case and the 5-minute save that bounds it. A
+  timed retry of a refused first save (one call per 66 s while the counter
+  is unsaved) was considered and not taken: the decision retries on the
+  next verified frame; the case needs a refused NVS write, which no sender
+  can cause, the member's frames kept out after it and a reboot inside the
+  window, all at once; it is no regression (the code before
+  the Codex fix waited for the 5-minute save there too); and on a board
+  without flash encryption, where no save lands, it would add a call per
+  66 s for every member for as long as it runs.
+  `test_a_failed_first_counter_save_is_tried_again` now pins the window:
+  290 s of passes with the member quiet run the handler on none of them,
+  a reboot then reads 133 of 133 frames the member signed before the
+  pairing `CONNECTED`, and with a 5-minute save landed before the reboot,
+  none. And the second save's first deadline was pinned only to 1 s: an
+  arm up to 999 ms early (`counter_resave_from_ms = verified_seen_ms -
+  999`, or `- 1`) passed every leg, whose passes ran on a 1 s grid.
+  `test_an_older_first_frame_is_saved_over_once_more` and the "armed from
+  the save that landed" leg of `test_a_failed_first_counter_save_is_tried_again`
+  now run a pass 1 ms before that deadline, and each fails on it alone.
+  Docs, comments and tests; no code change. Host-tested; not run on a
+  device.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)

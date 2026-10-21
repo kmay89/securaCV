@@ -762,11 +762,13 @@ bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * heartbeat is heard, longer while this device's station has not joined its
  * router, F320), and (1) then saves that older counter. (2) saves the
  * member's own newer one, so what stays open is a reboot before (1) returns
- * true, which finds nothing newer saved for the member (after a first
- * pairing, no counter at all), a reboot before (2) returns true, or every
- * frame of the member's own kept from this device until (2) (a jammer, or
- * a station not yet on its router's channel), after which the 5-minute
- * save is the next to catch up. Past the two saves that land, no frame adds
+ * true (after a false return, until the member's next verified frame or a
+ * 5-minute save that lands first: no pass retries (1)), which finds nothing
+ * newer saved for the member (after a first pairing, no counter at all), a
+ * reboot before (2) returns true, or every frame of the member's own kept
+ * from this device until (2) (a jammer, or a station not yet on its
+ * router's channel), after which the 5-minute save is the next to catch
+ * up. Past the two saves that land, no frame adds
  * one. A boot that restored a non-zero counter for the member runs neither,
  * so it costs no write. The handler must not change the trusted table. */
 typedef bool (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);

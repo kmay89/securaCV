@@ -548,10 +548,12 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
  * whether the save landed: on false the session tries the first save again
  * on the member's next verified frame, and the second one 66 s later, so
  * one failed NVS write does not wait for the 5-minute save (#1839's
- * review). Two saves that land per registration at most, and none after a
- * boot that restored a non-zero counter for the member; FE-gated like every
- * replay_ctrs write, so on a board without flash encryption every call
- * returns false and writes nothing. Runs on the main loop. */
+ * review) while the member is heard; no pass retries the first, so with
+ * the member's frames kept out after the refusal the 5-minute save is the
+ * next to catch up. Two saves that land per registration at most, and none
+ * after a boot that restored a non-zero counter for the member; FE-gated
+ * like every replay_ctrs write, so on a board without flash encryption
+ * every call returns false and writes nothing. Runs on the main loop. */
 static bool on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
   (void)fp;
   return persist_replay_counters();

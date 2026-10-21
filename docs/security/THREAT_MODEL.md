@@ -1125,16 +1125,23 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
         jammed, or, after a boot, unheard by a station that had not yet
         joined its router. So what stays open is three reboots. One before the
         member's first frame lands (or, when NVS refused that save, before
-        its retry on the member's next frame lands) finds nothing newer
-        saved for it (after a first pairing, no counter at all), so
-        everything it signed before is fresh again, and nothing need be
-        landed at the pairing (host-tested: 132 of 132 relayed frames read
+        its retry on the member's next frame, or a 5-minute save, lands)
+        finds nothing newer saved for it (after a first pairing, no counter
+        at all), so everything it signed before is fresh again, and nothing
+        need be landed at the pairing (host-tested: 132 of 132 relayed frames read
         `CONNECTED`; with that save refused and the reboot before its
         retry, 133 of 133); after a pairing that window is the one above,
         milliseconds unless the first COMPLETE or the paired heartbeat was
         lost or NVS refused the first save, which holds it open until a
         retry lands: on the member's next verified frame, normally its next
         heartbeat 27 to 33 s later, about 33 s more for each refused write.
+        No pass retries it, so when the member's own frames are kept from
+        the receiver after the refusal (lost, or jammed), it stays open
+        until the member's next verified frame or the next 5-minute save
+        that lands (main.cpp saves the counters every 300 s), as every
+        pairing's did before F324 (host-tested: 290 s of passes with the
+        member quiet ran no retry, and a reboot then read 133 of 133
+        `CONNECTED`; with a 5-minute save landed before it, none).
         One before a save of the member's newer counter lands (the second
         save, 66 s after the first, and, when NVS refused it, 66 s after each
         refused try; or a 5-minute save, when one lands first), and, when the
