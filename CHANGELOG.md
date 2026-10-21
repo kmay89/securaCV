@@ -116,7 +116,13 @@ hold keeps; and the per-address lockout's ways out.
   and reopens the first-boot setup door for 30 minutes, and that door goes
   to whichever Bluetooth client connects first, so a host on the network
   that is also in radio range could reach it before the phone, spend the
-  claim minted for its own link and keep the token. The docs that said
+  claim minted for its own link and keep the token. And a host only on the
+  network can turn the WAP's Bluetooth off from a landing session before
+  the hold (F346), a saved setting the hold keeps, under which every link
+  is dropped, so no phone reaches the door: a denial, not a takeover, in
+  which the kit's token and the console still work. The dashboard's advice
+  now says to check that Bluetooth Enabled is on under Settings, Bluetooth
+  before the hold. The docs that said
   otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
@@ -124,12 +130,18 @@ hold keeps; and the per-address lockout's ways out.
   said the USB serial console is disabled in production, and release
   images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
   reset destroys all data, and it now says what each device's hold keeps
-  (the WAP's keeps the identity key, the chain, the SD records, the token
-  and the Bluetooth bonds; only the flagship's 30 s stage sheds the key,
-  and NVS leaves an erased entry's bytes in flash until it reuses the page,
-  so on the default tier a full erase in either flasher is what removes
+  (the WAP's keeps the identity key, the chain, the SD records, the token,
+  the HTTPS certificate the iPhone app pins and its private key, and the
+  Bluetooth bonds; only the flagship's 30 s stage sheds the key, and
+  NVS leaves an erased entry's bytes in flash until it reuses the page, so
   the flagship's key, and the saved Wi-Fi passwords and broker login the
-  WAP's hold removes from NVS). The per-address
+  WAP's hold removes from NVS, stay there in plaintext on every tier today,
+  since flash encryption does not cover NVS and the NVS encryption that
+  would is not available under `framework = arduino`; on the default tier a
+  full erase in either flasher is what removes them).
+  The scenario's secure-tier line, which said flash encryption prevents
+  data extraction, now says it leaves NVS plaintext on the WAP and the
+  flagship. The per-address
   lockout's ways out (F343, in its entry below) offered the 10 s hold as a
   way out from under a host striking from 9 or more addresses, and it is
   not one while that host keeps striking: the hold empties the table, as
@@ -138,17 +150,20 @@ hold keeps; and the per-address lockout's ways out.
   again, and the claim that pairs the phone does not clear that, so the
   phone ends paired and held. `SECURITY_MODEL.md`, `magic_pairing.md` §3.7
   and the ledger now say so for both trees. On the WAP the way out is
-  changing Wi-Fi from the iPhone's bonded Bluetooth lane to a network that
-  host is not on, which needs no hold and does not reopen the first-come
-  setup door, or waiting until it stops. The lane holds only while that
-  host leaves it alone, and taking it away needs no radio: any landing
-  session (F346) can turn the WAP's Bluetooth off, a saved setting that
-  restarts and the 10 s hold keep, under which every link is dropped, or
-  delete the phone's bond; a host also in radio range can besides bond a
-  peer of its own and join the WAP back to a network it is on, or keep the
-  owner's write refused for as long as it keeps writing. The owner's own
-  landing session reaches the same routes, and `POST /api/wifi/connect`,
-  so the owner's browser can move the WAP with no Bluetooth too. On the
+  changing its Wi-Fi from a browser to a network that host is not on (the
+  landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), which needs no hold and does not reopen the first-come
+  setup door, or waiting until it stops. That holds only while that host
+  leaves it alone: it can mint sessions until the owner's is evicted, and
+  a host also in radio range can bond a Bluetooth peer of its own through
+  its session and write the WAP back to a network it is on over the bonded
+  lane. The iPhone's bonded Bluetooth lane is no way out today: the iPhone
+  app never dials a WAP's lane (ledger A65, open). Once that is settled the
+  lane holds only while that host leaves it alone, and taking it away needs
+  no radio: any landing session can turn the WAP's Bluetooth off, a saved
+  setting that restarts and the 10 s hold keep, under which every link is
+  dropped, or delete the phone's bond, and a host's own bonded peer can
+  keep the owner's write refused for as long as it keeps writing. On the
   flagship the way out is waiting, or
   the hold followed by a setup onto a network that host is not on. A
   browser that mistyped the token signs in with Use BOOT Tap Once on the
@@ -472,7 +487,8 @@ hold keeps; and the per-address lockout's ways out.
   section above: a tap clears an address only when it is served to that
   address's ask, and the flagship's tap still goes to the first asker,
   F354; under that host the hold is no way out unless the unit is then set
-  up on a network that host is not on, and that section gives the WAP's
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives the WAP's
   ways out with their caveats.) The dashboard now drops a token
   the device refuses (a `401`, or `403 {"error":"forbidden"}`) and shows its
   unlock banner again, saying the token was refused, as the WAP's page does;
@@ -524,8 +540,9 @@ hold keeps; and the per-address lockout's ways out.
   Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
   section above: a browser that mistyped the token signs in with Use BOOT
   Tap Once, since a tap clears only the address it is served to; under that
-  host the hold is no way out, and that section gives the ways out with
-  their caveats.) Clients behind one address share a
+  host the hold is no way out, the iPhone app does not reach a WAP's
+  Bluetooth lane today, ledger A65, and that section gives the ways out
+  with their caveats.) Clients behind one address share a
   backoff, and a deliberate LAN denial is not closed (a landing session's
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
@@ -618,7 +635,8 @@ hold keeps; and the per-address lockout's ways out.
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
   bonded Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
   section above: a tap clears an address only when it is served to that
-  address's ask; under that host the hold is no way out, and that section
+  address's ask; under that host the hold is no way out, the iPhone app
+  does not reach a WAP's Bluetooth lane today, ledger A65, and that section
   gives the ways out with their caveats.) **Host-tested**
   (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the

@@ -3217,9 +3217,10 @@
   up there again its next strikes from nine addresses fill the slots and
   arm the overflow, while the claim that pairs the phone frees only the
   phone's own slot. The way out is the one that takes away the attacker's
-  reach (a network that host is not on), which on the WAP the bonded
-  Bluetooth lane gives with no hold, while that host leaves the lane alone
-  (the next two bullets). Run the attack again from the state
+  reach (a network that host is not on), which on the WAP the owner's own
+  browser gives with no hold (its landing session reaches
+  `POST /api/wifi/connect` under the lockout), while that host leaves it
+  alone (the next three bullets). Run the attack again from the state
   the remedy leaves before listing it. And a sentence in the security model
   needs a row of its own even when it reads as obvious: "a served tap
   clears only the contention, not the addresses" had none, and clearing
@@ -3242,7 +3243,10 @@
   routes of the attack you have in mind. The first review judged the lane
   against pairing and bounded the host by radio range; the same landing
   session turns the WAP's Bluetooth off, a saved setting the 10 s hold
-  keeps, or deletes the phone's bond, from anywhere on the network. List
+  keeps, or deletes the phone's bond, from anywhere on the network; the
+  owner's own landing session reaches the same routes, and
+  `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
+  on, or move the WAP with no Bluetooth at all. List
   the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
   it would change), and a denial's length by what the attacker pays: a
   refused write the lane does not charge keeps the owner's refused for as
@@ -3251,6 +3255,18 @@
   scenario said the WAP's hold clears the saved Wi-Fi and the broker login,
   which it removes from NVS, leaving their bytes in flash, as the same
   paragraph already said of the flagship's key.
+- **Found in #1843's third review:** a way out is judged by the client
+  that has to take it, not only by the firmware that would answer. Every
+  list named the iPhone's bonded Bluetooth lane first, and the WAP's CREDS
+  write is real, but the iPhone app dials only a Canary that advertises the
+  console service, which a WAP does not, so it never reaches that write;
+  the same ledger already held it open as A65. Search the ledger's open
+  items for the remedy before offering it. And a tier qualifier has to come
+  from what the tier encrypts: "readable on the default tier" told a reader
+  the secure tier hides those bytes, and flash encryption does not cover
+  NVS, whose encryption is not available under `framework = arduino`, so
+  the erased Wi-Fi and broker passwords, the bonds and both trees' keys are
+  plaintext on the flash chip of a fused board too.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

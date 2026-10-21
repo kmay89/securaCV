@@ -448,30 +448,42 @@ stated, bounded to coarse claims, and revocable.
   What that buys an attacker (forward forgery yes, rewriting anchored history
   no) is stated in [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
 - **Secure tier: PARTIAL PASS.** Secure boot prevents firmware replacement;
-  flash encryption prevents data extraction without device cooperation.
+  flash encryption keeps the app image from being read off the chip, but it
+  does not cover NVS (ESP-IDF encrypts the app, OTA-data and NVS-key
+  partitions), and the NVS encryption that would is not available under
+  `framework = arduino`, which the canary-wap sketch and the
+  `firmware/canary` flagship build with (the O2 bullet in the Opera mesh
+  section below). So on those trees everything NVS holds, the identity key
+  among it, is still plaintext on the flash chip of a fused board (the
+  flagship reports it as `key_at_rest`, always `plaintext-nvs` today:
+  [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default)).
 - A factory reset before the seizure does not destroy the data, on either
-  tier. The canary-wap's 10 s BOOT hold removes the saved Wi-Fi networks
-  and their passwords, the broker settings (its user, password and CA among
+  tier. The canary-wap's 10 s BOOT hold removes the saved Wi-Fi networks and
+  their passwords, the broker settings (its user, password and CA among
   them) and the device name from NVS, but NVS only marks each entry erased,
-  and the bytes stay in flash until NVS erases that page to reuse it: on
-  the default tier the home network's password and the broker's are still
-  readable after the hold, until a full erase in either flasher removes
+  and the bytes stay in flash until NVS erases that page to reuse it: the
+  home network's password and the broker's are still plaintext in flash
+  after the hold, on every tier today (NVS is plaintext on a fused board
+  too, the secure-tier bullet above), and on the default tier, whose flash
+  is readable on a bench, a full erase in either flasher is what removes
   them. The hold keeps the identity key, the chain state, the witness
-  records and the health log on SD, the API token, and the Bluetooth
-  bonds: each bonded phone's keys stay in NVS, as readable from flash on
-  the default tier as the rest of it, and a bonded peer keeps the lane that
-  changes the WAP's Wi-Fi. Removing the paired phones
-  (`DELETE /api/bluetooth/paired` one at a time or
-  `/api/bluetooth/paired/all`) forgets their bonds, which ends a bonded
+  records and the health log on SD, the API token, the HTTPS certificate and
+  its private key (NVS `tls_cert` and `tls_key`, which the next boot loads
+  again; the iPhone app pins that certificate, so a seizer who reads the key
+  can present the WAP's own certificate to it), and the Bluetooth bonds:
+  each bonded phone's keys stay in NVS, plaintext in flash as the rest of it
+  is, and a bonded peer keeps the lane that changes the WAP's Wi-Fi.
+  Removing the paired phones (`DELETE /api/bluetooth/paired` one at a time
+  or `/api/bluetooth/paired/all`) forgets their bonds, which ends a bonded
   peer's lane, but those are NVS entries erased the same way, so the keys'
-  bytes stay in flash the same way. No hold sheds its key (a
-  clean install, a full erase in either flasher, is its way to a new
-  identity). The `firmware/canary` flagship's 10 s hold keeps the identity
-  key and the chain state too; only its further stage, BOOT held on to
-  30 s, sheds them, by clearing its NVS namespace. That clear does not
-  remove the key's bytes either: they stay in flash until NVS erases that
-  page to reuse it, so on the default tier a full erase in either flasher
-  is what removes the key. Neither hold erases the SD card.
+  bytes stay in flash the same way. No hold sheds its key (a clean install,
+  a full erase in either flasher, is its way to a new identity). The
+  `firmware/canary` flagship's 10 s hold keeps the identity key and the
+  chain state too; only its further stage, BOOT held on to 30 s, sheds them,
+  by clearing its NVS namespace. That clear does not remove the key's bytes
+  either: they stay in flash, plaintext on every tier today, until NVS
+  erases that page to reuse it, and on the default tier a full erase in
+  either flasher is what removes the key. Neither hold erases the SD card.
 
 **LIMITATION:** A sufficiently resourced adversary with physical access
 can potentially bypass ESP32 secure boot (active area of research).
@@ -1389,7 +1401,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   cosigner" rule are enforced by the originating firmware, not on receive.
   So they stop a caller of the device's REST API who is not physically at
   the device. They do not stop anyone holding that device's Ed25519 private
-  key (readable from flash on the default tier — Scenario 4 above): with it,
+  key (plaintext in NVS on every tier today, so on the flash chip of a
+  fused board too — Scenario 4 above): with it,
   a solo ALERT, or a solo CANCEL naming a live alarm's clear-text header
   nonce, can be signed on any ESP32 in radio range, and every set member in
   range accepts it. Nor do they stop software running on the device itself.

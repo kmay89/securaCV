@@ -160,13 +160,16 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   mistyped the token signs in with Use BOOT Tap Once. Under a host striking from 9 or more
   addresses the hold is no way out: it empties the table, as any restart does, but once the
   unit is set up on the same network again that host's next strikes hold every untracked
-  address again. The way out is the bonded Bluetooth lane to a network that host is not on,
-  or waiting until it stops. The lane holds only while that host leaves it alone, and taking
-  it away needs no radio: any landing session (F346) can turn the WAP's Bluetooth off, a saved
-  setting that restarts and the 10 s hold keep, or delete the phone's bond, and a host also in
-  radio range can besides bond a peer of its own and write the lane itself. The owner's own
-  landing session can move the WAP too (`POST /api/wifi/connect`). `magic_pairing.md` §3.7
-  has the whole posture.) Clients behind one address share a backoff, and a
+  address again. The way out is to change the WAP's Wi-Fi from a browser to a network that
+  host is not on (the landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), or waiting until it stops. That holds only while that host leaves it alone:
+  it can mint sessions until the owner's is evicted, and a host also in radio range can bond a
+  Bluetooth peer of its own and write the WAP back to a network it is on over the bonded lane.
+  The iPhone's bonded Bluetooth lane is no way out today: the iPhone app never dials a WAP's
+  lane (ledger A65, open). Once that is settled the lane holds only while that host leaves it
+  alone, and taking it away needs no radio: any landing session can turn the WAP's Bluetooth
+  off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
+  `magic_pairing.md` §3.7 has the whole posture.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
   connection purge; `magic_pairing.md` §3.7). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*

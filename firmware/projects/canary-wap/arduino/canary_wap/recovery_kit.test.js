@@ -38,7 +38,9 @@
 //     asks first and signs in on the next tap; the Settings save
 //     says the same instead of "HTTP 409"; neither sends the owner to the
 //     token box (on a cookie page it still takes the cookie's word), and
-//     the 10 s hold is said to clear what it clears; the dashboard's
+//     the 10 s hold is said to clear what it clears, the dashboard's
+//     saying to check its Bluetooth switch first (a saved Bluetooth-off
+//     outlives the hold, #1843); the dashboard's
 //     timeout line sends the owner to click before the press (its old
 //     "Press BOOT and click above" was the press-first order the arbiter
 //     cannot protect); the
@@ -615,6 +617,36 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.doesNotMatch(text, /paste|token box|type the token/i,
       'on a cookie page the token box still takes the cookie\'s word for a token');
     assert.ok(d.api);
+  });
+
+  it("the contention copy says to check Bluetooth before the hold, by a switch the dashboard has (#1843)", () => {
+    // Any landing session can turn the WAP's Bluetooth off (F346), a saved
+    // setting the hold leaves alone, and while it is off every link is
+    // dropped: followed then, the advice clears the Wi-Fi and leaves the
+    // iPhone app nothing to set up. So the copy says to look first.
+    const fn = uiFunction(read(UI), 'tapContendedText');
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
+    const check = text.indexOf('Before the hold, check that Bluetooth Enabled is on under Settings → Bluetooth: ' +
+                               'the hold does not turn it back on, and with it off the iPhone app cannot set the Canary up.');
+    assert.ok(check > text.indexOf('hold BOOT for 10 seconds'), text);
+    // The switch it names, where it says: Settings, then Bluetooth, then
+    // the Bluetooth Enabled toggle in that sub-panel.
+    const ui = read(UI);
+    assert.match(ui, /<button class="nav-btn" data-panel="settings">Settings<\/button>/);
+    assert.match(ui, /onclick="switchSettingsTab\('bluetooth'\)">[^<]*Bluetooth<\/button>/);
+    const panel = ui.indexOf('<div class="sub-panel" id="settings-bluetooth">');
+    const next = ui.indexOf('<div class="sub-panel"', panel + 1);
+    const sw = ui.indexOf('<div class="toggle-title">Bluetooth Enabled</div>');
+    assert.ok(panel > 0 && sw > panel && (next < 0 || sw < next), 'the Bluetooth Enabled switch sits in Settings → Bluetooth');
+    assert.match(ui.slice(sw, next < 0 ? undefined : next), /id="btEnabled" onchange="toggleBtEnabled\(\)"/);
+    // "Does not turn it back on": the hold's own function leaves Bluetooth's
+    // saved switch alone (canary_wap.ino factory_reset_by_hold()).
+    const ino = read(path.join(__dirname, 'canary_wap.ino'));
+    const at = ino.indexOf('static void factory_reset_by_hold() {');
+    assert.ok(at > 0, 'factory_reset_by_hold() not found');
+    const hold = ino.slice(at, ino.indexOf('\n}\n', at));
+    assert.match(hold, /wifi_clear_credentials\(\)/, 'the cut is the hold');
+    assert.doesNotMatch(hold, /bluetooth|BT_ENABLED|bt_enabled/i);
   });
 });
 

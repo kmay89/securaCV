@@ -2447,7 +2447,9 @@ so — see D2 below.)
       first, then waiting until it stops, and say the hold empties the
       table but reopens that door, so it is for a host known to be on the
       network only, with the phone ready (the third round, below, takes the
-      hold out of that list). "Or taps BOOT, which clears its
+      hold out of that list; #1843's third review, below, puts the owner's
+      browser first, since the iPhone app does not reach a WAP's lane,
+      A65). "Or taps BOOT, which clears its
       address" is now "signs in with Use BOOT Tap Once": the WAP clears an
       address only when the tap is served to that address's own ask
       (`auth_record_success()` after the take), and a bare tap goes to
@@ -2459,6 +2461,10 @@ so — see D2 below.)
       4.4.7 and 5.5.1), so the key's bytes stay in flash until NVS erases
       that page to reuse it; on the default tier a full erase in either
       flasher is what removes the key. The CHANGELOG says so too.
+      (Corrected by #1843's third review: the bytes are plaintext on every
+      tier today, since flash encryption does not cover NVS and NVS
+      encryption is not available under `framework = arduino`; "on the
+      default tier" now qualifies only the erase.)
     - The receipt's truncated-claim branch had no row that told it apart:
       with `|| got == ESP_ERR_HTTPD_RESULT_TRUNC` deleted every suite
       passed, because a value that never reaches `take()` spends nothing
@@ -2500,6 +2506,9 @@ so — see D2 below.)
       caveat is in #1843's first and second reviews' bullets, below), or
       waiting; on the flagship, waiting, or the hold followed by a setup
       onto a network that host is not on. F343's entry has the amendment.
+      (Corrected by #1843's third review: the iPhone app does not reach a
+      WAP's lane, A65, so the docs now lead with the owner's browser; its
+      bullet below.)
     - No row held that a served tap keeps the askers on record
       (`SECURITY_MODEL.md`: "a served tap clears only the contention, not
       the addresses"): clearing both entries at a TAKE passed every suite,
@@ -2549,7 +2558,8 @@ so — see D2 below.)
       (Corrected by #1843's second review: radio range is no bound, since
       any landing session can take the lane away with no radio, and three
       CHANGELOG amendments named the lane with no caveat; the second
-      round's bullet below.)
+      round's bullet below. And by its third review: the iPhone app does
+      not reach a WAP's lane at all, A65; the third round's bullet below.)
     - `stopKitSave()`'s `if (!ctl) return;` had no row. Every row tapped
       Save first, so with the guard deleted all 61 tests passed, while
       every pane change with no save running threw (`null.abort()`): the
@@ -2614,7 +2624,9 @@ so — see D2 below.)
       section, the two audit files' amendments, F346's note and
       `LESSONS_LEARNED.md` now say so, and that the owner's own landing
       session reaches the same routes and `POST /api/wifi/connect`, so the
-      owner's browser can move the WAP too. The same saved Bluetooth-off
+      owner's browser can move the WAP too. (Corrected by #1843's third
+      review: F346's note and `LESSONS_LEARNED.md` did not name the owner's
+      route; both do now.) The same saved Bluetooth-off
       makes the hold's setup door a denial for a host only on the network
       (no phone reaches the door; the kit and the console still work), and
       the tap paragraph in `SECURITY_MODEL.md`, `THREAT_MODEL.md`'s receipt
@@ -2632,7 +2644,8 @@ so — see D2 below.)
       password and the broker's stay readable in flash until NVS reuses
       the page, or a full erase; the scenario says so, and that removing
       the paired phones forgets their bonds the same way. The CHANGELOG's
-      F342 section says so too.
+      F342 section says so too. (Corrected by #1843's third review: they
+      stay plaintext in flash on every tier today; its bullet below.)
     - The check after the companion's body read was held only by the
       source pin "the handler builds no download of its own": the
       harness's body read always rejected once the save was aborted. The
@@ -2648,6 +2661,79 @@ so — see D2 below.)
       (`CHANGELOG.md` was in the diff).
     - Counts now: `recovery_kit.test.js` 64 tests, the sketch's
       `*.test.js` 190. Host-tested; not run on a device.
+  - Follow-up review fixes, third round (#1843). In the firmware, one
+    sentence of the dashboard's copy (`web_ui.h`, and its gzip copy); a row
+    and docs besides.
+    - Every list of the WAP's ways out from under a host striking from nine
+      or more addresses named the iPhone's bonded Bluetooth lane first, and
+      the iPhone app never reaches it on a WAP. `BLEConsole.swift` dials
+      only a peripheral whose advert carries the console service
+      (`8fc1cee0-…`, its `guard advertised.contains(Self.consoleServiceUUID)`),
+      and no WAP advert carries it: the beacon's scan response carries the
+      SCV UUID, or Improv's while the setup door is open (`ble_opera.h`),
+      and `bluetooth_channel.cpp` adds its own `8fc1ceca-…`. So
+      `writeWiFiCredentials()` answers `.unreachable` for a WAP, as A65
+      (open, below) already said. The way out that works is the owner's
+      browser: the landing page's session reaches `POST /api/wifi/connect`
+      (`wifi_change_authorize()` takes it through `api_auth_check()`, which
+      takes the cookie before the bearer and its lockout). `SECURITY_MODEL.md`,
+      `magic_pairing.md` §3.7, the CHANGELOG's F342 section,
+      `SECURITY-AUDIT.md`'s and `esp32s3_firmware_full_audit_2026-07.md`'s
+      F343 notes and F343's posture (its fifth amendment) now lead with
+      that route and waiting, give the route its own caveats (a host that
+      keeps minting sessions evicts the oldest of the eight slots in
+      `csi_integration.cpp`, the owner's among them; a host also in radio
+      range can bond a peer through its session and write the WAP back
+      over CREDS), and name the iPhone's lane only as no way out until A65
+      is settled. The CHANGELOG's three F343-section amendments say the
+      iPhone app does not reach a WAP's lane (A65) and point to the F342
+      section; F346's note and `LESSONS_LEARNED.md` name the owner's
+      route; and A65 says F343's posture waits on it. The hold's sentence
+      in `SECURITY_MODEL.md` and `magic_pairing.md`, which said the bonded
+      lane makes a setup onto another network without the hold, now says
+      the owner's browser does.
+    - `THREAT_MODEL.md` Scenario 4 limited each "readable from flash"
+      statement to the default tier, and NVS is plaintext on a fused board
+      too: flash encryption encrypts the app, OTA-data and NVS-key
+      partitions, and NVS encryption is not available under
+      `framework = arduino`, which both the WAP and the flagship build
+      with (`THREAT_MODEL.md`'s own O2 bullet and `SECURITY_MODEL.md`'s
+      `key_at_rest`). The erased Wi-Fi and broker passwords, the bonds and
+      the flagship's cleared key stay plaintext in flash on every tier
+      today, and the scenario, the CHANGELOG and the bullets above now say
+      so ("on the default tier" is left qualifying only a full erase in
+      either flasher, the way to remove them there). The
+      scenario's older secure-tier line, "flash encryption prevents data
+      extraction", now says what flash encryption leaves out, and the
+      beacon section's pointer to the scenario ("readable from flash on the
+      default tier", of the WAP's identity key) now says the key is
+      plaintext in NVS on every tier.
+    - The scenario's list of what the WAP's hold keeps left out the HTTPS
+      certificate and its private key (NVS `tls_cert`, `tls_key`), which
+      `factory_reset_by_hold()` leaves and the next boot loads again, and
+      which the iPhone app pins; the scenario and the CHANGELOG now list
+      them.
+    - The poller's last way out, the hold and a fresh iPhone setup, lacked
+      the saved Bluetooth-off in two copies: the CHANGELOG's F342
+      paragraph, and the dashboard's own advice (`tapContendedText()`),
+      which said to hold BOOT and set up from the iPhone right away.
+      Followed with Bluetooth off, that advice clears the Wi-Fi and leaves
+      the iPhone app nothing to set up. The copy now ends "Before the hold,
+      check that Bluetooth Enabled is on under Settings → Bluetooth: the
+      hold does not turn it back on, and with it off the iPhone app cannot
+      set the Canary up."; the CHANGELOG says so. A row in
+      `recovery_kit.test.js` holds the sentence after the hold's, the
+      switch where it names it (Settings, the Bluetooth sub-panel, the
+      Bluetooth Enabled toggle wired to `toggleBtEnabled()`), and
+      `factory_reset_by_hold()` free of any Bluetooth key; the copy before
+      this fails it.
+    - The second round's bullet said F346's note and `LESSONS_LEARNED.md`
+      named the owner's own route; neither did. Both do now.
+    - Counts now: `recovery_kit.test.js` 65 tests, the sketch's
+      `*.test.js` 191. `web_assets_gz.h` regenerated (the dashboard's gzip
+      is 65,017 bytes, 64,941 before; the companion's 48,621, unchanged);
+      `gen_wap.py` leaves `wap.json` unchanged and `gen_csp.py --check`
+      passes. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2803,6 +2889,22 @@ so — see D2 below.)
   phone reaches the setup door the hold reopens, a denial in which the
   kit's token and the console still work. The sentence the docs use now
   says so. From code; not probed.
+  *Amended a fifth time 2026-10-21 (#1843's third review):* the lane is no
+  way out the owner can take today. The iPhone app dials only a Canary
+  whose advert carries the console service (`BLEConsole.swift`), and a WAP
+  advertises the SCV UUID, Improv's or the pairing service's, never the
+  console's, so the app never writes a WAP's CREDS (A65, open). The way out
+  that works is the owner's browser: the landing page's session reaches
+  `POST /api/wifi/connect` under the lockout (above). It too holds only
+  while that host leaves it alone: the landing page mints that host
+  sessions as well, and the eight slots evict the oldest
+  (`csi_integration.cpp`), so a host that keeps minting can end the
+  owner's session before its save; and a host also in radio range can bond
+  a peer and write the WAP back to a network it is on over CREDS. The
+  sentence the docs use now: on the WAP, change its Wi-Fi from a browser
+  to a network that host is not on, or wait until it stops, with those
+  caveats; the iPhone's lane is named as no way out until A65 is settled,
+  and with the caveats above for when it is. From code; not probed.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
@@ -2915,6 +3017,12 @@ so — see D2 below.)
   keeps writing keeps the lane refused for as long as it writes, since a
   refused write is not charged. So the decision bears on those routes too.
   From code; not probed.
+  *(2026-10-21, #1843's third review:)* the owner's own landing session
+  reaches the same routes, and `POST /api/wifi/connect`
+  (`wifi_change_authorize()` through `api_auth_check()`), so the owner's
+  browser can turn Bluetooth back on, or move the WAP with no Bluetooth at
+  all. That browser is the WAP's way out under F343's lockout while the
+  iPhone app does not reach a WAP's lane (A65). From code; not probed.
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,
@@ -16794,6 +16902,17 @@ so — see D2 below.)
   `ble_config.h`) and discover the console service by UUID once connected, or
   remove the lane and every sentence that offers it. Needs a WAP on a bench to
   settle (U1). Found by the 2026-10 cleanup's iOS package.
+  *(2026-10-21, #1843's third review:)* F343's posture waits on this: until
+  it is settled, the WAP's way out from under a host striking from nine or
+  more addresses is the owner's browser (the landing page's session and
+  `POST /api/wifi/connect`), not this lane, and the docs say so. The
+  companion page (`companion_pwa.h`) writes the same CREDS over Web
+  Bluetooth, but its chooser filters on the name prefix `SecuraCV` alone,
+  while a WAP advertises `SCV-` and four characters in its scan response,
+  or `WAP-` and four while the setup door is open (`ble_opera.h`,
+  `ble_improv.cpp`), and its GAP name defaults to `SecuraCV-Canary`
+  (`bluetooth_channel.cpp`); whether a WAP is listed there is for the same
+  bench.
 - [ ] **A66 [code+human] AccessorySetupKit spike for the nearby card.** On iOS
   18, AccessorySetupKit shows a system picker for a matched accessory and
   grants Bluetooth access to that device alone, in place of the app-wide

@@ -3030,7 +3030,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
              'the token each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
              '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
              'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
-             'first phone or computer nearby that connects.';
+             'first phone or computer nearby that connects. Before the hold, check that Bluetooth Enabled is on ' +
+             'under Settings → Bluetooth: the hold does not turn it back on, and with it off the iPhone app ' +
+             'cannot set the Canary up.';
     }
 
     async function requestFromDevice() {
