@@ -47,6 +47,14 @@ export function consumeForOrder(db, order) {
   return done;
 }
 
+// Undoing a pack puts back exactly what packing took: the net of this
+// order's pack/unpack moves per SKU, so pack → unpack → pack never double-counts.
+export function releaseForOrder(db, order) {
+  const net = db.all('SELECT sku, SUM(delta) AS d FROM inventory_moves WHERE ref = ? AND reason IN (\'pack\',\'unpack\') GROUP BY sku HAVING SUM(delta) <> 0', `order:${order.number}`);
+  for (const r of net) move(db, r.sku, -r.d, 'unpack', `order:${order.number}`);
+  return net.map(r => [r.sku, -r.d]);
+}
+
 // How many of each sellable SKU can be built from what is on the shelf —
 // the honest number behind store.json's per-batch `stock`.
 export function buildable(db, finishedSku) {

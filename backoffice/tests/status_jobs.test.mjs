@@ -76,3 +76,11 @@ test('backups are consistent copies with retention', () => {
   copy.close(); rmSync(dir, { recursive: true });
 });
 import { openDb as _openDb } from "../src/db.mjs"; function await_import_sync() { return { openDb: _openDb }; }
+
+test('a probe target that stalls while sending its body hits the same deadline', async () => {
+  const db = testDb(); const cfg = testCfg();
+  const p = upsertProbe(db, { name: 'Stall', url: 'https://x.test/', expect_text: 'ok' });
+  const stalled = async () => ({ status: 200, text: () => new Promise(() => {}) });
+  const r = await runProbe(db, p, { fetchImpl: stalled, cfg, timeoutMs: 50 });
+  assert.ok(!r.ok); assert.equal(r.detail, 'timeout');
+});

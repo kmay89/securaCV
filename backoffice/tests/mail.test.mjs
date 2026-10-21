@@ -63,3 +63,9 @@ test('the SMTP client authenticates, dot-stuffs and delivers; the outbox suppres
   // no SMTP configured → nothing is sent, nothing is lost
   assert.equal((await sendOutbox(db, testCfg({ smtpUrl: '' }))).skipped, 1);
 });
+
+test('smtp:// fails closed when the relay does not offer STARTTLS', async () => {
+  const { server, port } = await fakeSmtp();
+  await assert.rejects(smtpSend(`smtp://u:p@127.0.0.1:${port}`, { from: 'x@y.test', to: 'a@b.test', raw: 'x' }), /does not offer STARTTLS/);
+  server.close();
+});

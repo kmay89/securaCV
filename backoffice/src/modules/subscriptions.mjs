@@ -19,6 +19,11 @@ export function upsertSubscription(db, s) {
   return db.get('SELECT * FROM subscriptions WHERE id = ?', r.lastInsertRowid);
 }
 // A paid invoice for a subscription is services revenue.
-export const postSubscriptionPayment = (db, { external_id, amount_cents, date }) => postTransaction(db, { date, legs: [{ account: 'assets:stripe', debit: amount_cents }, { account: 'income:services', credit: amount_cents }], memo: `subscription ${external_id}`, ref: `subscription:${external_id}:${date}`, source: 'stripe' });
+// Keyed by the Stripe invoice id, so a redelivered invoice.paid posts nothing twice.
+export function postSubscriptionPayment(db, { external_id, invoice_id, amount_cents, date }) {
+  const ref = `subscription:${external_id}:${invoice_id || date}`;
+  if (db.get('SELECT id FROM ledger WHERE ref = ?', ref)) return null;
+  return postTransaction(db, { date, legs: [{ account: 'assets:stripe', debit: amount_cents }, { account: 'income:services', credit: amount_cents }], memo: `subscription ${external_id}`, ref, source: 'stripe' });
+}
 export const listSubscriptions = (db) => db.all('SELECT s.*, c.email, c.org FROM subscriptions s LEFT JOIN contacts c ON c.id = s.contact_id ORDER BY s.status = \'active\' DESC, s.current_period_end');
 export const mrrCents = (db) => db.get('SELECT COALESCE(SUM(CASE WHEN interval = \'year\' THEN amount_cents / 12 ELSE amount_cents END),0) AS c FROM subscriptions WHERE status = \'active\'').c;

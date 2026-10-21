@@ -5,6 +5,8 @@ COPY package.json ./
 COPY bin ./bin
 COPY src ./src
 ENV NODE_ENV=production BACKOFFICE_DATA_DIR=/data BACKOFFICE_HOST=0.0.0.0 BACKOFFICE_PORT=8787
+# The volume is created root-owned by the runtime; the process runs as `node`.
+RUN mkdir -p /data && chown node:node /data
 VOLUME ["/data"]
 EXPOSE 8787
 USER node

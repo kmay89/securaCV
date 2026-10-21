@@ -35,7 +35,8 @@ export function eventToOrder(event) {
       unit_cents: li.price?.unit_amount ?? Math.round((li.amount_subtotal || 0) / (li.quantity || 1)),
     }));
     return {
-      kind: 'order', external_id: o.id, source: 'stripe',
+      kind: 'order', external_id: o.id, payment_intent: typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id || null, source: 'stripe',
+      line_items_present: Array.isArray(o.line_items?.data),
       email: o.customer_details?.email || o.customer_email || '', name: o.shipping_details?.name || o.customer_details?.name || '',
       currency: o.currency || 'usd',
       subtotal_cents: o.amount_subtotal ?? 0, shipping_cents: o.total_details?.amount_shipping ?? o.shipping_cost?.amount_total ?? 0,
@@ -44,7 +45,7 @@ export function eventToOrder(event) {
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
     };
   }
-  if (type === 'charge.refunded') return { kind: 'refund', external_id: o.payment_intent || o.id, refunded_cents: o.amount_refunded ?? 0 };
+  if (type === 'charge.refunded') return { kind: 'refund', external_id: (typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id) || o.id, charge: o.id, refunded_cents: o.amount_refunded ?? 0 };
   if (type.startsWith('customer.subscription.')) {
     const item = o.items?.data?.[0];
     return { kind: 'subscription', external_id: o.id, customer: o.customer, status: o.status,
@@ -55,6 +56,22 @@ export function eventToOrder(event) {
   }
   if (type === 'payout.paid') return { kind: 'payout', external_id: o.id, amount_cents: o.amount ?? 0, arrival: o.arrival_date ? new Date(o.arrival_date * 1000).toISOString().slice(0, 10) : null, currency: o.currency || 'usd' };
   return { kind: 'ignore', type };
+}
+
+// A plain checkout.session.completed webhook does not carry line_items (they
+// are expandable, never inline). With an API key we fetch them; without one
+// the order is recorded empty and an exception names it (orders.mjs refuses
+// to pack an order with no items, so nothing ships blind).
+export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {}) {
+  if (!cfg.stripeApiKey) return null;
+  const r = await fetchImpl(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}/line_items?limit=100&expand[]=data.price.product`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
+  if (!r.ok) throw new Error(`stripe line_items ${r.status} for ${sessionId}`);
+  const body = await r.json();
+  return (body.data || []).map(li => ({
+    sku: li.price?.product?.metadata?.sku || li.price?.metadata?.sku || li.price?.product?.name || li.description,
+    name: li.description || li.price?.product?.name || 'item', qty: li.quantity || 1,
+    unit_cents: li.price?.unit_amount ?? Math.round((li.amount_subtotal || 0) / (li.quantity || 1)),
+  }));
 }
 
 // --- the CSV path. Stripe's Payments export headers vary by dashboard

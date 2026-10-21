@@ -3,7 +3,7 @@
 // HTML escaping. No framework — the whole thing is readable in one sitting.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
-export const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const escapeHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 export class HttpError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; Object.assign(this, extra); }
@@ -91,7 +91,9 @@ export class Router {
 // --- responses
 export function send(res, status, body, headers = {}) {
   const buf = typeof body === 'string' ? Buffer.from(body) : body;
-  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', ...headers });
+  const { 'Content-Type': contentType = 'text/plain; charset=utf-8', ...rest } = headers;
+  res.setHeader('Content-Type', contentType);
+  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', ...rest });
   res.end(buf);
 }
 export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...headers });

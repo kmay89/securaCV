@@ -71,22 +71,27 @@ export function login(db, password, code, { sessionHours = 12 } = {}) {
 export const sessionFor = (db, id) => id ? db.get('SELECT * FROM sessions WHERE id = ? AND expires_at > ?', id, nowIso()) : null;
 export const logout = (db, id) => db.run('DELETE FROM sessions WHERE id = ?', id);
 
-// --- API tokens: 32 random bytes, stored as an HMAC under the app secret so
-// neither the DB alone nor the secret alone verifies one. A bearer token is
-// high-entropy by construction, so a key-derivation function is not needed
-// (and would cost 50 ms on every API call); the HMAC keeps it unrecoverable.
-const appSecret = (db) => db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
-const tokenTag = (db, bearer) => createHmac('sha256', appSecret(db)).update(String(bearer)).digest('hex');
+// --- API tokens: `bo_<id>.<secret>`. The id finds the row; the secret is
+// verified against a scrypt hash (the same KDF as the password, a lighter
+// cost: ~10 ms per API call). A copy of the table verifies nothing.
+const TOKEN_SCRYPT = { N: 4096, r: 8, p: 1 };
+const tokenHash = (secret, salt = randomBytes(16)) => `scrypt$${salt.toString('base64')}$${scryptSync(String(secret), salt, 32, TOKEN_SCRYPT).toString('base64')}`;
+function tokenVerify(secret, stored) {
+  const [, salt, key] = String(stored || '').split('$'); if (!salt || !key) return false;
+  const got = scryptSync(String(secret), Buffer.from(salt, 'base64'), 32, TOKEN_SCRYPT); const want = Buffer.from(key, 'base64');
+  return got.length === want.length && timingSafeEqual(got, want);
+}
 export function createApiToken(db, name) {
-  const t = 'bo_' + token(32);
-  db.run('INSERT INTO api_tokens (name, token_hash, created_at) VALUES (?, ?, ?)', name, tokenTag(db, t), nowIso());
+  const id = token(9); const secret = token(32);
+  db.run('INSERT INTO api_tokens (name, token_id, token_hash, created_at) VALUES (?, ?, ?, ?)', name, id, tokenHash(secret), nowIso());
   db.audit('cli', 'auth.token.create', 'api_token', name);
-  return t;
+  return `bo_${id}.${secret}`;
 }
 export function apiTokenFor(db, bearer) {
-  if (!bearer) return null;
-  const row = db.get('SELECT * FROM api_tokens WHERE token_hash = ?', tokenTag(db, bearer));
-  if (row) db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', nowIso(), row.id);
+  const m = /^bo_([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(String(bearer || '')); if (!m) return null;
+  const row = db.get('SELECT * FROM api_tokens WHERE token_id = ?', m[1]);
+  if (!row || !tokenVerify(m[2], row.token_hash)) return null;
+  db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', nowIso(), row.id);
   return row;
 }
 export const revokeApiToken = (db, name) => db.run('DELETE FROM api_tokens WHERE name = ?', name).changes;

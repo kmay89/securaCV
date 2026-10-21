@@ -52,3 +52,14 @@ test('the fulfill.mjs CSV carries one row per item with the catalog SKU', () => 
   assert.ok(lines[1].startsWith('EL-000001,ada@example.test,Ada Lovelace,wap-kit,2,'));
   assert.equal(listOrders(db, { q: 'Lovelace' }).length, 1);
 });
+
+test('undoing a pack restores exactly what packing took; an order with no items cannot be packed', () => {
+  const db = testDb();
+  upsertItem(db, { sku: 'xiao-esp32s3', name: 'XIAO', on_hand: 5 }); setRecipe(db, 'wap-kit', { 'xiao-esp32s3': 1 });
+  const { order } = recordOrder(db, sampleOrder({ items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }] }), { catalog: catalog() });
+  transition(db, order.id, 'packed'); assert.equal(item(db, 'xiao-esp32s3').on_hand, 3);
+  transition(db, order.id, 'paid'); assert.equal(item(db, 'xiao-esp32s3').on_hand, 5, 'unpack put both back');
+  transition(db, order.id, 'packed'); assert.equal(item(db, 'xiao-esp32s3').on_hand, 3, 'a second pack consumes once, not twice');
+  const empty = recordOrder(db, sampleOrder({ external_id: 'cs_empty', items: [] }), { catalog: catalog() }).order;
+  assert.throws(() => transition(db, empty.id, 'packed'), /no line items/);
+});

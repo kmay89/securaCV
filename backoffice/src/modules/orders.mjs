@@ -5,7 +5,7 @@
 import { nowIso } from '../db.mjs';
 import { upsertContact } from './contacts.mjs';
 import { resolveSku, cogsCents } from './catalog.mjs';
-import { consumeForOrder } from './inventory.mjs';
+import { consumeForOrder, releaseForOrder } from './inventory.mjs';
 import { enqueue, fill } from './mail.mjs';
 import { postSale, postRefund } from './ledger.mjs';
 
@@ -20,7 +20,7 @@ export function weekLabel(d = new Date()) {
 }
 
 export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system' } = {}) {
-  if (o.external_id) { const dup = db.get('SELECT * FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: dup, created: false }; }
+  if (o.external_id) { const dup = db.get('SELECT id FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: orderById(db, dup.id), created: false }; }
   const unknown = [];
   const items = (o.items || []).map(it => {
     const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null;
@@ -32,10 +32,10 @@ export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'sy
     const contact = o.email ? upsertContact(db, { email: o.email, name: o.name || null, source: 'store' }) : null;
     const number = db.nextNumber('EL');
     const paidAt = o.paid_at || nowIso();
-    const r = db.run(`INSERT INTO orders (number, external_id, source, contact_id, status, currency, subtotal_cents, shipping_cents, tax_cents, total_cents,
+    const r = db.run(`INSERT INTO orders (number, external_id, payment_intent, source, contact_id, status, currency, subtotal_cents, shipping_cents, tax_cents, total_cents,
         ship_name, ship_line1, ship_line2, ship_city, ship_state, ship_zip, ship_country, created_at, paid_at, batch, notes)
-      VALUES (?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      number, o.external_id || null, o.source || 'manual', contact?.id ?? null, o.currency || 'usd',
+      VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      number, o.external_id || null, o.payment_intent || null, o.source || 'manual', contact?.id ?? null, o.currency || 'usd',
       o.subtotal_cents || 0, o.shipping_cents || 0, o.tax_cents || 0, o.total_cents || 0,
       o.name || contact?.name || '', o.ship?.line1 || '', o.ship?.line2 || '', o.ship?.city || '', (o.ship?.state || '').toUpperCase(), o.ship?.zip || '', (o.ship?.country || 'US').toUpperCase(),
       nowIso(), paidAt, weekLabel(new Date(paidAt)), o.notes || null);
@@ -49,7 +49,7 @@ export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'sy
 }
 
 export const orderById = (db, id) => { const o = db.get('SELECT o.*, c.email FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id WHERE o.id = ?', id); if (o) o.items = db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', id); return o; };
-export const orderByNumber = (db, n) => { const o = db.get('SELECT id FROM orders WHERE number = ? OR external_id = ?', n, n); return o ? orderById(db, o.id) : null; };
+export const orderByNumber = (db, n) => { const o = db.get('SELECT id FROM orders WHERE number = ? OR external_id = ? OR payment_intent = ?', n, n, n); return o ? orderById(db, o.id) : null; };
 export const listOrders = (db, { status = '', batch = '', q = '', limit = 300 } = {}) => db.all(
   `SELECT o.*, c.email, (SELECT GROUP_CONCAT(qty || '× ' || sku, ', ') FROM order_items i WHERE i.order_id = o.id) AS items_text FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id
    WHERE (? = '' OR o.status = ?) AND (? = '' OR o.batch = ?) AND (? = '' OR o.number LIKE ? OR o.ship_name LIKE ? OR c.email LIKE ? OR o.tracking LIKE ?)
@@ -64,7 +64,8 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
             shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
       to, to, now, to, now, to, now, to, now, id);
-    if (to === 'packed') consumeForOrder(db, o);
+    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); }
+    if (to === 'paid' && o.status === 'packed') releaseForOrder(db, o);
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ? WHERE id = ?', carrier, tracking, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);

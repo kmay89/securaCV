@@ -61,7 +61,11 @@ export async function smtpSend(url, { from, to, raw }, { timeoutMs = 30_000 } = 
   await new Promise((res, rej) => { sock.once(o.tls ? 'secureConnect' : 'connect', res); sock.once('error', rej); });
   await expect([220], 'greeting');
   cmd(`EHLO backoffice`); let ehlo = await expect([250], 'EHLO');
-  if (!o.tls && o.starttls && ehlo.lines.some(l => /STARTTLS/i.test(l))) {
+  if (!o.tls && o.starttls) {
+    // smtp:// means "upgrade to TLS before anything secret". A relay that does not
+    // offer STARTTLS, or a path that strips it, gets no credentials: fail closed.
+    // Plain-text submission is an explicit ?starttls=no, for a loopback relay only.
+    if (!ehlo.lines.some(l => /STARTTLS/i.test(l))) { sock.end(); throw new Error(`smtp: ${o.host} does not offer STARTTLS — use smtps:// (465), or ?starttls=no for a loopback relay`); }
     cmd('STARTTLS'); await expect([220], 'STARTTLS');
     sock = tlsConnect({ socket: sock, servername: o.host });
     await new Promise((res, rej) => { sock.once('secureConnect', res); sock.once('error', rej); });

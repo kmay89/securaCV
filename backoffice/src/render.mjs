@@ -40,11 +40,11 @@ export const NAV = [
   ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/settings', 'Settings'],
 ];
 
-export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true }) {
+export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '' }) {
   const navHtml = nav ? `<nav>${NAV.map(([p, l]) => `<a href="${p}" class="${path === p || (p !== '/' && path.startsWith(p)) ? 'on' : ''}">${l}</a>`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
-<body><header><b>${e(company)}</b>${navHtml}${nav ? '<form method="post" action="/logout" class="inline" style="margin-left:auto"><button class="quiet">Log out</button></form>' : ''}</header>
+<body><header><b>${e(company)}</b>${navHtml}${nav ? `<form method="post" action="/logout" class="inline" style="margin-left:auto"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet">Log out</button></form>` : ''}</header>
 <main>${flashHtml}<h1>${e(title)}</h1>${body}</main><footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer></body></html>`;
 }
 

@@ -22,16 +22,17 @@ export function upsertProbe(db, p) {
 export const listProbes = (db, { publicOnly = false } = {}) => db.all('SELECT * FROM probes WHERE (? = 0 OR public = 1) ORDER BY id', publicOnly ? 1 : 0);
 export const deleteProbe = (db, id) => db.run('DELETE FROM probes WHERE id = ?', id).changes;
 
-export async function runProbe(db, p, { fetchImpl = fetch, cfg = {}, now = nowIso } = {}) {
+export async function runProbe(db, p, { fetchImpl = fetch, cfg = {}, now = nowIso, timeoutMs = 15_000 } = {}) {
   const t0 = Date.now(); let ok = false, detail = '';
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 15_000);
+    // One deadline for headers AND body: a target that stalls mid-body must not stall the scheduler.
     const r = await fetchImpl(p.url, { signal: ctl.signal, redirect: 'follow', headers: { 'user-agent': 'securacv-backoffice-probe/1' } });
-    clearTimeout(timer);
-    const body = p.expect_text ? await r.text() : '';
+    const body = p.expect_text ? await Promise.race([r.text(), new Promise((_, rej) => ctl.signal.addEventListener('abort', () => rej(Object.assign(new Error('timeout'), { name: 'AbortError' }))))]) : '';
     ok = r.status === p.expect_status && (!p.expect_text || body.includes(p.expect_text));
     detail = ok ? `${r.status}` : `${r.status}${p.expect_text && !body.includes(p.expect_text) ? ` (missing "${p.expect_text}")` : ''}`;
   } catch (e) { detail = String(e.name === 'AbortError' ? 'timeout' : e.message || e).slice(0, 200); }
+  finally { clearTimeout(timer); }
   const ms = Date.now() - t0; const at = now();
   db.run('INSERT INTO probe_results (probe_id, at, ok, ms, detail) VALUES (?, ?, ?, ?, ?)', p.id, at, ok ? 1 : 0, ms, detail);
   db.run('UPDATE probes SET last_ok = ?, last_ms = ?, last_at = ?, last_detail = ?, fails = CASE WHEN ? THEN 0 ELSE fails + 1 END WHERE id = ?', ok ? 1 : 0, ms, at, detail, ok ? 1 : 0, p.id);

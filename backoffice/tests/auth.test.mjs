@@ -36,6 +36,8 @@ test('operator setup, login with password + code, sessions and API tokens', () =
   assert.ok(t.startsWith('bo_'));
   assert.equal(apiTokenFor(db, t).name, 'cli');
   assert.equal(apiTokenFor(db, 'bo_bad'), null);
+  assert.equal(apiTokenFor(db, t.replace(/.$/, c => c === 'a' ? 'b' : 'a')), null, 'a one-character change fails');
+  assert.equal(apiTokenFor(db, t.split('.')[0] + '.x'), null, 'the right id with the wrong secret fails');
   assert.equal(revokeApiToken(db, 'cli'), 1);
   assert.equal(apiTokenFor(db, t), null);
 });

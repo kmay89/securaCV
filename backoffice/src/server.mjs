@@ -7,7 +7,7 @@ const e = escapeHtml;
 import { layout } from './render.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
-import { verifyStripeSignature, eventToOrder } from './modules/stripe.mjs';
+import { verifyStripeSignature, eventToOrder, fetchLineItems } from './modules/stripe.mjs';
 import { recordOrder, refund, orderByNumber, transition, listOrders } from './modules/orders.mjs';
 import { upsertSubscription, postSubscriptionPayment } from './modules/subscriptions.mjs';
 import { postPayout, profitAndLoss, postExpense } from './modules/ledger.mjs';
@@ -18,7 +18,7 @@ import { publicStatus, listIncidents } from './modules/status.mjs';
 import { invoiceByNumber, invoiceToken } from './modules/invoices.mjs';
 import { listItems, move as invMove } from './modules/inventory.mjs';
 import { listDevices, registerDevice } from './modules/devices.mjs';
-import { openExceptions, resolve as resolveException } from './modules/exceptions.mjs';
+import { openExceptions, resolve as resolveException, raise as raiseException } from './modules/exceptions.mjs';
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
@@ -45,8 +45,11 @@ export function createApp({ db, cfg }) {
     if (!cfg.stripeWebhookSecret) throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET not set');
     if (!verifyStripeSignature(c.raw, c.req.headers['stripe-signature'], cfg.stripeWebhookSecret)) throw new HttpError(400, 'bad signature');
     let event; try { event = JSON.parse(c.raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); }
+    // Stripe redelivers; an event id is applied exactly once.
+    if (event.id && db.get('SELECT id FROM stripe_events WHERE id = ?', event.id)) return json(c.res, { received: true, duplicate: true });
     const mapped = eventToOrder(event);
     const result = await applyStripeEvent(app, mapped, event);
+    if (event.id) db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', new Date().toISOString());
     json(c.res, { received: true, ...result });
   }, { public: true, raw: true });
 
@@ -159,11 +162,27 @@ export function createApp({ db, cfg }) {
 
 export async function applyStripeEvent(app, m, event = null) {
   const { db, cfg } = app;
-  if (m.kind === 'order') { const catalog = await app.catalog().catch(() => null); const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' }); return { order: order.number, created }; }
-  if (m.kind === 'refund') { const o = db.get('SELECT * FROM orders WHERE external_id = ?', m.external_id); if (!o) return { ignored: 'unknown order' }; const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' }); return { order: o.number, refunded_cents: m.refunded_cents }; }
+  if (m.kind === 'order') {
+    const catalog = await app.catalog().catch(() => null);
+    if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
+    const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
+    if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
+    return { order: order.number, created, items: order.items.length };
+  }
+  if (m.kind === 'refund') {
+    // A refund names the PaymentIntent (or the charge); a Checkout order is stored under its session id too.
+    const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id, m.external_id, m.charge || '');
+    if (!o) return { ignored: 'unknown order' };
+    const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' });
+    return { order: o.number, refunded_cents: m.refunded_cents };
+  }
   if (m.kind === 'subscription') { const s = upsertSubscription(db, m); return { subscription: s.id, status: s.status }; }
   if (m.kind === 'payout') { postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents }); return { payout: m.external_id }; }
-  if (event?.type === 'invoice.paid' && event.data?.object?.subscription) { const o = event.data.object; postSubscriptionPayment(db, { external_id: o.subscription, amount_cents: o.amount_paid || 0, date: new Date((o.created || Date.now() / 1000) * 1000).toISOString().slice(0, 10) }); return { subscription_payment: o.subscription }; }
+  if (event?.type === 'invoice.paid' && event.data?.object?.subscription) {
+    const o = event.data.object; const sub = typeof o.subscription === 'string' ? o.subscription : o.subscription?.id;
+    const posted = postSubscriptionPayment(db, { external_id: sub, invoice_id: o.id, amount_cents: o.amount_paid || 0, date: new Date((o.created || Date.now() / 1000) * 1000).toISOString().slice(0, 10) });
+    return { subscription_payment: sub, posted: !!posted };
+  }
   return { ignored: m.type || m.kind };
 }
 

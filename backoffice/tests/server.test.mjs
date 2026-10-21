@@ -27,7 +27,8 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     const cookie = r.headers.get('set-cookie').split(';')[0];
     assert.match(r.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
     const csrf = db.get('SELECT csrf FROM sessions').csrf;
-    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); assert.ok((await r.text()).includes('Dashboard'));
+    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('Dashboard'));
+    assert.ok(dash.includes(`action="/logout" class="inline" style="margin-left:auto"><input type="hidden" name="_csrf" value="${csrf}"`), 'the visible Log out button carries the CSRF token');
     // a POST without the CSRF token is refused; with it, it works
     r = await fetch(base + '/inventory/item', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' }, body: form({ sku: 'cable', name: 'cable', kind: 'part', reorder_point: 1, reorder_qty: 1, unit_cost_cents: 100 }) });
     assert.equal(r.status, 403);
@@ -62,9 +63,31 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     assert.equal((await fetch(base + '/webhooks/stripe', { method: 'POST', body: event, headers: { 'content-type': 'application/json' } })).status, 400);
     const sig = signStripePayload(event, 'whsec_test');
     r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: event, headers: { 'content-type': 'application/json', 'stripe-signature': sig } });
-    assert.deepEqual(await r.json(), { received: true, order: 'EL-000001', created: true });
+    assert.deepEqual(await r.json(), { received: true, order: 'EL-000001', created: true, items: 1 });
     r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: event, headers: { 'content-type': 'application/json', 'stripe-signature': sig } });
-    assert.equal((await r.json()).created, false, 'idempotent on redelivery');
+    assert.equal((await r.json()).created, false, 'idempotent on redelivery (same session, no event id)');
+    // a checkout session without inline line_items: they are fetched from Stripe (fake), the order gets items and its PaymentIntent
+    app.cfg.stripeApiKey = 'sk_test_x';
+    app.fetchImpl = async (url) => { assert.match(url, /\/v1\/checkout\/sessions\/cs_live_2\/line_items/); return { ok: true, json: async () => ({ data: [{ description: 'Canary WAP Kit', quantity: 2, price: { unit_amount: 6900, product: { metadata: { sku: 'wap-kit' } } } }] }) }; };
+    const bare = JSON.stringify({ id: 'evt_2', type: 'checkout.session.completed', data: { object: { id: 'cs_live_2', payment_intent: 'pi_live_2', payment_status: 'paid', currency: 'usd', amount_subtotal: 13800, amount_total: 14600, total_details: { amount_shipping: 800, amount_tax: 0 },
+      customer_details: { email: 'ada@example.test', name: 'Ada' }, shipping_details: { name: 'Ada Lovelace', address: { line1: '1 Analytical Way', city: 'Boston', state: 'MA', postal_code: '02134', country: 'US' } } } } });
+    r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: bare, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(bare, 'whsec_test') } });
+    assert.deepEqual(await r.json(), { received: true, order: 'EL-000002', created: true, items: 1 });
+    assert.equal(db.get('SELECT qty FROM order_items WHERE order_id = 2').qty, 2);
+    r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: bare, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(bare, 'whsec_test') } });
+    assert.deepEqual(await r.json(), { received: true, duplicate: true }, 'an event id is applied once');
+    // a refund names the PaymentIntent, and still finds the Checkout order
+    const refundEv = JSON.stringify({ id: 'evt_3', type: 'charge.refunded', data: { object: { id: 'ch_1', payment_intent: 'pi_live_2', amount_refunded: 800 } } });
+    r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: refundEv, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(refundEv, 'whsec_test') } });
+    assert.deepEqual(await r.json(), { received: true, order: 'EL-000002', refunded_cents: 800 });
+    // invoice.paid for a subscription posts once, however often it is delivered
+    const sub = JSON.stringify({ id: 'evt_4', type: 'invoice.paid', data: { object: { id: 'in_1', subscription: 'sub_1', amount_paid: 9900, created: 1760000000 } } });
+    r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: sub, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(sub, 'whsec_test') } });
+    assert.equal((await r.json()).posted, true);
+    const sub2 = sub.replace('evt_4', 'evt_5');
+    r = await fetch(base + '/webhooks/stripe', { method: 'POST', body: sub2, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(sub2, 'whsec_test') } });
+    assert.equal((await r.json()).posted, false, 'same invoice under a new event id posts nothing');
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM ledger WHERE ref = ?', 'subscription:sub_1:in_1').n, 2, 'one balanced pair');
 
     // API: no token 401, token works, transition ships + queues mail
     assert.equal((await fetch(base + '/api/orders')).status, 401);
@@ -77,7 +100,7 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     r = await fetch(base + '/api/orders/EL-000001/transition', { method: 'POST', headers: h, body: JSON.stringify({ to: 'paid' }) }); assert.equal(r.status, 400, 'a refused transition is the caller\'s error'); assert.match((await r.json()).error, /cannot move/);
     r = await fetch(base + '/api/tickets/T-000001/reply', { method: 'POST', headers: h, body: JSON.stringify({ body: 'No. It structurally cannot — see the FAQ.', close: true }) });
     assert.equal((await r.json()).status, 'closed');
-    r = await fetch(base + '/api/snapshot', { headers: h }); assert.equal((await r.json()).orders.open, 0);
+    r = await fetch(base + '/api/snapshot', { headers: h }); assert.equal((await r.json()).orders.open, 1, 'EL-000002 is paid and waiting; EL-000001 shipped');
     r = await fetch(base + '/api/jobs/probes', { method: 'POST', headers: h }); assert.ok((await r.json()).ok);
 
     // invoice public page: token gated
