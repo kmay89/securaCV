@@ -526,11 +526,15 @@ re-pointable at a new network from across the room. To change its Wi-Fi
 yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
-version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
+version, use its own setup page (Settings → WiFi on the dashboard, or the
 `SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
-forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
-`/api/wifi/forget` route), which clears the stored network and opens the
-door again for half an hour from that moment. Holding a WAP's BOOT button
+forget its Wi-Fi from the dashboard (Settings → WiFi → Remove credentials,
+the `/api/wifi/forget` route), which clears every saved network and opens
+the door again for half an hour from that moment, to the first phone or
+computer nearby that connects, so have yours ready. Before you forget it,
+check that Bluetooth Enabled is on under Settings → Bluetooth: forgetting
+does not turn it back on, the 10-second hold below does not either, and
+with it off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;

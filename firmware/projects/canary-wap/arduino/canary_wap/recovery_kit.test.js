@@ -159,6 +159,160 @@ function fakeClassList() {
   };
 }
 
+// The sketch's C++ as the compiler reads it: comments cut, and raw string
+// literals (the pages' HTML and script) emptied, so neither a word in a
+// comment nor a function in a page's script reads as code. Ordinary string
+// and character literals stay: an NVS key is one.
+function cppCode(src) {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += src.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+      continue;
+    }
+    if (c === 'R' && d === '"' && ['', 'u8', 'u', 'U', 'L'].includes(src.slice(0, i).match(/\w*$/)[0])) {
+      const open = src.indexOf('(', i + 2);
+      const delim = src.slice(i + 2, open);
+      const close = src.indexOf(')' + delim + '"', open);
+      const stop = close < 0 ? src.length : close + delim.length + 2;
+      out += 'R""' + src.slice(i, stop).replace(/[^\n]/g, '');
+      i = stop;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+// The index of the brace that closes the one at `open`, past literals.
+function closingBrace(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < s.length && s[j] !== c && s[j] !== '\n') j += s[j] === '\\' ? 2 : 1;
+      i = j;
+    } else if (c === '{') {
+      depth++;
+    } else if (c === '}' && --depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Every free function the sketch defines that `root` reaches, root included:
+// each call in a body is tied to the sketch's definitions of that name the
+// call can see (its namespace qualifier, through the file's namespace
+// aliases, or for a bare name the caller's namespace and those around it),
+// and each of those is read in turn. A call to a function-like macro the
+// sketch defines reads the macro. A call the sketch defines no free
+// function or macro for is a library's (Serial, WiFi, Preferences, mbedtls,
+// libc) and is not read; a member call is not read either, so a check over
+// the bodies must name what a member call can touch (an NVS key, a clear).
+// A call whose name the sketch defines only where the call cannot see it,
+// or defines in a shape the index does not read (a body after `name(...)`
+// anywhere in the code), is a failure, not a guess. Returns
+// { bodies: Map<'ns::name (file)', code>, external }.
+function sketchCallWalk(root) {
+  const defs = new Map();
+  const macros = new Map();
+  const aliasesOf = new Map();
+  const bodied = new Set();
+  const files = fs.readdirSync(__dirname).filter((f) => /\.(ino|cpp|h)$/.test(f));
+  for (const file of files) {
+    const s = cppCode(read(path.join(__dirname, file)));
+    const scopes = [];
+    for (const m of s.matchAll(/\b(namespace|class|struct)\s+([\w:]+)[^;{}()=]*\{/g)) {
+      const open = m.index + m[0].length - 1;
+      scopes.push({ kind: m[1], name: m[2].split('::'), from: open, to: closingBrace(s, open) });
+    }
+    const aliases = new Map();
+    for (const m of s.matchAll(/\bnamespace\s+(\w+)\s*=\s*([\w:]+)\s*;/g)) {
+      aliases.set(m[1], m[2].split('::').filter(Boolean));
+    }
+    aliasesOf.set(file, aliases);
+    const defRe = /(?:^|[\n;{}])[ \t]*(?:template\s*<[^>]*>\s*)?(?:[\w:<>,]+[ \t*&]+)+((?:\w+::)*)(\w+)\s*\((?:[^;{}()]|\([^()]*\))*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{/g;
+    for (const m of s.matchAll(defRe)) {
+      const open = m.index + m[0].length - 1;
+      const around = scopes.filter((x) => x.from < open && open < x.to).sort((a, b) => a.from - b.from);
+      const qual = m[1].split('::').filter(Boolean);
+      const def = {
+        file,
+        name: m[2],
+        method: around.some((x) => x.kind !== 'namespace'),
+        ns: around.flatMap((x) => x.name).concat(qual),
+        body: s.slice(m.index + m[0].match(/^[\n;{}]?[ \t]*/)[0].length, closingBrace(s, open) + 1),
+      };
+      if (!defs.has(def.name)) defs.set(def.name, []);
+      defs.get(def.name).push(def);
+    }
+    for (const m of s.matchAll(/\b(\w+)\s*\((?:[^;{}()]|\([^()]*\))*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{/g)) {
+      bodied.add(m[1]);
+    }
+    for (const m of s.matchAll(/#define[ \t]+(\w+)\((?:[^\n]*\\\n)*[^\n]*/g)) {
+      if (!macros.has(m[1])) macros.set(m[1], []);
+      macros.get(m[1]).push({ file, name: m[1], method: false, ns: [], body: m[0] });
+    }
+  }
+  const endsWith = (a, b) => b.length <= a.length && b.every((x, i) => a[a.length - b.length + i] === x);
+  const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'return', 'sizeof', 'alignof', 'decltype',
+                            'static_assert', 'defined', 'catch']);
+  const bodies = new Map();
+  const external = new Set();
+  const queue = (defs.get(root) || []).filter((d) => !d.method && d.ns.length === 0);
+  assert.equal(queue.length, 1, root + ' is one free function of the sketch');
+  while (queue.length) {
+    const d = queue.shift();
+    const key = d.ns.concat(d.name).join('::') + ' (' + d.file + ')';
+    if (bodies.has(key)) continue;
+    bodies.set(key, d.body);
+    const calls = d.body.slice(d.body.indexOf(d.name) + d.name.length)
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+    for (const m of calls.matchAll(/(?:^|[^\w.>:])((?:::)?(?:\w+::)*\w+)\s*\(/g)) {
+      let parts = m[1].split('::').filter(Boolean);
+      const name = parts.pop();
+      if (KEYWORDS.has(name)) continue;
+      const aliases = aliasesOf.get(d.file);
+      if (parts.length && aliases.has(parts[0])) parts = aliases.get(parts[0]).concat(parts.slice(1));
+      const free = (defs.get(name) || []).filter((x) => !x.method);
+      const seen = parts.length
+        ? free.filter((x) => endsWith(x.ns, parts))
+        : free.filter((x) => x.ns.length <= d.ns.length && x.ns.every((n, i) => d.ns[i] === n));
+      if (seen.length) {
+        queue.push(...seen);
+      } else if (!parts.length && macros.has(name)) {
+        queue.push(...macros.get(name));
+      } else {
+        assert.equal(free.length, 0, 'the walk from ' + root + ' cannot tell which ' + m[1] + '() ' + key +
+                     ' calls: the sketch defines it only in ' + free.map((x) => x.ns.join('::') || '(global)').join(', '));
+        assert.ok(!bodied.has(name), 'the walk from ' + root + ' cannot read ' + m[1] + '(), which ' + key +
+                  ' calls: the sketch gives a body to that name in a shape the walk does not index');
+        external.add(m[1]);
+      }
+    }
+  }
+  return { bodies, external };
+}
+
 // A browser window just big enough for the pages' kit code: elements by id
 // (starting as `markup` draws them), a body, Blob, URL and timers, with every
 // save recorded.
@@ -509,8 +663,13 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // fetch) could land before any ask of the page's had reached the
     // device, and a host watching /api/logs for the tap was then its only
     // asker. Two asks that never reached the device, then the device's 403.
-    const { statusAtAsk } = await dashboardTap([BLIP, BLIP, GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    const first = await dashboardTap([BLIP, BLIP, GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    const { statusAtAsk } = first;
     assert.equal(statusAtAsk.length, 5);
+    // A blip waits its 2 s like any other ask (#1843's fifth review: a
+    // catch that went straight to the next ask passed every row, and with
+    // the Wi-Fi down the 30 asks then ran out in moments, not 60 s).
+    assert.deepEqual(first.win.timers, [2000, 2000, 2000, 2000], 'a sleep after each of the four asks before the receipt');
     for (const t of statusAtAsk.slice(0, 3)) {
       assert.match(t, /^Asking the Canary first\. Don't press BOOT yet/, 'before the device answered: ' + t);
       assert.doesNotMatch(t, /Now short-tap/);
@@ -521,6 +680,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const { win } = await dashboardTap([BLIP]);
     assert.equal(win.els.authStatus.textContent,
                  "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.");
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 30, 'thirty blips, each followed by its 2 s: the 60 s the sign-in promises');
     assert.doesNotMatch(read(UI), /'Now short-tap BOOT on the device\. Listening for 60 seconds\.'/);
   });
 
@@ -656,34 +816,53 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const sw = ui.indexOf('<div class="toggle-title">Bluetooth Enabled</div>');
     assert.ok(panel > 0 && sw > panel && (next < 0 || sw < next), 'the Bluetooth Enabled switch sits in Settings → Bluetooth');
     assert.match(ui.slice(sw, next < 0 ? undefined : next), /id="btEnabled" onchange="toggleBtEnabled\(\)"/);
-    // "Does not turn it back on": the hold's own function leaves Bluetooth's
-    // saved switch alone (canary_wap.ino factory_reset_by_hold()), and so
-    // does every function it calls to clear (#1843's fourth review: a
-    // `remove("bt_enabled")`, or a clear of the whole "securacv" namespace,
-    // in one of them passed the row that read the hold alone, and the
-    // restart would then read Bluetooth's default, on). Their comments are
-    // cut first: wifi_clear_credentials() talks about the setup door.
+    // "Does not turn it back on": nothing the hold runs touches Bluetooth's
+    // saved switch, "bt_enabled" in the main NVS namespace
+    // (bluetooth_channel.cpp's load_settings()), whose absence a boot reads
+    // as bt_defaults::ENABLED, on. The row reads every free function the
+    // hold reaches in the sketch, to the bottom (sketchCallWalk above), and
+    // holds each to no Bluetooth key, by its literal or by a name the sketch
+    // gives one, no clear or erase of a whole NVS namespace, and no call
+    // into Bluetooth code (#1843's fifth review: the fourth review's row read
+    // the hold for Bluetooth names and four named callees for the rest, and
+    // `nvs->clear()` in the hold's own session, a remove in
+    // start_captive_portal() two calls further down, or one in a new helper
+    // the hold called each passed it). Comments are cut, so
+    // wifi_clear_credentials()'s talk of the setup door is not read as code.
     const ino = read(path.join(__dirname, 'canary_wap.ino'));
     const body = (src, sig, file) => {
       const at = src.indexOf(sig);
       assert.ok(at >= 0, sig + ' not found in ' + file);
       return src.slice(at, src.indexOf('\n}\n', at));
     };
-    const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-    const resetHold = body(ino, 'static void factory_reset_by_hold() {', 'canary_wap.ino');
-    assert.doesNotMatch(resetHold, /bluetooth|BT_ENABLED|bt_enabled/i);
-    const callees = [
-      ['canary_wap.ino', 'static bool wifi_clear_credentials() {', /\n {2}wifi_clear_credentials\(\);/, resetHold],
-      ['csi_mqtt.cpp', 'bool config_clear() {', /csi_mqtt::config_clear\(\)/, resetHold],
-      ['setup_wizard.h', 'inline bool reset_to_first_boot() {', /setup_wizard::reset_to_first_boot\(\)/, resetHold],
-    ];
-    const clearWifi = body(ino, 'static bool wifi_clear_credentials() {', 'canary_wap.ino');
-    callees.push(['canary_wap.ino', 'static void wifi_raise_ap() {', /\n {2}wifi_raise_ap\(\);/, clearWifi]);
-    for (const [file, sig, call, caller] of callees) {
-      assert.match(caller, call, sig + ' is called on the hold\'s way');
-      const fnBody = code(body(file === 'canary_wap.ino' ? ino : read(path.join(__dirname, file)), sig, file));
-      assert.doesNotMatch(fnBody, /bluetooth|\bbt_|BT_|\.clear\s*\(|nvs_erase|eraseAll/i,
-        sig + ' touches a Bluetooth key or clears a whole namespace');
+    const bt = cppCode(read(path.join(__dirname, 'bluetooth_channel.cpp')));
+    assert.match(bt, /static const char\* NVS_KEY_BT_ENABLED = "bt_enabled";/);
+    assert.match(body(bt, 'static bool load_settings(BluetoothSettings* out) {', 'bluetooth_channel.cpp'),
+                 /NvsMainSession nvs\(true\);[\s\S]*out->enabled = nvs->getBool\(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED\);/);
+    assert.match(read(path.join(__dirname, 'bt_defaults.h')), /constexpr bool ENABLED = true;/);
+    // Every name the sketch gives a Bluetooth key ("bt_..."), wherever it is.
+    const btNames = new Set();
+    for (const f of fs.readdirSync(__dirname).filter((n) => /\.(ino|cpp|h)$/.test(n))) {
+      for (const m of cppCode(read(path.join(__dirname, f))).matchAll(/\b(\w+)\s*(?:\[\s*\])?\s*=\s*"bt_|#define\s+(\w+)\s+"bt_/g)) {
+        btNames.add(m[1] || m[2]);
+      }
+    }
+    assert.ok(btNames.has('NVS_KEY_BT_ENABLED'), [...btNames].join(' '));
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    for (const reached of ['wifi_clear_credentials (canary_wap.ino)', 'csi_mqtt::config_clear (csi_mqtt.cpp)',
+                           'setup_wizard::reset_to_first_boot (setup_wizard.h)', 'wifi_raise_ap (canary_wap.ino)',
+                           'setup_wizard::start_captive_portal (setup_wizard.h)']) {
+      assert.ok(bodies.has(reached), 'the walk reaches ' + reached + ': ' + [...bodies.keys()].join(', '));
+    }
+    const btName = new RegExp('\\b(?:' + [...btNames].join('|') + ')\\b');
+    for (const [fn, code] of bodies) {
+      const calls = code.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(code, /"bt_\w*"/, fn + ' names a Bluetooth key');
+      assert.doesNotMatch(code, btName, fn + ' names a Bluetooth key');
+      assert.doesNotMatch(code, /(?:\.|->)\s*clear\s*\(|\bnvs_erase_all\b|\bnvs_flash_erase\w*|\beraseAll\b/,
+                          fn + ' clears or erases a whole NVS namespace');
+      assert.doesNotMatch(calls, /(?:^|[^\w.>:])(?:ble_|bt_|esp_bt|esp_ble|nimble|bluetooth)\w*\s*(?:\(|::)|\b(?:NimBLE\w*|BLEDevice|bluetooth_\w+|ble_\w+|bt_\w+)\s*(?:\.|->)\s*\w+\s*\(/i,
+                          fn + ' calls into Bluetooth code');
     }
     // The way there from the sign-in, which covers the page and holds no
     // session (no control closes it, and a signed-out /api/bluetooth is
@@ -722,22 +901,47 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // PairView's "No recovery kit?" advice reopens the same setup door
     // through Forget Wi-Fi, which leaves the saved Bluetooth switch as the
     // hold does (its handler is wifi_clear_credentials(), which the row
-    // above reads), so it says to check the switch first, as the
+    // above walks), so it says to check the switch first, as the
     // dashboard's copy does (#1843's fourth review).
     const swift = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Views/PairView.swift'));
     const m = swift.match(/Text\("(Or set it up again from this phone: [^"]*)"\)/);
     assert.ok(m, 'PairView\'s set-it-up-again advice not found');
     const advice = m[1];
-    const check = advice.indexOf('first check that Bluetooth Enabled is on under Settings → Bluetooth ' +
+    const way = advice.indexOf('open its page below and choose Open dashboard there, then Settings. ');
+    const check = advice.indexOf('First check that Bluetooth Enabled is on under Settings → Bluetooth ' +
                                  '(forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it)');
-    const forget = advice.indexOf('then forget its Wi-Fi there');
-    assert.ok(check > 0 && forget > check, advice);
+    const forget = advice.indexOf('then forget its Wi-Fi there (Settings → WiFi → Remove credentials)');
+    assert.ok(way > 0 && check > way && forget > check, advice);
     assert.equal(advice.indexOf('forget its Wi-Fi'), forget + 'then '.length, 'no forget is named before the check');
     const ino = read(path.join(__dirname, 'canary_wap.ino'));
     const at = ino.indexOf('static esp_err_t handle_wifi_forget(httpd_req_t* req) {');
     assert.ok(at > 0);
     assert.match(ino.slice(at, ino.indexOf('\n}\n', at)), /\n {2}wifi_clear_credentials\(\);/);
     assert.match(ino, /\.uri = "\/api\/wifi\/forget", \.method = HTTP_POST, \.handler = handle_wifi_forget_auth \}/);
+    // The button it names: Remove credentials, in Settings → WiFi, posting
+    // that route.
+    const ui = read(UI);
+    assert.match(ui, /onclick="switchSettingsTab\('wifi'\)">[^<]*WiFi<\/button>/);
+    assert.match(ui, /<button class="btn btn-danger" onclick="forgetWifi\(\)" id="wifiForgetBtn"[^>]*>Remove credentials<\/button>/);
+    assert.match(uiFunction(ui, 'forgetWifi', true), /await api\('\/api\/wifi\/forget', 'POST'\);/);
+    // "Its page" is the link under the advice: the WAP's name at "/", which a
+    // browser with no session gets as the landing page, whose Open dashboard
+    // the row above walks to Settings (#1843's fifth review: the advice said
+    // "Use BOOT Tap Once there lets you in", a button that page does not
+    // show). The kit's footer names the same way to the Save button, and
+    // the sign-in a landing session's Save opens.
+    assert.match(swift, /if let page = canary\.host\.flatMap\(DeviceAPI\.url\(forDiscoveredHost:\)\) \{\n\s+Link\("Open its page", destination: page\)/);
+    const api = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Transport/DeviceAPI.swift'));
+    assert.match(api, /static func url\(forDiscoveredHost host: String\) -> URL\? \{[\s\S]*?return URL\(string: "http:\/\/\\\(name\)"\)\n {4}\}/);
+    assert.doesNotMatch(advice, /Use BOOT Tap Once/);
+    const footer = swift.match(/Text\("(Its own page saves a recovery kit [^"]*)"\)/);
+    assert.ok(footer, 'PairView\'s kit footer not found');
+    const steps = ['open the page, choose Open dashboard there, then Settings → Device → Save my recovery kit; ',
+                   'when the sign-in opens, choose Use BOOT Tap Once and short-tap BOOT when the page says to.'];
+    assert.ok(footer[1].indexOf(steps[0]) > 0 && footer[1].indexOf(steps[1]) > footer[1].indexOf(steps[0]), footer[1]);
+    assert.match(ui, /onclick="switchSettingsTab\('device'\)">[^<]*Device<\/button>/);
+    assert.match(ui, /onclick="saveRecoveryKitFromSettings\(\)" id="settingsKitSave">Save my recovery kit<\/button>/);
+    assert.match(uiFunction(ui, 'secureFetch', true), /if \(resp\.status === 401 \|\| resp\.status === 403\) \{[\s\S]*?showAuthModal\(/);
   });
 });
 

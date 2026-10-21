@@ -131,8 +131,11 @@ honest hardware-RoT design must own this, not bury it.
 - **A mandatory attestation *service* / phone-home.** Attestation must be
   verifiable locally and offline (Principle 2: zero phone-home). No cloud is in
   the trust path.
-- **Nation-state physical security.** Flash encryption defends key-at-rest and
-  casual readout, not decapping/fault-injection by a well-funded lab. We say so.
+- **Nation-state physical security.** Flash encryption with NVS encryption
+  (Tier 3) would defend key-at-rest and casual readout, not
+  decapping/fault-injection by a well-funded lab. We say so. Flash encryption
+  alone defends only the app image: today the key and the saved passwords stay
+  plaintext in NVS on a fused board (the Tier 3 row below).
 
 ## 5. Proposed design
 
@@ -341,9 +344,12 @@ choosing the alternative knowingly, per §5.1–5.2.
    as a future per-chip possibility for the ESP32-C6 members (canary-sense) — not
    a scheme choice now.
 3. **Flash-encryption mode — development mode at Tier 3; release mode only inside
-   full Tier 4.** Dev mode is the sweet spot: it protects WiFi/keys at rest from a
-   thief while the device stays field-recoverable. Release mode (which disables
-   plaintext re-flashing) belongs only with the full, opt-in lockdown.
+   full Tier 4.** Dev mode is the sweet spot: with NVS encryption beside it, it
+   would protect WiFi/keys at rest from a thief while the device stays
+   field-recoverable. Until NVS encryption is in the build (the Tier 3 row in
+   §5.1), dev mode protects the app image only, and the WiFi passwords and keys
+   stay plaintext in NVS. Release mode (which disables plaintext re-flashing)
+   belongs only with the full, opt-in lockdown.
 4. **Attestation key binding — Ed25519 identity key under flash/NVS encryption
    (§5.4b) is the default;** the DS-peripheral-bound RSA key (§5.4a) is added
    **only** where a deployment needs non-extractability against a full flash

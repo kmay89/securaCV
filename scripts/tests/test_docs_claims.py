@@ -169,6 +169,22 @@ BANNED = (
      "only while that host leaves it alone, and taking it away needs no radio.",
      "the lane would hold only while that host leaves it alone and the new "
      "network stays up (it saves through the same paths as the browser)"),
+    # Retired by #1843's fifth review: the copies the fourth review's "every
+    # copy" left, which still tied the key's exposure to the default tier or
+    # offered the opt-in tiers as the answer to seizure. Burning their fuses
+    # protects the firmware image today, not the key: NVS stays plaintext.
+    ("on a default-configured Canary they can recover the key",
+     "today they can recover it from any Canary, a board with flash "
+     "encryption fused included: NVS encryption is in no released build"),
+    ("this is the case the opt-in tiers exist for",
+     "the opt-in tiers buy the firmware image's protection today, not the "
+     "key's; the defenses against a seizer are the anchored chain, a "
+     "clone's divergent chain and a device kept out of reach"),
+    ("understand that you are trading recoverability for extraction "
+     "resistance",
+     "burning the fuses trades recoverability for no key secrecy today: the "
+     "key, the saved passwords and the bonds stay plaintext in NVS on a "
+     "fused board"),
 )
 
 # Sentences retired from documents the gate above does not scan whole (the
@@ -242,6 +258,61 @@ RETIRED_IN = (
      "bullets).",
      "while that host leaves it alone and the new network stays up (the next "
      "four bullets)"),
+    # #1843's fifth review: the same retirement in the design docs, the
+    # bench runbook and the in-browser flasher's trust card, which told an
+    # owner that flash encryption protects the key, the saved Wi-Fi or the
+    # mesh secret at rest.
+    ("docs/design/hardware_root_of_trust.md",
+     "Flash encryption defends key-at-rest and casual readout, not "
+     "decapping/fault-injection by a well-funded lab.",
+     "flash encryption with NVS encryption (Tier 3) would; flash encryption "
+     "alone defends the app image only"),
+    ("docs/design/hardware_root_of_trust.md",
+     "Dev mode is the sweet spot: it protects WiFi/keys at rest from a thief "
+     "while the device stays field-recoverable.",
+     "with NVS encryption beside it, it would; until then it protects the app "
+     "image only"),
+    ("docs/design/vault_operator_ux_v1_1.md",
+     "Secure it (protect the key at rest) — already tooled, not yet burned.",
+     "the fuses are tooled; the key's protection needs NVS encryption, which "
+     "no released build can turn on under framework = arduino"),
+    ("docs/design/vault_operator_ux_v1_1.md",
+     "Keeps the entire existing signing scheme; the key can't be dumped off a "
+     "locked device.",
+     "once NVS encryption is in the build it can't; until then it can"),
+    ("docs/V1_BENCH_TEST_RUNBOOK.md",
+     "the `opera_secret` in NVS is only confidential under FE",
+     "the firmware writes it only with FE on (audit O2), and FE does not make "
+     "it confidential: NVS is plaintext on a fused board too"),
+    ("canary-local/assets/flash.js",
+     "(then the flash reads back as ciphertext)",
+     "the firmware image does; the identity key and the saved WiFi, in NVS, "
+     "read back in the clear from a fused board too"),
+    ("canary-local/assets/flash.js",
+     "For a board deployed somewhere physically exposed, use Phase-2 secure "
+     "provisioning (flash encryption + eFuse).",
+     "put it out of reach: Phase-2 provisioning does not yet protect its key "
+     "or saved WiFi"),
+    # #1843's fifth review: a factory reset offered as the whole fix for a
+    # WAP whose setup door a stranger took. The stranger chose the network,
+    # so it can spend the claim and hold the token and the SoftAP password,
+    # which the hold and Forget Wi-Fi keep; and either reopens the door.
+    ("docs/design/magic_pairing.md",
+     "an owner who finds the unit on the wrong network holds it, "
+     "factory-resets it, and starts again.",
+     "on a WAP the reset keeps the token the stranger's claim bought and "
+     "reopens the first-come door (ledger F345)"),
+    ("docs/design/magic_pairing.md",
+     "a unit joined to the wrong network is a unit its owner holds, not one "
+     "that has been taken; the fix is a factory reset.",
+     "the same"),
+    # #1843's fifth review: Forget Wi-Fi drops every saved network, and the
+    # door it reopens is first-come, behind a saved Bluetooth switch.
+    ("docs/FAQ.md",
+     "which clears the stored network and opens the door again for half an "
+     "hour from that moment.",
+     "which clears every saved network and opens the door to the first phone "
+     "or computer nearby that connects, once Bluetooth Enabled is on"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -288,6 +359,16 @@ MUST_PASS = [
     "owner's browser makes that move without it",
     "Once A65 is settled the lane would move the WAP with no browser, but only "
     "while that host leaves it alone and the new network stays up",
+    # The seizure prose that replaced #1843's fifth-review bans.
+    "different adversary, and today they can recover the key from any Canary, "
+    "a board with flash encryption fused included",
+    "know what the opt-in tiers buy today before you burn anything: at most "
+    "the firmware image's protection (flash encryption keeps the app image "
+    "from being read off the chip; Secure Boot, which the provisioning kit "
+    "prepares but does not yet enable, would refuse unsigned firmware), not "
+    "the key's.",
+    "Read that design note before you burn a fuse — that decision cannot be "
+    "walked back, and today it does not buy key secrecy.",
 ]
 # The replacements of the RETIRED_IN sentences, which share most of their
 # words with what they replaced.
@@ -312,6 +393,28 @@ MUST_PASS_IN = [
     "and the new network stays up, and taking it away needs no radio",
     "under the lockout), while that host leaves it alone and the new network "
     "stays up (the next four bullets).",
+    "Flash encryption with NVS encryption (Tier 3) would defend key-at-rest and "
+    "casual readout, not decapping/fault-injection by a well-funded lab.",
+    "Dev mode is the sweet spot: with NVS encryption beside it, it would "
+    "protect WiFi/keys at rest from a thief while the device stays "
+    "field-recoverable.",
+    "Secure it (protect the key at rest) — the fuses are tooled, the key's "
+    "protection is not yet buildable.",
+    "Keeps the entire existing signing scheme; once NVS encryption is in the "
+    "build, the key can't be dumped off a locked device",
+    "the firmware writes the `opera_secret` to NVS only with FE on (audit O2). "
+    "FE does not make it confidential: NVS is plaintext on a fused board too",
+    "protects the firmware image, not the identity key or the saved WiFi",
+    "For a board deployed somewhere physically exposed, put it out of reach: "
+    "Phase-2 provisioning (flash encryption + eFuse) does not yet protect its "
+    "key or saved WiFi.",
+    "An owner who finds the unit on the wrong network still holds it, but on a "
+    "WAP a reset does not undo a stranger who took the door.",
+    "a unit joined to the wrong network is one its owner still holds. On a WAP "
+    "a factory reset is not the whole fix",
+    "which clears every saved network and opens the door again for half an "
+    "hour from that moment, to the first phone or computer nearby that "
+    "connects",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -353,6 +456,13 @@ MUST_FAIL = [
     "not, so it never writes a WAP's CREDS (ledger A65, open). Once A65 is\n"
     "settled the lane would move the WAP with no browser, but only while that\n"
     "host leaves it alone, and taking it away needs no radio. Any landing",
+    "different adversary, and on a default-configured Canary they can recover\n"
+    "the key. That is a deliberate trade — the alternative permanently bricks",
+    "**If your threat model includes device seizure**, this is the case the\n"
+    "opt-in tiers exist for. Turn them on deliberately, back up the key first,",
+    "opt-in tiers exist for. Turn them on deliberately, back up the key first,\n"
+    "and understand that you are trading recoverability for extraction\n"
+    "resistance. Read [`../design/hardware_root_of_trust.md`]",
 ]
 # And the RETIRED_IN sentences as they stood, wrapped.
 MUST_FAIL_IN = [
@@ -383,6 +493,26 @@ MUST_FAIL_IN = [
     "  browser gives with no hold (its landing session reaches\n"
     "  `POST /api/wifi/connect` under the lockout), while that host leaves it\n"
     "  alone (the next three bullets). Run the attack again from the state",
+    "- **Nation-state physical security.** Flash encryption defends key-at-rest and\n"
+    "  casual readout, not decapping/fault-injection by a well-funded lab. We say so.",
+    "   full Tier 4.** Dev mode is the sweet spot: it protects WiFi/keys at rest from a\n"
+    "   thief while the device stays field-recoverable. Release mode (which disables",
+    "- **Secure it (protect the key at rest) — already tooled, not yet burned.**\n"
+    "  `docs/secure_provisioning.md` Phase 2 wraps Espressif's guide: **eFuse +",
+    "  Secure Boot v2 + JTAG-off. Keeps the entire existing signing scheme; the key\n"
+    "  can't be dumped off a locked device. Largely already tooled in",
+    "| Boards with **flash encryption** enabled | ≥ 2 | Required for mesh (the "
+    "`opera_secret` in NVS is only confidential under FE) |",
+    '    "encryption and eFuse locks (then the flash reads back as ciphertext), " +',
+    '    "For a board deployed somewhere physically exposed, use Phase-2 secure '
+    'provisioning (flash encryption + eFuse).",',
+    "  forever; a join that succeeds stores credentials and shuts the door; an\n"
+    "  owner who finds the unit on the wrong network holds it, factory-resets it,\n"
+    "  and starts again.",
+    "  owner, and a unit joined to the wrong network is a unit its owner holds,\n"
+    "  not one that has been taken; the fix is a factory reset. A deployment",
+    "`/api/wifi/forget` route), which clears the stored network and opens the\n"
+    "door again for half an hour from that moment. Holding a WAP's BOOT button",
 ]
 
 
@@ -612,6 +742,39 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
                     "static void factory_reset_by_hold() {"):
             with self.subTest(fn=sig):
                 self.assertIn("\n  wifi_clear_credentials();", body_after(ino, sig, r"\n}\n"))
+
+    def test_nvs_encryption_is_in_no_released_build(self):
+        # #1843's fourth and fifth reviews: the docs say the key, the saved
+        # passwords and the bonds are plaintext in NVS on every tier, a fused
+        # board included, because flash encryption does not cover NVS and no
+        # released build can turn NVS encryption on. Held to the build files:
+        # a tree that moves to ESP-IDF, or a secure env whose sdkconfig starts
+        # to reach a build, fails here until the docs follow.
+        frameworks = {}
+        for ini in sorted((REPO / "firmware").rglob("*.ini")):
+            for line in ini.read_text(encoding="utf-8").splitlines():
+                m = re.match(r"\s*framework\s*=\s*(\S+)", line)
+                if m:
+                    frameworks[str(ini.relative_to(REPO))] = m.group(1)
+        # canary-ota is the teaching sample (its README says so), not a
+        # released tree.
+        self.assertEqual(frameworks.pop("firmware/projects/canary-ota/platformio.ini"), "espidf")
+        self.assertIn("firmware/envs/platformio/common.ini", frameworks)
+        self.assertIn("firmware/canary/platformio.ini", frameworks)
+        self.assertEqual(set(frameworks.values()), {"arduino"}, frameworks)
+        ota = (REPO / "firmware/projects/canary-ota/README.md").read_text(encoding="utf-8")
+        self.assertIn("**This is a teaching sample, not the production OTA path.**", ota)
+        # The secure env's sdkconfig, the only place NVS encryption is asked
+        # for, is marked inert under that framework ...
+        secure = (REPO / "firmware/provisioning/platformio_secure.ini").read_text(encoding="utf-8")
+        self.assertIn("; KNOWN INERT under `framework = arduino`", secure)
+        self.assertIn("So this image has flash encryption at most, never NVS\n; encryption", secure)
+        # ... and its partition table leaves nvs unflagged, so flash
+        # encryption leaves it in plaintext.
+        table = (REPO / "firmware/provisioning/partitions_secure.csv").read_text(encoding="utf-8")
+        nvs = [ln for ln in table.splitlines() if ln.startswith("nvs,")]
+        self.assertEqual(len(nvs), 1)
+        self.assertNotIn("encrypted", nvs[0])
 
 
 if __name__ == "__main__":

@@ -31,10 +31,13 @@ or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
 file it reads outside the workflow's own trees in both path lists (R6) —
 otherwise an edit to that file alone runs nothing, and the red lands on the
 next unrelated PR. The first half is on the reviewer. The second is
-machine-checked for one job so far, canary-local.yml's logic tests
-(`scripts/path_filter_reads/`). In its three test steps every node process
-records the repo paths it opens, stats, lists or only checks for existence,
-and every python3 process the paths it opens and lists: CPython raises no
+machine-checked for two jobs so far, canary-local.yml's logic tests and
+viewer.yml's `selftest-ui` (the WAP sketch's page suites, whose
+`recovery_kit.test.js` reads two iPhone app files), through
+`scripts/path_filter_reads/`. In each armed test step (five in each job)
+every node process records the repo paths it opens, stats, lists or only
+checks for existence, and every python3 process the paths it opens and
+lists: CPython raises no
 audit event for a stat or an exists check, so a python3 existence check is
 not seen. The step after them, `scripts/check_path_filter_reads.py`, fails
 on any recorded path outside the `pull_request` list, naming the test, the

@@ -2415,7 +2415,9 @@ so — see D2 below.)
       with `403`. The iPhone app's `PairView.swift` "No recovery kit?" line
       said "(a short BOOT tap lets you in)" for the WAP's own page; it now
       says "(Use BOOT Tap Once there lets you in)", the page's button,
-      which gives the order itself.
+      which gives the order itself. (Corrected by #1843's fifth review: the
+      page its link opens is the landing page, which shows no such button;
+      the advice now walks Open dashboard to Settings.)
     - The two suites pinned bytes 3 and 15 of the arbiter's key one by one
       and no other (byte 3 by an IPv6 pair, byte 15 by the IPv4 rows' two
       addresses), so "the arbiter tells IPv6 askers apart by all 16 bytes"
@@ -2799,7 +2801,10 @@ so — see D2 below.)
       `wifi_raise_ap()`, which `wifi_clear_credentials()` calls), comments
       cut, for a Bluetooth key or a whole-namespace clear. Either mutant
       fails it now, as do a `prefs.clear()` in `reset_to_first_boot()` and
-      a `"bt_enabled"` in `config_clear()`'s keys.
+      a `"bt_enabled"` in `config_clear()`'s keys. (Corrected by #1843's
+      fifth review: the hold's own body was read for Bluetooth names only,
+      and the four callees are not every function the hold reaches; the
+      row now walks them all, below.)
     - The iPhone app's "No recovery kit?" advice (`PairView.swift`) reopens
       the same door through Forget Wi-Fi, which leaves the saved Bluetooth
       switch too, and said nothing of it; it now says to check Bluetooth
@@ -2833,6 +2838,104 @@ so — see D2 below.)
       companion's 48,621, unchanged); `gen_wap.py` leaves `wap.json`
       unchanged and `gen_csp.py --check` passes. Host-tested; not run on a
       device.
+  - Follow-up review fixes, fifth round (#1843). No firmware C++ and no page
+    the device serves changed; the iPhone app's copy, the in-browser
+    flasher's trust card, a workflow, rows and docs did.
+    - The fourth round said NVS is plaintext on every tier "in every copy",
+      and copies outside its diff still said the opt-in tiers protect the
+      key at rest: `SECURITY_MODEL.md`'s seizure advice ("this is the case
+      the opt-in tiers exist for ... trading recoverability for extraction
+      resistance") and its software promise's limit ("on a
+      default-configured Canary"), `hardware_root_of_trust.md`'s non-goal
+      and its dev-mode decision, `vault_operator_ux_v1_1.md`'s "secure it"
+      bullet, its decided path, decision #7 and its key inventory, the bench
+      runbook's mesh row ("only confidential under FE"), and the in-browser
+      flasher's trust card ("then the flash reads back as ciphertext", and a
+      best practice that sent a physically exposed board to Phase-2
+      provisioning). Burning those fuses today protects at most the firmware
+      image, not the key, the saved passwords, the bonds or the mesh secret,
+      which stay plaintext in NVS: every released tree builds with
+      `framework = arduino`, `platformio_secure.ini` marks its
+      NVS-encryption sdkconfig inert, and `partitions_secure.csv` leaves
+      `nvs` unflagged. Each now says so, and the seizure advice says the
+      defenses against a seizer today are the anchored chain, a clone's
+      divergent chain and a device kept out of reach. `test_docs_claims.py`
+      bans the retired sentences (three in `SECURITY_MODEL.md`, seven more
+      where they stood) and holds the claim to the build files (every
+      `framework =` in `firmware/**/*.ini` is `arduino` but the canary-ota
+      teaching sample's, the inert marker, the unflagged `nvs` row); a move
+      to ESP-IDF, or an `encrypted` flag on `nvs`, fails it. The CHANGELOG's
+      F342 section now carries the correction for an owner who provisioned
+      the secure tier.
+    - `magic_pairing.md` §2.2 and §8 offered a factory reset as the fix for
+      a WAP whose open setup door a stranger took. The stranger chose the
+      network the WAP joined, so it can spend the claim from that network,
+      and the receipt carries the token and the SoftAP password, both
+      derived from the identity key the hold and Forget Wi-Fi keep; and
+      either reset reopens the same first-come door. Both now say so, and
+      §2.2's "cannot get the WAP's bearer token" is scoped to Bluetooth,
+      with the claim's route from the stranger's network beside it;
+      `test_docs_claims.py` bans the two retired sentences there. F345,
+      whose decision this is, has a note; it also says F343's way out rests
+      on `POST /api/wifi/connect` and `POST /api/wifi/forget` taking the
+      session.
+    - The fourth round's PairView row made `recovery_kit.test.js` read
+      `ios/Sources/SecuraCV/Views/PairView.swift`, outside the path filter
+      of `viewer.yml`, the only workflow that runs that suite, so a PR that
+      edited only PairView ran nothing (the recorded-reads gate, run by hand
+      over the `selftest-ui` job, named it). `viewer.yml` now lists PairView
+      and `DeviceAPI.swift` (this round's row reads both), and the gate's
+      recorder and checker, in both path lists, and `selftest-ui` runs the
+      recorded-reads gate as canary-local's logic tests do (each suite step
+      armed, then `check_path_filter_reads.py`; locally: 5 suites recorded,
+      266 distinct paths, all inside the filter). `.github/CI.md` names the
+      second armed job.
+    - The fourth round's Bluetooth row read the hold's own body for
+      Bluetooth names only and four named callees for the rest, so
+      `nvs->clear()` in the hold's own session, a remove of `"bt_enabled"`
+      in `setup_wizard::start_captive_portal()` (reached through
+      `wifi_raise_ap()`), or one in a new helper the hold called each passed
+      all 66 rows. The row now walks every free function the hold reaches in
+      the sketch, to the bottom (`sketchCallWalk()`: 21 functions today, the
+      hold, its clears and `log_health()`'s and the SoftAP password's
+      helpers among them), through namespace qualifiers, aliases and
+      function-like macros, and fails on a call whose name the sketch
+      defines where the walk cannot see or index it. Each body is held to no
+      Bluetooth key (its literal, or any name the sketch gives a `"bt_..."`
+      key), no clear or erase of a whole namespace, and no call into
+      Bluetooth code. The three mutants above fail it, as do the fourth
+      round's (a remove in `wifi_clear_credentials()`,
+      `reset_to_first_boot()` or `wifi_raise_ap()`, a `prefs.clear()`, a
+      `"bt_enabled"` in `config_clear()`'s keys), a key held under another
+      name, a macro, a namespace alias, a `using namespace`, a definition
+      split over lines, `NimBLEDevice::deleteAllBonds()` and
+      `bluetooth_channel::disable()` in the hold. It also pins the switch
+      itself: `"bt_enabled"` read through the main session, and its default,
+      on. Member calls are not walked; the key, clear and Bluetooth-call
+      checks read them where they stand.
+    - The dashboard's blip rows never counted the sign-in's waits, so a blip
+      whose `catch` went straight to the next ask passed all 66 rows (with
+      the Wi-Fi down, the thirty asks then ran out in moments, not the 60 s
+      the line counts down). The blip rows now hold the waits: four 2 s
+      sleeps before a receipt on the fifth ask, thirty for thirty blips.
+      That mutant fails a named row.
+    - PairView's advice named "Use BOOT Tap Once there lets you in" for the
+      WAP's page, but its Open its page link is the WAP's name at `/`, which
+      a browser with no session gets as the landing page, with no such
+      button; the kit footer named the same button. Both now walk the
+      landing page's Open dashboard to Settings (the row above walks that
+      way in the firmware), the advice names the button Forget Wi-Fi carries
+      there (Settings, WiFi, Remove credentials), and the footer names
+      Settings, Device, Save my recovery kit and the sign-in its refusal
+      opens. The PairView row holds each to the page and the link to
+      `DeviceAPI.url(forDiscoveredHost:)`. (Corrects the earlier bullet that
+      gave the advice its parenthesis.) `FAQ.md`'s Forget Wi-Fi answer said
+      "the stored network"; it clears every saved one, and it now says to
+      check Bluetooth Enabled first and that the door it reopens is
+      first-come (the retired sentence is banned there).
+    - Counts now: `recovery_kit.test.js` 66 tests, the sketch's `*.test.js`
+      192, `test_docs_claims.py` 13. `web_assets_gz.h` unchanged (no page
+      changed). Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -3114,6 +3217,20 @@ so — see D2 below.)
   bearer asked for leaves the door shut, or whether this stays posture. From
   code; not probed. Found by the superseded F289 port's review, filed by
   #1832.
+  *(2026-10-21, #1843's fifth review:)* F343's posture (its fifth and sixth
+  amendments) rests on these routes taking the session. The WAP's way out
+  from under a host striking from nine or more addresses is the owner's
+  landing session on `POST /api/wifi/connect` (`wifi_change_authorize()`,
+  which hands the cookie to `api_auth_check()`), and the only step that
+  makes that move stick is `POST /api/wifi/forget`
+  (`handle_wifi_forget_auth()`, `api_auth_check()`). A decision that gives
+  either a bearer leaves the owner's bearer held `429` by the shared
+  overflow under that host, and waiting is then the WAP's only way out, so
+  the decision bears on F343 too. The same claim is why a factory reset
+  does not undo a stranger who took the open door: the stranger chose the
+  network, can spend the claim from it, and keeps the token and the SoftAP
+  password the receipt carries, which the hold and Forget Wi-Fi keep
+  (`magic_pairing.md` §2.2 and §8 now say so). From code; not probed.
 - [ ] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and

@@ -125,8 +125,11 @@ hold keeps; and the per-address lockout's ways out.
   is on under Settings, Bluetooth, and how its sign-in, which covers the
   page with no session, gets there (the main page, Open dashboard, then
   Settings); the iPhone app's "No recovery kit?" advice says to check it
-  before forgetting the WAP's Wi-Fi, which leaves it as the hold does. The
-  docs that said otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  before forgetting the WAP's Wi-Fi, which leaves it as the hold does, and
+  it and the app's kit footer walk the same way there from the WAP's main
+  page (Open dashboard, then Settings; they named a Use BOOT Tap Once that
+  page does not show), and `FAQ.md`'s Forget Wi-Fi answer says to check the
+  switch first. The docs that said otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
   credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
@@ -147,7 +150,25 @@ hold keeps; and the per-address lockout's ways out.
   full erase in either flasher is what removes them).
   The scenario's secure-tier line, which said flash encryption prevents
   data extraction, now says it leaves NVS plaintext on the WAP and the
-  flagship. The per-address
+  flagship. **If you provisioned the secure tier for seizure, read this:**
+  the security docs, the design notes, the bench runbook and the in-browser
+  flasher's trust card said or implied that its fuses protect the identity
+  key, the saved Wi-Fi or the mesh secret at rest, and they do not. Every
+  released tree builds with `framework = arduino`, where NVS encryption is
+  not available, so on a board with flash encryption fused the key, the
+  saved Wi-Fi and broker passwords and the Bluetooth bonds are still
+  plaintext in NVS, and the WAP's mesh secret beside them; the fuses protect
+  at most the firmware image. `SECURITY_MODEL.md` (its honest statement, its
+  physical-access paragraph, its seizure advice and its software promise's
+  limit), `THREAT_MODEL.md` (its principle scope and Scenario 8), the beacon
+  spec, `hardware_root_of_trust.md`, `vault_operator_ux_v1_1.md`,
+  `V1_BENCH_TEST_RUNBOOK.md` and the flasher's card now say so, and
+  `test_docs_claims.py` holds the build files to it. Likewise
+  `magic_pairing.md` offered a factory reset as the fix for a WAP a stranger
+  joined to its own network through the open setup door: that stranger could
+  spend the claim from that network, and the token and SoftAP password its
+  receipt carries survive the hold and Forget Wi-Fi, which also reopen the
+  first-come door (ledger F345); it now says so. The per-address
   lockout's ways out (F343, in its entry below) offered the 10 s hold as a
   way out from under a host striking from 9 or more addresses, and it is
   not one while that host keeps striking: the hold empties the table, as

@@ -19,6 +19,14 @@ on:
       # the Swift tests on the Apple runners — an edit to it alone must still
       # be checked, or the two implementations can drift through the fixture.
       - 'viewer/fixtures/timeline/**'
+      # recovery_kit.test.js holds the iPhone's "No recovery kit?" advice
+      # (PairView) to the WAP's dashboard, and its "Open its page" link to
+      # the address DeviceAPI builds, so an edit to either alone runs it.
+      - 'ios/Sources/SecuraCV/Views/PairView.swift'
+      - 'ios/Sources/SecuraCV/Transport/DeviceAPI.swift'
+      # the recorded-reads gate on selftest-ui: its recorder and its checker
+      - 'scripts/path_filter_reads/**'
+      - 'scripts/check_path_filter_reads.py'
       - '.github/workflows/viewer.yml'
   pull_request:
     branches: [ "main" ]
@@ -35,6 +43,14 @@ on:
       # the Swift tests on the Apple runners — an edit to it alone must still
       # be checked, or the two implementations can drift through the fixture.
       - 'viewer/fixtures/timeline/**'
+      # recovery_kit.test.js holds the iPhone's "No recovery kit?" advice
+      # (PairView) to the WAP's dashboard, and its "Open its page" link to
+      # the address DeviceAPI builds, so an edit to either alone runs it.
+      - 'ios/Sources/SecuraCV/Views/PairView.swift'
+      - 'ios/Sources/SecuraCV/Transport/DeviceAPI.swift'
+      # the recorded-reads gate on selftest-ui: its recorder and its checker
+      - 'scripts/path_filter_reads/**'
+      - 'scripts/check_path_filter_reads.py'
       - '.github/workflows/viewer.yml'
 
 permissions:
@@ -106,19 +122,61 @@ jobs:
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version-file: pyproject.toml
     - uses: actions/setup-node@v7
       with:
         node-version: '22'
+    # The path-filter gate (sweep CI2, as canary-local.yml's logic-tests
+    # job runs it): each suite step below records the repo paths its
+    # processes read (scripts/check_path_filter_reads.py says how), and the
+    # last step fails on a read outside this workflow's pull_request paths.
+    # A suite here that reads a file outside the sketch (recovery_kit.test.js
+    # reads the iPhone's PairView and DeviceAPI) would otherwise go unrun by a
+    # PR that edits only that file, and the red would land on the next
+    # sketch PR. A suite step added without this env block is named by the
+    # gate as a suite it never heard from.
     - name: Pre-flight self-test UI logic (probe×status hint matrix)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/selftest_ui.test.js
     - name: Onboarding wizard logic tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js
     - name: Admin dashboard logic tests (peek URL, retry policy, BLE endpoint)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/web_ui_logic.test.js
     - name: Recovery kit offer (dashboard BOOT-tap sign-in, wizard close-out)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
     - name: Dashboard gates (Camera and Community views only where the build serves them, Export saves its answer)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js
+    - name: Every file the self-test UI suites read is inside this workflow's path filter
+      # Reads the recordings the five suite steps above left (the suites
+      # are not run again). A miss names the test, the file, the line that
+      # read it and the line to add to BOTH path lists (R6). PyYAML reads
+      # this file.
+      run: |
+        python3 -m pip install --quiet pyyaml
+        python3 scripts/check_path_filter_reads.py \
+          --workflow .github/workflows/viewer.yml --job selftest-ui \
+          --reads "$RUNNER_TEMP/path-filter-reads"
 
   canary-vision-lint:
     name: ESLint (canary-vision)

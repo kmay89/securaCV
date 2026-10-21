@@ -97,9 +97,17 @@ While the door is **open** (a new unit, or the owner tapped it):
 - They can connect and, after the Just Works pairing, write credentials for
   *their* network. That is the inherent exposure of any "no owner yet"
   door, and it is bounded: the window is 30 minutes from power-on, not
-  forever; a join that succeeds stores credentials and shuts the door; an
-  owner who finds the unit on the wrong network holds it, factory-resets it,
-  and starts again.
+  forever; a join that succeeds stores credentials and shuts the door. An
+  owner who finds the unit on the wrong network still holds it, but on a WAP
+  a reset does not undo a stranger who took the door. The network the WAP
+  joined is one the stranger chose, so the stranger is on it and can spend
+  the claim the door minted for its own link, and the receipt that claim
+  buys carries the bearer token and the SoftAP password (ledger F345). The 10 s
+  hold and Forget Wi-Fi keep both, since both derive from the identity key
+  the reset keeps, and nothing rotates the token today; only a full erase in
+  a flasher replaces them, with the identity. And either reset reopens the
+  same first-come door for 30 minutes, which a stranger still in radio range
+  can take again.
 - They **cannot** hold the door open or hold the single link against the
   owner: a client that sends nothing for **3 minutes** is dropped
   (`Timing::idle_disconnect_ms`); accepted credential writes are at least
@@ -110,10 +118,11 @@ While the door is **open** (a new unit, or the owner tapped it):
   failure is `InvalidRpc` (`0x01`), because "a device that names which byte
   was wrong is a device helping someone probe it."
 - They **cannot** get the WAP's bearer token, its console, its OTA channel,
-  its witness export or its bonded provisioning: the key a Just Works
-  pairing yields is *unauthenticated*, and every `*_AUTHEN` characteristic
-  refuses it. The claim ticket they could read opens nothing from the street
-  (§2.4).
+  its witness export or its bonded provisioning over Bluetooth: the key a
+  Just Works pairing yields is *unauthenticated*, and every `*_AUTHEN`
+  characteristic refuses it. The claim ticket they could read opens nothing
+  from the street (§2.4); from a network they joined the WAP to, it buys the
+  receipt, token included (above).
 - A **passive listener** learns nothing: the command and result
   characteristics require an encrypted link (LE Secure Connections), checked
   by the characteristic's properties *and again in the write handler*. The
@@ -1016,8 +1025,12 @@ a user.
 - **The first-boot window is a window.** For 30 minutes after a new unit's
   power-on, anyone in radio range with a standard client can hand it a
   network. The bounds (§2.2) keep that from being a denial-of-service on the
-  owner, and a unit joined to the wrong network is a unit its owner holds,
-  not one that has been taken; the fix is a factory reset. A deployment
+  owner, and a unit joined to the wrong network is one its owner still
+  holds. On a WAP a factory reset is not the whole fix: whoever chose that
+  network can spend the claim from it, and with it hold the bearer token and
+  the SoftAP password, which the hold and Forget Wi-Fi keep (nothing rotates the token
+  today; a full erase replaces both, with the identity), and either reset
+  reopens the same first-come door for 30 minutes (§2.2, ledger F345). A deployment
   that wants no window at all compiles `IMPROV_FIRST_BOOT_WINDOW_MS` to 0
   (tap-only) — on a WAP, which has no tap door yet, that means no door.
 - **Just Works resists a passive listener, not an active one who paired

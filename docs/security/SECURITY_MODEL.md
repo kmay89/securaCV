@@ -259,10 +259,13 @@ because we never had it.
 
 **The limit of that promise.** It is a statement about software. Someone
 who physically takes the device and reads the flash chip directly is a
-different adversary, and on a default-configured Canary they can recover
-the key. That is a deliberate trade — the alternative permanently bricks
-devices whose owners lose a key — and it is spelled out, with what it does
-and doesn't let an attacker do, under
+different adversary, and today they can recover the key from any Canary,
+a board with flash encryption fused included: the key is in NVS, which
+flash encryption does not cover, and the NVS encryption that would is not
+in any released build. Leaving the irreversible fuses off by default is a
+deliberate trade — the alternative permanently bricks devices whose owners
+lose a key — and both are spelled out, with what key recovery does and
+doesn't let an attacker do, under
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ---
@@ -892,11 +895,23 @@ divergent chains from the same device key. Two chains that share a prefix
 and then disagree is not something the real device can do, so if both ever
 reach a verifier, the clone is provable.
 
-**If your threat model includes device seizure**, this is the case the
-opt-in tiers exist for. Turn them on deliberately, back up the key first,
-and understand that you are trading recoverability for extraction
-resistance. Read [`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
-before you burn a fuse — that decision cannot be walked back.
+**If your threat model includes device seizure**, know what the opt-in
+tiers buy today before you burn anything: at most the firmware image's
+protection (flash encryption keeps the app image from being read off the
+chip; Secure Boot, which the provisioning kit prepares but does not yet
+enable, would refuse unsigned firmware), not the key's. The identity key,
+the saved Wi-Fi and broker passwords and the Bluetooth bonds stay
+plaintext in NVS on a fused board too, and the WAP's mesh secret, which it
+saves only on such a board, sits beside them in plaintext. They stay so
+until NVS encryption is in the build, which needs the
+arduino-as-IDF-component migration
+(`firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9; the Tier 3 row of
+[`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
+§5.1). Until then the defenses against a seizer are the two above, the
+anchored chain it cannot rewrite and the divergent chain a clone leaves
+for a verifier to find, and keeping the device out of reach. Read that
+design note before you burn a fuse — that decision cannot be walked back,
+and today it does not buy key secrecy.
 
 **If your threat model is an intruder, a landlord, or a domestic abuser
 who does not take the device to a lab**, the default is the right one for

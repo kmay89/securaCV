@@ -25,7 +25,7 @@ in `Cargo.toml` to `1.0.0` (the tag step).
 | Item | Qty | Notes |
 |---|---|---|
 | XIAO ESP32-S3 (Sense) | **≥ 3** | 3 boards are needed for the Opera mesh / Beacon three-board repro; 2 minimum for Chirp |
-| Boards with **flash encryption** enabled | ≥ 2 | Required for mesh (the `opera_secret` in NVS is only confidential under FE) |
+| Boards with **flash encryption** enabled | ≥ 2 | Required for mesh: the firmware writes the `opera_secret` to NVS only with FE on (audit O2). FE does not make it confidential: NVS is plaintext on a fused board too |
 | USB-C cables, powered hub | — | For simultaneous multi-board flashing + serial |
 | Raspberry Pi 4/5 or x86 box w/ Home Assistant OS | 1 | Operator stack host (Track A) |
 | RTSP IP camera (or the committed mp4 fixture over RTSP) | 1 | Track A |

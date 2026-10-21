@@ -583,9 +583,11 @@ function renderTrustCard() {
     "Physical possession. A standard dev board answers USB: anyone holding " +
     "it with a cable can read or rewrite its flash — that is exactly how " +
     "this page's own backup works, and pretending otherwise would be " +
-    "theater. The project's Phase-2 provisioning closes this with flash " +
-    "encryption and eFuse locks (then the flash reads back as ciphertext), " +
-    "documented — limits included — in docs/security/THREAT_MODEL.md."));
+    "theater. The project's Phase-2 provisioning (flash encryption and " +
+    "eFuse locks) protects the firmware image, not the identity key or the " +
+    "saved WiFi: those live in NVS, which flash encryption does not cover, " +
+    "so today they read back in the clear from a fused board too. " +
+    "Documented — limits included — in docs/security/THREAT_MODEL.md."));
 
   const bp = el("div", "flash-trust-sec");
   bp.append(el("h3", null, "Best practices, in four lines."));
@@ -593,7 +595,7 @@ function renderTrustCard() {
   [
     "Treat backup files like house keys — they contain everything on the board, identity key and saved WiFi included.",
     "Selling or giving a board away? Run Advanced → full erase first. It destroys the identity key and all settings.",
-    "For a board deployed somewhere physically exposed, use Phase-2 secure provisioning (flash encryption + eFuse).",
+    "For a board deployed somewhere physically exposed, put it out of reach: Phase-2 provisioning (flash encryption + eFuse) does not yet protect its key or saved WiFi.",
     "After any install or restore, run the health check — fingerprints and witness counters, read off the chip.",
   ].forEach((t) => {
     const li = el("li");
