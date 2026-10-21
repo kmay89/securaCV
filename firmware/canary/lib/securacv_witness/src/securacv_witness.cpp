@@ -174,23 +174,28 @@ static bool persist_chain_blob() {
 // nothing written to the key or the chain state. (setup() has already run
 // bootguard::begin() and canary_pe::on_boot(), which write rows of their
 // own: the crash-loop count, the power-event log.)
-// A fault in the read that leaves the entry in place (a flash read error
-// there, a session that will not open) so leaves the key for a later boot
-// that can read it. Corruption is IDF's to meet first, and the firmware
-// sees only its answer. An entry whose data CRC fails IDF erases inside the
-// read it refuses. On IDF 4.4 (core 2.0.17: every env but env:full) the
-// blob's index stays and every later boot halts on it; on IDF 5.x (core
-// 3.x, env:full) the next boot halts as IDF erases the index too, and the
-// boot after it finds no key and makes a new identity. A key whose index
-// entry fails IDF's header check is erased before the key is asked for (when
-// IDF loads the page, or in the probe's own lookup), so the probe answers
-// ESP_ERR_NVS_NOT_FOUND and that same boot makes a new identity, on IDF 4.4
-// and 5.x alike. Both are today's behavior, not a decision. What holds
-// throughout: this firmware never writes over a key IDF still reports as
-// stored. The 30 s BOOT hold at power-on wipes the identity and starts
-// fresh. Before, a failed read fell through to a new keypair stored over
-// the old one, and a read that failed after the length check ran the boot
-// on the zeroed key.
+// A fault in the read that leaves the entry in place (a session that will
+// not open, a flash read error while IDF copies the data) so leaves the key
+// for a later boot that can read it. Corruption is IDF's to meet first, and
+// the firmware sees only its answer. An entry whose data CRC fails IDF
+// erases inside the read it refuses, leaving the blob's index, so that boot
+// halts. On IDF 4.4 (core 2.0.17: every env but env:full) the index stays
+// and every later boot halts on it; on IDF 5.5 (core 3.3.8, env:full) the
+// next boot's nvs_flash_init() erases an index whose data is gone, so that
+// boot finds no key and makes a new identity. A data chunk whose header
+// fails IDF's check is erased when IDF loads the page: on IDF 4.4 every boot
+// then halts as above, and on IDF 5.5 the same init erases the index, so the
+// probe answers ESP_ERR_NVS_NOT_FOUND. A key whose index entry fails the
+// check is erased before the key is read (when IDF loads the page, or in the
+// probe's own lookup), and a flash read error in that lookup sets the page
+// aside for the boot; either way the probe answers ESP_ERR_NVS_NOT_FOUND.
+// Each NOT_FOUND here sends that same boot down the first-boot path, a new
+// identity, with no halt. All of it is today's behavior, not a decision.
+// What holds throughout: this firmware never writes over a key IDF still
+// reports as stored. The 30 s BOOT hold at power-on wipes the identity and
+// starts fresh. Before, a failed read fell through to a new keypair stored
+// over the old one, and a read that failed after the length check, before
+// IDF copied anything into the buffer, ran the boot on the zeroed key.
 static bool establish_identity_key() {
   const KeyLoad stored = nvs_load_key(g_device.privkey);
   if (stored == KeyLoad::Loaded) {

@@ -45,13 +45,14 @@
 //
 // And the key read fails closed (sweep F360, the canary's rule on this
 // sketch). nvs_load_key() checked the stored key's length and then discarded
-// the count Preferences::getBytes() answered; the core leaves the buffer as
-// it was when that read fails, so a read that failed after the length check
-// left g_device's zeroed key in use, and provisioning went on with it: the
-// SoftAP came up under that key's published known answer cv-3jByJ6rHdhM2
-// and records were signed with a key anyone holds. And its one false meant
-// "no key": a failed session open or a length lookup other than 32 made
-// provision_device() generate a keypair and store it over the old one. Now
+// the count Preferences::getBytes() answered; a read that fails before IDF
+// copies anything leaves the buffer as it was, so such a read after the
+// length check left g_device's zeroed key in use, and provisioning went on
+// with it: the SoftAP came up under that key's published known answer
+// cv-3jByJ6rHdhM2 and records were signed with a key anyone holds. And its
+// one false meant "no key": a failed session open or a length lookup other
+// than 32 made provision_device() generate a keypair and store it over the
+// old one. Now
 // stored_key_length() asks IDF's nvs_open() / nvs_get_blob() first, and only
 // ESP_ERR_NVS_NOT_FOUND (no namespace, or no key in it) answers Absent; any
 // other error, a key that is not 32 bytes, a read that does not answer all

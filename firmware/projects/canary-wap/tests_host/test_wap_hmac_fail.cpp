@@ -79,6 +79,8 @@
 #include <dirent.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <cctype>
 #include <cstdarg>
@@ -576,7 +578,10 @@ static void token_windows_are_never_overrun() {
 // given, whatever the length: no byte at 0, "" below "cv_" and its NUL, a
 // cut token from 4 to 35, the whole token at 36 and above. Before, a 1- to
 // 3-byte window took the prefix and a NUL past its end, and a 0-byte one
-// wrapped `out_len - 1` and took a whole token.
+// wrapped `out_len - 1` and took a whole token. A null output has no window
+// to look at, so what that case holds is that the call returns: it runs in a
+// child process, and a write through the pointer (the child dying on a
+// signal) is a failed check here, not a crash of the whole suite.
 static void the_token_formatter_stays_in_its_window() {
   uint8_t in[64];
   for (size_t i = 0; i < sizeof(in); i++) in[i] = (uint8_t)(i * 37 + 11);
@@ -594,9 +599,20 @@ static void the_token_formatter_stays_in_its_window() {
     const std::string want = len < 4 ? "" : token.substr(0, len - 1);
     CHECK_MSG(w.text() == want, what + ": " + w.text());
   }
-  Window none(4);
-  format_api_token_string(in, sizeof(in), nullptr, 4);
-  CHECK_MSG(none.intact() && none.text() == "ZZZZ", "format_api_token_string(): a null output");
+  std::fflush(nullptr);
+  const pid_t child = fork();
+  if (child == 0) {
+    format_api_token_string(in, sizeof(in), nullptr, 4);
+    _exit(0);
+  }
+  int status = 0;
+  std::string how = "fork failed";
+  if (child > 0 && waitpid(child, &status, 0) == child) {
+    how = WIFSIGNALED(status) ? "signal " + std::to_string(WTERMSIG(status))
+                              : "exit " + std::to_string(WEXITSTATUS(status));
+  }
+  CHECK_MSG(how == "exit 0",
+            "format_api_token_string(): a null output did not return (" + how + ")");
 }
 
 // ── resolve_ap_password() ───────────────────────────────────────────────────

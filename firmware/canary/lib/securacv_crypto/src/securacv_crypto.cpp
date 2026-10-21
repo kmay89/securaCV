@@ -428,9 +428,13 @@ void crypto_print_key_at_rest() {
 // reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
 // failed": its begin() fails alike on a namespace never created and on a
 // fault, and getBytesLength() answers 0 alike for a missing key and a failed
-// lookup. IDF answers ESP_ERR_NVS_NOT_FOUND for exactly the first, at the
-// open (no namespace) or at the lookup (no key in it), as health/boot_guard.h
-// reads it; any other error is NVS failing to say. ESP_OK sets *len. IDF
+// lookup. Only IDF's ESP_ERR_NVS_NOT_FOUND reads as no key, as
+// health/boot_guard.h reads it. IDF answers it at the open (no namespace) or
+// at the lookup, which takes nothing from a page but a match: no key in the
+// namespace, and also a stored entry the lookup skipped (a privkey of another
+// type, an index entry whose header fails IDF's check, which it erases, a
+// page a flash read error set aside). So NOT_FOUND says IDF holds no key it
+// can find, and any other error is NVS failing to say. ESP_OK sets *len. IDF
 // logs neither answer, so a first boot no longer logs Preferences'
 // "nvs_get_blob len fail: privkey NOT_FOUND" for the key read (an error-level
 // line, kept at Core Debug Level 1 and above). By then canary_pe::on_boot()
@@ -452,10 +456,12 @@ static esp_err_t stored_key_length(size_t* len) {
 // that generates no key and writes nothing over the stored one. Before,
 // every failure answered false, and the caller
 // generated and stored a new identity over whatever false meant. Worse, the
-// read's own answer was discarded: Preferences::getBytes() leaves the buffer
-// as it was when its read fails, so an NVS error after the length check left
-// the zeroed DeviceIdentity key in use: a signing key every reader of this
-// source holds, whose setup-network key is the published known answer
+// read's own answer was discarded: Preferences::getBytes() answers 0 when its
+// read fails, and a read that fails before IDF copies anything leaves the
+// buffer as it was (one whose data CRC fails leaves the entry's corrupted
+// bytes), so an NVS error after the length check could leave the zeroed
+// DeviceIdentity key in use: a signing key every reader of this source
+// holds, whose setup-network key is the published known answer
 // cv-3jByJ6rHdhM2, and from which, on a unit with no stored token, the API
 // token is derived too.
 KeyLoad nvs_load_key(uint8_t priv[32]) {

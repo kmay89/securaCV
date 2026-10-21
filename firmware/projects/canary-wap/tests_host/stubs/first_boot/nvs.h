@@ -13,16 +13,17 @@
  *
  * Two answers here are ones IDF does not give. Once the open succeeded,
  * IDF's size query answers only ESP_OK, ESP_ERR_NVS_NOT_FOUND or
- * ESP_ERR_NVS_INVALID_HANDLE (v4.4.7 and v5.5.1 nvs_api.cpp
+ * ESP_ERR_NVS_INVALID_HANDLE (v4.4.7, v5.5.1 and v5.5.4 nvs_api.cpp
  * nvs_get_str_or_blob(), nvs_storage.cpp Storage::findItem()): its lookup
- * skips an entry stored as another type, one it cannot read and one whose
- * header fails its check (erasing that one first), and goes on searching,
- * so each of those ends ESP_ERR_NVS_NOT_FOUND. This fake answers a key
- * stored as another type with ESP_ERR_NVS_TYPE_MISMATCH, and length_fault
- * makes the lookup fail with the error a test names (ESP_FAIL in the
- * suite). The suite keeps both to drive the key load's refusal of an answer
- * it does not know: the load fails closed on anything but ESP_OK and
- * ESP_ERR_NVS_NOT_FOUND, whatever a later IDF answers. */
+ * skips an entry stored as another type and one whose header fails its
+ * check (erasing that one first), sets aside for the boot a page it cannot
+ * read, and goes on searching, so each of those ends ESP_ERR_NVS_NOT_FOUND.
+ * This fake answers a key stored as another type with
+ * ESP_ERR_NVS_TYPE_MISMATCH, and length_fault makes the lookup fail with the
+ * error a test names (ESP_FAIL in the suite). The suite keeps both to drive
+ * the key load's refusal of an answer it does not know: the load fails
+ * closed on anything but ESP_OK and ESP_ERR_NVS_NOT_FOUND, whatever a later
+ * IDF answers. */
 #ifndef STUB_FIRST_BOOT_NVS_H
 #define STUB_FIRST_BOOT_NVS_H
 

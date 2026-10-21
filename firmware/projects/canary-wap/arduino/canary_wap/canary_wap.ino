@@ -1639,8 +1639,12 @@ static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
 // reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
 // failed": its begin() fails alike on a namespace never created and on a
 // fault, and getBytesLength() answers 0 alike for a missing key and a failed
-// lookup. IDF answers ESP_ERR_NVS_NOT_FOUND for exactly the first, at the
-// open (no namespace) or at the lookup (no key in it); any other error is NVS
+// lookup. Only IDF's ESP_ERR_NVS_NOT_FOUND reads as no key. IDF answers it
+// at the open (no namespace) or at the lookup, which takes nothing from a
+// page but a match: no key in the namespace, and also a stored entry the
+// lookup skipped (a privkey of another type, an index entry whose header
+// fails IDF's check, which it erases, a page a flash read error set aside).
+// So NOT_FOUND says IDF holds no key it can find, and any other error is NVS
 // failing to say. ESP_OK sets *len. The key read is the first session on
 // "securacv" (setup_wizard::init() only probes it), and on a first boot after
 // an NVS erase it comes before nvs_store_key() creates the namespace; IDF's
@@ -1664,9 +1668,10 @@ static esp_err_t stored_key_length(size_t* len) {
 // session open or a length lookup other than 32 answered false, and
 // provision_device() generated a keypair and stored it over the old one; and
 // the read's own count was discarded, so a read that failed after the length
-// check left g_device's zeroed key in use: provisioning went on, the SoftAP
-// came up under that key's published known answer cv-3jByJ6rHdhM2, and
-// records were signed with a key anyone holds.
+// check, before IDF copied anything into the buffer, left g_device's zeroed
+// key in use: provisioning went on, the SoftAP came up under that key's
+// published known answer cv-3jByJ6rHdhM2, and records were signed with a key
+// anyone holds.
 static KeyLoad nvs_load_key(uint8_t priv[32]) {
   memset(priv, 0, 32);
   size_t stored = 0;
@@ -11327,26 +11332,30 @@ static bool start_wifi_ap() {
 // and the key stays zeroed, and setup() halts on it before anything signs.
 // Nothing on that path writes the key or the chain state (safe_mode_check()
 // has written its own "hw_state" rows on a crash reset by then), so a fault
-// in the read that leaves the entry in place (a flash read error there, a
-// session that will not open) leaves the key, and the chain state beside
-// it, for a later boot that can read them. Corruption is IDF's to meet
-// first, and the sketch sees only its answer. An entry whose data CRC fails
-// IDF erases inside the read it refuses; on IDF 5.x (this sketch's core
-// 3.x) the next boot still finds the blob's index, so it halts again, and
-// IDF erases the index in that read; the boot after it finds no key and
-// makes a new identity. A key whose index entry fails IDF's header check is
-// erased before the key is asked for (when IDF loads the page, or in the
-// probe's own lookup), so the probe answers ESP_ERR_NVS_NOT_FOUND and that
-// same boot makes a new identity. Both are today's behavior, not a
-// decision; what holds throughout is that this sketch never writes over a
-// key IDF still reports as stored. It halts rather than going on as
-// setup() does after the other provisioning failures (sweep F336): from
-// there the boot attestation record and the mesh take g_device.privkey as it
-// is, which here is the zeroed key every derivation of is public, and the
-// chain starts again at seq 0, which the reboot and deep-sleep paths persist
-// over the stored one. Before, a failed read fell through to a new keypair
-// stored over the old one, and a read that failed after the length check ran
-// the boot on the zeroed key.
+// in the read that leaves the entry in place (a session that will not open,
+// a flash read error while IDF copies the data) leaves the key, and the
+// chain state beside it, for a later boot that can read them. Corruption is
+// IDF's to meet first, and the sketch sees only its answer. An entry whose
+// data CRC fails IDF erases inside the read it refuses, leaving the blob's
+// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.8) the next
+// boot's nvs_flash_init() erases an index whose data is gone, so that boot
+// finds no key and makes a new identity. A data chunk whose header fails
+// IDF's check is erased when IDF loads the page, and the index with it in
+// the same init; a key whose index entry fails the check is erased before
+// the key is read (when IDF loads the page, or in the probe's own lookup);
+// and a flash read error in that lookup sets the page aside for the boot.
+// In each the probe answers ESP_ERR_NVS_NOT_FOUND, and that same boot takes
+// the first-boot path, a new identity, with no halt. All of it is today's
+// behavior, not a decision; what holds throughout is that this sketch never
+// writes over a key IDF still reports as stored. It halts rather than going
+// on as setup() does after the other provisioning failures (sweep F336):
+// from there the boot attestation record and the mesh take g_device.privkey
+// as it is, which here is the zeroed key every derivation of is public, and
+// the chain starts again at seq 0, which the reboot and deep-sleep paths
+// persist over the stored one. Before, a failed read fell through to a new
+// keypair stored over the old one, and a read that failed after the length
+// check, before IDF copied anything into the buffer, ran the boot on the
+// zeroed key.
 static bool establish_identity_key() {
   g_device.key_refused = false;
   const KeyLoad stored = nvs_load_key(g_device.privkey);

@@ -11,11 +11,12 @@
  *
  * THE FAILURE THIS PREVENTS. nvs_load_key() checked the stored key's length,
  * then read it with Preferences::getBytes() and discarded the count it
- * answered. The Arduino core leaves the buffer as it was when that read
- * fails, so an NVS error between the two reads ran the boot on the zeroed
- * DeviceIdentity key: a signing key anyone holds, whose setup-network key is
- * the published known answer cv-3jByJ6rHdhM2 (test_ap_password.cpp), and
- * from which, on a unit with no stored token, the API token is derived too.
+ * answered. A read that fails before IDF copies anything into the buffer
+ * leaves it as it was, so such an error between the two reads ran the boot
+ * on the zeroed DeviceIdentity key: a signing key anyone holds, whose
+ * setup-network key is the published known answer cv-3jByJ6rHdhM2
+ * (test_ap_password.cpp), and from which, on a unit with no stored token,
+ * the API token is derived too.
  * And every false meant "no key":
  * a failed open or a failed length lookup fell through to a new keypair,
  * stored over the identity the unit had.
@@ -299,11 +300,12 @@ static void test_a_good_stored_key_loads_unchanged() {
 
 // ── THE F360 CASE: the read fails after the length lookup said 32 ───────────
 //
-// Preferences::getBytes() answers 0 and leaves the buffer as it was. Before,
-// the load answered true over the zeroed buffer, and the boot ran on the
-// all-zero key. Now it is Refused, the boot stops, and this firmware writes
-// nothing, so a fault that leaves the entry in place (Read::Fails: a flash
-// read error, say) leaves the key for the next boot that can read it. (IDF
+// Preferences::getBytes() answers 0, and here the buffer is as it was.
+// Before, the load answered true over the zeroed buffer, and the boot ran on
+// the all-zero key. Now it is Refused, the boot stops, and this firmware
+// writes nothing, so a fault that leaves the entry in place (Read::Fails: a
+// flash read error while IDF copies the data, say) leaves the key for the
+// next boot that can read it. (IDF
 // itself erases an entry whose data CRC fails, inside that read; this fake
 // does not model that.)
 static void test_a_failed_read_after_the_length_check_is_refused() {

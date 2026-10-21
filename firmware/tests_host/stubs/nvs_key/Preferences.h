@@ -8,8 +8,9 @@
  * read-write one creates it, and begin() on a begun handle refuses;
  * getBytesLength() answers 0 for a missing key and for a failed lookup
  * alike; getBytes() asks the length first, answers 0 when that is 0 or more
- * than the buffer holds, and answers 0 when the read fails, leaving the
- * buffer as it was; putBytes() stores and answers the length, or 0 on a
+ * than the buffer holds, and answers 0 when the read fails, touching the
+ * buffer only as IDF did (Read::Fails below leaves it as it was, Garbles
+ * fills it); putBytes() stores and answers the length, or 0 on a
  * closed or read-only handle, a null key or value, or a zero length.
  *
  * The faults, each in force until the test clears it:
@@ -21,15 +22,17 @@
  *                  getBytesLength() and so getBytes() answer 0). Once the
  *                  open succeeded, IDF's size query answers only ESP_OK,
  *                  ESP_ERR_NVS_NOT_FOUND or ESP_ERR_NVS_INVALID_HANDLE
- *                  (v4.4.7 and v5.5.1 nvs_api.cpp nvs_get_str_or_blob(),
- *                  nvs_storage.cpp Storage::findItem()): its lookup skips
- *                  a key stored as another type, an entry it cannot read
- *                  and one whose header fails its check (erasing that one
- *                  first), and answers ESP_ERR_NVS_NOT_FOUND when nothing
- *                  else matches. So ESP_FAIL and ESP_ERR_NVS_TYPE_MISMATCH
- *                  here are answers IDF does not give today; the suite
- *                  keeps them because the load fails closed on an answer it
- *                  does not know, whatever a later IDF answers.
+ *                  (v4.4.7, v5.5.1 and v5.5.4 nvs_api.cpp
+ *                  nvs_get_str_or_blob(), nvs_storage.cpp
+ *                  Storage::findItem()): its lookup skips a key stored as
+ *                  another type and one whose header fails its check
+ *                  (erasing that one first), sets aside for the boot a page
+ *                  it cannot read, and answers ESP_ERR_NVS_NOT_FOUND when
+ *                  nothing else matches. So ESP_FAIL and
+ *                  ESP_ERR_NVS_TYPE_MISMATCH here are answers IDF does not
+ *                  give today; the suite keeps them because the load fails
+ *                  closed on an answer it does not know, whatever a later
+ *                  IDF answers.
  *   begin_fails    Preferences' begin() refuses every open (IDF unaffected).
  *   read           what getBytes() does once its length lookup has
  *                  succeeded: Ok; Fails (answers 0, the buffer untouched:
