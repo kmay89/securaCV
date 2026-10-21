@@ -22,6 +22,8 @@ import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
+import { seedDemo } from '../src/modules/demo.mjs';
+import { totp } from '../src/auth.mjs';
 import { join } from 'node:path';
 
 const [cmd = 'help', ...rest] = process.argv.slice(2);
@@ -35,6 +37,8 @@ const app = createApp({ db, cfg });
 const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
 
   setup                                    set the operator password + authenticator (first run)
+  demo                                     fill an EMPTY database with a realistic week (orders, tickets, stock, books…) to explore
+  code                                     print the current authenticator code (same as your phone shows; for local trying-out)
   serve                                    run the web admin, API, forms, webhook and the scheduler
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
   snapshot                                 the dashboard numbers as JSON
@@ -91,6 +95,12 @@ const main = async () => {
       for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
     }
+    case 'demo': {
+      if (!hasOperator(db)) { const secret = setupOperator(db, flags.password || 'demo-password-change-me'); for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p); out(`Operator set with password "${flags.password || 'demo-password-change-me'}". Authenticator secret: ${secret} — or run \`backoffice code\` for the current code.`); }
+      out(await seedDemo(db, cfg));
+      return out('Demo data loaded. Now: backoffice serve  → http://127.0.0.1:' + cfg.port + '/  (log in with the password above and `backoffice code`)');
+    }
+    case 'code': { const secret = db.setting('auth:totp'); if (!secret) throw new Error('no operator yet — run setup or demo'); return out(totp(secret)); }
     case 'serve': {
       if (!hasOperator(db)) console.error('[backoffice] no operator yet — run `backoffice setup` in another shell; serving anyway');
       const addr = await app.listen(); startScheduler(app);
