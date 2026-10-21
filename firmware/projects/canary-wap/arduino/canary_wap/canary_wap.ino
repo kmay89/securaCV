@@ -6891,9 +6891,14 @@ static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
 // password. Answers ONLY while the first-boot wizard is active and only to
 // a browser that asked for exactly canary.local or 192.168.4.1
 // (request_host_is_setup_name(), sweep F344) — the same gate the "/"
-// redirect that minted the original token asks. The AP itself remains the
-// security boundary (companion_pwa.h wizard doc block); the token stays a UX
-// gate.
+// redirect that minted the original token asks. The token authorizes the
+// Wi-Fi join and the standalone exit (wifi_change_authorize()), so its answer
+// carries no Access-Control-Allow-Origin, unlike http_send_json()'s: the
+// wizard reads it same-origin, and a page on another site, in the owner's
+// own browser while it is on the SoftAP, can send this request at
+// 192.168.4.1 (a setup name) but is not handed the body (review of F344;
+// before, it was, and could spend the token cross-site). The SoftAP's key
+// keeps everyone else off it.
 static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   g_health.http_requests++;
   if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {
@@ -6913,7 +6918,9 @@ static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   doc["token"] = tok_hex;
   String response;
   serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, response.c_str(), HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {

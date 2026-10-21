@@ -66,7 +66,13 @@
 //     exactly canary.local or 192.168.4.1, any port, any case (before: any
 //     Host that contained one of them, and not CANARY.LOCAL); every other
 //     name gets the captive page and no token, and /companion serves under
-//     any Host as before;
+//     any Host as before. The wizard token's re-issue
+//     (handle_wifi_pair_token(), cut with http_send_json()) answers its token
+//     at those names with no Access-Control-Allow-Origin and
+//     Cache-Control: no-store (review of F344; before: through
+//     http_send_json(), `*` and no-cache, so a page on another site in the
+//     owner's browser on the SoftAP read it), and 404 with no token after
+//     setup or under any other name;
 //   - the two token stores' clock (sweep F347): the slot functions cut
 //     verbatim out of csi_integration.cpp (pick_slot_for_issuance(),
 //     find_slot(), pick_session_slot_for_issuance(), find_valid_session(),
@@ -93,6 +99,8 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "Arduino.h"           // stubs/receipt_grant
 #include "esp_http_server.h"   // stubs/receipt_grant
@@ -157,8 +165,48 @@ static httpd_handle_t g_https_server = nullptr;
 
 namespace setup_wizard {
 static bool g_active = false;
+static int g_touches = 0;
 inline bool is_active() { return g_active; }
+inline void touch() { ++g_touches; }
 }  // namespace setup_wizard
+
+// The wizard token's re-issue (handle_wifi_pair_token) writes its answer with
+// ArduinoJson, which is not on the host. Not ArduinoJson: a flat object of
+// bool and string members, written as ArduinoJson writes them (no spaces,
+// the members in the order they were set), with no escaping (the one string
+// is the token's hex).
+class String {
+ public:
+  const char* c_str() const { return text_.c_str(); }
+  std::string text_;
+};
+class JsonDocument {
+ public:
+  class Member {
+   public:
+    explicit Member(std::string* json) : json_(json) {}
+    void operator=(bool v) { *json_ = v ? "true" : "false"; }
+    void operator=(const char* v) { *json_ = std::string("\"") + v + "\""; }
+
+   private:
+    std::string* json_;
+  };
+  Member operator[](const char* key) {
+    for (auto& m : members_) if (m.first == key) return Member(&m.second);
+    members_.emplace_back(key, "null");
+    return Member(&members_.back().second);
+  }
+  std::vector<std::pair<std::string, std::string>> members_;
+};
+inline size_t serializeJson(const JsonDocument& doc, String& out) {
+  out.text_ = "{";
+  for (size_t i = 0; i < doc.members_.size(); ++i) {
+    if (i) out.text_ += ",";
+    out.text_ += "\"" + doc.members_[i].first + "\":" + doc.members_[i].second;
+  }
+  out.text_ += "}";
+  return out.text_.size();
+}
 
 static const char CAPTIVE_PORTAL_HTML[] = "<p>Open canary.local</p>";
 static const uint8_t CSI_DASHBOARD_HTML_GZ[] = {0x1f, 0x8b, 0x08};
@@ -286,6 +334,7 @@ const std::string kAttrs = "; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400";
 void reset() {
   g_https_server = nullptr;
   setup_wizard::g_active = false;
+  setup_wizard::g_touches = 0;
   csi_integration::g_live_session.clear();
   csi_integration::g_live_pair.clear();
   csi_integration::g_sessions_issued = 0;
@@ -490,6 +539,70 @@ void test_setup_name_is_exact() {
   }
   CHECK(!setup_name(nullptr));                                   // no Host
   CHECK(!setup_name(std::string(120, 'a').c_str()));             // too long for the buffer
+  // Too long for the buffer, and cut to it, still canary.local and a port:
+  // never read as the setup name (review of F344: a helper that took the cut
+  // header passed every other row, since a cut all-'a' name names nothing).
+  CHECK_MSG(!setup_name(("canary.local:" + std::string(100, '8')).c_str()),
+            "a truncated canary.local:<port> Host was read as the setup name");
+}
+
+// The wizard token's re-issue, GET /api/wifi/pair-token (review of F344):
+// its answer carries the token and NO Access-Control-Allow-Origin, and is
+// not stored. The wizard reads it same-origin (companion_pwa.h's
+// refreshToken()), so a page on another site, running in the owner's own
+// browser while that browser is on the SoftAP for setup, can make the
+// request at http://192.168.4.1/ (a Host the exact-name rule must pass) and
+// is not handed the body. Before, the answer went out through
+// http_send_json(), which sends Access-Control-Allow-Origin: *, so such a
+// page read a live pair token and could spend it on /api/wifi/connect or
+// /api/wifi/ap-only (a body those parse as JSON whatever its Content-Type,
+// so the POST needs no preflight). The request below carries the Origin
+// such a fetch sends; the handler reads none, and must not need to.
+void test_wizard_token_reissue_is_same_origin_only() {
+  const std::string token_body = "{\"ok\":true,\"token\":\"" + std::string(64, 'c') + "\"}";
+  for (const char* host : {"192.168.4.1", "canary.local", "CANARY.LOCAL:80", "192.168.4.1:80"}) {
+    reset();
+    setup_wizard::g_active = true;
+    httpd_req_t r;
+    r.handle = g_http_server;
+    r.req_hdrs["Host"] = host;
+    r.req_hdrs["Origin"] = "http://evil.example";
+    CHECK(handle_wifi_pair_token(&r) == ESP_OK);
+    const std::string why = std::string("the re-issue under Host ") + host;
+    CHECK_MSG(r.status == "200 OK", why + " answered " + r.status);
+    CHECK_MSG(r.type == "application/json", why + ": type " + r.type);
+    CHECK_MSG(r.resp == token_body, why + ": body " + r.resp);
+    CHECK_MSG(header_count(r, "Access-Control-Allow-Origin") == 0,
+              why + " sent Access-Control-Allow-Origin '" + header(r, "Access-Control-Allow-Origin") +
+                  "': a page on another site reads the token");
+    CHECK_MSG(header(r, "Cache-Control") == "no-store", why + ": Cache-Control '" + header(r, "Cache-Control") + "'");
+    CHECK(r.sends == 1);
+    CHECK(csi_integration::g_pair_tokens_issued == 1);
+    CHECK(setup_wizard::g_touches == 1);
+  }
+  // Setup over, or a name that is not one of the two: 404, no token, and
+  // still no wildcard.
+  struct Refused { bool setup; const char* host; };
+  for (const Refused& row : {Refused{false, "192.168.4.1"}, Refused{false, "canary.local"},
+                             Refused{true, "canary.local.evil.example"}, Refused{true, "canary-7916.local"},
+                             Refused{true, nullptr}}) {
+    reset();
+    setup_wizard::g_active = row.setup;
+    httpd_req_t r;
+    r.handle = g_http_server;
+    if (row.host) r.req_hdrs["Host"] = row.host;
+    CHECK(handle_wifi_pair_token(&r) == ESP_OK);
+    const std::string why = std::string(row.setup ? "during setup, " : "after setup, ") +
+                            (row.host ? std::string("Host ") + row.host : std::string("no Host"));
+    CHECK_MSG(r.status == "404 Not Found", why + " answered " + r.status);
+    CHECK_MSG(r.resp == "{\"ok\":false}", why + ": body " + r.resp);
+    CHECK_MSG(csi_integration::g_pair_tokens_issued == 0, why + " was minted a pair token");
+    CHECK_MSG(header_count(r, "Access-Control-Allow-Origin") == 0, why + " sent Access-Control-Allow-Origin");
+    CHECK(setup_wizard::g_touches == 0);
+  }
+  // http_send_json() is cut beside it so that a re-issue answering through
+  // it again compiles here and fails the rows above, not the build.
+  (void)&http_send_json;
 }
 
 // ── the Host question after setup (sweep F344) ───────────────────────────────
@@ -1103,6 +1216,7 @@ int main() {
   test_exchange_without_pair_token_mints_nothing();
   test_first_boot_setup_flow_unchanged();
   test_setup_name_is_exact();
+  test_wizard_token_reissue_is_same_origin_only();
   test_foreign_host_gets_no_pair_token_and_no_session();
   test_every_name_the_household_uses_still_lands();
   test_router_names_outside_the_rule_get_the_refusal();

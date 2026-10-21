@@ -73,7 +73,12 @@ to a fixed point, every function that calls one). What it reads:
     function's gate for it (handle_ui's and the receipt's Host row, the
     setup branch's exact setup names, /api/pair/token's cookie-or-bearer
     macro), and each entry still has its call. A page, a wrapper or a
-    global that mints anywhere else fails, by file and line.
+    global that mints anywhere else fails, by file and line. And no
+    MINT_SITES function answers through http_send_json() or
+    http_send_error() or names Access-Control-Allow-Origin (review of F344:
+    the wizard token's re-issue answered its token through
+    http_send_json(), whose `*` let a page on another site read it), so
+    what a mint site hands out is not readable by another site's page.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -83,8 +88,8 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
-run first, every run: a clean sketch that passes and forty-six plants that
-each fail it.
+run first, every run: a clean sketch that passes and fifty-three plants
+that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -182,7 +187,8 @@ SELF_GATING_HANDLERS = {
     "handle_https_redirect": "301 to https at the request's Host when it is an IP literal or the device's own name, else receipt_authority.h's address (503 when it has none); no data",
     "handle_tune_page": "session-cookie check, 302 to / when absent",
     "handle_wifi_pair_token": "gated on setup_wizard::is_active + exact setup "
-        "Host (canary.local or 192.168.4.1)",
+        "Host (canary.local or 192.168.4.1); its answer sends no CORS header "
+        "(MINT_SITES), so another site's page cannot read the token",
 }
 
 
@@ -324,7 +330,8 @@ MINT_SITES = {
         "session_issue": ("refusal", "!request_host_names_device(req)"),
     },
     ("canary_wap.ino", "handle_wifi_pair_token"): {
-        # The wizard token's re-issue: setup only, the exact setup names.
+        # The wizard token's re-issue: setup only, the exact setup names,
+        # and its answer read same-origin only (MINT_WILDCARD_SEND).
         "pair_token_issue": ("refusal", "!setup_wizard::is_active()||!request_host_is_setup_name(req)"),
     },
     ("csi_integration.cpp", "handle_pair_token"): {
@@ -337,6 +344,18 @@ MINT_SITES = {
     },
 }
 _MINT_DECL = re.compile(r"\b(?:bool|esp_err_t)\s+(?:[A-Za-z_]\w*\s*::\s*)*$")
+# What a mint site hands out is kept from a page on another site only because
+# its answer grants no cross-origin read, so no MINT_SITES function sends
+# through canary_wap.ino's JSON senders, which add
+# `Access-Control-Allow-Origin: *` (http_send_error() answers through
+# http_send_json()), or names the header itself. Review of F344: the wizard
+# token's re-issue answered through http_send_json(), so during setup any
+# page in the owner's browser on the SoftAP read a pair token at 192.168.4.1.
+# The body is read, not what it calls: a helper that sends the wildcard for
+# a mint site is not seen here (test_session_cookie's re-issue rows and
+# test_receipt_grant read the headers).
+MINT_WILDCARD_SEND = re.compile(r"\b(http_send_json|http_send_error)\s*\(")
+MINT_WILDCARD_HEADER = '"Access-Control-Allow-Origin"'
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -1317,6 +1336,21 @@ def mint_site_problems(sources: dict, sites=None) -> list:
             if (fname, name, call) not in seen:
                 problems.append(f"MINT_SITES names {fname}'s {name}() calling {call}(), which it "
                                 f"no longer does: remove or fix the entry")
+    for fname, text in sorted(sources.items()):
+        blanked = _blank(text)
+        for name, _p, _h, b, e in functions(text, indented=True):
+            if (fname, name) not in sites:
+                continue
+            for m in MINT_WILDCARD_SEND.finditer(blanked, b, e):
+                problems.append(f"{fname}:{_line(blanked, m.start())}: {name}() mints a session or "
+                                f"a pair token and answers through {m.group(1)}(), which sends "
+                                f"Access-Control-Allow-Origin: *: a page on another site would "
+                                f"read what it hands out")
+            at = text.find(MINT_WILDCARD_HEADER, b, e)
+            if at >= 0:
+                problems.append(f"{fname}:{_line(text, at)}: {name}() mints a session or a pair "
+                                f"token and names Access-Control-Allow-Origin: its answer must "
+                                f"grant no other site a read")
     return problems
 
 
@@ -1699,6 +1733,42 @@ _FIX_PLANTS = (
     ("a mint site whose call is gone", "canary_wap.ino",
      "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n", "  return ESP_OK;\n",
      "which it no longer does"),
+    # The three exactness rules _gate_before() keeps, one plant each (review
+    # of F344's PR: dropping any of them passed every plant above): a
+    # refusal at the top level of the body, a refusal and a grant whose
+    # WHOLE condition is the gate, and a statement at the top level, at a
+    # statement boundary.
+    ("the Host refusal nested in another branch", "canary_wap.ino",
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n",
+     "  if (x) {\n    if (!request_host_names_device(req)) return send_refusal(req);\n  }\n",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the Host refusal's condition widened", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req) && x) return send_refusal(req);",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the setup grant's condition widened", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n",
+     "  if (request_host_is_setup_name(req) || x) {\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional, in braces", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) { CSI_AUTH_OR_RETURN(req); }\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # A mint site's answer grants no other site a read (review of F344: the
+    # wizard token's re-issue answered through http_send_json()).
+    ("the setup token answered through the wildcard sender", "canary_wap.ino",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return http_send_json(req, hex);\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a credential-gated mint naming the CORS header", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  CSI_AUTH_OR_RETURN(req);\n  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n"
+     "  char hex[65];\n",
+     "handle_pair_token() mints a session or a pair token and names Access-Control-Allow-Origin"),
 )
 
 
@@ -1741,7 +1811,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 46, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 53, "the module docstring counts the plants: update it"
 
 
 def main() -> int:

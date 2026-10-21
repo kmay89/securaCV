@@ -50,7 +50,17 @@
   captive DNS also resolves to the device, was sent to the wizard with a
   token that authorizes the Wi-Fi join, and `CANARY.LOCAL` was not. Both now
   match the two names exactly, in any case and with any port; every other
-  name still gets the static "open canary.local" page and no token.
+  name still gets the static "open canary.local" page and no token. And
+  the re-issue's answer no longer carries `Access-Control-Allow-Origin: *`
+  (it went out through the sketch's JSON sender, which adds it to every
+  answer). An exact name does not stop a page that asks for the real one:
+  during setup, a page on another site open in the owner's browser while
+  that browser was on the SoftAP could read a pair token at
+  `http://192.168.4.1/api/wifi/pair-token`, and spend it on
+  `/api/wifi/connect` (join the device to a network the page names) or
+  `/api/wifi/ap-only` (end setup in standalone mode). The wizard reads the
+  token from the same origin, so it works as before, and the route check
+  now refuses a place that mints and answers through that sender.
   Host-tested; not run on a device.
 - **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
   `cv_session` over plain HTTP (sweep F337).** A browser that holds a
@@ -84,7 +94,10 @@
   `tls_cert_fp` pin, and the flagship's HTTPS builds serve HTTP and say why in
   `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL, FEATURES.md, the WAP's
   READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`, the captive
-  portal test plan and the bench checklist no longer say otherwise; the
+  portal test plan, the bench checklist, the flagship's getting-started
+  guide, `firmware/README.md`'s `dev` row and the glossary's TLS pin no
+  longer say otherwise (the broker password's provisioning request is plain
+  on every stock unit, and the flagship guide says to use `http://`); the
   FAQ's recovery-kit steps and the README's first-boot step use `http://`. The generator itself is not changed here: fixing its guard
   turns HTTPS on for every such unit and changes the pin the apps trust,
   which needs the bench (F15 stays open).

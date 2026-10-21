@@ -1811,6 +1811,21 @@ so — see D2 below.)
   section in `hardware_verification_checklist.md` (a plain-HTTP row that
   runs now, and an HTTPS row blocked until a WAP serves HTTPS, F15); the
   F289 rows written for `https://` say to run over `http://` until then.
+  *Review (2026-10-21, #<PR>):* F15's correction covers both trees, and the
+  CHANGELOG said the docs no longer say either serves HTTPS, but
+  SECURITY_MODEL's transport paragraph still opened with the WAP serving
+  HTTPS after setup and the flagship's HTTPS builds serving it from the
+  first boot after setup; its broker paragraph and THREAT_MODEL's MQTT row
+  read as if those builds carried the broker password encrypted; and the
+  flagship's getting-started guide, `firmware/README.md`'s `dev` row and
+  the glossary's TLS pin described HTTPS as running. Each now says no stock
+  build stores a certificate, so every unit serves plain HTTP (F15), and
+  describes HTTPS as what runs once one is stored; the CHANGELOG names
+  them. LESSONS_LEARNED's F337 entry said an http page can neither block
+  nor shadow the `__Host-` cookie; it can still push the Cookie header past
+  the reader's 512-byte ceiling and sign the browser out (integrity, not
+  availability), as THREAT_MODEL, the CHANGELOG and the writer's comment
+  say. Docs only.
 - [ ] **F338 [code+decision] The flagship's route check has no secret-answer
   rule.** `firmware/canary/scripts/check_route_security.py` holds the
   Host-first order and names every reader of `auth_get_token()` as an emitter
@@ -2628,9 +2643,9 @@ so — see D2 below.)
   split-horizon names, and public-Host reverse proxies; owners use the
   `.local` name, the IP or the bare router name. Residuals: requests at the
   IP from a cross-site page, which cannot read what the landing, the
-  exchange, the pages or the receipt serve (none sends a CORS header with
-  it; the receipt's `500` and `503` error codes do, and carry nothing
-  else), but
+  exchange, the pages, the wizard token's re-issue (since the second review)
+  or the receipt serve (none sends a CORS header with it; the receipt's
+  `500` and `503` error codes do, and carry nothing else), but
   spend no claim, close the tap from another address rather than take it,
   can still use up an open tap from the owner's own browser, and can churn
   pair tokens; `/api/wifi`, `/api/wifi/scan` and `/api/fleet`, which answer
@@ -2730,6 +2745,49 @@ so — see D2 below.)
     checklist's F255 intro now say a stock WAP serves plain HTTP (F15). The
     U1 row's SoftAP step names its precondition (the home link down, or a
     standalone unit).
+  *Review 2 (2026-10-21, #<PR>):*
+  - The wizard token's re-issue answered through `http_send_json()`, which
+    sends `Access-Control-Allow-Origin: *`, so the exact setup-name match
+    did not keep its token from a page on another site that asks for a real
+    setup name: during setup, a page in the owner's own browser on the
+    SoftAP could `fetch('http://192.168.4.1/api/wifi/pair-token')`, read a
+    live pair token, and spend it on `/api/wifi/connect` or
+    `/api/wifi/ap-only` (both parse any body as JSON, so the POST needs no
+    preflight). The exposure predates F344; this PR's text called the route
+    restricted. `handle_wifi_pair_token()` now answers with
+    `application/json`, `Cache-Control: no-store` and no CORS header; its one
+    client, the wizard's `refreshToken()` (`companion_pwa.h`), reads it
+    same-origin. `test_session_cookie.cpp` cuts the re-issue (with
+    `http_send_json()`, so a return to it fails the rows, not the build) and
+    drives it: the token at `192.168.4.1`, `canary.local`, `CANARY.LOCAL:80`
+    and `192.168.4.1:80` with no `Access-Control-Allow-Origin` and
+    `no-store`, and `404` with no token after setup or under another name.
+    The sketch before fails 8 of 880 (`*` and `no-cache` on all four).
+    `check_route_security.py`'s mint rule also refuses a `MINT_SITES`
+    function whose body answers through `http_send_json()` or
+    `http_send_error()` or names the header (`MINT_WILDCARD_SEND`); the
+    sketch before fails it at `handle_wifi_pair_token()`. F357, THREAT_MODEL's
+    and SECURITY_MODEL's residuals, the CHANGELOG and LESSONS_LEARNED say
+    so, and the U1 row's first-boot step checks the header.
+  - The mint rule's self-test pinned none of `_gate_before()`'s three
+    exactness rules: dropping the top-level test, matching the refusal's or
+    the grant's gate as a substring of its condition, or dropping the
+    statement-boundary test each passed all 46 plants and the tree. Five
+    plants pin them (the Host refusal nested in a branch, the refusal's and
+    the setup grant's condition widened, `CSI_AUTH_OR_RETURN` behind an
+    `if`, bare and in braces), and two pin the wildcard rule: 53 in all.
+    Each of those four mutants, the top-level test dropped from either
+    branch alone, and each half of the wildcard rule dropped now fails the
+    self-test.
+  - `test_setup_name_is_exact` sends `canary.local:` and 100 digits, which
+    cut to the 96-byte buffer still reads as `canary.local` and a port. A
+    `request_host_is_setup_name()` that took a truncated Host passed both
+    suites; it fails this row (1 of 880). No browser sends such a Host.
+  - The U1 row's step 5 sends the foreign ask before the BOOT tap, as
+    `test_receipt_foreign_host_is_refused_first` does: sent after the tap,
+    it could land after the owner's next ask had spent the tap, and a sketch
+    without the Host row passed.
+  Host-tested; not run against a browser or on a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's
@@ -3071,7 +3129,13 @@ so — see D2 below.)
   /api/wifi/scan` (nearby networks; a request can also start a scan, which
   stalls the SoftAP) and `GET /api/fleet` (coarse presence, whose wildcard
   is a documented contract: `tvos/discovery/DISCOVERY.md` says a single
-  Canary is readable from any page on the LAN). So any page a household
+  Canary is readable from any page on the LAN). A fourth public route, the
+  wizard token's re-issue (`GET /api/wifi/pair-token`, setup only, the
+  exact setup names), answered through it too, and its body is a pair
+  token that authorizes `/api/wifi/connect` and `/api/wifi/ap-only`; F344's
+  second review closed that one (it now sends no CORS header, and
+  `check_route_security.py` refuses a mint site that answers through
+  `http_send_json()`). So any page a household
   member opens over plain `http` can `fetch('http://<the WAP's IP>/api/wifi')`
   and read the answer, with no rebinding: a simple GET needs no preflight,
   Firefox and Safari do not gate a public page's requests to a private

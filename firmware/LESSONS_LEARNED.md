@@ -654,7 +654,11 @@
   first-boot setup branch had a second fault of the same kind:
   `strstr(host, "canary.local")` admitted `canary.local.evil.example`, which
   that same captive DNS resolves to the device, and the token it minted
-  authorizes the Wi-Fi join.
+  authorizes the Wi-Fi join. And the wizard token's re-issue
+  (`/api/wifi/pair-token`) answered through `http_send_json()`, which sends
+  `Access-Control-Allow-Origin: *`, so during setup any page on another site
+  in the owner's browser on the SoftAP read a pair token at `192.168.4.1`,
+  a name the exact test must pass (the PR's second review).
 - **Rule:** A name test is an equality on the parsed authority (trimmed, the
   port dropped, lowercased: `host_authority_name()`), never a substring of
   the raw header, and a header cut to its buffer is no answer at all (a
@@ -662,12 +666,18 @@
   exemption that is safe on one product is not safe by default on another:
   check what answers DNS there before copying it. A rule that rests on
   "every mint asks first" needs a guard that lists the mints, or the next
-  page that hands out the landing passes every check.
+  page that hands out the landing passes every check. A Host test stops only
+  a page that reached the device under another name; against a page that
+  asks for the device's real name, a credential is kept only by an answer
+  that grants no cross-origin read, so a route that hands one out sends no
+  CORS header.
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
-  (the pages and the setup names, an oversize Host) and
+  (the pages and the setup names, an oversize Host, the re-issue's
+  headers) and
   `test_receipt_grant.cpp` (the receipt's Host row);
   `projects/canary-wap/tests_host/check_route_security.py`'s `MINT_SITES`
-  (every mint, after its gate); `firmware/scripts/check_improv_sync.sh`
+  (every mint, after its gate, and none answering through the wildcard
+  sender); `firmware/scripts/check_improv_sync.sh`
   holds the staged copy byte-identical to the canonical header.
 
 ### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
@@ -686,8 +696,9 @@
   and the `Secure` attribute does not make two cookies of one name.
 - **Fix:** Over HTTPS the cookie is `__Host-cv_session`, which in current
   browsers only an https answer with `Path=/` and no `Domain` can set, so an
-  http page can neither block it nor shadow it; over plain HTTP it stays
-  `cv_session`. The reader takes the `__Host-` one first and does not fall
+  http page can neither set it nor shadow it (it can still push the Cookie
+  header past the reader's 512-byte ceiling and sign the browser out:
+  integrity, not availability); over plain HTTP it stays `cv_session`. The reader takes the `__Host-` one first and does not fall
   back when it is malformed. That fallback to the plain name on an HTTPS
   request is safe only while every session buys the same thing.
 - **Rule:** When one origin name serves both schemes, give the HTTPS cookie

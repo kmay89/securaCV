@@ -398,10 +398,17 @@ setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
 reverse proxy that forwards a public Host; use the `.local` name, the IP or
 the bare router name instead (widening the shared list is F356). What it
 leaves: a cross-site page can still send requests at the IP address (an IP
-literal passes). It cannot read what the landing, the exchange, the pages
-or the receipt serve, since none sends a CORS header with it (the
-receipt's `500` and `503` error codes do, through `http_send_error()`, and
-carry nothing else), but its requests
+literal passes). It cannot read what the landing, the exchange, the pages,
+the wizard token's re-issue (`/api/wifi/pair-token`) or the receipt serve,
+since none sends a CORS header with it (the receipt's `500` and `503` error
+codes do, through `http_send_error()`, and carry nothing else). The
+re-issue answered through `http_send_json()`, with
+`Access-Control-Allow-Origin: *`, until F344's second review: during setup
+a page on another site, in the owner's own browser on the SoftAP, read a
+pair token at `192.168.4.1` (a setup name, which the exact match passes)
+and could spend it on `/api/wifi/connect` or `/api/wifi/ap-only`. It now
+sends no CORS header, and `check_route_security.py` refuses a mint site
+that answers through `http_send_json()`. Its requests
 spend no claim, from another address close an open tap rather than take it
 (F342), from the owner's own browser can still use up an open tap, and can
 churn pair tokens: a denial of service, not a way to the token. Three
@@ -516,24 +523,27 @@ credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller
 can flip.
 
-**Encryption in transit is not the default.** The Canary WAP
-serves HTTPS on port 443 with a certificate minted on the device once setup
-has completed and the certificate loads; during first-boot setup, and when
-the HTTPS server fails to start, it serves plain HTTP and says so on the
-serial log. The flagship's `dev`, `dev_ha`, `usb-onboard` and `full` builds
-(`FEATURE_HTTPS=1`) take the same shape with a self-signed ECDSA P-256
-certificate generated on the device and kept in its NVS: from the first
-boot after setup completes they serve HTTPS on 443 and 307-redirect port 80
-there, except the connectivity probes phones and laptops send, and a build,
-core or certificate step that cannot do TLS serves plain HTTP and says why in
-`/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
-`usb-onboard` inherit the flag from `dev` and no workflow builds them; none
-of the four has run on hardware. And no stock unit of either tree serves
-HTTPS today: the on-device certificate generator compiles out on every
-pinned core (its guard tests `mbedtls/x509write_crt.h`, a header mbedTLS
-never ships) and nothing else stores a certificate, so the WAP serves plain
-HTTP after setup and the flagship's HTTPS builds serve plain HTTP and say
-why in `tls_mode_reason` (F15). The flagship's release images (`release`,
+**Encryption in transit is not the default, and no stock unit serves
+HTTPS today.** Both trees have an HTTPS server built in that runs once a
+certificate is stored, and no stock build stores one (F15): the on-device
+certificate generator compiles out on every pinned core (its guard tests
+`mbedtls/x509write_crt.h`, a header mbedTLS never ships) and nothing else
+stores a certificate. So the Canary WAP serves plain HTTP after setup as
+during it, and the flagship's `dev`, `dev_ha`, `usb-onboard` and `full`
+builds (`FEATURE_HTTPS=1`) serve plain HTTP and say why in `/api/status`
+`tls_mode_reason` ("no stored certificate and this core cannot generate
+one"). Once a certificate is stored, the WAP would serve HTTPS on port 443
+from a certificate minted on the device after setup has completed, and
+plain HTTP during first-boot setup and when the HTTPS server fails to
+start, saying so on the serial log; the flagship's HTTPS builds would take
+the same shape with a self-signed ECDSA P-256 certificate generated on the
+device and kept in its NVS, serving HTTPS on 443 from the first boot after
+setup completes and 307-redirecting port 80 there, except the connectivity
+probes phones and laptops send, and a build, core or certificate step that
+cannot do TLS serves plain HTTP and says why in `tls_mode_reason`. CI
+compiles `dev` and `full`; `dev_ha` and `usb-onboard` inherit the flag from
+`dev` and no workflow builds them; none of the four has run on hardware.
+The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
@@ -544,9 +554,10 @@ container with its host port disabled, and the Docker sidecar's on every
 interface with port 8799 published from the first start, so Home Assistant
 can pair over the LAN (what that opens, and what crosses the wire, is
 [below](#home-assistant-pairing-and-what-crosses-your-network)). The
-iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp` —
-the WAP's pairing receipt and QR, and the flagship's receipt on its HTTPS
-builds, which `/api/status` also reports — refuses an https Canary it
+iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp`
+when a unit hands one out (the WAP's pairing receipt and QR, and the
+flagship's receipt on its HTTPS builds, which `/api/status` also reports;
+no stock unit has one to hand out today), refuses an https Canary it
 cannot check, and offers a plain-http credential push only when nothing
 encrypted reaches the device and only behind a disclosure you switch on.
 Compile-tested by CI; whether a given unit is serving HTTPS is on its serial
@@ -560,10 +571,11 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. On the flagship's release images, and on its HTTPS builds
-until the first boot after setup or when HTTPS fails to start, provisioning
-the broker password over `POST /api/mqtt/config` crosses the LAN in the
-clear like the rest of the device API. A `POST /api/mqtt/config` that moves
+every connect. Provisioning the broker password over
+`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
+device API on every stock unit of either tree today, since none serves HTTPS
+(F15); the flagship's release images stay plain HTTP after that too, until
+HTTPS is turned on for them. A `POST /api/mqtt/config` that moves
 the broker (a new host or port) while a password is stored and the body
 names none is refused `400 password_required_for_new_host` from any caller
 (`mqtt_tls_fields::credential_carry`; the flagship has no dashboard session,
