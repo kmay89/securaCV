@@ -342,11 +342,14 @@ drops a token the device refuses and shows its unlock banner again, so a
 mistyped paste is dropped at its first refusal instead of being sent on
 every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
-token waits at most about 60 s, or taps BOOT, which clears its address
-(F341). A host that strikes from 9 or more addresses within 60 s holds every
-untracked address while the shared overflow slot runs, and a tap does not
-clear that. The flagship has no Bluetooth lane that changes its Wi-Fi and
-no Bluetooth setup door, so there the way out is to wait until that host
+token waits at most about 60 s, or taps BOOT, which clears its address when
+the tap is served to it (F341): the flagship's tap still goes to the first
+asker (F354), so it is that browser's own receipt request or page load that
+has to be the one served. A host that strikes from 9 or more addresses
+within 60 s holds every untracked address while the shared overflow slot
+runs, and a tap does not clear that. The flagship has no Bluetooth lane
+that changes its Wi-Fi and no Bluetooth setup door, so there the way out is
+to wait until that host
 stops. Its 10 s hold empties the table (it is in RAM, and the release
 restarts the unit) and clears the saved networks, but it gets the owner out
 only if the unit is then set up on a network that host is not on: set up on
@@ -445,8 +448,16 @@ host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
 clear that; then change Wi-Fi from the iPhone's bonded Bluetooth lane to a
 network that host is not on (the overflow's backoff then ends at most 60 s
-after that host's last strike), or wait until it stops. The 10 s BOOT hold
-is no way out from under that host: it empties the table (it is in RAM,
+after that host's last strike), or wait until it stops. The lane gets the
+owner out unless that host is also in radio range and bonded to the WAP
+itself: any landing session can pair a Bluetooth peer, since it can turn
+pairing on and read the passkey from `GET /api/bluetooth` (F346), and a
+bonded peer can write the lane's credentials as the owner's phone can. It
+can join the WAP back to a network that host is on, or spend the lane's ten
+writes an hour (one count for every peer, charged before a write's contents
+are checked), so the owner's write is refused until the hour's window ends.
+The 10 s BOOT hold is no way out from under that host: it empties the table
+(it is in RAM,
 and the release restarts the unit), as any restart does, but once the unit
 is set up on the same network again, the host's next strikes from nine
 addresses hold every untracked address again, the owner's among them, and

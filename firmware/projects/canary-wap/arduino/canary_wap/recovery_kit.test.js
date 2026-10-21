@@ -52,7 +52,10 @@
 //     review): Do this later or Run again while it runs aborts the ask out
 //     (the sixteenth too) and asks nothing more, and nothing is saved or shown after, a save
 //     tapped once the step is back is its own, and every function that
-//     hides the step stops the save first; a fetch that rejects (a Wi-Fi
+//     hides the step stops the save first; with no save running, or after
+//     one has ended, a pane change still changes the pane, asks nothing and
+//     throws nothing, and an ended save's line is put away with the step
+//     (#1843); a fetch that rejects (a Wi-Fi
 //     blip) is followed by more asks until the sixteen are spent, a later
 //     200 is still served, the press line waits for the first 403, and a
 //     save the device never answered says so.
@@ -137,8 +140,8 @@ function fakeClassList() {
   return {
     set,
     get hidden() { return set.has('hidden'); },
-    add(c) { set.add(c); },
-    remove(c) { set.delete(c); },
+    add(...cs) { for (const c of cs) set.add(c); },
+    remove(...cs) { for (const c of cs) set.delete(c); },
     toggle(c, force) {
       const on = force === undefined ? !set.has(c) : !!force;
       if (on) set.add(c); else set.delete(c);
@@ -839,6 +842,13 @@ describe("the wizard's close-out saves through the same builder", () => {
     if (!running) throw new Error('showRunning was not found in companion_pwa.h');
     return kitBlock(src, 'companion_pwa.h') + '\n' + running[1] + chain[1];
   }
+  // showFinishLinks(), the pane I'm done for now and Open this one's
+  // dashboard end at, as companion_pwa.h ships it.
+  function finishLinksCode(src) {
+    const m = src.match(/\n( {2}function showFinishLinks\(\) \{[\s\S]*?\n {2}\}\n)/);
+    if (!m) throw new Error('showFinishLinks was not found in companion_pwa.h');
+    return m[1];
+  }
   // A browser's answer to an ask, or to a body read, whose signal was
   // aborted while it was out.
   const aborted = () => new DOMException('The operation was aborted.', 'AbortError');
@@ -848,22 +858,31 @@ describe("the wizard's close-out saves through the same builder", () => {
   // run at once. `on.ask(n, page)` acts while ask n (from 0) is out,
   // `on.wait(n, page)` during the sleep before it and `on.body(n, page)`
   // while its body is read: page.skip() taps Do this later, page.rerun()
-  // starts Run again (showRunning()), page.back() puts the step on screen
-  // again (as Run again's next result does) and taps Save, and page.ui()
-  // reads every element and every save. As a browser's, fetch rejects an
-  // ask whose signal was aborted while it was out, and a body read too. It
-  // settles once every save tapped has.
+  // starts Run again (showRunning()), page.finish() taps I'm done for now
+  // (showFinishLinks()), page.back() puts the step on screen again (as Run
+  // again's next result does) and taps Save, and page.ui() reads every
+  // element and every save. As a browser's, fetch rejects an ask whose
+  // signal was aborted while it was out, and a body read too. It settles
+  // once every save tapped has. wizardPage() is the same step with Save not
+  // yet tapped: page.save() taps it, and settled() waits for every save.
   function wizardSave(answers, on = {}) {
+    const p = wizardPage(answers, on);
+    p.page.save();
+    return p.settled().then(() => ({ win: p.win, asked: p.asked, banners: p.banners, ui: p.ui, page: p.page }));
+  }
+  function wizardPage(answers, on = {}) {
     const queue = Array.isArray(answers) ? answers : [answers];
     const src = read(PWA);
     const ids = ['wiz-recovery-block', 'wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done',
-                 'wiz-recovery-skip', 'wiz-ha-block', 'wiz-multi-block', 'wiz-step-5-running', 'wiz-step-5-result'];
+                 'wiz-recovery-skip', 'wiz-ha-block', 'wiz-multi-block', 'wiz-step-5-running', 'wiz-step-5-result',
+                 'wiz-another-block', 'wiz-st-failnote', 'wiz-st-continue', 'wiz-st-links', 'wiz-st-finish'];
     const win = fakeWindow(ids);
     for (const el of Object.values(win.els)) {
       el.listeners = [];
       el.addEventListener = (type, fn) => { if (type === 'click') el.listeners.push(fn); };
     }
     win.els['wiz-recovery-block'].style.display = 'block';
+    win.els['wiz-recovery-save'].disabled = false;   // a button starts enabled
     const click = (id) => win.els[id].listeners.map((fn) => fn());
     const ui = () => ({
       els: Object.fromEntries(ids.map((id) => {
@@ -881,7 +900,8 @@ describe("the wizard's close-out saves through the same builder", () => {
       saves.push(handlers[0]);
     };
     const back = () => { win.els['wiz-recovery-block'].style.display = 'block'; tapSave(); };
-    const page = { skip: () => click('wiz-recovery-skip'), rerun: () => ctx.showRunning(), back, ui };
+    const page = { skip: () => click('wiz-recovery-skip'), rerun: () => ctx.showRunning(),
+                   finish: () => ctx.showFinishLinks(), back, save: tapSave, ui };
     const asked = [];
     // The banner as each ask leaves: what the owner sees while Save asks.
     const banners = [];
@@ -916,10 +936,9 @@ describe("the wizard's close-out saves through the same builder", () => {
       if (ms === 2000 && on.wait) on.wait(asked.length, page);
       fn();
     };
-    vm.runInNewContext(closeOutCode(src), ctx, { filename: 'wizard.recovery_close_out.js' });
-    tapSave();
+    vm.runInNewContext(closeOutCode(src) + finishLinksCode(src), ctx, { filename: 'wizard.recovery_close_out.js' });
     const settled = async () => { for (let i = 0; i < saves.length; i++) await saves[i]; };
-    return settled().then(() => ({ win, asked, banners, ui }));
+    return { win, asked, banners, ui, page, settled };
   }
   it('a served receipt is saved by RecoveryKit.save, exactly as served', async () => {
     const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
@@ -1142,6 +1161,54 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.match(src, /\$w\('wiz-recovery-skip'\)\.addEventListener\('click', showMultiBlock\);/);
     assert.match(src, /\$w\('wiz-st-rerun'\)\.addEventListener\('click', runSelfTest\);/);
     assert.match(src, /async function runSelfTest\(\) \{\n {4}showRunning\(\);/);
+  });
+  it('a pane change with no save running changes the pane, asks nothing and throws nothing (#1843)', () => {
+    // stopKitSave() is the first line of every pane change, and most come
+    // with no save to stop: the self-test's first showRunning() (step 5's
+    // runSelfTest(), outside its try), Continue after a saved kit, I'm done
+    // for now. A stop that reached for the absent save's controller threw
+    // there, and every row above taps Save first, so none of them saw it:
+    // the first self-test would never ask for /api/selftest.
+    const { win, asked, page } = wizardPage(SERVED);
+    win.els['wiz-step-5-running'].classList.add('hidden');
+    assert.doesNotThrow(() => page.rerun(), 'Run again, or the first self-test, with no save running');
+    assert.equal(win.els['wiz-step-5-running'].classList.contains('hidden'), false, 'the running pane is shown');
+    assert.ok(win.els['wiz-step-5-result'].classList.contains('hidden'), 'the result pane is hidden');
+    assert.doesNotThrow(() => page.skip(), 'Do this later with no save running');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-block'].style.display, 'none');
+    assert.doesNotThrow(() => page.finish(), "I'm done for now with no save running");
+    assert.equal(win.els['wiz-st-links'].style.display, 'flex');
+    assert.equal(win.els['wiz-st-finish'].style.display, 'inline-flex');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'none');
+    assert.equal(asked.length, 0, 'leaving the step asks the device nothing');
+    leftIdle(win);
+  });
+  it('a save that has ended leaves its line on the step only until the step is left (#1843)', async () => {
+    // A save that ended on a line (another device asking, no press in 30 s,
+    // a refusal) is no running save, so leaving the step has nothing to
+    // abort. It still puts the line away: Run again's next all-passed
+    // result puts the step back on screen, and it would say the old line.
+    const ended = [[TAP_409, CONTENDED], [GATE_403, /^Didn't see a press\./],
+                   [BLIP, /^Your Canary didn't answer\./],
+                   [{ status: 503, body: '{"error":"no_address"}' }, /^Could not fetch the recovery kit: HTTP 503\./]];
+    for (const [answers, line] of ended) {
+      const { win, asked, page } = await wizardSave(answers);
+      const n = asked.length;
+      assert.match(win.els['wiz-recovery-err'].textContent, line);
+      assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'the line is on screen while the step is');
+      assert.doesNotThrow(() => page.skip(), 'Do this later after the save ended');
+      leftIdle(win);
+      assert.doesNotThrow(() => page.rerun(), 'Run again after the save ended');
+      win.els['wiz-recovery-block'].style.display = 'block';   // the next result shows the step again
+      leftIdle(win);
+      assert.equal(asked.length, n, 'leaving the step asks nothing more');
+    }
+    const saved = await wizardSave(SERVED);
+    assert.equal(saved.win.els['wiz-recovery-skip'].textContent, 'Continue');
+    assert.doesNotThrow(() => saved.page.skip(), 'Continue after a saved kit');
+    assert.equal(saved.win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(saved.win.saved.length, 1);
   });
 
   // A rejected fetch is a blip, not an answer (#1842's Codex review), as the

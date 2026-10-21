@@ -806,9 +806,14 @@ void test_wrong_claims_log_once_per_ten_seconds() {
 // spent, and the refusal's health line written as for a wrong claim of the
 // right length. The line is the only thing that tells a handler that reads
 // TRUNC as "no claim" apart: a value that never reaches take() spends
-// nothing either, so a host sending over-long claims would leave no trace
-// in /api/logs. Each ask here starts 10 s after the last line, so each one
-// is due its own. The first is the phone's own claim with more after it.
+// nothing either, so a host sending claims of 40 to 121 characters would
+// leave no trace in /api/logs. That is the reach of the line, not of every
+// over-long claim: the handler reads the query into 128 bytes, and a query
+// of 128 or more (a claim of 122 characters or more, alone in it) is not
+// read at all, so its claim is neither compared nor logged and the request
+// goes on to the tap as one with no claim, spending nothing either. Each
+// ask here starts 10 s after the last line, so each one is due its own. The
+// first is the phone's own claim with more after it.
 void test_a_truncated_claim_is_logged_and_spends_nothing() {
   reset_device();
   mint_claim();
@@ -826,6 +831,24 @@ void test_a_truncated_claim_is_logged_and_spends_nothing() {
   check_gate_refusal(long_one.r);
   CHECK_MSG(claim_refusal_lines() == 2, "two truncated claims 10 s apart wrote " +
                                             std::to_string(claim_refusal_lines()) + " refusal lines");
+  CHECK(claim_pending());
+  CHECK(g_improv_claim_spent_at_ms == 0);
+  // The query's own edge: 121 characters fill the 128-byte query buffer
+  // with its NUL and are logged; at 122 the query is not read, so no line.
+  stub_grant::now_ms += 10000;
+  Req at_edge;
+  at_edge.from(192, 168, 1, 21).query(std::string("claim=") + std::string(121, 'a'));
+  CHECK(receipt(at_edge) == 0);
+  check_gate_refusal(at_edge.r);
+  CHECK_MSG(claim_refusal_lines() == 3, "after a 121-character claim, " + std::to_string(claim_refusal_lines()) +
+                                            " refusal lines in all (3 expected)");
+  stub_grant::now_ms += 10000;
+  Req past_edge;
+  past_edge.from(192, 168, 1, 21).query(std::string("claim=") + std::string(122, 'a'));
+  CHECK(receipt(past_edge) == 0);
+  check_gate_refusal(past_edge.r);
+  CHECK_MSG(claim_refusal_lines() == 3, "after a query too long to read, " + std::to_string(claim_refusal_lines()) +
+                                            " refusal lines in all (3 expected)");
   CHECK(claim_pending());
   CHECK(g_improv_claim_spent_at_ms == 0);
   // The phone's own spend then serves.

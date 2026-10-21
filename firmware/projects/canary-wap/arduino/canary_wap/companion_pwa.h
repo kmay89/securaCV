@@ -1843,7 +1843,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // means another device asked during the same press and the device gave
   // out nothing; the old order (press first, then Save) is served on the
   // first ask. The banner says to press only once the device has answered
-  // an ask (sweep F342's fourth review): a press the first ask has not
+  // an ask with 403 (sweep F342's fourth review): a press the first ask has not
   // reached yet is one no page of the owner's is asking for. A successful
   // fetch downloads the receipt JSON and issues the session cookie that the
   // MQTT endpoints accept, which is why the Home Assistant block is only
@@ -1852,8 +1852,13 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // The save belongs to the step on screen (#1842's Codex review). Every
   // pane change that hides the step (Do this later, Run again, a new
   // self-test result, the finish links) calls stopKitSave() first, which
-  // aborts the ask in flight and puts the step back to idle, and the loop
-  // checks after every await that it is still the running save. So no ask
+  // aborts a running save's ask in flight and puts the step back to idle
+  // (the banner put away, Save given back), and the loop checks after every
+  // await that it is still the running save. Most pane changes come with no
+  // save running (the self-test's first showRunning(), Continue after a
+  // saved kit, I'm done for now), and a save that has ended leaves its last
+  // line (a 409, a missed press) on the banner; stopKitSave() puts that
+  // away too, so Run again's next result never shows it again. So no ask
   // leaves a hidden step: a BOOT tap made after the owner moved on goes to
   // no page of theirs, no kit is downloaded, and the Home Assistant block
   // is not shown again. An ask already on the wire when the step is left
@@ -1868,13 +1873,16 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // answered says so instead of "Didn't see a press". Only a rejected fetch
   // is a blip: any answer other than 403 ends the save as before (a 409, a
   // served receipt, a 503 after the tap was spent), and so does a body read
-  // that fails once the device has answered.
+  // that fails once the device has answered. A rejected fetch is no answer
+  // reaching the page, not always an ask that never reached the device: an
+  // ask the device judged can lose its answer on the way back, a served tap
+  // among them. The next asks then hear 403 and the save ends "Didn't see a
+  // press"; the receipt was sent on this page's own ask, to no one else.
   let kitSave = null;   // the running save's AbortController, or null
   function stopKitSave() {
     const ctl = kitSave;
-    if (!ctl) return;
     kitSave = null;
-    ctl.abort();
+    if (ctl) ctl.abort();   // a running save: its ask in flight is dropped
     const err = $w('wiz-recovery-err');
     err.textContent = '';
     err.classList.remove('show', 'note');
@@ -1919,7 +1927,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
           r = await fetch('/api/provisioning-receipt', { cache: 'no-store', signal: ctl.signal });
         } catch (_) {
           if (!live()) return;   // aborted because the step was left
-          continue;              // a blip: the ask never reached the device, so ask again
+          continue;              // a blip: no answer reached the page, so ask again
         }
         if (!live()) return;
         if (r.status === 403) {   // no press yet: ask again, and now say to press

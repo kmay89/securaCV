@@ -523,8 +523,16 @@ untracked address while the shared overflow slot runs, and a tap does not
 clear that. On the WAP, then change Wi-Fi from the iPhone's bonded
 Bluetooth lane to a network that host is not on (the overflow's backoff
 then ends at most 60 s after that host's last strike), or wait until it
-stops. The 10 s BOOT hold is no way out from under that host: it empties
-the table (it is in RAM, and the release restarts the unit), as any restart
+stops. The lane gets the owner out unless that host is also in radio range
+and bonded to the WAP itself: any landing session can pair a Bluetooth
+peer, since it can turn pairing on and read the passkey from
+`GET /api/bluetooth` (F346), and a bonded peer can write the lane's
+credentials as the owner's phone can. It can join the WAP back to a network
+that host is on, or spend the lane's ten writes an hour
+(`ble_provision.cpp`: one count for every peer, charged before a write's
+contents are checked), so the owner's write is refused until the hour's
+window ends. The 10 s BOOT hold is no way out from under that host: it
+empties the table (it is in RAM, and the release restarts the unit), as any restart
 does, but once the unit is set up on the same network again, the host's
 next strikes from nine addresses hold every untracked address again, the
 owner's among them, and the claim that pairs the phone does not clear the

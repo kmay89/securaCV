@@ -155,7 +155,15 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   BOOT, which clears its address (F341). A host that strikes from 9 or more addresses within
   60 s holds every untracked address while the shared overflow slot runs, and a tap does not
   clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
-  10 s. Clients behind one address share a backoff, and a
+  10 s. (Amended 2026-10-21 by #1843, #1842's follow-up, from F342's final review: a tap
+  clears an address only when it is served to that address's own ask, so a browser that
+  mistyped the token signs in with Use BOOT Tap Once. Under a host striking from 9 or more
+  addresses the hold is no way out: it empties the table, as any restart does, but once the
+  unit is set up on the same network again that host's next strikes hold every untracked
+  address again. The way out is the bonded Bluetooth lane to a network that host is not on,
+  unless that host is also in radio range and bonded to the WAP (a landing session can pair a
+  Bluetooth peer, F346), or waiting until it stops; `magic_pairing.md` §3.7 has the whole
+  posture.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
   connection purge; `magic_pairing.md` §3.7). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*

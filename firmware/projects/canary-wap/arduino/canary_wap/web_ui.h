@@ -3042,8 +3042,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // The poll starts at the click, before the tap: the device hands a
       // tap only to the one address that asked from 10 s before it onward
       // (sweep F342), so this page is on record when the press lands. The
-      // line says to press only once the device has answered an ask (sweep
-      // F342's fourth review): until then the first ask may still be on its
+      // line says to press only once the device has answered an ask with 403
+      // (sweep F342's fourth review): until then the first ask may still be on its
       // way (a TLS handshake, a blip, a busy server), and a press it has not
       // reached yet is one no page of the owner's is asking for.
       const POLL_INTERVAL_MS = 2000;

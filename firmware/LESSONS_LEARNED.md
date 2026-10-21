@@ -3185,8 +3185,8 @@
   an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
   maps to, passed every suite; rows with IPv6 askers that differ only in the
   prefix, or share the owner's last four bytes, now fail both.
-- **Found in Codex's review, same PR:** a poll that can claim a one-time
-  grant belongs to the screen that started it. The companion's kit save
+- **Found in Codex's review of #1842, fixed in its follow-up, #1843:** a
+  poll that can claim a one-time grant belongs to the screen that started it. The companion's kit save
   kept asking from a step the owner had skipped, so the next BOOT tap went
   to a page nobody was looking at, the kit downloaded unasked and the
   hidden Home Assistant step came back. Every function that hides the step
@@ -3198,8 +3198,8 @@
   window, though the dashboard's poll of the same route already asked on
   through one. Two copies of one loop drift; the companion now follows the
   dashboard's rules, each with a row.
-- **Found in the final review's second round, same PR:** a rule found for
-  one list of ways out governs every list. The fifth review's fix judged
+- **Found in #1842's final review, second round (fixed in #1843):** a rule
+  found for one list of ways out governs every list. The fifth review's fix judged
   the poller's ways out against the poller and left the lockout's, a
   paragraph or two away in the same files, offering the same 10 s hold as
   an equal way out from under a host striking from nine or more addresses.
@@ -3209,8 +3209,8 @@
   truncated `?claim=` as presented, and since a value that never reaches
   the compare spends nothing either, deleting the branch passed every
   suite until a row counted the refusal's health line.
-- **Found in the final review's third round, same PR:** a reset is a way
-  out only if the attacker cannot simply do again what it did. The second
+- **Found in #1842's final review, third round (fixed in #1843):** a reset
+  is a way out only if the attacker cannot simply do again what it did. The second
   round kept the 10 s hold in the lockout's list because it empties the
   table, and judged it only against the setup door it reopens; but the host
   that filled the table is still on the network, and once the unit is set
@@ -3218,12 +3218,25 @@
   arm the overflow, while the claim that pairs the phone frees only the
   phone's own slot. The way out is the one that takes away the attacker's
   reach (a network that host is not on), which on the WAP the bonded
-  Bluetooth lane gives with no hold. Run the attack again from the state
+  Bluetooth lane gives with no hold, while that host holds no bond of its
+  own (the next bullet). Run the attack again from the state
   the remedy leaves before listing it. And a sentence in the security model
   needs a row of its own even when it reads as obvious: "a served tap
   clears only the contention, not the addresses" had none, and clearing
   both at a TAKE, which hands a host that asks first after the owner's next
   tap the token, passed every suite.
+- **Found in #1843's first review:** a search for the advice has to run
+  over the whole tree, not over the files the diff already touches. The
+  second round's own bullet says a search for "hold BOOT 10 s" finds both
+  lists; run over the tree it also found three audit notes in two files and
+  three CHANGELOG passages still offering the hold, none of them in the
+  diff. And a way out has to be judged against everything else the attacker can
+  reach: the bonded lane takes away the striking host's network reach, but
+  a host also in radio range can bond through the landing session the
+  network gives it, and then use the lane itself. A guard that every row
+  passes without needs a row from the state it guards: every companion row
+  tapped Save first, so the stop's `if (!ctl) return;` was never reached
+  with no save running, the state most pane changes are made in.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

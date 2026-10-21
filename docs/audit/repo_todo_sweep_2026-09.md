@@ -1866,9 +1866,9 @@ so — see D2 below.)
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
   from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. The flagship
   has no Bluetooth lane that changes its Wi-Fi, so there the fallbacks are
-  to wait or the 10 s hold. (Amended by #1842, both halves of that
-  sentence: see F343's posture below.) Not closed: the device-wide request
-  limit, filed as F351; ARP spoofing; httpd's connection purge; clients
+  to wait or the 10 s hold. (Amended by #1843, #1842's follow-up, both
+  halves of that sentence: see F343's posture below.) Not closed: the
+  device-wide request limit, filed as F351; ARP spoofing; httpd's connection purge; clients
   behind one address share a backoff.
   Host-tested in `firmware/tests_host/test_securacv_auth.cpp` (97 checks over
   the real `securacv_auth.cpp` and `auth_backoff.h`; the code before this
@@ -1947,7 +1947,7 @@ so — see D2 below.)
   addresses within 60 s holds every untracked address while the shared
   overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
   from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. (Amended by
-  #1842: see F343's posture below.)
+  #1843, #1842's follow-up: see F343's posture below.)
   Host-tested. `test_receipt_grant.cpp` (1642 checks; the sketch before the
   change fails 25 of them): after the tap, the claim and a header-less tap
   wait, A's right bearer gets the receipt as `BEARER` at once and the QR is
@@ -2056,7 +2056,10 @@ so — see D2 below.)
   Corrections to this item: the phone does not "then need the BOOT tap"; the
   iPhone app has no tap flow and ends "on the Wi-Fi, not paired".
   *Done (2026-10-20, #1842):* in two commits of the PR that carries F347,
-  and the review commits each bullet below names.
+  and the review commits each bullet below names. #1842 was merged at its
+  fifth review's fixes, before its Codex review's and its final review's
+  had landed; those bullets below, from "Codex review fixes" on, are the
+  follow-up PR's, #1843, and so is each amendment that names it.
   - The claim: `spend_if_match()` and `wipe_hex()` in
     `firmware/common/network/claim_ticket.h` (staged copy cp'd), `take()` on
     them; the receipt's refusal line drops "(claim spent)" and is written
@@ -2332,8 +2335,8 @@ so — see D2 below.)
       `recovery_kit.test.js` 48 tests, the page before these fixes failing
       1; `wap.test.js` 33, the `wap.json` before failing 1. Host-tested;
       not run on a device.
-  - Codex review fixes (same PR). Two findings on the companion's kit save,
-    the loop this PR added; only `companion_pwa.h` (and its gzip copy)
+  - Codex review fixes (on #1842; landed in #1843). Two findings on the
+    companion's kit save, the loop this PR added; only `companion_pwa.h` (and its gzip copy)
     changes in the firmware.
     - Leaving the step did not stop the save. **Do this later** stays
       enabled while Save asks, and the loop had nothing to stop it, so a
@@ -2385,7 +2388,7 @@ so — see D2 below.)
       companion's gzip is 48,370 bytes, 47,381 before; the dashboard's is
       64,938, unchanged); `gen_wap.py` leaves `wap.json` unchanged and
       `gen_csp.py --check` passes. Host-tested; not run on a device.
-  - Final review fixes (same PR). No behavior changes in the firmware.
+  - Final review fixes (#1843). No behavior changes in the firmware.
     - `THREAT_MODEL.md` Scenario 4 (a seized device) said a factory reset
       the owner triggers first destroys all data, on both tiers; the holds
       #1816 added keep the identity key. It now says what each hold keeps:
@@ -2433,7 +2436,7 @@ so — see D2 below.)
       that ask; it fails with the check removed.
     - Counts now: `test_receipt_grant.cpp` 6266 checks;
       `recovery_kit.test.js` 60 tests. Host-tested; not run on a device.
-  - Final review fixes, second round (same PR). No firmware changes.
+  - Final review fixes, second round (#1843). No firmware changes.
     - The per-address lockout's ways out (F343's posture, in
       `SECURITY_MODEL.md` twice, `magic_pairing.md` §3.7 and the F340, F341
       and F343 entries) still offered the 10 s hold as an equal way out
@@ -2471,7 +2474,7 @@ so — see D2 below.)
       first".
     - Counts now: `test_receipt_grant.cpp` 6302 checks. Host-tested; not
       run on a device.
-  - Final review fixes, third round (same PR). No firmware source changes:
+  - Final review fixes, third round (#1843). No firmware source changes:
     two test rows, docs, and a comment in the iPhone app.
     - The lockout's ways out still listed the 10 s hold, on the WAP for a
       host known to be on the network and on the flagship as an equal
@@ -2484,11 +2487,18 @@ so — see D2 below.)
       the real `auth_backoff.h`: from an empty table, a host striking once a
       second from nine rotating addresses and the owner sending the right
       bearer every 2 s, the owner's first held poll comes 9.5 s after the
-      host resumes, and 47 of its 60 polls in 120 s are held (46 of 60 with
-      no restart at all). `SECURITY_MODEL.md`, `magic_pairing.md` §3.7, the
-      CHANGELOG and F340's and F343's posture now say so for both trees:
+      host resumes, and 47 of its 60 polls in 120 s are held. (Corrected by
+      #1843's first review: with no restart at all it is 46 to 56 of 60, by
+      how long the host had been striking when the 120 s begin, measured
+      every 10 s from 0 to 600 s; the 46 was one of those phases. So in
+      many phases a restart cuts the held polls, from as many as 56 to 47,
+      though never enough to get the owner out.) `SECURITY_MODEL.md`,
+      `magic_pairing.md` §3.7, the CHANGELOG and F340's and F343's posture
+      now say so for both trees:
       on the WAP the way out is the bonded Bluetooth lane to a network that
-      host is not on (no hold, no reopened setup door), or waiting; on the
+      host is not on (no hold, no reopened setup door; the lane's own
+      caveat, a host also in radio range that bonds through a landing
+      session, is #1843's first review's, below), or waiting; on the
       flagship, waiting, or the hold followed by a setup onto a network
       that host is not on. F343's entry has the amendment.
     - No row held that a served tap keeps the askers on record
@@ -2505,16 +2515,85 @@ so — see D2 below.)
       answer passed every page test. A row in `recovery_kit.test.js` answers
       a `503`, then a `500`, before the `403`; under that mutant it fails
       and the other 60 pass.
-    - Nits: the F289 bench row's Setup and two rows in
+    - Nits: the F289 bench row's Setup and the WiFi-only row in
       `canary_settings_access_validation.md` relied on "a private window"
       for a page that needs no `cv_session`; they now close every private
-      window or delete the cookie, and the BOOT-tap row opens `/settings`
-      for its auth modal. `magic_pairing.md` §3.7 quoted the dashboard's
-      "Asking the Canary first" as both pages' line. The iPhone app's
+      window or delete the cookie, and the BOOT-tap row, which had no setup
+      (corrected by #1843's first review: this said it relied on a private
+      window too), now starts from the same browser with no session and
+      opens `/settings` for its auth modal. `magic_pairing.md` §3.7 quoted
+      the dashboard's "Asking the Canary first" as both pages' line. The iPhone app's
       `PairView.swift` header said the WAP serves the receipt for 30 s after
       a tap; it now adds that it serves the one address asking (F342).
     - Counts now: `recovery_kit.test.js` 61 tests; `test_receipt_grant.cpp`
       6302 checks. Host-tested; not run on a device.
+  - Follow-up review fixes, first round (#1843). In the firmware, one fix
+    in the companion page (`companion_pwa.h`, and its gzip copy) and
+    comments in it and `web_ui.h`; rows and docs besides.
+    - The lockout's ways out were corrected in `SECURITY_MODEL.md`,
+      `magic_pairing.md` §3.7, the CHANGELOG's F342 section and this
+      ledger, and other copies still gave the old rule: `SECURITY-AUDIT.md`'s
+      F343 and F340 part 2 notes and `esp32s3_firmware_full_audit_2026-07.md`'s
+      F343 note offered the 10 s hold, and a bare BOOT tap, as ways out from
+      under a host striking from nine or more addresses, and so did three
+      places in the CHANGELOG's F343 section. Each now carries a dated
+      amendment naming #1843 with the rule F343's posture states.
+    - The bonded Bluetooth lane was offered as the clean way out with no
+      caveat. A host on the network that is also in radio range can bond
+      through a landing session (F346) and then join the WAP back to a
+      network it is on, or spend the lane's ten writes an hour so the
+      owner's is refused. Every place that names the lane as the way out
+      now says so (F343's posture has the amendment, and F346 the note).
+    - `stopKitSave()`'s `if (!ctl) return;` had no row. Every row tapped
+      Save first, so with the guard deleted all 61 tests passed, while
+      every pane change with no save running threw (`null.abort()`): the
+      first self-test after Wi-Fi joins (`showRunning()`, outside
+      `runSelfTest()`'s `try`) never asked for `/api/selftest`, and
+      Continue after a saved kit, I'm done for now and Run again threw too.
+      The stop now aborts only a running save (`if (ctl) ctl.abort()`) and
+      puts the step back to idle on every exit, a save that has ended
+      included: the line such a save left (a `409`, "Didn't see a press",
+      "Your Canary didn't answer", a refusal) used to come back on the step
+      when Run again's next result showed it again. Two rows: a pane change
+      with no save running (Run again, Do this later, and I'm done for now,
+      whose `showFinishLinks()` the harness now runs) changes the pane,
+      asks nothing and throws nothing; a save that has ended keeps its line
+      only until the step is left, and Continue after a saved kit gets
+      through. The companion before this fix fails the second; with its
+      guard deleted it fails both. The `finally`'s `kitSave = null` is now
+      equivalent (an exit puts the step back to idle whether or not it has
+      a save to abort), and stays so the variable means the running save.
+      The harness's fake `classList` now takes several names, as the DOM's
+      does, and its Save starts enabled, as a button does.
+    - Two comments said the pages press-prompt once the device has
+      "answered an ask"; both key the line to a `403` and now say so. The
+      companion's comment that a rejected fetch is "the ask never reached
+      the device" now says no answer reached the page: an ask the device
+      judged can lose its answer on the way back, a served tap among them.
+    - The truncated-claim row's comment said that without the `TRUNC`
+      branch a host sending over-long claims would leave no trace. The
+      handler reads the query into 128 bytes and reads no longer one, so
+      a claim of 122 characters or more, alone in the query, is neither
+      compared nor logged (it falls to the tap as no claim and spends
+      nothing either). The comment now scopes the line to claims of 40 to
+      121 characters, and the row adds that edge: 121 characters write the
+      line, 122 do not. With the branch deleted the row fails 4 checks.
+    - Nits: `THREAT_MODEL.md` Scenario 4 lists the Bluetooth bonds among
+      what the WAP's hold keeps (`factory_reset_by_hold()` deletes none;
+      removing the paired phones does); `SECURITY_MODEL.md`'s flagship
+      paragraph says a tap clears the mistyping browser's address only when
+      it is served to that browser (F354); the iPhone app's Forget Wi-Fi
+      advice (`PairView.swift`) says that for half an hour after it the
+      setup door goes to the first phone or computer nearby that connects;
+      the third round's no-restart measurement and its validation-row nit
+      are corrected in place above; and the Codex and final reviews'
+      bullets, F343's amendments and the CHANGELOG name #1843, where they
+      landed.
+    - Counts now: `recovery_kit.test.js` 63 tests; `test_receipt_grant.cpp`
+      6332 checks. `web_assets_gz.h` regenerated (the companion's gzip is
+      48,621 bytes, 48,370 before; the dashboard's 64,941, 64,938 before);
+      `gen_wap.py` leaves `wap.json` unchanged and `gen_csp.py --check`
+      passes. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2587,7 +2666,7 @@ so — see D2 below.)
   address while the shared overflow slot runs, and a tap does not clear
   that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or
   hold BOOT 10 s.
-  *Amended 2026-10-21 (#1842, F342's final review, second round):* on the
+  *Amended 2026-10-21 (#1843, F342's final review, second round):* on the
   WAP that sentence offered the 10 s hold as an equal way out with the
   striking host on the network, and the hold reopens the first-boot setup
   door, which goes to whichever Bluetooth client connects first (F342's
@@ -2604,7 +2683,7 @@ so — see D2 below.)
   host known to be on the network only, with the phone ready. The flagship
   has no Bluetooth setup door, so its fallbacks stayed to wait or the 10 s
   hold.
-  *Amended again 2026-10-21 (#1842, F342's final review, third round):*
+  *Amended again 2026-10-21 (#1843, F342's final review, third round):*
   the hold is no way out from under a host that keeps striking, on either
   tree. It empties the table, as any restart does, but once the unit is set
   up on the same network again the host's next strikes from nine addresses
@@ -2623,6 +2702,21 @@ so — see D2 below.)
   table a restart leaves: eight sources fill the slots, a ninth strikes the
   overflow, a tenth untracked source is held, and a success from it frees
   nothing.
+  *Amended once more 2026-10-21 (#1843's first review):* the bonded lane
+  gets the owner out only while that host holds no bond of its own. Any
+  landing session can pair a Bluetooth peer: it can turn pairing on
+  (`POST /api/bluetooth/settings`), start it, read the passkey from
+  `GET /api/bluetooth` and confirm it, all behind `api_auth_check()`, which
+  takes the session cookie (F346). A bonded peer may write the lane's
+  credentials as the owner's phone may (`ble_provision.cpp`'s CREDS,
+  `WRITE_ENC | WRITE_AUTHEN`), and `ble_request_wifi_provisioning()` saves
+  and joins what it is sent. So a host on the network that is also in radio
+  range can bond before the owner moves the WAP, then join it back to a
+  network it is on, or spend the lane's ten writes an hour
+  (`HOURLY_WRITE_CAP`, one count for every peer, charged before a write's
+  contents are checked) so the owner's write is refused until the hour's
+  window ends. The sentence the docs use now gives the lane that caveat,
+  naming F346, whose decision is where it closes. From code; not probed.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
@@ -2721,6 +2815,11 @@ so — see D2 below.)
   needs nobody to read the code to it. Decide whether these codes take a
   bearer or stay posture. From code; not probed. Found by the superseded F289
   port, filed by #1832.
+  *(2026-10-21, #1843's first review:)* a peer bonded this way may also
+  write the WAP's Wi-Fi over the bonded lane (`ble_provision.cpp`'s CREDS),
+  the way out F343's posture names from under a host striking from nine or
+  more addresses, and spend that lane's ten writes an hour, so the decision
+  bears on that way out too. From code; not probed.
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,

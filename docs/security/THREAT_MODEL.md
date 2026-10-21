@@ -452,9 +452,14 @@ stated, bounded to coarse claims, and revocable.
 - A factory reset before the seizure does not destroy the data, on either
   tier. The canary-wap's 10 s BOOT hold clears the saved Wi-Fi, the broker
   login and the device name, and keeps the identity key, the chain state,
-  the witness records and the health log on SD, and the API token; no hold
-  sheds its key (a clean install, a full erase in either flasher, is its way
-  to a new identity). The `firmware/canary` flagship's 10 s hold keeps the
+  the witness records and the health log on SD, the API token, and the
+  Bluetooth bonds: each bonded phone's keys stay in NVS, as readable from
+  flash on the default tier as the rest of it, and a bonded peer keeps the
+  lane that changes the WAP's Wi-Fi (removing the paired phones,
+  `DELETE /api/bluetooth/paired` one at a time or
+  `/api/bluetooth/paired/all`, is what deletes them). No hold sheds its
+  key (a clean install, a full erase in either flasher, is its way to a new
+  identity). The `firmware/canary` flagship's 10 s hold keeps the
   identity key and the chain state too; only its further stage, BOOT held
   on to 30 s, sheds them, by clearing its NVS namespace. That clear does not
   remove the key's bytes: NVS only marks each entry erased, and the bytes

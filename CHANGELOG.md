@@ -1,7 +1,15 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842)
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842, #1843)
+
+#1842 carries the claim, the tap, the sweeps and its first five reviews'
+fixes. It was merged before its Codex review's and its final review's
+fixes landed, and those are its follow-up, #1843, whose parts below are,
+besides wording: the companion's save that stops when its step is left,
+asks on through a rejected fetch and waits for a `403` to say press; the
+BLE OTA line named as press-first; the seizure scenario's list of what each
+hold keeps; and the per-address lockout's ways out.
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
   F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0
@@ -86,7 +94,12 @@
   dropping for a moment, as it can once the Canary has joined the home
   network) is asked again 2 s later, as the dashboard's sign-in does, and no longer ends the
   save; a save the device never answers ends "Your Canary didn't
-  answer", not "Didn't see a press".
+  answer", not "Didn't see a press". Leaving the step also puts away the
+  line a save that has ended left on it (a `409`, a missed press), so Run
+  again's next result does not show it again. The iPhone app's "No
+  recovery kit?" advice to forget the WAP's Wi-Fi now says that for half
+  an hour after it, Bluetooth setup goes to the first phone or computer
+  nearby that connects.
   A sole asker is served at once, as before. The asker is the socket peer
   (`request_peer_key()`, the read the per-address lockout already keys on),
   and the serial console names
@@ -111,9 +124,9 @@
   said the USB serial console is disabled in production, and release
   images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
   reset destroys all data, and it now says what each device's hold keeps
-  (the WAP's keeps the identity key, the chain, the SD records and the
-  token; only the flagship's 30 s stage sheds the key, and NVS leaves the
-  erased key's bytes in flash until it reuses the page, so on the default
+  (the WAP's keeps the identity key, the chain, the SD records, the token
+  and the Bluetooth bonds; only the flagship's 30 s stage sheds the key,
+  and NVS leaves the erased key's bytes in flash until it reuses the page, so on the default
   tier a full erase in either flasher is what removes it). The per-address
   lockout's ways out (F343, in its entry below) offered the 10 s hold as a
   way out from under a host striking from 9 or more addresses, and it is
@@ -125,7 +138,11 @@
   and the ledger now say so for both trees. On the WAP the way out is
   changing Wi-Fi from the iPhone's bonded Bluetooth lane to a network that
   host is not on, which needs no hold and does not reopen the first-come
-  setup door, or waiting until it stops; on the flagship it is waiting, or
+  setup door (unless that host is also in radio range and bonded to the
+  WAP: a landing session can pair a Bluetooth peer, F346, and a bonded
+  peer can join the WAP back to a network it is on, or spend the lane's
+  ten writes an hour so the owner's is refused), or waiting until it
+  stops; on the flagship it is waiting, or
   the hold followed by a setup onto a network that host is not on. A
   browser that mistyped the token signs in with Use BOOT Tap Once on the
   WAP, since a tap clears only the address it is served to (F341).
@@ -444,7 +461,12 @@
   the shared overflow slot runs, and a tap does not clear that; then wait,
   change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
   The flagship has no Bluetooth lane that changes its Wi-Fi, so there the
-  fallbacks are to wait or the 10 s hold. The dashboard now drops a token
+  fallbacks are to wait or the 10 s hold. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, and on the WAP the way out is the
+  bonded lane to such a network, or waiting.) The dashboard now drops a token
   the device refuses (a `401`, or `403 {"error":"forbidden"}`) and shows its
   unlock banner again, saying the token was refused, as the WAP's page does;
   it kept a mistyped paste and sent it on every poll, a strike each time the
@@ -492,7 +514,11 @@
   (F341). A host that strikes from 9 or more addresses within 60 s holds
   every untracked address while the shared overflow slot runs, and a tap
   does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-  Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a
+  Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a browser that mistyped the token signs in with Use BOOT
+  Tap Once, since a tap clears only the address it is served to; under that
+  host the hold is no way out, and the bonded lane goes to a network that
+  host is not on.) Clients behind one address share a
   backoff, and a deliberate LAN denial is not closed (a landing session's
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
@@ -583,7 +609,10 @@
   its address (F341). A host that strikes from 9 or more addresses within
   60 s holds every untracked address while the shared overflow slot runs,
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
-  bonded Bluetooth lane, or hold BOOT 10 s. **Host-tested**
+  bonded Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's ask; under that host the hold is no way out, and the bonded
+  lane goes to a network that host is not on.) **Host-tested**
   (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the
   claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
