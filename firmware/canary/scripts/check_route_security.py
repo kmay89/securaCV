@@ -69,26 +69,33 @@ every other gate), and the premise the last one stands on:
     without it);
   * every answer that carries a credential holds to a bearer-only grant, on
     the flagship's own gates (check_bearer_only_answers, sweep F338; the
-    canary-wap checker's F328 rule, ported to what this tree has). The
-    three credentials are the bearer token, the SoftAP password and the TLS
-    pin — public in every TLS handshake, held because the apps trust it as
-    the pin. Each is read where SECRET_READS spells it (its stores: the
-    token's buffer and its NVS record, the SoftAP password's two buffers and
-    the Wi-Fi driver's AP config; its accessor; its deriver) and carried up
-    the call graph to the route handlers, the carry stopping at a
-    device-side use and at a comparer. Every reader is named: an accessor in
-    its home (SECRET_ACCESSORS), an emitter in its home carrying exactly what
-    TOKEN_EMITTERS says, its reading statements pinned (EMITTER_STATEMENTS),
-    a comparer reading only the token, a device-side use whose reading
-    statements are exactly its SECRET_LOCAL_USES row (statement pins, keyed
-    by file and qualified function), or a SECRET_ANSWERS handler; outside
-    every function only OUTSIDE_FUNCTION_LINES may name one. A mint's
-    statement runs through its refusal and carries where it sits, so the pin
-    on main.cpp's `derive_ap_password(device.privkey, ...)` holds the call,
-    its refusal and the halt, at setup()'s own level with no block or
-    preprocessor conditional around it and no `goto` before it (`#if 0` or
-    `if (false) {` around it compiles the key out and raises the SoftAP
-    open), and the token's
+    canary-wap checker's F328 rule, ported to what this tree has). The four
+    credentials are the bearer token, the SoftAP password, the TLS pin
+    (public in every TLS handshake, held because the apps trust it as the
+    pin) and the TLS key (the private key behind that certificate). Each is
+    read where SECRET_READS spells it (its stores: the token's buffer and its
+    NVS record, the SoftAP password's two buffers, begin()'s parameter and
+    the Wi-Fi driver's AP config and its read-back, the TLS key's buffer and
+    its NVS record; its accessor and its deriver, by bare name, so taking
+    one's address is a read) and carried up the call graph to the route
+    handlers, the carry stopping at a device-side use and at a comparer.
+    Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
+    emitter in its home carrying exactly what TOKEN_EMITTERS says, its
+    reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
+    the token, a device-side use whose reading statements are exactly its
+    SECRET_LOCAL_USES row (statement pins, keyed by file and qualified
+    function, in order), or a SECRET_ANSWERS handler; outside every function
+    only OUTSIDE_FUNCTION_LINES may name one. Every pinned statement is held
+    where it sits: the header of every block around it and every
+    preprocessor conditional open around it in its function, and a goto (or
+    an ESP_GOTO_* macro) before it, are folded in front of it as `[within
+    ...]`, so a statement moved under `if (false) {` or `#if 0`, or past a
+    goto, is not the statement it was (begin()'s copy of the SoftAP key,
+    compiled out, would leave raiseAp() an empty key). A mint's statement
+    runs through its refusal too, so the pin on main.cpp's
+    `derive_ap_password(device.privkey, ...)` holds the call, its refusal
+    and the halt, at setup()'s own level with no block or preprocessor
+    conditional around it and no goto before it, and the token's
     `derive_api_token(privkey, ...)` is held inside its `if (!loaded) {`.
     Every registered handler that carries one is a SECRET_ANSWERS row with
     exactly what it carries and its grant: 'bearer' (`if (!auth_gate(req))
@@ -104,35 +111,60 @@ every other gate), and the premise the last one stands on:
     once under ROOTS, in its file, so a second body or a shadow in another
     lib fails): the glue every grant runs through (host_is_foreign,
     auth_gate, bearer_present_and_valid, from_ap_subnet, page_token_inject
-    with its four inputs and F341's auth_handed_token on the tap that
-    served, provisioning_gate_take, the hook setter, main.cpp's take hook,
-    and the lockout glue F340 and F341 left: AuthManager::check, grant,
-    compare, handedToken and constantTimeCompare and the auth_check,
-    auth_bearer_grant and auth_handed_token wrappers), the three accessors,
-    the token's deriver, and the SoftAP password's way to the radio
-    (announce_setup_network, apply_ap_security). The gate primitives are
-    called only where the census says and defined only where it says
+    with F341's auth_handed_token on the tap that served,
+    provisioning_gate_take, the hook setter, main.cpp's take hook, and the
+    lockout glue F340 and F341 left: auth_get_instance, AuthManager::check,
+    grant, compare, handedToken and constantTimeCompare and the auth_check,
+    auth_bearer_grant and auth_handed_token wrappers), page_token_inject's
+    setup input at its source (the setup lib's setup_init,
+    setup_is_first_boot, setup_is_active, setup_mark_complete and
+    setup_check_timeout), the three accessors, the token's deriver and its
+    two helpers (hmac_sha256, format_api_token_string), and the SoftAP
+    password's way to the radio (announce_setup_network, apply_ap_security).
+    The gate primitives are mentioned only where the census says, a call or
+    an address taken alike, and defined only where it says
     (GATE_CALL_SITES): every auth_gate call is the whole refusal statement,
-    at its handler's own top level, under no block or conditional, with
-    nothing able to leave before it but the rate limit's refusal;
+    at its handler's own top level in every body that holds it (a head split
+    across `#if` / `#else` is two), under no block or conditional, with
+    nothing able to leave before it (a return, goto, throw, co_return or an
+    ESP_RETURN_* / ESP_GOTO_* macro) but the rate limit's refusal;
     auth_handed_token runs on the receipt only under a served verdict; the
     AuthManager's one instance (s_auth) is reached only by
     auth_get_instance(), and that only by the three wrappers;
     constantTimeCompare runs only in compare; the receipt is sent only from
     its route; the boot hands auth_load_or_derive g_device.privkey, with its
-    refusal; and every WiFi.softAP() is begin()'s or raiseAp()'s statement,
-    with its key. Every AUTH_MARKERS and PRE_HOST_STEPS name is a census
-    row, so a deleted gate's name cannot linger in either list;
+    refusal; every WiFi.softAP() is begin()'s or raiseAp()'s statement, with
+    its key, and begin() is started once, by setup() with g_ap_password
+    (network_init, which hands it on, is called by nothing; every reference
+    to the network manager is named net or network, MANAGER_NAMES, and a
+    member's bare or `this->` begin() counts, so the census sees each
+    start); the driver's
+    config is written only by apply_ap_security (the SoftAP's) and
+    ensure_sta_pmf_capable (the STA's), each its statement where it sits,
+    and Arduino-ESP32 3.x's AP class is not used; the BOOT tap is opened
+    only by handle_boot_button's short press, where it sits, and g_prov_gate
+    is named only by the two hooks and that handler, its declaration
+    holding its initial value; the setup state (s_active, s_first_boot,
+    s_started_ms) is named only by the setup lib's pinned functions, and
+    the setup timeout runs from loop() while setup is active; and the
+    token's alphabet is its declaration. Every AUTH_MARKERS name is a census
+    row, and every PRE_HOST_STEPS name a row, a TOKEN_EMITTERS key or
+    auth_get_token, so a deleted gate's name cannot linger in either list.
+    No `#define` under ROOTS, and no `-D` flag in platformio.ini or the
+    files its extra_configs names, may name a pinned or census function, a
+    device-side use, an accessor, a mint, an emitter, a comparer, a
+    credential's spelling or the private key (`#define auth_gate(r) (true)`
+    is the preprocessor's shadow of a pinned body);
   * the premise the last rule stands on, checked (no_session_problems): the
     flagship has no session. No cookie is read or set, the request headers
     read are `Authorization` (the auth lib) and `Host` (the network lib)
     only, by literal name, a response header's name is a literal and never
     `Set-Cookie`, a URL query is read only by the witness log's paging, and
-    a request's raw path (`->uri`, which keeps its query) only where
-    URI_READERS says. A cookie, a session header, a query credential or a
-    lockout keyed on a request header fails here, pointing at canary-wap's
-    any-session class (ANY_SESSION_GATES, F328): CONSOLIDATION.md's Phase 6
-    cv_session port must bring that rule with it.
+    a request's raw path (`->uri` or `(*req).uri`, which keeps its query)
+    only where URI_READERS says. A cookie, a session header, a query
+    credential or a lockout keyed on a request header fails here, pointing
+    at canary-wap's any-session class (ANY_SESSION_GATES, F328):
+    CONSOLIDATION.md's Phase 6 cv_session port must bring that rule with it.
 
 (The lambda clause of the first rule is why a receipt_decide(...) whose
 verdict nobody reads fails it, although its bearer and tap lambdas return
@@ -141,30 +173,42 @@ the gates' answers.)
 The parser names what it reads: one head parser (function_defs) names a
 constructor for its class, its initializer list included, a member as
 `Class::name`, and a function whose head ends in `const`, `noexcept`,
-`override` or `final`; a lambda names no function, so what it calls is its
-enclosing function's. A census name outside every parsed function counts as
-a declaration only after a type, never after `return` (a namespace-scope
-lambda's body is code). The route-gate and Host-first rules, too, read every
-definition of a handler.
+`override`, `final` or a trailing return type (`auto f(...) -> void {`); a
+lambda names no function, so what it calls is its enclosing function's. A
+census name outside every parsed function counts as a declaration only after
+a type, never after a statement's word (`return`, `else`, `case`), and never
+with an `=`, a `(` or a `return` before it in its statement (`static
+AuthManager* const v = &auth_get_instance();` is a use). The route-gate and
+Host-first rules read every definition of a handler, whatever its head
+(`static int`, `IRAM_ATTR`, `noexcept`, a trailing return type).
 
 What a text check cannot see, stated so nobody leans on it: names are
 matched by spelling, so a copy of a credential under another name is not
-followed, and neither is a value passed on as a parameter (begin()'s
-ap_password and announce_setup_network()'s pass are held by pins on the
-statements and the bodies that handle them instead); a call by bare name
-reaches every definition of that name (Preferences' begin() reaches
-ScvNetworkManager::begin), which errs toward failing; the private key is not
-carried (it is read across the tree to sign and derive): only a handler's
-own body naming it fails, not a helper that answers it; a statement before a
-gated route's refusal that does the route's work itself, without leaving,
-is not seen; an early `return` before a mint is not refused (the rest of
-its function goes with it, setup()'s start of the network among it), though
-a `goto` before one is; a non-mint device-side statement is held without
-its blocks and conditionals (compiling one out removes a use, it adds
-none); the shared firmware/common/network/auth_backoff.h is outside ROOTS
-and its arithmetic is test_auth_backoff.cpp's; and a pinned body or
-statement means an edit to that glue updates its row in the same review
-(the failure prints the row as it now is, so the update is mechanical).
+followed (a reference to the network manager spelled other than
+`ScvNetworkManager&`, `ScvNetworkManager*` or an `auto` bound to the
+singleton, a template parameter or a decltype, is not begin()'s census), and
+neither is a value passed on as a parameter (announce_setup_network()'s pass
+is held by the pins on the statements and the body that handle it instead);
+a value is not checked, only its spelling (a `memset` of the private key
+just before a mint passes, and both credentials would become HMACs of a zero
+key over public inputs; the constants include/canary_config.h defines, the
+NVS keys' names and SETUP_TIMEOUT_MS among them, are outside ROOTS); a call
+by bare name reaches every definition of that name (Preferences' begin()
+reaches ScvNetworkManager::begin), which errs toward failing; the private
+key is not carried (it is read across the tree to sign and derive): only a
+handler's own body naming it fails, not a helper that answers it; a
+statement before a gated route's refusal that does the route's work itself,
+without leaving, is not seen; an early `return` before a mint is not refused
+(the rest of its function goes with it, setup()'s start of the network among
+it), though a goto before one is; macros are read only as `#define` lines
+and `-D` flags (a PlatformIO extra_script that adds a flag is not read: the
+canary has none); the flagship's derive_api_token and its two helpers are
+held by their text, not run (no host test compiles them; test_securacv_auth
+stubs derive_api_token); the shared firmware/common/network/auth_backoff.h
+is outside ROOTS and its arithmetic is test_auth_backoff.cpp's; and a pinned
+body or statement means an edit to that glue updates its row in the same
+review (the failure prints the row as it now is, so the update is
+mechanical).
 
 Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
 step "Check canary (PIO) route security", beside the WAP's audit):
@@ -172,6 +216,7 @@ step "Check canary (PIO) route security", beside the WAP's audit):
 """
 
 import functools
+import os
 import re
 import sys
 from pathlib import Path
@@ -387,6 +432,15 @@ def function_body(source: str, name: str):
     return bodies[0] if bodies else None
 
 
+def handler_bodies(sources: dict, name: str) -> list:
+    """Every definition of the function `name` (bare) in `sources`, from its
+    name to its closing brace, whatever its return type, attributes or head
+    (`static int`, `IRAM_ATTR`, `noexcept`, a trailing return type): the
+    route-gate and Host-first rules read each one, so an `#else` body under
+    another head is a body like the first."""
+    return [t[s:e] for t in sources.values() for s, e in definition_spans(t, name)]
+
+
 def parse_routes(fname: str, text: str):
     """(uri, method, handler, fname) for every httpd_uri_t initializer
     (parse_routes_at, without the offsets)."""
@@ -447,18 +501,21 @@ def _name_pattern(name: str) -> str:
 
 
 # What may stand between a definition's parameter list and its body: a
-# member's `const`, and `noexcept`, `override`, `final` (a helper written
-# `static void f(uint32_t s) noexcept { ... }` is a function like any other,
-# not code outside every function).
-_HEAD_SUFFIX = re.compile(r"(?:\s*\b(?:const|noexcept|override|final)\b)*\s*")
+# member's `const`, and `noexcept`, `override`, `final`, then a trailing
+# return type (`auto f(uint32_t s) -> void {`). A helper written either way is
+# a function like any other, not code outside every function, and a shadow
+# written either way is a second definition.
+_HEAD_TAIL = (r"(?:\s*\b(?:const|noexcept|override|final)\b)*"
+              r"(?:\s*->\s*[\w:<>,*&\s]+?)?\s*")
+_HEAD_SUFFIX = re.compile(_HEAD_TAIL + r"(?=\{)")
 
 
 def _body_open(blanked: str, i: int) -> int:
     """The offset of the `{` that opens a definition's body, when the text
     just past a parameter list's `)` at `i` (after any _HEAD_SUFFIX) is one,
     else -1 (a call)."""
-    j = _HEAD_SUFFIX.match(blanked, i).end()
-    return j if j < len(blanked) and blanked[j] == "{" else -1
+    m = _HEAD_SUFFIX.match(blanked, i)
+    return m.end() if m else -1
 
 
 def definition_spans(text: str, name: str) -> list:
@@ -768,23 +825,31 @@ TOKEN_COMPARERS = {
 
 # ── The bearer-only answers: what the rule reads ─────────────────────────────
 
-# The three credentials, by the spellings this tree reads them with (over
+# The four credentials, by the spellings this tree reads them with (over
 # comment-stripped, string-blanked text): each store, its accessor and its
 # deriver. The bearer token lives in s_bearer and in its NVS record
 # (NVS_KEY_TOKEN, defined in include/canary_config.h); the SoftAP password in
-# the network manager's buffer, main.cpp's, and the Wi-Fi driver's AP config
-# (`<wifi_config_t>.ap.password`, read back by esp_wifi_get_config). The TLS
+# the network manager's buffer, main.cpp's, begin()'s parameter that carries
+# it there, and the Wi-Fi driver's AP config (`<wifi_config_t>.ap.password`,
+# and the read-back itself, `esp_wifi_get_config(WIFI_IF_AP, ...)`). The TLS
 # pin is public (every TLS handshake shows the certificate it hashes); it is
-# held because the apps trust it as the pin.
+# held because the apps trust it as the pin. The TLS key is the private key
+# behind that certificate (the network manager's DER buffer and its NVS
+# record): whoever holds it serves the pinned certificate and collects the
+# bearer the apps send. An accessor or a deriver is spelled by its bare name,
+# so taking its address (`&auth_get_token`, `&ScvNetworkManager::getApPassword`)
+# is a read like calling it.
 SECRET_READS = {
-    "token": re.compile(r"\bauth_get_token\s*\(|\bs_bearer\b|\bderive_api_token\s*\("
+    "token": re.compile(r"\bauth_get_token\b|\bs_bearer\b|\bderive_api_token\b"
                         r"|\bNVS_KEY_TOKEN\b"),
-    "ap": re.compile(r"\bgetApPassword\s*\(|\bm_ap_password\b|\bg_ap_password\b"
-                     r"|\bderive_ap_password\s*\(|\bap\s*\.\s*password\b"),
-    "pin": re.compile(r"\bgetTlsCertFp\s*\(|\bm_tls_cert_fp_hex\b"),
+    "ap": re.compile(r"\bgetApPassword\b|\bm_ap_password\b|\bg_ap_password\b|\bap_password\b"
+                     r"|\bderive_ap_password\b|\bap\s*\.\s*password\b"
+                     r"|\besp_wifi_get_config\s*\(\s*WIFI_IF_AP\b"),
+    "pin": re.compile(r"\bgetTlsCertFp\b|\bm_tls_cert_fp_hex\b"),
+    "tlskey": re.compile(r"\bm_tls_key_der\b|\bNVS_KEY_TLS_KEY\b"),
 }
 SECRET_NAMES = {"token": "the bearer token", "ap": "the SoftAP password",
-                "pin": "the TLS pin"}
+                "pin": "the TLS pin", "tlskey": "the TLS private key"}
 # The device's private key, which every credential above derives from (the
 # token and the SoftAP password are HMACs of it). It is read across the tree
 # to sign and to derive, so it is not carried; a registered route handler's
@@ -798,6 +863,7 @@ _AUTH = "securacv_auth.cpp"
 _CRYPTO = "securacv_crypto.cpp"
 _WITNESS = "securacv_witness.cpp"
 _MAIN = "src/main.cpp"
+_SETUP = "securacv_setup.cpp"
 
 # The accessors and the derivers under ROOTS: reading the store (or making
 # the value) is their job, so their own body is not a reader; a call of one
@@ -838,6 +904,13 @@ OUTSIDE_FUNCTION_LINES = (
      "char m_ap_password[65];"),
     ("securacv_network.h",
      "char m_tls_cert_fp_hex[65];"),
+    ("securacv_network.h",
+     "uint8_t* m_tls_key_der;"),
+    ("securacv_network.h",
+     "bool begin(const char* ap_ssid, const char* ap_password, const char* device_id = nullptr);"),
+    ("securacv_network.h",
+     "bool network_init(const char* ap_ssid, const char* ap_password, const char* device_id = "
+     "nullptr);"),
     (_MAIN,
      "static char g_ap_password[16];"),
     (_MAIN,
@@ -859,21 +932,38 @@ OUTSIDE_FUNCTION_LINES = (
 # failure prints the row as it now is. A function defined twice (an `#if`
 # body and its `#else` one) is held body by body, so a stub that reads
 # nothing fails as a row it no longer has.
+# Where two pinned statements sit: begin()'s start in setup(), and initTls()'s
+# body on an HTTPS build.
+_BEGIN_IN_SETUP = ("[within { > #if FEATURE_WIFI_AP] if (net.begin(ap_ssid, g_ap_password, "
+                   "device.device_id)) {")
+_TLS_BUILD = "#if !FEATURE_HTTPS ... #elif !SECURACV_HAS_HTTPS_SERVER ... #else"
 SECRET_LOCAL_USES = {
     (_NET, "ScvNetworkManager::ScvNetworkManager"): (
-        "the constructor clears both buffers",
+        "the constructor clears the SoftAP password's and the pin's buffers and the TLS key's "
+        "pointer",
         (
             "m_ap_password[0] = '\\0';",
+            "m_tls_key_der = nullptr;",
             "m_tls_cert_fp_hex[0] = '\\0';",
         )),
     (_NET, "ScvNetworkManager::begin"): (
-        "keeps the SoftAP password it is handed for raiseAp(), and prints the setup-network "
-        "line both flashers parse",
+        "keeps the SoftAP password it is handed for raiseAp() (the copy where it sits: dead or "
+        "compiled out, raiseAp() would re-raise on an empty key), raises the SoftAP with it, and "
+        "prints the setup-network line both flashers parse",
         (
-            "strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);",
-            "m_ap_password[sizeof(m_ap_password) - 1] = '\\0';",
-            "m_ap_password[0] = '\\0';",
+            "if (ap_password) {",
+            "[within if (ap_password) {] strncpy(m_ap_password, ap_password, "
+            "sizeof(m_ap_password) - 1);",
+            "[within if (ap_password) {] m_ap_password[sizeof(m_ap_password) - 1] = '\\0';",
+            "[within else {] m_ap_password[0] = '\\0';",
+            "bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
+            "AP_MAX_CONNECTIONS);",
             "announce_setup_network(m_ap_ssid, m_ap_password);",
+        )),
+    (_NET, "network_init"): (
+        "hands begin() its key (a convenience nothing calls: its census row says so)",
+        (
+            "return network_get_instance().begin(ap_ssid, ap_password, device_id);",
         )),
     (_NET, "ScvNetworkManager::raiseAp"): (
         "re-raises the SoftAP with its own password after the home link drops, and prints the "
@@ -884,10 +974,37 @@ SECRET_LOCAL_USES = {
             "announce_setup_network(m_ap_ssid, m_ap_password);",
         )),
     (_NET, "ScvNetworkManager::initTls"): (
-        "computes the pin from the certificate and logs its first 16 digits",
+        "loads or makes the certificate and its key (kept for the TLS server), computes the pin "
+        "from the certificate and logs its first 16 digits",
         (
-            "canary::net::tls_policy::fingerprint_hex(digest, m_tls_cert_fp_hex);",
-            'Serial.printf("[TLS] Cert fingerprint: %.16s...\\n", m_tls_cert_fp_hex);',
+            "[within " + _TLS_BUILD + "] if (m_tls_cert_der && m_tls_key_der) return true;",
+            "[within " + _TLS_BUILD + "] m_tls_key_der = key;",
+            "[within " + _TLS_BUILD + "] canary::net::tls_policy::fingerprint_hex(digest, "
+            "m_tls_cert_fp_hex);",
+            "[within " + _TLS_BUILD + '] Serial.printf("[TLS] Cert fingerprint: %.16s...\\n", '
+            "m_tls_cert_fp_hex);",
+        )),
+    (_NET, "ScvNetworkManager::startHttpServer"): (
+        "asks tls_policy whether a key is loaded, and hands the TLS server the key",
+        (
+            "const Mode mode = canary::net::tls_policy::decide( FEATURE_HTTPS != 0, "
+            "SECURACV_HAS_HTTPS_SERVER != 0, m_tls_cert_der != nullptr && m_tls_key_der != "
+            "nullptr, setup_active, &why);",
+            "[within if (mode == Mode::HTTPS_REDIRECT) { > #if SECURACV_HAS_HTTPS_SERVER] "
+            "ssl.prvtkey_pem = m_tls_key_der;",
+        )),
+    (_NET, "tls_load_der_from_nvs"): (
+        "reads the certificate and its key back from NVS into the buffers it is handed",
+        (
+            "const size_t klen = nvs.getBytesLength(NVS_KEY_TLS_KEY);",
+            "bool ok = c && k && nvs.getBytes(NVS_KEY_TLS_CERT, c, clen) == clen && "
+            "nvs.getBytes(NVS_KEY_TLS_KEY, k, klen) == klen;",
+        )),
+    (_NET, "tls_store_der_to_nvs"): (
+        "persists the certificate and its key to NVS",
+        (
+            "const bool ok = nvs.putBytes(NVS_KEY_TLS_CERT, cert, cert_len) == cert_len && "
+            "nvs.putBytes(NVS_KEY_TLS_KEY, key, key_len) == key_len;",
         )),
     (_MAIN, "setup"): (
         "derives the SoftAP password from the private key (F350: the whole statement, the halt "
@@ -897,30 +1014,41 @@ SECRET_LOCAL_USES = {
             "if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
             'sizeof(g_ap_password))) { Serial.println("[!!] Setup network key derivation '
             'failed - HALTING"); while (true) { delay(1000); } }',
-            "if (net.begin(ap_ssid, g_ap_password, device.device_id)) {",
-            'Serial.printf("║ Password : %-45s ║\\n", g_ap_password);',
-            'snprintf(fp_short, sizeof(fp_short), "%.16s...", network.getTlsCertFp());',
+            _BEGIN_IN_SETUP,
+            '[within #if FEATURE_WIFI_AP] Serial.printf("║ Password : %-45s ║\\n", '
+            "g_ap_password);",
+            "[within { > if (network.isTlsEnabled()) { > #if FEATURE_WIFI_AP] snprintf(fp_short, "
+            'sizeof(fp_short), "%.16s...", network.getTlsCertFp());',
         )),
     (_NET, "apply_ap_security"): (
-        "measures the passphrase the driver holds for the SoftAP (WPA2 or the WPA2/WPA3 "
-        "transition, ap_security_policy.h); the read-back is zeroed after",
+        "reads back and measures the passphrase the driver holds for the SoftAP (WPA2 or the "
+        "WPA2/WPA3 transition, ap_security_policy.h); the read-back is zeroed after",
         (
-            "pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));",
+            "if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {",
+            "[within if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {] pw_len = "
+            "strnlen((const char*)c.ap.password, sizeof(c.ap.password));",
         )),
     (_AUTH, "auth_load_or_derive"): (
         "loads the bearer token from NVS or derives it from the private key (the whole mint "
         "statement, its refusal included, inside `if (!loaded)`) into the auth lib's own "
         "buffer, and persists it",
         (
-            "size_t tlen = nvs.getBytesLength(NVS_KEY_TOKEN);",
-            "if (tlen > 0 && tlen < sizeof(s_bearer)) {",
+            "[within if (nvs.beginReadOnly()) {] size_t tlen = "
+            "nvs.getBytesLength(NVS_KEY_TOKEN);",
+            "[within if (nvs.beginReadOnly()) {] if (tlen > 0 && tlen < sizeof(s_bearer)) {",
+            "[within if (nvs.beginReadOnly()) { > if (tlen > 0 && tlen < sizeof(s_bearer)) {] "
             "size_t got = nvs.getBytes(NVS_KEY_TOKEN, s_bearer, tlen);",
-            "s_bearer[tlen] = '\\0';",
-            'loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) >= 35);',
-            "s_bearer[0] = '\\0';",
+            "[within if (nvs.beginReadOnly()) { > if (tlen > 0 && tlen < sizeof(s_bearer)) { > "
+            "if (got == tlen) {] s_bearer[tlen] = '\\0';",
+            "[within if (nvs.beginReadOnly()) { > if (tlen > 0 && tlen < sizeof(s_bearer)) { > "
+            'if (got == tlen) {] loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) '
+            ">= 35);",
+            "[within if (nvs.beginReadOnly()) { > if (tlen > 0 && tlen < sizeof(s_bearer)) { > "
+            "else {] s_bearer[0] = '\\0';",
             "[within if (!loaded) {] if (!derive_api_token(privkey, s_bearer, "
             "sizeof(s_bearer))) { s_bearer[0] = '\\0'; return false; }",
-            "size_t wrote = nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));",
+            "[within if (!loaded) { > if (nvs.beginReadWrite()) {] size_t wrote = "
+            "nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));",
             "return s_bearer[0] != '\\0';",
         )),
 }
@@ -972,17 +1100,23 @@ BEARER_REFUSAL = "if (!auth_gate(req)) return ESP_OK;"
 # ── The bearer-only answers: the grant glue, pinned whole ────────────────────
 
 # Every piece of glue a grant runs through, and the credentials' accessors,
-# the token's mint and the SoftAP password's way to the radio, keyed by (file
-# suffix, qualified function): what its body guarantees, and the body itself
-# from the name to the closing brace, comment-stripped and whitespace folded
-# (a preprocessor line inside it included). No host test reaches this glue
-# (the decisions it calls are host-tested; the auth lib's arithmetic is
-# auth_backoff.h's, test_auth_backoff.cpp's), so the body is pinned: an edit
-# to it is an edit to its row in the same review, and the failure prints the
-# body as it now is. Each row's function is defined exactly once under ROOTS,
-# in its file: a second definition of the name anywhere (an `#else` body, or
-# a shadow in another lib that its callers there would reach) fails.
-# host_is_foreign was the first row (HOST_IS_FOREIGN_DEF).
+# the token's mint and its helpers, the SoftAP password's way to the radio and
+# the first-boot unlock's source, keyed by (file suffix, qualified function):
+# what its body guarantees, and the body itself from the name to the closing
+# brace, comment-stripped and whitespace folded (a preprocessor line inside it
+# included). The pin holds the text; firmware/tests_host holds some of the
+# behavior too: test_securacv_auth.cpp compiles securacv_auth.cpp whole (the
+# AuthManager and the three wrappers) and drives page_token_inject,
+# bearer_present_and_valid, handle_provisioning_receipt and send_host_refusal
+# cut verbatim out of securacv_network.cpp, so an edit to one of those
+# updates its row here and may change that suite's answers; the decisions the
+# glue calls are host-tested, and the lockout's arithmetic is auth_backoff.h's
+# (test_auth_backoff.cpp). The rest is held by its pin alone. An edit to a
+# pinned body is an edit to its row in the same review, and the failure
+# prints the body as it now is. Each row's function is defined exactly once
+# under ROOTS, in its file: a second definition of the name anywhere (an
+# `#else` body, or a shadow in another lib that its callers there would
+# reach) fails. host_is_foreign was the first row (HOST_IS_FOREIGN_DEF).
 _PAGE_GRANTS = (
     "SECURITY_MODEL.md's four unlocks, and only them: first-boot setup, a real bearer "
     "(auth_bearer_grant through bearer_present_and_valid), a SoftAP peer (from_ap_subnet) "
@@ -1052,6 +1186,40 @@ GLUE_DEFS = {
         'Serial.println("[AUTH] page token handed to one page load on a BOOT tap. Gate '
         'closed."); log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Page token unlocked", "BOOT '
         'gate"); } return verdict; }'),
+    # page_token_inject's setup input at its source: the setup lib's state,
+    # set at boot from NVS, cleared by the wizard's completion or its timeout
+    # (the census holds every other writer out of the file).
+    (_SETUP, "setup_init"): (
+        "the first-boot unlock's source: setup is active only when NVS has no setup_ok, from "
+        "boot until the wizard completes or SETUP_TIMEOUT_MS passes",
+        "setup_init(void) { using namespace setup_wiz; if (s_initialized) return true; "
+        'Preferences prefs; if (prefs.begin("securacv", true)) { s_first_boot = '
+        "!prefs.getBool(NVS_KEY_SETUP_OK, false); prefs.getString(NVS_KEY_DEV_NAME, "
+        "s_device_name, sizeof(s_device_name)); prefs.end(); } else { s_first_boot = true; } "
+        "if (s_first_boot) { s_active = true; s_started_ms = millis(); "
+        'log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "First boot detected", "setup mode '
+        'active"); } s_initialized = true; return true; }'),
+    (_SETUP, "setup_is_first_boot"): (
+        "the first-boot unlock's source: its state returned, nothing else",
+        "setup_is_first_boot(void) { return setup_wiz::s_first_boot; }"),
+    (_SETUP, "setup_is_active"): (
+        "the first-boot unlock's source: its state returned, nothing else",
+        "setup_is_active(void) { return setup_wiz::s_active; }"),
+    (_SETUP, "setup_mark_complete"): (
+        "the first-boot unlock's end: setup_ok persisted, both flags cleared",
+        "setup_mark_complete(void) { using namespace setup_wiz; Preferences prefs; if "
+        '(prefs.begin("securacv", false)) { prefs.putBool(NVS_KEY_SETUP_OK, true); '
+        "prefs.end(); } s_first_boot = false; s_active = false; log_health(LOG_LEVEL_INFO, "
+        'LOG_CAT_SYSTEM, "Setup complete", "normal operation"); }'),
+    (_SETUP, "setup_check_timeout"): (
+        "the first-boot unlock's end by time: past SETUP_TIMEOUT_MS from boot, setup_ok "
+        "persisted, both flags cleared and a restart",
+        "setup_check_timeout(void) { using namespace setup_wiz; if (!s_active) return; if "
+        "((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) { Preferences prefs; if "
+        '(prefs.begin("securacv", false)) { prefs.putBool(NVS_KEY_SETUP_OK, true); '
+        "prefs.end(); } s_active = false; s_first_boot = false; setup_stop_captive_portal(); "
+        'log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Setup timeout", "rebooting to normal '
+        'operation"); delay(500); ESP.restart(); } }'),
     (_MAIN, "prov_gate_take_hook"): (
         "the take hook: provisioning_gate::take, never is_open",
         "prov_gate_take_hook() { return canary::net::provisioning_gate::take(g_prov_gate, "
@@ -1109,6 +1277,10 @@ GLUE_DEFS = {
         "the tap's clear: record_success for that source only",
         "AuthManager::handedToken(uint32_t source) { "
         "canary::net::auth_backoff::record_success(m_table, source); }"),
+    (_AUTH, "auth_get_instance"): (
+        "the AuthManager's one instance, returned and nothing else (the census holds s_auth to "
+        "this body and this function to the three wrappers)",
+        "auth_get_instance() { return s_auth; }"),
     (_AUTH, "auth_check"): (
         "a one-line delegation to the instance's check",
         "auth_check(httpd_req_t* req, const char* expected_token, uint32_t source) { return "
@@ -1157,6 +1329,29 @@ GLUE_DEFS = {
         "false; } format_api_token_string(token_hash, sizeof(token_hash), token_str, "
         "token_str_len); secure_zero(token_key, sizeof(token_key)); secure_zero(token_hash, "
         "sizeof(token_hash)); return strlen(token_str) >= 35; }"),
+    # Its two helpers (the census holds the alphabet's declaration): the HMAC
+    # keyed by what it is handed, and the rendering of every hash byte.
+    (_CRYPTO, "hmac_sha256"): (
+        "the token's HMAC (and the backup's): mbedtls HMAC-SHA256 keyed by the key it is "
+        "handed, over the data it is handed, a failure refused",
+        "hmac_sha256(const uint8_t* key, size_t key_len, const uint8_t* data, size_t "
+        "data_len, uint8_t out[32]) { const mbedtls_md_info_t* info = "
+        "mbedtls_md_info_from_type(MBEDTLS_MD_SHA256); if (!info) return false; "
+        "mbedtls_md_context_t ctx; mbedtls_md_init(&ctx); int ret = mbedtls_md_setup(&ctx, "
+        "info, 1); if (ret == 0) ret = mbedtls_md_hmac_starts(&ctx, key, key_len); if (ret == "
+        "0) ret = mbedtls_md_hmac_update(&ctx, data, data_len); if (ret == 0) ret = "
+        "mbedtls_md_hmac_finish(&ctx, out); mbedtls_md_free(&ctx); return ret == 0; }"),
+    (_CRYPTO, "format_api_token_string"): (
+        "the token's rendering: cv_ and 32 characters of the unambiguous alphabet, each from "
+        "a byte of the hash it is handed (rejection-sampled)",
+        "format_api_token_string(const uint8_t* input, size_t in_len, char* output, size_t "
+        "out_len) { if (!output || out_len == 0) return; size_t out_idx = 0; if (out_len > 3) "
+        "{ output[out_idx++] = 'c'; output[out_idx++] = 'v'; output[out_idx++] = '_'; } const "
+        "size_t target_chars = 32; size_t chars_produced = 0; size_t i = 0; while "
+        "(chars_produced < target_chars && out_idx + 1 < out_len) { uint8_t b; if (i < "
+        "in_len) { b = input[i++]; } else { b = (uint8_t)(i ^ 0xA5); i++; } if (b < 216) { "
+        "output[out_idx++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN]; chars_produced++; } } "
+        "output[out_idx] = '\\0'; }"),
     # The SoftAP password on its way to the radio, after the mint and the
     # two raises (the census holds both WiFi.softAP statements): the line it
     # is printed on, and the driver config it is measured from.
@@ -1219,6 +1414,24 @@ GLUE_DEFS = {
 # A row whose name has no call fails, and so does a listed caller that no
 # longer calls. Every AUTH_MARKERS entry names a row, and every
 # PRE_HOST_STEPS entry a row, a TOKEN_EMITTERS key or auth_get_token.
+# The census rows' statements, folded where they sit (_placed).
+_AP_SET_CONFIG = ("[within if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) { > "
+                  "#if CANARY_SOFTAP_SAE_IN_BUILD] const bool accepted = "
+                  "(esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);")
+_STA_SET_CONFIG = ("[within if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) { > if "
+                   "(!capable) { > #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0) ... #else] "
+                   "capable = (esp_wifi_set_config(WIFI_IF_STA, &c) == ESP_OK);")
+_BOOT_GATE_STMTS = (
+    "canary::net::provisioning_gate::expire(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);",
+    "[within else if (!pressed && boot_btn_was_pressed) { > else { > else if (duration >= "
+    "BOOT_SHORT_PRESS_MS) {] canary::net::provisioning_gate::open(g_prov_gate, millis());")
+_SETUP_TIMEOUT = ("[within if (setup_is_active()) { > #if FEATURE_SETUP_WIZARD] "
+                  "setup_check_timeout();")
+_SETUP_WRITERS = {(_SETUP, "setup_init"), (_SETUP, "setup_mark_complete"),
+                  (_SETUP, "setup_check_timeout")}
+_SETUP_STATE = {"file": _SETUP, "ident": True}
+_ALPHABET = {"callers": {(_CRYPTO, "format_api_token_string"), (_CRYPTO, "unambiguous_suffix16")},
+             "file": _CRYPTO, "ident": True}
 GATE_CALL_SITES = {
     # The 62 gated routes' refusal: whole, at the handler's own top level,
     # never under a block or a conditional (`if (!from_ap_subnet(req)) {...}`,
@@ -1233,15 +1446,17 @@ GATE_CALL_SITES = {
                           "served": {(_NET, "handle_provisioning_receipt")},
                           "home": (_AUTH, "auth_handed_token")},
     # The AuthManager: its one instance, s_auth, is reached only through
-    # auth_get_instance(), and that only from the three wrappers, so no
-    # other code reaches check, grant, handedToken or reset.
+    # auth_get_instance() (whose one-line body is GLUE_DEFS'), and that only
+    # from the three wrappers, so no other function reaches s_auth. What the
+    # AuthManager's own members do with it (sendLockout, reset) is
+    # test_securacv_auth.cpp's, which compiles the auth lib whole.
     "auth_get_instance": {"callers": {(_AUTH, "auth_check"), (_AUTH, "auth_bearer_grant"),
                                       (_AUTH, "auth_handed_token")},
                           "home": (_AUTH, "auth_get_instance")},
     "s_auth": {"callers": {(_AUTH, "auth_get_instance")}, "ident": True,
                "decl": ("static AuthManager s_auth;",)},
     "compare": {"callers": {(_AUTH, "AuthManager::check"), (_AUTH, "AuthManager::grant")},
-                "file": _AUTH, "pattern": r"(?<![\w.])compare\s*\(",
+                "file": _AUTH, "pattern": r"(?<![\w.])compare\b",
                 "home": (_AUTH, "AuthManager::compare")},
     "constantTimeCompare": {"callers": {(_AUTH, "AuthManager::compare")},
                             "home": (_AUTH, "AuthManager::constantTimeCompare")},
@@ -1260,8 +1475,8 @@ GATE_CALL_SITES = {
                                   "home": (_NET, "send_provisioning_receipt")},
     "network_set_provisioning_gate_hooks": {
         "callers": {(_MAIN, "setup")}, "once": True,
-        "whole": "network_set_provisioning_gate_hooks(prov_gate_take_hook, "
-                 "prov_gate_is_open_hook);",
+        "whole": "[within { > #if FEATURE_WIFI_AP] network_set_provisioning_gate_hooks("
+                 "prov_gate_take_hook, prov_gate_is_open_hook);",
         "home": (_NET, "network_set_provisioning_gate_hooks")},
     "s_gate_take": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
                                 (_NET, "provisioning_gate_take"), (_NET, "handle_status")},
@@ -1286,6 +1501,68 @@ GATE_CALL_SITES = {
                 "bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
                 "AP_MAX_CONNECTIONS);"},
         "home": None},
+    # The key begin() raises with is its parameter, so begin() is started
+    # once, by setup() with g_ap_password (and by network_init, which nothing
+    # calls): a second start handed "" or nullptr would raise the SoftAP open
+    # and leave raiseAp() an empty key. Its spelling: the manager's names
+    # (MANAGER_NAMES, which every reference to it must use), `this`, the
+    # singleton, the member's own name, and a bare `begin(` inside one of its
+    # members ("bare": a qualified member, or one defined in the header).
+    "ScvNetworkManager::begin": {
+        "pattern": r"(?:\b(?:net|network|this)\s*(?:\.|->)|\bnetwork_get_instance\s*\(\s*\)"
+                   r"\s*(?:\.|->))\s*begin\b|\bScvNetworkManager\s*::\s*begin\b"
+                   r"|(?P<bare>(?<![\w.>:~])begin(?=\s*\())",
+        "bare": ("ScvNetworkManager::", _NET_H),
+        "callers": {(_MAIN, "setup"), (_NET, "network_init")}, "once": True,
+        "whole": {
+            (_MAIN, "setup"): _BEGIN_IN_SETUP,
+            (_NET, "network_init"):
+                "return network_get_instance().begin(ap_ssid, ap_password, device_id);"},
+        "home": (_NET, "ScvNetworkManager::begin")},
+    "network_init": {"callers": set(), "none": True, "home": (_NET, "network_init")},
+    # The driver's SoftAP config is written by apply_ap_security alone (the
+    # STA's PMF request writes WIFI_IF_STA), each call its whole statement
+    # where it sits: never an open or weaker authmode beside the raise.
+    "esp_wifi_set_config": {
+        "callers": {(_NET, "apply_ap_security"), (_NET, "ensure_sta_pmf_capable")},
+        "whole": {
+            (_NET, "apply_ap_security"): _AP_SET_CONFIG,
+            (_NET, "ensure_sta_pmf_capable"): _STA_SET_CONFIG},
+        "home": None},
+    # Arduino-ESP32 3.x's AP class raises a SoftAP of its own: not used here.
+    "WiFi.AP": {"pattern": r"\bAP\s*\.\s*(?:create|begin|enable)\b", "callers": set(),
+                "none": True, "home": None},
+    # The BOOT tap's open side: a short press in handle_boot_button, once,
+    # where it sits (g_prov_gate's row below holds the statement in place).
+    "provisioning_gate::open": {
+        "pattern": r"\bprovisioning_gate\s*::\s*open\b",
+        "callers": {(_MAIN, "handle_boot_button")}, "once": True, "home": None},
+    "g_prov_gate": {
+        "callers": {(_MAIN, "prov_gate_take_hook"), (_MAIN, "prov_gate_is_open_hook"),
+                    (_MAIN, "handle_boot_button")},
+        "file": _MAIN, "ident": True,
+        "decl": ("static canary::net::provisioning_gate::State g_prov_gate = {0};",),
+        "stmts": {(_MAIN, "handle_boot_button"): _BOOT_GATE_STMTS}},
+    # The page grant's first-boot unlock at its source: the setup state is
+    # written only by the setup lib's pinned functions (GLUE_DEFS), and the
+    # timeout that ends it runs from loop() while setup is active.
+    "s_active": dict(_SETUP_STATE, decl=("static bool s_active = false;",),
+                     callers=_SETUP_WRITERS | {(_SETUP, "setup_is_active")}),
+    "s_first_boot": dict(_SETUP_STATE, decl=("static bool s_first_boot = false;",),
+                         callers=_SETUP_WRITERS | {(_SETUP, "setup_is_first_boot")}),
+    "s_started_ms": dict(_SETUP_STATE, decl=("static uint32_t s_started_ms = 0;",),
+                         callers={(_SETUP, "setup_init"), (_SETUP, "setup_check_timeout")}),
+    "setup_check_timeout": {
+        "callers": {(_MAIN, "loop")}, "once": True, "whole": {(_MAIN, "loop"): _SETUP_TIMEOUT},
+        "home": (_SETUP, "setup_check_timeout")},
+    # The token's alphabet, which format_api_token_string renders the HMAC
+    # through (its declaration is the row's, so a narrowed alphabet fails).
+    "UNAMBIGUOUS_ALPHABET": dict(_ALPHABET, decl=(
+        'static const char UNAMBIGUOUS_ALPHABET[] = '
+        '"23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";',
+        "static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;")),
+    "UNAMBIGUOUS_LEN": dict(_ALPHABET, decl=(
+        "static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;",)),
 }
 # The one statement a `top` census call may follow out of its function: the
 # rate limit's refusal, its second argument (when it has one) a literal or a
@@ -1315,7 +1592,7 @@ URI_READERS = {
     (_NET, "register_route"): "a route table entry's own path (httpd_uri_t), for the "
                               "full-table log line; no request",
 }
-_URI_READ = re.compile(r"->\s*uri\b")
+_URI_READ = re.compile(r"(?:->|[)\]]\s*\.)\s*uri\b")
 _NO_SESSION = ("the flagship has no session today. A cookie, a session header or a query "
                "credential is canary-wap's any-session class (ANY_SESSION_GATES, F328): "
                "CONSOLIDATION.md Phase 6's cv_session port must bring that rule with it")
@@ -1329,8 +1606,7 @@ PRE_HOST_STEPS = ("bearer_present_and_valid(", "auth_bearer_grant(", "auth_check
 _KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "sizeof", "defined"}
 
 
-_FUNC_HEAD = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)"
-                        r"(?:\s*\b(?:const|noexcept|override|final)\b)*\s*\{")
+_FUNC_HEAD = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)" + _HEAD_TAIL + r"\{")
 # A constructor's parameter list closing, then its initializer list's `:`
 # (not a `::`).
 _INIT_COLON = re.compile(r"\)\s*:(?!:)")
@@ -1724,7 +2000,7 @@ def check_host_first(sources: dict, require_defs: bool = True) -> list:
             continue
         seen.add((method, uri, base))
         # Every definition: an `#else` body is a body like the first.
-        for body in (b for t in sources.values() for b in function_bodies(t, base)):
+        for body in handler_bodies(sources, base):
             if (method, uri) in PUBLIC_ALLOWLIST:
                 steps = steps_before(body, len(body), tuple(
                     st for st in PRE_HOST_STEPS if st != "send_html_with_token("))
@@ -1937,9 +2213,15 @@ def _statement_at(blanked: str, lo: int, hi: int, pos: int, whole_if: bool = Fal
 def _outside_statement(text: str, blanked: str, pos: int):
     """(start, end, folded) of the statement holding `pos` outside every
     function (a declaration): from just after the nearest `;`, `{` or `}`
-    before it to the `;` that ends it."""
+    before it to the `;` that ends it, a brace initializer included
+    (`State g = {0};` whole, so its initial value is part of it)."""
     lo = max(blanked.rfind(c, 0, pos) for c in ";{}") + 1
     start, end, _level = _statement_at(blanked, lo, len(blanked), pos)
+    if blanked[end - 1:end] == "{" and "=" in blanked[start:end]:
+        close = _bracket_close(blanked, end - 1)
+        semi = blanked.find(";", close) if close >= 0 else -1
+        if semi >= 0 and not blanked[close + 1:semi].strip():
+            end = semi + 1
     return start, end, _fold(text[start:end])
 
 
@@ -2040,31 +2322,48 @@ def _context(text: str, blanked: str, lo: int, start: int) -> list:
     return out + conds
 
 
+# A jump that can skip a statement: a `goto`, or ESP-IDF's esp_check.h macros
+# that expand to one (ESP_GOTO_ON_ERROR, ESP_GOTO_ON_FALSE, ...).
+_GOTO = re.compile(r"\bgoto\b|\bESP_GOTO_\w+\s*\(")
+# A way out of a function before a statement: those, the keywords, and
+# esp_check.h's early-return macros (ESP_RETURN_ON_FALSE(cond, value, ...)
+# returns `value`).
+_LEAVE = re.compile(r"\b(?:return|goto|throw|co_return)\b|\bESP_(?:RETURN|GOTO)_\w+\s*\(")
+
+
+def _placed(text: str, blanked: str, d, start: int, end: int) -> str:
+    """The statement text[start:end] of function body `d`, folded, with where
+    it sits in front of it when it sits anywhere but its function's own level
+    with nothing able to jump past it: `[within if (!loaded) { > #if 0] ...`,
+    `[within after a goto] ...` (_context; a goto or an ESP_GOTO_* macro
+    before it in its function)."""
+    around = _context(text, blanked, d[3], start)
+    if _GOTO.search(blanked, d[3], start):
+        around.append("after a goto")
+    folded = _fold(text[start:end])
+    return "[within " + " > ".join(around) + "] " + folded if around else folded
+
+
 def _statements(sources, key, d, positions, T) -> list:
     """[(start, end, folded, kinds)] for the statements of function body `d`
-    holding the reads at `positions`, in order, one per statement. A mint's
-    statement (SECRET_MINTS) runs through its branch, and where it sits
-    (_context, and a `goto` before it in its function, which can jump past
-    it) is folded in front of it: `[within if (!loaded) {] if (...`."""
+    holding the reads at `positions`, in order, one per statement, each
+    folded with where it sits (_placed): a statement moved under `if (false)
+    {` or `#if 0`, or past a goto, is not the statement it was. A mint's
+    statement (SECRET_MINTS) runs through its branch: `[within if (!loaded) {]
+    if (!derive_api_token(...)) { ...; return false; }`."""
     text = sources[key[0]]
     blanked = blank_string_contents(text)
-    mint = (re.compile(r"\b(?:" + "|".join(map(re.escape, T["mints"])) + r")\s*\(")
+    mint = (re.compile(r"\b(?:" + "|".join(map(re.escape, T["mints"])) + r")\b")
             if T["mints"] else None)
     out = []
     for pos in sorted(positions):
         if any(a <= pos < b for a, b, _f, _k in out):
             continue
         start, end, _level = _statement_at(blanked, d[3], d[4], pos)
-        folded = None
         if mint and mint.search(blanked, start, end):
             start, end, _level = _statement_at(blanked, d[3], d[4], pos, whole_if=True)
-            around = _context(text, blanked, d[3], start)
-            if re.search(r"\bgoto\b", blanked[d[3]:start]):
-                around.append("after a goto")
-            if around:
-                folded = "[within " + " > ".join(around) + "] " + _fold(text[start:end])
         kinds = {k for k, rx in T["reads"].items() if rx.search(blanked, start, end)}
-        out.append((start, end, folded or _fold(text[start:end]), kinds))
+        out.append((start, end, _placed(text, blanked, d, start, end), kinds))
     return out
 
 
@@ -2359,8 +2658,19 @@ def glue_def_problems(sources: dict, glue: dict) -> list:
 
 # A census name mentioned outside every function after one of these words is
 # a statement in a body the head parser did not read (a namespace-scope
-# lambda's `return ...`), never a declaration.
+# lambda's `return ...`), never a declaration; and so is one whose statement
+# has an `=`, a `(` or one of those words before it (`static AuthManager*
+# const v = &auth_get_instance();`, a default argument): a declaration names
+# its function after a type and nothing else.
 _STATEMENT_WORD = re.compile(r"\b(?:return|throw|co_return|case|else|do|new|delete)\s*$")
+_USE_BEFORE = re.compile(r"[=(]|\b(?:return|throw|co_return)\b")
+
+
+def _is_row_def(qual: str, name: str) -> bool:
+    """True when a definition named `qual` is census row `name`'s own: that
+    member exactly for a qualified row (`ScvNetworkManager::begin`), else a
+    definition by the bare name."""
+    return qual == name if "::" in name else qual.split("::")[-1] == name
 
 
 def _census_home_problems(name: str, row: dict, defs_of: dict) -> list:
@@ -2371,7 +2681,7 @@ def _census_home_problems(name: str, row: dict, defs_of: dict) -> list:
     home = row["home"]
     found = sorted((f, d[0]) for f, ds in defs_of.items()
                    if not row.get("file") or _in_file(f, row["file"])
-                   for d in ds if d[0].split("::")[-1] == name)
+                   for d in ds if _is_row_def(d[0], name))
     if home is None and not found:
         return []
     if (home is not None and len(found) == 1 and _in_file(found[0][0], home[0])
@@ -2395,8 +2705,8 @@ def _top_problems(text: str, blanked: str, d, start: int, level: int, where: str
         problems.append(f"{where}: {d[0]} calls {name} other than at its own top level "
                         f"(within {' > '.join(around)}): the refusal runs on every request, "
                         f"never under a block or a conditional")
-    for x in re.finditer(r"\b(?:return|goto|throw|co_return)\b", blanked[d[3]:start]):
-        s, e, lv = _statement_at(blanked, d[3], d[4], d[3] + x.start())
+    for x in _LEAVE.finditer(blanked, d[3], start):
+        s, e, lv = _statement_at(blanked, d[3], d[4], x.start())
         stmt = _fold(text[s:e])
         if lv != 1 or not RATE_LIMIT_REFUSAL.fullmatch(stmt):
             problems.append(f"{where}: {d[0]} can leave before its {name} call: {stmt!r} — "
@@ -2406,9 +2716,11 @@ def _top_problems(text: str, blanked: str, d, start: int, level: int, where: str
 
 
 def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) -> list:
-    """GATE_CALL_SITES: every call of a gate primitive is where its row says;
-    every primitive is defined where its row says; every AUTH_MARKERS and
-    PRE_HOST_STEPS name is a row."""
+    """GATE_CALL_SITES: every mention of a gate primitive is where its row
+    says (a call, or its address taken: `&auth_get_token`, a function
+    pointer); every primitive is defined where its row says; every
+    AUTH_MARKERS name is a row, and every PRE_HOST_STEPS name a row, an
+    emitter or auth_get_token."""
     problems = []
     for marker in markers:
         if marker.rstrip("(") not in census:
@@ -2422,30 +2734,34 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                             f"TOKEN_EMITTERS key or auth_get_token")
     defs_of = {f: function_defs(t) for f, t in sources.items()}
     for name, row in sorted(census.items()):
-        rx = re.compile(row.get("pattern") or
-                        (r"\b" + re.escape(name) + (r"\b" if row.get("ident") else r"\s*\(")))
+        rx = _census_rx(name, row)
         callers = row.get("callers")
         if not row.get("ident"):
             problems.extend(_census_home_problems(name, row, defs_of))
-        seen, count = set(), 0
+        seen, count, per, held = set(), 0, {}, {}
         for fname, text in sorted(sources.items()):
             if row.get("file") and not _in_file(fname, row["file"]):
                 continue
             blanked = blank_string_contents(text)
             for m in rx.finditer(blanked):
                 d = _innermost(defs_of[fname], m.start())
-                if d is not None and m.start() == d[2] and d[0].split("::")[-1] == name:
+                if d is not None and d[1] <= m.start() <= d[2] and _is_row_def(d[0], name):
                     continue  # the primitive's own definition
+                if "bare" in row and "bare" in rx.groupindex and m.group("bare") and not (
+                        d is not None and m.start() >= d[3]
+                        and (d[0].startswith(row["bare"][0]) or _in_file(fname, row["bare"][1]))):
+                    continue  # another class's begin(), or a declaration
                 line = _line_of(text, m.start())
                 if d is None or m.start() < d[3]:
-                    stmt = _outside_statement(text, blanked, m.start())[2]
+                    ostart, _oend, stmt = _outside_statement(text, blanked, m.start())
                     before = blanked[max(0, m.start() - 40):m.start()]
                     if row.get("ident"):
                         if stmt not in row.get("decl", ()):
                             problems.append(f"{fname}:{line}: {name} named outside every "
                                             f"function other than in its declaration: {stmt!r}")
                     elif (not re.search(r"[\w*&>]\s*$", before)
-                          or _STATEMENT_WORD.search(before)):
+                          or _STATEMENT_WORD.search(before)
+                          or _USE_BEFORE.search(blanked, ostart, m.start())):
                         problems.append(f"{fname}:{line}: {name}() called outside every "
                                         f"function: {stmt!r}")
                     continue
@@ -2458,18 +2774,27 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                                     f"called only where the census says")
                     continue
                 seen.add(key)
+                per[key] = per.get(key, 0) + 1
                 whole = row.get("whole")
                 if isinstance(whole, dict):
                     whole = whole.get(key)
                 start, end, lv = _statement_at(blanked, d[3], d[4], m.start(),
                                                whole_if=bool(row.get("whole_if")))
-                if whole and _fold(text[start:end]) != whole:
+                placed = _placed(text, blanked, d, start, end)
+                if whole and placed != whole:
                     problems.append(f"{fname}:{line}: {d[0]} calls {name} other than as "
-                                    f"the whole statement `{whole}`: "
-                                    f"{_fold(text[start:end])!r}")
+                                    f"the whole statement `{whole}`: {placed!r}")
+                if key in row.get("stmts", {}):
+                    held.setdefault(key, {})[start] = placed
                 if row.get("top"):
-                    problems.extend(_top_problems(text, blanked, d, start, lv,
-                                                  f"{fname}:{line}", name))
+                    # Every definition whose body holds the call: a head split
+                    # across #if / #else puts the refusal in the outer one's
+                    # conditional, which the innermost head does not show.
+                    for dd in defs_of[fname]:
+                        if dd[3] <= m.start() < dd[4]:
+                            s2, _e2, lv2 = _statement_at(blanked, dd[3], dd[4], m.start())
+                            problems.extend(_top_problems(text, blanked, dd, s2, lv2,
+                                                          f"{fname}:{line}", name))
                 if key in row.get("served", ()):
                     code = blanked[d[3]:d[4]]
                     bind = _RECEIPT_BIND.search(code)
@@ -2477,15 +2802,59 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                         problems.append(f"{fname}:{line}: {d[0]} calls {name} outside a "
                                         f"SERVE_* test of its receipt_decide verdict — only "
                                         f"the tap that served hands the asker the token")
-        if count == 0:
+        if count == 0 and not row.get("none"):
             problems.append(f"GATE_CALL_SITES row {name} has no call under ROOTS — remove or "
                             f"fix the row")
-        if row.get("once") and count > 1:
-            problems.append(f"{name} is called {count} times; its GATE_CALL_SITES row says "
-                            f"exactly once")
+        if row.get("once"):
+            if callers is None and count > 1:
+                problems.append(f"{name} is called {count} times; its GATE_CALL_SITES row says "
+                                f"exactly once")
+            for k, n in sorted((k, n) for k, n in per.items() if k is not None and n > 1):
+                problems.append(f"{name} is called {n} times by {k[1]}; its GATE_CALL_SITES row "
+                                f"says exactly once")
+        for k, want in sorted(row.get("stmts", {}).items()):
+            got = tuple(f for _s, f in sorted(held.get(k, {}).items()))
+            if got != tuple(want):
+                problems.append(f"GATE_CALL_SITES row {name}: {k[1]}'s statements that name it "
+                                f"are not its row ({k[0]}). If the change is meant, update the "
+                                f"row in the same review. Now: {got!r}")
         for f, q in sorted((callers or set()) - seen):
             problems.append(f"GATE_CALL_SITES row {name} names {q} ({f}), which no longer "
                             f"calls it — remove it")
+    return problems
+
+
+def _census_rx(name: str, row: dict):
+    """A census row's spelling: its pattern, else every mention of its name
+    as a whole word (its qualifier's `::` spaced freely), so taking its
+    address is a mention like calling it."""
+    return re.compile(row.get("pattern") or
+                      r"\b" + r"\s*::\s*".join(map(re.escape, name.split("::"))) + r"\b")
+
+
+# The names a reference or pointer to the network manager may take, so
+# begin()'s census row (which spells its calls by these names) sees every
+# start of the network: `ScvNetworkManager& mgr = ...; mgr.begin(...)` fails
+# here instead of passing there.
+MANAGER_NAMES = ("net", "network")
+_MANAGER_BINDING = re.compile(
+    r"\bScvNetworkManager\s*(?:const\s*)?[&*]+\s*(?:const\s+)?([A-Za-z_]\w*)\b(?!\s*\()"
+    r"|\bauto\s*(?:const\s*)?[&*]*\s*([A-Za-z_]\w*)\s*=\s*&?\s*network_get_instance\b")
+
+
+def manager_alias_problems(sources: dict) -> list:
+    """Every reference or pointer to the network manager, a local, a
+    parameter or a member, is named one of MANAGER_NAMES."""
+    problems = []
+    for fname, text in sorted(sources.items()):
+        blanked = blank_string_contents(text)
+        for m in _MANAGER_BINDING.finditer(blanked):
+            alias = m.group(1) or m.group(2)
+            if alias not in MANAGER_NAMES:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: names the network manager "
+                                f"{alias!r}; a reference to it is named {' or '.join(MANAGER_NAMES)}, "
+                                f"so begin()'s census row sees every start of the network (a "
+                                f"second start handed \"\" raises the SoftAP open)")
     return problems
 
 
@@ -2522,7 +2891,7 @@ def no_session_problems(sources: dict, headers: dict, queries: set, uri_readers)
                                 f"{_NO_SESSION}")
         for rx, allow, what, table in (
                 (_URL_QUERY, queries, "the URL query", "URL_QUERY_READERS"),
-                (_URI_READ, uri_readers, "a request's raw path (->uri, which keeps its query)",
+                (_URI_READ, uri_readers, "a request's raw path (its uri, which keeps its query)",
                  "URI_READERS")):
             for m in rx.finditer(blanked):
                 d = _innermost(defs, m.start())
@@ -2542,10 +2911,71 @@ def no_session_problems(sources: dict, headers: dict, queries: set, uri_readers)
     return problems
 
 
-def check_bearer_only_answers(sources: dict, tables=None) -> list:
+# The build's flag files (platformio.ini and the files its extra_configs
+# names): a `-D` flag is a `#define` too.
+FLAG_FILES = (Path("firmware/canary/platformio.ini"),)
+_DEFINE = re.compile(r"^[ \t]*#[ \t]*define\b(?:[^\n]*\\\n)*[^\n]*", re.M)
+_FLAG = re.compile(r"(?<![\w-])-D\s*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
+
+
+def flag_sources(files=FLAG_FILES) -> dict:
+    """{path: text} of the flag files and every file their extra_configs
+    names, comment lines dropped."""
+    out, todo = {}, [Path(f) for f in files]
+    while todo:
+        path = Path(os.path.normpath(todo.pop()))
+        if path.as_posix() in out or not path.is_file():
+            continue
+        text = "\n".join(line for line in path.read_text(errors="replace").splitlines()
+                         if not line.lstrip().startswith((";", "#")))
+        out[path.as_posix()] = text
+        more = re.search(r"^extra_configs\s*=[^\n]*\n((?:[ \t]+\S[^\n]*\n?)+)", text, re.M)
+        if more:
+            todo.extend(path.parent / line.split(";")[0].strip()
+                        for line in more.group(1).splitlines() if line.strip())
+    return out
+
+
+def macro_problems(sources: dict, T: dict, flags: dict) -> list:
+    """No `#define` under ROOTS, and no `-D` build flag, names a pinned or
+    census function, a device-side use, an accessor, a mint, an emitter, a
+    comparer, a credential's spelling or the private key, in its name or its
+    replacement: `#define auth_gate(r) (true)` after the gate's definition
+    leaves every refusal's text and every pin intact and ungates every
+    route, the preprocessor's shadow of a pinned body."""
+    names = ({q.split("::")[-1] for _f, q in T["glue"]}
+             | {q.split("::")[-1] for _f, q in T["local"]}
+             | set(T["accessors"]) | set(T["mints"]) | set(T["emitters"]) | set(T["comparers"]))
+    rxs = ([re.compile(r"\b(?:" + "|".join(map(re.escape, sorted(names))) + r")\b"),
+            _PRIVATE_KEY] + list(T["reads"].values())
+           + [_census_rx(n, row) for n, row in sorted(T["census"].items())])
+
+    def named(text):
+        return next((m.group(0) for rx in rxs for m in [rx.search(text)] if m), None)
+    problems = []
+    for fname, text in sorted(sources.items()):
+        for m in _DEFINE.finditer(blank_string_contents(text)):
+            hit = named(m.group(0))
+            if hit:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: a macro names {hit!r} "
+                                f"({_fold(text[m.start():m.end()])[:90]!r}): no #define may "
+                                f"stand in for, or wrap, the glue, the gates or a credential "
+                                f"the check holds")
+    for fname, text in sorted(flags.items()):
+        for m in _FLAG.finditer(text):
+            hit = named(next(g for g in m.groups() if g is not None))
+            if hit:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: the build flag "
+                                f"{m.group(0)!r} names {hit!r}: no -D may stand in for the "
+                                f"glue, the gates or a credential the check holds")
+    return problems
+
+
+def check_bearer_only_answers(sources: dict, tables=None, flags=None) -> list:
     """Every answer that carries a credential holds to its grant, on the
     flagship's own gates (see the module docstring). `tables` overrides the
-    module tables by name (the self-test's fixtures pass their own)."""
+    module tables by name (the self-test's fixtures pass their own); `flags`
+    is the build's flag files (flag_sources())."""
     T = {"reads": SECRET_READS, "accessors": SECRET_ACCESSORS, "mints": SECRET_MINTS,
          "emitters": TOKEN_EMITTERS, "emitter_stmts": EMITTER_STATEMENTS,
          "comparers": TOKEN_COMPARERS, "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
@@ -2573,7 +3003,9 @@ def check_bearer_only_answers(sources: dict, tables=None) -> list:
             + glue_def_problems(sources, T["glue"])
             + gate_census_problems(sources, T["census"], T["markers"], T["steps"],
                                    T["emitters"])
-            + no_session_problems(sources, T["headers"], T["queries"], T["uri"]))
+            + no_session_problems(sources, T["headers"], T["queries"], T["uri"])
+            + macro_problems(sources, T, flags or {})
+            + manager_alias_problems(sources))
 
 
 def check_registration_sites(sources: dict) -> list:
@@ -2788,6 +3220,20 @@ def _assert_parser_robust() -> None:
     assert any("(one of its 2 definitions) has NO credential gate" in f for f in got), got
     got = check_host_first({"fx": twice}, require_defs=False)
     assert any("handle_w (fx) never asks the Host" in f for f in got), got
+    # ...whatever the #else body's head: `static int` (esp_err_t is an int, so
+    # it matches the forward declaration), an attribute, a trailing return
+    # type, noexcept.
+    for head in ("static int handle_w(httpd_req_t* req) {",
+                 "static esp_err_t IRAM_ATTR handle_w(httpd_req_t* req) {",
+                 "static auto handle_w(httpd_req_t* req) -> esp_err_t {",
+                 "static esp_err_t handle_w(httpd_req_t* req) noexcept {"):
+        other = twice.replace("#else\nstatic esp_err_t handle_w(httpd_req_t* req) {",
+                              "#else\n" + head)
+        got = check_route_gates({"fx": other}, parse_routes("fx", other))[0]
+        assert any("(one of its 2 definitions) has NO credential gate" in f for f in got), (
+            head, got)
+        got = check_host_first({"fx": other}, require_defs=False)
+        assert any("handle_w (fx) never asks the Host" in f for f in got), (head, got)
     both = twice.replace("{\n  return apply(req);",
                          "{\n  if (!auth_gate(req)) return ESP_OK;\n  return apply(req);")
     assert check_route_gates({"fx": both}, parse_routes("fx", both))[0] == []
@@ -3050,6 +3496,34 @@ _FIX_NET = "fx/lib/securacv_network.cpp"
 _FIX_MAIN = "fx/src/main.cpp"
 _FIX_OTHER = "fx/lib/securacv_other.cpp"
 _FIX_WITNESS = "fx/lib/securacv_witness.cpp"
+_FIX_SETUP = "fx/lib/securacv_setup.cpp"
+_FIX_MINT_SRC = ("  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
+                 "sizeof(g_ap_password))) {\n"
+                 "    Serial.println(\"[!!] Setup network key derivation failed - HALTING\");\n"
+                 "    while (true) { delay(1000); }\n  }\n")
+_FIX_MINT = ("if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
+             "sizeof(g_ap_password))) { Serial.println(\"[!!] Setup network key derivation "
+             "failed - HALTING\"); while (true) { delay(1000); } }")
+# setup()'s start of the network, in the tree's block and conditional, and its
+# serial banner.
+_FIX_SETUP_NET = (
+    "  {\n"
+    "#if FEATURE_WIFI_AP\n"
+    "    const char* ap_ssid = device.ap_ssid;\n"
+    "    ScvNetworkManager& net = network_get_instance();\n"
+    "    network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n"
+    "    if (net.begin(ap_ssid, g_ap_password, device.device_id)) {\n"
+    "      net.startHttpServer();\n    }\n"
+    "#endif\n"
+    "  }\n")
+_FIX_SETUP_PRINT = ("#if FEATURE_WIFI_AP\n"
+                    "  Serial.printf(\"Password: %s\\n\", g_ap_password);\n"
+                    "#endif\n")
+_FIX_BEGIN_COPY = ("  if (ap_password) {\n"
+                   "    strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);\n"
+                   "    m_ap_password[sizeof(m_ap_password) - 1] = '\\0';\n"
+                   "  } else {\n"
+                   "    m_ap_password[0] = '\\0';\n  }\n")
 _FIX_FILES = {
     _FIX_AUTH: (
         "static AuthManager s_auth;\n"
@@ -3120,6 +3594,20 @@ _FIX_FILES = {
         "    return false;\n  }\n"
         "  return true;\n}\n"),
     _FIX_CRYPTO: (
+        "bool hmac_sha256(const uint8_t* key, size_t key_len, const uint8_t* data,\n"
+        "                 size_t data_len, uint8_t out[32]) {\n"
+        "  return mbed_hmac(key, key_len, data, data_len, out);\n}\n"
+        "static const char UNAMBIGUOUS_ALPHABET[] =\n"
+        "  \"23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz\";\n"
+        "static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;\n"
+        "void format_api_token_string(const uint8_t* input, size_t in_len, char* output,\n"
+        "                             size_t out_len) {\n"
+        "  for (size_t i = 0; i < in_len && i + 1 < out_len; i++) {\n"
+        "    output[i] = UNAMBIGUOUS_ALPHABET[input[i] % UNAMBIGUOUS_LEN];\n  }\n}\n"
+        "static void unambiguous_suffix16(uint16_t v, char out[5]) {\n"
+        "  for (int i = 0; i < 4; i++) {\n"
+        "    out[i] = UNAMBIGUOUS_ALPHABET[v % UNAMBIGUOUS_LEN];\n"
+        "    v = (uint16_t)(v / UNAMBIGUOUS_LEN);\n  }\n}\n"
         "bool derive_api_token(const uint8_t privkey[32], char* token_str,\n"
         "                      size_t token_str_len) {\n"
         "  if (!token_str || token_str_len < 36) return false;\n"
@@ -3170,16 +3658,35 @@ _FIX_FILES = {
         "  wifi_config_t c;\n  size_t pw_len = 0;\n"
         "  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {\n"
         "    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));\n  }\n"
-        "  if (transition_allowed(pw_len)) {\n"
+        "  aps::Decision d = aps::decide(pw_len);\n"
+        "#if CANARY_SOFTAP_SAE_IN_BUILD\n"
+        "  if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) {\n"
         "    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;\n"
-        "    esp_wifi_set_config(WIFI_IF_AP, &c);\n  }\n"
+        "    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);\n"
+        "    d = aps::after_driver(d, accepted);\n  }\n"
+        "#endif\n"
         "  secure_zero(&c, sizeof(c));\n}\n"
+        "static bool ensure_sta_pmf_capable() {\n"
+        "#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)\n"
+        "  return true;\n"
+        "#else\n"
+        "  wifi_config_t c;\n  bool capable = false;\n"
+        "  if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) {\n"
+        "    capable = c.sta.pmf_cfg.capable;\n"
+        "    if (!capable) {\n"
+        "      c.sta.pmf_cfg.capable = true;\n"
+        "      capable = (esp_wifi_set_config(WIFI_IF_STA, &c) == ESP_OK);\n    }\n  }\n"
+        "  return capable;\n"
+        "#endif\n}\n"
         "bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password) {\n"
-        "  strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);\n"
+        + _FIX_BEGIN_COPY +
         "  bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
         "AP_MAX_CONNECTIONS);\n"
         "  apply_ap_security(m_status);\n"
         "  return ap_ok;\n}\n"
+        "bool network_init(const char* ap_ssid, const char* ap_password, "
+        "const char* device_id) {\n"
+        "  return network_get_instance().begin(ap_ssid, ap_password, device_id);\n}\n"
         "void ScvNetworkManager::raiseAp() {\n"
         "  bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
         "AP_MAX_CONNECTIONS);\n"
@@ -3269,23 +3776,56 @@ _FIX_FILES = {
         "  return canary::net::provisioning_gate::is_open(g_prov_gate, millis(), TTL);\n}\n"
         "void setup() {\n"
         "  DeviceIdentity& device = witness_get_device();\n"
-        "  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
-        "sizeof(g_ap_password))) {\n"
-        "    Serial.println(\"[!!] Setup network key derivation failed - HALTING\");\n"
-        "    while (true) { delay(1000); }\n  }\n"
-        "  network_set_provisioning_gate_hooks(prov_gate_take_hook, prov_gate_is_open_hook);\n"
-        "#if FEATURE_WIFI_AP\n"
-        "  Serial.printf(\"Password: %s\\n\", g_ap_password);\n"
+        + _FIX_MINT_SRC + _FIX_SETUP_NET + _FIX_SETUP_PRINT +
+        "}\n"
+        "static void handle_boot_button() {\n"
+        "  canary::net::provisioning_gate::expire(g_prov_gate, millis(), "
+        "PROVISIONING_GATE_TTL_MS);\n"
+        "  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);\n"
+        "  if (pressed && !boot_btn_was_pressed) {\n"
+        "    boot_btn_was_pressed = true;\n"
+        "  } else if (!pressed && boot_btn_was_pressed) {\n"
+        "    if (duration >= BOOT_MEDIUM_PRESS_MS) {\n"
+        "      print_status();\n"
+        "    } else {\n"
+        "      if (duration >= BOOT_SHORT_PRESS_MS && tap_is_usb_confirm) {\n"
+        "        Serial.println(\"[AUTH] USB onboarding confirmed\");\n"
+        "      } else if (duration >= BOOT_SHORT_PRESS_MS) {\n"
+        "        canary::net::provisioning_gate::open(g_prov_gate, millis());\n"
+        "      }\n    }\n  }\n}\n"
+        "void loop() {\n"
+        "  handle_boot_button();\n"
+        "#if FEATURE_SETUP_WIZARD\n"
+        "  if (setup_is_active()) {\n"
+        "    setup_check_timeout();\n"
+        "  }\n"
         "#endif\n"
         "}\n"),
+    _FIX_SETUP: (
+        "namespace setup_wiz {\n"
+        "static bool s_initialized = false;\n"
+        "static bool s_first_boot = false;\n"
+        "static bool s_active = false;\n"
+        "static uint32_t s_started_ms = 0;\n"
+        "}\n"
+        "bool setup_init(void) {\n"
+        "  using namespace setup_wiz;\n"
+        "  if (s_initialized) return true;\n"
+        "  s_first_boot = !nvs_setup_ok();\n"
+        "  if (s_first_boot) {\n    s_active = true;\n    s_started_ms = millis();\n  }\n"
+        "  s_initialized = true;\n  return true;\n}\n"
+        "bool setup_is_first_boot(void) {\n  return setup_wiz::s_first_boot;\n}\n"
+        "bool setup_is_active(void) {\n  return setup_wiz::s_active;\n}\n"
+        "void setup_mark_complete(void) {\n"
+        "  using namespace setup_wiz;\n  s_first_boot = false;\n  s_active = false;\n}\n"
+        "void setup_check_timeout(void) {\n"
+        "  using namespace setup_wiz;\n"
+        "  if (!s_active) return;\n"
+        "  if ((millis() - s_started_ms) >= SETUP_TIMEOUT_MS) {\n"
+        "    s_active = false;\n    s_first_boot = false;\n  }\n}\n"
+        "bool setup_get_device_name(char* out, size_t len) {\n"
+        "  return copy_name(out, len);\n}\n"),
 }
-_FIX_MINT_SRC = ("  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
-                 "sizeof(g_ap_password))) {\n"
-                 "    Serial.println(\"[!!] Setup network key derivation failed - HALTING\");\n"
-                 "    while (true) { delay(1000); }\n  }\n")
-_FIX_MINT = ("if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
-             "sizeof(g_ap_password))) { Serial.println(\"[!!] Setup network key derivation "
-             "failed - HALTING\"); while (true) { delay(1000); } }")
 _FIX_GLUE = ((_NET, "host_is_foreign"), (_NET, "auth_gate"), (_NET, "bearer_present_and_valid"),
              (_NET, "from_ap_subnet"), (_NET, "network_set_provisioning_gate_hooks"),
              (_NET, "provisioning_gate_take"), (_NET, "page_token_inject"),
@@ -3296,12 +3836,25 @@ _FIX_GLUE = ((_NET, "host_is_foreign"), (_NET, "auth_gate"), (_NET, "bearer_pres
              (_AUTH, "AuthManager::constantTimeCompare"), (_AUTH, "auth_get_token"),
              (_NET_H, "getApPassword"), (_NET_H, "getTlsCertFp"),
              (_CRYPTO, "derive_api_token"), (_NET, "announce_setup_network"),
-             (_NET, "apply_ap_security"))
+             (_NET, "apply_ap_security"), (_AUTH, "auth_get_instance"),
+             (_CRYPTO, "hmac_sha256"), (_CRYPTO, "format_api_token_string"),
+             (_SETUP, "setup_init"), (_SETUP, "setup_is_first_boot"),
+             (_SETUP, "setup_is_active"), (_SETUP, "setup_mark_complete"),
+             (_SETUP, "setup_check_timeout"))
 _FIX_TABLES = {
     "local": {
         (_NET, "ScvNetworkManager::begin"): (
-            "keeps the SoftAP password",
-            ("strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);",)),
+            "keeps the SoftAP password and raises the SoftAP with it",
+            ("if (ap_password) {",
+             "[within if (ap_password) {] strncpy(m_ap_password, ap_password, "
+             "sizeof(m_ap_password) - 1);",
+             "[within if (ap_password) {] m_ap_password[sizeof(m_ap_password) - 1] = '\\0';",
+             "[within else {] m_ap_password[0] = '\\0';",
+             "bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
+             "AP_MAX_CONNECTIONS);")),
+        (_NET, "network_init"): (
+            "hands begin() its key",
+            ("return network_get_instance().begin(ap_ssid, ap_password, device_id);",)),
         (_NET, "ScvNetworkManager::raiseAp"): (
             "raises the SoftAP",
             ("bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
@@ -3309,10 +3862,13 @@ _FIX_TABLES = {
              "announce_setup_network(m_ap_ssid, m_ap_password);")),
         (_NET, "apply_ap_security"): (
             "measures the driver's passphrase",
-            ("pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));",)),
+            ("if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {",
+             "[within if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {] pw_len = "
+             "strnlen((const char*)c.ap.password, sizeof(c.ap.password));")),
         (_MAIN, "setup"): (
-            "mints the SoftAP password, prints it",
-            (_FIX_MINT, "Serial.printf(\"Password: %s\\n\", g_ap_password);")),
+            "mints the SoftAP password, starts the network with it, prints it",
+            (_FIX_MINT, _BEGIN_IN_SETUP,
+             "[within #if FEATURE_WIFI_AP] Serial.printf(\"Password: %s\\n\", g_ap_password);")),
         (_AUTH, "auth_load_or_derive"): (
             "mints the token",
             ("[within if (!loaded) {] if (!derive_api_token(privkey, s_bearer, "
@@ -3823,6 +4379,10 @@ _FIX_PLANTS = (
      "static auto clear_backoff = [](uint32_t s) { return "
      "auth_get_instance().handedToken(s); };\n",
      ("auth_get_instance() called outside every function",)),
+    ("a namespace-scope lambda's else branch clears the backoff", _FIX_NET, "",
+     "static auto clear_backoff = [](uint32_t s) { if (!s) return; else "
+     "auth_handed_token(s); };\n",
+     ("auth_handed_token() called outside every function",)),
     ("a noexcept helper reaches the instance", _FIX_NET, "",
      "static void clear_backoff(uint32_t s) noexcept { return "
      "auth_get_instance().handedToken(s); }\n",
@@ -3846,13 +4406,214 @@ _FIX_PLANTS = (
      "  prefs.begin(\"fleet\", true);\n",
      "  prefs.begin(\"fleet\", true);\n"
      "  if (strstr(req->uri, \"cv_session=\")) return send_doc(req, doc);\n",
-     ("handle_fleet reads a request's raw path (->uri, which keeps its query), outside "
+     ("handle_fleet reads a request's raw path (its uri, which keeps its query), outside "
       "URI_READERS",)),
     ("a request header named by a variable", _FIX_NET,
      "  prefs.begin(\"fleet\", true);\n",
      "  prefs.begin(\"fleet\", true);\n  char c[64];\n"
      "  httpd_req_get_hdr_value_str(req, kCookie, c, sizeof(c));\n",
      ("reads the request header 'kCookie'",)),
+    # Round-2 review: begin()'s key, where its copy sits, and its callers.
+    ("begin()'s key parameter reassigned", _FIX_NET, "  if (ap_password) {\n    strncpy(",
+     "  ap_password = nullptr;\n  if (ap_password) {\n    strncpy(",
+     ("ScvNetworkManager::begin() reads the SoftAP password in a statement not in its "
+      "SECRET_LOCAL_USES row: 'ap_password = nullptr;'",)),
+    ("begin()'s copy made dead", _FIX_NET, "  if (ap_password) {\n    strncpy(",
+     "  if (ap_password && false) {\n    strncpy(", ("'if (ap_password && false) {'",)),
+    ("begin()'s copy compiled out", _FIX_NET,
+     "    strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);\n",
+     "#if 0\n    strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);\n#endif\n",
+     ("[within if (ap_password) { > #if 0] strncpy(m_ap_password",)),
+    ("a second start of the network handed an empty key", _FIX_MAIN, _FIX_SETUP_PRINT,
+     _FIX_SETUP_PRINT + "  network_get_instance().begin(device.ap_ssid, \"\");\n",
+     ("setup calls ScvNetworkManager::begin other than as the whole statement",
+      "ScvNetworkManager::begin is called 2 times by setup")),
+    ("network_init called with no key", _FIX_MAIN, "",
+     "static void restart_setup() {\n  network_init(witness_get_device().ap_ssid, nullptr, "
+     "nullptr);\n}\n",
+     ("network_init called from restart_setup",)),
+    ("the network started through another name", _FIX_MAIN, "",
+     "static void restart_setup() {\n  ScvNetworkManager& mgr = network_get_instance();\n"
+     "  mgr.begin(\"x\", \"\");\n}\n",
+     ("names the network manager 'mgr'",)),
+    ("the network started through an auto reference", _FIX_MAIN, "",
+     "static void restart_setup() {\n  auto& m = network_get_instance();\n"
+     "  m.begin(\"x\", \"\");\n}\n",
+     ("names the network manager 'm'",)),
+    ("a member restarts the network with no key", _FIX_NET, "  if (!ap_ok) return;\n",
+     "  if (!ap_ok) return;\n  begin(m_ap_ssid, \"\");\n",
+     ("ScvNetworkManager::begin called from ScvNetworkManager::raiseAp",)),
+    ("a member restarts the network through this", _FIX_NET, "  if (!ap_ok) return;\n",
+     "  if (!ap_ok) return;\n  this->begin(m_ap_ssid, nullptr);\n",
+     ("ScvNetworkManager::begin called from ScvNetworkManager::raiseAp",)),
+    ("the driver's AP config opened beside the raise", _FIX_NET, "  if (!ap_ok) return;\n",
+     "  if (!ap_ok) return;\n  { wifi_config_t o; esp_wifi_get_config(WIFI_IF_AP, &o); "
+     "o.ap.authmode = WIFI_AUTH_OPEN; esp_wifi_set_config(WIFI_IF_AP, &o); }\n",
+     ("esp_wifi_set_config called from ScvNetworkManager::raiseAp",)),
+    ("a helper opens the driver's AP config", _FIX_NET, "",
+     "static void ap_open() {\n  wifi_config_t c;\n  c.ap.authmode = WIFI_AUTH_OPEN;\n"
+     "  esp_wifi_set_config(WIFI_IF_AP, &c);\n}\n",
+     ("esp_wifi_set_config called from ap_open",)),
+    ("the driver's AP config written in place", _FIX_NET,
+     "    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);\n",
+     "    c.ap.authmode = WIFI_AUTH_OPEN;\n"
+     "    const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == ESP_OK);\n",
+     ("apply_ap_security changed",)),
+    ("core 3's AP class raises a SoftAP", _FIX_NET, "  if (!ap_ok) return;\n",
+     "  if (!ap_ok) return;\n  WiFi.AP.create(m_ap_ssid, nullptr);\n",
+     ("WiFi.AP called from ScvNetworkManager::raiseAp",)),
+    # Taking an address is a mention: an accessor's, a census primitive's.
+    ("the token's accessor through a function pointer", _FIX_NET,
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n",
+     "static const char* (*const s_tok)() = &auth_get_token;\n"
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n"
+     "  httpd_resp_set_hdr(req, \"X-Diag\", s_tok());\n",
+     ("a credential named outside every function ('static const char* (*const s_tok)() = "
+      "&auth_get_token;')",)),
+    ("the tap's clear through a function pointer", _FIX_NET,
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n",
+     "static void (*const s_seen)(uint32_t) = auth_handed_token;\n"
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n  s_seen(request_peer_ipv4(req));\n",
+     ("auth_handed_token() called outside every function",)),
+    ("the SoftAP password through a member pointer", _FIX_NET, "",
+     "static const char* (ScvNetworkManager::*const s_ap)() const = "
+     "&ScvNetworkManager::getApPassword;\n",
+     ("a credential named outside every function ('static const char* "
+      "(ScvNetworkManager::*const s_ap)",)),
+    ("the instance's address at namespace scope", _FIX_AUTH, "",
+     "static AuthManager* const s_view = &auth_get_instance();\n",
+     ("auth_get_instance() called outside every function",)),
+    ("a trailing-return helper reaches the instance", _FIX_AUTH, "",
+     "auto auth_clear_source(uint32_t source) -> void {\n"
+     "  (&auth_get_instance())->handedToken(source);\n}\n",
+     ("auth_get_instance called from auth_clear_source",)),
+    ("a trailing-return shadow of auth_gate in another lib", _FIX_OTHER, "",
+     "static auto auth_gate(httpd_req_t* req) -> bool { (void)req; return true; }\n",
+     ("GLUE_DEFS pins auth_gate() in securacv_network.cpp, which ROOTS defines twice",
+      "GATE_CALL_SITES row auth_gate: ROOTS defines it twice")),
+    ("a trailing-return shadow of host_is_foreign in another lib", _FIX_OTHER, "",
+     "static auto host_is_foreign(httpd_req_t* req) -> bool { (void)req; return false; }\n",
+     ("GLUE_DEFS pins host_is_foreign() in securacv_network.cpp, which ROOTS defines twice",)),
+    # Macros: the preprocessor's shadow of a pinned body or a census name.
+    ("a macro ungates every route", _FIX_NET, "static network_gate_fn_t s_gate_take = nullptr;\n",
+     "#define auth_gate(r) (true)\nstatic network_gate_fn_t s_gate_take = nullptr;\n",
+     ("a macro names 'auth_gate'",)),
+    ("a macro on two lines makes the bearer grant true", _FIX_NET,
+     "static void announce_setup_network(",
+     "#define bearer_present_and_valid(r) \\\n  (true)\nstatic void announce_setup_network(",
+     ("a macro names 'bearer_present_and_valid'",)),
+    ("a macro makes every Host this device's", _FIX_NET, "",
+     "#define host_is_foreign(r) (false)\n", ("a macro names 'host_is_foreign'",)),
+    ("a macro reads a credential", _FIX_NET, "",
+     "#define AP_KEY network_get_instance().getApPassword()\n",
+     ("a macro names 'getApPassword'",)),
+    # The page grant's setup input at its source.
+    ("the first-boot unlock widened at its source", _FIX_SETUP,
+     "  return setup_wiz::s_active;\n",
+     "  return setup_wiz::s_active || millis() < 600000UL;\n",
+     ("setup_is_active changed — the first-boot unlock's source",)),
+    ("first boot read as always", _FIX_SETUP, "  s_first_boot = !nvs_setup_ok();\n",
+     "  s_first_boot = true;\n", ("setup_init changed",)),
+    ("a new writer of the setup state", _FIX_SETUP, "  return copy_name(out, len);\n",
+     "  setup_wiz::s_active = true;\n  return copy_name(out, len);\n",
+     ("s_active called from setup_get_device_name",)),
+    ("the setup timeout's call dropped", _FIX_MAIN, "    setup_check_timeout();\n", "",
+     ("GATE_CALL_SITES row setup_check_timeout names loop (src/main.cpp), which no longer "
+      "calls it",)),
+    # The token's helpers.
+    ("the token's HMAC ignores its key", _FIX_CRYPTO,
+     "  return mbed_hmac(key, key_len, data, data_len, out);\n",
+     "  return mbed_hmac((const uint8_t*)\"k\", 1, data, data_len, out);\n",
+     ("hmac_sha256 changed",)),
+    ("the token's rendering skips its input", _FIX_CRYPTO,
+     "    output[i] = UNAMBIGUOUS_ALPHABET[input[i] % UNAMBIGUOUS_LEN];\n",
+     "    output[i] = UNAMBIGUOUS_ALPHABET[i % UNAMBIGUOUS_LEN];\n",
+     ("format_api_token_string changed",)),
+    ("the token's alphabet narrowed", _FIX_CRYPTO,
+     "\"23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz\"", "\"22222222\"",
+     ("UNAMBIGUOUS_ALPHABET named outside every function other than in its declaration",)),
+    # The BOOT tap's open side.
+    ("the BOOT tap opened for any SoftAP peer", _FIX_MAIN,
+     "static void handle_boot_button() {\n",
+     "static void open_for_ap_peer() {\n  if (WiFi.softAPgetStationNum() > 0) "
+     "canary::net::provisioning_gate::open(g_prov_gate, millis());\n}\n"
+     "static void handle_boot_button() {\n",
+     ("g_prov_gate called from open_for_ap_peer",
+      "provisioning_gate::open called from open_for_ap_peer")),
+    ("the BOOT tap opened on every pass", _FIX_MAIN,
+     "  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);\n",
+     "  canary::net::provisioning_gate::open(g_prov_gate, millis());\n"
+     "  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);\n",
+     ("g_prov_gate: handle_boot_button's statements that name it are not its row",
+      "provisioning_gate::open is called 2 times by handle_boot_button")),
+    ("the BOOT tap's stamp written directly", _FIX_MAIN,
+     "  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);\n",
+     "  g_prov_gate.opened_at_ms = millis();\n"
+     "  bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);\n",
+     ("g_prov_gate: handle_boot_button's statements that name it are not its row",)),
+    ("the BOOT tap open from boot", _FIX_MAIN, "State g_prov_gate = {0};",
+     "State g_prov_gate = {1};",
+     ("g_prov_gate named outside every function other than in its declaration",)),
+    # The refusal's place and the mint's: a split head, ESP-IDF's early-exit
+    # macros, a throw, a nested rate limit; the mint's order.
+    ("Wi-Fi connect's head split across #if / #else", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "#if CANARY_DEV_OPEN_SETUP\nstatic esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "#else\nstatic esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n#endif\n",
+     ("handle_wifi_connect calls auth_gate other than at its own top level (within static "
+      "esp_err_t handle_wifi_connect(httpd_req_t* req) {",)),
+    ("an ESP_RETURN_ON_* before Wi-Fi connect's refusal", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  ESP_RETURN_ON_FALSE(!from_ap_subnet(req), wifi_connect_apply(req), \"net\", \"ap\");\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     ("handle_wifi_connect can leave before its auth_gate call: 'ESP_RETURN_ON_FALSE(",)),
+    ("a throw before Wi-Fi connect's refusal", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (from_ap_subnet(req)) throw wifi_connect_apply(req);\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     ("handle_wifi_connect can leave before its auth_gate call: 'if (from_ap_subnet(req)) "
+      "throw",)),
+    ("a rate-limit refusal nested before the status refusal", _FIX_NET,
+     "  if (!rate_limit_check(req)) return ESP_OK;\n  if (!auth_gate(req)) return ESP_OK;\n",
+     "  if (from_ap_subnet(req)) {\n    if (!rate_limit_check(req)) return ESP_OK;\n  }\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     ("handle_status can leave before its auth_gate call: 'if (!rate_limit_check(req)) "
+      "return ESP_OK;'",)),
+    ("an ESP_GOTO_ON_* past the SoftAP key's mint", _FIX_MAIN, _FIX_MINT_SRC,
+     "  ESP_GOTO_ON_FALSE(device.provisioned, ESP_OK, keyed, \"boot\", \"x\");\n"
+     + _FIX_MINT_SRC + "keyed:\n",
+     ("setup()'s SECRET_LOCAL_USES row holds", "[within after a goto] if (!canary::net::")),
+    ("mint: the SoftAP key's mint after its use", _FIX_MAIN, _FIX_MINT_SRC + _FIX_SETUP_NET,
+     _FIX_SETUP_NET + _FIX_MINT_SRC,
+     ("setup()'s statements that read a credential are not its SECRET_LOCAL_USES row",)),
+    # The stores and spellings the round-2 review added.
+    ("the roll-call answers the TLS private key", _FIX_NET,
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     "  uint8_t kb[1300];\n  size_t kl = nvs.getBytes(NVS_KEY_TLS_KEY, kb, sizeof(kb));\n"
+     "  httpd_resp_send(req, (const char*)kb, kl);\n"
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     ("public route handler handle_fleet() answers the TLS private key",)),
+    ("the driver's passphrase through a copy of its union member", _FIX_NET,
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     "  wifi_config_t c;\n  esp_wifi_get_config(WIFI_IF_AP, &c);\n"
+     "  const wifi_ap_config_t& a = c.ap;\n"
+     "  httpd_resp_set_hdr(req, \"X-Diag\", (const char*)a.password);\n"
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     (_PUBLIC_AP,)),
+    ("a query credential through (*req).uri", _FIX_NET, "  prefs.begin(\"fleet\", true);\n",
+     "  prefs.begin(\"fleet\", true);\n"
+     "  if (strstr((*req).uri, \"cv_session=\")) return send_doc(req, doc);\n",
+     ("handle_fleet reads a request's raw path (its uri, which keeps its query)",)),
+    ("the instance's accessor resets the table", _FIX_AUTH,
+     "AuthManager& auth_get_instance() {\n  return s_auth;\n}\n",
+     "AuthManager& auth_get_instance() {\n  s_auth.reset();\n  return s_auth;\n}\n",
+     ("auth_get_instance changed",)),
 )
 
 
@@ -3922,6 +4683,17 @@ _FIX_TABLE_PLANTS = (
     ("a URI_READERS row naming no reader",
      _with("uri", lambda u: dict(u) | {(_NET, "handle_ui"): "x"}),
      ("URI_READERS names handle_ui (securacv_network.cpp), which no longer reads it",)),
+    # Round-2 review: a row's file is part of it (a glue body, a census home).
+    ("a GLUE_DEFS row keyed to another file than its body's",
+     _with("glue", lambda g: {(("securacv_other.cpp" if q == "provisioning_gate_take" else f), q):
+                              v for (f, q), v in g.items()}),
+     ("GLUE_DEFS pins provisioning_gate_take() in securacv_other.cpp, which ROOTS defines once "
+      "(fx/lib/securacv_network.cpp)",)),
+    ("a census home in another file than the definition",
+     _with("census", lambda c: dict(c or GATE_CALL_SITES) | {"auth_check": dict(
+         (c or GATE_CALL_SITES)["auth_check"], home=(_NET, "auth_check"))}),
+     ("GATE_CALL_SITES row auth_check: ROOTS defines it once (auth_check "
+      "(fx/lib/securacv_auth.cpp))",)),
     ("a URL_QUERY_READERS row naming no reader",
      _with("queries", lambda q: set(q or URL_QUERY_READERS) | {(_NET, "handle_ui")}),
      ("URL_QUERY_READERS names handle_ui (securacv_network.cpp), which no longer reads it",)),
@@ -3941,13 +4713,18 @@ def _assert_answer_gate_rule() -> None:
              "B::B() : m_t{}, n_(f(1)) { y(); }\nC::~C() { z(); }\n"
              "ns::Type D::get() const { return 1; }\nint free_fn(int a) { return a ? f(a) : 0; }\n"
              "static void h(uint32_t s) noexcept { return k(s); }\n"
-             "int E::f() const override { return 2; }\n")
+             "int E::f() const override { return 2; }\n"
+             "auto T::g(int s) -> void { k(s); }\n"
+             "static auto t2(int s) noexcept -> std::pair<int, int> { return {s, s}; }\n")
     spans = function_spans(heads)
     assert [n for n, _s, _e in spans] == ["Foo::Foo", "A::grant", "B::B", "C::~C", "D::get",
-                                          "free_fn", "h", "E::f"], spans
+                                          "free_fn", "h", "E::f", "T::g", "t2"], spans
     # (a `noexcept` helper is a function, not code outside every function, and
-    # definition_spans finds a member's `const` definition.)
+    # definition_spans finds a member's `const` definition and a trailing
+    # return type's.)
     assert definition_span(heads, "h") and definition_span(heads, "E::f")
+    assert definition_span(heads, "T::g") and definition_span(heads, "t2")
+    assert definition_span("int r = f(x) -> y;\nauto q = f(x);\n", "f") is None
     assert definition_span("const char* g() const { return m_x; }\n", "g") == (12, 37)
     for needle, owner in (("auth_get_token", "Foo::Foo"), ("compare(", "A::grant"),
                           ("y()", "B::B"), ("f(1)", "B::B")):
@@ -3975,6 +4752,14 @@ def _assert_answer_gate_rule() -> None:
         missing = [w for w in words if not any(w in p for p in got)]
         assert not missing, (f"the bearer-only answer rule passed a table plant ({what}): "
                              f"expected problems naming {missing!r}, got {got!r}")
+    # A -D build flag is a #define too; the flags the build sets name none.
+    ini = "build_flags =\n    -DFEATURE_WIFI_AP=1\n    -DCORE_DEBUG_LEVEL=0\n"
+    assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini}) == []
+    for flag in ("-D'auth_gate(r)=true'", '-D"host_is_foreign(r)=false"',
+                 "-Dbearer_present_and_valid(r)=1"):
+        got = check_bearer_only_answers(clean, tables,
+                                        flags={"fx/platformio.ini": ini + "    " + flag + "\n"})
+        assert any("the build flag" in p and "names '" in p for p in got), (flag, got)
 
 
 def check_route_gates(sources: dict, routes: list) -> tuple:
@@ -3996,7 +4781,7 @@ def check_route_gates(sources: dict, routes: list) -> tuple:
         base = handler.split("::")[-1]
         if base in SELF_GATING_HANDLERS:
             continue
-        bodies = [b for t in sources.values() for b in function_bodies(t, base)]
+        bodies = handler_bodies(sources, base)
         if not bodies:
             failures.append(f"{method} {uri}: handler {handler} not found "
                             f"(registered in {fname})")
@@ -4034,7 +4819,7 @@ def main() -> int:
         routes.extend(parse_routes(fname, text))
 
     failures = []
-    handler_def = re.compile(r"esp_err_t\s+\w+\s*\(\s*httpd_req_t\s*\*")
+    handler_def = re.compile(r"\b\w+\s*\(\s*httpd_req_t\s*\*\s*\w*\s*\)\s*[\w\s]*\{")
     for fname, text in sorted(sources.items()):
         if handler_def.search(text) and re.search(r'\bR"[^(\s]*\(', text):
             failures.append(
@@ -4052,7 +4837,7 @@ def main() -> int:
 
     failures.extend(check_page_token_wiring(sources))
     failures.extend(check_host_first(sources))
-    failures.extend(check_bearer_only_answers(sources))
+    failures.extend(check_bearer_only_answers(sources, flags=flag_sources()))
     failures.extend(check_registration_sites(sources))
     failures.extend(check_route_budgets(sources))
 
