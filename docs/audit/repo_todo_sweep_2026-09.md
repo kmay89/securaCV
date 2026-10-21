@@ -867,6 +867,27 @@ so — see D2 below.)
   the LAN works on `/api/wifi/connect` with no Host question for its ten
   minutes, until F334 removes that road after setup). Left open for the
   maintainer to close or narrow.
+  *Note (2026-10-21, F344's fifth review):* two corrections to the note
+  above, and one thing no Host question closes. A carried pair token works
+  with no Host on `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start, status
+  and stop) as well as `/api/wifi/connect`. F334's decision takes connect
+  and ap-only from it after setup and answers the scan's start `404` then;
+  the scan's status and stop keep `qr_scan_request_allowed()`, which takes
+  the pair token, and `qr_auto_scan_tick()` runs whenever no Wi-Fi is
+  configured, so a standalone unit with a camera keeps scanning after setup
+  and a carried token can still read that scan's status and stop it. And
+  `host_guard.h` accepts a name because public DNS cannot mint it, which is
+  not the same as only this device answering to it: every WAP claims
+  `canary.local` over mDNS, and the SoftAP's captive DNS answers every name
+  with the device. So a page another network served under one of those
+  names (a hostile hotspot, or mDNS spoofed on a shared Wi-Fi), left open
+  until the browser comes home or joins the SoftAP, is same-origin with the
+  device and passes every Host check: it can take the landing's pair token,
+  a session through `?cv_pair=`, during setup the wizard token's re-issue,
+  and, around a BOOT tap pressed from that browser, a receipt it can read.
+  The flagship and the display share the rule. Only HTTPS with an identity
+  the browser can check closes it (F15, F256). From code; not run in a
+  browser. No new number.
 - [ ] **F58 [decision] The canary's identity-key store still reports success
   whatever the write did.** `nvs_store_key()`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
@@ -1851,6 +1872,20 @@ so — see D2 below.)
   `http://192.168.4.1`, where the old sketch passes too (the setup branch's
   `302` is relative, so the wizard and the kit save stay on that host); it
   now runs at `http://canary.local`. Docs only.
+  *Review 5 (2026-10-21, #<PR>):* Review 4's "only to a browser that used a
+  standalone unit over `https://192.168.4.1`" was too narrow. A joined unit
+  serves that address too while its SoftAP is up: `wifi_init_provisioning()`
+  raises the SoftAP at every boot, `loop()` drops it only once the home link
+  has held `AP_DROP_GRACE_MS` (120 s) and raises it again when the link is
+  lost, and `setup()` turns HTTPS on after setup whenever a certificate is
+  known, on every interface (`magic_pairing.md` already expects a receipt
+  naming `https://192.168.4.1` from a phone inside that window). The
+  CHANGELOG, THREAT_MODEL's HTTP row, the writer's comment above
+  `session_cookie_header()` and LESSONS_LEARNED now say "a unit it used over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s,
+  or after the link drops)". The HTTPS branch is preparatory (F15), so no
+  stock unit's behavior changes. Docs only.
 - [ ] **F338 [code+decision] The flagship's route check has no secret-answer
   rule.** `firmware/canary/scripts/check_route_security.py` holds the
   Host-first order and names every reader of `auth_get_token()` as an emitter
@@ -2918,6 +2953,59 @@ so — see D2 below.)
     "can't forge them" is scoped to cross-site requests. The certificate
     comment in `setup()` now says no stock build stores a certificate
     (F15). No new number.
+  *Review 5 (2026-10-21, #<PR>):*
+  - The docs said a DNS-rebinding page gets nothing from a WAP, unqualified
+    (the CHANGELOG's headline, SECURITY_MODEL, THREAT_MODEL's row, the WAP
+    README, `magic_pairing.md`, the sketch's comments). The code closes what
+    the decision names, and the review found no code bypass, but the Host
+    question tells a public name from a name only the local network
+    answers, not this device from another server that answered such a name
+    (`canary.local`, `192.168.4.1`, any `.local` name, a single label, a
+    private suffix) on a network the browser used before. A page loaded
+    there and left open is same-origin with the device once the browser
+    comes home (every WAP claims `canary.local`) or joins the SoftAP (the
+    captive DNS answers every name), and every Host check passes it: it can
+    take the landing's pair token, a session through `?cv_pair=`, during
+    setup the wizard token's re-issue, and, around a BOOT tap pressed from
+    that browser (one address to F342's arbiter), a receipt it can read.
+    Only HTTPS with an identity the browser can check closes it (F15, F256).
+    Each of those sentences now says "under a public name", the residual
+    sits in SECURITY_MODEL's "What it leaves", THREAT_MODEL's row, the
+    CHANGELOG's "Not covered here", the WAP README and `magic_pairing.md`,
+    the comment above `request_host_names_device()` names it, and the
+    re-issue's comment says the SoftAP's key keeps every other device off
+    it, not a page in the owner's own browser. Noted under F57; no new
+    number. Docs only.
+  - The mint rule's self-test had no plant with a mint inside its Host
+    refusal's own branch, so a `_gate_before()` that took the branch's
+    start (`bspan[0] <= rel`) or the `if` itself (`pos <= rel`) for the
+    branch's end passed all 55 plants and the tree, and under it a Host
+    refusal whose branch returns `send_pair_landing()` (the landing handed
+    to every refused Host) passed the check; at today's two refusal sites
+    `test_session_cookie` and the real checker still catch it. And every
+    wildcard-sender plant sat in a short fixture function, so a scan of a
+    body's first 400 characters passed them all. Two plants fail those
+    three mutants: the landing handed out in its Host refusal's own branch
+    (both bounds) and a wildcard sender past forty statements (the short
+    scan). 57 in all.
+  - Review 4's "until the owner-authority PR (F334) removes that road after
+    setup", said of the carried pair token on `/api/wifi/connect`,
+    `/api/wifi/ap-only` and `/api/wifi/qr-scan`, overstated F334: its
+    decision takes connect and ap-only and the scan's start after setup,
+    and keeps status and stop on `qr_scan_request_allowed()`, and a
+    standalone unit's own boot scan keeps running after setup. SECURITY_MODEL,
+    THREAT_MODEL's row and the CHANGELOG say so.
+  - The sketch README's first-boot step offered `canary-<4 hex>.local`,
+    which the setup branch answers with the static page (pinned by
+    `test_setup_name_is_exact`); it now offers `http://192.168.4.1` or
+    `http://canary.local` and names the unique name for after setup. The
+    CHANGELOG said the re-issue gives every other name the static page; it
+    answers `404 {"ok":false}`. `check_improv_sync.sh`'s `host_guard.h`
+    entry now names the cookie validator and the re-issue. The U1 row's
+    setup names the second laptop step 5 needs, and its SoftAP step says a
+    joined unit raises the SoftAP at every boot until the home link has
+    held 120 s, not only when the link is lost.
+  Host-tested; not run against a browser or on a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

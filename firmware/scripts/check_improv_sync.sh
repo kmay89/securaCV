@@ -46,10 +46,13 @@ set -euo pipefail
 #                     .internal or .home.arpa name)? The rule the flagship
 #                     (securacv_network) and the display (glass_web) already
 #                     apply; the WAP asks it first on the post-setup pages
-#                     and the ?cv_pair exchange, and on the provisioning
-#                     receipt in every mode (sweep F344), and reads the
-#                     setup branch's exact canary.local / 192.168.4.1 match
-#                     through its host_authority_name(). Host-tested by
+#                     and the ?cv_pair exchange, on the provisioning
+#                     receipt in every mode, and before every cookie gate
+#                     reads the session (csi_integration.cpp's
+#                     session_validate_cookie()) (sweep F344), and reads
+#                     the exact canary.local / 192.168.4.1 match of the
+#                     setup branch and the wizard token's re-issue through
+#                     its host_authority_name(). Host-tested by
 #                     firmware/tests_host/test_host_guard.cpp. The display
 #                     stages its own copy (canary-display/setup.sh).
 #

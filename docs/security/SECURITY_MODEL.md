@@ -366,21 +366,22 @@ seconds after a short BOOT tap — and also in the pairing QR an operator
 fetches with the token, or on the serial console.
 
 Since sweep F344 the WAP asks the flagship's Host question too, in fewer
-places and with no exemption. After setup, the landing page `/`, its
-one-tap link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer
-only a Host that can name this device (`host_guard.h`: an IP address, a
-`.local` name, a single label, or a `.lan`, `.internal` or `.home.arpa`
-name). Any other Host, or none, gets `403` and one fixed `text/plain`
-sentence ("This Canary answers only its own names. Open it at its .local
-name, its IP address, or the bare name your router gives it."): no pair
-token is handed out, no session is minted, the owner's link stays unspent,
-and a live cookie sent under that name is refused too. The provisioning
-receipt asks the same question first, in every mode, setup included, and
-answers `403 {"error":"host"}` before it reads the bearer, takes the claim
-or judges the tap, so such a request is never a strike (F343), never an
-asker for the tap (F342), spends nothing and clears nothing (F341). A
-DNS-rebinding page is then handed no session and no receipt. Nor can it use
-a session carried in: any host on the LAN can take a 24-hour session at the
+places and with no exemption. After setup, the landing page `/`, its one-tap
+link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer only a
+Host that can name this device (`host_guard.h`: an IP address, a `.local`
+name, a single label, or a `.lan`, `.internal` or `.home.arpa` name). Any
+other Host, or none, gets `403` and one fixed `text/plain` sentence ("This
+Canary answers only its own names. Open it at its .local name, its IP
+address, or the bare name your router gives it."): no pair token is handed
+out, no session is minted, the owner's link stays unspent, and a live cookie
+sent under that name is refused too. The provisioning receipt asks the same
+question first, in every mode, setup included, and answers
+`403 {"error":"host"}` before it reads the bearer, takes the claim or judges
+the tap, so such a request is never a strike (F343), never an asker for the
+tap (F342), spends nothing and clears nothing (F341). A DNS-rebinding page
+under a public name is then handed no session and no receipt (what no Host
+question can tell apart is under "What it leaves" below). Nor can it use a
+session carried in: any host on the LAN can take a 24-hour session at the
 landing, and a page can set that value for its own name with
 `document.cookie`, so the cookie validator behind every cookie route
 (`session_validate_cookie()`, which `api_auth.h`'s checks and
@@ -389,51 +390,66 @@ Host question before it reads the cookie (F344's third review). Before, it
 read no Host, and such a value reached the dashboard, the live camera, the
 vault download, every session admin route and `GET /api/pair/token` (whose
 pair token then authorized `/api/wifi/connect`) from the rebinding page for
-its 24 hours. Two differences from the flagship. There is no
-SoftAP exemption, because the WAP's captive DNS sends every name to the
-device; its wizard runs at `canary.local` or `192.168.4.1`, which both pass,
-and the setup branch and the wizard token's re-issue now match exactly those
-two names, in any case and with any port, rather than any name that contains
-one of them. And the question is asked by the places that mint a session or
-a pair token for a caller holding no credential (`check_route_security.py`'s
+its 24 hours. Two differences from the flagship. There is no SoftAP
+exemption, because the WAP's captive DNS sends every name to the device; its
+wizard runs at `canary.local` or `192.168.4.1`, which both pass, and the
+setup branch and the wizard token's re-issue now match exactly those two
+names, in any case and with any port, rather than any name that contains one
+of them. And the question is asked by the places that mint a session or a
+pair token for a caller holding no credential (`check_route_security.py`'s
 `MINT_SITES` lists every place that mints, each with the gate it must pass
 first), the pages that start a sign-in and the cookie, not by every API
-route as the flagship asks it: outside the receipt a bearer asks no Host,
-so a rebinding page that holds the bearer token itself is F57's open
-question, and a pair token's value carried off the LAN is read with no Host
-on `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
+route as the flagship asks it: outside the receipt a bearer asks no Host, so
+a rebinding page that holds the bearer token itself is F57's open question,
+and a pair token's value carried off the LAN is read with no Host on
+`/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
 status and stop; a started scan acts only on a code held to the camera) for
-its ten minutes, until the owner-authority PR (F334) removes that road after
-setup. Refused after
-setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
-`.home`), a name with a trailing dot, a public split-horizon name, and a
-reverse proxy that forwards a public Host; use the `.local` name, the IP or
-the bare router name instead (widening the shared list is F356). What it
-leaves: a cross-site page can still send requests at the IP address (an IP
-literal passes). It cannot read what the landing, the exchange, the pages,
-the wizard token's re-issue (`/api/wifi/pair-token`) or the receipt serve,
-since none sends a CORS header with it (the receipt's `500` and `503` error
-codes do, through `http_send_error()`, and carry nothing else). The
-re-issue answered through `http_send_json()`, with
-`Access-Control-Allow-Origin: *`, until F344's second review: during setup
-a page on another site, in the owner's own browser on the SoftAP, read a
-pair token at `192.168.4.1` (a setup name, which the exact match passes)
-and could spend it on `/api/wifi/connect` or `/api/wifi/ap-only`. It now
-sends no CORS header, and `check_route_security.py` refuses a mint site
-that answers through `http_send_json()`. Its requests
-spend no claim, from another address close an open tap rather than take it
-(F342), from the owner's own browser can still use up an open tap, and can
-churn pair tokens: a denial of service, not a way to the token. Three
-public routes do answer it readably: `/api/wifi` (the home network's name,
-the station address, the SoftAP's name and client count), `/api/wifi/scan`
-(nearby networks) and `/api/fleet` (coarse presence) send
-`Access-Control-Allow-Origin: *` (`http_send_json()`; `/api/fleet`'s by its
-documented contract), so any page can read them at the IP, rebinding or
-not, and the Host question cannot close that. The other public routes
-(`/api/selftest`, `/api/device-info`, `/api/help-qr`, `/enroll`,
-`/api/device/enroll`) send no CORS header, so only a rebinding page reads
-them, and they ask no Host. Both are F357.
-Host-tested; not run against a browser or on a device.
+its ten minutes. The owner-authority PR (F334) takes connect and ap-only
+from it after setup and answers the scan's start `404` then; the scan's
+status and stop keep taking it, and a standalone unit with a camera keeps
+scanning for a Wi-Fi QR code after setup, so a carried token can still read
+that scan's status (the network name the code held, the error text) and stop
+it. Refused after setup: a router name under another suffix (`.fritz.box`,
+`.localdomain`, `.home`), a name with a trailing dot, a public split-horizon
+name, and a reverse proxy that forwards a public Host; use the `.local`
+name, the IP or the bare router name instead (widening the shared list is
+F356). What it leaves: the Host question tells a public name from a name
+only the local network answers; it cannot tell this device from another
+server that answered such a name (`canary.local`, `192.168.4.1`, any
+`.local` name, a single label or a private suffix) on a network the browser
+used before, such as a hostile hotspot or mDNS spoofed on a shared Wi-Fi. A
+page loaded there and left open runs same-origin with the device when the
+browser comes home (every WAP claims `canary.local`) or joins the SoftAP
+(whose captive DNS answers every name with the device). It can take the
+landing's pair token, a 24-hour session through `?cv_pair=`, during setup
+the wizard token's re-issue (at either setup name), and, around a BOOT tap
+the owner presses from that browser, the receipt: one browser is one address
+to the tap rule (F342), and here the answer is readable. Only HTTPS with an
+identity the browser can check closes it (F15, F256). And a cross-site page
+can still send requests at the IP address (an IP literal passes). It cannot
+read what the landing, the exchange, the pages, the wizard token's re-issue
+(`/api/wifi/pair-token`) or the receipt serve, since none sends a CORS
+header with it (the receipt's `500` and `503` error codes do, through
+`http_send_error()`, and carry nothing else). The re-issue answered through
+`http_send_json()`, with `Access-Control-Allow-Origin: *`, until F344's
+second review: during setup a page on another site, in the owner's own
+browser on the SoftAP, read a pair token at `192.168.4.1` (a setup name,
+which the exact match passes) and could spend it on `/api/wifi/connect` or
+`/api/wifi/ap-only`. It now sends no CORS header, and
+`check_route_security.py` refuses a mint site that answers through
+`http_send_json()`. Its requests spend no claim, from another address close
+an open tap rather than take it (F342), from the owner's own browser can
+still use up an open tap, and can churn pair tokens: a denial of service,
+not a way to the token. Three public routes do answer it readably:
+`/api/wifi` (the home network's name, the station address, the SoftAP's name
+and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet`
+(coarse presence) send `Access-Control-Allow-Origin: *` (`http_send_json()`;
+`/api/fleet`'s by its documented contract), so any page can read them at the
+IP, rebinding or not, and the Host question cannot close that. The other
+public routes (`/api/selftest`, `/api/device-info`, `/api/help-qr`,
+`/enroll`, `/api/device/enroll`) send no CORS header, so only a rebinding
+page reads them, and they ask no Host. Both are F357. Host-tested; not run
+against a browser or on a device.
 
 Since sweep F342 the tap goes to the one address asking for it: when a
 second address asked for the receipt in the ten seconds before the tap or

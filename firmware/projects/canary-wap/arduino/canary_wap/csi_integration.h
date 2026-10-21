@@ -118,7 +118,9 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * store, and only when the request's Host can name this device
  * (host_guard.h's rule; sweep F344, its third review): a missing, oversize
  * or foreign Host is false whatever the cookie holds, so a live value a
- * DNS-rebinding page sets for its own name opens nothing. The Host is asked
+ * DNS-rebinding page sets for its own public name opens nothing (a page
+ * another network served under one of the device's names is not told
+ * apart: canary_wap.ino, request_host_names_device()). The Host is asked
  * first. A `__Host-` cookie that is present is the one asked, malformed or
  * not: the plain one behind it is not tried. Never sends
  * a response — caller decides what to do on failure (handle_ui shows

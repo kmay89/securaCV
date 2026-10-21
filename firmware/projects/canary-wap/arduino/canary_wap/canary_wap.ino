@@ -3725,7 +3725,13 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // is re-pointed at this device's LAN address) arrives under its own name and
 // fails. A missing Host, or one too long for the buffer, is foreign: a
 // truncated header is never read as a name (a 108-byte rebinding name cut to
-// 95 bytes can end in ".local").
+// 95 bytes can end in ".local"). What it cannot tell (review 5 of F344): this
+// device from another server that answered one of those names (canary.local,
+// 192.168.4.1, a single label) on a network the browser used before. A page
+// loaded there and left open is same-origin with this device once the
+// browser comes home (every WAP claims canary.local) or joins the SoftAP
+// (the captive DNS answers every name), and its Host passes. Only HTTPS with
+// an identity the browser checks closes that (F15, F256).
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
@@ -3822,8 +3828,10 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
 //     canary.local), the same unit after a factory reset, or one whose HTTPS
 //     start failed, until the old cookie's 24 h ran out (the wizard's Home
 //     Assistant step answering 401 meanwhile). The same holds at 192.168.4.1
-//     only for a browser that used a standalone unit over
-//     https://192.168.4.1: a cookie follows the host name, so one from
+//     only for a browser that used a unit over https://192.168.4.1 on its
+//     SoftAP (a standalone unit, or a joined one while its SoftAP is up:
+//     after a boot until the home link has held 120 s, or after the link
+//     drops): a cookie follows the host name, so one from
 //     https://canary.local never blocks http://192.168.4.1. With two names
 //     the two never meet. And in current browsers only an https answer from
 //     this host, Secure, Path=/ and with no Domain, can set the __Host- name,
@@ -3859,10 +3867,11 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // After the first-boot setup branch (Branch 0 below), the Host question
   // comes first (sweep F344): a Host that cannot name this device
   // (request_host_names_device(), host_guard.h's rule) gets the fixed 403
-  // page, before any branch below runs. So a DNS-rebinding page is handed no
-  // pair token, its ?cv_pair mints no session and leaves the owner's token
-  // unspent, and a live cookie sent under that name is refused too. Then
-  // three branches:
+  // page, before any branch below runs. So a DNS-rebinding page under a
+  // public name is handed no pair token, its ?cv_pair mints no session and
+  // leaves the owner's token unspent, and a live cookie sent under that name
+  // is refused too (what the Host cannot tell is above
+  // request_host_names_device()). Then three branches:
   //   1. session cookie present and valid (__Host-cv_session, else
   //      cv_session: read_session_cookie_hex()) → serve the dashboard HTML
   //      as-is. The page's in-page fetches authenticate via the cookie
@@ -6913,7 +6922,10 @@ static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
 // own browser while it is on the SoftAP, can send this request at
 // 192.168.4.1 (a setup name) but is not handed the body (review of F344;
 // before, it was, and could spend the token cross-site). The SoftAP's key
-// keeps everyone else off it.
+// keeps every other device off it, not a page in the owner's own browser: one
+// another network served as http://192.168.4.1 or http://canary.local, left
+// open, reads this same-origin once the browser joins the SoftAP, and no
+// Host test can tell it from the wizard (request_host_names_device()).
 static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   g_health.http_requests++;
   if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {

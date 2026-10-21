@@ -3,101 +3,115 @@
 ## [Unreleased]
 ### canary-wap answers its pages, the receipt and the setup mints only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337)
 
-- **A DNS-rebinding page gets no session, no pair token and no receipt from
-  a WAP (sweep F344).** After setup the WAP read no `Host` header: its
-  landing page `/` handed any caller a one-tap pair token, the `?cv_pair=`
-  exchange minted a 24-hour session for any Host, and the provisioning
-  receipt's BOOT tap and setup-door claim served any Host. Every stock WAP
-  serves plain HTTP after setup (its certificate generator is gated on a
-  header no pinned core ships, F15), so a page on another site whose name is
-  re-pointed at the WAP's address could load those as its own origin: a
-  session that reads the live camera and the vault download, a pair token
-  that authorizes `/api/wifi/connect`, and around a BOOT tap or the
-  post-join setup window, the bearer token and the SoftAP password. (The
-  landing now hands a pair token only to a Host that names the device, but
-  a live one's value, wherever it is carried, still works for its ten
-  minutes on `/api/wifi/connect`, `/api/wifi/ap-only` and
-  `/api/wifi/qr-scan` with no Host question, until the owner-authority PR,
-  F334, removes that road after setup.) The WAP now stages the
-  shared `firmware/common/network/host_guard.h` that the flagship and the
-  display already use (byte-identical, held by `check_improv_sync.sh`).
-  After setup, `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion`
-  answer a Host that cannot name the device (anything but an IP address, a
-  `.local` name, a single label, or a `.lan`, `.internal` or `.home.arpa`
-  name), or no Host, with `403` and one fixed sentence: "This Canary answers
-  only its own names. Open it at its .local name, its IP address, or the bare
-  name your router gives it." No pair token, no session, the owner's link
-  unspent, and a live cookie under that name refused too. Every other
-  cookie route asks the same question before it reads the cookie, the live
-  camera, the vault download and `/api/pair/token` included: any host on
-  the home network can take a 24-hour session at the landing, and a page
-  can set that value for its own name, so closing the landing alone left
-  such a value working from a rebinding page. The receipt asks
-  the same question first, in every mode, and answers `403
-  {"error":"host"}` before it reads the bearer, takes the claim or judges the
-  tap, so such a request is never a lockout strike, never an asker that
+- **A DNS-rebinding page under a public name gets no session, no pair token
+  and no receipt from a WAP (sweep F344).** After setup the WAP read no `Host`
+  header: its landing page `/` handed any caller a one-tap pair token, the
+  `?cv_pair=` exchange minted a 24-hour session for any Host, and the
+  provisioning receipt's BOOT tap and setup-door claim served any Host. Every
+  stock WAP serves plain HTTP after setup (its certificate generator is gated
+  on a header no pinned core ships, F15), so a page on another site whose name
+  is re-pointed at the WAP's address could load those as its own origin: a
+  session that reads the live camera and the vault download, a pair token that
+  authorizes `/api/wifi/connect`, and around a BOOT tap or the post-join setup
+  window, the bearer token and the SoftAP password. (The landing now hands a
+  pair token only to a Host that names the device, but a live one's value,
+  wherever it is carried, still works for its ten minutes on
+  `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
+  Host question. The owner-authority PR, F334, takes connect and ap-only from
+  it after setup and answers the scan's start `404` then; the scan's status
+  and stop keep taking it, and a standalone unit with a camera keeps scanning
+  for a Wi-Fi QR code after setup, so a carried token can still read that
+  scan's status and stop it.) The WAP now stages the shared
+  `firmware/common/network/host_guard.h` that the flagship and the display
+  already use (byte-identical, held by `check_improv_sync.sh`). After setup,
+  `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
+  cannot name the device (anything but an IP address, a `.local` name, a
+  single label, or a `.lan`, `.internal` or `.home.arpa` name), or no Host,
+  with `403` and one fixed sentence: "This Canary answers only its own names.
+  Open it at its .local name, its IP address, or the bare name your router
+  gives it." No pair token, no session, the owner's link unspent, and a live
+  cookie under that name refused too. Every other cookie route asks the same
+  question before it reads the cookie, the live camera, the vault download and
+  `/api/pair/token` included: any host on the home network can take a 24-hour
+  session at the landing, and a page can set that value for its own name, so
+  closing the landing alone left such a value working from a rebinding page.
+  The receipt asks the same question first, in every mode, and answers
+  `403 {"error":"host"}` before it reads the bearer, takes the claim or judges
+  the tap, so such a request is never a lockout strike, never an asker that
   contends the owner's tap, and spends nothing. Unlike the flagship there is
   no SoftAP exemption, because the WAP's captive DNS sends every name to the
   device. Names that now get the `403` page after setup: a router name under
   another suffix (`canary-x.fritz.box`, `.localdomain`, `.home`), a name with
   a trailing dot, a public split-horizon name, and a reverse proxy that
   forwards a public Host; use the `.local` name, the IP or the bare router
-  name. A Host too long for the device's 96-byte buffer is refused, never
-  read cut short. The route check now lists every place that mints a
-  session or a pair token (`MINT_SITES` in `check_route_security.py`), each
-  after its gate, so a new page that hands out the landing fails it. Not
-  covered here: `/api/wifi`, `/api/wifi/scan` and `/api/fleet` answer with
+  name. A Host too long for the device's 96-byte buffer is refused, never read
+  cut short. The route check now lists every place that mints a session or a
+  pair token (`MINT_SITES` in `check_route_security.py`), each after its gate,
+  so a new page that hands out the landing fails it. Not covered here:
+  `/api/wifi`, `/api/wifi/scan` and `/api/fleet` answer with
   `Access-Control-Allow-Origin: *`, so any web page can read them at the
-  device's address, rebinding or not, and the other public routes ask no
-  Host (F357, a decision still open); outside the receipt a bearer asks no
-  Host (a rebinding page that holds the bearer token is F57's open
-  question); and a pair token's value carried off the LAN works for its
-  ten minutes, as above. Host-tested (`test_session_cookie.cpp`,
-  `test_receipt_grant.cpp`); not run against a browser or on a device.
+  device's address, rebinding or not, and the other public routes ask no Host
+  (F357, a decision still open); outside the receipt a bearer asks no Host (a
+  rebinding page that holds the bearer token is F57's open question); a pair
+  token's value carried off the LAN works for its ten minutes, as above; and
+  the Host question tells a public name from a name only the local network
+  answers, not the device from another server that answered such a name
+  (`canary.local`, `192.168.4.1`, any `.local` name, a single label or a
+  private suffix) on a network the browser used before, such as a hostile
+  hotspot or mDNS spoofed on a shared Wi-Fi. A page loaded there and left open
+  runs same-origin with the device when the browser comes home (every WAP
+  claims `canary.local`) or joins the SoftAP (whose captive DNS answers every
+  name with the device): it can take the landing's pair token, a session
+  through `?cv_pair=`, during setup the wizard token's re-issue, and, around a
+  BOOT tap the owner presses from that browser, the receipt. Only HTTPS with
+  an identity the browser can check closes that (F15, F256). Host-tested
+  (`test_session_cookie.cpp`, `test_receipt_grant.cpp`); not run against a
+  browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
   (sweep F344).** `/`'s setup branch and the wizard token's re-issue
-  (`/api/wifi/pair-token`) tested the Host by substring, so a name that
-  merely contained one of them (`canary.local.evil.example`), which the
-  captive DNS also resolves to the device, was sent to the wizard with a
-  token that authorizes the Wi-Fi join, and `CANARY.LOCAL` was not. Both now
-  match the two names exactly, in any case and with any port; every other
-  name still gets the static "open canary.local" page and no token. And
-  the re-issue's answer no longer carries `Access-Control-Allow-Origin: *`
-  (it went out through the sketch's JSON sender, which adds it to every
-  answer). An exact name does not stop a page that asks for the real one:
-  during setup, a page on another site open in the owner's browser while
-  that browser was on the SoftAP could read a pair token at
-  `http://192.168.4.1/api/wifi/pair-token`, and spend it on
+  (`/api/wifi/pair-token`) tested the Host by substring, so a name that merely
+  contained one of them (`canary.local.evil.example`), which the captive DNS
+  also resolves to the device, was sent to the wizard with a token that
+  authorizes the Wi-Fi join, and `CANARY.LOCAL` was not. Both now match the
+  two names exactly, in any case and with any port; every other name still
+  gets the static "open canary.local" page on `/` and `404 {"ok":false}` on
+  the re-issue, and no token. And the re-issue's answer no longer carries
+  `Access-Control-Allow-Origin: *` (it went out through the sketch's JSON
+  sender, which adds it to every answer). An exact name does not stop a page
+  that asks for the real one: during setup, a page on another site open in the
+  owner's browser while that browser was on the SoftAP could read a pair token
+  at `http://192.168.4.1/api/wifi/pair-token`, and spend it on
   `/api/wifi/connect` (join the device to a network the page names) or
   `/api/wifi/ap-only` (end setup in standalone mode). The wizard reads the
-  token from the same origin, so it works as before, and the route check
-  now refuses a place that mints and answers through that sender.
-  Host-tested; not run on a device.
+  token from the same origin, so it works as before, and the route check now
+  refuses a place that mints and answers through that sender. Host-tested; not
+  run on a device.
 - **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
-  `cv_session` over plain HTTP (sweep F337).** A browser that holds a
-  `Secure` cookie refuses a same-name cookie that an http page at the same
-  host name sets, so with one name a browser that had used one WAP over
-  HTTPS at `canary.local` could not sign in to a unit it then met over plain
-  HTTP at `canary.local` (a second unit, since every WAP claims
-  `canary.local`; the same unit after a factory reset; or a unit whose HTTPS
-  start failed) until the old cookie's 24 hours ran out, and the wizard's
-  Home Assistant step answered "This needs the recovery-kit step first"
-  meanwhile. The same held at `192.168.4.1` only for a browser that had
-  used a standalone unit over `https://192.168.4.1`: cookies follow the host
-  name, so one from `https://canary.local` never blocked
-  `http://192.168.4.1`. The two names never meet. The device reads `__Host-cv_session` first and a malformed one reads
-  nothing; plain `cv_session` is still read. In current browsers only an
-  https answer from the device can set the `__Host-` name, so a cookie
-  planted over http cannot shadow it (integrity, not availability: an
-  on-path host can still sign a browser out by overflowing its Cookie
-  header). No `Strict-Transport-Security`: browsers ignore it from a
-  self-signed certificate and for an IP address, and it would shut a
-  browser out of a unit that falls back to HTTP. Sessions live in RAM, so
-  the update's reboot ends them: tap **Open dashboard** once, as after any
-  reboot. On a stock unit nothing else changes today, because no stock WAP
-  serves HTTPS (below). Host-tested (`test_session_cookie.cpp`,
-  `test_receipt_grant.cpp`, `wizard_logic.test.js`); not run in a browser
-  or on a device.
+  `cv_session` over plain HTTP (sweep F337).** A browser that holds a `Secure`
+  cookie refuses a same-name cookie that an http page at the same host name
+  sets, so with one name a browser that had used one WAP over HTTPS at
+  `canary.local` could not sign in to a unit it then met over plain HTTP at
+  `canary.local` (a second unit, since every WAP claims `canary.local`; the
+  same unit after a factory reset; or a unit whose HTTPS start failed) until
+  the old cookie's 24 hours ran out, and the wizard's Home Assistant step
+  answered "This needs the recovery-kit step first" meanwhile. The same held
+  at `192.168.4.1` only for a browser that had used a unit over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s, or
+  after the link drops): cookies follow the host name, so one from
+  `https://canary.local` never blocked `http://192.168.4.1`. The two names
+  never meet. The device reads `__Host-cv_session` first and a malformed one
+  reads nothing; plain `cv_session` is still read. In current browsers only an
+  https answer from the device can set the `__Host-` name, so a cookie planted
+  over http cannot shadow it (integrity, not availability: an on-path host can
+  still sign a browser out by overflowing its Cookie header). No
+  `Strict-Transport-Security`: browsers ignore it from a self-signed
+  certificate and for an IP address, and it would shut a browser out of a unit
+  that falls back to HTTP. Sessions live in RAM, so the update's reboot ends
+  them: tap **Open dashboard** once, as after any reboot. On a stock unit
+  nothing else changes today, because no stock WAP serves HTTPS (below).
+  Host-tested (`test_session_cookie.cpp`, `test_receipt_grant.cpp`,
+  `wizard_logic.test.js`); not run in a browser or on a device.
 - **Neither firmware tree's stock build serves HTTPS today (F15
   corrected).** The on-device certificate generator on the WAP and on the
   flagship's `FEATURE_HTTPS` builds is gated on `mbedtls/x509write_crt.h`, a

@@ -678,7 +678,13 @@
   CORS header. And closing the places that hand a credential out does not
   close the places that take it: a host-only cookie is whatever a page on
   that name sets, so the code that reads a session asks which name the
-  request was sent to, as the code that hands one out does.
+  request was sent to, as the code that hands one out does. And a Host test
+  tells a public name from a name only the local network answers, not this
+  device from another server that answered that name on a network the
+  browser used before (`canary.local` from a hostile hotspot, a page left
+  open until the browser comes home): only an identity the browser checks,
+  HTTPS with a pin, tells those apart, so a doc that says "a rebinding page
+  gets nothing" scopes it to a public name (the PR's fifth review).
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
   (the pages and the setup names, an oversize Host, the re-issue's
   headers, and the real cookie validator under the device's names and
@@ -700,9 +706,11 @@
   reset, or one whose HTTPS start failed) drops every session cookie the
   plain page sets, and the wizard's Home Assistant step answers 401, until
   the old cookie's 24 h run out. A cookie follows the host name, so the
-  same happens at `192.168.4.1` only to a browser that used a standalone
-  unit over `https://192.168.4.1`; one from `https://canary.local` never
-  blocks `http://192.168.4.1`. No stock unit serves HTTPS yet (F15), so no
+  same happens at `192.168.4.1` only to a browser that used a unit over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s,
+  or after the link drops); one from `https://canary.local` never blocks
+  `http://192.168.4.1`. No stock unit serves HTTPS yet (F15), so no
   owner has hit it; F337 lands before HTTPS does.
 - **Root cause:** A cookie's name is shared across both schemes at one host,
   and the `Secure` attribute does not make two cookies of one name.

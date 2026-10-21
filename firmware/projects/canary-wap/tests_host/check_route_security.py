@@ -90,7 +90,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
-run first, every run: a clean sketch that passes and fifty-five plants
+run first, every run: a clean sketch that passes and fifty-seven plants
 that each fail it, through the same text_rule_problems() main() runs over
 the tree, so a rule dropped from that list fails the plants that need it.
 
@@ -1743,6 +1743,15 @@ _FIX_PLANTS = (
      "  char hex[65];\n  pair_token_issue(hex, sizeof(hex));\n  CSI_AUTH_OR_RETURN(req);\n"
      "  return pair_token_issue",
      "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # The refusal's upper bound (review 5 of F344): a mint inside the Host
+    # refusal's own branch hands the landing to every refused Host, and no
+    # plant above puts one there, so a _gate_before() that took the
+    # branch's start, or the `if` itself, for its end passed them all.
+    ("the landing handed out in its Host refusal's own branch", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) "
+     "return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;",
+     "handle_landing() calls send_pair_landing() not after its gate"),
     ("a mint site whose call is gone", "canary_wap.ino",
      "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n", "  return ESP_OK;\n",
      "which it no longer does"),
@@ -1781,6 +1790,15 @@ _FIX_PLANTS = (
      "if (!request_host_names_device(req)) return send_refusal(req);",
      "if (!request_host_names_device(req)) return http_send_error(req, 403, \"host\");",
      "handle_landing() mints a session or a pair token and answers through http_send_error()"),
+    # The wildcard rule reads the whole body (review 5 of F344): every plant
+    # above sits in a short fixture function, so a scan of a body's first
+    # few hundred characters passed them all.
+    ("the wildcard sender far down a long mint site", "canary_wap.ino",
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n",
+     "  note_request(req);\n" * 40
+     + "  if (!csi_integration::send_pair_landing(req)) return ESP_FAIL;\n"
+       "  return http_send_json(req, \"{}\");\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
     ("a credential-gated mint naming the CORS header", "csi_integration.cpp",
      "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
      "  CSI_AUTH_OR_RETURN(req);\n  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n"
@@ -1839,7 +1857,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 55, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 57, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
