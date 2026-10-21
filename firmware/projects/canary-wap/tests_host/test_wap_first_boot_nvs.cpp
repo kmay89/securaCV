@@ -43,6 +43,27 @@
 // begin_read_only(): a first boot logs none of them. Against the plain
 // read-only open the chirp first-boot test counts three lines.
 //
+// And the key read fails closed (sweep F360, the canary's rule on this
+// sketch). nvs_load_key() checked the stored key's length and then discarded
+// the count Preferences::getBytes() answered; a read that fails before IDF
+// copies anything leaves the buffer as it was, so such a read after the
+// length check left g_device's zeroed key in use, and provisioning went on
+// with it: the SoftAP came up under that key's published known answer
+// cv-3jByJ6rHdhM2 and records were signed with a key anyone holds. And its
+// one false meant "no key": a failed session open or a length lookup other
+// than 32 made provision_device() generate a keypair and store it over the
+// old one. Now
+// stored_key_length() asks IDF's nvs_open() / nvs_get_blob() first, and only
+// ESP_ERR_NVS_NOT_FOUND (no namespace, or no key in it) answers Absent; any
+// other error, a key that is not 32 bytes, a read that does not answer all
+// 32 bytes and a key of 32 zero bytes answer Refused with the buffer zeroed.
+// establish_identity_key() (provision_device()'s key block, cut verbatim)
+// generates only on Absent; on Refused it sets g_device.key_refused,
+// generates and writes nothing, and setup() halts on it (pinned below).
+// Against the old load and the old key block, adapted to build and to keep
+// the old code's shape (the sweep's F360 entry lists each change), the key
+// cases fail.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host run
 
 #include <cstdint>
@@ -51,6 +72,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "Arduino.h"
 #include "Preferences.h"
@@ -84,7 +106,29 @@ static char s_device_name[DEVICE_NAME_MAX + 1] = {0};
 #include "test_wap_first_boot_nvs_wizard.inc"
 }  // namespace setup_wizard
 
-// ── canary_wap.ino's key read and store, cut verbatim ───────────────────
+// ── canary_wap.ino's key read, its store and its caller, cut verbatim ───
+// What establish_identity_key() touches besides the cut: the members of the
+// sketch's DeviceIdentity it reads and writes, and a stand-in keygen that
+// counts its calls and draws a fixed key (or fails, as a boot whose
+// provisioning stores no key).
+struct DeviceIdentity {
+  uint8_t privkey[32];
+  uint8_t pubkey[32];
+  uint32_t key_born_ms;
+  bool key_is_new;
+  bool key_refused;
+  bool first_boot;
+};
+static DeviceIdentity g_device;
+static int g_keygens = 0;
+static bool g_keygen_fails = false;
+static bool generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
+  ++g_keygens;
+  if (g_keygen_fails) return false;
+  std::memset(priv, 0x5a, 32);
+  std::memset(pub, 0x77, 32);
+  return true;
+}
 #include "test_wap_first_boot_nvs_key.inc"
 
 // ── power_monitor.h's load_nvs_state(), cut verbatim ────────────────────
@@ -137,7 +181,7 @@ struct BootResult {
 };
 
 // A reboot: RAM gone, NVS kept. `provisions` false models a boot whose
-// provisioning stored no key (provision_device() returns before
+// provisioning stored no key (establish_identity_key() returns before
 // nvs_store_key() when the keypair generation fails).
 static BootResult boot(bool provisions = true) {
   setup_wizard::s_first_boot = false;
@@ -150,15 +194,18 @@ static BootResult boot(bool provisions = true) {
   std::memset(&power_monitor::s_history, 0, sizeof(power_monitor::s_history));
   host_nvs().reset_counts();
 
+  std::memset(&g_device, 0, sizeof(g_device));
+  g_keygen_fails = !provisions;
+  Serial.all.clear();
+
   BootResult r;
   setup_wizard::init();                          // setup()'s first "securacv" open
-  uint8_t priv[32];
-  r.key_loaded = nvs_load_key(priv);             // provision_device()
-  if (!r.key_loaded && provisions) {
-    std::memset(priv, 0x5a, sizeof(priv));       // generate_keypair()
-    r.key_stored = nvs_store_key(priv);
-  }
+  const int keygens = g_keygens;
+  const bool key_ready = establish_identity_key();   // provision_device()
+  r.key_loaded = key_ready && g_keygens == keygens;
+  r.key_stored = key_ready && g_keygens != keygens;
   power_monitor::load_nvs_state();               // power_monitor::init()
+  g_keygen_fails = false;
   return r;
 }
 
@@ -256,18 +303,300 @@ static int test_a_boot_that_stored_no_key_logs_nothing() {
   return 0;
 }
 
-// An NVS fault is not a missing namespace: every open still goes to
-// Preferences and keeps its error line, as before.
+// An NVS fault is not a missing namespace: the wizard's and the power
+// monitor's opens still go to Preferences and keep their error line, as
+// before. The key read asks IDF, which names the fault, and refuses it
+// (sweep F360): no Preferences open, so no line of its own, and no keygen or
+// store after it. Before F360 the key read's open and the store's each
+// logged a line too (four), and a keypair was generated.
 static int test_an_nvs_fault_keeps_its_lines() {
   host_nvs().clear();
   host_nvs().fail_begin = true;
+  const int keygens = g_keygens;
   const BootResult r = boot();
   CHECK(!r.key_loaded);
   CHECK(!r.key_stored);
-  CHECK(host_nvs().error_logs == 4);             // wizard, key read, key store, power
+  CHECK(host_nvs().error_logs == 2);             // wizard, power
+  CHECK(g_device.key_refused);
+  CHECK(g_keygens == keygens);
+  CHECK(Serial.all.find("[!!] identity key not loaded: NVS could not say whether one is stored "
+                        "(ESP_ERR_NVS_NOT_INITIALIZED)\n") != std::string::npos);
   CHECK(setup_wizard::s_first_boot);
   host_nvs().fail_begin = false;
   return 0;
+}
+
+// ── The key read fails closed (F360) ────────────────────────────────────
+static const uint8_t kStoredKey = 0x11;
+
+static bool same_store(const HostFirstBootNvs& a, const HostFirstBootNvs& b) {
+  if (a.created != b.created || a.rows.size() != b.rows.size()) return false;
+  for (auto ia = a.rows.begin(), ib = b.rows.begin(); ia != a.rows.end(); ++ia, ++ib) {
+    if (ia->first != ib->first || ia->second.type != ib->second.type ||
+        ia->second.bytes != ib->second.bytes) {
+      return false;
+    }
+  }
+  return true;
+}
+static bool all_bytes(const uint8_t* p, uint8_t v) {
+  for (size_t i = 0; i < 32; i++) {
+    if (p[i] != v) return false;
+  }
+  return true;
+}
+static void store_key(size_t len, uint8_t v) {
+  HostFirstBootNvs::Row& k = host_nvs().rows["securacv/privkey"];
+  k.type = 'b';
+  k.bytes.assign(len, v);
+}
+static bool printed(const char* line) { return Serial.all.find(line) != std::string::npos; }
+
+// Nothing open after the load: IDF's handle closed, the session ended.
+static int check_idle() {
+  CHECK(host_nvs().handle_ns.empty());
+  CHECK(!NvsManager::instance().isOpen());
+  return 0;
+}
+
+// The boot a refusal leaves: no key in RAM, nothing generated, NVS as it
+// was, the flag setup() halts on, and the two lines that say why.
+static int check_refused(const HostFirstBootNvs& before, const char* why) {
+  CHECK(g_device.key_refused);
+  CHECK(all_bytes(g_device.privkey, 0));
+  CHECK(!g_device.key_is_new && !g_device.first_boot);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(printed(why));
+  CHECK(printed("[!!] Identity key not used: no new key is made in its place, provisioning "
+                "cannot continue (see the identity key line above)\n"));
+  CHECK(!printed("[PROV] Generating Ed25519 keypair"));
+  CHECK(!printed("[PROV] Loaded existing keypair from NVS"));
+  return check_idle();
+}
+
+// One establish_identity_key() as provision_device() runs it. The key buffer
+// starts as bytes nobody chose (the device's is a zeroed static; the load
+// must not depend on that), so every refusal's zeroed buffer is the load's
+// own.
+static bool establish() {
+  std::memset(&g_device, 0, sizeof(g_device));
+  std::memset(g_device.privkey, 0xEE, sizeof(g_device.privkey));
+  Serial.all.clear();
+  host_nvs().reset_counts();
+  return establish_identity_key();
+}
+
+// A stored key loads unchanged, and nothing is generated or written.
+static int test_a_stored_key_loads_unchanged() {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(establish());
+  CHECK(all_bytes(g_device.privkey, kStoredKey));
+  CHECK(!g_device.key_refused && !g_device.key_is_new && !g_device.first_boot);
+  CHECK(g_keygens == keygens);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(printed("[PROV] Loaded existing keypair from NVS\n"));
+  CHECK(host_nvs().error_logs == 0);
+  CHECK(host_nvs().blob_reads == 1);
+  return check_idle();
+}
+
+// The namespace is there and holds no key (a boot whose provisioning
+// stored none, after its brownout count made the namespace): Absent, so a
+// key is generated and stored, as on a first boot.
+static int test_a_namespace_with_no_key_generates_one() {
+  host_nvs().clear();
+  store_u32("batt_brown", 1);
+  const int keygens = g_keygens;
+  CHECK(establish());
+  CHECK(g_keygens == keygens + 1);
+  CHECK(!g_device.key_refused && g_device.key_is_new && g_device.first_boot);
+  CHECK(g_device.key_born_ms == 4242);
+  CHECK(all_bytes(g_device.privkey, 0x5a));
+  CHECK(host_nvs().rows["securacv/privkey"].bytes == std::vector<uint8_t>(32, 0x5a));
+  CHECK(printed("[PROV] Keypair stored in NVS\n"));
+  CHECK(host_nvs().error_logs == 0);
+  return check_idle();
+}
+
+// The filed case: the length lookup answers 32, the read itself fails and
+// leaves the buffer as it was. Before, the load answered true over the
+// zeroed key.
+static int test_a_read_that_fails_after_the_length_check_is_refused() {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  host_nvs().read = HostFirstBootNvs::Read::Fails;
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens);
+  CHECK(check_refused(before,
+                      "[!!] identity key not loaded: the stored key could not be read "
+                      "(0 of 32 bytes)\n") == 0);
+  host_nvs().read = HostFirstBootNvs::Read::Ok;
+  return 0;
+}
+
+// A read that wrote the buffer and then refused (IDF fills it before its
+// CRC check), and a short read: refused, and the buffer zeroed again. What
+// is held here is the sketch's side: its key block writes nothing. IDF
+// also erases an entry whose data CRC fails, inside that read; this fake
+// keeps it.
+static int test_a_garbled_or_short_read_is_refused_and_zeroed() {
+  for (HostFirstBootNvs::Read how : {HostFirstBootNvs::Read::Garbles, HostFirstBootNvs::Read::Short}) {
+    host_nvs().clear();
+    store_key(32, kStoredKey);
+    host_nvs().read = how;
+    const HostFirstBootNvs before = host_nvs();
+    const int keygens = g_keygens;
+    CHECK(!establish());
+    CHECK(g_keygens == keygens);
+    CHECK(check_refused(before, how == HostFirstBootNvs::Read::Short
+                                    ? "the stored key could not be read (31 of 32 bytes)\n"
+                                    : "the stored key could not be read (0 of 32 bytes)\n") == 0);
+  }
+  host_nvs().read = HostFirstBootNvs::Read::Ok;
+  return 0;
+}
+
+// The length lookup answers neither ESP_OK nor ESP_ERR_NVS_NOT_FOUND: here
+// ESP_FAIL, and ESP_ERR_NVS_TYPE_MISMATCH for a "privkey" stored as another
+// type. Neither is an answer IDF's size query gives once the open succeeded
+// (stubs/first_boot/nvs.h: on a device a key of another type answers
+// ESP_ERR_NVS_NOT_FOUND); the load refuses them because it fails closed on an
+// answer it does not know. Before, getBytesLength()'s 0 read as "no key"
+// whatever the lookup met: a keypair was generated and stored over the
+// identity.
+static int test_a_failed_length_lookup_is_refused() {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  host_nvs().length_fault = ESP_FAIL;
+  HostFirstBootNvs before = host_nvs();
+  int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens);
+  CHECK(check_refused(before,
+                      "[!!] identity key not loaded: NVS could not say whether one is stored "
+                      "(ESP_FAIL)\n") == 0);
+  host_nvs().length_fault = ESP_OK;
+
+  host_nvs().clear();
+  store_u32("privkey", 7);
+  before = host_nvs();
+  keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens);
+  CHECK(check_refused(before,
+                      "[!!] identity key not loaded: NVS could not say whether one is stored "
+                      "(ESP_ERR_NVS_TYPE_MISMATCH)\n") == 0);
+  return 0;
+}
+
+// A stored key of the wrong length is refused, not replaced.
+static int test_a_wrong_length_key_is_refused() {
+  for (size_t len : {size_t(16), size_t(31), size_t(33), size_t(64)}) {
+    host_nvs().clear();
+    store_key(len, kStoredKey);
+    const HostFirstBootNvs before = host_nvs();
+    const int keygens = g_keygens;
+    CHECK(!establish());
+    CHECK(g_keygens == keygens);
+    char why[96];
+    std::snprintf(why, sizeof(why),
+                  "[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)len);
+    CHECK(check_refused(before, why) == 0);
+  }
+  return 0;
+}
+
+// The probe found the key but the session would not open (the shared
+// handle's lock wait timed out, or NVS failed between the two). Before,
+// that read as "no key" and a keypair was generated.
+static int test_a_session_that_will_not_open_is_refused() {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  host_nvs().prefs_begin_fails = true;
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens);
+  CHECK(check_refused(before,
+                      "[!!] identity key not loaded: the stored key could not be read "
+                      "(0 of 32 bytes)\n") == 0);
+  host_nvs().prefs_begin_fails = false;
+  return 0;
+}
+
+// A stored key of 32 zero bytes is the zeroed buffer's, the one key whose
+// every derivation is public: refused.
+static int test_a_zero_key_is_refused() {
+  host_nvs().clear();
+  store_key(32, 0);
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens);
+  CHECK(check_refused(before, "[!!] identity key not loaded: the stored key is 32 zero bytes\n") ==
+        0);
+  return 0;
+}
+
+// Only all 32 zero bytes are refused: a key with one byte set, at either
+// end, is a key.
+static int test_a_key_with_one_byte_set_loads() {
+  for (size_t at : {size_t(0), size_t(31)}) {
+    host_nvs().clear();
+    store_key(32, 0);
+    host_nvs().rows["securacv/privkey"].bytes[at] = 0x01;
+    CHECK(establish());
+    CHECK(!g_device.key_refused);
+    CHECK(g_device.privkey[at] == 0x01);
+    CHECK(check_idle() == 0);
+  }
+  return 0;
+}
+
+// A read fault that leaves the entry in place: the next boot that can read
+// the key loads it, since the refusal wrote nothing. (A corrupted entry is
+// another case: IDF erases it in the refused read, which this fake does not
+// model.)
+static int test_a_refused_boot_keeps_the_key_for_the_next() {
+  host_nvs().clear();
+  store_key(32, kStoredKey);
+  host_nvs().read = HostFirstBootNvs::Read::Fails;
+  CHECK(!establish());
+  host_nvs().read = HostFirstBootNvs::Read::Ok;
+  CHECK(establish());
+  CHECK(all_bytes(g_device.privkey, kStoredKey));
+  CHECK(!g_device.key_refused);
+  return check_idle();
+}
+
+// No key stored, and a read-write session that will not open (Preferences
+// refuses every open; IDF's probe still answers NOT_FOUND): a key is drawn,
+// its store fails, and provisioning stops without the flag setup() halts on,
+// since no stored key is at stake. Nothing is written and the boot does not
+// claim a stored key. Whether such a unit should halt or run on the key it
+// could not store is F58's pending call; this pins the answer the store's
+// failure gives provision_device().
+static int test_a_key_that_cannot_be_stored_fails_provisioning() {
+  host_nvs().clear();
+  host_nvs().prefs_begin_fails = true;
+  const HostFirstBootNvs before = host_nvs();
+  const int keygens = g_keygens;
+  CHECK(!establish());
+  CHECK(g_keygens == keygens + 1);
+  CHECK(!g_device.key_refused);
+  CHECK(!g_device.key_is_new && !g_device.first_boot);
+  CHECK(same_store(before, host_nvs()));
+  CHECK(printed("[PROV] Generating Ed25519 keypair"));
+  CHECK(printed("[!!] Failed to store keypair\n"));
+  CHECK(!printed("[PROV] Keypair stored in NVS"));
+  host_nvs().prefs_begin_fails = false;
+  return check_idle();
 }
 
 // ── The "chirp" namespace (F220) ────────────────────────────────────────
@@ -379,10 +708,12 @@ static int test_the_boot_runs_these_opens_in_this_order() {
   CHECK(ahead.find("NvsMainSession") == std::string::npos);
   CHECK(ahead.find("nvs_") == std::string::npos);
 
-  // provision_device() reads the key before it stores one.
+  // provision_device() establishes the key, which reads before it stores.
   const std::string prov = body_of(ino, "static bool provision_device() {");
-  const size_t rd = prov.find("nvs_load_key(");
-  const size_t wr = prov.find("nvs_store_key(");
+  CHECK(prov.find("if (!establish_identity_key()) return false;") != std::string::npos);
+  const std::string est = body_of(ino, "static bool establish_identity_key() {");
+  const size_t rd = est.find("nvs_load_key(");
+  const size_t wr = est.find("nvs_store_key(");
   CHECK(rd != std::string::npos && wr != std::string::npos && rd < wr);
 
   // power_monitor::init() reads its state through load_nvs_state().
@@ -397,12 +728,99 @@ static int test_the_boot_runs_these_opens_in_this_order() {
   CHECK(body_of(power, "inline void load_nvs_state() {")
             .find("csi_module_settings_nvs::begin_read_only(prefs, \"securacv\")") !=
         std::string::npos);
-  const std::string load_key = body_of(ino, "static bool nvs_load_key(uint8_t priv[32]) {");
-  const size_t probe = load_key.find("probe_namespace(NVS_MAIN_NS)");
+  const std::string load_key = body_of(ino, "static KeyLoad nvs_load_key(uint8_t priv[32]) {");
+  const size_t probe = load_key.find("stored_key_length(&stored)");
   const size_t session = load_key.find("NvsMainSession nvs(true);");
   CHECK(probe != std::string::npos && session != std::string::npos && probe < session);
+  const std::string length = body_of(ino, "static esp_err_t stored_key_length(size_t* len) {");
+  CHECK(length.find("nvs_open(NVS_MAIN_NS, NVS_READONLY, &h)") != std::string::npos);
+  CHECK(length.find("nvs_close(h);") != std::string::npos);
   CHECK(wizard.find("begin(\"securacv\", true)") == std::string::npos);
   CHECK(power.find("begin(\"securacv\", true)") == std::string::npos);
+  return 0;
+}
+
+// Comments become spaces (newlines kept); string and character literals are
+// kept, so a "//" inside one is not a comment.
+static std::string strip_comments(const std::string& s) {
+  std::string out = s;
+  size_t i = 0;
+  while (i < s.size()) {
+    const char c = s[i];
+    if (c == '"' || c == '\'') {
+      size_t j = i + 1;
+      while (j < s.size() && s[j] != c && s[j] != '\n') j += (s[j] == '\\') ? 2 : 1;
+      i = j + 1;
+    } else if (c == '/' && i + 1 < s.size() && s[i + 1] == '/') {
+      while (i < s.size() && s[i] != '\n') out[i++] = ' ';
+    } else if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+      size_t j = s.find("*/", i + 2);
+      j = (j == std::string::npos) ? s.size() : j + 2;
+      for (; i < j; i++) {
+        if (out[i] != '\n') out[i] = ' ';
+      }
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+static size_t count_of(const std::string& text, const std::string& what) {
+  size_t n = 0;
+  for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) n++;
+  return n;
+}
+
+// The key read's refusal (F360) stops the boot: setup()'s provisioning
+// failure block halts on g_device.key_refused before anything else in it,
+// and provision_device() returns on a refused key before it derives or names
+// anything from it or marks the identity ready. The one call of
+// nvs_load_key() is establish_identity_key()'s, and only the key's probe,
+// load and store name its NVS entry.
+static int test_a_refused_key_halts_the_boot() {
+  const std::string dir = WAP_SKETCH_DIR;
+  const std::string ino = strip_comments(read_file(dir + "/canary_wap.ino"));
+  CHECK(!ino.empty());
+
+  const std::string setup = body_of(ino, "void setup() {");
+  const size_t fail = setup.find("if (!provision_device()) {");
+  CHECK(fail != std::string::npos);
+  const std::string fail_head = "if (!provision_device()) {";
+  CHECK(setup.find("provision_device()", fail + fail_head.size()) == std::string::npos);
+  const size_t end = setup.find("pinMode(BOOT_BUTTON_GPIO", fail);
+  CHECK(end != std::string::npos);
+  const std::string block = setup.substr(fail, end - fail);
+  const size_t halt = block.find("if (g_device.key_refused) {");
+  const size_t loop = block.find("while (true) { delay(1000); }");
+  CHECK(halt != std::string::npos && loop != std::string::npos && halt < loop);
+  CHECK(block.find('}', halt) > loop);           // the loop is inside the if's block
+  // The line it prints before the loop, as CHANGELOG.md quotes it.
+  const size_t said = block.find(
+      "Serial.println(\"[!!] PROVISIONING FAILED - the identity key could not be used (see the "
+      "identity key line above) - HALTING\");");
+  CHECK(said != std::string::npos && halt < said && said < loop);
+  CHECK(block.find("Serial.println();") > loop);  // the block's first statement
+  CHECK(block.find("log_health(") > loop);
+
+  const std::string prov = body_of(ino, "static bool provision_device() {");
+  const size_t est = prov.find("if (!establish_identity_key()) return false;");
+  CHECK(est != std::string::npos);
+  for (const char* later : {"Ed25519::derivePublicKey(", "compute_fingerprint(", "generate_device_id(",
+                            "derive_api_token(", "derive_ap_password(", "g_device.initialized = true;"}) {
+    const size_t at = prov.find(later);
+    CHECK(at != std::string::npos && est < at);
+  }
+
+  CHECK(count_of(ino, "nvs_load_key(") == 2);    // its definition and establish_identity_key()'s call
+  CHECK(body_of(ino, "static bool establish_identity_key() {").find("nvs_load_key(g_device.privkey)") !=
+        std::string::npos);
+  const size_t in_bodies =
+      count_of(body_of(ino, "static esp_err_t stored_key_length(size_t* len) {"), "NVS_KEY_PRIV") +
+      count_of(body_of(ino, "static KeyLoad nvs_load_key(uint8_t priv[32]) {"), "NVS_KEY_PRIV") +
+      count_of(body_of(ino, "static bool nvs_store_key(const uint8_t priv[32]) {"), "NVS_KEY_PRIV");
+  CHECK(in_bodies == 3);
+  CHECK(count_of(ino, "NVS_KEY_PRIV") == in_bodies + 1);   // and its definition
+  CHECK(count_of(ino, "\"privkey\"") == 1);
   return 0;
 }
 
@@ -448,7 +866,19 @@ int main() {
   rc |= test_a_provisioned_boot_reads_as_before();
   rc |= test_a_boot_that_stored_no_key_logs_nothing();
   rc |= test_an_nvs_fault_keeps_its_lines();
+  rc |= test_a_stored_key_loads_unchanged();
+  rc |= test_a_namespace_with_no_key_generates_one();
+  rc |= test_a_read_that_fails_after_the_length_check_is_refused();
+  rc |= test_a_garbled_or_short_read_is_refused_and_zeroed();
+  rc |= test_a_failed_length_lookup_is_refused();
+  rc |= test_a_wrong_length_key_is_refused();
+  rc |= test_a_session_that_will_not_open_is_refused();
+  rc |= test_a_zero_key_is_refused();
+  rc |= test_a_key_with_one_byte_set_loads();
+  rc |= test_a_refused_boot_keeps_the_key_for_the_next();
+  rc |= test_a_key_that_cannot_be_stored_fails_provisioning();
   rc |= test_the_boot_runs_these_opens_in_this_order();
+  rc |= test_a_refused_key_halts_the_boot();
   rc |= test_a_first_boot_logs_no_chirp_line();
   rc |= test_stored_chirp_settings_read_as_before();
   rc |= test_an_nvs_fault_keeps_its_chirp_lines();

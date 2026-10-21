@@ -335,7 +335,14 @@ static volatile bool g_vault_test_pending = false;
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* DEVICE_TYPE        = "canary";
+// DEVICE_TYPE is this product's wire type, the same word the mDNS `dt` records
+// and csi_mqtt.cpp's status topic say. REST /api/status, node_status.node,
+// /api/fleet's product, the boot banner and the BOOT attestation read it; the
+// attestation's CBOR payload is hashed and never leaves the device. Keep it
+// one string literal declared once and never assigned elsewhere: wire_types.mjs
+// (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
+// any other =, compound assignment, ++ or -- of the name (sweep F294).
+static const char* DEVICE_TYPE        = "canary-wap";
 static const char* FIRMWARE_VERSION   = "2.4.16-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
@@ -702,6 +709,14 @@ struct WitnessRecord {
   bool        verified;
 };
 
+// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
+// one answer that may lead to a new key: IDF's NVS says nothing is stored.
+// Refused means a key is, or may be, stored and was not read or not used;
+// no new identity may be made over it. Declared here, among the types and
+// above the sketch's first function, so the prototype the Arduino builder
+// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
+
 struct DeviceIdentity {
   uint8_t  privkey[32];
   uint8_t  pubkey[32];
@@ -725,6 +740,7 @@ struct DeviceIdentity {
   bool     born_exact;    // False ⇒ first DATED, not born. Not a birthday.
   uint32_t key_born_ms;   // millis() when this boot generated the key…
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
+  bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -1631,21 +1647,81 @@ static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
                       WATCHDOG_TIMEOUT_SEC * 1000u,
               "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
 
-// The key read is the first session on "securacv" (setup_wizard::init() only
-// probes it), and on a first boot after an NVS erase it comes before
-// nvs_store_key() creates the namespace. An absent namespace answers "no key"
-// without a Preferences open and its NOT_FOUND line, as the refused open did
-// (sweep F201).
-static bool nvs_load_key(uint8_t priv[32]) {
-  if (csi_module_settings_nvs::probe_namespace(NVS_MAIN_NS) ==
-      csi_module_settings_nvs::NamespaceState::kAbsent) {
-    return false;
+// The stored private key's length, asked of IDF's NVS before Preferences
+// reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
+// failed": its begin() fails alike on a namespace never created and on a
+// fault, and getBytesLength() answers 0 alike for a missing key and a failed
+// lookup. Only IDF's ESP_ERR_NVS_NOT_FOUND reads as no key. IDF answers it
+// at the open (no namespace) or at the lookup, which takes nothing from a
+// page but a match: no key in the namespace, and also a stored entry the
+// lookup skipped (a privkey of another type, an index entry whose header
+// fails IDF's check, which it erases, a page a flash read error set aside).
+// So NOT_FOUND says IDF holds no key it can find, and any other error is NVS
+// failing to say. ESP_OK sets *len. The key read is the first session on
+// "securacv" (setup_wizard::init() only probes it), and on a first boot after
+// an NVS erase it comes before nvs_store_key() creates the namespace; IDF's
+// read-only open logs nothing there, so that boot still logs no NOT_FOUND
+// line for it (sweep F201).
+static esp_err_t stored_key_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_PRIV, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// Fails closed (sweep F360, the canary's rule): only a key NVS says is not
+// there answers Absent, and every other way the stored key goes unread or
+// unused answers Refused with priv zeroed, which establish_identity_key()
+// turns into a boot that setup() halts, with no key generated and nothing
+// written over the stored one. Before, a failed
+// session open or a length lookup other than 32 answered false, and
+// provision_device() generated a keypair and stored it over the old one; and
+// the read's own count was discarded, so a read that failed after the length
+// check, before IDF copied anything into the buffer, left g_device's zeroed
+// key in use: provisioning went on, the SoftAP came up under that key's
+// published known answer cv-3jByJ6rHdhM2, and records were signed with a key
+// anyone holds.
+static KeyLoad nvs_load_key(uint8_t priv[32]) {
+  memset(priv, 0, 32);
+  size_t stored = 0;
+  const esp_err_t probe = stored_key_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] identity key not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
   }
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-  if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;
-  nvs->getBytes(NVS_KEY_PRIV, priv, 32);
-  return true;
+  if (stored != 32) {
+    Serial.printf("[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must return all 32 bytes. A refused one may have left
+  // the buffer as it was or partly written (IDF fills it before it checks the
+  // data's CRC), so it is zeroed again.
+  size_t got = 0;
+  {
+    NvsMainSession nvs(true);
+    if (nvs.isOpen()) got = nvs->getBytes(NVS_KEY_PRIV, priv, 32);
+  }
+  if (got != 32) {
+    memset(priv, 0, 32);
+    Serial.printf("[!!] identity key not loaded: the stored key could not be read (%u of 32 bytes)\n",
+                  (unsigned)got);
+    return KeyLoad::Refused;
+  }
+  // A drawn key is 32 zero bytes with odds of 2^-256, and those bytes are
+  // the zeroed buffer's, the one key whose every derivation is public.
+  uint8_t any = 0;
+  for (size_t i = 0; i < 32; i++) any |= priv[i];
+  if (any == 0) {
+    Serial.printf("[!!] identity key not loaded: the stored key is 32 zero bytes\n");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 static bool nvs_store_key(const uint8_t priv[32]) {
@@ -1776,16 +1852,37 @@ static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
 // HMAC-SHA256 (using mbedtls)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void hmac_sha256(const uint8_t* key, size_t key_len,
+// True when every mbedTLS step ran (sweep F359). Each step can fail:
+// mbedtls_md_setup() answers MBEDTLS_ERR_MD_ALLOC_FAILED when it cannot
+// allocate the HMAC context, and after a failed step `out` is not (or not
+// wholly) written, so it would keep whatever the caller's stack held, bytes
+// nobody chose and this unit cannot make again after a reboot. On any failure `out` is zeroed and
+// the answer is false, and every caller refuses on false instead of using the
+// bytes: 32 zero bytes are the same on every unit (the flagship's
+// fleet_key::hmac_sha256_checked keeps the same rule, sweep F350). The context
+// is freed on every path. Declared [[nodiscard]] in data_mgmt_api.h, the first
+// declaration the compiler reads; tests_host/test_wap_hmac_fail.cpp fails
+// each step.
+static bool hmac_sha256(const uint8_t* key, size_t key_len,
                         const uint8_t* data, size_t data_len,
                         uint8_t out[32]) {
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (info == nullptr) {
+    memset(out, 0, 32);
+    return false;
+  }
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, key, key_len);
-  mbedtls_md_hmac_update(&ctx, data, data_len);
-  mbedtls_md_hmac_finish(&ctx, out);
+  int ret = mbedtls_md_setup(&ctx, info, 1);
+  if (ret == 0) ret = mbedtls_md_hmac_starts(&ctx, key, key_len);
+  if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, data, data_len);
+  if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, out);
   mbedtls_md_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1815,8 +1912,21 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 
 // Rejection sampling: discard bytes >= 216 (216 = 54*4, evenly divisible)
 // This eliminates modular bias entirely.
+//
+// Writes nothing past out_len (the F359 review): a null or zero-length
+// output gets no byte, and one shorter than "cv_" and its NUL gets "" (its
+// first byte only). Before, the prefix's three bytes and a NUL went in
+// unchecked, so a 1-, 2- or 3-byte buffer was written past its end, and a
+// zero length wrapped `out_len - 1` and let the loop write a whole token.
+// derive_api_token() refuses a buffer short of the whole token first, so no
+// caller reaches either; the check here is this function's own.
 static void format_api_token_string(const uint8_t* input, size_t in_len,
                                     char* output, size_t out_len) {
+  if (output == nullptr || out_len == 0) return;
+  if (out_len < 4) {
+    output[0] = '\0';
+    return;
+  }
   size_t out_idx = 0;
   output[out_idx++] = 'c';
   output[out_idx++] = 'v';
@@ -1853,15 +1963,35 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
 // HKDF-STYLE API TOKEN DERIVATION (two-step key separation)
 // ════════════════════════════════════════════════════════════════════════════
 
+// False, with `token_str` wiped, when any of its three HMACs fails (sweep
+// F359): a token rendered from bytes an HMAC did not write is one nobody
+// chose, and provision_device() would store it in NVS, where every later boot
+// loads it. provision_device() refuses on false and stores nothing.
+//
+// A buffer shorter than the token and its NUL (36 bytes: "cv_", 32
+// characters, NUL) is refused before any HMAC runs, with the bytes it was
+// given wiped (none, for a zero length); a null one is refused with nothing
+// written. Before (the F359 review), a 1- to 3-byte buffer ran all three
+// HMACs and the formatter wrote past its end. Every caller passes
+// g_device.api_token_str, 36 bytes; the length check after the format below
+// never fires for a buffer that size, and stays as a backstop.
 static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) {
+  if (token_str == nullptr) return false;
+  if (token_str_len < 36) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
+
   // ── Step 1: Derive intermediate token-key (key separation) ────────────
   // The Ed25519 signing key NEVER directly touches the token derivation context.
   uint8_t token_key[32];
-  hmac_sha256(
-    privkey, 32,
-    (const uint8_t*)"securacv:token-key-derive:v1", 28,
-    token_key
-  );
+  if (!hmac_sha256(
+        privkey, 32,
+        (const uint8_t*)"securacv:token-key-derive:v1", 28,
+        token_key)) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 2: Derive actual API token from intermediate key + MAC ──────
   uint8_t mac[6];
@@ -1872,11 +2002,14 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   memcpy(token_input + 21, mac, 6);
 
   uint8_t token_hash[32];
-  hmac_sha256(
-    token_key, 32,
-    token_input, 27,
-    token_hash
-  );
+  if (!hmac_sha256(
+        token_key, 32,
+        token_input, 27,
+        token_hash)) {
+    secure_zero(token_key, sizeof(token_key));
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 3: Encode with rejection sampling ───────────────────────────
   // The encoder keeps ~84% of its input bytes, so 32 characters need ~38 on
@@ -1891,22 +2024,29 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   uint8_t token_input2[28];  // domain + MAC + block counter
   memcpy(token_input2, token_input, 27);
   token_input2[27] = 0x02;
-  hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
-  format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  const bool second_block = hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
+  if (second_block) {
+    format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  }
 
   // ── Wipe intermediate key material ───────────────────────────────────
   secure_zero(token_key, sizeof(token_key));
   secure_zero(token_hash, sizeof(token_hash));
   secure_zero(token_bytes, sizeof(token_bytes));
 
-  return strlen(token_str) >= 35;  // "cv_" + 32 chars
+  if (!second_block || strlen(token_str) < 35) {  // "cv_" + 32 chars
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE-UNIQUE AP PASSWORD (derived from the device private key)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+static bool derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+  if (!password || len == 0) return false;
   // Derive from the PRIVATE key, not the public fingerprint. The pubkey
   // fingerprint is published (serial banner, device_id suffix, /enroll page),
   // so the old fingerprint-derived password was recomputable by anyone who had
@@ -1914,9 +2054,17 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // the private key under its own domain label (same key-separation discipline
   // as derive_api_token) so the password is a real per-device secret.
   uint8_t pw_key[32];
-  hmac_sha256(privkey, 32,
-              (const uint8_t*)"securacv:ap-password:v1", 23,
-              pw_key);
+  if (!hmac_sha256(privkey, 32,
+                   (const uint8_t*)"securacv:ap-password:v1", 23,
+                   pw_key)) {
+    // A failed HMAC is refused, never rendered (sweep F359): its output is
+    // zeroed, and 32 zero bytes would render as "cv-222222222222" on every
+    // unit. "" is no password to every caller: provision_device() fails on
+    // the false, and resolve_ap_password() raises no SoftAP on "" in a
+    // release build.
+    password[0] = '\0';
+    return false;
+  }
 
   // 12 unambiguous chars ≈ 69 bits — far beyond offline WPA2 (PBKDF2) reach.
   // WPA2-PSK requires 8-63 ASCII chars; "cv-" + 12 = 15 fits ap_password[16].
@@ -1941,6 +2089,7 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // lives on only in the caller's buffer (g_device.ap_password) by design.
   secure_zero(encoded, sizeof(encoded));
   secure_zero(pw_key, sizeof(pw_key));
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3835,7 +3984,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
     facts.credentials_submitted = __atomic_load_n(&g_onboard_creds_submitted, __ATOMIC_RELAXED);
 
     NodeStatus ns{};
-    ns.node           = "canary-wap";   // the dt word mDNS and /api/fleet already speak
+    ns.node           = DEVICE_TYPE;    // the type constant, the same word as the mDNS dt
     ns.product        = OTA_PRODUCT;
     ns.fw             = FIRMWARE_VERSION;
     ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)
@@ -7901,7 +8050,7 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   FleetSelfDevice self{};
   const char* nm = setup_wizard::get_device_name();
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
-  self.product = "canary-wap";
+  self.product = DEVICE_TYPE;
   self.online  = 1;   // we are answering this request, so we are up
   // Honest coarse chain state, backed by an actual tail check (see
   // chain_tail_intact): the latched flags PLUS the newest record
@@ -10958,9 +11107,11 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 #endif
   }
 
-  // Derive only when no valid password is currently present.
-  if (strlen(g_device.ap_password) < 8) {
-    derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
+  // Derive only when no valid password is currently present. A failed derive
+  // leaves "" (sweep F359), which the length test below refuses.
+  if (strlen(g_device.ap_password) < 8 &&
+      !derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "AP password not derived", "HMAC-SHA256 failed");
   }
 
   // Use either pre-existing or freshly derived device-unique password.
@@ -11360,6 +11511,68 @@ static bool start_wifi_ap() {
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
+// The identity key: the stored one, or, only when NVS says none is stored, a
+// new one generated and stored (sweep F360, the canary's rule). Any other
+// answer is a key that is, or may be, in NVS and was not read or not used:
+// no key is generated, nothing is written here, g_device.key_refused is set
+// and the key stays zeroed, and setup() halts on it before anything signs.
+// Nothing on that path writes the key or the chain state (safe_mode_check()
+// has written its own "hw_state" rows on a crash reset by then), so a fault
+// in the read that leaves the entry in place (a session that will not open,
+// a flash read error while IDF copies the data) leaves the key, and the
+// chain state beside it, for a later boot that can read them. Corruption is
+// IDF's to meet first, and the sketch sees only its answer. An entry whose
+// data CRC fails IDF erases inside the read it refuses, leaving the blob's
+// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.8) the next
+// boot's nvs_flash_init() erases an index whose data is gone, so that boot
+// finds no key and makes a new identity. A data chunk whose header fails
+// IDF's check is erased when IDF loads the page, and the index with it in
+// the same init; a key whose index entry fails the check is erased before
+// the key is read (when IDF loads the page, or in the probe's own lookup);
+// and a flash read error in that lookup sets the page aside for the boot.
+// In each the probe answers ESP_ERR_NVS_NOT_FOUND, and that same boot takes
+// the first-boot path, a new identity, with no halt. All of it is today's
+// behavior, not a decision; what holds throughout is that this sketch never
+// writes over a key IDF still reports as stored. It halts rather than going
+// on as setup() does after the other provisioning failures (sweep F336):
+// from there the boot attestation record and the mesh take g_device.privkey
+// as it is, which here is the zeroed key every derivation of is public, and
+// the chain starts again at seq 0, which the reboot and deep-sleep paths
+// persist over the stored one. Before, a failed read fell through to a new
+// keypair stored over the old one, and a read that failed after the length
+// check, before IDF copied anything into the buffer, ran the boot on the
+// zeroed key.
+static bool establish_identity_key() {
+  g_device.key_refused = false;
+  const KeyLoad stored = nvs_load_key(g_device.privkey);
+  if (stored == KeyLoad::Loaded) {
+    Serial.println("[PROV] Loaded existing keypair from NVS");
+    return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    g_device.key_refused = true;
+    Serial.println("[!!] Identity key not used: no new key is made in its place, provisioning "
+                   "cannot continue (see the identity key line above)");
+    return false;
+  }
+  Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
+  if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
+    Serial.println("[!!] Keypair generation failed");
+    return false;
+  }
+  if (!nvs_store_key(g_device.privkey)) {
+    Serial.println("[!!] Failed to store keypair");
+    return false;
+  }
+  Serial.println("[PROV] Keypair stored in NVS");
+  g_device.first_boot = true;
+  // This boot made the key, so this boot is the only one that can honestly
+  // say how old it is when a clock finally arrives.
+  g_device.key_is_new = true;
+  g_device.key_born_ms = millis();
+  return true;
+}
+
 static bool provision_device() {
   Serial.println("[PROV] Provisioning device identity...");
 
@@ -11369,25 +11582,7 @@ static bool provision_device() {
   // Device identity (device_id / AP SSID / mDNS hostname) is derived from the
   // pubkey fingerprint, not the MAC (event_contract §10), so the keypair and its
   // fingerprint must exist before we name anything.
-  if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[PROV] Loaded existing keypair from NVS");
-  } else {
-    Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
-    if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
-      Serial.println("[!!] Keypair generation failed");
-      return false;
-    }
-    if (!nvs_store_key(g_device.privkey)) {
-      Serial.println("[!!] Failed to store keypair");
-      return false;
-    }
-    Serial.println("[PROV] Keypair stored in NVS");
-    g_device.first_boot = true;
-    // This boot made the key, so this boot is the only one that can honestly
-    // say how old it is when a clock finally arrives.
-    g_device.key_is_new = true;
-    g_device.key_born_ms = millis();
-  }
+  if (!establish_identity_key()) return false;
 
   // What we already know about when this key was born. Loaded before anything
   // can offer a clock, so the "already recorded" rule is in force from the
@@ -11405,26 +11600,6 @@ static bool provision_device() {
   generate_device_id(g_device.device_id, sizeof(g_device.device_id));
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
   generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
-
-  // ── Derive API token (HKDF-style, 2-step) ──
-  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
-  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
-    Serial.println("[PROV] Loaded existing API token from NVS");
-  } else {
-    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
-      Serial.println("[!!] API token derivation failed");
-      return false;
-    }
-    if (!nvs_store_token(g_device.api_token_str)) {
-      Serial.println("[!!] Failed to store API token");
-      return false;
-    }
-    Serial.println("[PROV] API token stored in NVS");
-  }
-
-  // ── Derive device-unique AP password ──
-  Serial.println("[PROV] Deriving device-unique AP password...");
-  derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
 
   // Load operator-configurable runtime settings (Device tab). Clamped on
   // load, so the record loop, time-coarsening bucket, and log threshold are
@@ -11491,6 +11666,43 @@ static bool provision_device() {
   // first record. It runs after log_seq is loaded, so a report takes the
   // next health-log seq, not one the load would hand out again.
   if (genesis) persist_chain_state();
+
+  // The two mints come after the chain state. Each refuses a failed HMAC
+  // (sweep F359), and the token's store can fail too; any of the three
+  // returns false with g_device.initialized still false, and setup() goes on
+  // from there (sweep F336's posture), so the boot attestation record and
+  // loop() sign with g_device.privkey, the stored key. Loaded first, the
+  // chain continues from the stored {seq, head}. When the mints came first,
+  // a refusal left seq 0 and a head of 32 zero bytes: the next records were
+  // signed under this key at seq numbers it had already used, and the
+  // persist ten records on (or the reboot, safe-mode and deep-sleep paths)
+  // wrote that branch over the stored chain state.
+
+  // ── Derive API token (HKDF-style, 2-step) ──
+  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
+  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
+    Serial.println("[PROV] Loaded existing API token from NVS");
+  } else {
+    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
+      Serial.println("[!!] API token derivation failed");
+      return false;
+    }
+    if (!nvs_store_token(g_device.api_token_str)) {
+      Serial.println("[!!] Failed to store API token");
+      return false;
+    }
+    Serial.println("[PROV] API token stored in NVS");
+  }
+
+  // ── Derive device-unique AP password ──
+  // A failed HMAC fails provisioning (sweep F359), as a failed token mint
+  // does: the key is "", g_device.initialized stays false, and so a release
+  // build raises no SoftAP (resolve_ap_password()).
+  Serial.println("[PROV] Deriving device-unique AP password...");
+  if (!derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    Serial.println("[!!] AP password derivation failed (HMAC-SHA256)");
+    return false;
+  }
 
   g_device.boot_ms = millis();
   g_device.initialized = true;
@@ -12136,6 +12348,21 @@ void setup() {
 
   // Provision device identity and crypto
   if (!provision_device()) {
+    // An identity key this boot could not read or use (sweep F360) halts
+    // here, as the canary halts: nothing below runs, so nothing signs with the
+    // zeroed key and nothing writes over the stored key or its chain. It is
+    // reached before the watchdog is set up and before any radio, server or
+    // task starts. The line goes to Serial only: the health log's ring is
+    // drained to the SD card by loop(), which never runs after this. Every
+    // other failure goes on (sweep F336). A refusal after the key is
+    // established comes after provision_device() has loaded the chain state,
+    // so the records below continue the stored chain; the only ones ahead of
+    // it are a new key that could not be made or stored, on a boot with no
+    // key stored (F58's pending halt-or-ephemeral call).
+    if (g_device.key_refused) {
+      Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above) - HALTING");
+      while (true) { delay(1000); }
+    }
     Serial.println();
     Serial.println("[!!] PROVISIONING FAILED - HALTING");
     // Don't infinite loop - just log and continue with limited function
