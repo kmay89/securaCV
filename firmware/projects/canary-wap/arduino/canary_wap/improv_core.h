@@ -57,7 +57,10 @@
  *   a device NOBODY OWNS YET, and for an owner's own tap — never for a
  *   device that has an owner and a bad day.
  *
- *   - NO CREDENTIALS STORED (first boot, or after a factory reset): the
+ *   - NO CREDENTIALS STORED (first boot, or after a factory reset or Forget
+ *     Wi-Fi, which the owner chose: on a WAP both keep the identity and the
+ *     token, so that unit still has an owner, and the door goes to whichever
+ *     client connects first, docs/design/magic_pairing.md §2.2): the
  *     door opens on its own for a bounded first-boot window
  *     (Timing::first_boot_window_ms, half an hour by default; a power cycle
  *     re-arms it; a compile-time 0 makes the device tap-only). Long enough

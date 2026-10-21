@@ -136,7 +136,7 @@ the portal's):
   portal (a door with a key printed on the unit) raises as before and does
   **not** open this one.
 - **A short BOOT tap** (`common/io/short_tap.h`: at least 40 ms down, up
-  before 700 ms — the WAP's 2 s hold and the 5 s factory-reset hold are
+  before 700 ms — the WAP's 2 s hold and the 10 s factory-reset hold are
   someone else's gesture) opens it for **60 s** on a Sense or Vision, with or
   without credentials; `BOOT_BUTTON_PIN` comes from the board's `pins.h`.
   The WAP has no tap door in this version.

@@ -15,8 +15,10 @@
 // Why per address (sweep F343). The WAP's lockout used to be one backoff for
 // every caller, so one host's wrong bearers held every other host's right
 // token at 429. The likeliest such host was the owner's own phone, still
-// polling a reset unit with its old token. A Table keeps one Slot per source
-// address instead, so a host's wrong bearers hold only that host's address.
+// polling a re-flashed unit with its old token (a full erase gives it a new
+// key, so a new token and device_id; the 10 s BOOT reset leaves the token as
+// it was). A Table keeps one Slot per source address instead, so a host's
+// wrong bearers hold only that host's address.
 //
 // The contract:
 //   * The source is the request's socket peer address (the caller reads it

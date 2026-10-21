@@ -509,7 +509,7 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
         // serve it (older firmware, or Bluetooth turned down in settings).
         if pendingProvision?.peripheralID == peripheral.identifier,
            !(peripheral.services ?? []).contains(where: { $0.uuid == Self.provisionServiceUUID }) {
-            resolveProvision(.failed("This Canary's firmware doesn't offer the Bluetooth rescue — use its setup portal (hold BOOT) instead."))
+            resolveProvision(.failed("This Canary's firmware doesn't offer the Bluetooth rescue — use its own setup network (SecuraCV-wap-XXXX, which it raises while it is off your Wi-Fi) instead."))
         }
     }
 

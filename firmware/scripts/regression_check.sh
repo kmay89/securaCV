@@ -1053,7 +1053,7 @@ else
     if grep -q "esp_flash_encryption_enabled" "$mf"; then
       check_pass "Mesh FE persistence gate present: $rel"
     else
-      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted to unencrypted NVS (#610)"
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted on a board without flash encryption (#610; the gate keeps it off un-fused boards, it does not encrypt NVS)"
     fi
   done <<< "$MESH_IMPL_FILES"
 fi

@@ -1025,8 +1025,9 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: SecuraCVConfigEntry):
             return
         # async_pin needs the loop; schedule as a task so the @callback
         # context returns synchronously. A pin that actually lands is a new
-        # identity for this device_id (fresh flash, factory reset, a
-        # replacement board), whose counters start over — so its replay
+        # identity for this device_id (a full flash erase, an all-rounder
+        # Canary's 30 s BOOT wipe, a replacement board; the 10 s BOOT reset
+        # keeps the key), whose counters start over — so its replay
         # high-water marks start over with it, or every valid publish from
         # the new key would read as a replay of the old one.
         async def _pin_and_reset_replay() -> None:
@@ -1077,11 +1078,12 @@ def async_record_verify(
         "detail": verdict.detail,
     }
     if verdict.reason == "tofu_pin":
-        # A newly pinned device starts its counters over (fresh flash, factory
-        # reset); its replay high-water marks must start over with it. The
-        # verifiers do not return this reason today — the health hook and the
-        # options flow clear the marks themselves — but a future verifier
-        # that pins inline gets the same behavior for free.
+        # A newly pinned device starts its counters over (a full flash erase,
+        # an all-rounder Canary's 30 s BOOT wipe); its replay high-water marks
+        # must start over with it. The verifiers do not return this reason
+        # today — the health hook and the options flow clear the marks
+        # themselves — but a future verifier that pins inline gets the same
+        # behavior for free.
         async_clear_replay_marks(hass, entry, device_id)
     if verdict.reason == "mismatch":
         # Dedup by (device_id, received_fingerprint) so a steady stream

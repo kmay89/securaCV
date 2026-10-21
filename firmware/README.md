@@ -277,7 +277,7 @@ Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tab
 | `esp32cam` | classic-ESP32 reach port: camera peek, CSI, SPI SD, pull-OTA | AI-Thinker ESP32-CAM | built (compile-tested; USB install only, no OTA manifest) |
 | `esp32-wroom` | classic ESP32: CSI presence witness, chain, pull-OTA | Generic WROOM-32 DevKit | built (same) |
 | `freenove-s3` | S3 camera kit, SD off (1-bit SDMMC only) | Freenove FNK0085 | built (same) |
-| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image, flash encryption required (`provisioning/platformio_secure.ini`) | The production eFuse path; nothing publishes it | compile-only |
+| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image: it refuses to store or load the identity key unless NVS is encrypted, which no board is under `framework = arduino`, so it refuses on every board, fused or not (`provisioning/platformio_secure.ini`) | The production eFuse path, not yet usable; nothing publishes it | compile-only |
 
 "PR CI" is `firmware/flavors.json` `build_envs` (with the size guards its
 `size_guards` name) plus `firmware.yml`'s compile-only steps on the canary

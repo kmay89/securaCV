@@ -103,9 +103,11 @@ honest hardware-RoT design must own this, not bury it.
 2. **No attestation.** The device can *sign*, but there's no protocol for a
    verifier to confirm genuineness + firmware integrity, and no measurement to
    sign over. "Boot attestation record" today is local and unused.
-3. **Key extraction.** The identity key is plaintext-at-rest. Without flash
-   encryption or a hardware-bound key, physical possession = key compromise,
-   which undermines both attestation and the pinned-identity model.
+3. **Key extraction.** The identity key is plaintext-at-rest. Without NVS
+   encryption (which needs flash encryption beside it and is in no released
+   build) or a hardware-bound key, physical possession = key compromise, on a
+   board with flash encryption fused too, today, which undermines both
+   attestation and the pinned-identity model.
 
 ## 4. Goals & non-goals
 
@@ -156,8 +158,10 @@ un-brickable guarantee is knowingly traded away.
 ### 5.2 Reconciling with the flasher & recovery (the crux)
 
 Once Secure Boot + flash encryption are on (Tier 4), the mask-ROM download path
-still exists but the ROM **refuses to boot an unsigned image**, and flash reads
-come back ciphertext — so the browser flasher's "write any factory image and boot
+still exists but the ROM **refuses to boot an unsigned image**, and reads of the
+app image come back ciphertext (NVS does not: without NVS encryption, the Tier 3
+row, the key and saved passwords still read back in the clear) — so the browser
+flasher's "write any factory image and boot
 it" no longer works, and JTAG is gone. Recovery shifts, and the design must make
 that shift safe and legible:
 
@@ -220,9 +224,10 @@ version drift (an honest device reporting an old measurement), and binds
 freshness via the nonce (no replay) — but it does **not** catch a modified image
 that lies about itself. Only once Secure Boot measures the app in the boot chain
 (Tier 4) does `fw_measure` become trustworthy and *"proves it's running trusted
-firmware"* actually hold. Tier 3's non-extractable key (§5.4) additionally stops
-the identity key being lifted out of a stolen board, closing the
-clone-with-stolen-key gap.
+firmware"* actually hold. Tier 3, once NVS encryption is buildable, would
+additionally stop the identity key being lifted out of a stolen board, closing
+the clone-with-stolen-key gap (an optional DS-bound attestation key, §5.4, is
+non-extractable but a separate key); today no tier does.
 
 ### 5.4 Hardware-bound identity via the DS peripheral (Tier 3+)
 
@@ -250,7 +255,9 @@ Mirroring the honesty of the vault RFC's §5.5
   have an ECDSA-capable ROM.
 - **Flash Encryption** — XTS-AES-128/256, key in read-protected eFuse.
   *Development* mode still allows re-flashing with the key present; *Release* mode
-  disables plaintext serial programming. Protects at-rest, **not** a live chip.
+  disables plaintext serial programming. Protects the app image and the
+  partitions flagged `encrypted` at rest, **not** NVS (that takes NVS
+  encryption) and **not** a live chip.
 - **DS + HMAC peripherals** — hardware-bound signing key as above.
 - **eFuse** — one-time-programmable. Every security bit here is a one-way door.
 - **No discrete secure element / TPM.** The root of trust is the SoC itself; there

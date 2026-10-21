@@ -222,6 +222,56 @@ hold keeps; and the per-address lockout's ways out.
   `test_receipt_grant.cpp`, `test_session_cookie.cpp`); the wraps cannot be
   bench-tested, and nothing here ran on a device.
 
+- **The remaining copies of #1843's four corrections now say what the code
+  does (#1843's sweep for every copy).** A BOOT tap or the setup-door claim
+  that serves an address frees that address's own slot, never the shared
+  overflow: two sentences of `SECURITY_MODEL.md`, the WAP receipt's
+  comment, `CONSOLIDATION.md` and the flagship's page-token comment said
+  "ends that address's backoff" with no exception, and the F341 entry below
+  left the flagship out of its way-out amendment. The 10 s BOOT hold keeps
+  the identity key, the chain, the token and the HTTPS certificate on every
+  Canary; only the flagship's 30 s wipe or a full erase in a flasher changes
+  them. The getting started guide said a factory reset loses the witness
+  chain and makes a new certificate, the flagship's `ota_deploy.py` and
+  `ota_deploy.sh` offered a factory reset as the reason for a pin mismatch,
+  and the iPhone app's certificate-mismatch error said a reset explains it,
+  which could lead an owner to re-pair to whatever is answering; each now
+  names the full erase (or the flagship's 30 s wipe) and says the 10 s
+  reset keeps the certificate. The flagship's serial banner said BOOT
+  resets at 5 s (it warns at 3, resets at 10 with the key kept and wipes at
+  30); either flasher's "Erase the entire chip" help called the erase a
+  factory reset; and the Home Assistant integration's comments, the
+  lockout's notes, the event-id floor's note (both trees), `FEATURES.md` and
+  the WAP's readiness list said a reset gives a new identity, or that the
+  WAP has no reset path. The iPhone app's Wi-Fi rollout and Bluetooth
+  rescue no longer send the owner to "hold BOOT", which on a WAP is the 10 s
+  factory reset: they name the setup network a WAP raises on its own while
+  it is off its Wi-Fi. The WAP dashboard's Forget Wi-Fi confirm now says
+  every saved network goes and that for half an hour after, its Bluetooth
+  setup goes to the first phone or computer nearby that connects. NVS is
+  plaintext on every tier: the flagship's Bluetooth panel said paired
+  devices are "stored securely" and now says where they are kept; both
+  flashers' eFuse card said a flash-encrypted board's reads come back as
+  ciphertext, and now says the firmware image does; comments, `PARITY.md`,
+  `FIRMWARE_MAP.md`, the design, strategy and audit notes no longer offer
+  flash encryption or the secure kit as the at-rest protection (the path is
+  NVS encryption, after the arduino-as-IDF-component migration), and
+  `THREAT_MODEL.md`, `FEATURES.md`, the firmware README and
+  `secure_provisioning.md` no longer credit the opt-in tier with a working
+  Secure Boot or the secure env with running. And the getting started
+  guide's unlock banner and "whichever asks first" are the flagship's, now
+  said so, with the WAP's ask-first order beside them and no in-app BOOT-tap
+  fetch (the iPhone app has none). The Vision SPA said to short-tap BOOT in
+  the same moment as its first ask, so a press could land before the ask
+  reached a WAP and go to another asker, and read a WAP's `409
+  tap_contended` as a missed tap: it now says "Don't press BOOT yet" until
+  the device answers with `403`, and on `409` stops and says another device
+  asked, with the ways out; the reference server's comments say it models
+  the first-asker rule, not the WAP's. `test_docs_claims.py` bans every
+  retired sentence where it stood. Host-tested where code moved
+  (`canary-vision` SPA tests, the sketch's tests); not run on a device or in
+  a browser.
+
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from
@@ -559,7 +609,8 @@ hold keeps; and the per-address lockout's ways out.
   bearer whenever the backoff was not running held every other caller's right
   token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
   polls over ten minutes. The likeliest such host was the owner's own phone,
-  still polling a reset unit with its old token (filed as F352). The backoff
+  still polling a re-flashed unit (a full erase gives it a new key and
+  token; the 10 s hold keeps the token) with its old token (filed as F352). The backoff
   is now one per source address, the request's socket peer and never a
   header, on the new pure `firmware/common/network/auth_backoff.h` (staged
   into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each
@@ -668,9 +719,11 @@ hold keeps; and the per-address lockout's ways out.
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
   bonded Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
   section above: a tap clears an address only when it is served to that
-  address's ask; under that host the hold is no way out, the iPhone app
-  does not reach a WAP's Bluetooth lane today, ledger A65, and that section
-  gives the ways out with their caveats.) **Host-tested**
+  address's own ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives both
+  trees' ways out with their caveats.) **Host-tested**
   (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the
   claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
@@ -1095,8 +1148,9 @@ All are closed here; none of the code changes is run on a device.
   at a full ceiling too. The ceiling's hour of six 10-minute buckets is
   recorded as a decision at `csi_event_set_module_ceiling()` (F132). An
   exhausted event-id space is the owner's to recover, now said at
-  `space_low()` on both trees: a factory reset on a canary, a full flash erase
-  on a canary-wap without restoring the flasher's pre-erase backup, then a
+  `space_low()` on both trees: the 30 s BOOT wipe on a canary (its 10 s reset
+  keeps the floor), a full flash erase on a canary-wap (whose 10 s hold keeps
+  it too) without restoring the flasher's pre-erase backup, then a
   re-pin in Home Assistant (F82). `wifi.channel_activity`'s three knobs are
   documented as compile-time defaults (F122). The Tuning Lab's per-row reset
   and Reset all remove the stored row instead of storing the default, so the

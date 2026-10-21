@@ -199,8 +199,9 @@ resolve_transport() {
   presented=$(cert_fp "$pem")
   if [[ "$presented" != "$PIN" ]]; then
     log_error "TLS certificate mismatch: presented ${presented:-none}, pinned ${PIN}."
-    log_error "Refusing to send the token. A factory reset makes a new certificate;"
-    log_error "re-read \`tls_cert_fp\` from the recovery kit if that is what happened."
+    log_error "Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase"
+    log_error "makes a new certificate (the 10 s reset keeps it); re-read \`tls_cert_fp\`"
+    log_error "from a new recovery kit only if one of those happened."
     exit 1
   fi
   spki=$(cert_spki_pin "$pem")

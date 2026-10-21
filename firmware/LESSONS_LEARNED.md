@@ -929,8 +929,9 @@
   in `api_auth.h`: one backoff for every caller, so a host that sent a wrong
   bearer whenever the backoff was not running held every other host's right
   token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
-  and the likeliest such host was the owner's own phone, polling a reset unit
-  with its old token. Because a `static` in a header is a separate object in
+  and the likeliest such host was the owner's own phone, polling a
+  re-flashed unit (a full erase gives it a new key and token; the 10 s hold
+  keeps the token) with its old token. Because a `static` in a header is a separate object in
   every translation unit that includes it, `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
   strike one file's gate recorded never held another file's. Three more

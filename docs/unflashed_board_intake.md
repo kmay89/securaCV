@@ -304,10 +304,11 @@ release signature verified before a byte is written, the chip's own MD5 read
 back after. The device identity keypair is generated on first boot *after* the
 erase, so nothing pre-existing carries into the device's identity.
 
-If you want to be the last person who can ever do this to that board, the
-Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) burns
-secure boot and flash encryption yourself. It is irreversible, so it is an
-explicit opt-in and never a default.
+The Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) is
+where secure boot and flash encryption are staged, prepared but not yet
+enabled: today it does not make you the last person who can change what runs
+on the board, and it does not protect the key or the saved Wi-Fi in NVS. It is
+irreversible, so it is an explicit opt-in and never a default.
 
 ## What this does not do
 

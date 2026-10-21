@@ -535,8 +535,10 @@
 #define NVS_KEY_WIFI_EN   "wifi_en"
 #define NVS_KEY_TOKEN     "api_token"
 // FEATURE_HTTPS: the self-signed ECDSA P-256 certificate and its key, DER,
-// generated once on the first TLS-capable boot (factory reset erases both,
-// so the device re-keys and a pinned iPhone pairing must be redone).
+// generated once on the first TLS-capable boot. The 10 s BOOT reset keeps
+// both (reset_scope_keys.h kIdentityKept); only the 30 s wipe
+// (ResetScope::Everything) or a full flash erase removes them, after which
+// the device re-keys and a pinned iPhone pairing must be redone.
 #define NVS_KEY_TLS_CERT  "tls_cert"
 #define NVS_KEY_TLS_KEY   "tls_key"
 #define NVS_KEY_BATT_CAP  "batt_cap"

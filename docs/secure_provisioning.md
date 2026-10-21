@@ -37,7 +37,10 @@ them during development.
 - XTS-AES-256 Flash Encryption
 - Anti-rollback protection
 - JTAG permanently disabled via eFuse
-- NVS encryption enabled
+- NVS encryption — named in `sdkconfig.defaults.secure` but inert under
+  `framework = arduino` (`platformio_secure.ini`, "KNOWN INERT"), so a Phase 2
+  board's NVS (the identity key, the saved Wi-Fi and broker passwords, the
+  bonds) stays plaintext until the arduino-as-IDF-component migration
 - **Irreversible:** Once burned, device cannot return to dev mode
 
 ---
@@ -52,7 +55,7 @@ All tools are located in `firmware/provisioning/`:
 | `verify_device.py` | Reads security-relevant eFuses via `espefuse.py`, checks virgin state pre-provisioning and lockdown post-provisioning, outputs JSON audit trail |
 | `provision_canary.sh` | Full orchestration: virgin verify → burn keys → flash signed firmware → burn security eFuses → post-verify → generate manifest. Has `--dry-run` mode |
 | `create_manifest.py` | Fleet management: list provisioned devices, search by MAC, generate summary reports |
-| `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled, Secure Boot v2 **prepared but not enabled**, Flash Encryption release mode, NVS encryption, anti-rollback, JTAG off |
+| `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled; Secure Boot v2 (with anti-rollback) and Flash Encryption (release mode) **prepared but not enabled** (commented out); NVS encryption named but inert under `framework = arduino`; JTAG is left to `provision_canary.sh`'s eFuse burn |
 | `platformio_secure.ini` | PlatformIO environment config that wraps the security sdkconfig (`[env:secure]`, `[env:secure_ha]`; `firmware/canary/platformio.ini` includes it, and CI compiles both envs, compile-only) |
 | `partitions_secure.csv` | Partition table with OTA A/B slots, an `nvs_keys` partition, and `encrypted` flags on the partitions flash encryption may cover — never on `nvs` |
 

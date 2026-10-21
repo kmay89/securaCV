@@ -190,8 +190,10 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
                         size_t   out_buf_cap,
                         size_t*  out_count);
 
-/* Erase the persisted trusted-peer list. Used on factory reset and
- * "un-pair all" UI. Idempotent — succeeds if the list was empty. Also
+/* Erase the persisted trusted-peer list. Used by POST /api/mesh/leave
+ * (securacv_network.cpp's handle_mesh_leave). No factory reset calls it: the
+ * 10 s BOOT reset keeps the list, and the 30 s wipe drops it with the whole
+ * namespace (nvs.clear()). Idempotent — succeeds if the list was empty. Also
  * erases "peer_macs" (below), best effort: an address with no peer is
  * meaningless, and the return value reports the pubkey list only.
  *

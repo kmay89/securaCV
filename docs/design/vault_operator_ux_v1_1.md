@@ -119,7 +119,9 @@ returns nothing: there is no hardware-key abstraction anywhere yet.
   asks that "vault confidentiality … rely on **distinct, device-local key
   material**"; a `0600` file technically satisfies "device-local," but the honest
   form of that promise is key material a plugged-in **PKCS#11 token** (host) or
-  the **ESP32-S3's own eFuse / flash-encryption / DS peripheral** (device) holds —
+  the **ESP32-S3's own eFuse / NVS encryption / DS peripheral** (device) holds
+  (no released build uses any of them yet; flash encryption alone does not
+  cover NVS) —
   **we have no TPM and no discrete secure element** (§5.5). Trustee hardware
   tokens are likewise the honest form of "**independently controlled** principals
   or devices."
@@ -465,9 +467,11 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 - Wire `doctor` to report the live backend; add `vault.keystore` config.
 - **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a PKCS#11 token to validate on.**
 - **Device side (parallel, firmware track — decision #7: (a) + (b)-optional):**
-  path **(a)** hardens the ESP32-S3 Ed25519 identity *at rest* by burning
+  path **(a)** would harden the ESP32-S3 Ed25519 identity *at rest* with
   `secure_provisioning.md` Phase 2 (eFuse + flash encryption + Secure Boot v2 +
-  JTAG-off), opt-in per device; path **(b)** is an *optional*, feature-gated
+  JTAG-off) plus NVS encryption, which waits on the arduino-as-IDF-component
+  migration; burning Phase 2 alone leaves the key plaintext in NVS. Opt-in per
+  device; path **(b)** is an *optional*, feature-gated
   `esp_ds`/`esp_hmac` crypto-HAL that adds a non-extractable RSA **attestation**
   identity (never replaces Ed25519 signatures). Firmware provisioning + HAL, not
   kernel crypto — shares no code with the host `KeyStore`.

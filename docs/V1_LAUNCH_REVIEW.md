@@ -40,7 +40,8 @@ are **resolved**. This capstone does not re-litigate them.
    added; now it parses and runs green. (Supersedes the still-open PR #734.)
 2. **Firmware guard: mesh secret persistence is FE-gated** (`firmware/scripts/regression_check.sh`).
    Asserts the mesh persistence layer keeps its `esp_flash_encryption_enabled()` check so the
-   `opera_secret` can never be silently persisted to unencrypted NVS — the static half of issue
+   `opera_secret` is never persisted on a board without flash encryption (on an FE board it is,
+   in NVS that flash encryption leaves plaintext) — the static half of issue
    **#610**. (Note: by design the live in-RAM session still runs for the current boot on an FE-off
    dev board; whether activation should also refuse is an open #610 decision — see the bench
    runbook Track C.)

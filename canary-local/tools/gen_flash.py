@@ -1713,8 +1713,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         # ── the install itself ──
         "erase_all": {
             "label": "Erase the entire chip first",
-            "what": "Wipes every byte — firmware, settings, stored WiFi, witness history — "
-                    "then writes fresh. A factory reset and an install in one pass.",
+            "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity "
+                    "key and the chain — then writes fresh, so the board comes up with a new "
+                    "identity. More than a factory reset: the 10-second BOOT reset keeps the key.",
             "when": "A board that misbehaves in ways an ordinary reinstall doesn’t fix, "
                     "or one you’re handing to someone else.",
             "default": "Off — a normal install only touches the regions the new firmware needs.",

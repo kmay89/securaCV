@@ -122,7 +122,7 @@ fn common_efuses() -> Vec<FieldDef> {
         FieldDef {
             key: "SPI_BOOT_CRYPT_CNT", bit: 82, width: 3, severity: "stop",
             label: "Flash encryption",
-            meaning: "Flash is encrypted with a key burned into this chip. Reads come back as ciphertext and a plaintext image won't boot. Not reversible.",
+            meaning: "Flash encryption is on, with a key burned into this chip: the firmware image (and any partition flagged encrypted) reads back as ciphertext, and a plaintext image won't boot. Not reversible.",
             active: Active::OddParity,
             touched: Some(("attention",
                 "Flash encryption was switched on and then off again by a previous owner. It isn't active now, so the board still works — but this chip has been through somebody's provisioning, and the counter can only be burned a couple more times.")),

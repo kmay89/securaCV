@@ -2,7 +2,7 @@
 
 The replay gate compares the signed counters (event_id, seq, chain length,
 totals) against the last value seen for a device_id. Those counters belong
-to the KEY: a factory-reset or replaced Canary starts them over. So every
+to the KEY: an erased (re-flashed) or replaced Canary starts them over. So every
 path that changes which key a device_id answers to must forget the marks —
 TOFU first sight (the health hook) and the operator's pin / rotate / unpin
 (the options flow) — or the replacement device's first publishes all read

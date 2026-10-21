@@ -8993,8 +8993,10 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    do not serve); another address's right token is served. The lockout
   //    never gates the claim or the tap: a page with a stale token, or a
   //    backoff a guesser armed, is still served by the claim or a BOOT tap,
-  //    and the address they serve has its backoff cleared (sweep F341,
-  //    after step 3).
+  //    and the address they serve has its own slot cleared (sweep F341,
+  //    after step 3), never the shared overflow: an address held only
+  //    through the overflow, which a host striking from nine or more
+  //    addresses keeps running, stays held after it is served.
   //    (The lockout is all this decides. Who gets the tap is step 3's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {

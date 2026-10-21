@@ -5214,7 +5214,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function forgetWifi() {
-      if (!confirm('Remove saved WiFi credentials from this Canary?')) return;
+      if (!confirm('Remove every saved Wi-Fi network from this Canary? For half an hour after, its Bluetooth setup goes to the first phone or computer nearby that connects, so have yours ready.')) return;
       stopWifiPolling();
       const data = await api('/api/wifi/forget', 'POST');
       if (!data.ok) { alert('Failed to remove credentials'); return; }

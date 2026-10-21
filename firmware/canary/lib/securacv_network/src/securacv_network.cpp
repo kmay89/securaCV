@@ -2411,8 +2411,9 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
 // exactly one home-LAN page load (or, if the app asks first, one receipt
 // fetch; never both). The page that got the token holds the bearer, so its
 // "Save recovery kit" needs no second tap, and the tap that handed it the
-// token ends its address's backoff (auth_handed_token, sweep F341), so a
-// browser that mistyped the token is not held on its first API call.
+// token ends its address's own backoff (auth_handed_token, sweep F341;
+// never the shared overflow's), so a browser that mistyped the token is not
+// held on its first API call.
 // Everything else (the home LAN) gets the page without the credential.
 static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {
   using canary::net::provisioning_gate::PageToken;

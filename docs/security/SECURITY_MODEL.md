@@ -340,8 +340,9 @@ else its `403`, which the page reads as "tap BOOT". A request with no
 `Authorization` header is no strike, so a dashboard tab loaded without the
 token, which polls with no header, arms nothing. A BOOT tap that hands an
 address the token, on the receipt or on the page load it unlocks, ends that
-address's backoff as a right bearer would (sweep F341). The dashboard
-drops a token the device refuses and shows its unlock banner again, so a
+address's own backoff as a right bearer would (sweep F341), never the shared
+overflow's (`auth_handed_token()` frees only the address's own slot). The
+dashboard drops a token the device refuses and shows its unlock banner again, so a
 mistyped paste is dropped at its first refusal instead of being sent on
 every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
@@ -511,8 +512,9 @@ saved; the hold, or Forget Wi-Fi, followed by that setup drops it, and
 reopens that door. A wrong bearer
 on the receipt is a strike even when the setup-door claim or the BOOT tap
 then serves it, and the claim or the tap
-that serves ends that address's backoff, as a right bearer would (sweep
-F341). The key is the request's socket peer address, never a
+that serves ends that address's own backoff, as a right bearer would, never
+the shared overflow's: an address held only through the overflow stays held
+(sweep F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a
 deliberate denial from the LAN: a landing session can still reboot the unit
 (`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's

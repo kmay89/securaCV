@@ -2,7 +2,10 @@
  * SecuraCV Canary WAP — the Bluetooth setup door (Improv Wi-Fi over BLE)
  *
  * The open Improv Wi-Fi standard, on the pairing channel's NimBLE server,
- * for a WAP nobody owns yet: while no credentials are stored, for the
+ * for a WAP nobody owns yet (or one whose owner held BOOT 10 s or forgot its
+ * Wi-Fi: both keep the identity and the token, and the door goes to
+ * whichever client connects first, docs/design/magic_pairing.md §2.2):
+ * while no credentials are stored, for the
  * first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after the last POWER
  * CYCLE — a software reset carries the spent time over, see below), a
  * phone hears it (Opera's beacon carries FLEET_BEACON_FLAG_SETUP_OPEN and

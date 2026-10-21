@@ -264,7 +264,8 @@ those bodies `"replay":true`. On the canary base
   space survives it; only the 30 s hold (`ResetScope::Everything`) clears the
   `securacv` namespace, the floor and the ceiling with it, and the witness
   identity and chain too, so every hub and display that pinned the device
-  sees a stranger; a canary-wap has no reset path, so its owner flashes it with the
+  sees a stranger; a canary-wap's 10 s BOOT hold (`factory_reset_by_hold()`)
+  keeps both, so its owner flashes it with the
   flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
   with the rest of NVS, and does not restore the flasher's pre-erase backup
   afterwards (it would bring the counter back). Either way the owner then

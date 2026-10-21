@@ -123,13 +123,17 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         — maintainer to confirm (changing them is a `COPY` edit only).
 
 - [ ] **Recovery-safe flows**
-  - [ ] Guided factory-reset confirmation UX (with explicit data-loss warning).
+  - [ ] Guided factory-reset confirmation UX (with an explicit warning of
+        what it clears and that it reopens the setup door).
         **Open — its own change, blocked on a maintainer decision:** today the
-        WAP has no factory-reset route at all (BOOT held ≥ 3 s is the only
-        path). Whether `POST /api/factory-reset` may exist is the decision;
+        WAP has no factory-reset route at all (BOOT held 10 s,
+        `factory_reset_by_hold()`, is the only path; it clears the saved
+        Wi-Fi, the broker row and the name, keeps the identity, the chain and
+        the token, and reopens the first-come Bluetooth setup door). Whether
+        `POST /api/factory-reset` may exist is the decision;
         the recommendation is yes, but only behind the Bearer credential AND
         a BOOT-tap `provisioning_gate_take()` (a remote credential alone must
-        never be able to wipe a witness), with a two-step confirmation in the
+        never be able to reopen the setup door), with a two-step confirmation in the
         companion PWA, `total_handlers` raised, and both route audits kept
         green.
   - [x] Credential reset path without the serial monitor: one BOOT tap

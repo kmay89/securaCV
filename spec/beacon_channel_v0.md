@@ -71,7 +71,7 @@ Critically: the three channels share the radio (via `mesh_channel_policy`) and t
 
 A device's Beacon identity is its persistent Ed25519 device pubkey — **the same pubkey used by Opera and witness records**. This is a deliberate choice:
 
-- Reuses the existing key-management infrastructure (NVS, eFuse-derived flash encryption, key generation at first boot).
+- Reuses the existing key-management infrastructure (the key in NVS, plaintext at rest on every tier today since flash encryption does not cover NVS, see the threat table below; key generation at first boot).
 - Allows Beacon receivers to also be Opera members (a typical deployment: 1–3 Canaries in your home are Opera peers AND members of the building Beacon set).
 - Provides a single auditable identity per device for safety-critical claims.
 

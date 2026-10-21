@@ -253,7 +253,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Boot count persistence | ✅ | ✅ | ✅ | ✅ |
 | Chain sequence persistence | ✅ | ⚠️ Basic | ✅ | ⚠️ |
 | Previous hash persistence | ✅ | ❌ | ✅ | ⚠️ |
-| Factory reset via BOOT button | ✅ (short/long press) | ❌ | ✅ (5s hold) | ❌ |
+| Factory reset via BOOT button | ✅ (short/long press) | ✅ (10 s hold: Wi-Fi, broker, name; identity and token kept) | ✅ (10 s: credentials + settings, identity kept; 30 s: wipe, identity too) | ❌ |
 | API token NVS storage | ✅ | ❌ | ❌ | ❌ |
 | TLS cert NVS storage | ✅ | ❌ | ❌ | ❌ |
 | WiFi credentials NVS storage | ✅ | ❌ | ❌ | ❌ |
@@ -451,7 +451,7 @@ bench-validated; CI compiles it on (`firmware.yml`, compile-only).
 | `verify_device.py` | ✅ | eFuse verification (pre/post provisioning) |
 | `provision_canary.sh` | ✅ | Full workflow with --dry-run |
 | `create_manifest.py` | ✅ | Fleet device manifest management |
-| `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env; compile-only in CI (F42), no bench pass |
+| `platformio_secure.ini` | ✅ | the secure env: its sdkconfig stages Secure Boot v2 and flash encryption (commented out) and names NVS encryption, all inert under `framework = arduino`; it sets `SECURACV_REQUIRE_FLASH_ENCRYPTION=1`, so it refuses the identity key on every board; compile-only in CI (F42), no bench pass |
 | `partitions_secure.csv` | ✅ | OTA A/B + `nvs_keys`; `nvs` itself is not flagged `encrypted` (NVS encryption, not flash encryption, protects it — none under `framework = arduino`) |
 | BT disabled at compile time | ✅ | in `dev`, `release` / `release_ha` (and the board envs that extend it) and the `firmware/provisioning/platformio_secure.ini` envs: `FEATURE_BLE=0`, `FEATURE_BLE_SCAN=0`, `FEATURE_BLE_STATUS=0` and the `[env]` `lib_ignore` of `securacv_ble_scan` / `securacv_ble_status`; only `[env:full]` compiles BLE in. (Until 2026-10-09 this row credited the secure env's `-DFEATURE_BLUETOOTH=0`, which gated no code.) CVE-2025-27840 mitigation |
 

@@ -5,8 +5,9 @@
  * PR 5b. Owns the 32-byte per-device secret that hash_beacon_id()
  * uses. The key is generated once on first boot via esp_fill_random()
  * and persisted to NVS under the existing "securacv" namespace
- * (mirroring opera_secret's hygiene — flash-encryption gate is the
- * deployment-layer responsibility).
+ * (not gated on flash encryption, unlike the opera_secret, and plaintext
+ * in NVS on every tier today: flash encryption does not cover NVS;
+ * common/identity/key_at_rest.h).
  *
  * Design choices:
  *   • The key is module-internal — callers never see raw key bytes;

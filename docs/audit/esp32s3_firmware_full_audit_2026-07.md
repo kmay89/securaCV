@@ -437,7 +437,10 @@ pure-logic pieces are host-tested.
   and **reuse sequence numbers**, weakening the tamper-evidence chain.
 
 Full-potential gaps: Secure Boot v2 + Flash Encryption exist as a reference (`partitions_secure.csv`)
-but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today; a
+but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today
+*(amended 2026-10-21: and would on a FULL build with Secure Boot and flash encryption too, since
+flash encryption does not cover NVS and NVS encryption is not available under
+`framework = arduino`; `key_at_rest.h`)*; a
 PSRAM-backed deferred-write ring would stop record loss while the SD card is absent (the mechanism
 already exists for other rings); the ULP-RISC-V / RTC domain is used only for a crash breadcrumb.
 

@@ -12,7 +12,7 @@
 // a single PILOT — the healthiest reachable Canary — and the rest of the
 // fleet is not touched until the pilot has actually come back on the new
 // network. A wrong password strands one device (which the BLE provisioning
-// service and the BOOT-button portal can still rescue), never the fleet.
+// service and its own setup network can still rescue), never the fleet.
 //
 // The second rule is about what the password crosses on its way (roadmap
 // row 13): the Bluetooth lane is bonded — encrypted end to end — and an
@@ -222,8 +222,9 @@ enum FleetWiFiRollout {
     static let didNotReturn =
         "Didn't answer on the new network within 90 seconds. It may still be "
         + "rejoining — pull down to check again in a moment. If the password "
-        + "was wrong, this Canary's Bluetooth rescue or its setup portal "
-        + "(hold BOOT) will take the correction."
+        + "was wrong, this Canary's Bluetooth rescue or its own setup network "
+        + "(SecuraCV-wap-XXXX, which it raises while it is off your Wi-Fi) will "
+        + "take the correction."
 
     /// Why the fleet is still waiting, said plainly on every follower row.
     static let waitingReason = "Waiting for the first Canary to prove the password."

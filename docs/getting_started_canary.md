@@ -534,7 +534,11 @@ the device ID, the dashboard's access token, and the Canary's own Wi-Fi
 name and password. Keep it somewhere private — anyone holding it can use
 the dashboard, and the iPhone app pairs from it.
 
-**Why the dashboard asks to be unlocked on your home network.** The page
+**Why the all-rounder Canary's dashboard asks to be unlocked on your home
+network.** (This and the next paragraph are the all-rounder Canary's,
+`firmware/canary`. A WAP's dashboard shows no such banner: its sign-in's
+**Use BOOT Tap Once** asks first, and you press BOOT only when the page
+says to.) The page
 you load carries the key that every button on it uses. Over the Canary's
 own Wi-Fi only your phone can reach it, so the key comes with the page.
 On your home network any device could load that page, so the Canary sends
@@ -547,11 +551,16 @@ it *without* the key and shows a banner with three ways in:
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.
 
-Each BOOT tap unlocks exactly one thing within those 30 seconds: one
-page load, or one app or browser fetching the recovery kit — whichever
-asks first. A page you unlocked with the tap can save the recovery kit
-without a second tap; the iPhone app fetching the kit on its own needs a
-fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
+On the all-rounder Canary each BOOT tap unlocks exactly one thing within
+those 30 seconds: one page load, or one browser fetching the recovery kit —
+whichever asks first. A page you unlocked with the tap can save the
+recovery kit without a second tap. On a WAP the tap unlocks no page load:
+it hands the recovery kit only to the one device asking for it, so click
+**Use BOOT Tap Once** (or **Save my recovery kit**) first and press BOOT
+when the page says to; if another device on your network asks during the
+same tap, the WAP hands out nothing and the page says so. The iPhone app
+never fetches the kit with a tap: it pairs during setup, or from a kit you
+open in it. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
 **Encrypted dashboard (development and full images only, for now).** On
@@ -560,9 +569,11 @@ is done; typing `http://` sends you there. Setup itself stays on plain
 `http://`, because the phone's sign-in sheet shows a blank page for a
 certificate it does not recognize. Your browser will warn that the
 certificate is not trusted: the Canary made it for itself, and the iPhone
-app checks it against the fingerprint in your recovery kit instead. A
-factory reset makes a new certificate, so pair the iPhone app again
-afterwards. The standard release image does not turn this on yet.
+app checks it against the fingerprint in your recovery kit instead. The
+10-second BOOT reset keeps the certificate, so that fingerprint stays
+right; holding BOOT to 30 seconds, or a full erase in a flasher, makes a
+new one, so pair the iPhone app again after either. The standard release
+image does not turn this on yet.
 *(New in 2026-09; its first automated build is pending, and it is not yet on a bench
 device.)*
 
@@ -851,10 +862,12 @@ crosses the privacy barrier just because the chain is involved.
 ## What you can break
 
 You can't brick the device through the dashboard. You *can* lose your
-witness chain by factory-resetting it (the Ed25519 device key is
-re-derived from a fresh hardware-RNG seed and the previous chain is no
-longer signable). If you've been using the Canary as a witness device
-for evidence, **export the chain before you factory-reset** —
+witness chain by erasing the board: a full erase in a flasher (or, on the
+all-rounder Canary, holding BOOT to 30 seconds) removes the Ed25519 device
+key, the next boot makes a new one from a fresh hardware-RNG seed, and the
+previous chain is no longer signable. The 10-second BOOT reset keeps the
+key and the chain. If you've been using the Canary as a witness device
+for evidence, **export the chain before you erase it** —
 **Settings → Export → Witness chain**.
 
 ---

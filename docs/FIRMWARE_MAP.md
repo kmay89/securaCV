@@ -176,6 +176,9 @@ MQTT, bearer token and (where present) the Ed25519 private key as plaintext
 NVS entries under namespace `securacv`. No shipped partition table has an
 `encrypted` flag or `nvs_keys` partition; `firmware/provisioning/` holds the
 opt-in secure kit (flash encryption + Secure Boot v2) that no CI leg builds.
+*(Amended 2026-10-21: `firmware.yml` compiles the kit's two envs,
+compile-only, since #1744; the kit stages flash encryption and Secure Boot,
+commented out, rather than enabling them, and neither would encrypt NVS.)*
 NVS encryption is not configurable on either pinned Arduino core as built
 (`platformio_secure.ini:63-76`, `key_at_rest.h:16-33`): the precompiled
 `sdkconfig` leaves it off and `-DSDKCONFIG_DEFAULTS` is inert. Only the PIO
@@ -441,7 +444,7 @@ in this program (the matrix with per-target cells is [`PARITY.md`](PARITY.md)).
 | One onboarding state machine for every firmware | four portals; the shared one on three products | a pure `onboarding_fsm.h` core every portal consumes (timers, AP hold, recovery, factory-reset hold), adopted by the shared portal and the display, with the WAP and canary (PIO) consuming the pure rules through staged copies |
 | SoftAP kept alive 2 min after join | 25 s on the shared portal and display; 120 s AP grace on the WAP | 120 s in the shared core |
 | Multiple saved networks + auto-reconnect backoff | one slot everywhere; backoff shared on four trees | a `wifi_store.h` ring of saved networks (pure, host-tested) behind the shared portal |
-| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path; no fake encryption |
+| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path *(amended 2026-10-21: the path is NVS encryption, after the arduino-as-IDF-component migration, roadmap item 9; the secure kit's flash encryption does not cover NVS)*; no fake encryption |
 | Recovery re-raise without wipe after N minutes | present on five trees with differing rules; a once-online unit never re-raises on three | the shared core adds the "saved network gone for N minutes" raise |
 | Hold-button factory reset | canary (PIO) only (5 s, wipes identity too) | 10 s hold on every board with a BOOT pin, credentials-only by default, shared pure classifier |
 | Captive portal one shared page | three page templates | the shared portal's page becomes the template; the display's is reconciled to it |
@@ -466,8 +469,10 @@ marks a cell ⚠️ or ❌ with a footnote. The open items, so nobody has to
 re-derive them from the matrix:
 
 - **Credentials at rest** stay plaintext NVS on every shipped build; the
-  posture is reported as `creds_at_rest` on every node and the secure kit is
-  the documented path (PARITY footnote 1).
+  posture is reported as `creds_at_rest` on every node, and NVS encryption,
+  after the arduino-as-IDF-component migration, is the documented path; the
+  secure kit is not, since flash encryption does not cover NVS (PARITY
+  footnote 1).
 - **The WAP and the display keep their own mDNS TXT** (`host`, `role`, `fw`
   are the shared keys; `caps` and `coord` are not emitted yet) and **are not
   on the SCVP peer protocol** — neither is the flagship, whose `release` slot

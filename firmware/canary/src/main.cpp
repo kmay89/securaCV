@@ -2305,7 +2305,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
+  Serial.println("║  BOOT: tap=gate, 2s=info, 10s=reset (key kept), 30s=wipe     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them

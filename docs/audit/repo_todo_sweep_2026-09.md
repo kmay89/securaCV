@@ -2968,7 +2968,8 @@ so — see D2 below.)
   so one host's wrong bearers held every other host's right token at `429`.
   The F289 follow-up's replay refused 86 of 86 owner polls. The likeliest
   striker was the owner's own phone, still polling a reset unit with its old
-  token.
+  token. *(Amended 2026-10-21, #1843: a re-flashed unit; the 10 s hold keeps
+  the token, and only a full erase in a flasher changes it, F352.)*
   What it is now. The backoff is keyed by the request's socket peer address,
   never a header. It is read by `request_peer_key()` (`getpeername`), the
   sketch's one peer reader, and `auth_request_source()` turns that key into
@@ -3040,13 +3041,20 @@ so — see D2 below.)
   or wait until it stops, and the hold is named as no way out; on the
   flagship, which has no Bluetooth lane that changes its Wi-Fi, wait until
   it stops, or hold BOOT 10 s and set the unit up on a network that host
-  is not on. `test_auth_backoff.cpp`'s overflow row starts from the empty
-  table a restart leaves: eight sources fill the slots, a ninth strikes the
+  is not on. (Corrected by #1843's later reviews, in the amendments below:
+  the iPhone app never reaches a WAP's lane, A65, so the sentence the docs
+  use now names the owner's browser on `POST /api/wifi/connect` as the
+  WAP's way out, with its caveats, and the iPhone's lane as no way out
+  until A65 is settled.) `test_auth_backoff.cpp`'s overflow row starts from
+  the empty table a restart leaves: eight sources fill the slots, a ninth strikes the
   overflow, a tenth untracked source is held, and a success from it frees
   nothing.
   *Amended once more 2026-10-21 (#1843's first review):* the bonded lane
-  gets the owner out only while that host holds no bond of its own. Any
-  landing session can pair a Bluetooth peer: it can turn pairing on
+  gets the owner out only while that host holds no bond of its own.
+  (Corrected by the fourth and fifth amendments below: radio range is no
+  bound, since any landing session can take the lane away, and the lane is
+  no way out today, since the iPhone app never reaches a WAP's CREDS, A65.)
+  Any landing session can pair a Bluetooth peer: it can turn pairing on
   (`POST /api/bluetooth/settings`), start it, read the passkey from
   `GET /api/bluetooth` and confirm it, all behind `api_auth_check()`, which
   takes the session cookie (F346). A bonded peer may write the lane's
@@ -3148,7 +3156,8 @@ so — see D2 below.)
   `test_receipt_authority.cpp` (the reader's text). The ESP32 compile is
   CI's; not run on a device (U1: the "one host's wrong bearers hold only
   that host" row in `hardware_verification_checklist.md`). Filed: F352
-  (iOS, a reset unit's stale pairing).
+  (iOS, a reset unit's stale pairing; amended 2026-10-21, #1843: a
+  re-flashed unit's, since the 10 s hold keeps the token).
   *Review (2026-10-19, the PR's second round):* the strike's console line
   is now read by a test: it prints the count and the backoff, with
   " (shared overflow)" only for a strike that landed there, and names no
@@ -3243,9 +3252,11 @@ so — see D2 below.)
   port, filed by #1832.
   *(2026-10-21, #1843's first review:)* a peer bonded this way may also
   write the WAP's Wi-Fi over the bonded lane (`ble_provision.cpp`'s CREDS),
-  the way out F343's posture names from under a host striking from nine or
-  more addresses, and spend that lane's ten writes an hour, so the decision
-  bears on that way out too. From code; not probed.
+  which F343's posture then named as the way out from under a host striking
+  from nine or more addresses (corrected by the third review's note below:
+  the way out is the owner's browser, and the iPhone's lane is no way out
+  until A65 is settled), and spend that lane's ten writes an hour, so the
+  decision bears on that way out too. From code; not probed.
   *(2026-10-21, #1843's second review:)* a session needs no peer in range
   to take that way out away: `POST /api/bluetooth/disable` turns
   Bluetooth off, a saved setting that restarts and the 10 s hold keep,
@@ -3520,9 +3531,11 @@ so — see D2 below.)
   is the shape a per-source budget could take. Decide whether the budget
   stays per device, becomes per source, or both. From code; not probed.
   Found by the F340 decision's security review, 2026-10-19.
-- [ ] **F352 [code] iOS: a pairing for a reset Canary keeps polling with its
-  old token.** A factory reset that regenerates the WAP's key changes both
-  its token and its `device_id`. `DeviceStore.add`
+- [ ] **F352 [code] iOS: a pairing for a re-flashed Canary keeps polling with
+  its old token.** A full erase in a flasher, which regenerates the WAP's key
+  (the 10 s hold keeps the key and the token), changes both its token and its
+  `device_id`. *(Amended 2026-10-21, #1843: this item had said a factory
+  reset, which keeps both.)* `DeviceStore.add`
   (`ios/Sources/SecuraCV/Security/DeviceStore.swift`) dedupes by id, so the
   old row stays beside the new one, and `FleetStore`'s 20 s refresh loop
   (`ios/Sources/SecuraCV/App/FleetStore.swift`, `startRefreshLoop()`) keeps
@@ -5044,6 +5057,11 @@ so — see D2 below.)
   stranger. The note at `space_low()` (both trees, the `kIdSpaceBase` line
   untouched) and `docs/csi_developer_api.md` say so now; the canary-wap half
   is unchanged. No behavior changed; not run on a device.
+  *Amended 2026-10-21 (#1843):* the canary-wap half said it has no reset
+  path; it has the 10 s hold (`factory_reset_by_hold()`, #1816), which keeps
+  `csi`/`ev.next` and `csi.evsent`, so the full erase is still its
+  recovery. The note at `space_low()` (both trees) and
+  `docs/csi_developer_api.md` say so now.
 - [x] **F83 [code] The canary-wap can commit an event before its id floor
   is restored.** `csi_integration::init` calls `register_v1_modules()`
   before `apply_event_id_floor_from_nvs()`. `ble_scout_init()` emits
