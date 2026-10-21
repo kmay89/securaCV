@@ -863,7 +863,12 @@ clean: clean-wap-daily-summary
 # namespace (sweep F220): chirp_channel.cpp's load_settings() and
 # save_settings(), and the loop()'s self-test stamp read in canary_wap.ino
 # (its `if (!s_selftest_nvs_loaded) {` block, cut by line), through the real
-# nvs_store.h's NvsSession, whose read-only open now asks IDF first.
+# nvs_store.h's NvsSession, whose read-only open now asks IDF first. And the
+# key read fails closed (sweep F360, the canary's rule): stored_key_length(),
+# nvs_load_key(), nvs_store_key() and establish_identity_key(), with the
+# one-line KeyLoad enum, over the same fake NVS, which can also fail IDF's
+# blob lookup and Preferences' read: only IDF's ESP_ERR_NVS_NOT_FOUND may
+# lead to a new key, and a refused read writes nothing.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
@@ -884,10 +889,12 @@ $(FIRSTBOOT_PWR): $(SRC_DIR)/power_monitor.h $(FIRSTBOOT_CUT) Makefile
 $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	@test "$$(grep -cE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
 	  echo "canary_wap.ino: no single NVS_KEY_PRIV line for nvs_load_key()" >&2; exit 1; }
-	@grep -nE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino | \
+	@test "$$(grep -cE '^enum class KeyLoad : uint8_t \{ Loaded, Absent, Refused \};$$' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single one-line KeyLoad enum for nvs_load_key()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_PRIV +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
-	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
-	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+	awk -v 'sigs=static esp_err_t stored_key_length(|static KeyLoad nvs_load_key(|static bool nvs_store_key(|static bool establish_identity_key() {' \
+	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
 	awk -v 'sigs=static void load_settings() {|static void save_settings() {' -f $(FIRSTBOOT_CUT) \
@@ -1894,6 +1901,77 @@ clean-mqtt-identity:
 
 run: run-mqtt-identity
 clean: clean-mqtt-identity
+
+# The sketch's HMAC-SHA256 fails closed (sweep F359): hmac_sha256() answers
+# whether every mbedTLS step ran and zeroes its output when one did not, and
+# its callers refuse. secure_zero(), hmac_sha256(), the unambiguous alphabet
+# (the awk below takes its two lines, each once), format_api_token_string(),
+# derive_api_token(), derive_ap_password() and fingerprint_is_nonzero() are
+# cut verbatim out of canary_wap.ino, resolve_ap_password() on its own (the
+# suite includes it twice, as a release and as a development build), and the
+# backup format's constants (each once) with backup_chain() and
+# restore_chain() out of data_mgmt_api.h (firmware/tests_host/
+# cut_functions.awk). Under them: a stand-in for mbedTLS's streaming HMAC,
+# declared by firmware/tests_host/stubs/mbedtls_md and defined in the suite
+# over OpenSSL, that fails the step the test names; and the fake SD card
+# (stubs/sd_fake). provision_device() is cut on its own too, over stand-ins
+# for everything it calls but the two mints, so a refused mint is run against
+# the chain state it leaves. It also reads every source in the sketch
+# directory (the path is passed in), so it re-runs on every `make`: each call
+# of the three uses its result.
+HMACFAIL_BIN     = test_wap_hmac_fail
+HMACFAIL_SRC     = test_wap_hmac_fail.cpp
+HMACFAIL_KEY     = test_wap_hmac_fail_key.inc
+HMACFAIL_RESOLVE = test_wap_hmac_fail_resolve.inc
+HMACFAIL_DM      = test_wap_hmac_fail_datamgmt.inc
+HMACFAIL_PROV    = test_wap_hmac_fail_prov.inc
+HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV)
+HMACFAIL_CUT     = ../../../tests_host/cut_functions.awk
+HMACFAIL_MD      = ../../../tests_host/stubs/mbedtls_md
+CUT_INCS        += $(HMACFAIL_INCS)
+
+$(HMACFAIL_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk '/^static const char UNAMBIGUOUS_ALPHABET\[\] =$$/ { a++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  /^static const size_t UNAMBIGUOUS_LEN = / { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print; next } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  END { if (a != 1 || n != 1) { print "canary_wap.ino: UNAMBIGUOUS_ALPHABET found " a + 0 " time(s), UNAMBIGUOUS_LEN " n + 0 ", expected once each" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp
+	awk -v 'sigs=static void secure_zero(|static bool hmac_sha256(|static void format_api_token_string(|static bool derive_api_token(|static bool derive_ap_password(|static bool fingerprint_is_nonzero(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_RESOLVE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool resolve_ap_password(char* out_password, size_t out_len) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool provision_device() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
+	awk '/^static const (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 4) { print "data_mgmt_api.h: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/data_mgmt_api.h > $@.tmp
+	awk -v 'sigs=inline bool backup_chain(|inline bool restore_chain(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
+                 $(SRC_DIR)/chain_state.h $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \
+	  -I stubs/sd_fake -I $(HMACFAIL_MD) -I $(SRC_DIR) -I . \
+	  -DWAP_HMAC_KEY_INC='"$(HMACFAIL_KEY)"' \
+	  -DWAP_HMAC_RESOLVE_INC='"$(HMACFAIL_RESOLVE)"' \
+	  -DWAP_HMAC_DATAMGMT_INC='"$(HMACFAIL_DM)"' \
+	  -DWAP_HMAC_PROV_INC='"$(HMACFAIL_PROV)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HMACFAIL_SRC) -lcrypto
+
+.PHONY: run-wap-hmac-fail clean-wap-hmac-fail
+run-wap-hmac-fail: $(HMACFAIL_BIN)
+	$(call run_marked,$(HMACFAIL_BIN))
+clean-wap-hmac-fail:
+	rm -f $(HMACFAIL_BIN) $(HMACFAIL_INCS)
+
+run: run-wap-hmac-fail
+clean: clean-wap-hmac-fail
 
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and

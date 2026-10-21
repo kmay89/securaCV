@@ -165,6 +165,12 @@ bool get_peer(const uint8_t mac[MESH_TRANSPORT_MAC_LEN], Peer* out);
  * are populated. Order is implementation-defined. */
 size_t list_peers(Peer* out, size_t max);
 
+/* The clock a Peer's last_seen_ms is stamped on: millis() on the device,
+ * the test clock (test::set_now_ms) in a host build. mesh_session stamps
+ * its verified-frame liveness on it too (F324), so a member's age reads
+ * the same way whichever layer recorded the arrival. */
+uint32_t clock_ms();
+
 /* ──────────────────────────────────────────────────────────────────────────
  * SEND
  * ────────────────────────────────────────────────────────────────────────── */

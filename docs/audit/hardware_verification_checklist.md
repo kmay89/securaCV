@@ -145,11 +145,16 @@ host tests assert they do, on real radio.
       `[!!] identity key not loaded: flash encryption required by this
       build but not active` (the load is refused before NVS is read, so it
       prints whether or not a default image had already stored a key), then
-      `[!!] identity key not stored: ...` with the same reason, then
-      `Device provisioning failed`; NVS never gains a new `privkey` entry and
-      an existing one is left as it was.
-    - opt-in image, FE-on board: provisioning ALSO halts, the same two
-      lines with the reason `encrypted NVS required by this build but NVS
+      `[!!] Identity key not used: no new key is made in its place,
+      provisioning cannot continue (see the identity key line above)`
+      (also printed whether or not a key is stored), then
+      `Device provisioning failed - HALTING`. No keypair is generated (no
+      `Generating new keypair` line; since sweep F360 the refusal is not
+      read as "no key stored", so the `[!!] identity key not stored: ...`
+      line this row used to expect no longer prints); NVS never gains a new
+      `privkey` entry and an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same lines
+      with the reason `encrypted NVS required by this build but NVS
       encryption is not active (flash encryption alone does not cover NVS)`.
       Under `framework = arduino` the opt-in image refuses on every board —
       that is the policy, not a fault.
@@ -164,7 +169,9 @@ host tests assert they do, on real radio.
       reading is a FAIL (the disable powered down / reset the ADC under the
       power monitor).
   - Policy under test: `firmware/common/identity/key_at_rest.h`
-    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`); the load
+    and its caller's halt by `firmware/tests_host/test_nvs_load_key.cpp`,
+    whose second build is the opt-in image.
   - Artifact: `docs/audit/repro/K1/`.
 
 - [ ] **K2 — chain head survives a power cut between record and persist**
@@ -1143,11 +1150,14 @@ CI's. Owner: U1.
     new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
-## PlatformIO opera membership: a join needs a leave first, the paired heartbeat, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215) — on-device verification
+## PlatformIO opera membership: a join needs a leave first, the paired and periodic heartbeats, liveness from verified frames, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215, F324) — on-device verification
 
 Code: `mesh_session.cpp` (`execute_request`'s PAIR_JOIN refusal,
-OPERA_EXISTS; the one signed `HEARTBEAT` after NOTIFY_PAIRED and on the
-first `process()` pass after a boot that bound a member),
+OPERA_EXISTS; the signed `HEARTBEAT` after NOTIFY_PAIRED and on the
+first `process()` pass after a boot that bound a member, and since F324
+every 30 s ± 3 s from `process()`, `arm_heartbeat`; each member's
+liveness from its last verified frame, `verified_seen_ms` and
+`verified_state`),
 `handle_mesh_pair_join` (409 `opera_exists`) and the peers handler
 (`mesh_api::peer_views_from_status`) in
 `firmware/canary/lib/securacv_network/src/securacv_network.cpp`, and the
@@ -1179,10 +1189,51 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     CONNECTED with a `last_seen_sec` of a few seconds (before F162:
     OFFLINE, "never", until some opera frame), and the initiator's COMPLETE
     copies stop after the joiner's heartbeat (before: 149 copies over five
-    minutes). After the reboot the initiator hears the joiner once more at
-    the joiner's first loop pass when the router is on the softAP's channel
-    1, and not when it is not (F320, open).
+    minutes). After the reboot the initiator hears the joiner at the
+    joiner's first loop pass when the router is on the softAP's channel 1,
+    and otherwise within one heartbeat interval, about 33 s, of the
+    joiner's station joining its router (F320, bounded by F324).
   - Artifact: `docs/audit/repro/F162/paired-heartbeat/`.
+- [ ] **A quiet PlatformIO opera reads its members CONNECTED, and a gone one STALE then OFFLINE (F324)**
+  - Setup: two PlatformIO canaries (`[env:full]`) paired into an opera, on
+    the same router channel, serial on both, the API tokens; a third ESP32
+    as an ESP-NOW sniffer on that channel (and, for the last step, flashed
+    to send any ESP-NOW frame from a given MAC).
+  - Repro: leave both idle 10 minutes; read `GET /api/mesh` and
+    `GET /api/mesh/peers` on each, and log the sniffer's frames from each
+    Canary's MAC. Unplug one and read the other's `/api/mesh/peers` every
+    10 s for 6 minutes. Plug it back in, let it rejoin, unplug it again,
+    and this time have the third ESP32 send a junk frame from the unplugged
+    Canary's MAC every 30 s.
+  - Expected: after the idle 10 minutes both read `state` ACTIVE,
+    `peers_online` 1, the other CONNECTED with `last_seen_sec` of 34 or
+    less. The sniffer shows one signed heartbeat from each MAC every
+    27-33 s (plus one loop pass). After each unplug the other Canary reads
+    it STALE within about 90-100 s and OFFLINE within about 5 minutes, also
+    while the third ESP32 sends junk from its MAC. Do not reboot or power
+    off the reading Canary in between: once it is back, every heartbeat the
+    member sent while it was down, and after a reboot every frame it heard
+    since its last 5-minute replay-counter save, is a frame it never heard
+    or no longer remembers, and a recorder that sends those keeps the member
+    CONNECTED about 90 s each (the threat model's documented residual, not
+    this row's). Last, on flash-encrypted boards: erase both boards' NVS
+    (so neither holds the other's key or a replay tombstone), power both
+    up, pair them within the first 4 minutes of the rebooting board's
+    uptime, and reboot it within a few seconds of the pairing confirmation,
+    once its `GET /api/mesh/peers` reads the other CONNECTED (the save
+    follows the member's first frame there; a reboot before it restores no
+    counter, the threat model's residual); its boot log reads
+    `[OK] Restored 1/1 replay counters from NVS` (the
+    first-counter save). The periodic replay save runs every 5 minutes of
+    uptime (`main.cpp`'s timer starts at boot, not at the pairing), so a
+    reboot minutes after a pairing can follow a periodic save and print the
+    same line on firmware without the first-counter save; only a pairing
+    and reboot both inside the board's first 300 s of uptime tell them
+    apart (before review round 2 that reboot restored none and printed no
+    such line). Before F324: CONNECTING, the other OFFLINE with
+    `last_seen_sec` about 600 after 10 idle minutes, and nothing on the
+    sniffer; with the spoofing ESP32, CONNECTED indefinitely.
+  - Artifact: `docs/audit/repro/F324/quiet-opera/`.
 - [ ] **The peers list is the session's, without flash encryption**
   - Setup: a PlatformIO canary in an opera, flashed without flash
     encryption.
@@ -2460,7 +2511,9 @@ Code: `firmware/projects/canary-wap/arduino/canary_wap/setup_wizard.h`
 (`load_nvs_state()`): each read-only open of `securacv` that can come before
 `provision_device()`'s key store creates the namespace asks IDF's
 `nvs_open()` first (`csi_module_settings_nvs::begin_read_only()` /
-`probe_namespace()`). Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
+`probe_namespace()`; the key read through its own `stored_key_length()`
+since F360, which asks `nvs_get_blob()` for the key's length too).
+Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
 whose `stubs/first_boot` NVS counts the error line Arduino-ESP32's
 `Preferences::begin()` logs for a namespace that is not there, with source
 pins holding `setup()`'s order); that IDF's `nvs_open()` answers
