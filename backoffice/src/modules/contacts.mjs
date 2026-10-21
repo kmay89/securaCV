@@ -6,7 +6,13 @@ import { nowIso } from '../db.mjs';
 import { token } from '../http.mjs';
 
 export const normEmail = (s) => String(s || '').trim().toLowerCase();
-export const validEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail(s)) && normEmail(s).length <= 254;
+export function validEmail(s) {
+  const em = normEmail(s);
+  if (em.length < 3 || em.length > 254 || /\s/.test(em)) return false;
+  const at = em.indexOf('@'); if (at < 1 || at !== em.lastIndexOf('@')) return false;
+  const domain = em.slice(at + 1); const dot = domain.lastIndexOf('.');
+  return dot > 0 && dot < domain.length - 1;
+}
 
 export function upsertContact(db, { email, name = null, org = null, kind = 'person', source = 'manual' }) {
   const em = normEmail(email);

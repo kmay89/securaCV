@@ -19,7 +19,7 @@ export function upsertProbe(db, p) {
     p.name, p.url, p.expect_status || 200, p.expect_text || null, p.interval_s || 300, p.enabled ?? 1, p.public ?? 1);
   return db.get('SELECT * FROM probes WHERE name = ?', p.name);
 }
-export const listProbes = (db, { publicOnly = false } = {}) => db.all(`SELECT * FROM probes WHERE ${publicOnly ? 'public = 1' : '1=1'} ORDER BY id`);
+export const listProbes = (db, { publicOnly = false } = {}) => db.all('SELECT * FROM probes WHERE (? = 0 OR public = 1) ORDER BY id', publicOnly ? 1 : 0);
 export const deleteProbe = (db, id) => db.run('DELETE FROM probes WHERE id = ?', id).changes;
 
 export async function runProbe(db, p, { fetchImpl = fetch, cfg = {}, now = nowIso } = {}) {
@@ -64,7 +64,7 @@ export function updateIncident(db, id, { status, body }) {
   db.run('UPDATE incidents SET status = COALESCE(?, status), body = COALESCE(?, body), updated_at = ?, resolved_at = CASE WHEN ? = \'resolved\' THEN ? ELSE resolved_at END WHERE id = ?', status || null, body || null, nowIso(), status || '', nowIso(), id);
   return db.get('SELECT * FROM incidents WHERE id = ?', id);
 }
-export const listIncidents = (db, { openOnly = false, limit = 20 } = {}) => db.all(`SELECT * FROM incidents ${openOnly ? 'WHERE status != \'resolved\'' : ''} ORDER BY id DESC LIMIT ?`, limit);
+export const listIncidents = (db, { openOnly = false, limit = 20 } = {}) => db.all('SELECT * FROM incidents WHERE (? = 0 OR status != \'resolved\') ORDER BY id DESC LIMIT ?', openOnly ? 1 : 0, limit);
 
 export function publicStatus(db) {
   const probes = listProbes(db, { publicOnly: true }).map(p => ({ name: p.name, ok: p.last_ok == null ? null : !!p.last_ok, checked_at: p.last_at, ms: p.last_ms, uptime_90d: uptime(db, p.id) }));

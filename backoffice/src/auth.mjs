@@ -2,7 +2,7 @@
 // cookie, a CSRF token per session, and bearer tokens for the API/CLI.
 // No user table: a company of one does not need roles, and adding them
 // later is a migration, not a redesign.
-import { scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { scryptSync, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { nowIso } from './db.mjs';
 import { token, safeEqual } from './http.mjs';
 
@@ -71,17 +71,21 @@ export function login(db, password, code, { sessionHours = 12 } = {}) {
 export const sessionFor = (db, id) => id ? db.get('SELECT * FROM sessions WHERE id = ? AND expires_at > ?', id, nowIso()) : null;
 export const logout = (db, id) => db.run('DELETE FROM sessions WHERE id = ?', id);
 
-// --- API tokens
-const sha = (s) => createHash('sha256').update(String(s)).digest('hex');
+// --- API tokens: 32 random bytes, stored as an HMAC under the app secret so
+// neither the DB alone nor the secret alone verifies one. A bearer token is
+// high-entropy by construction, so a key-derivation function is not needed
+// (and would cost 50 ms on every API call); the HMAC keeps it unrecoverable.
+const appSecret = (db) => db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
+const tokenTag = (db, bearer) => createHmac('sha256', appSecret(db)).update(String(bearer)).digest('hex');
 export function createApiToken(db, name) {
   const t = 'bo_' + token(32);
-  db.run('INSERT INTO api_tokens (name, token_hash, created_at) VALUES (?, ?, ?)', name, sha(t), nowIso());
+  db.run('INSERT INTO api_tokens (name, token_hash, created_at) VALUES (?, ?, ?)', name, tokenTag(db, t), nowIso());
   db.audit('cli', 'auth.token.create', 'api_token', name);
   return t;
 }
 export function apiTokenFor(db, bearer) {
   if (!bearer) return null;
-  const row = db.get('SELECT * FROM api_tokens WHERE token_hash = ?', sha(bearer));
+  const row = db.get('SELECT * FROM api_tokens WHERE token_hash = ?', tokenTag(db, bearer));
   if (row) db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', nowIso(), row.id);
   return row;
 }

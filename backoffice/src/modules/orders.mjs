@@ -60,8 +60,10 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
   const allowed = { paid: ['packed', 'canceled', 'refunded'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid'], shipped: ['delivered', 'refunded'], delivered: ['refunded'] };
   if (!(allowed[o.status] || []).includes(to)) throw new Error(`cannot move ${o.number} from ${o.status} to ${to}`);
   return db.tx(() => {
-    const stamp = { packed: 'packed_at', shipped: 'shipped_at', delivered: 'delivered_at', paid: 'paid_at' }[to];
-    db.run(`UPDATE orders SET status = ?${stamp ? `, ${stamp} = ?` : ''} WHERE id = ?`, ...(stamp ? [to, nowIso(), id] : [to, id]));
+    const now = nowIso();
+    db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
+            shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
+      to, to, now, to, now, to, now, to, now, id);
     if (to === 'packed') consumeForOrder(db, o);
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ? WHERE id = ?', carrier, tracking, id);

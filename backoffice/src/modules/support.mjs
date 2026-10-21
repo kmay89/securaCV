@@ -158,9 +158,29 @@ function extractText(body, ct, cte) {
     return '';
   }
   const decoded = decodeBody(body, cte, cs).replace(/\r\n/g, '\n');
-  if (type === 'text/html') return decoded.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, '').replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  if (type === 'text/html') return htmlToText(decoded);
   if (type.startsWith('text/')) return decoded;
   return '';
+}
+
+// HTML-only mail → readable text. Not a sanitizer: the result is stored and
+// always HTML-escaped on output. A character walk, so there is no tag regex
+// to get half right; script/style bodies are dropped, block ends become
+// newlines, entities are decoded exactly once at the end.
+export function htmlToText(html) {
+  let out = '', i = 0; const n = html.length;
+  while (i < n) {
+    if (html[i] !== '<') { out += html[i++]; continue; }
+    const close = html.indexOf('>', i); if (close < 0) break;
+    const tag = html.slice(i + 1, close).trim().toLowerCase();
+    const name = tag.replace(/^\//, '').split(/[\s/]/)[0];
+    if ((name === 'script' || name === 'style') && !tag.startsWith('/')) {
+      const end = html.toLowerCase().indexOf('</' + name, close); i = end < 0 ? n : html.indexOf('>', end) + 1 || n; continue;
+    }
+    if (name === 'br' || tag === '/p' || tag === '/div' || tag === '/li' || tag === '/tr' || /^\/h[1-6]$/.test(tag)) out += '\n';
+    i = close + 1;
+  }
+  return out.replace(/&(nbsp|amp|lt|gt|quot|#39|#x27);/g, (_, e) => ({ nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'" }[e]));
 }
 
 export const supportStats = (db) => ({

@@ -1,7 +1,8 @@
 // Server-rendered HTML, one stylesheet, no client JavaScript. The admin is a
 // set of plain pages and forms so it works from a phone, a text browser and
 // an AI operator's fetch() alike.
-import { escapeHtml as e } from './http.mjs';
+import { escapeHtml } from './http.mjs';
+const e = escapeHtml;
 
 export const money = (cents, cur = 'usd') => {
   const n = (Number(cents) || 0) / 100;
@@ -41,7 +42,7 @@ export const NAV = [
 
 export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true }) {
   const navHtml = nav ? `<nav>${NAV.map(([p, l]) => `<a href="${p}" class="${path === p || (p !== '/' && path.startsWith(p)) ? 'on' : ''}">${l}</a>`).join('')}</nav>` : '';
-  const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${e(flash.text)}</div>` : '';
+  const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
 <body><header><b>${e(company)}</b>${navHtml}${nav ? '<form method="post" action="/logout" class="inline" style="margin-left:auto"><button class="quiet">Log out</button></form>' : ''}</header>
 <main>${flashHtml}<h1>${e(title)}</h1>${body}</main><footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer></body></html>`;

@@ -52,3 +52,10 @@ test('SLA: an unanswered ticket past the window is a breach; an answered one is 
   reply(db, t.id, 'on it', { cfg });
   assert.equal(slaBreaches(db).length, 0);
 });
+
+test('htmlToText drops script/style bodies, keeps block breaks, decodes entities once', async () => {
+  const { htmlToText } = await import('../src/modules/support.mjs');
+  assert.equal(htmlToText('<div>Hi<br>there &amp;lt; you</div><script>alert(1)</script><style>p{}</style><p>bye</p>'), 'Hi\nthere &lt; you\nbye\n');
+  assert.equal(htmlToText('<scr<script>ipt>x</script>'), 'ipt>x');
+  assert.equal(htmlToText('a <b'), 'a ');
+});

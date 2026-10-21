@@ -2,7 +2,8 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, html, json, text, redirect, clientIp, escapeHtml as e } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, html, json, text, redirect, clientIp, escapeHtml } from './http.mjs';
+const e = escapeHtml;
 import { layout } from './render.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
@@ -69,8 +70,8 @@ export function createApp({ db, cfg }) {
       const t = openTicket(db, { email, name: b.name || null, subject, body: msg + (b.extra ? `\n\n${JSON.stringify(b.extra)}` : ''), kind: { request: 'build_request', feedback: 'feedback', press: 'press', wholesale: 'wholesale', support: 'support' }[kind] || null, channel: 'form', cfg });
       out = { ok: true, ticket: t.number };
     } else throw new HttpError(404, 'unknown form');
-    const back = String(b._redirect || '');
-    if (back && back.startsWith(cfg.siteOrigin + '/')) return redirect(c.res, back);
+    const back = sameOriginUrl(String(b._redirect || ''), cfg.siteOrigin);
+    if (back) return redirect(c.res, back);
     if ((c.req.headers.accept || '').includes('text/html')) return html(c.res, plain(cfg, 'Thanks', out.ticket ? `Got it — ticket ${e(out.ticket)}. A person reads every one; keep an eye on ${e(email)}.` : `You're on the list for ${e(out.waitlist)}. One mail when it's in stock, nothing else.`));
     json(c.res, out, 200, corsHeaders(cfg));
   }, { public: true });
@@ -137,13 +138,17 @@ export function createApp({ db, cfg }) {
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
       const status = err.status || (err instanceof Error && !(err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError) && !/SQLITE|sqlite/i.test(String(err.code || err.message)) ? 400 : 500);
-      if (status === 500) console.error(`[backoffice] ${req.method} ${url.pathname}:`, err);
+      // Our own bug never reaches the page or the API body: it is logged here, and the
+      // client gets a generic line. A refused request (4xx) carries the rule it broke.
+      if (status === 500) console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err);
+      const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : String(err.message);
       if ((req.headers.accept || '').includes('text/html') && !url.pathname.startsWith('/api')) {
-        const back = req.headers.referer && new URL(req.headers.referer, 'http://x').pathname;
-        if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(err.message)}`);
-        return html(res, plain(cfg, `${status}`, e(err.message)), status);
+        // Back to the admin page the form came from — only ever a local admin path.
+        const back = safeLocalPath(req.headers.referer);
+        if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(message)}`);
+        return html(res, plain(cfg, `${status}`, escapeHtml(message)), status);
       }
-      json(res, { error: err.message, status }, status);
+      json(res, { error: message, status }, status);
     }
   });
   app.server = server;
@@ -160,6 +165,20 @@ export async function applyStripeEvent(app, m, event = null) {
   if (m.kind === 'payout') { postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents }); return { payout: m.external_id }; }
   if (event?.type === 'invoice.paid' && event.data?.object?.subscription) { const o = event.data.object; postSubscriptionPayment(db, { external_id: o.subscription, amount_cents: o.amount_paid || 0, date: new Date((o.created || Date.now() / 1000) * 1000).toISOString().slice(0, 10) }); return { subscription_payment: o.subscription }; }
   return { ignored: m.type || m.kind };
+}
+
+// A redirect target is accepted only when it parses and its origin IS the site's.
+export function sameOriginUrl(candidate, origin) {
+  if (!candidate) return null;
+  let u; try { u = new URL(candidate); } catch { return null; }
+  if (u.origin !== origin || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null;
+  return u.href;
+}
+// A Referer is accepted only as a plain local path: one leading slash, path characters, nothing else.
+export function safeLocalPath(referer) {
+  if (!referer) return null;
+  let u; try { u = new URL(referer); } catch { return null; }
+  return /^\/(?!\/)[A-Za-z0-9/._~-]*$/.test(u.pathname) ? u.pathname : null;
 }
 
 const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });

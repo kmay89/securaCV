@@ -96,3 +96,14 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     assert.equal((await fetch(base + '/orders', { redirect: 'manual', headers: { cookie } })).status, 303);
   } finally { await app.close(); db.close(); }
 });
+
+test('redirect targets: only the site origin for forms, only a local path for the Referer', async () => {
+  const { sameOriginUrl, safeLocalPath } = await import('../src/server.mjs');
+  assert.equal(sameOriginUrl('https://example.test/store?joined=1', 'https://example.test'), 'https://example.test/store?joined=1');
+  assert.equal(sameOriginUrl('https://example.test.evil.net/', 'https://example.test'), null);
+  assert.equal(sameOriginUrl('//evil.net/', 'https://example.test'), null);
+  assert.equal(sameOriginUrl('javascript:alert(1)', 'https://example.test'), null);
+  assert.equal(safeLocalPath('http://ops.test/orders/12'), '/orders/12');
+  assert.equal(safeLocalPath('http://ops.test//evil.net/x'), null, 'a protocol-relative path never becomes a redirect');
+  assert.equal(safeLocalPath('not a url'), null);
+});

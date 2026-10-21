@@ -42,8 +42,9 @@ export function parseBody(raw, contentType = '') {
   const ct = contentType.split(';')[0].trim().toLowerCase();
   if (ct === 'application/json') { try { return JSON.parse(raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); } }
   if (ct === 'application/x-www-form-urlencoded' || ct === '') {
-    const out = {};
+    const out = Object.create(null);
     for (const [k, v] of new URLSearchParams(raw.toString('utf8'))) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
       if (k.endsWith('[]')) (out[k.slice(0, -2)] ||= []).push(v); else out[k] = v;
     }
     return out;

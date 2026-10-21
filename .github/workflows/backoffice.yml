@@ -14,16 +14,24 @@ on:
 permissions:
   contents: read
 
+# A test workflow (CI.md R3): PR runs collapse per branch, every main commit
+# keeps its own group so a burst of merges can never evict a queued main run.
+concurrency:
+  group: backoffice-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: node --test (no network, no credentials)
-    runs-on: ubuntu-latest
+    # the image the suite was written against (CI.md R11); moving is its own change
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run: { working-directory: backoffice }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # the major every other node job runs (CI.md, Node)
+      - uses: actions/setup-node@v7
         with: { node-version: "22" }
       - name: No dependencies, by construction
         run: test "$(node -e 'console.log(Object.keys(require("./package.json").dependencies||{}).length)')" = 0
