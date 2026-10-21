@@ -576,6 +576,17 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // What the hold clears is factory_reset_by_hold()'s list (the saved
     // Wi-Fi, the MQTT bridge's broker, the device name), not "its Wi-Fi".
     assert.match(text, /this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token/);
+    // The hold reopens the first-boot Bluetooth setup door, which goes to the
+    // first client in radio range that connects (magic_pairing.md §2.2): a
+    // host on the network that is also in range can take it and keep the
+    // token. So the kit and the console come first, the hold last, with the
+    // phone ready and the door's first-come rule named.
+    const kit = text.indexOf('recovery kit');
+    const usb = text.indexOf('USB console');
+    const hold = text.indexOf('hold BOOT for 10 seconds');
+    assert.ok(kit >= 0 && usb > kit && hold > usb, 'the kit, then the console, then the hold: ' + text);
+    assert.match(text, /with your iPhone ready: hold BOOT for 10 seconds/);
+    assert.match(text, /Bluetooth setup goes to the first phone or computer nearby that connects/);
     assert.doesNotMatch(text, /paste|token box|type the token/i,
       'on a cookie page the token box still takes the cookie\'s word for a token');
     assert.ok(d.api);

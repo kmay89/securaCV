@@ -3016,13 +3016,21 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // on a page the landing session signed in, that box still takes the
     // cookie's word for a token, so a mistyped one looks accepted (the
     // ledger's owner-authority items revisit this copy once the box checks
-    // the token itself). The hold's list is factory_reset_by_hold()'s.
+    // the token itself). The hold's list is factory_reset_by_hold()'s, and
+    // the hold comes last (sweep F342's fifth review): it reopens the
+    // first-boot Bluetooth setup door, which goes to the first client in
+    // radio range that connects (magic_pairing.md §2.2), so a host on the
+    // network that is also in range can take that door, spend its claim
+    // and keep the token the hold kept. The kit and the console carry no
+    // such exposure.
     function tapContendedText(retry) {
       return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
              'Close any other Canary pages and wait 10 seconds, then ' + retry + ' ' +
-             'If this keeps happening: the iPhone app can pair from your recovery kit, the USB console prints ' +
-             'the token each time the Canary starts, or hold BOOT for 10 seconds (this clears its Wi-Fi, its ' +
-             'Home Assistant link and its name, and keeps the token) and set it up again from the iPhone app.';
+             'If this keeps happening: the iPhone app can pair from your recovery kit, or the USB console prints ' +
+             'the token each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
+             '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
+             'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
+             'first phone or computer nearby that connects.';
     }
 
     async function requestFromDevice() {

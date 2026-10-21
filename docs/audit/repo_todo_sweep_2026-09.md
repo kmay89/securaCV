@@ -2048,12 +2048,13 @@ so — see D2 below.)
   USB serial console (the receipt prints at every boot), and holding BOOT
   10 s, then setting up again from the iPhone through the setup door: the
   hold keeps the token, and the phone's claim can no longer be spent by a
-  stray request. Forget Wi-Fi is not a token-free way out once F345 has
-  gated it.
+  stray request. (Amended by the fifth review, below: the hold is the last
+  way out, since it reopens the first-come setup door.) Forget Wi-Fi is not
+  a token-free way out once F345 has gated it.
   Corrections to this item: the phone does not "then need the BOOT tap"; the
   iPhone app has no tap flow and ends "on the Wi-Fi, not paired".
   *Done (2026-10-20, #<PR>):* in two commits of the PR that carries F347,
-  with three review commits.
+  and the review commits each bullet below names.
   - The claim: `spend_if_match()` and `wipe_hex()` in
     `firmware/common/network/claim_ticket.h` (staged copy cp'd), `take()` on
     them; the receipt's refusal line drops "(claim spent)" and is written
@@ -2086,8 +2087,8 @@ so — see D2 below.)
     copy on the dashboard names the ways out that do not go through the
     token box (wait 10 s, then click **Use BOOT Tap Once** again and only
     then tap, which serves once only one device is asking; the iPhone app
-    pairing from the recovery kit; the USB console's token; the 10 s hold
-    and a fresh iPhone setup): on a page the landing session signed in,
+    pairing from the recovery kit; the USB console's token; last, the 10 s
+    hold and a fresh iPhone setup): on a page the landing session signed in,
     `connectWithToken()` still takes the cookie's word for a pasted token.
     The owner-authority PR (F334, F335, F346) revisits this copy once that
     box checks the token itself (`credentials: 'omit'`).
@@ -2269,6 +2270,65 @@ so — see D2 below.)
       `test_provisioning_gate` fails 8 on it; `recovery_kit.test.js` 48
       tests, the pages before these fixes failing 6. Host-tested; not run
       on a device.
+  - Fifth review fixes (same PR). No firmware behavior changes; the
+    dashboard's `409` copy, the docs and the tests change.
+    - The 10 s hold was offered as an equal way out under a poller, ending
+      "so the phone ends paired". The hold keeps the token and reopens the
+      first-boot setup door for 30 minutes (`factory_reset_by_hold()` →
+      `wifi_clear_credentials()`), and the door accepts the first Just Works
+      client that connects (§2.2). A client that connects before the phone
+      (a host on the network that is also in radio range, say) can join
+      the Canary to a network it is on, spend the claim minted for its own
+      link (served before the tap's rule is asked) and keep the token,
+      which nothing rotates (the owner-authority PR files the rotation as
+      F353). `magic_pairing.md` §3.7, `SECURITY_MODEL.md`,
+      `THREAT_MODEL.md` and `CHANGELOG.md` now list the kit's token and the
+      USB console first and the hold last, for a host known to be on the
+      network only, with the phone ready; the phone ends paired unless
+      something in radio range reached the door first. The dashboard's
+      `tapContendedText()` names the hold last, "with your iPhone ready",
+      and says Bluetooth setup then goes to the first phone or computer
+      nearby that connects. The door's first-come exposure predates this
+      PR (§2.2); the hold keeping the token is #1816's.
+    - The release-gating tap rows sent the operator to "a fresh private
+      window" to get a page with no `cv_session`, but Chrome and Firefox
+      share one private session across every open private window, so the
+      second row's window resumed the first row's sign-in and never showed
+      **Use BOOT Tap Once**. The rows, `magic_pairing.md`'s bench line and
+      the F257 row now say to close every private window first (or delete
+      the cookie in the developer tools). The F257 row worked as written,
+      because its reboot drops the session first.
+    - The first-boot recovery-kit row repeated a save that cannot be
+      repeated: a served save hides Save. It now runs the contended save
+      first (its `409` leaves Save on screen), then the clean one. The hold
+      row's "B gets `403` every time" now says every answer B gets once the
+      WAP is back on the home Wi-Fi; the row names B as a host on the
+      network with its Bluetooth off.
+    - "Every line the owner or a client reads gives that order" was wider
+      than the change. It now says every instruction a WAP page or answer
+      gives. Two lines that modeled the press as a window the dashboard
+      then uses now put the ask first: the getting started guide's sentence
+      (pinned by `gen_wap.py`'s `must_words`) and the Lab's BOOT card
+      (`gen_wap.py` FLASH, into `wap.json`, pinned by `wap.test.js`). The
+      iPhone app's `PairView.swift` footer ("saves a recovery kit … after a
+      short BOOT tap") is not changed: it describes the setup page, which
+      gives the order itself.
+    - `CHANGELOG.md` quoted a `409` text as if it had shipped (it existed
+      only inside this PR) and quoted the `403`'s hint as its button's
+      words; both quotes now match `origin/main`.
+    - Rows added where a mutant survived: the arbiter tells IPv6 askers
+      apart by all 16 bytes (`ipv6_askers_are_told_apart_by_all_sixteen_bytes`
+      in `test_provisioning_gate.cpp`, and `test_ipv6_askers_are_two_askers`
+      through the cut handler); comparing the last four bytes, or the IPv4
+      a key maps to, fails 6 and 6 there and 14 and 28 of the receipt
+      suite's checks. The flagship's sweep row now refuses a `return` in
+      `loop()` before `handle_boot_button()` (an early return there fails
+      it). No WAP interface runs IPv6 today; the rows hold the arbiter for
+      F354 and any later IPv6.
+    - Counts now: `test_receipt_grant.cpp` 3528 checks;
+      `recovery_kit.test.js` 48 tests, the page before these fixes failing
+      1; `wap.test.js` 33, the `wap.json` before failing 1. Host-tested;
+      not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

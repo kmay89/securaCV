@@ -391,9 +391,17 @@ ten seconds before the tap can hide the owner's client; and a host that
 asks for the receipt at least once every ten seconds (polling included)
 makes every tap the owner's client is already asking for refuse, loudly (a
 bare re-tap with no client of the owner's asking is the first case, and
-goes to that host). Then the recovery kit's token, the USB serial console
-(the receipt prints at every boot) and holding BOOT 10 s, then setting up
-again from the iPhone through the setup door, are the ways in.
+goes to that host). Then the recovery kit's token and the USB serial
+console (the receipt prints at every boot) are the ways in, and neither
+opens anything to anyone else. Holding BOOT 10 s, then setting up again
+from the iPhone through the setup door, is the last one: the hold keeps the
+token and reopens the first-boot setup door for 30 minutes, and that door
+goes to whichever Bluetooth client connects first. A client that connects
+before the phone (a host on the network that is also in radio range, say)
+can join the Canary to a network it is on, spend the claim minted for its
+own link and keep the token, which nothing rotates today. So the hold is
+for a host known to be on the network only, with the phone ready, and the
+phone ends paired unless something in radio range reached the door first.
 
 Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could

@@ -63,6 +63,7 @@
 
 #include "../common/network/provisioning_gate.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -274,6 +275,17 @@ static std::string fn_body(const std::string& src, const std::string& sig) {
   return end == std::string::npos ? "" : src.substr(at + 1, end - at);
 }
 
+// `word` in `s` as a whole identifier: no identifier character on either side
+// ("returned" and "return_ms" are not `return`).
+static bool has_word(const std::string& s, const char* word) {
+  const auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+  const size_t n = std::strlen(word);
+  for (size_t at = s.find(word); at != std::string::npos; at = s.find(word, at + 1)) {
+    if ((at == 0 || !ident(s[at - 1])) && (at + n >= s.size() || !ident(s[at + n]))) return true;
+  }
+  return false;
+}
+
 static void the_flagship_sweeps_its_tap_every_pass() {
   const std::string src = strip_comments(read_text(CANARY_MAIN_CPP));
   CHECK(!src.empty(), "could not read %s", CANARY_MAIN_CPP);
@@ -297,11 +309,18 @@ static void the_flagship_sweeps_its_tap_every_pass() {
   }
   CHECK(boot.find("provisioning_gate::open(g_prov_gate, millis())") != std::string::npos,
         "the sweep sits in the handler that opens the gate (the same task)");
-  // And loop() calls the handler on every pass.
+  // And loop() calls the handler on every pass: at its top level, with no
+  // `return` before the call (a pass that returned early would skip the
+  // flagship's only sweep; test_receipt_grant.cpp holds the WAP's loop() to
+  // the same rule before its two sweeps).
   const std::string loop = fn_body(src, "void loop() {");
   CHECK(!loop.empty(), "loop()'s definition not found once");
-  CHECK(loop.find("\n  handle_boot_button();\n") != std::string::npos,
-        "loop() does not call handle_boot_button() at its top level");
+  const size_t call_at = loop.find("\n  handle_boot_button();\n");
+  CHECK(call_at != std::string::npos, "loop() does not call handle_boot_button() at its top level");
+  if (call_at != std::string::npos) {
+    CHECK(!has_word(loop.substr(0, call_at), "return"),
+          "loop() can return before it calls handle_boot_button(), the flagship's tap sweep");
+  }
 }
 
 // ── page-token policy truth table ───────────────────────────────────────────
@@ -1029,6 +1048,69 @@ static void a_polling_owner_stays_on_record_past_the_lookback() {
   }
 }
 
+// (3c) Askers that are real IPv6 peers are told apart by all 16 bytes of
+// their key, unlike the per-address lockout, which puts every IPv6 peer in
+// one bucket (auth_request_source() keys on the IPv4 of a mapped key and 0
+// otherwise). No WAP interface runs IPv6 today, so every real asker is a
+// mapped key; this holds the arbiter for the day one does, and for the
+// flagship when it adopts the arbiter (F354). Each pair below is two
+// different peers that a narrower compare would merge into one asker, and
+// one asker is served the tap:
+//   - two global addresses that differ only in the prefix (a compare of the
+//     last four bytes, or of the IPv4 a key maps to, merges them);
+//   - an IPv6 address whose last four bytes are the owner's IPv4 (a compare
+//     of the last four bytes merges it with the mapped owner);
+//   - two link-local addresses (every non-mapped key maps to IPv4 0, so a
+//     compare through ipv4_host_order_from_addr() merges them).
+// The timeline is (3b)'s: the owner polls every 2 s from 21 s before the
+// tap, and the other host asks first, 100 ms after it.
+static Peer v6(const uint8_t (&addr)[16]) {
+  Peer p{};
+  peer_key_from_addr(AddrFamily::IPV6, addr, p.key);
+  return p;
+}
+
+static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
+  static const uint8_t kDb8Tail[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kDb9Tail[16] = {0x20, 0x01, 0x0d, 0xb9, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kLinkOwner[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
+  static const uint8_t kLinkHost[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x00, 0xaa, 0xbb, 0xff, 0xfe, 0xcc, 0xdd, 0xee};
+  struct Pair {
+    Peer owner;
+    Peer host;
+    const char* what;
+  };
+  const Pair pairs[] = {
+      {v6(kDb8Tail), v6(kDb9Tail), "2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114 (the prefix differs)"},
+      {kOwner, v6(kDb8Tail), "::ffff:192.168.1.20 and 2001:db8::1:c0a8:114 (the same last four bytes)"},
+      {v6(kLinkOwner), v6(kLinkHost), "fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee (both map to IPv4 0)"},
+  };
+  for (const Pair& p : pairs) {
+    CHECK(memcmp(p.owner.key, p.host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", p.what);
+    Bench b;
+    const uint32_t click = 700000;
+    const uint32_t T = click + 21000;
+    uint32_t t = click;
+    for (; t < T; t += 2000) {
+      CHECK(b.ask(p.owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", p.what);
+    }
+    open(b.gate, T);
+    CHECK(b.ask(p.host, T + 100) == TapVerdict::CONTENDED,
+          "a second IPv6 peer asking first after the tap was taken for the owner: %s", p.what);
+    CHECK(b.ask(p.owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", p.what);
+    CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, p.what);
+    CHECK(peek(b.gate) == 0, "and the tap is closed: %s", p.what);
+  }
+  // And one IPv6 peer is one asker: the owner alone, polling from its own
+  // address, is served on its first ask after the tap.
+  Bench solo;
+  const Peer me = v6(kLinkOwner);
+  CHECK(solo.ask(me, 800000) == TapVerdict::NO_TAP, "before the tap");
+  open(solo.gate, 801000);
+  CHECK(solo.ask(me, 802000) == TapVerdict::TAKE, "an IPv6 owner alone is served");
+  CHECK(solo.served == 1, "served once (%d)", solo.served);
+}
+
 // (4) An address that stopped asking more than the lookback before the tap
 // does not contend; at the lookback exactly, it does.
 static void an_address_silent_past_the_lookback_does_not_contend() {
@@ -1334,6 +1416,7 @@ int main() {
   a_sole_owner_is_served_on_its_first_ask_after_the_tap();
   an_attacker_asking_first_loses_to_an_owner_who_asked_before();
   a_polling_owner_stays_on_record_past_the_lookback();
+  ipv6_askers_are_told_apart_by_all_sixteen_bytes();
   an_address_silent_past_the_lookback_does_not_contend();
   a_lone_poller_is_served_the_residual();
   a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();

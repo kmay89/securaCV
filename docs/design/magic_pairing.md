@@ -588,8 +588,8 @@ never consumed unjudged. Both trees sweep the tap every loop pass
 serve again when `millis()` comes back round to it 49.7 days later. A `429`
 for a held bearer still comes before the `409`, and the `409` clears no
 backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
-companion's recovery-kit save now asks from the Save tap, and every line
-the owner or a client reads gives that order (the `403`'s hint and button
+companion's recovery-kit save now asks from the Save tap, and every
+instruction a WAP page or answer gives puts the ask first (the `403`'s hint and button
 say to start asking first, then short-tap BOOT; the dashboard's timeout
 says to click again, then tap; both pages' `409` text says to wait 10 s,
 then click **Use BOOT Tap Once** again, or tap Save again, and only then
@@ -617,12 +617,21 @@ What stays open, and is the ledger's, not a claim of this design:
   included) makes every tap the owner's client is already asking for
   refuse, loudly (a bare re-tap with no client of the owner's asking is the
   first residual, and goes to that host). The
-  owner's ways out: the recovery kit's token (the iPhone app pairs from the kit);
-  the USB serial console, which prints the receipt with the token at every
-  boot; or hold BOOT 10 s, then set the Canary up again from the iPhone
-  through the setup door. The hold clears the saved Wi-Fi, the broker login
-  and the name, keeps the token, and the phone's claim can no longer be
-  spent by a stray request, so the phone ends paired.
+  owner's ways out, first: the recovery kit's token (the iPhone app pairs
+  from the kit); the USB serial console, which prints the receipt with the
+  token at every boot. Neither opens anything to anyone else. Last, hold
+  BOOT 10 s, then set the Canary up again from the iPhone through the setup
+  door. The hold clears the saved Wi-Fi, the broker login and the name, and
+  keeps the token; a stray `?claim=` can no longer spend the phone's claim.
+  But the hold reopens the first-boot setup door for 30 minutes, and the
+  door goes to whichever Bluetooth client connects first (§2.2). A client
+  that connects before the phone can join the Canary to a network it is on
+  (the owner's, if it is a host on the owner's network that is also in
+  radio range), spend the claim minted for its own link (a claim is served
+  before the tap's rule is asked) and keep the token, which the hold kept
+  and nothing rotates today. So the hold is for a host known to be on the
+  network only, with the phone ready before BOOT is released, and the phone
+  ends paired unless something in radio range reached the door first.
 - A dual-stack browser would count as two askers if the WAP's station
   interface ever enabled IPv6 (it does not today).
 - The flagship's tap, on its receipt and on the page load it unlocks, still
@@ -1047,8 +1056,10 @@ cannot speak to.
       serves; a claim after 180 s is `403`; the BOOT tap is still unspent
       after a claim served.
 - [ ] With a second host polling `GET /api/provisioning-receipt` over plain
-      HTTP, open `http://canary-<suffix>.local/settings` in a private
-      window (no `cv_session` cookie), choose **Use BOOT Tap Once** and
+      HTTP, close every private window (Chrome and Firefox share one private
+      session, and its `cv_session` cookie, across the private windows that
+      are open), then open `http://canary-<suffix>.local/settings` in a new
+      one, choose **Use BOOT Tap Once** and
       short-tap BOOT when the page says to: both get `409 tap_contended`,
       nothing is served, and the dashboard says another device asked; with
       the second host stopped for 10 s, a second click of the same button

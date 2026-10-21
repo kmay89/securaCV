@@ -588,6 +588,12 @@ test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings
   assert.ok(short && short.includes(`under ${holdMs / 1000} s`) && short.includes("provisioning gate") &&
     short.includes(`${gateMs / 1000} s`) && /prints no key/.test(short),
     "a short press opens the provisioning gate and prints no key: " + short);
+  // The tap goes to the one page already asking (sweep F342): the card says
+  // to start the dashboard's ask first, never that the press opens a window
+  // the dashboard then uses.
+  assert.ok(/to the one page already asking for it/.test(short) &&
+    /click Use BOOT Tap Once on the dashboard first/.test(short) && !/can hand over/.test(short),
+    "the short press's card puts the dashboard's ask first: " + short);
   assert.ok(boot.gestures.some((g) => g.startsWith(`hold ${holdMs / 1000}–${longMs / 1000} s: prints the identity block`)),
     "the medium hold prints the identity block");
   assert.ok(!/wipe_ms/.test(ino), "the sketch arms a wipe stage now: the recovery text says it has none");

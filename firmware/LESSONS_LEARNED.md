@@ -2942,6 +2942,20 @@
   2 s, for longer than the 10 s lookback), so deleting the refresh, which
   serves a host the token under a polling owner, failed only four harness
   probes. Rows in both suites now poll at the pages' cadence.
+- **Found in the fifth review, same PR:** a way out of an attack is advice
+  given while that attacker is known to be present, so it has to be judged
+  against that attacker. The docs and the dashboard's `409` offered the 10 s
+  hold and a fresh iPhone setup as an equal way out under a polling host,
+  ending "so the phone ends paired"; the hold keeps the token and reopens
+  the first-boot Bluetooth setup door, which goes to the first client that
+  connects, so a host on the network that is also in radio range can take
+  it, spend its own claim and keep the token. The kit's token and the USB
+  console now come first, and the hold last, with the phone ready and the
+  door's first-come rule named. And a row that keys on a whole value needs a
+  case where only part of it differs: every asker in the arbiter's rows was
+  an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
+  maps to, passed every suite; rows with IPv6 askers that differ only in the
+  prefix, or share the owner's last four bytes, now fail both.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

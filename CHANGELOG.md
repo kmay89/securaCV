@@ -49,15 +49,18 @@
   `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
-  other line the owner or a client reads: the `403`'s hint and button
-  (they said "short tap, then poll within 30 seconds"), both pages' `409`
-  text (it said "wait 10 seconds, and try again", which reads as "press
-  BOOT again", and a bare re-tap after the wait goes to the other device
-  if it is still asking), the dashboard's timeout line ("Didn't see a tap.
-  Click Use BOOT Tap Once again, then short-tap BOOT."; it said "Press
-  BOOT and click above"), and the text of the companion's Home Assistant
-  step (that step's banner is not shown yet; the ledger's F342 entry notes
-  it). Both pages say to press only once the device has answered their
+  instruction a WAP page or answer gives: the `403`'s hint and button (its
+  button said "short tap, then poll within 30 seconds", and its hint "Press
+  the BOOT button on the device to reveal the provisioning receipt."), both
+  pages' new `409` text (it names the click, or the tap on Save, before the
+  press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
+  Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
+  above"), and the text of the companion's Home Assistant step (that step's
+  banner is not shown yet; the ledger's F342 entry notes it). The getting
+  started guide's sentence and the Lab's BOOT card said a short press lets
+  the dashboard hand over the recovery kit for 30 seconds; they now say the
+  press hands it to the one page already asking, so click **Use BOOT Tap
+  Once** first. Both pages say to press only once the device has answered their
   first ask ("Asking the Canary first. Don't press BOOT yet." until then),
   so a press made as the instruction appears cannot land before the
   page's ask has reached the device. The dashboard's copy
@@ -78,8 +81,13 @@
   behind one address are one asker; a host that asks for the receipt at
   least once every 10 s (polling included) makes every tap the owner's
   client is already asking for refuse, and then the
-  recovery kit's token, the USB serial console and the 10 s BOOT hold
-  followed by a fresh iPhone setup are the ways in. The docs that said
+  recovery kit's token and the USB serial console are the ways in. The 10 s
+  BOOT hold followed by a fresh iPhone setup is the last one, and the
+  dashboard names it last, with the iPhone ready: the hold keeps the token
+  and reopens the first-boot setup door for 30 minutes, and that door goes
+  to whichever Bluetooth client connects first, so a host on the network
+  that is also in radio range could reach it before the phone, spend the
+  claim minted for its own link and keep the token. The docs that said
   otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had

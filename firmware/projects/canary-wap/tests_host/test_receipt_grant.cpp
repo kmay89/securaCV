@@ -1558,6 +1558,70 @@ void test_first_asker_after_the_tap_loses_to_a_waiting_owner() {
   }
 }
 
+// (c2) Row (c)'s polling owner and late host, both real IPv6 peers whose
+// keys differ only in the prefix (2001:db8::1:c0a8:114 and
+// 2001:db9::1:c0a8:114), and then two link-local peers. The per-address
+// lockout puts every IPv6 peer in one bucket (auth_request_source() is 0 for
+// each), but the tap's asker is the whole 16-byte key: an arbiter that
+// compared the last four bytes, or the IPv4 a key maps to, merged the two
+// and served the host the token. No WAP interface runs IPv6 today; this
+// holds the handler for the day one does.
+void test_ipv6_askers_are_two_askers() {
+  static const uint8_t kOwner6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kHost6[16] = {0x20, 0x01, 0x0d, 0xb9, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kOwnerLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
+  static const uint8_t kHostLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x00, 0xaa, 0xbb, 0xff, 0xfe, 0xcc, 0xdd, 0xee};
+  struct Pair {
+    const uint8_t (*owner)[16];
+    const uint8_t (*host)[16];
+    const char* what;
+  };
+  const Pair pairs[] = {
+      {&kOwner6, &kHost6, " (2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114)"},
+      {&kOwnerLink, &kHostLink, " (fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee)"},
+  };
+  for (const Pair& p : pairs) {
+    reset_device();
+    const uint32_t click = stub_grant::now_ms;
+    uint32_t next = click;
+    for (; next < click + 21000; next += 2000) {
+      stub_grant::now_ms = next;
+      Req poll;
+      poll.from6(*p.owner);
+      CHECK(receipt(poll) == 0);
+      check_gate_refusal(poll.r);
+    }
+    stub_grant::now_ms = click + 21000;
+    open_tap();
+    stub_grant::now_ms += 100;
+    Req host;
+    host.from6(*p.host);
+    CHECK_MSG(receipt(host) == 0, std::string("a second IPv6 peer was served as the owner") + p.what);
+    check_tap_contended(host.r);
+    CHECK_MSG(!carries_secret(host.r), std::string("the host's answer carries the secret") + p.what);
+    stub_grant::now_ms = next;
+    Req owner;
+    owner.from6(*p.owner);
+    CHECK(receipt(owner) == 0);
+    check_tap_contended(owner.r);
+    CHECK_MSG(g_served.empty(), std::string("something was served beside a polling IPv6 owner") + p.what);
+    CHECK(gate_stamp() == 0);
+  }
+  // One IPv6 peer alone is one asker, and is served.
+  reset_device();
+  Req before;
+  before.from6(kOwnerLink);
+  CHECK(receipt(before) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 1000;
+  Req alone;
+  alone.from6(kOwnerLink);
+  CHECK(receipt(alone) == 1);
+  CHECK(g_served.size() == 1 && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(alone.r.status == "200 OK");
+}
+
 // (d) What counts as an ask: a request the bearer and the claim did not
 // serve. B's wrong bearer (a strike against B) and B's wrong claim each
 // contend the owner's tap; B's right bearer and B's right claim are served
@@ -2962,6 +3026,7 @@ int main() {
   test_two_hosts_in_one_tap_are_both_refused();
   test_sole_asker_is_served_at_once();
   test_first_asker_after_the_tap_loses_to_a_waiting_owner();
+  test_ipv6_askers_are_two_askers();
   test_what_counts_as_an_ask();
   test_break_glass_leaves_nothing_to_take();
   test_contention_does_not_carry_into_a_clean_next_tap();
