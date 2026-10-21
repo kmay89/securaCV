@@ -1,0 +1,35 @@
+name: Backoffice
+
+# The business backend (backoffice/): one Node process, one SQLite file, no
+# dependencies. The suite needs no network and no credential — fakes stand in
+# for SMTP, IMAP, Stripe, GitHub and the probe targets — so a red run is a
+# real defect. Doc 20, principle 3: every system ships with its gate.
+on:
+  push:
+    branches: [main]
+    paths: ["backoffice/**", ".github/workflows/backoffice.yml"]
+  pull_request:
+    paths: ["backoffice/**", ".github/workflows/backoffice.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node --test (no network, no credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run: { working-directory: backoffice }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: No dependencies, by construction
+        run: test "$(node -e 'console.log(Object.keys(require("./package.json").dependencies||{}).length)')" = 0
+      - run: npm test
+      - name: The CLI boots, sets up an operator and reports a snapshot
+        env: { BACKOFFICE_DATA_DIR: /tmp/bo-ci, STORE_JSON: tests/fixtures/store.json }
+        run: |
+          node --disable-warning=ExperimentalWarning bin/backoffice.mjs setup --password 'ci-only-password-1' | grep -q otpauth
+          node --disable-warning=ExperimentalWarning bin/backoffice.mjs snapshot | grep -q '"orders"'

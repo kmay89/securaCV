@@ -181,6 +181,7 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 | The in-browser Lab | `canary-local/` — real firmware compiled to WebAssembly |
 | The desktop Flasher / hub app | `desktop/` (plus `desktop/hub-core`, `desktop/hub-io`) |
 | The Lab desktop app | `desktop-lab/` — a different app from the Flasher |
+| The business backend (orders, support inbox, books, status page, warranty, invoices) | `backoffice/` — one Node process, one SQLite file; `backoffice/README.md` is the operator's guide, `docs/strategy/31-…` the reasoning |
 | Home Assistant integration | `custom_components/securacv/` + the app (add-on) wrapper `privacy_witness_kernel/` |
 | Apple targets | `ios/` (iPhone/iPad), `tvos/` (the Witness Wall) |
 | Architecture docs, not code | `kernel/` — docs only, despite the name |

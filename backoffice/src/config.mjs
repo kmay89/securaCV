@@ -1,0 +1,34 @@
+// Every knob is an environment variable; .env.example documents each one.
+// Nothing here is a secret the code embeds — a blank value means "feature off".
+import { join } from 'node:path';
+
+const env = (k, d = '') => (process.env[k] ?? d).trim();
+
+export function loadConfig(overrides = {}) {
+  const dataDir = env('BACKOFFICE_DATA_DIR', './data');
+  const cfg = {
+    dataDir,
+    dbPath: env('BACKOFFICE_DB', join(dataDir, 'backoffice.db')),
+    port: Number(env('BACKOFFICE_PORT', '8787')),
+    host: env('BACKOFFICE_HOST', '127.0.0.1'),
+    baseUrl: env('BACKOFFICE_BASE_URL', 'http://127.0.0.1:8787').replace(/\/$/, ''),
+    siteOrigin: env('SITE_ORIGIN', 'https://securacv.com'),          // the website, for CORS on /forms
+    company: env('COMPANY_NAME', 'Errer Labs'),
+    product: env('PRODUCT_NAME', 'SecuraCV'),
+    supportAddr: env('SUPPORT_ADDR', ''),                           // the inbox the helpdesk reads + replies from
+    mailFrom: env('MAIL_FROM', ''),                                 // "Errer Labs <hello@…>"
+    smtpUrl: env('SMTP_URL', ''),                                   // smtp://user:pass@host:587 (STARTTLS) | smtps://…:465
+    imapUrl: env('IMAP_URL', ''),                                   // imaps://user:pass@host:993
+    stripeWebhookSecret: env('STRIPE_WEBHOOK_SECRET', ''),
+    stripeApiKey: env('STRIPE_API_KEY', ''),                        // optional, read-only uses (payout list)
+    githubToken: env('GITHUB_TOKEN', ''),
+    githubRepo: env('GITHUB_REPO', 'kmay89/securaCV'),
+    storeJson: env('STORE_JSON', 'https://securacv.com/store.json'), // catalog: path or URL
+    slaHours: Number(env('SUPPORT_SLA_HOURS', '24')),
+    sessionHours: Number(env('SESSION_HOURS', '12')),
+    backupKeep: Number(env('BACKUP_KEEP', '14')),
+    secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),
+    ...overrides,
+  };
+  return cfg;
+}

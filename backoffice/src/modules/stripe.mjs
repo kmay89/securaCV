@@ -1,0 +1,115 @@
+// Stripe stays the processor (that is the one thing nobody self-hosts). What
+// we replace is everything around it: the order queue, refunds ledger,
+// subscription state. Two inputs: the signed webhook (live) and the CSV
+// export the weekly batch already uses (catch-up / offline).
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>…]; signed_payload = `${t}.${body}`
+export function verifyStripeSignature(rawBody, header, secret, { now = Date.now() / 1000, toleranceS = 300 } = {}) {
+  if (!secret || !header) return false;
+  const parts = Object.create(null); const v1 = [];
+  for (const kv of String(header).split(',')) { const [k, v] = kv.split('=').map(s => s.trim()); if (k === 't') parts.t = v; if (k === 'v1') v1.push(v); }
+  if (!parts.t || !v1.length) return false;
+  if (Math.abs(now - Number(parts.t)) > toleranceS) return false;
+  const expected = createHmac('sha256', secret).update(`${parts.t}.${Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody}`).digest('hex');
+  const e = Buffer.from(expected);
+  return v1.some(s => { const b = Buffer.from(s); return b.length === e.length && timingSafeEqual(b, e); });
+}
+
+// Used by tests and by `backoffice stripe:sign` to craft a header.
+export function signStripePayload(rawBody, secret, t = Math.floor(Date.now() / 1000)) {
+  return `t=${t},v1=${createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex')}`;
+}
+
+// Map a Stripe event to the neutral shape orders.mjs consumes. We only read
+// fields that exist on every account; metadata.sku is what a Payment Link
+// carries when the product's metadata is set (store-README step 1).
+export function eventToOrder(event) {
+  const type = event.type || '';
+  const o = event.data?.object || {};
+  if (type === 'checkout.session.completed' && o.payment_status === 'paid') {
+    const addr = o.shipping_details?.address || o.customer_details?.address || {};
+    const items = (o.line_items?.data || []).map(li => ({
+      sku: li.price?.product?.metadata?.sku || li.price?.metadata?.sku || li.price?.product?.name || li.description,
+      name: li.description || li.price?.product?.name || 'item', qty: li.quantity || 1,
+      unit_cents: li.price?.unit_amount ?? Math.round((li.amount_subtotal || 0) / (li.quantity || 1)),
+    }));
+    return {
+      kind: 'order', external_id: o.id, source: 'stripe',
+      email: o.customer_details?.email || o.customer_email || '', name: o.shipping_details?.name || o.customer_details?.name || '',
+      currency: o.currency || 'usd',
+      subtotal_cents: o.amount_subtotal ?? 0, shipping_cents: o.total_details?.amount_shipping ?? o.shipping_cost?.amount_total ?? 0,
+      tax_cents: o.total_details?.amount_tax ?? 0, total_cents: o.amount_total ?? 0,
+      ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
+      items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
+    };
+  }
+  if (type === 'charge.refunded') return { kind: 'refund', external_id: o.payment_intent || o.id, refunded_cents: o.amount_refunded ?? 0 };
+  if (type.startsWith('customer.subscription.')) {
+    const item = o.items?.data?.[0];
+    return { kind: 'subscription', external_id: o.id, customer: o.customer, status: o.status,
+      plan: item?.price?.nickname || item?.price?.product?.name || item?.price?.id || 'support',
+      amount_cents: item?.price?.unit_amount ?? 0, interval: item?.price?.recurring?.interval || 'month',
+      current_period_end: o.current_period_end ? new Date(o.current_period_end * 1000).toISOString() : null,
+      email: o.customer_email || null, deleted: type.endsWith('.deleted') };
+  }
+  if (type === 'payout.paid') return { kind: 'payout', external_id: o.id, amount_cents: o.amount ?? 0, arrival: o.arrival_date ? new Date(o.arrival_date * 1000).toISOString().slice(0, 10) : null, currency: o.currency || 'usd' };
+  return { kind: 'ignore', type };
+}
+
+// --- the CSV path. Stripe's Payments export headers vary by dashboard
+// settings; we reuse the website's alias idea so one spelling fix lands once.
+export function parseCsv(textIn) {
+  const text = textIn.replace(/^﻿/, '');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  const [head, ...body] = rows.filter(r => r.length > 1 || (r[0] || '').trim());
+  if (!head) return [];
+  return body.map(r => Object.fromEntries(head.map((h, i) => [h.trim(), (r[i] ?? '').trim()])));
+}
+
+const ALIASES = {
+  external_id: ['id', 'paymentid', 'paymentintentid', 'checkoutsessionid', 'orderid', 'order'],
+  email: ['email', 'customeremail', 'receiptemail', 'customer'],
+  name: ['shippingname', 'name', 'shipname', 'customername', 'cardname'],
+  sku: ['sku', 'skuid', 'productid', 'metadatasku', 'skumetadata'],
+  product: ['product', 'productname', 'description', 'item', 'lineitem'],
+  qty: ['qty', 'quantity'],
+  amount: ['amount', 'amountpaid', 'total', 'converted amount'],
+  line1: ['shippingaddressline1', 'line1', 'address1', 'addressline1', 'shippingaddress', 'street1'],
+  line2: ['shippingaddressline2', 'line2', 'address2', 'addressline2', 'street2'],
+  city: ['shippingaddresscity', 'city', 'shippingcity'],
+  state: ['shippingaddressstate', 'state', 'shippingstate', 'province'],
+  zip: ['shippingaddresspostalcode', 'zip', 'zipcode', 'postalcode', 'shippingzip', 'postcode'],
+  country: ['shippingaddresscountry', 'country', 'shippingcountry'],
+  created: ['createddate(utc)', 'created', 'date', 'createdutc'],
+  status: ['status'],
+};
+const norm = (h) => String(h).toLowerCase().replace(/[^a-z0-9()]/g, '');
+export function detectColumns(row) {
+  const byNorm = new Map(Object.keys(row || {}).map(h => [norm(h), h]));
+  const map = {};
+  for (const [k, names] of Object.entries(ALIASES)) for (const n of names) if (byNorm.has(n)) { map[k] = byNorm.get(n); break; }
+  return map;
+}
+export function csvRowToOrder(row, map) {
+  const g = (k) => (map[k] ? row[map[k]] : '') || '';
+  const amount = Number(String(g('amount')).replace(/[^0-9.-]/g, '')) || 0;
+  const qty = Number(g('qty')) || 1;
+  return {
+    kind: 'order', external_id: g('external_id') || null, source: 'import', email: g('email'), name: g('name'), currency: 'usd',
+    subtotal_cents: Math.round(amount * 100), shipping_cents: 0, tax_cents: 0, total_cents: Math.round(amount * 100),
+    ship: { line1: g('line1'), line2: g('line2'), city: g('city'), state: g('state'), zip: g('zip'), country: g('country') || 'US' },
+    items: [{ sku: g('sku') || g('product'), name: g('product') || g('sku') || 'item', qty, unit_cents: Math.round(amount * 100 / qty) }],
+    paid_at: g('created') ? new Date(g('created') + (g('created').endsWith('Z') ? '' : 'Z')).toISOString() : null,
+    status_hint: g('status'),
+  };
+}

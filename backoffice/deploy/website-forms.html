@@ -1,0 +1,29 @@
+<!-- Drop-in for the website (securacv_website). Each form posts straight to the
+     backoffice; no JavaScript is required, and with JS it stays on the page.
+     The site's CSP must allow it:  form-action 'self' https://ops.securacv.com
+     and, for the fetch() path,     connect-src … https://ops.securacv.com
+     (that is a one-line edit in _headers; tests/csp.test.mjs pins the policy). -->
+
+<!-- Waitlist / notify-me (store cards, compare.html) -->
+<form method="post" action="https://ops.securacv.com/forms/waitlist" class="signup">
+  <input type="hidden" name="sku" value="wap-kit">
+  <input type="hidden" name="_redirect" value="https://securacv.com/store?joined=1">
+  <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
+  <label>Email <input type="email" name="email" required></label>
+  <label><input type="checkbox" name="newsletter" value="1"> also send occasional news (we'll ask you to confirm)</label>
+  <button>Tell me when it's in stock</button>
+</form>
+
+<!-- Contact (contact.html) — opens a support ticket; the sender gets an acknowledgment -->
+<form method="post" action="https://ops.securacv.com/forms/contact">
+  <input type="hidden" name="_redirect" value="https://securacv.com/contact?sent=1">
+  <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
+  <label>Name <input name="name"></label>
+  <label>Email <input type="email" name="email" required></label>
+  <label>Subject <input name="subject" required></label>
+  <label>Message <textarea name="message" required></textarea></label>
+  <button>Send</button>
+</form>
+
+<!-- Build request (request.html) and feedback (feedback.html): same shape,
+     action /forms/request and /forms/feedback. Press and wholesale: /forms/press, /forms/wholesale. -->
