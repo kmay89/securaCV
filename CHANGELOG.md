@@ -1,6 +1,143 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap's one device type is `canary-wap` on every surface, and the PlatformIO mesh keeps a quiet opera's members live with a jittered heartbeat (sweep F294, F324)
+
+- **Compatibility: on a WAP, REST `GET /api/status` `device_type` changes from
+  `"canary"` to `"canary-wap"`, and so does the serial boot banner's Type line
+  (sweep F294).** `"canary"` was the flagship PlatformIO tree's word. The same
+  `/api/status` body's `node_status.node`, the mDNS `dt`, the MQTT status,
+  `/api/fleet`'s `product` and the Bluetooth Improv device info already said
+  `"canary-wap"`. A script that told a WAP apart by the REST field should read
+  `node_status.node`, the mDNS `dt` or the MQTT status, which are unchanged.
+  No in-tree client acted on the field: the iPhone decodes it and never reads
+  it. `node_status.node` and `/api/fleet`'s `product` now read the
+  `DEVICE_TYPE` constant too, as REST `device_type`, the boot banner and the
+  BOOT attestation do, with their values unchanged; `figures.test.js` holds
+  all five readers to the constant, none handed a literal. The BOOT
+  attestation carries the constant in its CBOR payload, which is hashed and
+  never leaves the device, so no verifier sees the value;
+  the BOOT record's `payload_len` (REST `/api/witness`) and `plen` (the BLE
+  witness export) grow by 4 bytes, 240 of its 256-byte buffer at worst.
+  `wire_types.mjs` reads the constant as a third agreeing site beside the
+  three mDNS `dt` records and the two MQTT status strings, which stay
+  literals (the reader requires that of them), so `gen_figures.mjs --check`
+  holds the constant and those literal sites to one value: it refuses a
+  split by file and line, and refuses a second declaration and any other
+  assignment to the name (`=`, a compound assignment, `++`, `--`; the check
+  is lexical, so a write through a pointer to the constant is not seen). It
+  reads a `static const char* const` (or `constexpr`) declaration as the
+  declaration too, the stronger form, whose other assignments the compiler
+  refuses as well. Improv's firmware-name string in
+  `ble_improv.cpp` stays a literal outside that check.
+  The Lab's `wap.json` is regenerated (the device type and the boot preview's
+  Type line); the figures, the Home Assistant data, the CSP and the emulator
+  dist are unchanged. No `FIRMWARE_VERSION` bump: devices get the new value
+  with the next WAP release. **Host-tested** (`figures.test.js`: fourteen
+  new refusals, each of which the old reader let through, among them `+=`,
+  `-=`, every prefix and postfix `++`/`--`, a declaration that is a choice or
+  a concatenation of literals and a const-pointer declaration of another
+  type; the constant's read site and its five readers; `wap.test.js`); the
+  ESP32 compile is CI's; not run on a device.
+- **The PlatformIO mesh heartbeats on a timer, and a member's liveness counts
+  only verified frames (sweep F324; `[env:full]` builds only, no released
+  image changes).** A PlatformIO member now sends its empty signed
+  `HEARTBEAT` to its bound members every 30 s ± 3 s while the mesh runs with
+  an opera. Every heartbeat, the paired and boot ones of F162 included,
+  re-arms the deadline; nothing is signed and no counter spent with no member
+  bound; and turning the mesh off (`POST /api/mesh/enable` with `false`)
+  stops it. So a healthy, quiet opera reads `ACTIVE` with its members
+  `CONNECTED` and a real age, where it read `CONNECTING` ("Searching for
+  opera members...") with every member `OFFLINE`; a member that is
+  unplugged, crashed, out of range or jammed reads `STALE` within about
+  90-100 s and `OFFLINE` within about 5 minutes, unless a radio sends the
+  receiver frames of the member's that it did not hear (below). Each
+  member's `GET /api/mesh/peers` `state`, `last_seen_sec` and `rssi`, and
+  `GET /api/mesh`'s `peers_online`, now come from its last frame that passed
+  the signature, opera and counter checks, as on canary-wap. Before, any
+  frame from its address refreshed them, so a junk frame and a replay from a
+  spare radio copying a quiet member's address held it `CONNECTED`
+  (host-probed); now junk, a forgery and a replay of a frame the receiver
+  has heard refresh nothing. Any genuine frame of the member's that the
+  receiver did not hear still counts when it arrives late from the member's
+  address, about 90 s of `CONNECTED` per frame, with no fixed bound. Since
+  the member heartbeats a bound member's address whether or not it is
+  listening, every heartbeat sent while the receiver was off, booting or on
+  another channel is one: relayed, they hold a gone member `CONNECTED`
+  about three times as long as the receiver was down (one hour down, about
+  2.9 hours, host-tested). A reboot adds the frames heard since the last
+  5-minute replay-counter save (at most 12 heartbeats, about 18 minutes,
+  more if the member sent other frames in it), and a jammer that sends late
+  what it blocked holds it for as long as its stock lasts
+  (`THREAT_MODEL.md`). The counter of a member's first frame that verifies
+  is now persisted as soon as it lands, and once more 66 s later if it has
+  moved; a save that fails (the replay-counter write refused) is tried
+  again on the member's next verified frame, or for the second save 66 s
+  after the pass that failed, where the PR's Codex review found it taken
+  as done (on a board without flash encryption, which writes no replay
+  counter, every try is refused and writes nothing). So a receiver
+  rebooted within 5 minutes of a pairing, once the member's first frame
+  has landed there and its save with it, restores a counter for the
+  member, and the frames the member signed before the pairing stay replays (before,
+  it restored none, and 240 recorded frames held a gone member `CONNECTED`
+  356 minutes, host-probed); a save taken before the member was heard wrote
+  it at 0, which no longer counts as a saved counter. That narrows the
+  pairing case rather than closing it. A reboot before the member's first
+  frame lands (milliseconds after the bind normally, up to about 33 s when
+  the first `PAIR_COMPLETE` or the paired heartbeat is lost), or, when NVS
+  refused that frame's save, before its retry on the member's next
+  verified frame lands, restores no counter for a newly paired member; no
+  pass retries that save, so with the member's own frames kept out after
+  the refusal (lost, or jammed) it waits for the member's next verified
+  frame or the next 5-minute save that lands. And
+  a radio copying the member's address can land one of the member's older
+  genuine frames before the member's own first frame, the first save then
+  holds that older counter, and a reboot before the second save lands (66 s
+  after the first, and 66 s more for each write NVS refused) restores it, as
+  does one before
+  the next 5-minute save when the member's own frames were kept out
+  through the 66 s (`THREAT_MODEL.md`).
+  An age past 2^31 ms is
+  held there, so a member gone longer than the 32-bit clock can count stays
+  `OFFLINE` instead of reading `CONNECTED` again after about 49.7 days. A joiner that lost the first
+  `PAIR_COMPLETE` now hears the initiator at the initiator's next heartbeat,
+  and a boot heartbeat lost before Wi-Fi association (F320) costs at most one
+  interval after the station joins its router. Cost, from code: one
+  signature per 30 s per sender, at most 8 heartbeat verifies per 30 s per
+  receiver (one per bound member), one outbound counter per heartbeat (a
+  reservation write about 2.8 times a day), and at most two replay-counter
+  saves that land per pairing. No wire change: older PlatformIO firmware verifies the
+  heartbeat and drops it. Only `[env:full]` builds the
+  mesh; `[env:release]` and every env that extends it set
+  `FEATURE_MESH_NETWORK=0`, so no OTA'd device changes. **Host-tested**
+  (`test_mesh_session`: the five silence assertions a timer makes false now
+  admit only member heartbeats checked by destination, signature, opera and
+  counter, with their spacing held to the constants; six new cases, each
+  failing on the old code; three more, the deadline across the clock's
+  wrap, a jitter drawn for every interval and a member bound after weeks
+  with none, each failing on a mutant every suite let through, as does the
+  age cap on a stopped pass, now a leg of the wrap case; one that pins the
+  figures above for a frame the receiver did not hear, with a reboot, a
+  jammer and an hour's downtime from a real sending session; one for the
+  first-counter save, failing without it or when a saved 0 counts as
+  saved; one for its second save, failing without it or on a deadline
+  armed up to 999 ms early, with the reboot before it pinned as still
+  open; two for a save that fails, the first
+  retried on the member's next verified frame and the second a full 66 s
+  later, never on the next pass, each failing on the code the Codex review
+  found, and the second also on a retry counted from the deadline a late
+  pass missed rather than from that pass, or set up to 999 ms early, the
+  first with a reboot before its retry lands pinned as still open, also
+  after 290 s of passes with the member quiet, none of which retries it,
+  and closed by a 5-minute save that lands; a flipped
+  signature byte and a frame under another opera in the liveness case; the
+  documented 30 s ± 3 s pinned at compile time; the other 12 mesh suites
+  unchanged;
+  `check_canary_mesh_status.py`; `test_canary_mesh_first_counter_wiring.py`
+  for main.cpp's half, which now fails on a handler or a persist that drops
+  the save's result); the `[env:full]` compile is CI's; not run on a
+  device (a U1 bench row).
+
 ### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
 
 - **The flagship's dashboard tab no longer holds the owner's app at `429`,

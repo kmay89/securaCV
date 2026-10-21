@@ -2576,6 +2576,148 @@
   tested the counter, not the trust decision.
 - **Date learned:** 2026-10
 
+### A transport's last-seen stamp is not liveness, and a presence signal needs a sender
+- **What happened:** The PlatformIO mesh reported each member's state,
+  `last_seen_sec`, RSSI and `peers_online` from the ESP-NOW transport's
+  peer entry (F324). Two things were wrong with that. First, nothing sent
+  on a timer: two healthy paired Canaries quiet for ten minutes both read
+  `CONNECTING` with the other `OFFLINE`, about 610 s old, and the web UI
+  said "Searching for opera members". Second, the transport stamps its
+  entry for any frame from a known address before the session verifies
+  anything, and ESP-NOW does not authenticate a source: a host probe sent a
+  3-byte junk frame and a replay of one verified frame from a quiet
+  member's address once a minute, and the member read `CONNECTED`,
+  `last_seen_sec` 1, the junk's RSSI, for ten minutes. Adding the heartbeat
+  alone would have made that worse, because it puts the member's address on
+  the air every 30 s for anyone to copy.
+- **Root cause:** Liveness was read from the layer that sees frames, not
+  from the layer that checks them. canary-wap had already put its stamp
+  after the signature and counter checks. And "a member is gone" can only
+  be told from "a member is quiet" if a healthy member is never quiet.
+- **Fix:** A jittered 30 s ± 3 s heartbeat that every heartbeat re-arms,
+  with a `static_assert` that one lost heartbeat cannot read `STALE`, and a
+  per-member `verified_seen_ms` and RSSI stamped in `on_opera_frame` after
+  the counter check, which the view and `online_peer_count` read instead of
+  the transport entry. Three edges the arithmetic hides: the deadline is
+  compared as a signed difference, because a device up about 49.7 days
+  arms one past 2^32 ms that wraps to a small number, and a plain
+  `now >= deadline` then signs a heartbeat on every pass until the clock
+  wraps too (28 in 400 s where 13 belong, host-probed); a deadline kept
+  across a disable longer than 2^31 ms reads as weeks in the future, so a
+  stopped pass drops it; and a 32-bit age wraps after about 49.7 days and
+  would read a long-gone member `CONNECTED` again, so every pass, stopped
+  or running, holds a heard member's age at 2^31 ms or under. What it does
+  not fix: the counter check is a high-water mark, so any genuine frame the
+  receiver did not hear still verifies and stamps the member live when a
+  copying radio sends it late, and nothing bounds that but the recorder's
+  stock. The largest stock is one the heartbeat itself creates: a member
+  heartbeats a bound member's address whether or not it is listening, so
+  every heartbeat sent while the receiver was off, booting or on another
+  channel is one it never heard, and relayed after a downtime they hold a
+  gone member `CONNECTED` about three times as long as the downtime (one
+  hour: about 2.9 hours, host-tested). A reboot adds the frames heard since
+  the last replay-counter save, and a jammer has its own. Review round 1
+  wrote the residual as "two ways, up to about 18 minutes" and listed only
+  the frames the receiver heard before a reboot; round 2 found the
+  downtime's frames, which need no jammer. A receiver rebooted within 5
+  minutes of a pairing also restored no counter for the new member, so
+  everything the member had signed before the pairing was fresh again (240
+  recorded frames, 356 minutes, host-probed); the counter of a member's
+  first frame that verifies is now persisted as soon as it lands (the
+  session's first-counter handler, main.cpp `on_mesh_first_counter`). Round
+  3 found two holes in that save. The first frame that verifies need not be
+  the member's newest (the counter check is a high-water mark, so an older
+  genuine frame a radio copying the member's address lands first passes,
+  and the save held its old counter), so the save is now taken once more
+  66 s later if the counter has moved. The residuals the docs state are a
+  reboot before the member's first frame lands, or, when NVS refused that
+  frame's save, before its retry on the member's next verified frame lands
+  (nothing saved for it yet; no pass retries it, so with the member's frames
+  kept out after the refusal, until the next 5-minute save that lands), a
+  reboot before that second save lands, and,
+  when the member's own frames were kept out through the 66 s (a jammer, or
+  after a boot a station not yet on its router's channel, F320), a reboot
+  before the next 5-minute save; review
+  round 4 found the summaries naming only the middle one. And a save
+  taken while the member was
+  registered and unheard wrote it at 0, which the boot restore counted as a
+  saved counter, so the member's first frame after that boot saved nothing;
+  a saved 0 no longer counts (no frame carries 0). The PR's Codex review
+  then found the save marked done before it ran: the session cleared the
+  member's `counter_unsaved` and armed the second save ahead of a `void`
+  handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so one NVS write that
+  failed (`Preferences::begin` or `putBytes`) was never retried by the
+  session: a failed first save waited for the second (or, with the
+  counter unmoved by then, for the 5-minute save), and a failed second
+  save for the 5-minute save. The handler now returns the save's result; the flag clears and the second
+  save arms only on true, a false first save is tried on the member's next
+  verified frame, and a false second save 66 s after the pass that failed,
+  never on the next pass (on a board without flash encryption every save
+  is refused before any write, so a retry costs a snapshot and writes
+  nothing). Its review found the docs still bounding that second reboot
+  at "inside the 66 s": a refused second save leaves the older counter
+  saved 66 s more for each refused try, so the reboot that restores it is
+  one before the second save lands; its second review found the first
+  reboot with the same gap, bounded at the first frame's landing when a
+  refused first save leaves nothing saved until its retry lands. When a
+  fix adds a periodic send, count what the send leaves on the air for a
+  recorder, not only what it tells the receiver; when a save is meant to
+  hold "the newest", ask what makes the value it saves the newest; and
+  when a step exists to make something durable, set "done" from its
+  result, not before the call, and draw every bound the docs give at that
+  result, for each window they list, not at the step's start.
+- **Regression check:** `test_mesh_session`:
+  `test_liveness_counts_only_verified_frames` (junk and a replay refresh
+  nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
+  minutes read `ACTIVE`/`CONNECTED`, the heartbeat spacing held to the
+  constants), `test_every_heartbeat_re_arms_the_timer`,
+  `test_the_heartbeat_timer_survives_a_long_disable`,
+  `test_a_long_gone_member_stays_offline_past_the_clock_wrap`; each fails
+  on the code before F324, and the last three on a mutant without the
+  re-arm, the stopped-pass drop and the age cap (running and stopped).
+  Review round 1 found seven mutants every suite let through, and these
+  fail on them: `test_the_heartbeat_spacing_holds_across_the_millis_wrap`
+  (the plain compare), `test_each_heartbeat_deadline_is_drawn_afresh` (a
+  fixed or once-drawn jitter keeps every gap inside the per-gap bounds, so
+  only a spread assertion sees it),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), and the wrap case's stopped leg; and
+  `test_a_frame_the_receiver_has_not_heard_still_counts_as_live` pins the
+  threat model's figures, its downtime leg from a real sending session run
+  for an hour. Review round 2: `test_a_members_first_counter_is_saved_at_once`
+  (fails without the save), the liveness case's flipped signature byte and
+  frame under another opera (a stamp in either check's failure branch
+  passed every suite), and the documented 30 s ± 3 s pinned at compile time
+  (a jitter of 0 or a 40 s interval passed every check, because every check
+  derives its bounds from the constants it tests). Review round 3:
+  the first-counter case's saved-0 leg (fails on a restore that marks a
+  saved 0 saved) and `test_an_older_first_frame_is_saved_over_once_more`
+  (an older frame landed first: fails without the second save, and pins a
+  reboot before it as still open). Review round 4: the 66 s pinned at
+  compile time beside the cadence, and that case's legs for one lost
+  heartbeat of the member's own, timed from the heartbeat constants rather
+  than from the deadline (a 33 s or 45 s deadline passed every suite), the
+  same across the millis() wrap (a `now < from + R` compare passed), a
+  frame after a deadline that found nothing moved (a save left armed until
+  the counter moved passed), and a reboot before the first frame (pinned
+  open). The Codex review: `test_a_failed_first_counter_save_is_tried_again`
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (each
+  fails on the code it found; the second also on a retry taken on the next
+  pass and on one counted from the deadline a late pass missed, and the
+  first on a second save armed from the call that failed), with a pass
+  1 ms before each 66 s deadline (each fails on a deadline armed up to
+  999 ms early) and a reboot before a refused first save's retry lands,
+  also with the member quiet for 290 s (pinned open),
+  and the wiring test fails on a handler or a persist that drops the
+  result. Bounding each gap is not
+  testing a jitter, a check derived from a constant cannot catch a change to
+  it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
+  timer makes false were rewritten to admit only member heartbeats checked
+  by destination, signature, opera and counter
+  (`assert_only_member_heartbeats`), not deleted.
+- **Date learned:** 2026-10
+
 ### A pin on the order of a step is not a test of the step
 - **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
   member's radio address, and its ESP-NOW registration, at the source of

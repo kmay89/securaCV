@@ -9367,6 +9367,11 @@ so — see D2 below.)
   joiner reads the initiator OFFLINE until the initiator's next frame (the
   joiner's own heartbeat still ends the copies). Rejected: a recurring
   heartbeat (a new periodic RF pattern; the maintainer's call, F324).
+  *Since F324 (2026-10-19):* a member heartbeats every 30 s ± 3 s, every
+  heartbeat (these two included) re-arming the deadline, so a joiner that
+  lost the first COMPLETE hears the initiator at the initiator's next
+  heartbeat, a lost paired heartbeat costs the copies about one interval,
+  and the boot one's loss (F320) one interval after association.
   Host-tested (`test_two_paired_canaries_hear_each_other_at_once`, two
   sessions in two processes with their frames carried between them;
   `test_a_reboot_announces_itself_once_to_each_member`;
@@ -9387,7 +9392,14 @@ so — see D2 below.)
   session call made when `WiFi.status()` first reads `WL_CONNECTED`, with a
   host test of the session half; keep a board with no router sending it at
   once. From code; host tests cannot see it (#1802).
-- [ ] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
+  *Since F324 (2026-10-19):* the harm is bounded to one heartbeat interval
+  after association. The next periodic heartbeat, 27-33 s after the boot
+  one and every 27-33 s after that, goes out on whatever channel the radio
+  is on then, so once the station has joined its router the members hear
+  this one within about 33 s (from code; the channel behavior is the F324
+  bench row). The `main.cpp` hook would save at most that interval; this
+  checkbox is left to its own decision.
+- [x] **F324 [decision] PlatformIO: a periodic heartbeat.** Since F162 a
   member is heard once after it pairs and once after a boot (and the boot one
   can be lost before Wi-Fi association, F320), and otherwise only when it has
   an alert, a Beacon event or a rotation to send, so a quiet opera's members
@@ -9401,6 +9413,340 @@ so — see D2 below.)
   initiator could send its heartbeat once more when its COMPLETE copies stop
   on hearing the joiner after at least one copy went out. The maintainer's
   call (#1802).
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* a periodic heartbeat, and liveness from verified frames only. A
+  member sends the existing empty signed `HEARTBEAT` (registry 16) to its
+  bound members every 30 s ± 3 s (`HEARTBEAT_INTERVAL_MS`,
+  `HEARTBEAT_JITTER_MS` in `mesh_session.h`; the jitter is drawn afresh for
+  each interval, `arm_heartbeat`). It goes through `send_heartbeat`: members
+  only (F101), the storm gate, and nothing signed and no counter spent with
+  no member bound. It runs whenever the session runs with an opera, and
+  every heartbeat re-arms the deadline, the paired and boot ones (F162)
+  included. A `static_assert` keeps one lost heartbeat short of STALE
+  (2 × 33 s < 90 s). A stopped pass drops the deadline, so a disable longer
+  than 2^31 ms cannot leave one that reads as weeks in the future. Each
+  member's `GET /api/mesh/peers` state, `last_seen_sec` and `rssi`, and
+  `GET /api/mesh`'s `peers_online`, now come from the arrival of that
+  member's last frame that passed the signature, opera and counter checks
+  (`verified_seen_ms` and `verified_rssi`, stamped in `on_opera_frame` on
+  the transport clock, `mesh_transport::clock_ms()`), as on canary-wap
+  (`mesh_network.cpp`). Until now any frame from the member's address
+  refreshed them before verification (`mesh_transport.cpp` `drain_ring`).
+  On the old code a 3-byte junk frame and a replay sent from a quiet
+  member's address once a minute held it `CONNECTED`, `last_seen_sec` 1, the
+  junk's RSSI, and `peers_online` 1 for ten minutes; now it reads `STALE` at
+  two minutes and `OFFLINE`, 601 s old with the verified frame's RSSI, at
+  ten, and the opera `CONNECTING`. Without a timer, two healthy paired
+  Canaries quiet for ten minutes both read `CONNECTING`, the other
+  `OFFLINE` about 610 s old, and the web UI said "Searching for opera
+  members"; now they read `ACTIVE` and `CONNECTED`, at most 34 s old. A
+  member that is unplugged, crashed, out of range or jammed reads STALE
+  within about 90-100 s and OFFLINE within about 5 min while junk, forgeries
+  and replays of frames the receiver has heard are all a radio copying its
+  address sends. *Not covered (review rounds 1 and 2, 2026-10-20):* any
+  genuine frame of the member's that the receiver did NOT hear passes every
+  check whenever it arrives from the member's address (the counter check is
+  a high-water mark) and refreshes its liveness: a recorder that sends such
+  frames one under every 90 s holds a member that is gone `CONNECTED` about
+  90 s each, then it reads STALE and OFFLINE, and nothing bounds the stock.
+  Round 1 named two sources and capped the reboot case at about 18 minutes;
+  round 2 found the largest, which needs no jammer. A member heartbeats a
+  bound member's address whether or not that member is listening
+  (`send_to_members`), so every heartbeat it sends while the receiver is
+  off, booting, out of range or on another channel is one the receiver never
+  heard, and a passive recorder near the member keeps it. Relayed once the
+  receiver is back, they hold a gone member `CONNECTED` about three times as
+  long as the receiver was down (host-tested from a real sending session:
+  an hour down, 117 frames, 10414 s; probed on the round-1 head: 177
+  minutes). Before F324 a member sent nothing on a timer, so a downtime left
+  nothing to keep. After a receiver reboot the frames heard since its last
+  5-minute replay-counter save add to that (`main.cpp` saves on that timer
+  and on revoke, leave and rekey, and no restart path saves first): at most
+  12 heartbeats one save interval holds (more if the member sent other
+  frames in it), about 18 minutes on their own, and a receiver that reboots
+  more often than every 5 minutes never advances its saved counter. A
+  jammer that keeps the member's frames from the receiver and sends them
+  late holds it `CONNECTED` for as long as its stock lasts, with no STALE
+  between. Nothing on the receive side tells a late frame from a fresh one;
+  the signed header's timestamp is the sender's own clock and no receiver
+  checks it. Closing this needs a freshness check against that clock or a
+  wire change; neither is made here or filed under a number. A
+  `persist_replay_counters()` before the deliberate restarts
+  would narrow the reboot case to unclean ones; not done here, and not
+  filed under a number of its own. *Narrowed in review rounds 2 and 3, not
+  closed:* pairing persisted no replay counter, so a receiver rebooted
+  before its first 5-minute save after a pairing (paired on the bench,
+  unplugged to mount)
+  restored none for the new member, and every frame the member had signed
+  under the opera was fresh again (probed: 240 recorded frames held it
+  `CONNECTED` 356 minutes). mesh_session now runs a first-counter handler
+  (`set_first_counter_handler`) on a member's first frame that passes every
+  check since it was registered with no saved counter (a pairing, a re-pair
+  from its replay tombstone, a boot that restored none for it), and
+  main.cpp's `on_mesh_first_counter` persists the replay counters then; a
+  counter the boot restored marks it saved (a non-zero one since round 3,
+  below), so a boot costs no write. *Review round 3 (2026-10-20)* found
+  that save holding less than it claimed, twice. The first frame that verifies need not be the member's
+  newest: the counter check is a high-water mark, so a radio copying the
+  member's address that lands one of the member's older genuine frames
+  while the receiver holds it registered and unheard (milliseconds after
+  the bind normally, up to about 33 s when the first COMPLETE or the paired
+  heartbeat is lost, which a jammer can force) got that older counter
+  saved, and a reboot before the next 5-minute save reopened everything
+  after it (probed: counter 1 saved, 119 relayed frames held the gone
+  member `CONNECTED` at 119 of 119 reads). The session now runs the
+  handler once more `FIRST_COUNTER_RESAVE_MS` (2 × (30 + 3) s = 66 s) after
+  the first save if the counter has moved (`resave_first_counters`, every
+  pass, stopped or not), so the save holds the member's own counter unless
+  every frame of the member's own was kept out through those 66 s; at most
+  two saves per registration, and no frame adds one. Still open, and stated
+  so in the threat model and spec §8.3: a reboot before the member's first
+  frame lands, which finds nothing newer saved for it (after a first
+  pairing, no counter at all); a reboot inside the 66 s; and, when the
+  member's own frames were kept out through them (a jammer, or after a boot
+  that restored no counter for the member, a station not yet joined to its
+  router, F320), a reboot before the next 5-minute save. *Review round 4
+  (2026-10-20)* found the threat model's sentence introducing this list
+  still calling the pairing case closed, and the summaries (CHANGELOG,
+  roadmap, spec §14, `LESSONS_LEARNED.md`) naming only the reboot inside
+  the 66 s; all now name the three. Persisting on every advancing frame
+  in a window after the
+  registration was rejected: a recorder replaying its stock in counter
+  order would drive one NVS write per frame. And a save taken while a
+  member was registered and unheard (another member's first counter, a
+  leave, the 5-minute save) wrote it at 0, which `restore_replay_counter()`
+  counted as a saved counter, so the member's first frame after that boot
+  saved nothing (probed: the handler fired 0 times, then 120 relayed frames
+  held it `CONNECTED` at 120 of 120 reads); a restored 0 no longer marks it
+  saved, as no frame carries counter 0. Neither is filed under a new
+  number. One addition the
+  code needed beyond the decision: the age is a 32-bit difference, so a
+  member gone 2^32 ms (about 49.7 days) would read `CONNECTED` again for
+  90 s (the transport entry did the same at head); every pass, stopped or
+  not, now holds a heard member's age at 2^31 ms (`cap_verified_ages`), so
+  it stays `OFFLINE`, last seen about 24.8 days ago. A joiner that lost the
+  first COMPLETE hears the initiator at the initiator's next heartbeat, and
+  F320's lost boot heartbeat costs at most one interval after association.
+  A missed frame re-delivered from a copied address (spec §8.3) stays
+  dispatchable until the receiver hears the sender's next frame: about 33 s
+  or less on a working link. A jammer can stretch that, and one that also
+  sends the blocked frames late keeps the member `CONNECTED` while it does
+  (above). Cost, from code: one counter per heartbeat (about 2.8
+  reservation writes a day), replay saves that now write moving counters
+  every 5 min (only on flash-encrypted boards; `default_8MB.csv`'s 20 KB
+  nvs), one sign per 30 s per sender and at most 8 heartbeat verifies per
+  30 s per receiver (one per bound member; `MAX_TRUSTED_PEERS` is 8), and
+  at most two replay-counter saves that land per pairing (the Codex
+  amendment below). No wire change. The RF pattern is
+  marginal: the only env with
+  the mesh (`[env:full]`) already broadcasts the BLE status beacon. No
+  released image builds the mesh, so no OTA'd device changes. The owner
+  stops the frame by turning the mesh off. Rejected: the narrow
+  lost-COMPLETE re-send (one case of three); keeping it documented (the
+  dashboard stays wrong, liveness stays meaningless); counting
+  heard-this-boot as online (hides a removed sibling); the heartbeat without
+  verified liveness (the heartbeat would broadcast the address to copy);
+  skipping a heartbeat after other traffic (no measured need). Host-tested:
+  `test_mesh_session`, whose five silence assertions now admit only member
+  heartbeats checked by destination, signature, opera and per-destination
+  counter (`assert_only_member_heartbeats`), with their spacing held to the
+  constants (`check_beat_spacing`; in the seeded host run 20 heartbeats per
+  side in the quiet ten minutes, 17-22 allowed, and 117 rounds per member in
+  the hour, 105-133 allowed), and new cases for a lost COMPLETE healed, every heartbeat
+  re-arming the timer, no running opera (not started, disabled, no opera,
+  no bound member: an hour silent with no counter spent, then a heartbeat),
+  a disable past 2^31 ms, junk and a replay from a member's address, and an
+  age past the clock's wrap; each fails on the old code, and the re-arm,
+  long-disable and wrap cases on a mutant without the re-arm, the
+  stopped-pass drop and the age cap. Review round 1 (2026-10-20) added
+  cases for seven mutants every suite let through:
+  `test_the_heartbeat_spacing_holds_across_the_millis_wrap` (a plain
+  `now >= deadline` signs a heartbeat on every pass near the wrap: 28 in
+  400 s where 13 go), `test_each_heartbeat_deadline_is_drawn_afresh` (in
+  the seeded run an hour's gaps span 27.1-32.9 s with 52 distinct values; a
+  deadline fixed at 27, 30 or 33 s, or drawn once, gives one value),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), a stopped leg of the wrap case (the age cap on
+  a stopped pass), and `test_a_frame_the_receiver_has_not_heard_still_counts_as_live`,
+  which pins the figures of the not-covered note above (12 frames since
+  the save, 1069 s `CONNECTED`). Review round 2 (2026-10-20): that case's
+  downtime leg (a sending session run for an hour, then its heartbeats
+  relayed to the rebooted receiver: 117 frames, 10414 s, 2.89 times the
+  downtime, held between the bounds the gap limits give);
+  `test_a_members_first_counter_is_saved_at_once` (fails without the save:
+  the first recorded frame reads the gone member live), with
+  `scripts/tests/test_canary_mesh_first_counter_wiring.py` holding
+  main.cpp's half; a flipped signature byte and a frame signed under another
+  opera in the liveness case (a stamp in either check's failure branch
+  passed every suite); and the documented 30 s ± 3 s pinned at compile time,
+  with `static_assert(HEARTBEAT_JITTER_MS > 0)` in `mesh_session.h` (a
+  jitter of 0 and a 40 s interval passed every suite, since every check
+  derives its bounds from the constants). Review round 3 (2026-10-20): the
+  first-counter case's saved-0 leg (fails on the round-2 restore) and
+  `test_an_older_first_frame_is_saved_over_once_more` (fails without the
+  second save; pins a reboot before it as still open, the second save's
+  exact deadline, once only, nothing when the counter has not moved, a
+  stopped session, and a member dropped first). Review round 4
+  (2026-10-20): `FIRST_COUNTER_RESAVE_MS` pinned at 66 s at compile time,
+  and legs of that case for one lost heartbeat of the member's own, timed
+  from the heartbeat constants (a 33 s, 45 s or 64 s deadline passed every
+  suite and fails there; 120 s and 299 s fail the pin), the same with the
+  clock wrapping between the two saves (a `now < from + R` compare passed),
+  a frame after a deadline that found nothing moved (a save left armed
+  until the counter moved passed), and a reboot before the member's first
+  frame (pinned open: 132 of 132 relayed frames `CONNECTED`). The other
+  12 mesh suites are
+  unchanged and pass; `check_canary_mesh_status.py` passes (68 mutations
+  refused). The `[env:full]` compile is CI's; host-tested, not run on a
+  device. The on-air spacing and the STALE/OFFLINE transitions are a U1
+  bench row (`hardware_verification_checklist.md`).
+  *Codex review on #1839 (2026-10-20), P2; fixed in the same PR:* the
+  first-counter save was marked done before it ran. `on_opera_frame`
+  cleared `counter_unsaved` and armed the second save before it called a
+  `void` handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so an NVS write that
+  failed once (`Preferences::begin` or `putBytes`) was not retried by the
+  session: a failed first save waited for the second save 66 s later, or,
+  with the counter unmoved by then, for the next 5-minute save, and a
+  failed second save (`resave_first_counters` disarmed either way) for the
+  5-minute save. A reboot in between restored an older counter or none,
+  the window the save exists to narrow. `first_counter_fn` now returns
+  `bool`, true when the replay counters were persisted:
+  `on_mesh_first_counter` returns `persist_replay_counters()`, which
+  returns `save_replay_counters()`'s result (true with nothing to save;
+  its other callers cast it to `void`). The flag clears and the second
+  save arms only on true, so on false, or with no handler, the counter
+  stays unsaved and the member's next verified frame tries again; a second
+  save that returns false moves its deadline to that pass and is tried
+  again `FIRST_COUNTER_RESAVE_MS` later, never on the next pass. The "at
+  most two saves per registration" above now means two that land; a failed
+  one costs one more call, on the member's next verified frame or 66 s
+  later. `save_replay_counters()` refuses every call on a board without
+  flash encryption, which writes no `replay_ctrs` at all, so there the
+  first save is tried on each of the member's verified frames: a counter
+  snapshot each and no write, accepted. Rejected: retrying on every
+  `process()` pass after a failed second save (a hot loop on a unit whose
+  NVS keeps failing); leaving it (the 5-minute save does catch up, but the
+  window reopens on exactly the failure the save should survive).
+  Host-tested: `test_a_failed_first_counter_save_is_tried_again` (one
+  refused write retried on the member's next verified frame, and not on a
+  pass of its own, a replay, junk or a forgery; a reboot after that retry
+  keeps the 133 frames the member signed before the pairing replays; the
+  second save armed from the save that landed; a frame before any handler
+  is installed; a handler refusing every call runs once per verified frame,
+  23 calls for 23 frames in ten minutes, and never arms the second save)
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (a
+  refused second save retried 66 s later, then disarmed; one refusing
+  every call runs exactly once per 66 s, ten times in 660 s, at t0 and
+  across the clock's wrap). Each fails on the code the review found (run
+  with a shim that drops the handler's result, as the old `void` typedef
+  did); the second also on a retry taken on the next pass and on a failed
+  save left armed with its old deadline, the first on a second save armed
+  from the call that failed. `test_canary_mesh_first_counter_wiring.py`
+  now pins `static bool on_mesh_first_counter(...) { (void)fp; return
+  persist_replay_counters(); }` and a `static bool` persist that returns
+  the save's result and true with nothing to save, and fails on the old
+  shape and on a handler or a persist that drops the result. The other 12
+  mesh suites pass unchanged; `check_canary_mesh_status.py` passes (68
+  mutations refused). The `[env:full]` compile is CI's; host-tested, not
+  run on a device; no new bench row.
+  *Review of the Codex fix (2026-10-20):* the threat model's list of the
+  reboots left open still bounded the second at "inside the 66 s", as did
+  the CHANGELOG, spec §14, the roadmap, `LESSONS_LEARNED.md` and main.cpp's
+  comment on the handler (round 3's list above says it too, and stays as
+  that round's record). A refused second
+  save leaves the older counter saved until a save of the member's newer
+  counter lands: the retry, 66 s after each refused try, or a 5-minute
+  save that lands first (the test above shows the saved counter still the
+  first save's through every pass to the retry). All now say a reboot
+  before the second save lands, as spec §8.3 did; docs and a comment only.
+  The threat model's and spec §8.3's host-tested lists for the pairing case
+  now name the two tests. And those tests let through a retry deadline
+  counted from the one it missed (`counter_resave_from_ms +=
+  FIRST_COUNTER_RESAVE_MS` in place of `= now`), since every pass in them
+  landed on a deadline; after a main-loop stall that version runs the
+  handler on several passes in a row, one NVS write each. A late-pass leg
+  of `test_a_failed_second_save_is_tried_again_a_deadline_later` (no pass
+  from the member's heartbeat to two deadlines later, then 1 s passes),
+  at t0 and across the wrap, now fails on it (three calls on three passes)
+  and passes on the code, which was right. Host-tested; not run on a
+  device.
+  *Second review of the Codex fix (2026-10-20):* the first reboot had the
+  same gap. A refused first save leaves nothing saved for the member until
+  its retry on the member's next verified frame lands, normally its next
+  heartbeat, 27 to 33 s later, so the first reboot left open is one before
+  that retry lands, not before the first frame lands (probed: the paired
+  heartbeat landed, its save refused, a reboot 10 s later; 133 of 133
+  frames the member signed before the pairing read `CONNECTED`). The
+  threat model said so in its list but closed the same sentence on
+  "milliseconds unless the first COMPLETE or the paired heartbeat was
+  lost"; the roadmap (its table row and §3) and `LESSONS_LEARNED.md` drew
+  the bound at the first frame alone, and the CHANGELOG and spec §14 named only that
+  bound for the reboot that still reopens it. All now say "or, when NVS
+  refused that save, before its retry lands". The window is the residual
+  the docs state, not a new one, and
+  `test_a_failed_first_counter_save_is_tried_again` now pins it (133 of
+  133 read `CONNECTED`), as `test_an_older_first_frame_is_saved_over_once_more`
+  pins the reboot before the first frame. The review also found the cost
+  of a save NVS keeps refusing unstated for a flash-encrypted board: each
+  verified frame of a member whose first save has not landed is one
+  refused write attempt, at the member's heartbeat pace normally, at the
+  pace of a copier replaying a recording of the member's frames this
+  receiver has not heard otherwise (as fast as the main loop verifies the
+  8 frames the transport queues at a time), bounded by the recording's
+  frames, each verifying once (probed: 400 calls for a 400-frame
+  recording in 50 passes; the code before the Codex fix ran it once). The
+  threat model's
+  cost bullet now says so; spacing the retry (one try per interval under
+  the heartbeat gap) was considered and not taken: the decision retries on
+  the next verified frame, the cost needs a board whose NVS already
+  refuses, and the recording bounds it; whether a refused write wears
+  flash was not checked on hardware. A retry deadline set up to 999 ms
+  early (`= now - 1`) passed every leg, whose passes ran on a 1 s grid;
+  the late-pass leg of `test_a_failed_second_save_is_tried_again_a_deadline_later`
+  now runs a pass 1 ms before the retry's deadline and fails on it. And
+  `mesh_session.h` said a refused second save ends when "a deadline finds
+  nothing moved", which cannot happen after a refusal (`counter_resave_above`
+  stays at the first save's); it now says a refused save is never dropped.
+  Docs, comments and tests; no code change. Host-tested; not run on a
+  device.
+  *Third review of the Codex fix (2026-10-21):* #1838 landed on main
+  after this branch last merged it, and both add a new top section under
+  the CHANGELOG's `[Unreleased]`, so the PR conflicted, and GitHub runs no
+  `pull_request` workflow on a PR with a merge conflict: a push would have
+  left it at zero check runs, the `[env:full]` compile among them. main is
+  merged in again with a merge commit, both sections kept, this PR's
+  first. A refused first save whose member then goes quiet (its own frames
+  kept from the receiver after the paired heartbeat: lost, or jammed) is
+  retried by no pass (`resave_first_counters` acts only after a save that
+  landed), so that window lasts until the member's next verified frame or
+  the next 5-minute save that lands, as every pairing's did before F324.
+  The threat model, spec §8.3 and §14, the CHANGELOG, the roadmap and
+  `LESSONS_LEARNED.md` bounded it by the member's next verified frame
+  alone, and main.cpp's comment on the handler said a failed write does
+  not wait for the 5-minute save; they, and `mesh_session.h`'s handler
+  contract, now name the quiet case and the 5-minute save that bounds it. A
+  timed retry of a refused first save (one call per 66 s while the counter
+  is unsaved) was considered and not taken: the decision retries on the
+  next verified frame; the case needs a refused NVS write, which no sender
+  can cause, the member's frames kept out after it and a reboot inside the
+  window, all at once; it is no regression (the code before
+  the Codex fix waited for the 5-minute save there too); and on a board
+  without flash encryption, where no save lands, it would add a call per
+  66 s for every member for as long as it runs.
+  `test_a_failed_first_counter_save_is_tried_again` now pins the window:
+  290 s of passes with the member quiet run the handler on none of them,
+  a reboot then reads 133 of 133 frames the member signed before the
+  pairing `CONNECTED`, and with a 5-minute save landed before the reboot,
+  none. And the second save's first deadline was pinned only to 1 s: an
+  arm up to 999 ms early (`counter_resave_from_ms = verified_seen_ms -
+  999`, or `- 1`) passed every leg, whose passes ran on a 1 s grid.
+  `test_an_older_first_frame_is_saved_over_once_more` and the "armed from
+  the save that landed" leg of `test_a_failed_first_counter_save_is_tried_again`
+  now run a pass 1 ms before that deadline, and each fails on it alone.
+  Docs, comments and tests; no code change. Host-tested; not run on a
+  device.
 - [x] **F163 [code] The kernel's mesh pairing wizard waits for both Canaries
   to read ACTIVE.** `privacy_witness_kernel/wizard/index.html`'s
   `meshConfirm()` polls `/api/mesh/status` (the Canary's `GET /api/mesh`)
@@ -12885,7 +13231,11 @@ so — see D2 below.)
   tree the page logic tests pass on the committed dist (1004 pass, 4 skipped,
   the four `LAB_CORES=native` only). Host-tested; not bench-tested on a
   display that sees a WAP. Found here: F294, A89 and C19.
-- [ ] **F294 [decision] The WAP publishes two device types.**
+  *Since F294 (2026-10-19):* the sketch's `DEVICE_TYPE` constant is
+  `"canary-wap"` too, and `wire_types.mjs` reads it as a third agreeing site
+  beside the mDNS `dt` and the MQTT status, so `"canary"` is no longer a WAP
+  type anywhere in the sketch.
+- [x] **F294 [decision] The WAP publishes two device types.**
   `canary_wap.ino`'s `DEVICE_TYPE` is `"canary"`, which REST `/api/status`,
   the signed record's `device_type` and the boot banner carry (the same string
   `firmware/canary` uses), while mDNS `dt` and the MQTT status say
@@ -12893,6 +13243,60 @@ so — see D2 below.)
   whether `DEVICE_TYPE` becomes `"canary-wap"` (a signed-record field change a
   verifier may pin) or the split is documented beside the record format. Found
   by F258 (#1802).
+  *Done (#1839, 2026-10-19; decided under the maintainer's instruction to fix the
+  remaining open items in best engineering practice, on the maintainer's
+  behalf):* `DEVICE_TYPE` is `"canary-wap"`. The premise that it is a
+  signed-record field a verifier may pin was wrong. The BOOT attestation's
+  CBOR payload is built in a stack buffer (`boot_payload[256]`), hashed with
+  `sha256_domain("securacv:fw:payload:v1")` and discarded:
+  `create_witness_record` keeps only its length and hash, and `WitnessRecord`
+  has no payload field. The SD line, the BLE line, `/api/v1/witness` and every
+  verifier (`tools/verify_witness_log.py`, `witness_page.h`, the iOS
+  ChainVerifier) see only the payload hash (`spec/witness_api_v1.md` §4.2
+  and §5). No reader can see the value, and no record key changed. The old
+  `"canary"` was the flagship's word. It contradicted the same `/api/status`
+  body's `node_status.node`, the mDNS `dt`, the MQTT status, `/api/fleet`'s
+  `product` and the BLE Improv device info, which all say `"canary-wap"`. No
+  in-tree client acted on it: iOS `WapStatus` decodes it and ignores it, and
+  its fixture already expected `"canary-wap"`. `node_status.node` and
+  `/api/fleet`'s `self.product` now read the constant, as REST
+  `device_type`, the boot banner and the BOOT attestation already did, so
+  every surface but the literal wire sites reads it (`figures.test.js` held
+  the first two to it and refused a literal handed to either, review round
+  1, 2026-10-20; review round 2, 2026-10-20, found REST `device_type` and
+  the attestation could go back to a literal `"canary"` with every gate
+  green, and the test now holds all five readers, once each, none handed a
+  literal). The sketch still spells `"canary-wap"` at the declaration and in
+  the three mDNS `dt` records, by design: the reader requires a literal
+  there. `wire_types.mjs` reads the constant as a third agreeing site
+  (`constString`: one declaration, one string literal, and any other
+  assignment to the name refused, whether `=`, a compound assignment, `++`
+  or `--`; the check is lexical, so a write through a pointer to the
+  constant is not seen; since round 2 a `static const char* const` or
+  `static constexpr const char*` declaration is read as the declaration, the
+  stronger form, where round 1's reader refused it as an assignment), so
+  `gen_figures.mjs --check` holds the constant and the literal sites (the
+  three mDNS `dt` calls and the two MQTT status strings) to one value and
+  refuses any future split between them, by file and line.
+  Improv's firmware-name string (`ble_improv.cpp`) stays a literal outside
+  that check, since that file cannot see the sketch's constant.
+  `figures.test.js` pins the constant, holds its declaration line among the
+  read sites, and adds fourteen refusals (the constant set back to
+  `"canary"`, handed a name, declared twice, repointed, moved by `+=` or
+  `-=`, by a prefix `++` or `--` and by a postfix `++` or `--`, declared as
+  a choice or a concatenation of two literals, gone to a `#define`, and a
+  const-pointer declaration set back to `"canary"`), each of which the old
+  reader let through, plus cases that a longer name (`WAP_DEVICE_TYPE`) and
+  a `==` are not writes and that both const-pointer declarations are read.
+  `wap.json` is regenerated (`device_type` and the boot preview's Type line).
+  The figure outputs, the Home Assistant data, the CSP, `web_assets_gz.h` and
+  the emulator dist are unchanged. The BOOT record's `payload_len` (REST
+  `/api/witness`) and `plen` (the BLE witness export) grow by 4 bytes (240 B
+  worst case, with a 31-character device id, of its 256 B buffer). There is
+  no `FIRMWARE_VERSION` bump: the value reaches devices with the next WAP
+  release (CHANGELOG [Unreleased] names the REST change for out-of-tree
+  readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
+  is CI's; nothing to bench.
 
 ---
 
