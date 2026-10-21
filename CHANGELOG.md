@@ -1,6 +1,120 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
+
+- **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
+  F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0
+  before it compared, so any `?claim=` on `GET /api/provisioning-receipt`
+  from any host on the network spent the claim the phone had just read over
+  the Bluetooth setup door. The phone's own spend a moment later was `403`,
+  which the iPhone app treats as final, so one stray or hostile request
+  ended the one-tap pairing "on the Wi-Fi, not paired", and the spend
+  released the first-boot reboot hold under a phone that still held a good
+  claim. A claim is 128 random bits that live 180 s, so burning on a guess
+  bounded nothing. `take()` now loads the word, compares in constant time,
+  and spends with one compare-and-swap of the word it loaded
+  (`spend_if_match()`): a wrong, short or truncated value changes nothing,
+  exactly one matching taker wins, and an expired claim is still burned (a
+  claim minted less than a second after the request read its clock is
+  compared like a fresh one, never burned as expired; any other age past
+  the TTL is burned, so a claim left unswept is refused by `take()` itself
+  until a second before the 49.7-day wrap). The
+  refusal's health line drops "(claim spent)" and is written once per 10 s
+  at most. Host-tested (`firmware/tests_host/test_claim_ticket.cpp`,
+  `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`); not
+  run on a device.
+
+- **The BOOT tap is handed only to the one device asking for it (sweep
+  F342).** A short BOOT tap opened a 30 s gate that `GET
+  /api/provisioning-receipt` handed to the first request that asked, so any
+  host on the network that polled the route won the owner's next tap and was
+  handed the token, the SoftAP password and the TLS pin. The new
+  `provisioning_gate::tap_arbitrate()` (the WAP now uses the shared header's
+  gate, not an inline copy) remembers the last two distinct addresses that
+  asked without a credential, asks before the tap included, and serves the
+  tap only to the sole address seen from 10 s before the tap onward. A second
+  device asking in that window closes the tap with `409 tap_contended`, and
+  the dashboard's **Use BOOT Tap Once** and Settings recovery-kit save say
+  another device asked instead of "Didn't see a tap" or "HTTP 409". The
+  `409` ends once an ask finds no address other than the asker asking in
+  the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
+  after the other device stops, so the pages' retry works: "wait 10
+  seconds, then click Use BOOT Tap Once again, and only then short-tap
+  BOOT" (the companion: tap Save again, and press when its note says to)
+  asks first, and the next tap serves it. If the
+  other device keeps polling, its own asks end the `409` 10 s after the
+  owner's page stopped: the owner's retry hears `403` and keeps asking, and
+  the next tap is closed with `409` again (the poller residual below). The
+  `409`'s own hint says to start the request first and keep it
+  asking, then press BOOT, never a bare re-tap (a tap no client of the
+  owner's is asking for goes to whoever asks first), and so does every
+  instruction a WAP page or answer gives: the `403`'s hint and button (its
+  button said "short tap, then poll within 30 seconds", and its hint "Press
+  the BOOT button on the device to reveal the provisioning receipt."), both
+  pages' new `409` text (it names the click, or the tap on Save, before the
+  press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
+  Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
+  above"), and the text of the companion's Home Assistant step (that step's
+  banner is not shown yet; the ledger's F342 entry notes it). The getting
+  started guide's sentence and the Lab's BOOT card said a short press lets
+  the dashboard hand over the recovery kit for 30 seconds; they now say the
+  press hands it to the one page already asking, so click **Use BOOT Tap
+  Once** first. Both pages say to press only once the device has answered their
+  first ask ("Asking the Canary first. Don't press BOOT yet." until then),
+  so a press made as the instruction appears cannot land before the
+  page's ask has reached the device. The dashboard's copy
+  says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
+  name and keeps the token. The
+  first-boot companion's recovery-kit save now asks first and waits up to
+  30 s for the press, its last ask 30 s after Save ("Tap Save my recovery
+  kit", then short-press BOOT when its note says to; the old order still
+  works), and its message
+  banner is now on screen (the handler set its text but never showed it).
+  A sole asker is served at once, as before. The asker is the socket peer
+  (`request_peer_key()`, the read the per-address lockout already keys on),
+  and the serial console names
+  both addresses while the health log names neither. Residuals: a tap no
+  client of the owner's was asking for (a page or `curl` started after it,
+  or a tap pressed per an older page that says to press first, included)
+  still goes to the first asker; hosts
+  behind one address are one asker; a host that asks for the receipt at
+  least once every 10 s (polling included) makes every tap the owner's
+  client is already asking for refuse, and then the
+  recovery kit's token and the USB serial console are the ways in. The 10 s
+  BOOT hold followed by a fresh iPhone setup is the last one, and the
+  dashboard names it last, with the iPhone ready: the hold keeps the token
+  and reopens the first-boot setup door for 30 minutes, and that door goes
+  to whichever Bluetooth client connects first, so a host on the network
+  that is also in radio range could reach it before the phone, spend the
+  claim minted for its own link and keep the token. The docs that said
+  otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
+  the setup door's window as Forget Wi-Fi does, on a unit that had
+  credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
+  said the USB serial console is disabled in production, and release
+  images enable it.
+  Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
+  `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
+
+- **canary-wap and canary: the BOOT tap and the setup-door claim are swept
+  every loop pass, and the WAP's sessions and pair tokens age on seconds
+  since boot, so none comes back to life when `millis()` wraps after 49.7
+  days of uptime (F347).** Each aged by unsigned subtraction on 32-bit
+  `millis()`, which is right only below 2^32 ms: a tap nobody took served
+  the receipt again 49.7 days later with no press, a claim read but never
+  spent took it with its old value, and a session or pair token not reused
+  since it expired was valid again for another 24 hours or 10 minutes. `provisioning_gate::expire()` and `claim_ticket::expire()` clear
+  a stamp past its TTL with a compare-and-swap of the value they read (a
+  fresh tap or claim is never cleared); the WAP's `loop()` runs both every
+  pass and the flagship's `handle_boot_button()` runs the gate's. The WAP's
+  session and pair-token slots now stamp whole seconds from
+  `esp_timer_get_time()` (a 136-year wrap; a token can end up to 1 s
+  early). No wire or record format changes. Host-tested
+  (`test_provisioning_gate.cpp`, `test_claim_ticket.cpp`,
+  `test_receipt_grant.cpp`, `test_session_cookie.cpp`); the wraps cannot be
+  bench-tested, and nothing here ran on a device.
+
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from

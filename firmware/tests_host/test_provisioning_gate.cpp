@@ -31,13 +31,49 @@
 //     (IPv4 as ::ffff:a.b.c.d, IPv6 as itself), refuses the unspecified
 //     address, an unknown family and a null pointer, and the IPv4 of every
 //     key it writes is the IPv4 ipv4_host_order_from_addr reads off the
-//     socket address itself: the WAP's per-address lockout keys on it.
+//     socket address itself: the WAP's per-address lockout keys on it;
+//   * the BOOT tap goes to ONE asker on the WAP (sweep F342): peek() reads
+//     the stamp without consuming it and take_exact() consumes only the
+//     stamp that was judged (a re-tap, a BLE OTA take or a close between the
+//     two leaves it); tap_arbitrate(), driven the way the WAP's receipt
+//     drives it on a 32-bit clock: a poller and the owner's dashboard across
+//     one tap are both refused and the tap closed; a sole owner asking from
+//     before the tap is served on its first ask after it, once; an attacker
+//     that asks first after the tap loses to an owner who asked before it;
+//     an address silent for longer than the lookback does not contend, at
+//     the boundary to the millisecond; one address alone is served (the
+//     residual); a clean re-tap after contention serves and a re-tap inside
+//     the lookback does not; the 409 ends once the other address has been
+//     quiet for the lookback (to the millisecond), so a retry 10 s after the
+//     other device stopped is NO_TAP and its next tap serves, while two
+//     addresses still asking hear it to the closed tap's TTL; a re-tap
+//     served to anyone ends it; the same address never contends with
+//     itself; the record fails closed across a 49.7-day silence; and a peer
+//     key prints as a.b.c.d (only behind a zero prefix) or as eight hex
+//     groups;
+//   * the sweep (sweep F347): expire() clears a stamp at its TTL and never
+//     one a millisecond younger, and its step on a stamp it read
+//     (expire_seen()) never clears one re-opened since that read,
+//     and a swept tap stays closed when millis() comes back round to it
+//     2^32 ms later, where an unswept one reads open again (the
+//     characterization row: why the sweep exists); and the canary tree's
+//     handle_boot_button() (firmware/canary/src/main.cpp, its path passed in
+//     as CANARY_MAIN_CPP) sweeps g_prov_gate as its first statement, from
+//     loop() on every pass.
 
 #include "../common/network/provisioning_gate.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <functional>
+#include <iterator>
+#include <string>
+
+#ifndef CANARY_MAIN_CPP
+#error "CANARY_MAIN_CPP must name firmware/canary/src/main.cpp (the Makefile passes it)"
+#endif
 
 using namespace canary::net::provisioning_gate;
 
@@ -112,6 +148,179 @@ static void explicit_close() {
   close(s);
   CHECK(!is_open(s, 100, kTtl), "close() shuts the gate");
   CHECK(!take(s, 100, kTtl), "close() leaves nothing to take");
+}
+
+// ── the sweep (sweep F347) ──────────────────────────────────────────────────
+
+static const uint64_t kWrap = 1ull << 32;   // 2^32 ms: 49.7 days of millis()
+
+static void expire_clears_at_the_ttl_and_never_a_fresh_stamp() {
+  State s{0};
+  CHECK(!expire(s, 1000, kTtl), "a closed gate: nothing to sweep");
+  open(s, 1000);
+  CHECK(!expire(s, 1000, kTtl), "a tap this millisecond is not swept");
+  CHECK(!expire(s, 1000 + kTtl - 1, kTtl), "one ms before the TTL: not swept");
+  CHECK(peek(s) == 1000, "and the stamp is kept, got %u", (unsigned)peek(s));
+  CHECK(is_open(s, 1000 + kTtl - 1, kTtl), "still open");
+  CHECK(expire(s, 1000 + kTtl, kTtl), "at the TTL: swept");
+  CHECK(peek(s) == 0, "the gate is closed, got %u", (unsigned)peek(s));
+  CHECK(!expire(s, 1000 + kTtl, kTtl), "a second sweep finds nothing");
+  // Across the wrap: a tap stamped just before millis() wraps is swept on
+  // its age, not on the raw numbers.
+  State w{0};
+  const uint32_t near_wrap = 0xFFFFF000u;
+  open(w, near_wrap);
+  CHECK(!expire(w, near_wrap + kTtl - 1, kTtl), "across the wrap, one ms before the TTL: kept");
+  CHECK(expire(w, near_wrap + kTtl, kTtl), "and swept at the TTL");
+}
+
+static void a_swept_tap_does_not_revive_after_the_wrap() {
+  // The owner's loop sweeps every pass: the tap nobody took is cleared at
+  // its TTL, and millis() coming back round 2^32 ms after the tap finds
+  // nothing to serve.
+  State s{0};
+  open(s, 1000);
+  CHECK(expire(s, 1000 + kTtl, kTtl), "the loop's sweep at the TTL clears it");
+  const uint32_t later = (uint32_t)(1000 + kWrap + 5000);
+  CHECK(later == 6000, "test premise: 2^32 ms + 5 s after the tap reads 6000, got %u", (unsigned)later);
+  CHECK(!is_open(s, later, kTtl), "a swept tap is closed when millis() comes back round");
+  CHECK(!take(s, later, kTtl), "and gives nothing to take");
+  uint8_t key[PEER_KEY_LEN] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 20};
+  TapArbiter a{};
+  CHECK(tap_arbitrate(a, peek(s), key, later, kTtl) == TapVerdict::NO_TAP,
+        "the receipt's arbiter sees no tap either");
+}
+
+// Characterization: why the sweep exists. A stamp nobody took and nobody
+// swept reads open again once millis() comes back round to it, and take()
+// hands it out: the receipt for 30 s with no press.
+static void an_unswept_tap_reads_open_after_the_wrap() {
+  State s{0};
+  open(s, 1000);
+  CHECK(!is_open(s, 1000 + kTtl, kTtl), "closed at the TTL by the clock alone");
+  const uint32_t later = (uint32_t)(1000 + kWrap + 5000);
+  CHECK(is_open(s, later, kTtl), "unswept, it reads open 2^32 ms + 5 s after the tap");
+  CHECK(take(s, later, kTtl), "and take() hands it out");
+}
+
+static void expire_leaves_a_stamp_reopened_since_it_was_read() {
+  // The sweep's compare-and-swap, through its seam: a sweep that read an
+  // expired stamp and finds a re-tap stored before its swap clears nothing.
+  // (The loop task opens and sweeps, so on a device the re-tap cannot land
+  // in between; the swap is the guard if a second task ever opens.)
+  State s{0};
+  open(s, 1000);
+  const uint32_t seen = peek(s);
+  open(s, 1000 + kTtl + 50);   // the owner taps again, after the sweep's read
+  CHECK(!expire_seen(s, seen, 1000 + kTtl + 60, kTtl), "the sweep's swap of the old stamp fails");
+  CHECK(peek(s) == 1000 + kTtl + 50, "the re-tap's stamp is kept");
+  CHECK(is_open(s, 1000 + kTtl + 60, kTtl), "and the gate is open for it");
+  CHECK(!expire(s, 1000 + kTtl + 60, kTtl), "a sweep now reads the fresh tap and keeps it");
+  // The same seam on an unmoved stamp clears it, and on a fresh one keeps it.
+  State u{0};
+  open(u, 1000);
+  CHECK(!expire_seen(u, peek(u), 1000 + kTtl - 1, kTtl), "one ms before the TTL: kept");
+  CHECK(expire_seen(u, peek(u), 1000 + kTtl, kTtl), "at the TTL, unmoved: cleared");
+  CHECK(peek(u) == 0, "closed");
+  CHECK(!expire_seen(u, 0, 1000 + kTtl, kTtl), "a closed gate: nothing");
+}
+
+// ── the canary tree's sweep (firmware/canary/src/main.cpp) ──────────────────
+
+static std::string read_text(const char* path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// C and C++ comments out, string and character literals honored, newlines
+// kept (check_route_security.py's strip_comments, in C++).
+static std::string strip_comments(const std::string& t) {
+  std::string out;
+  enum { CODE, LINE, BLOCK, STR, CHR } st = CODE;
+  for (size_t i = 0; i < t.size(); ++i) {
+    const char c = t[i];
+    const char n = i + 1 < t.size() ? t[i + 1] : '\0';
+    switch (st) {
+      case CODE:
+        if (c == '/' && n == '/') { st = LINE; ++i; }
+        else if (c == '/' && n == '*') { st = BLOCK; ++i; }
+        else { out += c; if (c == '"') st = STR; else if (c == '\'') st = CHR; }
+        break;
+      case LINE:
+        if (c == '\n') { out += c; st = CODE; }
+        break;
+      case BLOCK:
+        if (c == '*' && n == '/') { st = CODE; ++i; }
+        else out += (c == '\n') ? '\n' : ' ';
+        break;
+      case STR:
+      case CHR:
+        out += c;
+        if (c == '\\' && i + 1 < t.size()) out += t[++i];
+        else if ((st == STR && c == '"') || (st == CHR && c == '\'')) st = CODE;
+        break;
+    }
+  }
+  return out;
+}
+
+// The text of the function whose definition line starts with `sig`, to the
+// first line that is exactly "}"; empty unless that line starts the file or
+// follows a newline exactly once.
+static std::string fn_body(const std::string& src, const std::string& sig) {
+  const std::string at_line = "\n" + sig;
+  const size_t at = src.find(at_line);
+  if (at == std::string::npos || src.find(at_line, at + 1) != std::string::npos) return "";
+  const size_t end = src.find("\n}\n", at);
+  return end == std::string::npos ? "" : src.substr(at + 1, end - at);
+}
+
+// `word` in `s` as a whole identifier: no identifier character on either side
+// ("returned" and "return_ms" are not `return`).
+static bool has_word(const std::string& s, const char* word) {
+  const auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+  const size_t n = std::strlen(word);
+  for (size_t at = s.find(word); at != std::string::npos; at = s.find(word, at + 1)) {
+    if ((at == 0 || !ident(s[at - 1])) && (at + n >= s.size() || !ident(s[at + n]))) return true;
+  }
+  return false;
+}
+
+static void the_flagship_sweeps_its_tap_every_pass() {
+  const std::string src = strip_comments(read_text(CANARY_MAIN_CPP));
+  CHECK(!src.empty(), "could not read %s", CANARY_MAIN_CPP);
+  const std::string boot = fn_body(src, "static void handle_boot_button() {");
+  CHECK(!boot.empty(), "handle_boot_button()'s definition not found once");
+  const std::string sweep =
+      "canary::net::provisioning_gate::expire(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);";
+  const size_t at = boot.find(sweep);
+  CHECK(at != std::string::npos, "handle_boot_button() does not sweep g_prov_gate");
+  // Its first statement after the two statics: nothing can return before it.
+  const std::string head =
+      "static void handle_boot_button() {\n"
+      "  static uint32_t boot_btn_start = 0;\n"
+      "  static bool boot_btn_was_pressed = false;\n";
+  CHECK(boot.compare(0, head.size(), head) == 0, "handle_boot_button() no longer opens with its two statics");
+  if (at != std::string::npos && boot.compare(0, head.size(), head) == 0) {
+    std::string between = boot.substr(head.size(), at - head.size());
+    bool blank = true;
+    for (char c : between) blank = blank && (c == ' ' || c == '\n' || c == '\t');
+    CHECK(blank, "the sweep is not handle_boot_button()'s first statement: '%s'", between.c_str());
+  }
+  CHECK(boot.find("provisioning_gate::open(g_prov_gate, millis())") != std::string::npos,
+        "the sweep sits in the handler that opens the gate (the same task)");
+  // And loop() calls the handler on every pass: at its top level, with no
+  // `return` before the call (a pass that returned early would skip the
+  // flagship's only sweep; test_receipt_grant.cpp holds the WAP's loop() to
+  // the same rule before its two sweeps).
+  const std::string loop = fn_body(src, "void loop() {");
+  CHECK(!loop.empty(), "loop()'s definition not found once");
+  const size_t call_at = loop.find("\n  handle_boot_button();\n");
+  CHECK(call_at != std::string::npos, "loop() does not call handle_boot_button() at its top level");
+  if (call_at != std::string::npos) {
+    CHECK(!has_word(loop.substr(0, call_at), "return"),
+          "loop() can return before it calls handle_boot_button(), the flagship's tap sweep");
+  }
 }
 
 // ── page-token policy truth table ───────────────────────────────────────────
@@ -665,6 +874,505 @@ static void four_grant_agrees_with_three_grant_when_no_claim_is_presented() {
   }
 }
 
+// ── The BOOT tap's one asker (sweep F342) ─────────────────────────────────
+
+static void peek_reads_and_take_exact_takes_only_the_judged_stamp() {
+  State s{0};
+  CHECK(peek(s) == 0, "closed: peek reads 0");
+  CHECK(!take_exact(s, 0), "0 is nothing to take");
+  open(s, 5000);
+  const uint32_t seen = peek(s);
+  CHECK(seen == 5000, "peek reads the stamp, got %u", (unsigned)seen);
+  CHECK(peek(s) == 5000, "and consumes nothing");
+  CHECK(!take_exact(s, 4999), "a stamp that is not the one there is refused");
+  CHECK(peek(s) == 5000, "and leaves the tap");
+  // A re-tap between the peek and the take: the judged stamp is gone, the
+  // new one is not consumed in its place.
+  open(s, 6000);
+  CHECK(!take_exact(s, seen), "a re-tap since the peek: refused");
+  CHECK(peek(s) == 6000, "the new tap is untouched");
+  // The BLE OTA break-glass take (or a close, or a sweep) between the two.
+  const uint32_t seen2 = peek(s);
+  CHECK(take(s, 6100, kTtl), "the other consumer takes it first");
+  CHECK(!take_exact(s, seen2), "then the judged stamp is not there to take");
+  open(s, 7000);
+  const uint32_t seen3 = peek(s);
+  close(s);
+  CHECK(!take_exact(s, seen3), "closed since the peek: refused");
+  open(s, 8000);
+  CHECK(take_exact(s, peek(s)), "the judged stamp, still there: taken");
+  CHECK(peek(s) == 0, "and the gate is closed");
+  CHECK(!take_exact(s, 8000), "a second take of it is refused");
+}
+
+// A peer key as the WAP's request_peer_key() writes it for an IPv4 client of
+// the dual-stack listener (::ffff:a.b.c.d).
+struct Peer {
+  uint8_t key[PEER_KEY_LEN];
+};
+static Peer v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+  Peer p{};
+  const uint8_t ip[4] = {a, b, c, d};
+  peer_key_from_addr(AddrFamily::IPV4, ip, p.key);
+  return p;
+}
+
+// The WAP's receipt step, as provisioning_gate_take_for() runs it: peek the
+// stamp, judge the ask, take exactly the judged stamp on TAKE, close the tap
+// on the ask that found the contention, and burn an expired stamp.
+struct Bench {
+  State gate{0};
+  TapArbiter arb{};
+  int served = 0;
+  int closed_by = 0;   // how many asks closed a tap by contention
+  TapVerdict ask(const Peer& p, uint32_t now) {
+    const uint32_t seen = peek(gate);
+    TapVerdict v = tap_arbitrate(arb, seen, p.key, now, kTtl);
+    if (v == TapVerdict::TAKE) {
+      if (take_exact(gate, seen)) ++served;
+      else v = TapVerdict::NO_TAP;
+    } else if (v == TapVerdict::CONTENDED) {
+      if (seen != 0 && seen == arb.contended_tap && take_exact(gate, seen)) ++closed_by;
+    } else if (seen != 0) {
+      take_exact(gate, seen);   // NO_TAP with a stamp: an expired one, burned
+    }
+    return v;
+  }
+};
+
+static const Peer kOwner = v4(192, 168, 1, 20);
+static const Peer kOther = v4(192, 168, 1, 21);
+
+// (1) A host polling every 100 ms and the owner's dashboard every 2 s, from
+// before the tap to well after it: nothing is served, the tap is closed by
+// the first ask after it, and every ask of the owner's inside the tap's
+// window is CONTENDED (the page says another device asked).
+static void a_poller_and_the_owner_across_one_tap_are_both_refused() {
+  Bench b;
+  const uint32_t T = 110050;
+  bool tapped = false;
+  int owner_contended = 0, owner_in_window = 0;
+  for (uint32_t t = 100000; t < 100000 + 60000; t += 100) {
+    if (!tapped && t >= T) { open(b.gate, T); tapped = true; }
+    const TapVerdict vb = b.ask(kOther, t);
+    CHECK(vb != TapVerdict::TAKE, "the poller was served at %u", (unsigned)t);
+    if ((t - 100000) % 2000 == 500) {
+      const TapVerdict va = b.ask(kOwner, t);
+      CHECK(va != TapVerdict::TAKE, "the owner was served beside a poller at %u", (unsigned)t);
+      if (t >= T && t < T + kTtl) {
+        ++owner_in_window;
+        if (va == TapVerdict::CONTENDED) ++owner_contended;
+      }
+    }
+  }
+  CHECK(b.served == 0, "nothing served, got %d", b.served);
+  CHECK(b.closed_by == 1, "the tap was closed once, by the first ask after it (%d)", b.closed_by);
+  CHECK(peek(b.gate) == 0, "and stays closed");
+  CHECK(owner_in_window == 15 && owner_contended == owner_in_window,
+        "every owner ask in the window CONTENDED (%d of %d)", owner_contended, owner_in_window);
+}
+
+// (2) The owner alone, asking every 2 s from before the tap: TAKE on its
+// first ask after the tap, once, and NO_TAP after it.
+static void a_sole_owner_is_served_on_its_first_ask_after_the_tap() {
+  Bench b;
+  const uint32_t T = 104100;
+  int takes = 0;
+  uint32_t first_take = 0;
+  bool tapped = false;
+  for (uint32_t t = 100000; t < 100000 + 40000; t += 2000) {
+    if (!tapped && t >= T) { open(b.gate, T); tapped = true; }   // the tap, between two polls
+    const TapVerdict v = b.ask(kOwner, t);
+    if (v == TapVerdict::TAKE) {
+      if (!takes) first_take = t;
+      ++takes;
+    } else {
+      CHECK(v == TapVerdict::NO_TAP, "the sole owner was CONTENDED at %u", (unsigned)t);
+    }
+  }
+  CHECK(takes == 1 && b.served == 1, "served once (%d)", takes);
+  CHECK(first_take == 106000, "on its first ask after the tap, got %u", (unsigned)first_take);
+}
+
+// (3) The owner asks 1 s before the tap; an attacker asks first after it,
+// at +5 s; the owner at +6 s. Both CONTENDED: the attacker cannot take the
+// tap by asking first.
+static void an_attacker_asking_first_loses_to_an_owner_who_asked_before() {
+  Bench b;
+  const uint32_t T = 200000;
+  CHECK(b.ask(kOwner, T - 1000) == TapVerdict::NO_TAP, "before the tap: nothing to take");
+  open(b.gate, T);
+  CHECK(b.ask(kOther, T + 5000) == TapVerdict::CONTENDED, "the attacker, first after the tap: CONTENDED");
+  CHECK(b.ask(kOwner, T + 6000) == TapVerdict::CONTENDED, "the owner after it: CONTENDED");
+  CHECK(b.served == 0 && peek(b.gate) == 0, "nothing served, the tap closed");
+  // The other order: the attacker asked before the tap (it polls), the owner
+  // asks first after it. CONTENDED too.
+  Bench c;
+  c.ask(kOther, T - 3000);
+  open(c.gate, T);
+  CHECK(c.ask(kOwner, T + 500) == TapVerdict::CONTENDED, "an asker before the tap contends the owner");
+  CHECK(c.served == 0, "nothing served");
+}
+
+// (3b) The owner's client as it really asks: Use BOOT Tap Once polls every
+// 2 s for up to 60 s from the click, the companion's Save every 2 s for up
+// to 30 s, so the press can land long after the first ask. Each ask by the
+// address already on record refreshes its time, which is what keeps a
+// polling owner inside the lookback: here the owner polls alone for 20 s
+// (and 28 s), longer than TAP_LOOKBACK_MS, the tap lands 1 s after its last
+// poll, and a host that times the tap from /api/logs asks first, 100 ms
+// after it. The host is CONTENDED, the owner's next poll too, and nothing is
+// served. An arbiter that kept the owner's FIRST ask time (no refresh) saw
+// an owner silent for 21 s and served the host the token.
+static void a_polling_owner_stays_on_record_past_the_lookback() {
+  const uint32_t leads[] = {21000, 29000};   // the dashboard's click 21 s before the tap, the companion's 29 s
+  for (const uint32_t lead : leads) {
+    Bench b;
+    const uint32_t click = 900000;
+    const uint32_t T = click + lead;
+    uint32_t t = click;
+    for (; t < T; t += 2000) {
+      CHECK(b.ask(kOwner, t) == TapVerdict::NO_TAP, "the owner's poll at click+%u, before the tap",
+            (unsigned)(t - click));
+    }
+    CHECK(T - (t - 2000) == 1000, "the tap lands 1 s after the owner's last poll");
+    CHECK(T - click > TAP_LOOKBACK_MS, "the first ask is older than the lookback");
+    open(b.gate, T);
+    CHECK(b.ask(kOther, T + 100) == TapVerdict::CONTENDED,
+          "a host asking first, 100 ms after the tap, %u ms after the click: CONTENDED (an ask by the "
+          "address on record no longer refreshes its time?)", (unsigned)lead);
+    CHECK(b.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED");
+    CHECK(b.served == 0, "nothing served, got %d", b.served);
+    CHECK(b.closed_by == 1, "the tap closed once, by the host's ask (%d)", b.closed_by);
+    CHECK(peek(b.gate) == 0, "and stays closed");
+  }
+}
+
+// (3c) Askers that are real IPv6 peers are told apart by all 16 bytes of
+// their key, unlike the per-address lockout, which puts every IPv6 peer in
+// one bucket (auth_request_source() keys on the IPv4 of a mapped key and 0
+// otherwise). No WAP interface runs IPv6 today, so every real asker is a
+// mapped key; this holds the arbiter for the day one does, and for the
+// flagship when it adopts the arbiter (F354). Each pair below is two
+// different peers that a narrower compare would merge into one asker, and
+// one asker is served the tap:
+//   - two global addresses that differ only in the prefix (a compare of the
+//     last four bytes, or of the IPv4 a key maps to, merges them);
+//   - an IPv6 address whose last four bytes are the owner's IPv4 (a compare
+//     of the last four bytes merges it with the mapped owner);
+//   - two link-local addresses (every non-mapped key maps to IPv4 0, so a
+//     compare through ipv4_host_order_from_addr() merges them).
+// The timeline is (3b)'s: the owner polls every 2 s from 21 s before the
+// tap, and the other host asks first, 100 ms after it.
+static Peer v6(const uint8_t (&addr)[16]) {
+  Peer p{};
+  peer_key_from_addr(AddrFamily::IPV6, addr, p.key);
+  return p;
+}
+
+static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
+  static const uint8_t kDb8Tail[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kDb9Tail[16] = {0x20, 0x01, 0x0d, 0xb9, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kLinkOwner[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
+  static const uint8_t kLinkHost[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x00, 0xaa, 0xbb, 0xff, 0xfe, 0xcc, 0xdd, 0xee};
+  struct Pair {
+    Peer owner;
+    Peer host;
+    const char* what;
+  };
+  const Pair pairs[] = {
+      {v6(kDb8Tail), v6(kDb9Tail), "2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114 (the prefix differs)"},
+      {kOwner, v6(kDb8Tail), "::ffff:192.168.1.20 and 2001:db8::1:c0a8:114 (the same last four bytes)"},
+      {v6(kLinkOwner), v6(kLinkHost), "fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee (both map to IPv4 0)"},
+  };
+  for (const Pair& p : pairs) {
+    CHECK(memcmp(p.owner.key, p.host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", p.what);
+    Bench b;
+    const uint32_t click = 700000;
+    const uint32_t T = click + 21000;
+    uint32_t t = click;
+    for (; t < T; t += 2000) {
+      CHECK(b.ask(p.owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", p.what);
+    }
+    open(b.gate, T);
+    CHECK(b.ask(p.host, T + 100) == TapVerdict::CONTENDED,
+          "a second IPv6 peer asking first after the tap was taken for the owner: %s", p.what);
+    CHECK(b.ask(p.owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", p.what);
+    CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, p.what);
+    CHECK(peek(b.gate) == 0, "and the tap is closed: %s", p.what);
+  }
+  // And one IPv6 peer is one asker: the owner alone, polling from its own
+  // address, is served on its first ask after the tap.
+  Bench solo;
+  const Peer me = v6(kLinkOwner);
+  CHECK(solo.ask(me, 800000) == TapVerdict::NO_TAP, "before the tap");
+  open(solo.gate, 801000);
+  CHECK(solo.ask(me, 802000) == TapVerdict::TAKE, "an IPv6 owner alone is served");
+  CHECK(solo.served == 1, "served once (%d)", solo.served);
+}
+
+// (4) An address that stopped asking more than the lookback before the tap
+// does not contend; at the lookback exactly, it does.
+static void an_address_silent_past_the_lookback_does_not_contend() {
+  const uint32_t T = 300000;
+  Bench b;
+  b.ask(kOther, T - 15000);
+  open(b.gate, T);
+  CHECK(b.ask(kOwner, T + 500) == TapVerdict::TAKE, "silent 15 s before the tap: the owner is served");
+  Bench edge;
+  edge.ask(kOther, T - TAP_LOOKBACK_MS);
+  open(edge.gate, T);
+  CHECK(edge.ask(kOwner, T + 500) == TapVerdict::CONTENDED, "at the lookback exactly: CONTENDED");
+  Bench past;
+  past.ask(kOther, T - TAP_LOOKBACK_MS - 1);
+  open(past.gate, T);
+  CHECK(past.ask(kOwner, T + 500) == TapVerdict::TAKE, "one ms past it: served");
+}
+
+// (5) The residual, characterized: one address polling with no other asker
+// is served. A tap no client of the owner's was asking for goes to the first
+// asker, whoever it is.
+static void a_lone_poller_is_served_the_residual() {
+  Bench b;
+  const uint32_t T = 400000;
+  for (uint32_t t = T - 5000; t < T; t += 100) b.ask(kOther, t);
+  open(b.gate, T);
+  CHECK(b.ask(kOther, T + 100) == TapVerdict::TAKE, "a lone poller takes the tap");
+  CHECK(b.served == 1, "served");
+}
+
+// (6) After a contended tap, the second address goes silent: a re-tap once
+// it has been silent past the lookback serves the owner (contention does not
+// carry into a clean next tap); a re-tap inside the lookback is CONTENDED.
+static void a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not() {
+  Bench b;
+  const uint32_t T = 500000;
+  b.ask(kOwner, T - 1000);
+  open(b.gate, T);
+  CHECK(b.ask(kOther, T + 200) == TapVerdict::CONTENDED, "the contended tap");
+  CHECK(b.ask(kOwner, T + 2000) == TapVerdict::CONTENDED, "inside its window");
+  // A re-tap 4 s after B's ask (inside the lookback): CONTENDED, and closed.
+  open(b.gate, T + 4200);
+  CHECK(b.ask(kOwner, T + 4300) == TapVerdict::CONTENDED, "a re-tap inside the lookback");
+  CHECK(peek(b.gate) == 0, "and that tap is closed too");
+  // B silent since T+200. A re-tap at T+11 s (B silent 10.8 s before it):
+  // served, inside the first tap's 30 s window as well.
+  open(b.gate, T + 11000);
+  CHECK(b.ask(kOwner, T + 11500) == TapVerdict::TAKE, "a clean re-tap serves the owner");
+  CHECK(b.served == 1, "once");
+  // Both addresses keep asking (each within the lookback of the other's
+  // last ask): the 409 lasts to the closed tap's TTL, and the window running
+  // out with no tap is NO_TAP, not CONTENDED.
+  Bench w;
+  w.ask(kOwner, T - 1000);
+  open(w.gate, T);
+  w.ask(kOther, T + 200);
+  CHECK(w.ask(kOwner, T + 9000) == TapVerdict::CONTENDED, "the owner, B asked 8.8 s ago");
+  CHECK(w.ask(kOther, T + 18000) == TapVerdict::CONTENDED, "B, the owner asked 9 s ago");
+  CHECK(w.ask(kOwner, T + 27000) == TapVerdict::CONTENDED, "the owner, B asked 9 s ago");
+  CHECK(w.ask(kOther, T + kTtl - 1) == TapVerdict::CONTENDED, "both still asking: CONTENDED to the TTL");
+  CHECK(w.ask(kOwner, T + kTtl) == TapVerdict::NO_TAP, "and it ends with it");
+  CHECK(w.arb.contended_tap == 0, "the record is cleared");
+}
+
+// (6b) The 409 ends when its cause ends: once the other address has been
+// quiet for the lookback, an ask inside the closed tap's 30 s is NO_TAP (the
+// page keeps asking) and the owner's next tap serves it. This is the flow the
+// pages' "wait 10 seconds, then click Use BOOT Tap Once again, and only then
+// short-tap BOOT" prescribes. Before, every ask was
+// CONTENDED until the closed tap's TTL had run, so a retry 10 to 30 s after
+// the tap stopped on its first answer, before the press.
+static void the_409_ends_when_the_other_address_goes_quiet() {
+  Bench b;
+  const uint32_t T = 700000;
+  CHECK(b.ask(kOwner, T - 1000) == TapVerdict::NO_TAP, "the owner's click, before the tap");
+  open(b.gate, T);
+  CHECK(b.ask(kOther, T + 100) == TapVerdict::CONTENDED, "B closes the tap");
+  CHECK(b.ask(kOwner, T + 1000) == TapVerdict::CONTENDED, "the owner hears it (the page stops)");
+  CHECK(b.ask(kOwner, T + 100 + TAP_LOOKBACK_MS) == TapVerdict::CONTENDED,
+        "B's last ask exactly the lookback ago: still CONTENDED");
+  CHECK(b.ask(kOwner, T + 100 + TAP_LOOKBACK_MS + 1) == TapVerdict::NO_TAP,
+        "one ms later, B quiet past the lookback: NO_TAP, inside the closed tap's 30 s");
+  CHECK(b.arb.contended_tap == 0, "the contention is cleared");
+  // The bench row: B stopped, the owner waits, clicks (its first poll at
+  // T+12 s is NO_TAP, not CONTENDED), keeps asking, and taps.
+  Bench r;
+  r.ask(kOwner, T - 1000);
+  open(r.gate, T);
+  r.ask(kOther, T + 100);
+  r.ask(kOwner, T + 1000);
+  CHECK(r.ask(kOwner, T + 12000) == TapVerdict::NO_TAP, "the retry's first poll is not a 409");
+  CHECK(r.ask(kOwner, T + 14000) == TapVerdict::NO_TAP, "nor its second");
+  open(r.gate, T + 15000);
+  CHECK(r.ask(kOwner, T + 16000) == TapVerdict::TAKE, "and the next tap serves the owner");
+  // The other side of the same rule: the 409 ends once an ask finds no
+  // address other than the asker asking in the lookback, whoever asks. With
+  // B still polling every 200 ms, B's own asks end it 10 s after the owner's
+  // page stopped, so the owner's retry hears NO_TAP (403), not CONTENDED,
+  // although B never stopped; the page keeps asking, and the next tap is
+  // closed again (the poller residual). Nothing is served either way.
+  Bench p;
+  p.ask(kOwner, T - 1000);
+  open(p.gate, T);
+  TapVerdict owner_retry = TapVerdict::TAKE, owner_poll = TapVerdict::TAKE, owner_after_tap = TapVerdict::TAKE;
+  for (uint32_t t = T + 100; t <= T + 20100; t += 100) {
+    if (t == T + 15000) open(p.gate, t);
+    if (t == T + 1000) CHECK(p.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner hears the 409 (the page stops)");
+    if (t == T + 12000) owner_retry = p.ask(kOwner, t);
+    if (t == T + 14000) owner_poll = p.ask(kOwner, t);
+    if (t == T + 16000) owner_after_tap = p.ask(kOwner, t);
+    if ((t - T) % 200 == 100) {
+      CHECK(p.ask(kOther, t) != TapVerdict::TAKE, "the poller was served at %u", (unsigned)t);
+    }
+  }
+  CHECK(owner_retry == TapVerdict::NO_TAP, "the owner's retry, B still polling: NO_TAP, not CONTENDED");
+  CHECK(owner_poll == TapVerdict::NO_TAP, "and its next poll");
+  CHECK(owner_after_tap == TapVerdict::CONTENDED, "the next tap, B still polling, is closed again");
+  CHECK(p.served == 0, "nothing served under the poller, got %d", p.served);
+  CHECK(p.closed_by == 2, "both taps closed (%d)", p.closed_by);
+  CHECK(r.served == 1, "once");
+  // B's own asks hear the 409 while the owner keeps asking, and NO_TAP once
+  // the owner has been quiet for the lookback.
+  Bench o;
+  o.ask(kOwner, T - 1000);
+  open(o.gate, T);
+  o.ask(kOther, T + 100);
+  o.ask(kOwner, T + 2000);
+  CHECK(o.ask(kOther, T + 12000) == TapVerdict::CONTENDED, "B, the owner asked 10 s ago");
+  CHECK(o.ask(kOther, T + 12001) == TapVerdict::NO_TAP, "B, the owner quiet past the lookback");
+}
+
+// (6c) A tap served to one asker ends the earlier contention: the asks after
+// it are NO_TAP, never "the tap was closed". Here B polls every 200 ms, the
+// owner asked once after the closed tap and then re-tapped without asking
+// first (the bare re-tap the 409's hint no longer advises): the re-tap goes
+// to B, the residual (a tap no client of the owner's was asking for). The
+// owner's next ask is NO_TAP. Before, it was CONTENDED for the rest of the
+// first tap's 30 s, though the token had just been handed out.
+static void a_served_retap_ends_the_contention() {
+  Bench b;
+  const uint32_t T = 800000;
+  b.ask(kOwner, T - 1000);
+  open(b.gate, T);
+  bool retapped = false;
+  TapVerdict b_at_retap = TapVerdict::NO_TAP;
+  for (uint32_t t = T + 100; t <= T + 12700; t += 200) {
+    if (t == T + 2100) CHECK(b.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner's one ask: CONTENDED");
+    if (!retapped && t >= T + 12500) { open(b.gate, T + 12500); retapped = true; }
+    const TapVerdict v = b.ask(kOther, t);
+    if (retapped && b_at_retap == TapVerdict::NO_TAP) b_at_retap = v;
+  }
+  CHECK(b_at_retap == TapVerdict::TAKE, "the bare re-tap went to the poller (the residual)");
+  CHECK(b.served == 1, "served once");
+  CHECK(b.arb.contended_tap == 0, "and no contention is left on record");
+  CHECK(b.ask(kOwner, T + 13000) == TapVerdict::NO_TAP, "the owner's next ask: NO_TAP, not CONTENDED");
+  // The 409's way instead: the owner's client asks first and keeps asking,
+  // then the re-tap. With B still polling, every ask is CONTENDED and
+  // nothing is served.
+  // (d counts 100 ms steps from T-5 s: B asks on every odd one, 200 ms
+  // apart; the owner every 2 s from T-1 s; the taps at T and T+12.5 s.)
+  Bench h;
+  const uint32_t start = T - 5000;
+  for (uint32_t d = 0; d <= 25000; d += 100) {
+    const uint32_t t = start + d;
+    if (d == 5000 || d == 17500) open(h.gate, t);
+    if (d >= 4000 && (d - 4000) % 2000 == 0) {
+      CHECK(h.ask(kOwner, t) != TapVerdict::TAKE, "the owner was served beside a poller at %u", (unsigned)t);
+    }
+    if (d % 200 == 100) {
+      CHECK(h.ask(kOther, t) != TapVerdict::TAKE, "the poller was served at %u", (unsigned)t);
+    }
+  }
+  CHECK(h.served == 0, "following the hint under a poller serves nothing, got %d", h.served);
+  CHECK(h.closed_by == 2, "both taps closed (%d)", h.closed_by);
+}
+
+// (7) The same address asking again and again never contends with itself.
+static void the_same_address_never_contends() {
+  Bench b;
+  const uint32_t T = 600000;
+  for (int i = 0; i < 100; ++i) b.ask(kOwner, T - 9000 + (uint32_t)i * 50);
+  open(b.gate, T);
+  CHECK(b.ask(kOwner, T + 10) == TapVerdict::TAKE, "a hundred asks from one address: served");
+  CHECK(!b.arb.prior.has, "and no second address was ever recorded");
+}
+
+// (8) take_exact() inside the step: a stamp that moved between the peek and
+// the take is never consumed unjudged.
+static void a_stamp_that_moved_since_the_peek_is_not_taken() {
+  State s{0};
+  TapArbiter a{};
+  open(s, 1000);
+  const uint32_t seen = peek(s);
+  CHECK(tap_arbitrate(a, seen, kOwner.key, 1100, kTtl) == TapVerdict::TAKE, "judged: TAKE");
+  open(s, 1050);   // a re-tap lands before the take
+  CHECK(!take_exact(s, seen), "the judged stamp is gone: not taken");
+  CHECK(peek(s) == 1050, "and the re-tap is left for the next ask");
+  CHECK(!take_exact(s, 0), "0 is never taken");
+}
+
+// The record ages on 32-bit millis() and is never swept: a silence of about
+// 2^32 ms makes a stale ask read as recent, which can only refuse a tap.
+static void a_stale_record_fails_closed_across_the_wrap() {
+  Bench b;
+  b.ask(kOther, 1000);
+  const uint32_t T = (uint32_t)(1000ull + 0x100000000ull + 2000ull);   // 2^32 ms + 2 s after B's ask
+  open(b.gate, T);
+  CHECK(b.ask(kOwner, T + 100) == TapVerdict::CONTENDED,
+        "a 49.7-day-old ask reads as recent: refused, never served");
+  CHECK(b.served == 0, "nothing served");
+  // A tap stamped across the wrap of millis() is judged on its age.
+  Bench w;
+  w.ask(kOwner, 0xFFFFF000u);
+  open(w.gate, 0xFFFFFF00u);
+  CHECK(w.ask(kOwner, 0x00000400u) == TapVerdict::TAKE, "a tap across the wrap serves the sole asker");
+}
+
+static void a_peer_key_prints_as_ipv4_or_eight_groups() {
+  char out[PEER_KEY_TEXT_CAP];
+  CHECK(peer_key_text(kOwner.key, out, sizeof(out)) == 12 && std::strcmp(out, "192.168.1.20") == 0,
+        "mapped: %s", out);
+  const Peer zero_tail = v4(10, 0, 0, 1);
+  peer_key_text(zero_tail.key, out, sizeof(out));
+  CHECK(std::strcmp(out, "10.0.0.1") == 0, "a zero octet: %s", out);
+  const Peer wide = v4(255, 255, 255, 255);
+  peer_key_text(wide.key, out, sizeof(out));
+  CHECK(std::strcmp(out, "255.255.255.255") == 0, "the widest IPv4: %s", out);
+  // An octet of exactly 100 keeps its hundreds digit (192.168.100.x is a
+  // common home subnet).
+  const Peer hundred = v4(192, 168, 100, 5);
+  peer_key_text(hundred.key, out, sizeof(out));
+  CHECK(std::strcmp(out, "192.168.100.5") == 0, "an octet of 100: %s", out);
+  const uint8_t ll[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
+  CHECK(peer_key_text(ll, out, sizeof(out)) == 39, "IPv6: 39 characters");
+  CHECK(std::strcmp(out, "fe80:0000:0000:0000:0211:22ff:fe33:4455") == 0, "IPv6: %s", out);
+  // ff ff at bytes 10-11 behind a nonzero prefix (2001:db8::ffff:c0a8:114)
+  // is a real IPv6 address, not ::ffff:192.168.1.20.
+  const uint8_t ff_tail[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xc0, 0xa8, 0x01, 0x14};
+  CHECK(peer_key_text(ff_tail, out, sizeof(out)) == 39, "a nonzero prefix: 39 characters");
+  CHECK(std::strcmp(out, "2001:0db8:0000:0000:0000:ffff:c0a8:0114") == 0, "a nonzero prefix: %s", out);
+  // One nonzero byte anywhere in the prefix is enough.
+  uint8_t one_byte[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 20};
+  one_byte[9] = 1;
+  peer_key_text(one_byte, out, sizeof(out));
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0001:ffff:c0a8:0114") == 0, "byte 9 set: %s", out);
+  // The mapped prefix is ff ff at bytes 10 AND 11: a zero prefix with ff 00
+  // there (::ff00:c0a8:114) is a real IPv6 address.
+  const uint8_t ff00[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0x00, 192, 168, 1, 20};
+  CHECK(peer_key_text(ff00, out, sizeof(out)) == 39, "ff 00 at bytes 10-11: 39 characters");
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0000:ff00:c0a8:0114") == 0, "ff 00 at bytes 10-11: %s", out);
+  // And 00 ff there (::ff:c0a8:114): byte 10 is held as well as byte 11.
+  const uint8_t ff_low[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0xff, 192, 168, 1, 20};
+  CHECK(peer_key_text(ff_low, out, sizeof(out)) == 39, "00 ff at bytes 10-11: 39 characters");
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0000:00ff:c0a8:0114") == 0, "00 ff at bytes 10-11: %s", out);
+  char small[PEER_KEY_TEXT_CAP - 1];
+  small[0] = 'x';
+  CHECK(peer_key_text(kOwner.key, small, sizeof(small)) == 0 && small[0] == '\0',
+        "a buffer short of the longest form: nothing written");
+  CHECK(peer_key_text(nullptr, out, sizeof(out)) == 0 && out[0] == '\0', "a null key: empty");
+  CHECK(peer_key_text(kOwner.key, nullptr, 40) == 0, "a null buffer: 0");
+}
+
 int main() {
   closed_by_default();
   open_then_peek_does_not_consume();
@@ -673,6 +1381,11 @@ int main() {
   millis_zero_is_a_real_tap();
   uint32_wraparound_is_not_expiry();
   explicit_close();
+  expire_clears_at_the_ttl_and_never_a_fresh_stamp();
+  a_swept_tap_does_not_revive_after_the_wrap();
+  an_unswept_tap_reads_open_after_the_wrap();
+  expire_leaves_a_stamp_reopened_since_it_was_read();
+  the_flagship_sweeps_its_tap_every_pass();
   lan_with_no_grant_withholds();
   every_single_grant_injects();
   reason_pointer_is_optional();
@@ -698,6 +1411,21 @@ int main() {
   four_grant_bearer_before_claim_before_tap();
   four_grant_spent_claim_falls_through_to_the_tap();
   four_grant_agrees_with_three_grant_when_no_claim_is_presented();
+  peek_reads_and_take_exact_takes_only_the_judged_stamp();
+  a_poller_and_the_owner_across_one_tap_are_both_refused();
+  a_sole_owner_is_served_on_its_first_ask_after_the_tap();
+  an_attacker_asking_first_loses_to_an_owner_who_asked_before();
+  a_polling_owner_stays_on_record_past_the_lookback();
+  ipv6_askers_are_told_apart_by_all_sixteen_bytes();
+  an_address_silent_past_the_lookback_does_not_contend();
+  a_lone_poller_is_served_the_residual();
+  a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();
+  the_409_ends_when_the_other_address_goes_quiet();
+  a_served_retap_ends_the_contention();
+  the_same_address_never_contends();
+  a_stamp_that_moved_since_the_peek_is_not_taken();
+  a_stale_record_fails_closed_across_the_wrap();
+  a_peer_key_prints_as_ipv4_or_eight_groups();
 
   if (g_failures) {
     std::printf("test_provisioning_gate: %d failure(s)\n", g_failures);

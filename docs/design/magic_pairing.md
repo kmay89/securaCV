@@ -68,11 +68,17 @@ sentence from `improv_core.h`:
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
 The WAP has **no tap door in this version**: its BOOT button keeps the
-sketch's own gestures (a short press opens the 30 s receipt gate; a 2 s hold
-prints the identity on serial), and **no button gesture factory-resets a WAP
-today**. A WAP's door is the first-boot window alone; the owner's way to
-re-arm it is **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`),
-which clears the credentials and the carried window record together.
+sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold
+prints the identity on serial, and a **10 s hold factory-resets the WAP**
+(`factory_reset_by_hold()`): it clears the saved Wi-Fi networks, the broker
+row, the device name and the first-boot flag, keeps the identity key and the
+API token derived from it, and restarts into first-boot setup when BOOT is
+released. A WAP's door is the first-boot window alone. The owner re-arms it
+with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
+10 s hold: both clear the credentials through `wifi_clear_credentials()`,
+which on a unit that had credentials also zeroes the carried window record,
+so the door gets a fresh 30 minutes (after the hold, from the restart on
+release).
 
 ### 2.2 What a stranger in radio range can and cannot do
 
@@ -151,8 +157,8 @@ read, then is withdrawn), good for **180 s**, spent by **one** HTTP request *on 
 LAN* that answers the same receipt the BOOT-tap route serves. Two factors,
 then: the encrypted link that provisioned, **and** presence on the Wi-Fi the
 device just joined. A phone that was only near the device gets a string that
-opens nothing from the street. A wrong guess burns the claim; an expired one
-is burned too; a second taker on any task reads nothing.
+opens nothing from the street. A wrong guess spends nothing; an expired one
+is burned; a second taker on any task reads nothing.
 
 ---
 
@@ -300,20 +306,31 @@ which answers the same receipt the BOOT-tap route serves —
 with `base_url` at the `.local` name (never the SoftAP address, which is dead
 once the AP drops). The rules, from `claim_ticket.h`:
 
-- `take()` claims the ticket with one atomic exchange **before** it compares,
-  so exactly one caller on any task can get `true`; a second reads 0.
+- `take()` loads the minted-at word, compares, and spends with **one
+  compare-and-swap of the word it loaded** (`spend_if_match()`), so exactly
+  one matching caller on any task can get `true`; a second finds the word
+  moved and is refused. A mismatch spends nothing (sweep F342; it used to
+  exchange the word to 0 before comparing, so any `?claim=` spent it).
 - The compare is constant time over all 32 characters; a presented string
   that is not exactly 32 characters is refused before the compare. The
   phone may upper-case it.
-- A match serves the receipt. A **mismatch burns the claim** (one guess per
-  join, not thousands). An **expired claim is burned too**. The TTL is
+- A match serves the receipt and spends the claim. A **mismatch spends
+  nothing**: 128 random bits cannot be guessed in 180 s, so burning on a
+  guess bounded nothing, and it let one stray or hostile request from a host
+  on the network end the phone's pairing (the app treats a `403` as final)
+  and release the first-boot reboot hold under it. A refused claim writes
+  one health line per 10 s at most. An **expired claim is burned**. The TTL is
   `claim_ticket::TTL_MS` = 180 000 ms: "the phone spends it within a second
   or two of reading it; three minutes covers a slow `.local` resolve and one
   retry, and is short enough that a claim read by a phone that then walked
   away dies on its own."
 - Minting touches the loop task; taking touches the httpd task; the
   minted-at word goes through the `__atomic` builtins exactly as
-  `provisioning_gate.h`'s `State` does.
+  `provisioning_gate.h`'s `State` does. The loop task also sweeps it every
+  pass (`claim_ticket::expire()`, sweep F347): a claim past its TTL is
+  burned with a compare-and-swap of the word read, so a claim read and never
+  spent cannot read as pending again when the 32-bit `millis()` comes back
+  round to it 49.7 days later.
 
 ### 3.6 The hub hand-off (Sense, Vision)
 
@@ -416,9 +433,9 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 |---|---|---|---|
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
-| 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim whatever it answers** (a wrong guess burns it). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. |
-| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). |
+| 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. On the WAP it is served only to the sole address asking for it (`tap_arbitrate()`); a second address in the window closes the tap with `409 tap_contended`. |
+| — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
 same order; the claim is inserted between the bearer and the tap and
@@ -432,7 +449,8 @@ the flagship has no setup-door claim. **The WAP sketch
 asks no Host question on this route today** (it has no `auth_gate`; its
 `/` page checks the Host header only to pick the first-boot wizard), so its
 `handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim and the same unspent tap. Its
+that order, with the same single-use claim (spent only on a match) and the
+same unspent tap, and its row 4 goes to one asker (below). Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 `cv_session` cookie (sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
@@ -540,17 +558,88 @@ address, its new pairing included (F352). Host-tested
 (`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
 run on a device.
 
-What the lockout does not decide, and what stays open (all of it predates
-F289's follow-up; it is the ledger's, not a claim of this design):
+**The WAP's row 4 goes to one asker (sweep F342).** A tap identifies
+nobody, and the WAP has no screen, so the one signal it has is who else
+asks. `provisioning_gate.h`'s `tap_arbitrate()` keeps the last two distinct
+addresses that asked for the receipt without a credential (any request the
+bearer and the claim did not serve: a wrong bearer and a wrong claim count),
+including asks made **before** the tap, and serves the tap only to the sole
+address seen from 10 s before the tap onward. A second address in that
+window closes the tap, and nothing is handed out. An asker then gets `409
+tap_contended` while an address other than it asked within the last 10 s,
+up to the closed tap's 30 s: the answer ends once an ask finds no other
+address asking (and when a re-tap is served), so a page that waits 10 s
+after the other device stops and asks again hears `403`, keeps asking, and
+its next tap serves it. If the other device keeps polling, its own asks end
+the `409` 10 s after the owner's page stopped: the owner's retry hears
+`403` too, keeps asking, and its next tap is closed with `409` again (the
+poller residual below). The
+`409`'s hint says to start the request first and keep it asking, then
+press BOOT; it never advises a bare re-tap, which no client of the owner's
+would be asking for. A sole asker is served at once,
+with no settle delay. The asker is the request's socket peer, read by
+`request_peer_key()` (`getpeername`, never a header), the same read the
+per-address lockout keys on. A socket that cannot say is refused `403` and
+the tap is left for the next asker. The stamp is peeked, judged and then
+taken with one compare-and-swap of the stamp that was judged
+(`take_exact()`), so a re-tap or a BLE OTA break-glass take in between is
+never consumed unjudged. Both trees sweep the tap every loop pass
+(`provisioning_gate::expire()`, sweep F347), so a tap nobody took cannot
+serve again when `millis()` comes back round to it 49.7 days later. A `429`
+for a held bearer still comes before the `409`, and the `409` clears no
+backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
+companion's recovery-kit save now asks from the Save tap, and every
+instruction a WAP page or answer gives puts the ask first (the `403`'s hint and button
+say to start asking first, then short-tap BOOT; the dashboard's timeout
+says to click again, then tap; both pages' `409` text says to wait 10 s,
+then click **Use BOOT Tap Once** again, or tap Save again, and only then
+press). Both pages say to press only once the device has answered their
+first ask ("Asking the Canary first. Don't press BOOT yet." until then), so
+a press that follows the page cannot land before the page's ask has
+reached the device (a TLS handshake, a blip or a busy server can hold the
+first ask back). So the owner's client is on record when the press lands:
+a host that polls the route, one that watches `/api/logs` for the tap, or
+one that delays the owner's next poll is refused loudly instead of handed
+the token, the SoftAP password and the pin. The serial console names both
+addresses; the health log (readable by any session) names neither.
 
-- **Row 3 is spent by whoever presents a claim first.** Any `?claim=` is
-  spent, match or not, so one wrong guess from a host on the network burns
-  a pending setup-door claim, and the phone that provisioned over the door
-  then needs the BOOT tap.
-- **Row 4 is spent by whoever asks first.** The tap has one consumer: a
-  request from any host on the network inside its 30 s, a wrong bearer
-  included, is served the receipt and spends the tap, and the owner's own
-  request after it is refused.
+What stays open, and is the ledger's, not a claim of this design:
+
+- A tap no client of the owner's was asking for (an accidental tap, a page
+  or `curl` started after it, a tap pressed per a recipe or an older page
+  that says to press first, BLE OTA break-glass) still goes to the first
+  asker.
+- Hosts behind one address (a NAT, an ARP spoofer, a page in the owner's own
+  browser) are one asker.
+- A host that keeps the WAP's one web server busy for more than 10 s before
+  the tap can hide the owner's earlier ask.
+- A host that asks for the receipt at least once every 10 s (polling
+  included) makes every tap the owner's client is already asking for
+  refuse, loudly (a bare re-tap with no client of the owner's asking is the
+  first residual, and goes to that host). The
+  owner's ways out, first: the recovery kit's token (the iPhone app pairs
+  from the kit); the USB serial console, which prints the receipt with the
+  token at every boot. Neither opens anything to anyone else. Last, hold
+  BOOT 10 s, then set the Canary up again from the iPhone through the setup
+  door. The hold clears the saved Wi-Fi, the broker login and the name, and
+  keeps the token; a stray `?claim=` can no longer spend the phone's claim.
+  But the hold reopens the first-boot setup door for 30 minutes, and the
+  door goes to whichever Bluetooth client connects first (§2.2). A client
+  that connects before the phone can join the Canary to a network it is on
+  (the owner's, if it is a host on the owner's network that is also in
+  radio range), spend the claim minted for its own link (a claim is served
+  before the tap's rule is asked) and keep the token, which the hold kept
+  and nothing rotates today. So the hold is for a host known to be on the
+  network only, with the phone ready before BOOT is released, and the phone
+  ends paired unless something in radio range reached the door first.
+- A dual-stack browser would count as two askers if the WAP's station
+  interface ever enabled IPv6 (it does not today).
+- The flagship's tap, on its receipt and on the page load it unlocks, still
+  goes to the first asker (F354).
+
+Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
+`test_receipt_grant.cpp`, `test_receipt_authority.cpp`,
+`recovery_kit.test.js`); not run on a device.
 
 ---
 
@@ -629,7 +718,7 @@ portal).
 | Stack | NimBLE-Arduino 2.x (core 3.x) | NimBLE-Arduino 1.4.x (core 2.x) | the pairing channel's NimBLE server | — | — |
 | Flag | `FEATURE_IMPROV` in `include/canary/config.h` (default 1; `-DFEATURE_IMPROV=0` compiles it out) | same | `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE` in `build_config.h` (FULL; 0 in DEV and MINIMAL) | — | — |
 | First-boot window | 30 min (`IMPROV_FIRST_BOOT_WINDOW_MS`) | 30 min | 30 min | — | — |
-| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi re-arms the window) | — | — |
+| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi or the 10 s BOOT hold re-arms the window) | — | — |
 | Window across a software restart | the glue's RTC record (`improv_ble.cpp`) | same | the sketch's RTC record (`provisioning_logic::door_window_record_valid`); door activity restarts the first-boot wizard's 15-minute idle timer | — | — |
 | Network list (`GET_WIFI_NETWORKS`) | ✅ the glue's own scan | ✅ same | ✅ the sketch's scan cache — the wizard's picker's list, under one lock | — | — |
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
@@ -664,8 +753,8 @@ handshake); the heap guard keeps the last word. The first-boot window rides
 across the wizard's 15-minute idle restart in RTC-noinit memory
 (`g_improv_window_*`, honored only when `esp_reset_reason()` is not a
 power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset —
-`door_window_record_valid`, host-tested; zeroed by Forget Wi-Fi on a unit
-that had credentials), and every command, join and claim at
+`door_window_record_valid`, host-tested; zeroed by Forget Wi-Fi and by the
+10 s BOOT hold on a unit that had credentials), and every command, join and claim at
 the door is a sign of life for that wizard timer (`setup_wizard::touch`), so
 the restart cannot land mid-provisioning. `GET_WIFI_NETWORKS` streams the
 sketch's scan cache — the same list the wizard's `GET /api/wifi/scan` serves,
@@ -963,9 +1052,19 @@ cannot speak to.
       3 s after the first is empty; a read from another link is refused.
 - [ ] `GET /api/provisioning-receipt?claim=<hex>` at the `.local` name
       serves the receipt with `base_url` at that name; the same claim a
-      second time is `403`; a wrong claim is `403` **and** burns the real
-      one; a claim after 180 s is `403`; the BOOT tap is still unspent after
-      a claim served.
+      second time is `403`; a wrong claim is `403` and the real one still
+      serves; a claim after 180 s is `403`; the BOOT tap is still unspent
+      after a claim served.
+- [ ] With a second host polling `GET /api/provisioning-receipt` over plain
+      HTTP, close every private window (Chrome and Firefox share one private
+      session, and its `cv_session` cookie, across the private windows that
+      are open), then open `http://canary-<suffix>.local/settings` in a new
+      one, choose **Use BOOT Tap Once** and
+      short-tap BOOT when the page says to: both get `409 tap_contended`,
+      nothing is served, and the dashboard says another device asked; with
+      the second host stopped for 10 s, a second click of the same button
+      and a tap are served within about 2 s of the tap (F342; the rows in
+      `hardware_verification_checklist.md`).
 - [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
       landing page's **Open dashboard** link minted is `403` on
       `GET /api/provisioning-receipt` and `401` on `GET /api/pairing-qr`,

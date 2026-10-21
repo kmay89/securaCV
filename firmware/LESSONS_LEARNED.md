@@ -1852,6 +1852,25 @@
   a 403 is final and points at Ready to pair on the Fleet tab and the
   recovery kit).
   Bench: not yet.
+- **Amended, 2026-10-19 (sweep F342):** "a wrong guess burns the claim"
+  was the wrong rule. A claim is 128 random bits that live 180 s: nobody
+  guesses that, so burning on a guess bounded nothing, and it handed any
+  host on the network a one-request denial. One stray or hostile `?claim=`
+  spent the phone's claim, the phone's own spend a moment later was `403`,
+  which the app rightly treats as final ("on the Wi-Fi, not paired"), and
+  the spend released the first-boot reboot hold under a phone that still
+  held a good claim. The fix: spend on a match, burn on expiry. `take()`
+  loads the minted-at word, compares in constant time, and spends with one
+  compare-and-swap of the word it loaded (`spend_if_match()`), so exactly
+  one matching taker wins and a mismatch changes nothing; the refusal's
+  health line is written once per 10 s at most. Rule: a single-use secret
+  should be spent by the act it authorizes, not by any attempt at it,
+  unless the secret is small enough that attempts are the threat; count the
+  bits before you add a burn. Regression check: `test_claim_ticket.cpp`'s
+  `a_mismatch_spends_nothing` (a thousand wrong values, then the right one
+  serves) and `a_spend_whose_stamp_changed_is_refused` (the seam), and
+  `test_receipt_grant.cpp`'s `test_receipt_wrong_claim_leaves_it_pending`
+  over the cut handler. Host-tested; not run on a device.
 - **Date learned:** 2026-10-07
 
 ### "Re-armed by a power cycle" was re-armed by every boot: the first-boot window and a firmware that restarts itself
@@ -3062,6 +3081,153 @@
   the session's": a chain's gate is its weakest link's, and the token's
   minter is a link — name the minter before calling a token-gated route
   something the session cannot reach.
+- **Date learned:** 2026-10
+
+### A physical-presence tap with no identity for its asker goes to the first poller (canary-wap, F342)
+- **What happened:** the WAP's BOOT tap opened a 30 s gate that its receipt
+  route handed to the first request that asked: `provisioning_gate_take()`
+  was a bare exchange that knew nothing about who was asking. So any host on
+  the home network that polled `GET /api/provisioning-receipt` won the
+  owner's next tap and was handed the token, the SoftAP password and the TLS
+  pin, and `/api/logs` (readable by any session) even said when the tap
+  landed. The press proved a hand was on the device, not whose request it
+  was for: the line between "on the LAN" and "owns the device" was posture
+  only.
+- **Root cause:** a presence check that grants to "the next request" grants
+  to whoever is fastest, and on a network that is a machine, not a person.
+  The WAP has no screen to show a code on, so the only signal it has is who
+  else asks.
+- **Fix:** the tap goes to one asker. `provisioning_gate.h`'s
+  `tap_arbitrate()` keeps the last two distinct addresses that asked without
+  a credential, asks before the tap included, and serves the tap only when
+  the asker is the sole address seen from 10 s before the tap onward; a
+  second address closes the tap with `409 tap_contended`. The owner's
+  clients (the dashboard's sign-in, now the companion's kit save) ask from
+  before the press, so they are on record when it lands. The stamp is peeked,
+  judged and then taken with a compare-and-swap of the stamp that was judged
+  (`take_exact()`), so nothing between the judgment and the take is consumed
+  unjudged. Rules: a grant that answers "the next request" needs an identity
+  for that request, or the fastest poller wins it; and one peer read must
+  serve every per-address rule. The tap's asker and the bearer lockout's
+  bucket are both `request_peer_key()` (one `getpeername`), so the two can
+  never disagree about who a request came from, which two readers could.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` (the arbiter
+  on a 32-bit clock: a poller and the owner across one tap, a sole owner, an
+  attacker asking first after the tap, the lookback's edge to the
+  millisecond, a re-tap, the 49.7-day silence) and the WAP's
+  `test_receipt_grant.cpp` over the cut handler (`409` with no cookie and no
+  secret, one health line naming no address, a wrong bearer or claim counted
+  as an ask, a held bearer still `429`); `test_receipt_authority.cpp` pins
+  `getpeername` once in the sketch and `request_peer_key()` as its
+  definition and two callers (the lockout's source and the tap's asker).
+  Host-tested; the peer read on the dual-stack listener is not yet proven on
+  a device (U1).
+- **Found in review, same PR:** a refusal answer must end when its cause
+  ends, and its advice must be followable. The first `409` lasted the
+  closed tap's whole 30 s whoever was still asking, while both pages stop on
+  their first `409` and say "wait 10 seconds, and try again", so following
+  the copy stopped the retry again before the press; and the device's own
+  hint said to tap BOOT again, which under a host still polling hands the
+  bare re-tap to that host. Now the `409` ends once an ask finds no address
+  other than the asker asking in the last 10 s (10 s after the other device
+  stops; under a host that keeps polling, 10 s after the owner's page
+  stopped, and the next tap is closed again) and on a served re-tap, and
+  the hint sends the client in first. Two test gaps closed with it: a seam result the code must honor
+  (`take_exact()`'s false after a TAKE verdict) needs a row that makes it
+  false at that exact point (the receipt harness's `millis()` hook acts on
+  the tap step's clock read, and a calibration call finds which read that
+  is), and a privacy check on a log line must read every field the log
+  serves (the harness's `log_health()` used to drop `detail`). A clock read
+  before an atomic load is the same trap the sweep's comment warns about:
+  `claim_ticket::take()` is handed `millis()` before it loads the word, so a
+  mint in between read 2^32 ms old and a wrong value burned it; a word
+  ahead of the clock is now compared like a fresh one.
+- **Found in the second review, same PR:** when a protection rests on an
+  order (the owner's client asks first, the press comes second), every line
+  that tells someone what to do is part of the protection. The dashboard's
+  timeout said "Press BOOT and click above to try again" and the WAP's
+  `403` said "short tap, then poll": followed as written, the press landed
+  with no client of the owner's asking, and a host reading the tap off
+  `/api/logs` was its only asker. Both now give the click first, pinned by
+  the receipt suite and `recovery_kit.test.js`. And an exception to a rule
+  should be as wide as the race it covers: "ahead of the clock" was first
+  every word up to 2^31 ms ahead, which served a claim left unswept for
+  24.8 days; it is now under a one-second skew, and every other age past
+  the TTL is burned.
+- **Found in the fourth review, same PR:** a retry line has to name its
+  first step, not just say "try again". Both pages' `409` text said "wait
+  10 seconds, and try again", the one line the owner reads while another
+  device is asking; an owner who reads it as "press BOOT again" makes, ten
+  seconds after the page stopped, exactly the bare re-tap a host still
+  polling wins (the page is no longer on record). It now says to click
+  **Use BOOT Tap Once** again (or tap Save again) and only then press. The
+  order holds in time as well as in words: the pages showed "Now short-tap
+  BOOT" before their first ask had left, so a press made as the line
+  appeared could land before any ask of the owner's had reached the device
+  (a TLS handshake, a blip); they now say it once the device has answered
+  that ask. And a rule a proof leans on needs a behavior row of its own:
+  the two-entry record is exact only because an ask by the address on
+  record refreshes its time, and no row polled the way the pages do (every
+  2 s, for longer than the 10 s lookback), so deleting the refresh, which
+  serves a host the token under a polling owner, failed only four harness
+  probes. Rows in both suites now poll at the pages' cadence.
+- **Found in the fifth review, same PR:** a way out of an attack is advice
+  given while that attacker is known to be present, so it has to be judged
+  against that attacker. The docs and the dashboard's `409` offered the 10 s
+  hold and a fresh iPhone setup as an equal way out under a polling host,
+  ending "so the phone ends paired"; the hold keeps the token and reopens
+  the first-boot Bluetooth setup door, which goes to the first client that
+  connects, so a host on the network that is also in radio range can take
+  it, spend its own claim and keep the token. The kit's token and the USB
+  console now come first, and the hold last, with the phone ready and the
+  door's first-come rule named. And a row that keys on a whole value needs a
+  case where only part of it differs: every asker in the arbiter's rows was
+  an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
+  maps to, passed every suite; rows with IPv6 askers that differ only in the
+  prefix, or share the owner's last four bytes, now fail both.
+- **Date learned:** 2026-10
+
+### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
+- **What happened:** the BOOT tap's gate, the setup-door claim and the WAP's
+  session and pair-token slots each stored a 32-bit `millis()` stamp and
+  aged it by unsigned subtraction, `(uint32_t)(now - stamp) < ttl`. That is
+  "wrap-safe" only while the stamp is younger than 2^32 ms. A tap nobody
+  took (the next credential-less receipt request would have spent it, but
+  none came) read as fresh again 49.7 days later and served the receipt for
+  30 s with no press, on the WAP and through the shared header on the
+  flagship; a claim read and never spent read as pending again; a session
+  slot not reused since it expired took its old cookie for another 24 h.
+  `/api/logs` says when a tap lands, so a host on the network could time it.
+- **Root cause:** "unsigned subtraction handles the wrap" was written into
+  the gate's own contract, and it is half true. It handles a clock that
+  wraps between the stamp and the read; it cannot handle a stamp left in
+  place for a whole cycle, because after 2^32 ms the difference is small
+  again. Clearing a stamp when it is read past its TTL does not help either:
+  a stamp nobody reads for 49.7 days is first read when it already looks
+  fresh.
+- **Fix:** each word gets the fix its threading allows. The gate and the
+  claim are shared across tasks as 32-bit atomics, so they keep them and are
+  swept every loop pass: `expire()` clears a stamp past its TTL with a
+  compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  never cleared, and no stamp outlives its TTL by more than one pass. The
+  sweep runs on the task that opens or mints, or a clock read before another
+  task's open would see the newer stamp as 2^32 ms old. The slots have one
+  writer, so they move to a wider clock: whole seconds of
+  `esp_timer_get_time()` in a `uint32_t`, a 136-year wrap at the same slot
+  size, one aligned word for the QR scanner task to read. Rules: a TTL check
+  on a 32-bit clock needs an owner that clears the stamp at its TTL, or a
+  clock wide enough that the stamp cannot outlive it; and a contract line
+  that says "wrap-safe" should say for how long.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` and
+  `test_claim_ticket.cpp` (a swept stamp stays closed 2^32 ms later, the
+  unswept twin reads open and is taken, a re-tap or re-mint is kept; the
+  flagship's `handle_boot_button()` sweeps first), the WAP's
+  `test_receipt_grant.cpp` (`loop()`'s two sweeps, run as the sketch spells
+  them, then 2^32 ms + 1 s later a bare request and the old `?claim=` are
+  both `403`; before, both were served) and `test_session_cookie.cpp` (the
+  slot functions cut from `csi_integration.cpp`: a session and a pair token
+  end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
+  Host-tested; the wraps cannot be bench-tested.
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots

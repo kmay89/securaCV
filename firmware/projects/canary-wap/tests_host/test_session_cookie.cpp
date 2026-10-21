@@ -35,7 +35,22 @@
 //   - handle_ui's dashboard branch through that reader: "xcv_session=<the
 //     live session>" gets the landing page, not the dashboard;
 //   - the sketch's text: the cookie's attributes are spelled once, in
-//     session_cookie_header(), and both Set-Cookie sites send its output.
+//     session_cookie_header(), and both Set-Cookie sites send its output;
+//   - the two token stores' clock (sweep F347): the slot functions cut
+//     verbatim out of csi_integration.cpp (pick_slot_for_issuance(),
+//     find_slot(), pick_session_slot_for_issuance(), find_valid_session(),
+//     ct_eq()) into a namespace this file opens for them, over one 64-bit
+//     test clock whose low 32 bits are millis() and whose whole seconds are
+//     uptime_s(). A session is valid at 24 h less a second and not at 24 h,
+//     a pair token likewise at 10 minutes, and neither is valid again 2^32
+//     ms + 5 s after issue (before, on millis(), both were: a slot not
+//     reused since it expired took its old cookie or token again); eviction
+//     picks an expired slot, so 49.7-day-old slots are all expired, else the
+//     oldest across the 2^32 ms mark. The harness's slot structs carry both
+//     the old issued_ms and the new issued_s, so the same rows run against
+//     either cut; csi_integration.cpp's text (its path is passed in) says the
+//     real slots carry issued_s only, stamped from uptime_s(), which reads
+//     esp_timer_get_time(), and that the constants mirrored here are its own.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-session-cookie
 
@@ -59,6 +74,12 @@
 #endif
 #ifndef CANARY_WAP_INO
 #error "CANARY_WAP_INO must name canary_wap.ino (the Makefile passes it)"
+#endif
+#ifndef SESSION_COOKIE_SLOTS_INC
+#error "SESSION_COOKIE_SLOTS_INC must name the cut of csi_integration.cpp's slot functions (the Makefile passes it)"
+#endif
+#ifndef CSI_INTEGRATION_CPP
+#error "CSI_INTEGRATION_CPP must name csi_integration.cpp (the Makefile passes it)"
 #endif
 
 // ── the test's own bookkeeping ───────────────────────────────────────────────
@@ -165,6 +186,49 @@ bool send_pair_landing(httpd_req_t* req) {
 
 // ── the handler and the cookie writer, cut verbatim out of canary_wap.ino ───
 #include SESSION_COOKIE_UI_INC
+
+// ── the token stores' slot functions, cut verbatim out of csi_integration.cpp ─
+// In a namespace of their own, beside the stand-in stores handle_ui uses
+// above. The constants mirror csi_integration.cpp's (test_store_text() holds
+// them to it). Each slot carries the old issued_ms AND the new issued_s, and
+// stamp() below sets both from one clock, so the cut before sweep F347
+// (millis()) and after it (uptime_s()) compile and run the same rows.
+namespace slots {
+constexpr size_t   PAIR_SLOTS        = 4;
+constexpr uint32_t PAIR_TTL_MS       = 10UL * 60UL * 1000UL;
+constexpr uint32_t PAIR_TTL_S        = PAIR_TTL_MS / 1000UL;
+constexpr size_t   PAIR_TOK_BYTES    = 32;
+constexpr size_t   SESSION_SLOTS     = 8;
+constexpr uint32_t SESSION_TTL_MS    = 24UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t SESSION_TTL_S     = SESSION_TTL_MS / 1000UL;
+constexpr size_t   SESSION_TOK_BYTES = 32;
+
+struct PairSlot {
+  bool     used;
+  bool     active;
+  uint32_t issued_ms;
+  uint32_t issued_s;
+  uint8_t  token[PAIR_TOK_BYTES];
+};
+PairSlot g_pair_slots[PAIR_SLOTS] = {};
+
+struct SessionSlot {
+  bool     active;
+  uint32_t issued_ms;
+  uint32_t issued_s;
+  uint8_t  token[SESSION_TOK_BYTES];
+};
+SessionSlot g_session_slots[SESSION_SLOTS] = {};
+
+// The test clock: milliseconds since boot, 64 bits wide, as
+// esp_timer_get_time() counts (in microseconds). millis() is its low 32
+// bits (stub_grant::now_ms, set by set_clock()); uptime_s() its whole
+// seconds, as csi_integration.cpp's reads esp_timer_get_time() / 10^6.
+uint64_t g_clock_ms = 0;
+uint32_t uptime_s() { return (uint32_t)(g_clock_ms / 1000ULL); }
+
+#include SESSION_COOKIE_SLOTS_INC
+}  // namespace slots
 
 namespace {
 
@@ -406,6 +470,228 @@ void test_sketch_text() {
   CHECK(receipt.find("httpd_resp_set_hdr(req, \"Set-Cookie\", cookie_hdr)") != std::string::npos);
 }
 
+// ── the token stores' clock (sweep F347) ─────────────────────────────────────
+
+const uint64_t kWrapMs = 1ULL << 32;            // 2^32 ms: 49.7 days of millis()
+const uint64_t kDayMs = 24ULL * 60 * 60 * 1000;
+const uint64_t kTenMinMs = 10ULL * 60 * 1000;
+
+void set_clock(uint64_t ms) {
+  slots::g_clock_ms = ms;
+  stub_grant::now_ms = (uint32_t)ms;
+}
+void clear_slots() {
+  for (auto& p : slots::g_pair_slots) p = slots::PairSlot{};
+  for (auto& q : slots::g_session_slots) q = slots::SessionSlot{};
+}
+// A session issued now, as session_issue() does: the slot the cut picks, a
+// token of `tag` bytes, both clock fields stamped. Its slot index.
+size_t issue_session(uint8_t tag) {
+  slots::SessionSlot* s = slots::pick_session_slot_for_issuance();
+  std::memset(s->token, tag, sizeof(s->token));
+  s->issued_ms = (uint32_t)slots::g_clock_ms;
+  s->issued_s = slots::uptime_s();
+  s->active = true;
+  return (size_t)(s - slots::g_session_slots);
+}
+bool session_ok(uint8_t tag) {
+  uint8_t tok[slots::SESSION_TOK_BYTES];
+  std::memset(tok, tag, sizeof(tok));
+  return slots::find_valid_session(tok);
+}
+size_t issue_pair(uint8_t tag) {
+  slots::PairSlot* p = slots::pick_slot_for_issuance();
+  std::memset(p->token, tag, sizeof(p->token));
+  p->issued_ms = (uint32_t)slots::g_clock_ms;
+  p->issued_s = slots::uptime_s();
+  p->used = false;
+  p->active = true;
+  return (size_t)(p - slots::g_pair_slots);
+}
+bool pair_ok(uint8_t tag) {
+  uint8_t tok[slots::PAIR_TOK_BYTES];
+  std::memset(tok, tag, sizeof(tok));
+  return slots::find_slot(tok) != nullptr;
+}
+
+void test_session_lives_24_hours_at_any_uptime() {
+  clear_slots();
+  const uint64_t t = 3000000;   // 50 minutes after boot
+  set_clock(t);
+  issue_session(0x5a);
+  CHECK(session_ok(0x5a));
+  set_clock(t + kDayMs - 1000);
+  CHECK_MSG(session_ok(0x5a), "a session was refused a second before its 24 h");
+  set_clock(t + kDayMs);
+  CHECK_MSG(!session_ok(0x5a), "a session was still valid at 24 h");
+  // millis() comes back round to the issue: 2^32 ms + 5 s later. Before,
+  // the slot read 5 s old and took its old cookie for another 24 h.
+  set_clock(t + kWrapMs + 5000);
+  CHECK(stub_grant::now_ms == (uint32_t)(t + 5000));   // millis() reads 5 s after the issue
+  CHECK_MSG(!session_ok(0x5a), "a 49.7-day-old session took its old cookie again");
+  // A session issued past the 2^32 ms mark lives its 24 h like any other.
+  set_clock(kWrapMs + 7000);
+  issue_session(0x6b);
+  set_clock(kWrapMs + 7000 + kDayMs - 1000);
+  CHECK(session_ok(0x6b));
+  set_clock(kWrapMs + 7000 + kDayMs);
+  CHECK(!session_ok(0x6b));
+}
+
+void test_pair_token_lives_10_minutes_at_any_uptime() {
+  clear_slots();
+  const uint64_t t = 4321000;
+  set_clock(t);
+  issue_pair(0x3c);
+  CHECK(pair_ok(0x3c));
+  set_clock(t + kTenMinMs - 1000);
+  CHECK_MSG(pair_ok(0x3c), "a pair token was refused a second before its 10 minutes");
+  set_clock(t + kTenMinMs);
+  CHECK_MSG(!pair_ok(0x3c), "a pair token was still valid at 10 minutes");
+  set_clock(t + kWrapMs + 5000);
+  CHECK_MSG(!pair_ok(0x3c), "a 49.7-day-old pair token was valid again");
+}
+
+void test_eviction_across_the_mark() {
+  // Eight sessions a minute apart, then 2^32 ms + 1 s after the first: every
+  // slot is 49.7 days old, so the next issue takes an expired slot (the
+  // first), and no old cookie is valid. Before, on millis(), slot 0 read
+  // 1 s old: it kept its cookie and the issue went to slot 1.
+  clear_slots();
+  const uint64_t t = 9000000;
+  for (uint8_t k = 0; k < slots::SESSION_SLOTS; ++k) {
+    set_clock(t + 60000ULL * k);
+    CHECK(issue_session((uint8_t)(0x10 + k)) == k);
+  }
+  set_clock(t + kWrapMs + 1000);
+  for (uint8_t k = 0; k < slots::SESSION_SLOTS; ++k) {
+    CHECK_MSG(!session_ok((uint8_t)(0x10 + k)), "a 49.7-day-old session slot " + std::to_string(k) + " was valid");
+  }
+  CHECK_MSG(slots::pick_session_slot_for_issuance() == &slots::g_session_slots[0],
+            "the issue did not take the first expired slot");
+  // None expired: the oldest is evicted, with the clock past the 32-bit mark.
+  clear_slots();
+  const uint64_t t0 = kWrapMs - 3ULL * 60 * 60 * 1000;   // three hours before the mark
+  for (uint8_t k = 0; k < slots::SESSION_SLOTS; ++k) {
+    set_clock(t0 + 30ULL * 60 * 1000 * k);                // every 30 minutes, across it
+    issue_session((uint8_t)(0x20 + k));
+  }
+  set_clock(t0 + 4ULL * 60 * 60 * 1000);
+  for (uint8_t k = 0; k < slots::SESSION_SLOTS; ++k) CHECK(session_ok((uint8_t)(0x20 + k)));
+  CHECK_MSG(slots::pick_session_slot_for_issuance() == &slots::g_session_slots[0],
+            "the oldest session was not the one evicted");
+  // The pair store: a used slot first, then an expired one, else the oldest.
+  clear_slots();
+  for (uint8_t k = 0; k < slots::PAIR_SLOTS; ++k) {
+    set_clock(t + 30000ULL * k);
+    CHECK(issue_pair((uint8_t)(0x40 + k)) == k);
+  }
+  set_clock(t + kWrapMs + 1000);
+  for (uint8_t k = 0; k < slots::PAIR_SLOTS; ++k) {
+    CHECK_MSG(!pair_ok((uint8_t)(0x40 + k)), "a 49.7-day-old pair token " + std::to_string(k) + " was valid");
+  }
+  CHECK_MSG(slots::pick_slot_for_issuance() == &slots::g_pair_slots[0],
+            "the pair issue did not take the first expired slot");
+  clear_slots();
+  for (uint8_t k = 0; k < slots::PAIR_SLOTS; ++k) {
+    set_clock(kWrapMs - 120000 + 60000ULL * k);           // two minutes before the mark, a minute apart
+    issue_pair((uint8_t)(0x50 + k));
+  }
+  set_clock(kWrapMs + 240000);
+  for (uint8_t k = 0; k < slots::PAIR_SLOTS; ++k) CHECK(pair_ok((uint8_t)(0x50 + k)));
+  CHECK_MSG(slots::pick_slot_for_issuance() == &slots::g_pair_slots[0],
+            "the oldest pair token was not the one evicted");
+  slots::g_pair_slots[2].used = true;
+  CHECK(slots::pick_slot_for_issuance() == &slots::g_pair_slots[2]);
+}
+
+// csi_integration.cpp with its comments stripped and its whitespace dropped,
+// for a text check that does not care how a line is aligned.
+std::string squeeze(const std::string& t) {
+  std::string out;
+  for (char c : t) if (c != ' ' && c != '\t') out += c;
+  return out;
+}
+std::string strip_comments(const std::string& t) {
+  std::string out;
+  enum { CODE, LINE, BLOCK, STR, CHR } st = CODE;
+  for (size_t i = 0; i < t.size(); ++i) {
+    const char c = t[i];
+    const char n = i + 1 < t.size() ? t[i + 1] : '\0';
+    switch (st) {
+      case CODE:
+        if (c == '/' && n == '/') { st = LINE; ++i; }
+        else if (c == '/' && n == '*') { st = BLOCK; ++i; }
+        else { out += c; if (c == '"') st = STR; else if (c == '\'') st = CHR; }
+        break;
+      case LINE:
+        if (c == '\n') { out += c; st = CODE; }
+        break;
+      case BLOCK:
+        if (c == '*' && n == '/') { st = CODE; ++i; }
+        else out += (c == '\n') ? '\n' : ' ';
+        break;
+      case STR:
+      case CHR:
+        out += c;
+        if (c == '\\' && i + 1 < t.size()) out += t[++i];
+        else if ((st == STR && c == '"') || (st == CHR && c == '\'')) st = CODE;
+        break;
+    }
+  }
+  return out;
+}
+
+// A struct's text, from the line that starts with `sig` to its "};" line.
+std::string struct_body(const std::string& src, const std::string& sig) {
+  const size_t at = src.find("\n" + sig);
+  if (at == std::string::npos) return "";
+  const size_t end = src.find("\n};\n", at);
+  return end == std::string::npos ? "" : src.substr(at, end - at);
+}
+
+void test_store_text() {
+  const std::string csi = strip_comments(read_file(CSI_INTEGRATION_CPP));
+  CHECK_MSG(!csi.empty(), std::string("could not read ") + CSI_INTEGRATION_CPP);
+  const std::string sq = squeeze(csi);
+  // The constants this file mirrors are csi_integration.cpp's.
+  for (const char* decl : {"constexprsize_tPAIR_SLOTS=4;", "constexpruint32_tPAIR_TTL_MS=10UL*60UL*1000UL;",
+                           "constexpruint32_tPAIR_TTL_S=PAIR_TTL_MS/1000UL;", "constexprsize_tPAIR_TOK_BYTES=32;",
+                           "constexprsize_tSESSION_SLOTS=8;",
+                           "constexpruint32_tSESSION_TTL_MS=24UL*60UL*60UL*1000UL;",
+                           "constexpruint32_tSESSION_TTL_S=SESSION_TTL_MS/1000UL;",
+                           "constexprsize_tSESSION_TOK_BYTES=32;"}) {
+    CHECK_MSG(sq.find(decl) != std::string::npos, std::string("csi_integration.cpp no longer declares ") + decl);
+  }
+  // Both slots age on issued_s, and nothing names issued_ms.
+  const std::string pair = struct_body(csi, "struct PairSlot {");
+  const std::string session = struct_body(csi, "struct SessionSlot {");
+  CHECK(!pair.empty() && !session.empty());
+  CHECK(squeeze(pair).find("uint32_tissued_s;") != std::string::npos);
+  CHECK(squeeze(session).find("uint32_tissued_s;") != std::string::npos);
+  CHECK_MSG(count_of(csi, "issued_ms") == 0, "csi_integration.cpp still names issued_ms");
+  // The clock: whole seconds of esp_timer_get_time()'s microseconds.
+  CHECK(sq.find("uint32_tuptime_s(){return(uint32_t)(esp_timer_get_time()/1000000LL);}") != std::string::npos);
+  // The four slot functions read uptime_s() and never millis().
+  for (const char* sig : {"PairSlot* pick_slot_for_issuance() {", "PairSlot* find_slot(const uint8_t* token) {",
+                          "SessionSlot* pick_session_slot_for_issuance() {",
+                          "bool find_valid_session(const uint8_t* token) {"}) {
+    const std::string body = fn_body(csi, sig);
+    CHECK_MSG(!body.empty(), std::string("not found: ") + sig);
+    CHECK_MSG(body.find("millis()") == std::string::npos, std::string(sig) + " reads millis()");
+    CHECK_MSG(body.find("const uint32_t now = uptime_s();") != std::string::npos, std::string(sig) + " does not read uptime_s()");
+  }
+  // And the two issuers stamp from it.
+  for (const char* sig : {"bool session_issue(char* hex_out, size_t out_cap) {",
+                          "bool pair_token_issue(char* hex_out, size_t out_cap) {"}) {
+    const std::string body = fn_body(csi, sig);
+    CHECK_MSG(!body.empty(), std::string("not found: ") + sig);
+    CHECK_MSG(squeeze(body).find("s->issued_s=uptime_s();") != std::string::npos,
+              std::string(sig) + " does not stamp issued_s from uptime_s()");
+    CHECK_MSG(body.find("millis()") == std::string::npos, std::string(sig) + " reads millis()");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -420,6 +706,10 @@ int main() {
   test_reader_shape_rules_unchanged();
   test_dashboard_branch_reads_the_whole_name();
   test_sketch_text();
+  test_session_lives_24_hours_at_any_uptime();
+  test_pair_token_lives_10_minutes_at_any_uptime();
+  test_eviction_across_the_mark();
+  test_store_text();
   if (g_failures) {
     std::printf("%d/%d checks FAILED\n", g_failures, g_checks);
     return 1;

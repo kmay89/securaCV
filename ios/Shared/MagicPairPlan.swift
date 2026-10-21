@@ -13,7 +13,8 @@
 //     — never its bearer token — and the phone spends it on the home LAN
 //     with one unauthenticated GET of the claim URL. The receipt that comes
 //     back is the one the BOOT-tap route serves; the key crossed Wi-Fi.
-//   * The claim is single use and burns on a wrong guess, so the plan dials
+//   * The claim is single use (the firmware spends it only on a match; a
+//     403 is spent, expired or replaced), so the plan dials
 //     at most twice, and the second time ONLY when the first never reached
 //     the Canary (its `.local` name not resolving yet is the common case —
 //     the address it reported stands in). A refusal (403) or any answer

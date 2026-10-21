@@ -42,6 +42,7 @@
 #include <Preferences.h>          // NVS-backed settings store
 #include <esp_http_server.h>
 #include <esp_random.h>           // esp_fill_random() — pairing token entropy
+#include <esp_timer.h>            // esp_timer_get_time() — the token stores' seconds clock
 #include <string.h>
 #include <stdlib.h>
 
@@ -1557,17 +1558,33 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
  * legitimate user is already on the device's AP at that point, and
  * the PWA simply re-fetches /api/pair/token if validation fails. No
  * security regression vs. the older 302-redirect design.
+ *
+ * Clock: both stores (this one and the session store below) age on whole
+ * seconds since boot, uptime_s(), from esp_timer_get_time()'s 64-bit
+ * microseconds (sweep F347). A uint32_t of seconds wraps after 136 years;
+ * the 32-bit millis() these slots aged on before wrapped every 49.7 days,
+ * and a slot not reused since it expired then read as fresh again: its old
+ * session cookie took the dashboard for another 24 h, its pair token for
+ * another 10 minutes. A second is the precision (a token can end up to 1 s
+ * early) against TTLs of 10 minutes and 24 hours. Only the httpd task
+ * writes a slot; pair_token_valid() is also read from the QR scanner task,
+ * where a slot's issued_s is one aligned 32-bit word, a read that cannot
+ * tear.
  * ────────────────────────────────────────────────────────────────────────── */
+
+/* Whole seconds since boot: the token stores' clock. */
+uint32_t uptime_s() { return (uint32_t)(esp_timer_get_time() / 1000000LL); }
 
 constexpr size_t   PAIR_SLOTS        = 4;
 constexpr uint32_t PAIR_TTL_MS       = 10UL * 60UL * 1000UL;  /* 10 min */
+constexpr uint32_t PAIR_TTL_S        = PAIR_TTL_MS / 1000UL;  /* the slots' clock is seconds */
 constexpr size_t   PAIR_TOK_BYTES    = 32;                    /* 256-bit entropy */
 constexpr size_t   PAIR_TOK_HEX_LEN  = PAIR_TOK_BYTES * 2;    /* 64 hex chars */
 
 struct PairSlot {
   bool     used;
   bool     active;
-  uint32_t issued_ms;
+  uint32_t issued_s;   /* uptime_s() at issue */
   uint8_t  token[PAIR_TOK_BYTES];
 };
 PairSlot g_pair_slots[PAIR_SLOTS] = {};
@@ -1603,16 +1620,16 @@ bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {
 }
 
 PairSlot* pick_slot_for_issuance() {
-  const uint32_t now = millis();
+  const uint32_t now = uptime_s();
   /* Pass 1: prefer a used or expired slot. */
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
-    if (!s.active || s.used || (now - s.issued_ms) >= PAIR_TTL_MS) return &s;
+    if (!s.active || s.used || (now - s.issued_s) >= PAIR_TTL_S) return &s;
   }
   /* Pass 2: evict the oldest active-and-unused slot. */
   size_t oldest = 0;
   for (size_t i = 1; i < PAIR_SLOTS; ++i) {
-    if ((now - g_pair_slots[i].issued_ms) > (now - g_pair_slots[oldest].issued_ms)) {
+    if ((now - g_pair_slots[i].issued_s) > (now - g_pair_slots[oldest].issued_s)) {
       oldest = i;
     }
   }
@@ -1620,11 +1637,11 @@ PairSlot* pick_slot_for_issuance() {
 }
 
 PairSlot* find_slot(const uint8_t* token) {
-  const uint32_t now = millis();
+  const uint32_t now = uptime_s();
   for (size_t i = 0; i < PAIR_SLOTS; ++i) {
     PairSlot& s = g_pair_slots[i];
     if (!s.active || s.used) continue;
-    if ((now - s.issued_ms) >= PAIR_TTL_MS) continue;
+    if ((now - s.issued_s) >= PAIR_TTL_S) continue;
     if (ct_eq(s.token, token, PAIR_TOK_BYTES)) return &s;
   }
   return nullptr;
@@ -1651,26 +1668,29 @@ PairSlot* find_slot(const uint8_t* token) {
  * caps the post-compromise window without forcing daily re-pairing.
  *
  * Threading: HTTP handlers serialize behind one ESP-IDF httpd worker, so
- * no portMUX needed; matches the pair-slot store above. ────────────── */
+ * no portMUX needed; matches the pair-slot store above. Clock: whole
+ * seconds since boot (uptime_s(), sweep F347), as the pair-slot store
+ * above says, so a session's 24 h holds at any uptime. ────────────── */
 
 constexpr size_t   SESSION_SLOTS    = 8;
 constexpr uint32_t SESSION_TTL_MS   = 24UL * 60UL * 60UL * 1000UL;  /* 24 h */
+constexpr uint32_t SESSION_TTL_S    = SESSION_TTL_MS / 1000UL;      /* the slots' clock is seconds */
 constexpr size_t   SESSION_TOK_BYTES   = 32;                     /* 256-bit entropy */
 constexpr size_t   SESSION_TOK_HEX_LEN = SESSION_TOK_BYTES * 2;  /* 64 hex chars */
 
 struct SessionSlot {
   bool     active;
-  uint32_t issued_ms;
+  uint32_t issued_s;   /* uptime_s() at issue */
   uint8_t  token[SESSION_TOK_BYTES];
 };
 SessionSlot g_session_slots[SESSION_SLOTS] = {};
 
 SessionSlot* pick_session_slot_for_issuance() {
-  const uint32_t now = millis();
+  const uint32_t now = uptime_s();
   /* Pass 1: prefer an empty or expired slot. */
   for (size_t i = 0; i < SESSION_SLOTS; ++i) {
     SessionSlot& s = g_session_slots[i];
-    if (!s.active || (now - s.issued_ms) >= SESSION_TTL_MS) return &s;
+    if (!s.active || (now - s.issued_s) >= SESSION_TTL_S) return &s;
   }
   /* Pass 2: evict the oldest active slot. Same trade-off as the pair
    * store — a determined attacker can churn issuances and bump a real
@@ -1678,8 +1698,8 @@ SessionSlot* pick_session_slot_for_issuance() {
    * by tapping the QR / "Open dashboard" link again. */
   size_t oldest = 0;
   for (size_t i = 1; i < SESSION_SLOTS; ++i) {
-    if ((now - g_session_slots[i].issued_ms) >
-        (now - g_session_slots[oldest].issued_ms)) {
+    if ((now - g_session_slots[i].issued_s) >
+        (now - g_session_slots[oldest].issued_s)) {
       oldest = i;
     }
   }
@@ -1687,11 +1707,11 @@ SessionSlot* pick_session_slot_for_issuance() {
 }
 
 bool find_valid_session(const uint8_t* token) {
-  const uint32_t now = millis();
+  const uint32_t now = uptime_s();
   for (size_t i = 0; i < SESSION_SLOTS; ++i) {
     SessionSlot& s = g_session_slots[i];
     if (!s.active) continue;
-    if ((now - s.issued_ms) >= SESSION_TTL_MS) continue;
+    if ((now - s.issued_s) >= SESSION_TTL_S) continue;
     if (ct_eq(s.token, token, SESSION_TOK_BYTES)) return true;
   }
   return false;
@@ -1774,7 +1794,7 @@ bool session_issue(char* hex_out, size_t out_cap) {
   SessionSlot* s = pick_session_slot_for_issuance();
   if (!s) return false;
   esp_fill_random(s->token, SESSION_TOK_BYTES);
-  s->issued_ms = millis();
+  s->issued_s  = uptime_s();
   s->active    = true;
   hex_encode(s->token, SESSION_TOK_BYTES, hex_out);
   return true;
@@ -2610,7 +2630,7 @@ bool pair_token_issue(char* hex_out, size_t out_cap) {
   PairSlot* s = pick_slot_for_issuance();
   if (!s) return false;
   esp_fill_random(s->token, PAIR_TOK_BYTES);
-  s->issued_ms = millis();
+  s->issued_s  = uptime_s();
   s->used      = false;
   s->active    = true;
   hex_encode(s->token, PAIR_TOK_BYTES, hex_out);

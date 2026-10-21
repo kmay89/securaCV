@@ -386,7 +386,7 @@ WIZARD = {
          "api": "GET /api/selftest",
          "checks": ["Wi-Fi", "Camera", "Bluetooth", "SD", "Microphone", "GPIO"],
          "blocks": [
-             {"title": "Save your recovery kit", "detail": "Short-press BOOT, then tap Save my recovery kit (downloads canary-recovery-kit.json)"},
+             {"title": "Save your recovery kit", "detail": "Tap Save my recovery kit, then short-press BOOT (downloads canary-recovery-kit.json)"},
              {"title": "Use Home Assistant? (optional)",
               "fields": [
                   {"name": "host", "placeholder": "Broker address (like 192.168.1.10)"},
@@ -1153,7 +1153,7 @@ BOOT_GPIO = int(grab(INO, r"BOOT_BUTTON_GPIO\s*=\s*(\d+)", "BOOT_BUTTON_GPIO"))
 BOOT_HOLD_MS = int(grab(INO, r"BOOT_BUTTON_HOLD_MS\s*=\s*(\d+)", "BOOT_BUTTON_HOLD_MS"))
 BOOT_LONG_MS = int(grab(INO, r"BOOT_LONG_PRESS_MS\s*=\s*(\d+)", "BOOT_LONG_PRESS_MS"))
 GATE_TTL_MS = int(grab(INO, r"PROVISIONING_GATE_TTL_MS\s*=\s*(\d+)", "PROVISIONING_GATE_TTL_MS"))
-must(INO, "Press the BOOT button on the device to reveal the provisioning receipt.", "BOOT receipt hint")
+must(INO, "Start asking for the receipt first, then short-tap BOOT on the device", "BOOT receipt hint (ask first)")
 # What each gesture does, read from the loop's own handler: a short press opens
 # the provisioning gate (it prints no key), the medium hold prints the identity
 # block, BOOT_LONG_PRESS_MS is only the "keep holding" warning, and the factory
@@ -1193,9 +1193,11 @@ must_words(DOC, "The ready banner prints the setup network's name (`WiFi AP`) an
            "docs: the banner shows the key")
 must_words(DOC, "A WAP repeats them in its `[WIFI] AP started` line at boot, and its serial command `w` "
                 "prints both at any time.", "docs: the WAP's AP-started line and w command")
-must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate, which lets the "
-                f"dashboard hand over the recovery kit for {GATE_TTL_MS // 1000} seconds.",
-           "docs: a short press opens the gate")
+must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate for "
+                f"{GATE_TTL_MS // 1000} seconds, which hands the recovery kit to the one page already "
+                "asking for it, so click **Use BOOT Tap Once** on the dashboard first and press when "
+                "the page says to.",
+           "docs: a short press opens the gate for the page already asking")
 must_words(DOC, f"Held for {RESET_HOLD_MS // 1000} seconds, BOOT resets Wi-Fi and settings and keeps "
                 "the device's keypair", "docs: the reset keeps the keypair")
 must_words(DOC, "A WAP has no such stage, and no BOOT hold changes its key.", "docs: no wipe on a WAP")
@@ -1213,7 +1215,8 @@ FLASH = {
          "what": f"GPIO{BOOT_GPIO}, a strapping pin — the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
          "gestures": [
              f"short press (under {BOOT_HOLD_MS // 1000} s): opens the provisioning gate for "
-             f"{GATE_TTL_MS // 1000} s, so the dashboard can hand over the recovery kit (it prints no key)",
+             f"{GATE_TTL_MS // 1000} s and hands the recovery kit to the one page already asking for it "
+             "(click Use BOOT Tap Once on the dashboard first; it prints no key)",
              f"hold {BOOT_HOLD_MS // 1000}–{BOOT_LONG_MS // 1000} s: prints the identity block "
              "(device ID, fingerprint, firmware) on serial",
              f"hold {RESET_HOLD_MS // 1000} s: factory reset — Wi-Fi, broker and name are cleared, the identity "

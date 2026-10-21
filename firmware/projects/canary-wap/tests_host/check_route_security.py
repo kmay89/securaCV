@@ -107,7 +107,6 @@ AUTH_MARKERS = (
     "pair_token_valid(",          # 10-min wizard pair token
     "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
     "qr_scan_request_allowed(",   # pair token OR admin credential
-    "provisioning_gate_is_open(", # physical BOOT-press gate
     "session_validate_cookie(",   # cv_session cookie (self-gating pages)
     "authorized(req",             # csi_mqtt session/Bearer helper
     "auth_gated<",                # module trampolines (bt_/bcn_/plain)
@@ -245,12 +244,14 @@ SECRET_ANSWERS = {
         "token ap pin", "the receipt (the recovery kit), through send_provisioning_receipt()"),
 }
 # A refusal an answer may also stand after, on grants that are not
-# credential gates: the receipt's BOOT tap (provisioning_gate_take()) and its
-# setup-door claim, whose flag only the claim's take may set ("writes"; one
-# ending in `(` is that call, then `;`). test_receipt_grant drives both.
+# credential gates: the receipt's BOOT tap (provisioning_gate_take_for(), its
+# one asker's take, sweep F342) and its setup-door claim, whose flag only the
+# claim's take may set ("writes"; one ending in `(` is that call, then `;`).
+# test_receipt_grant drives both. The tap's peek is no grant: the sketch's
+# provisioning_gate_is_open() is gone, and so is its AUTH_MARKERS entry.
 OTHER_GRANTS = {
     "handle_provisioning_receipt": {
-        "refusal": "!claim_served && !provisioning_gate_take()",
+        "refusal": "!claim_served && !provisioning_gate_take_for(req, &tap)",
         "flag": "claim_served",
         "writes": ("bool claim_served = false;",
                    "claim_served = canary::net::claim_ticket::take("),

@@ -881,7 +881,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="auth-divider">or</div>
       <button class="btn btn-secondary" style="width:100%" onclick="requestFromDevice()">Use BOOT Tap Once</button>
       <p style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:0.5rem;">
-        Click the button, then short-tap BOOT on the Canary within 60 seconds.
+        Click the button, then short-tap BOOT on the Canary when the line below says to, within 60 seconds.
       </p>
       <div class="auth-status" id="authStatus"></div>
       <div class="auth-footer">
@@ -2976,6 +2976,17 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       err.textContent = '';
       try {
         const resp = await secureFetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (resp.status === 409) {
+          // A cookie page's save reaches the device's BOOT-tap step, and
+          // another device asked during the same tap (sweep F342). The way
+          // back in is the sign-in, which asks before the press: a second
+          // Save the device answers 403 opens it (secureFetch above).
+          err.textContent = tapContendedText(
+            'click Save my recovery kit again; when the sign-in opens, click Use BOOT Tap Once there, ' +
+            'and only then short-tap BOOT.');
+          err.style.display = 'block';
+          return;
+        }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         if (!RecoveryKit.save(window, await resp.text())) throw new Error('not a recovery kit');
         done.style.display = 'block';
@@ -2988,17 +2999,58 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    // What the page says when the device answers 409 tap_contended (sweep
+    // F342): another address asked for the receipt during the same BOOT
+    // tap, so the device closed the tap and handed nothing out. `retry` is
+    // the page's own way back in, and it names the click before the press
+    // (sweep F342's fourth review): the page stops asking on the 409, and a
+    // tap no page of the owner's is asking for goes to the first asker, so a
+    // bare "try again" read as "press BOOT again" hands the keys to the
+    // other device if it is still asking. "Wait 10 seconds" is the device's
+    // rule: its 409 ends once an ask finds no address other than the asker
+    // asking in the last 10 s, which is 10 s after the other device stops
+    // (the new click then asks first, hears 403, and is served on the next
+    // tap) or, under a host that keeps polling, 10 s after this page stopped
+    // (the new click hears 403 too, and the next tap is closed again, so
+    // nothing is handed out). The ways out avoid the token box on purpose:
+    // on a page the landing session signed in, that box still takes the
+    // cookie's word for a token, so a mistyped one looks accepted (the
+    // ledger's owner-authority items revisit this copy once the box checks
+    // the token itself). The hold's list is factory_reset_by_hold()'s, and
+    // the hold comes last (sweep F342's fifth review): it reopens the
+    // first-boot Bluetooth setup door, which goes to the first client in
+    // radio range that connects (magic_pairing.md §2.2), so a host on the
+    // network that is also in range can take that door, spend its claim
+    // and keep the token the hold kept. The kit and the console carry no
+    // such exposure.
+    function tapContendedText(retry) {
+      return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
+             'Close any other Canary pages and wait 10 seconds, then ' + retry + ' ' +
+             'If this keeps happening: the iPhone app can pair from your recovery kit, or the USB console prints ' +
+             'the token each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
+             '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
+             'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
+             'first phone or computer nearby that connects.';
+    }
+
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
       // Polling budget: 30 ticks × 2 s = 60 s. The device's gate TTL
       // (advertised in the 403 body's gate_ttl_seconds) is much shorter
       // than this budget, so a press anywhere in the 60 s window lands.
+      // The poll starts at the click, before the tap: the device hands a
+      // tap only to the one address that asked from 10 s before it onward
+      // (sweep F342), so this page is on record when the press lands. The
+      // line says to press only once the device has answered an ask (sweep
+      // F342's fourth review): until then the first ask may still be on its
+      // way (a TLS handshake, a blip, a busy server), and a press it has not
+      // reached yet is one no page of the owner's is asking for.
       const POLL_INTERVAL_MS = 2000;
       const POLL_TICKS = 30;
       let gateTtl = 30;
       let gotFirst403 = false;
-      s.textContent = 'Now short-tap BOOT on the device. Listening for 60 seconds.';
+      s.textContent = "Asking the Canary first. Don't press BOOT yet.";
       for (let i = 0; i < POLL_TICKS; i++) {
         try {
           const resp = await fetch(API_BASE + '/api/provisioning-receipt');
@@ -3009,6 +3061,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             hideAuthModal();
             startDashboard();
             offerRecoveryKit(text);
+            return;
+          }
+          if (resp.status === 409) {
+            // Another device asked during the same tap (sweep F342): the
+            // device closed the tap and gave out nothing, so stop here.
+            s.textContent = tapContendedText('click Use BOOT Tap Once again, and only then short-tap BOOT.');
+            s.className = 'auth-status error';
             return;
           }
           if (resp.status === 403 && !gotFirst403) {
@@ -3023,12 +3082,22 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         } catch (e) { /* network blip, keep trying */ }
         const remaining = (POLL_TICKS - i - 1) * (POLL_INTERVAL_MS / 1000);
         if (remaining > 0) {
-          s.textContent = 'Listening for BOOT tap — ' + remaining + 's left ' +
-                          '(device holds the press for ' + gateTtl + 's).';
+          s.textContent = gotFirst403
+            ? 'Now short-tap BOOT on the device. Listening for BOOT tap — ' + remaining + 's left ' +
+              '(device holds the press for ' + gateTtl + 's).'
+            : "Asking the Canary first. Don't press BOOT yet — " + remaining + 's left.';
         }
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
       }
-      s.textContent = "Didn't see a tap. Press BOOT and click above to try again.";
+      // The retry asks first (sweep F342's second review): the tap goes only
+      // to an address that asked from 10 s before it onward, so a press made
+      // before the click is one no page of the owner's is asking for, and a
+      // host that watches /api/logs for the tap would be its only asker. A
+      // page the device never answered never said to press, so it does not
+      // say it missed a tap.
+      s.textContent = gotFirst403
+        ? "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+        : "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.";
       s.className = 'auth-status error';
     }
 

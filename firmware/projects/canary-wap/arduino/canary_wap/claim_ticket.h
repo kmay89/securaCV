@@ -21,9 +21,19 @@
  * bytes — esp_fill_random on the device, a fixed pattern in the tests),
  * no clock (millis() is a parameter). Touched from the loop task (mint)
  * and the httpd task (take), so the minted-at word goes through the
- * __atomic builtins exactly as provisioning_gate.h's State does, and take()
- * claims the ticket with one exchange BEFORE it compares — a second taker
- * on any task reads 0 and is refused, whatever it presented.
+ * __atomic builtins exactly as provisioning_gate.h's State does. A claim is
+ * spent only by a MATCH (sweep F342): take() loads the minted-at word,
+ * compares in constant time, and spends with one compare-and-swap of the
+ * word it loaded (spend_if_match()), so exactly one matching taker on any
+ * task gets true, and a wrong, short or truncated value changes nothing.
+ * It used to exchange the word to 0 before comparing, so any ?claim= from a
+ * host on the network spent the phone's claim: 128 random bits cannot be
+ * guessed in the TTL, so burning on a guess bounded nothing and handed that
+ * host a one-request denial. An expired claim is still burned. And the
+ * owner sweeps it every loop pass with expire() on the task that mints it
+ * (sweep F347): unsigned subtraction ages the minted-at word correctly only
+ * below 2^32 ms, so a claim read but never spent would read as pending
+ * again 49.7 days later; swept, none outlives its TTL by more than a pass.
  *
  * Consumed by the canary-wap sketch (and, in a follow-up, the flagship's
  * securacv_network); the WAP keeps a staged byte-identical copy next to its
@@ -47,6 +57,12 @@ inline constexpr size_t HEX_LEN = 2 * RAW_LEN;
 /// and one retry, and is short enough that a claim read by a phone that
 /// then walked away dies on its own.
 inline constexpr uint32_t TTL_MS = 180000;
+/// How far AHEAD of the taker's clock a minted-at word may read and still be
+/// compared like a fresh claim (spend_if_match()): the gap between the
+/// httpd task's millis() read and its load of the word, where a mint on the
+/// loop task can land. A few milliseconds in practice; a second is far past
+/// any preemption, and far short of an age a claim reaches unswept.
+inline constexpr uint32_t AHEAD_SKEW_MS = 1000;
 
 struct Ticket {
   char hex[HEX_LEN + 1];
@@ -57,10 +73,33 @@ struct Ticket {
 /// 0 is the "none" sentinel, so a mint at millis()==0 is stored as 1.
 inline uint32_t stamp(uint32_t now_ms) { return now_ms == 0 ? 1u : now_ms; }
 
-inline void wipe(Ticket& t) {
-  __atomic_store_n(&t.minted_at_ms, 0u, __ATOMIC_RELEASE);
+/// The hex zeroed through a volatile pointer, so the compiler cannot drop
+/// the stores. Leaves minted_at_ms alone: the caller has already cleared it
+/// (wipe()) or won the compare-and-swap that did (clear_if_unchanged()).
+inline void wipe_hex(Ticket& t) {
   volatile char* b = t.hex;
   for (size_t i = 0; i < sizeof(t.hex); ++i) b[i] = 0;
+}
+
+/// Clear the claim minted at `seen` (a minted-at word the caller loaded):
+/// one compare-and-swap of `seen` to 0, and the hex wiped only when that
+/// swap won. False, and nothing touched, when the word moved since the load
+/// (a re-mint, another taker, a sweep) or `seen` is 0. The one spend that
+/// spend_if_match() and expire() both make.
+inline bool clear_if_unchanged(Ticket& t, uint32_t seen) {
+  if (seen == 0) return false;
+  uint32_t expect = seen;
+  if (!__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
+  wipe_hex(t);
+  return true;
+}
+
+inline void wipe(Ticket& t) {
+  __atomic_store_n(&t.minted_at_ms, 0u, __ATOMIC_RELEASE);
+  wipe_hex(t);
 }
 
 /// Mint a claim from `raw` (RAW_LEN random bytes the caller drew) at
@@ -105,18 +144,77 @@ inline bool hex_equal(const char* expected, const char* presented) {
   return diff == 0;
 }
 
-/// Spend the claim. The ticket is consumed by this call whatever the
-/// outcome — a match serves the receipt, a mismatch burns the claim (a
-/// guesser gets one guess per join, not thousands), an expired claim is
-/// burned too. Exactly one caller, on any task, can get true.
+/// Spend the claim minted at `seen` (the minted-at word the caller loaded),
+/// and only on a match:
+///   * `seen` 0: nothing outstanding, false;
+///   * `seen` past its TTL: the claim is burned (a compare-and-swap of `seen`
+///     to 0, the hex wiped only when that swap won), false. A `seen` a
+///     moment AHEAD of `now_ms` (less than AHEAD_SKEW_MS) is not past it:
+///     take() is handed a clock its caller read before the load, and a mint
+///     on the loop task can land in between (the sketch's take(...,
+///     millis()) on the httpd task). Unsigned, that word reads 2^32 ms old
+///     and a wrong ?claim= would burn the phone's fresh claim, so it is
+///     compared like a fresh one. Every other age, from the TTL up to
+///     2^32 - AHEAD_SKEW_MS, is past it, so take() alone refuses a claim
+///     left unswept for any of that span (an earlier rule read every word
+///     up to 2^31 ms "ahead" and served one unswept for 24.8 days); only
+///     the wrap itself needs the owner's sweep;
+///   * `presented` does not match (hex_equal(): constant time, exactly
+///     HEX_LEN characters): false, and NOTHING changes;
+///   * a match: one compare-and-swap of `seen` to 0. It loses when the word
+///     moved since the load (a re-mint, an expiry sweep or another matching
+///     taker got there first): false. It wins exactly once: the hex is wiped
+///     and the answer is true.
+/// So a mismatch spends nothing and two matching takers on two tasks cannot
+/// both get true. The seam for a caller (and a test) that loads the word
+/// itself; take() is this with the word it loads now.
+inline bool spend_if_match(Ticket& t, uint32_t seen, const char* presented,
+                           uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
+  if (seen == 0) return false;
+  const uint32_t age = now_ms - seen;
+  const uint32_t ahead = seen - now_ms;
+  if (age >= ttl_ms && ahead >= AHEAD_SKEW_MS) {
+    clear_if_unchanged(t, seen);   // burned; a re-mint since the load is left
+    return false;
+  }
+  if (!hex_equal(t.hex, presented)) return false;
+  return clear_if_unchanged(t, seen);
+}
+
+/// Spend the claim, on a match only (sweep F342): a match serves the
+/// receipt and spends the claim; a wrong, short, empty or truncated value
+/// is refused and spends nothing (128 random bits cannot be guessed inside
+/// the TTL, so burning on a guess bounded nothing and let one stray request
+/// end the phone's pairing); an expired claim is refused and burned.
+/// Exactly one caller, on any task, can get true.
 inline bool take(Ticket& t, const char* presented, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
-  const uint32_t minted = __atomic_exchange_n(&t.minted_at_ms, 0u, __ATOMIC_ACQ_REL);
-  if (minted == 0) return false;
-  const bool fresh = (uint32_t)(now_ms - minted) < ttl_ms;
-  const bool match = hex_equal(t.hex, presented);
-  volatile char* b = t.hex;
-  for (size_t i = 0; i < sizeof(t.hex); ++i) b[i] = 0;
-  return fresh && match;
+  return spend_if_match(t, __atomic_load_n(&t.minted_at_ms, __ATOMIC_ACQUIRE), presented,
+                        now_ms, ttl_ms);
+}
+
+/// The sweep's step on a minted-at word `seen` its caller loaded: burn the
+/// claim when `seen` is `ttl_ms` old or older, with one compare-and-swap of
+/// `seen` (clear_if_unchanged()), so a re-mint stored since the load is
+/// never cleared. True when it burned one. The seam a test drives with a
+/// word it loaded before a re-mint; expire() is this with the word it loads
+/// now.
+inline bool expire_seen(Ticket& t, uint32_t seen, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
+  if (seen == 0 || (uint32_t)(now_ms - seen) < ttl_ms) return false;
+  return clear_if_unchanged(t, seen);
+}
+
+/// The sweep (sweep F347): burn a claim that is `ttl_ms` old or older, with
+/// one compare-and-swap of the minted-at word it read (expire_seen()), so a
+/// fresh re-mint is never cleared. True when it burned one. Its owner calls
+/// it every loop pass, ON THE TASK THAT MINTS (the WAP's loop task): a
+/// `now_ms` read before another task's mint() would see that newer word as
+/// 2^32 ms old. (So the sweep, unlike spend_if_match(), reads no word as
+/// ahead of its clock, and a word it misses for any reason is still burned
+/// once its age passes the TTL.) With the sweep, no claim outlives its TTL by
+/// more than one pass, so none can age into the wrap of millis() and read as
+/// pending again.
+inline bool expire(Ticket& t, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
+  return expire_seen(t, __atomic_load_n(&t.minted_at_ms, __ATOMIC_ACQUIRE), now_ms, ttl_ms);
 }
 
 }  // namespace claim_ticket

@@ -181,8 +181,8 @@ never-provisioned unit every 15 idle minutes, which would otherwise have
 re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
-and by **Forget Wi-Fi** on a unit that had credentials, which is the
-owner's way to re-arm the window), a phone at the door is a sign of life
+and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had
+credentials, which are the owner's ways to re-arm the window), a phone at the door is a sign of life
 for that wizard timer, and the restart waits while the door is open at all
 (`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
 door's card on their phone has touched nothing yet) — so it cannot land
@@ -190,9 +190,14 @@ mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
 dashboard, the bonded rescue service and the BOOT-tap receipt are the
 owner's paths). **There is no tap door on the WAP in this version:** the
-BOOT button keeps the sketch's own gestures (a short press opens the 30 s
-receipt gate; a 2 s hold prints the identity on serial), and no button
-gesture factory-resets a WAP today. A join over the door
+BOOT button keeps the sketch's own gestures: a short press opens the 30 s
+receipt gate, a 2 s hold prints the identity on serial, and a 10 s hold is
+the factory reset (`factory_reset_by_hold()`). The hold clears the saved
+Wi-Fi networks, the broker row, the device name and the first-boot flag,
+keeps the identity key and the API token derived from it, and restarts
+into first-boot setup when BOOT is released. It clears the Wi-Fi through
+the same `wifi_clear_credentials()` as Forget Wi-Fi, so on a unit that had
+credentials it re-arms the door's first-boot window the same way. A join over the door
 is held in RAM until WiFi proves it (`ble_improv_submit_join` /
 `ble_improv_join_verdict`): a proven join is persisted then, exactly as the
 wizard persists, and a failed or timed-out one is forgotten so the door
@@ -232,8 +237,8 @@ pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
 **Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
 `provisioning_gate::receipt_decide` order minus its first question (a
 foreign `Host`), which the WAP does not ask on this route today (the
-flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
-is burned too, and a claim that serves leaves the tap unspent.
+flagship's `auth_gate` does); a wrong guess spends nothing, an expired claim
+is burned, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
 the WAP just joined. **The receipt the claim buys names the steady-state
 address** — `https://<name>.local` with the certificate's `tls_cert_fp` pin:

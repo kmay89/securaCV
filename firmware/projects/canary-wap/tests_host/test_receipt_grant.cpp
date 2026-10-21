@@ -42,8 +42,49 @@
 //     SoftAP setup's recovery-kit save mints it (sweep F289's residual; the
 //     writer, session_cookie_header(), is cut with the handlers, and
 //     test_session_cookie.cpp drives handle_ui's mint);
-//   - a wrong claim burns the claim (as before); a header that is not
-//     "Bearer " is no bearer;
+//   - a wrong claim is refused and spends nothing (sweep F342; before, it
+//     burned the phone's claim): the real claim then serves; a host that
+//     keeps sending wrong claims gets one health line per 10 s; a header
+//     that is not "Bearer " is no bearer;
+//   - the BOOT tap goes to one asker (sweep F342; before, the first request
+//     from any host inside the tap's 30 s took it): with the owner's page
+//     asking from before the tap, a second address asking in the same
+//     window gets 409 tap_contended (no cookie, no secret, a body that
+//     parses, a hint that sends the owner's client in first and never
+//     advises a bare re-tap), the owner's page gets 409 too, the tap is
+//     closed and one health line, naming no address in its message or its
+//     detail, says so; the 409 ends lookback after the other address's last
+//     ask, so the owner's retry 10 s after the other device stopped asks
+//     first (403) and its next tap is served; a re-tap served to anyone
+//     ends the 409; a sole asker is served at
+//     once; an attacker that asks first after the tap loses to an owner who
+//     asked before it; a wrong bearer or a wrong claim from the second
+//     address counts as an ask, a right bearer or a right claim does not;
+//     the BLE OTA break-glass take leaves nothing to take, and a take or a
+//     re-tap that lands between the tap step's judgment and its take
+//     refuses the request (403, nothing served; the re-tap left for the next
+//     ask), and a re-tap stored while a request that found no fresh stamp
+//     sits between its peek and its burn is kept and serves the next ask
+//     (the burn is take_exact() of the peeked stamp, never a close());
+//     every 403 says to start asking first, then short-tap BOOT, in its hint
+//     and its button, and never "short tap, then poll" (sweep F342's second
+//     review: that order hands the tap to a host that watches /api/logs);
+//     contention does
+//     not carry into a clean next tap; a socket that cannot say is refused
+//     with the tap left for the next asker; a held bearer still gets its
+//     429 under contention; the 409 clears no backoff; an expired tap is
+//     burned by the request that finds it;
+//   - the tap and the claim do not come back when millis() wraps (sweep
+//     F347; before, a tap nobody took served the receipt again 49.7 days
+//     after the press, and a claim read but never spent took it with its
+//     old hex): loop()'s two sweeps, run here as the sketch's loop() spells
+//     them (each statement only when the sketch's loop() holds it, so a
+//     sketch without the sweep runs none), clear both past their TTLs, and
+//     2^32 ms + 1 s after them a bare request and the old ?claim= are both
+//     the 403; loop() holds both sweeps at its top level, after
+//     handle_serial_commands(), with no return before them; the BOOT short
+//     press opens the gate through the header's open(), and no line touches
+//     the gate's word directly;
 //   - the receipt's bearer is under every admin route's lockout (F289's
 //     follow-up; before, its compare recorded nothing, so the receipt was
 //     the one route where guessing the token cost nothing): a wrong or
@@ -128,10 +169,13 @@
 
 #include "arduino_globals.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <set>
@@ -146,6 +190,7 @@
 #include "provisioning_gate.h" // the sketch's staged copy: the peer key and its IPv4
 #include "api_auth.h"          // the REAL one
 #include "peer_source.h"       // stubs/receipt_grant: request_peer_key(), the socket read
+#include "json_strict.h"       // the 409's body parses as a browser's JSON.parse() reads it
 
 #ifndef RECEIPT_GRANT_INC
 #error "RECEIPT_GRANT_INC must name the cut of canary_wap.ino (the Makefile passes it)"
@@ -196,7 +241,10 @@ bool cv_session_validate(httpd_req_t* req) {
 
 // ── the sketch's globals the cut functions read ──────────────────────────────
 static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
-static uint32_t g_provisioning_gate_opened_at = 0;
+// The BOOT-tap gate and its one-asker record, as canary_wap.ino declares them
+// (provisioning_gate.h's State and TapArbiter; sweep F342).
+static canary::net::provisioning_gate::State g_provisioning_gate = {0};
+static canary::net::provisioning_gate::TapArbiter g_tap_arbiter = {};
 
 struct { uint32_t http_requests = 0; } g_health;
 struct {
@@ -214,6 +262,7 @@ static int g_http_server_obj = 0;
 static int g_https_server_obj = 0;
 static httpd_handle_t g_https_server = nullptr;
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+static uint32_t g_claim_refusal_logged_ms = 0;
 static uint32_t g_improv_claim_spent_at_ms = 0;
 
 static void secure_zero(void* p, size_t n) {
@@ -221,13 +270,21 @@ static void secure_zero(void* p, size_t n) {
   while (n--) *vp++ = 0;
 }
 
+// Each health line as /api/logs would serve it: the message, then " | " and
+// the detail when there is one (the device's ring entry keeps both, and any
+// session can read them), so a check that a line names no address holds
+// both halves.
 static std::vector<std::string> g_health_lines;
 // Milliseconds each health line moves the fake clock (0 but in the one test
 // that needs time to pass inside the handler, between its reads).
 static uint32_t g_health_line_ms = 0;
 void log_health(LogLevel, LogCategory, const char* message, const char* detail = nullptr) {
-  (void)detail;
-  g_health_lines.push_back(message ? message : "");
+  std::string line = message ? message : "";
+  if (detail && *detail) {
+    line += " | ";
+    line += detail;
+  }
+  g_health_lines.push_back(line);
   stub_grant::now_ms += g_health_line_ms;
 }
 
@@ -354,13 +411,16 @@ void reset_device() {
   g_tls_cert_fp_hex[0] = '\0';
   g_https_server = nullptr;
   WiFi = FakeWiFi{};
-  g_provisioning_gate_opened_at = 0;
+  canary::net::provisioning_gate::close(g_provisioning_gate);
+  g_tap_arbiter = {};
   canary::net::claim_ticket::wipe(g_improv_claim);
+  g_claim_refusal_logged_ms = 0;
   g_improv_claim_spent_at_ms = 0;
   g_served.clear();
   g_qr_payloads.clear();
   g_health_lines.clear();
   g_health_line_ms = 0;
+  stub_grant::millis_hook = nullptr;
   g_live_session = "";
   g_cookie_checks = 0;
   csi_integration::g_pair_token.clear();
@@ -417,9 +477,10 @@ struct Req {
   Req() { r.handle = &g_http_server_obj; }
 };
 
-void open_tap() { g_provisioning_gate_opened_at = millis(); }
+// The owner's short press, as the sketch's button handler makes it.
+void open_tap() { canary::net::provisioning_gate::open(g_provisioning_gate, millis()); }
 bool tap_open() {
-  return g_provisioning_gate_opened_at != 0 && (millis() - g_provisioning_gate_opened_at) < PROVISIONING_GATE_TTL_MS;
+  return canary::net::provisioning_gate::is_open(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
 }
 
 void mint_claim() {
@@ -449,10 +510,56 @@ size_t receipt(Req& q) {
   return g_served.size() - before;
 }
 
+// The answer when a second address asked inside the tap's window (sweep
+// F342): 409 tap_contended, a JSON body a browser parses, no cookie, no
+// secret, not cached.
+void check_tap_contended(const httpd_req_t& r) {
+  CHECK_MSG(r.status == "409 Conflict", "the contended tap answered " + r.status);
+  CHECK(r.type == "application/json");
+  CHECK(header(r, "Cache-Control") == "no-store");
+  json_strict::Value v;
+  CHECK_MSG(json_strict::parse(r.resp, &v), "the 409's body does not parse: " + r.resp);
+  const json_strict::Value* err = v.get("error");
+  CHECK(err && err->kind == json_strict::Value::String && err->text == "tap_contended");
+  const json_strict::Value* hint = v.get("hint");
+  // The hint sends the owner's client in first (sweep F342's review): the
+  // device sends this answer only while another address is asking, and a
+  // bare re-tap then goes to that address if it is the one still asking.
+  CHECK(hint && hint->text.find("start your request first and keep it asking, then press BOOT") !=
+                    std::string::npos);
+  CHECK_MSG(hint && hint->text.find("tap BOOT again") == std::string::npos &&
+                hint->text.find("wait 10 seconds") == std::string::npos,
+            "the 409's hint advises a bare re-tap: " + (hint ? hint->text : std::string()));
+  CHECK(!carries_secret(r));
+  CHECK(!has_header(r, "Set-Cookie"));
+}
+
+// The answer when nothing admitted the request. Its words give the order the
+// arbiter protects (sweep F342's second review): the client asks first and
+// the press comes second, because a tap no client of the owner's is already
+// asking for goes to the first asker, and a host that watches /api/logs for
+// "Provisioning gate opened" is that asker. It used to say "short tap, then
+// poll within 30 seconds", which leads a curl user or a client into the
+// residual. The fields stay: error, hint, button, gate_ttl_seconds (the
+// dashboard and the Vision SPA read gate_ttl_seconds).
 void check_gate_refusal(const httpd_req_t& r) {
   CHECK(r.status == "403 Forbidden");
   CHECK(r.resp.find("\"error\":\"physical_confirmation_required\"") != std::string::npos);
   CHECK(r.resp.find("\"gate_ttl_seconds\":30") != std::string::npos);
+  json_strict::Value v;
+  CHECK_MSG(json_strict::parse(r.resp, &v), "the 403's body does not parse: " + r.resp);
+  const json_strict::Value* hint = v.get("hint");
+  const json_strict::Value* button = v.get("button");
+  const json_strict::Value* ttl = v.get("gate_ttl_seconds");
+  CHECK(ttl && ttl->kind == json_strict::Value::Number);
+  CHECK_MSG(hint && hint->kind == json_strict::Value::String &&
+                hint->text.find("Start asking for the receipt first, then short-tap BOOT") != std::string::npos,
+            "the 403's hint does not put the ask before the tap: " + r.resp);
+  CHECK_MSG(button && button->kind == json_strict::Value::String &&
+                button->text.find("ask first, then a short tap") != std::string::npos,
+            "the 403's button does not put the ask before the tap: " + r.resp);
+  CHECK_MSG(r.resp.find("short tap, then poll") == std::string::npos,
+            "the 403 says to tap first and poll after: " + r.resp);
   CHECK(!carries_secret(r));
   CHECK(!has_header(r, "Set-Cookie"));
 }
@@ -548,7 +655,7 @@ void test_receipt_bare_tap_unchanged() {
   CHECK(has_header(q.r, "Set-Cookie"));
   CHECK(!tap_open());
   // A tap older than its TTL is no tap.
-  g_provisioning_gate_opened_at = millis();
+  open_tap();
   stub_grant::now_ms += PROVISIONING_GATE_TTL_MS;
   Req late;
   CHECK(receipt(late) == 0);
@@ -612,7 +719,18 @@ void test_receipt_cookie_secure_over_https_only() {
   check_gate_refusal(refused.r);
 }
 
-void test_receipt_wrong_claim_burns_it() {
+// How many "setup-door claim did not match" health lines were written.
+size_t claim_refusal_lines() {
+  size_t n = 0;
+  for (const auto& l : g_health_lines) if (l.find("claim did not match") != std::string::npos) ++n;
+  return n;
+}
+
+// A wrong claim is refused and spends nothing (sweep F342). Before, it
+// burned the phone's pending claim: one stray or hostile ?claim= from any
+// host on the network, and the phone's own spend a moment later was 403,
+// which the app treats as final ("on the Wi-Fi, not paired").
+void test_receipt_wrong_claim_leaves_it_pending() {
   reset_device();
   mint_session();
   mint_claim();
@@ -620,10 +738,64 @@ void test_receipt_wrong_claim_burns_it() {
   q.cookie().query(std::string("claim=") + kClaimHex);
   CHECK(receipt(q) == 0);
   check_gate_refusal(q.r);
-  CHECK_MSG(!claim_pending(), "a wrong claim left the real one pending");
-  bool logged = false;
-  for (const auto& l : g_health_lines) if (l.find("claim did not match") != std::string::npos) logged = true;
-  CHECK(logged);
+  CHECK_MSG(claim_pending(), "a wrong claim spent the real one");
+  CHECK(claim_refusal_lines() == 1);
+  for (const auto& l : g_health_lines) {
+    CHECK_MSG(l.find("claim spent") == std::string::npos, "the refusal still says the claim was spent: " + l);
+  }
+  // A truncated claim (longer than the handler's buffer) and a short one:
+  // refused, the claim still pending.
+  Req long_one;
+  long_one.from(192, 168, 1, 21).query(std::string("claim=") + std::string(80, 'a'));
+  CHECK(receipt(long_one) == 0);
+  check_gate_refusal(long_one.r);
+  Req short_one;
+  short_one.from(192, 168, 1, 21).query("claim=abc");
+  CHECK(receipt(short_one) == 0);
+  CHECK_MSG(claim_pending(), "a truncated or short claim spent the real one");
+  CHECK(g_improv_claim_spent_at_ms == 0);   // the reboot runway is not armed by a refusal
+  // The phone's own spend then serves.
+  Req phone;
+  phone.query(std::string("claim=") + g_improv_claim.hex);
+  CHECK_MSG(receipt(phone) == 1, "the phone's claim was refused after a wrong one");
+  CHECK(g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
+  CHECK(!claim_pending());
+  CHECK(g_improv_claim_spent_at_ms != 0);
+}
+
+// The refusal's health line is written at most once per 10 s, so a host
+// that keeps sending wrong claims cannot fill the health log.
+void test_wrong_claims_log_once_per_ten_seconds() {
+  reset_device();
+  mint_claim();
+  Req first;
+  first.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(first) == 0);
+  stub_grant::now_ms += 9999;
+  Req second;
+  second.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(second) == 0);
+  CHECK_MSG(claim_refusal_lines() == 1, "two wrong claims inside 10 s wrote " +
+                                            std::to_string(claim_refusal_lines()) + " lines");
+  stub_grant::now_ms += 1;
+  Req third;
+  third.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(third) == 0);
+  CHECK_MSG(claim_refusal_lines() == 2, "a wrong claim 10 s after the logged one wrote no line");
+  CHECK(claim_pending());
+  // A clock of exactly 0 is still a logged time (stamp() stores it as 1),
+  // so the next wrong claim inside 10 s of it writes no line.
+  reset_device();
+  mint_claim();
+  stub_grant::now_ms = 0;
+  Req at_zero;
+  at_zero.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(at_zero) == 0);
+  stub_grant::now_ms = 5000;
+  Req after_zero;
+  after_zero.query(std::string("claim=") + kClaimHex);
+  CHECK(receipt(after_zero) == 0);
+  CHECK(claim_refusal_lines() == 1);
 }
 
 void test_receipt_bearer_shapes() {
@@ -914,13 +1086,14 @@ void test_the_hand_over_clears_only_its_asker() {
   CHECK(receipt(held_right) == 0);
   check_lockout_refusal(held_right.r);
   CHECK_MSG(strikes(kHostA) == 3, "a refused request cleared its address");
-  // A wrong claim (spent, no match) and no tap: refused, nothing cleared.
+  // A wrong claim (no match: it spends nothing, sweep F342) and no tap:
+  // refused, nothing cleared.
   mint_claim();
   Req wrong_claim;
   wrong_claim.query(std::string("claim=") + kClaimHex);
   CHECK(receipt(wrong_claim) == 0);
   check_gate_refusal(wrong_claim.r);
-  CHECK(!claim_pending());
+  CHECK(claim_pending());
   CHECK(strikes(kHostA) == 3);
   CHECK(held(kHostA));
   // A tap that has timed out serves nothing and clears nothing.
@@ -975,6 +1148,639 @@ void test_receipt_lockout_answer_never_wraps() {
   CHECK(header(late.r, "Retry-After") == "1");
   stub_grant::now_ms -= 3000;
   CHECK(remaining_for(&late.r) == 3000);
+}
+
+// ── the BOOT tap's one asker (sweep F342) ───────────────────────────────────
+
+// How many "BOOT tap closed" health lines were written.
+size_t tap_closed_lines() {
+  size_t n = 0;
+  for (const auto& l : g_health_lines) if (l.find("BOOT tap closed") != std::string::npos) ++n;
+  return n;
+}
+uint32_t gate_stamp() { return canary::net::provisioning_gate::peek(g_provisioning_gate); }
+
+// (a) The owner's dashboard asks from before the tap (Use BOOT Tap Once
+// polls from the click); a host on the network asks just after the tap.
+// Before: B was served the receipt as BOOT_TAP (the token, the SoftAP
+// password) and the owner's next poll was 403.
+void test_two_hosts_in_one_tap_are_both_refused() {
+  reset_device();
+  stub_grant::serial_lines.clear();
+  Req a_before;                       // A at T-1 s: nothing to take yet
+  CHECK(receipt(a_before) == 0);
+  check_gate_refusal(a_before.r);
+  stub_grant::now_ms += 1000;
+  open_tap();                         // T
+  stub_grant::now_ms += 100;
+  Req b;                              // B at T+0.1 s
+  b.from(192, 168, 1, 21);
+  CHECK_MSG(receipt(b) == 0, "a second host was served the owner's tap");
+  check_tap_contended(b.r);
+  CHECK(g_served.empty());
+  CHECK_MSG(gate_stamp() == 0, "the contended tap was left open");
+  stub_grant::now_ms += 900;
+  Req a_after;                        // A at T+1 s
+  CHECK(receipt(a_after) == 0);
+  check_tap_contended(a_after.r);
+  CHECK_MSG(tap_closed_lines() == 1, "the closed tap wrote " + std::to_string(tap_closed_lines()) + " lines");
+  // Message and detail alike (the stub keeps both, as /api/logs serves them).
+  for (const auto& l : g_health_lines) {
+    CHECK_MSG(l.find("192.168") == std::string::npos, "a health line names an address: " + l);
+  }
+  bool console_names_both = false;
+  for (const auto& l : stub_grant::serial_lines) {
+    if (l == "[AUTH] BOOT tap closed: two addresses asked for the receipt (192.168.1.21 and 192.168.1.20)\n") {
+      console_names_both = true;
+    }
+  }
+  CHECK_MSG(console_names_both, "the console does not name both askers");
+  // The 409 lasts while B is still asking: at B's last ask plus the lookback
+  // (T+10.1 s) the owner still hears it, and one millisecond later, inside
+  // the closed tap's 30 s, the route answers its 403 again, so a page that
+  // waited and asks again keeps asking for the next tap. (Before, every ask
+  // was 409 until T+30 s.)
+  stub_grant::now_ms += 9100;         // T+10.1 s
+  Req a_edge;
+  CHECK(receipt(a_edge) == 0);
+  check_tap_contended(a_edge.r);
+  stub_grant::now_ms += 1;
+  Req a_done;
+  CHECK(receipt(a_done) == 0);
+  check_gate_refusal(a_done.r);
+  CHECK(tap_closed_lines() == 1);
+  CHECK(g_served.empty());
+}
+
+// The bench row (hardware_verification_checklist.md, "A second asker closes
+// the tap"): B asks once and stops; the owner's page stops on its 409; the
+// owner waits about 10 s and clicks Use BOOT Tap Once again. That click's
+// first poll is 403, not 409, so the page keeps asking, and the owner's next
+// tap serves it. Before, the first poll of a click 10 to 30 s after the tap
+// was 409 and the page stopped again before the press.
+void test_the_owner_retries_after_the_other_device_stops() {
+  reset_device();
+  Req a_click;
+  CHECK(receipt(a_click) == 0);
+  stub_grant::now_ms += 1000;
+  const uint32_t T = stub_grant::now_ms;
+  open_tap();
+  stub_grant::now_ms += 100;
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK(receipt(b) == 0);
+  check_tap_contended(b.r);
+  stub_grant::now_ms += 900;
+  Req a_stops;
+  CHECK(receipt(a_stops) == 0);
+  check_tap_contended(a_stops.r);     // the page stops here
+  stub_grant::now_ms = T + 12000;     // waited 10 s, clicked again
+  Req a_retry;
+  CHECK(receipt(a_retry) == 0);
+  CHECK_MSG(a_retry.r.status == "403 Forbidden",
+            "the retry's first poll, B quiet 11.9 s, answered " + a_retry.r.status);
+  check_gate_refusal(a_retry.r);
+  stub_grant::now_ms += 2000;
+  Req a_poll;
+  CHECK(receipt(a_poll) == 0);
+  check_gate_refusal(a_poll.r);
+  stub_grant::now_ms += 1000;         // T+15 s: the tap
+  open_tap();
+  stub_grant::now_ms += 1000;
+  Req a_served;
+  CHECK_MSG(receipt(a_served) == 1, "the owner's retry was not served after the other device stopped");
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(has_header(a_served.r, "Set-Cookie"));
+  CHECK(tap_closed_lines() == 1);
+}
+
+// A re-tap served inside the first tap's 30 s ends the contention: the asks
+// after it hear 403, never "the tap was closed". Here B polls every 200 ms,
+// the owner asks once after the closed tap (409) and then re-taps without
+// asking first, the bare re-tap the 409's hint used to advise: the re-tap
+// goes to B, the residual a tap no client of the owner's was asking for.
+// Before, the owner's next ask was 409 although the token, the SoftAP
+// password and the pin had just been handed out.
+void test_a_served_retap_ends_the_contention() {
+  reset_device();
+  Req a_click;
+  CHECK(receipt(a_click) == 0);
+  stub_grant::now_ms += 1000;
+  const uint32_t T = stub_grant::now_ms;
+  open_tap();
+  size_t b_served = 0;
+  bool retapped = false;
+  for (uint32_t d = 100; d <= 12700; d += 200) {
+    stub_grant::now_ms = T + d;
+    if (d == 2100) {
+      Req a;
+      CHECK(receipt(a) == 0);
+      check_tap_contended(a.r);
+    }
+    if (!retapped && d >= 12500) {
+      open_tap();
+      retapped = true;
+    }
+    Req b;
+    b.from(192, 168, 1, 21);
+    b_served += receipt(b);
+  }
+  CHECK_MSG(b_served == 1, "the poller was served " + std::to_string(b_served) + " times");
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  stub_grant::now_ms = T + 13000;
+  Req a_next;
+  CHECK(receipt(a_next) == 0);
+  CHECK_MSG(a_next.r.status == "403 Forbidden",
+            "after a served re-tap the owner heard " + a_next.r.status + " (\"the tap was closed\")");
+  check_gate_refusal(a_next.r);
+  CHECK(tap_closed_lines() == 1);
+}
+
+// The millis() hook (stubs/receipt_grant/Arduino.h), armed with its call
+// count zeroed, and disarmed.
+void arm_millis_hook(std::function<uint32_t(unsigned)> hook) {
+  stub_grant::millis_calls = 0;
+  stub_grant::millis_hook = std::move(hook);
+}
+void disarm_millis_hook() { stub_grant::millis_hook = nullptr; }
+
+// Which millis() call of a credential-less receipt request is the tap
+// step's clock read (tap_arbitrate()'s now_ms, read after the peek()): each
+// call returns a clock one millisecond further on, and the arbiter records
+// the ask at the time it read. The request is an ask with the tap closed
+// (403), so it stands for the owner's click before the tap.
+// The probe's message when the arbiter's record of a hooked ask is not the
+// hook's time. The hooked ask comes from the address tap_step_clock_call()
+// already put on record, so the record moves only if an ask by that address
+// refreshes its time: a failure here is the harness missing the clock read,
+// or tap_arbitrate() no longer refreshing a repeat asker, which is the
+// refresh that keeps a polling owner on record (row (c) holds its effect).
+const std::string kHookMissed =
+    "the hook did not run at the tap step's clock read, or a repeat ask by the address on record "
+    "no longer refreshes its time";
+
+unsigned tap_step_clock_call() {
+  const uint32_t base = stub_grant::now_ms;
+  arm_millis_hook([base](unsigned i) { return base + 1 + i; });
+  Req a;
+  CHECK(receipt(a) == 0);
+  disarm_millis_hook();
+  check_gate_refusal(a.r);
+  const uint32_t got = g_tap_arbiter.recent.last_ms;
+  CHECK_MSG(got > base, "the tap step read no clock through millis()");
+  return got - base - 1;
+}
+
+// The tap step peeks the stamp, judges it, then takes exactly that stamp:
+// when another consumer takes the tap between the judgment and the take,
+// the request is refused (403) and nothing is served. Two consumers race
+// for the stamp on a device: the BLE OTA break-glass take() on the NimBLE
+// task, and the loop task's BOOT handler storing a re-tap. The hook acts on
+// the tap step's clock read, between peek() and take_exact(), and the
+// arbiter's record of the ask at the hook's time proves it acted there. A
+// tap step that ignored take_exact()'s false (`take_exact(...); return
+// true;`) served both: the receipt on a tap another consumer held.
+void test_a_take_lost_after_the_judgment_is_refused() {
+  // The break-glass take between the judgment and the take.
+  reset_device();
+  const unsigned k = tap_step_clock_call();
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 500;
+  const uint32_t at = stub_grant::now_ms + 3;
+  bool ran = false;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k) return stub_grant::now_ms;
+    ran = true;
+    CHECK(provisioning_gate_take());   // the NimBLE task's break-glass take
+    return at;
+  });
+  Req a;
+  CHECK_MSG(receipt(a) == 0, "served on a tap the break-glass take held");
+  disarm_millis_hook();
+  check_gate_refusal(a.r);
+  CHECK(ran);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed);
+  CHECK(g_served.empty());
+  CHECK(gate_stamp() == 0);
+  // A re-tap stored between the judgment and the take: the request is
+  // refused, the new stamp is left open, and the next ask is served once.
+  reset_device();
+  const unsigned k2 = tap_step_clock_call();
+  stub_grant::now_ms += 1000;
+  open_tap();
+  const uint32_t first = gate_stamp();
+  stub_grant::now_ms += 500;
+  const uint32_t at2 = stub_grant::now_ms + 3;
+  const uint32_t retap = stub_grant::now_ms + 2;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k2) return stub_grant::now_ms;
+    canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+    return at2;
+  });
+  Req a1;
+  CHECK_MSG(receipt(a1) == 0, "served on a stamp nobody judged");
+  disarm_millis_hook();
+  check_gate_refusal(a1.r);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at2, kHookMissed);
+  CHECK(g_served.empty());
+  CHECK_MSG(gate_stamp() == retap && retap != first, "the re-tap was consumed unjudged");
+  stub_grant::now_ms += 100;
+  Req a2;
+  CHECK(receipt(a2) == 1);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  Req a3;
+  CHECK(receipt(a3) == 0);
+  check_gate_refusal(a3.r);
+  CHECK(g_served.size() == 1);
+}
+
+// The NO_TAP step's burn of an expired stamp is a compare-and-swap of the
+// stamp it peeked (take_exact()), never a close() of whatever the gate holds
+// by then: the loop task can sweep the old stamp and the BOOT handler store
+// the owner's re-tap while this request sits between its peek() and its
+// burn. With the gate closed there is nothing to burn, so the request
+// touches nothing. Either way the re-tap stays open and serves the next ask
+// once. A tap step that burned with close() (or closed unconditionally)
+// cleared the owner's fresh press on a stranger's request, and the next ask
+// heard 403.
+void test_a_retap_during_a_no_tap_ask_is_kept() {
+  for (int expired = 0; expired < 2; ++expired) {
+    const std::string why = expired ? " (an expired stamp peeked)" : " (the gate closed at the peek)";
+    reset_device();
+    const unsigned k = tap_step_clock_call();
+    if (expired) {
+      open_tap();
+      stub_grant::now_ms += PROVISIONING_GATE_TTL_MS + 5;
+    }
+    const uint32_t old_stamp = gate_stamp();
+    CHECK(expired ? old_stamp != 0 : old_stamp == 0);
+    const uint32_t retap = stub_grant::now_ms + 2;
+    const uint32_t at = stub_grant::now_ms + 3;
+    bool ran = false;
+    arm_millis_hook([&](unsigned i) -> uint32_t {
+      if (i != k) return stub_grant::now_ms;
+      ran = true;
+      canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+      return at;
+    });
+    Req a;
+    CHECK_MSG(receipt(a) == 0, "an ask that peeked no fresh stamp was served" + why);
+    disarm_millis_hook();
+    check_gate_refusal(a.r);
+    CHECK(ran);
+    CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed + why);
+    CHECK_MSG(gate_stamp() == retap, "the re-tap was cleared by a NO_TAP ask" + why);
+    CHECK(g_served.empty());
+    stub_grant::now_ms += 100;
+    Req a2;
+    CHECK_MSG(receipt(a2) == 1, "the re-tap did not serve the next ask" + why);
+    CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+    CHECK(gate_stamp() == 0);
+  }
+}
+
+// The CONTENDED step closes the tap with a compare-and-swap of the stamp it
+// peeked and judged (take_exact(seen)), never by reading the gate again: a
+// re-tap the loop task's BOOT handler stores while this request sits between
+// its peek() and its close is a new tap, judged on the next ask like any
+// other. Here B asks 5 s before the tap and A first asks 8 s after it, so
+// A's ask closes the tap (409); the re-tap lands between A's peek() and
+// A's close. The re-tap is kept, and A's next ask is served: B last asked
+// 13 s before the re-tap, outside its lookback. A close that re-read the
+// gate (`take_exact(g, peek(g))`, an expire() of whatever it holds) cleared
+// the owner's fresh press unjudged, and A's next ask heard 403.
+void test_a_retap_during_a_contended_close_is_kept() {
+  reset_device();
+  const unsigned k = tap_step_clock_call();
+  stub_grant::now_ms += 20000;
+  Req b0;
+  b0.from(192, 168, 1, 21);
+  CHECK(receipt(b0) == 0);
+  check_gate_refusal(b0.r);
+  stub_grant::now_ms += 5000;
+  open_tap();
+  const uint32_t first = gate_stamp();
+  stub_grant::now_ms += 8000;
+  const uint32_t retap = stub_grant::now_ms + 2;
+  const uint32_t at = stub_grant::now_ms + 3;
+  bool ran = false;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k) return stub_grant::now_ms;
+    ran = true;
+    canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+    return at;
+  });
+  Req a;
+  CHECK_MSG(receipt(a) == 0, "an ask that found the tap contended was served");
+  disarm_millis_hook();
+  check_tap_contended(a.r);
+  CHECK(ran);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed);
+  CHECK_MSG(g_tap_arbiter.contended_tap == first, "the ask did not close the tap it judged");
+  CHECK_MSG(gate_stamp() == retap && retap != first, "the contended close cleared a re-tap nobody judged");
+  CHECK(g_served.empty());
+  CHECK_MSG(tap_closed_lines() == 0, "a close that lost its swap logged a closed tap");
+  stub_grant::now_ms += 100;
+  Req a2;
+  CHECK_MSG(receipt(a2) == 1, "the re-tap kept through the contended close did not serve the next ask");
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(gate_stamp() == 0);
+}
+
+// (b) A sole asker is served at once: no settle delay, the cookie with it.
+void test_sole_asker_is_served_at_once() {
+  reset_device();
+  Req a_before;
+  CHECK(receipt(a_before) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 500;
+  Req a;
+  CHECK(receipt(a) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(a.r.status == "200 OK");
+  CHECK(has_header(a.r, "Set-Cookie"));
+  CHECK(!tap_open() && gate_stamp() == 0);
+  CHECK(tap_closed_lines() == 0);
+}
+
+// (c) A host that waits for the tap and asks first after it (it timed the
+// tap from /api/logs, say) loses to an owner who asked before it. First one
+// ask 2 s before the tap; then the owner's pages as they really ask, every
+// 2 s from the click: Use BOOT Tap Once clicked 21 s before the tap, the
+// companion's Save 29 s before it, both longer than the 10 s lookback. Each
+// ask by the address already on record refreshes its time, so the owner's
+// last poll (1 s before the tap) is what the host's ask is judged against;
+// an arbiter that kept the owner's first ask time served the host.
+void test_first_asker_after_the_tap_loses_to_a_waiting_owner() {
+  reset_device();
+  Req a_before;
+  CHECK(receipt(a_before) == 0);
+  stub_grant::now_ms += 2000;
+  open_tap();
+  stub_grant::now_ms += 3000;
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK_MSG(receipt(b) == 0, "the first asker after the tap took it from a waiting owner");
+  check_tap_contended(b.r);
+  stub_grant::now_ms += 1000;
+  Req a;
+  CHECK(receipt(a) == 0);
+  check_tap_contended(a.r);
+  CHECK(g_served.empty());
+  const uint32_t leads[] = {21000, 29000};   // ms from the click to the tap
+  for (const uint32_t lead : leads) {
+    const std::string why = " (the click " + std::to_string(lead) + " ms before the tap)";
+    reset_device();
+    const uint32_t click = stub_grant::now_ms;
+    uint32_t next = click;
+    for (; next < click + lead; next += 2000) {
+      stub_grant::now_ms = next;
+      Req poll;
+      CHECK(receipt(poll) == 0);
+      check_gate_refusal(poll.r);
+    }
+    stub_grant::now_ms = click + lead;
+    open_tap();
+    stub_grant::now_ms += 100;
+    Req host;
+    host.from(192, 168, 1, 21);
+    CHECK_MSG(receipt(host) == 0, "the host asking first after the tap took it from a polling owner" + why);
+    check_tap_contended(host.r);
+    CHECK_MSG(!carries_secret(host.r), "the host's answer carries the secret" + why);
+    stub_grant::now_ms = next;
+    Req owner;
+    CHECK(receipt(owner) == 0);
+    check_tap_contended(owner.r);
+    CHECK_MSG(g_served.empty(), "something was served beside a polling owner" + why);
+    CHECK(gate_stamp() == 0);
+  }
+}
+
+// (c2) Row (c)'s polling owner and late host, both real IPv6 peers whose
+// keys differ only in the prefix (2001:db8::1:c0a8:114 and
+// 2001:db9::1:c0a8:114), and then two link-local peers. The per-address
+// lockout puts every IPv6 peer in one bucket (auth_request_source() is 0 for
+// each), but the tap's asker is the whole 16-byte key: an arbiter that
+// compared the last four bytes, or the IPv4 a key maps to, merged the two
+// and served the host the token. No WAP interface runs IPv6 today; this
+// holds the handler for the day one does.
+void test_ipv6_askers_are_two_askers() {
+  static const uint8_t kOwner6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kHost6[16] = {0x20, 0x01, 0x0d, 0xb9, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
+  static const uint8_t kOwnerLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
+  static const uint8_t kHostLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x00, 0xaa, 0xbb, 0xff, 0xfe, 0xcc, 0xdd, 0xee};
+  struct Pair {
+    const uint8_t (*owner)[16];
+    const uint8_t (*host)[16];
+    const char* what;
+  };
+  const Pair pairs[] = {
+      {&kOwner6, &kHost6, " (2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114)"},
+      {&kOwnerLink, &kHostLink, " (fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee)"},
+  };
+  for (const Pair& p : pairs) {
+    reset_device();
+    const uint32_t click = stub_grant::now_ms;
+    uint32_t next = click;
+    for (; next < click + 21000; next += 2000) {
+      stub_grant::now_ms = next;
+      Req poll;
+      poll.from6(*p.owner);
+      CHECK(receipt(poll) == 0);
+      check_gate_refusal(poll.r);
+    }
+    stub_grant::now_ms = click + 21000;
+    open_tap();
+    stub_grant::now_ms += 100;
+    Req host;
+    host.from6(*p.host);
+    CHECK_MSG(receipt(host) == 0, std::string("a second IPv6 peer was served as the owner") + p.what);
+    check_tap_contended(host.r);
+    CHECK_MSG(!carries_secret(host.r), std::string("the host's answer carries the secret") + p.what);
+    stub_grant::now_ms = next;
+    Req owner;
+    owner.from6(*p.owner);
+    CHECK(receipt(owner) == 0);
+    check_tap_contended(owner.r);
+    CHECK_MSG(g_served.empty(), std::string("something was served beside a polling IPv6 owner") + p.what);
+    CHECK(gate_stamp() == 0);
+  }
+  // One IPv6 peer alone is one asker, and is served.
+  reset_device();
+  Req before;
+  before.from6(kOwnerLink);
+  CHECK(receipt(before) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 1000;
+  Req alone;
+  alone.from6(kOwnerLink);
+  CHECK(receipt(alone) == 1);
+  CHECK(g_served.size() == 1 && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(alone.r.status == "200 OK");
+}
+
+// (d) What counts as an ask: a request the bearer and the claim did not
+// serve. B's wrong bearer (a strike against B) and B's wrong claim each
+// contend the owner's tap; B's right bearer and B's right claim are served
+// by their own grants and never reach the tap, so the owner's sign-in is
+// still served.
+void test_what_counts_as_an_ask() {
+  for (int shape = 0; shape < 2; ++shape) {
+    reset_device();
+    mint_claim();
+    Req a_before;
+    CHECK(receipt(a_before) == 0);
+    stub_grant::now_ms += 1000;
+    open_tap();
+    stub_grant::now_ms += 200;
+    Req b;
+    b.from(192, 168, 1, 21);
+    if (shape == 0) b.bearer(kWrong);
+    else b.query(std::string("claim=") + kClaimHex);
+    CHECK(receipt(b) == 0);
+    check_tap_contended(b.r);
+    if (shape == 0) CHECK_MSG(strikes(kHostB) == 1, "B's wrong bearer was not B's strike");
+    else CHECK(claim_pending());
+    Req a;
+    CHECK_MSG(receipt(a) == 0, std::string("the owner was served beside B's ") + (shape ? "wrong claim" : "wrong bearer"));
+    check_tap_contended(a.r);
+  }
+  for (int shape = 0; shape < 2; ++shape) {
+    reset_device();
+    mint_claim();
+    Req a_before;
+    CHECK(receipt(a_before) == 0);
+    stub_grant::now_ms += 1000;
+    open_tap();
+    stub_grant::now_ms += 200;
+    Req b;
+    b.from(192, 168, 1, 21);
+    if (shape == 0) b.bearer(kToken);
+    else b.query(std::string("claim=") + g_improv_claim.hex);
+    CHECK(receipt(b) == 1);
+    CHECK(g_served.back() == (shape == 0 ? receipt_authority::Grant::BEARER
+                                         : receipt_authority::Grant::SETUP_DOOR_CLAIM));
+    CHECK(tap_open());
+    Req a;
+    CHECK_MSG(receipt(a) == 1, std::string("B's right ") + (shape ? "claim" : "bearer") + " contended the owner's tap");
+    CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  }
+}
+
+// (e) The BLE OTA break-glass hook (NimBLE task) takes the tap with the
+// header's take(), at once and unjudged: the receipt then finds nothing.
+void test_break_glass_leaves_nothing_to_take() {
+  reset_device();
+  open_tap();
+  CHECK(provisioning_gate_take());
+  Req a;
+  CHECK(receipt(a) == 0);
+  check_gate_refusal(a.r);
+  CHECK(g_served.empty());
+}
+
+// (f) Contention does not carry into a clean next tap: B went silent, and
+// once it has been silent past the lookback the owner's re-tap serves.
+void test_contention_does_not_carry_into_a_clean_next_tap() {
+  reset_device();
+  Req a_before;
+  CHECK(receipt(a_before) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 100;
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK(receipt(b) == 0);
+  check_tap_contended(b.r);
+  // The owner keeps polling; B is silent. 11 s later the owner taps again.
+  for (int i = 0; i < 5; ++i) {
+    stub_grant::now_ms += 2000;
+    Req a;
+    CHECK(receipt(a) == 0);
+    check_tap_contended(a.r);
+  }
+  stub_grant::now_ms += 1000;          // B silent 11 s
+  open_tap();
+  stub_grant::now_ms += 500;
+  Req a_retap;
+  CHECK_MSG(receipt(a_retap) == 1, "contention carried into a clean next tap");
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  // A re-tap while B is still asking: closed again.
+  reset_device();
+  Req a0;
+  CHECK(receipt(a0) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  Req b0;
+  b0.from(192, 168, 1, 21);
+  CHECK(receipt(b0) == 0);
+  stub_grant::now_ms += 4000;
+  Req b1;
+  b1.from(192, 168, 1, 21);
+  CHECK(receipt(b1) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 100;
+  Req a1;
+  CHECK(receipt(a1) == 0);
+  check_tap_contended(a1.r);
+  CHECK(gate_stamp() == 0);
+  CHECK(tap_closed_lines() == 2);
+}
+
+// (g) A socket that cannot say who sent the request is refused, and the tap
+// is left for the next asker: the arbiter is never skipped.
+void test_unreadable_peer_is_refused_and_leaves_the_tap() {
+  reset_device();
+  open_tap();
+  Req nobody;
+  nobody.unreadable();
+  CHECK_MSG(receipt(nobody) == 0, "a socket that cannot say was served the tap");
+  check_gate_refusal(nobody.r);
+  CHECK_MSG(gate_stamp() != 0, "a socket that cannot say spent the tap");
+  Req a;
+  CHECK(receipt(a) == 1);
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+}
+
+// (h) A bearer the backoff holds still gets its 429 under contention, not
+// the 409: a held page retries its token. And the 409 clears nothing.
+void test_held_bearer_under_contention_is_429_and_the_409_clears_nothing() {
+  reset_device();
+  Req a_before;
+  CHECK(receipt(a_before) == 0);
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 100;
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK(receipt(b) == 0);
+  check_tap_contended(b.r);
+  arm_lockout(3);
+  Req held_a;
+  held_a.bearer(kToken);
+  CHECK(receipt(held_a) == 0);
+  check_lockout_refusal(held_a.r);
+  Req bare_a;
+  CHECK(receipt(bare_a) == 0);
+  check_tap_contended(bare_a.r);
+  CHECK_MSG(strikes(kHostA) == 3 && held(kHostA), "the 409 cleared the asker's backoff");
+}
+
+// A tap that ran out before anyone asked: the request that finds it is
+// refused and burns the stale stamp (as the old take() did), so it cannot
+// read as fresh again once millis() wraps.
+void test_an_expired_tap_is_burned_by_the_request_that_finds_it() {
+  reset_device();
+  open_tap();
+  stub_grant::now_ms += PROVISIONING_GATE_TTL_MS + 5;
+  Req a;
+  CHECK(receipt(a) == 0);
+  check_gate_refusal(a.r);
+  CHECK_MSG(gate_stamp() == 0, "an expired stamp survived the request that found it");
 }
 
 // ── the pairing QR ───────────────────────────────────────────────────────────
@@ -1956,6 +2762,91 @@ std::string enclosing(const std::vector<std::string>& lines, size_t at) {
 }
 
 bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
+// How many times `needle` occurs in `s` (non-overlapping).
+size_t count_of(const std::string& s, const char* needle) {
+  const size_t n = std::strlen(needle);
+  size_t c = 0;
+  for (size_t at = s.find(needle); n && at != std::string::npos; at = s.find(needle, at + n)) ++c;
+  return c;
+}
+// `word` in `s` as a whole identifier: no identifier character on either side
+// ("returned" and "return_ms" are not `return`).
+bool has_word(const std::string& s, const char* word) {
+  const auto ident = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+  const size_t n = std::strlen(word);
+  for (size_t at = s.find(word); at != std::string::npos; at = s.find(word, at + 1)) {
+    if ((at == 0 || !ident(s[at - 1])) && (at + n >= s.size() || !ident(s[at + n]))) return true;
+  }
+  return false;
+}
+
+// ── loop()'s sweep (sweep F347) ──────────────────────────────────────────────
+// The two statements loop() runs every pass, spelled once: the harness runs
+// them and the text check below pins the sketch to the same spelling.
+#define LOOP_SWEEP_GATE \
+  canary::net::provisioning_gate::expire(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS)
+#define LOOP_SWEEP_CLAIM canary::net::claim_ticket::expire(g_improv_claim, millis())
+#define RG_STR(x) #x
+#define RG_XSTR(x) RG_STR(x)
+const std::string kLoopSweepGate = std::string("  ") + RG_XSTR(LOOP_SWEEP_GATE) + ";";
+const std::string kLoopSweepClaim = std::string("  ") + RG_XSTR(LOOP_SWEEP_CLAIM) + ";";
+
+// The sketch's loop(), comments stripped, as cut_functions.awk would cut it.
+const std::string& sketch_loop() {
+  static const std::string text = function_text(split_lines(strip_comments(read_file(CANARY_WAP_INO))),
+                                                "void loop() {");
+  return text;
+}
+// A line of `fn` that is exactly `stmt` (its two-space indent included: a
+// statement at loop()'s top level, not inside a branch).
+bool has_line(const std::string& fn, const std::string& stmt) {
+  for (const auto& l : split_lines(fn)) if (rtrim(l) == stmt) return true;
+  return false;
+}
+
+// One pass of loop()'s sweep, as the sketch runs it: each statement runs
+// only when the sketch's loop() holds it, so a sketch without the sweep (the
+// code before F347) runs none, and the row below sees what that device did.
+void loop_sweep_pass() {
+  if (has_line(sketch_loop(), kLoopSweepGate)) LOOP_SWEEP_GATE;
+  if (has_line(sketch_loop(), kLoopSweepClaim)) LOOP_SWEEP_CLAIM;
+}
+
+// A tap nobody took and a claim read but never spent, 2^32 ms later (sweep
+// F347). Before: millis() came back round to both stamps, the bare request
+// was served the receipt as BOOT_TAP with no press, and the old hex took it
+// as SETUP_DOOR_CLAIM.
+void test_receipt_stale_tap_and_claim_do_not_revive_after_the_wrap() {
+  reset_device();
+  CHECK(!sketch_loop().empty());
+  const uint32_t t0 = millis();
+  open_tap();
+  mint_claim();
+  const std::string old_hex = g_improv_claim.hex;
+  CHECK(tap_open() && claim_pending());
+  // loop() passes inside the TTLs leave both alone.
+  stub_grant::now_ms = t0 + PROVISIONING_GATE_TTL_MS - 1;
+  loop_sweep_pass();
+  CHECK_MSG(gate_stamp() != 0 && claim_pending(), "a sweep inside the TTLs cleared a fresh stamp");
+  // Past both TTLs, the next pass sweeps both. Nothing asked meanwhile.
+  stub_grant::now_ms = t0 + canary::net::claim_ticket::TTL_MS + 1;
+  loop_sweep_pass();
+  CHECK_MSG(gate_stamp() == 0, "loop() left a tap past its TTL");
+  CHECK_MSG(__atomic_load_n(&g_improv_claim.minted_at_ms, __ATOMIC_ACQUIRE) == 0,
+            "loop() left a claim past its TTL");
+  // millis() comes back round: 2^32 ms + 1 s after the tap and the mint.
+  stub_grant::now_ms = (uint32_t)((uint64_t)t0 + (1ull << 32) + 1000);
+  CHECK(stub_grant::now_ms == t0 + 1000);
+  Req bare;
+  CHECK_MSG(receipt(bare) == 0, "a tap nobody took served the receipt 2^32 ms after the press");
+  check_gate_refusal(bare.r);
+  Req claim;
+  claim.query("claim=" + old_hex);
+  CHECK_MSG(receipt(claim) == 0, "a claim read but never spent took the receipt 2^32 ms after the mint");
+  check_gate_refusal(claim.r);
+  CHECK(g_served.empty());
+  CHECK(g_improv_claim_spent_at_ms == 0);
+}
 
 void test_sketch_text() {
   const std::string raw = read_file(CANARY_WAP_INO);
@@ -1974,8 +2865,101 @@ void test_sketch_text() {
   CHECK(!has(receipt_fn, "api_auth_check_or_query("));
   CHECK(!has(receipt_fn, "cv_session_validate"));
   CHECK(!has(receipt_fn, "session_validate_cookie"));
-  CHECK(has(receipt_fn, "provisioning_gate_take()"));
   CHECK(has(receipt_fn, "claim_ticket::take("));
+  // The tap goes to one asker (sweep F342): the handler takes it only
+  // through provisioning_gate_take_for(), which judges the asker
+  // (tap_arbitrate) and takes exactly the judged stamp (take_exact), never
+  // the unjudged take(). BLE OTA break-glass keeps the immediate take.
+  CHECK(has(receipt_fn, "!claim_served && !provisioning_gate_take_for(req, &tap)"));
+  CHECK_MSG(!has(receipt_fn, "provisioning_gate_take()"), "the receipt takes the tap unjudged again");
+  CHECK(has(receipt_fn, "\"409 Conflict\""));
+  const std::string take_for = function_text(lines, "static bool provisioning_gate_take_for(");
+  CHECK(!take_for.empty());
+  CHECK(has(take_for, "request_peer_key(req, key)"));
+  CHECK(has(take_for, "pg::peek(g_provisioning_gate)"));
+  CHECK(has(take_for, "pg::tap_arbitrate(g_tap_arbiter, seen, key, millis(), PROVISIONING_GATE_TTL_MS)"));
+  CHECK(has(take_for, "pg::take_exact(g_provisioning_gate, seen)"));
+  CHECK_MSG(!has(take_for, "::take(") && !has(take_for, "provisioning_gate_take()"),
+            "provisioning_gate_take_for() takes a stamp it did not judge");
+  // The NO_TAP step burns the expired stamp it peeked with a compare-and-
+  // swap, never a close() that would clear a re-tap stored since the peek
+  // (test_a_retap_during_a_no_tap_ask_is_kept drives the race).
+  CHECK_MSG(has_line(take_for, "  if (seen != 0) pg::take_exact(g_provisioning_gate, seen);"),
+            "the NO_TAP step does not burn exactly the stamp it peeked");
+  CHECK_MSG(!has(take_for, "close("), "provisioning_gate_take_for() closes the gate outright");
+  // The stamp is read once: every swap is of the stamp the arbiter judged,
+  // never of one read again after it (a re-peek, or an expire() of whatever
+  // the gate holds, clears a re-tap nobody judged;
+  // test_a_retap_during_a_contended_close_is_kept drives the CONTENDED race).
+  CHECK_MSG(count_of(take_for, "peek(") == 1, "provisioning_gate_take_for() reads the stamp more than once");
+  CHECK_MSG(!has(take_for, "expire("), "provisioning_gate_take_for() sweeps a stamp it did not judge");
+  CHECK_MSG(count_of(take_for, "take_exact(") == 3 &&
+                count_of(take_for, "pg::take_exact(g_provisioning_gate, seen)") == 3,
+            "a swap in provisioning_gate_take_for() is not of the judged stamp");
+  CHECK_MSG(has_line(take_for,
+                     "    if (seen != 0 && seen == g_tap_arbiter.contended_tap && pg::take_exact(g_provisioning_gate, seen)) {"),
+            "the CONTENDED step does not close exactly the stamp it judged");
+  const std::string ble = function_text(lines, "static bool ble_ota_break_glass_take() {");
+  CHECK(!ble.empty());
+  CHECK(has(ble, "provisioning_gate_take()"));
+  // The sketch's gate is the header's State: no inline copy remains.
+  size_t gate_decls = 0;
+  for (const auto& l : lines) {
+    if (has(l, "g_provisioning_gate_opened_at")) CHECK_MSG(false, "the inline gate copy is back: " + rtrim(l));
+    if (has(l, "static canary::net::provisioning_gate::State g_provisioning_gate")) ++gate_decls;
+  }
+  CHECK(gate_decls == 1);
+  // Every touch of the gate goes through the header (open() stores 0 as 1
+  // with a release store; peek(), take(), take_exact() and expire() are its
+  // atomics): no line reaches into the State's word.
+  std::string raw_gate_lines;
+  for (const auto& l : lines) {
+    if (has(l, "g_provisioning_gate.") || has(l, "&g_provisioning_gate")) raw_gate_lines += "\n" + rtrim(l);
+  }
+  CHECK_MSG(raw_gate_lines.empty(), "the sketch touches the gate's word directly:" + raw_gate_lines);
+
+  // loop() sweeps the tap and the claim every pass (sweep F347): both
+  // statements at its top level, after handle_serial_commands();.
+  const std::string loop_fn = sketch_loop();
+  CHECK(!loop_fn.empty());
+  const size_t serial_at = loop_fn.find("\n  handle_serial_commands();\n");
+  const size_t gate_at = loop_fn.find("\n" + kLoopSweepGate + "\n");
+  const size_t claim_at = loop_fn.find("\n" + kLoopSweepClaim + "\n");
+  CHECK(serial_at != std::string::npos);
+  CHECK_MSG(gate_at != std::string::npos, "loop() does not sweep the BOOT tap: " + kLoopSweepGate);
+  CHECK_MSG(claim_at != std::string::npos, "loop() does not sweep the setup-door claim: " + kLoopSweepClaim);
+  CHECK(serial_at != std::string::npos && gate_at != std::string::npos && serial_at < gate_at);
+  CHECK(serial_at != std::string::npos && claim_at != std::string::npos && serial_at < claim_at);
+  // Nothing returns out of loop() before the sweeps run: every pass reaches
+  // them (the flagship's row holds its sweep as handle_boot_button()'s first
+  // statement; the WAP's sweeps sit mid-loop(), so the text before them is
+  // what must not return).
+  if (gate_at != std::string::npos && claim_at != std::string::npos) {
+    const std::string before = loop_fn.substr(0, std::min(gate_at, claim_at));
+    CHECK_MSG(!has_word(before, "return"), "loop() can return before it sweeps the tap and the claim");
+  }
+  // The BOOT short press opens the gate through the header's open(), the
+  // branch's first statement.
+  {
+    const std::string branch = "} else if (duration >= BOOT_SHORT_PRESS_MS) {\n";
+    const size_t at = loop_fn.find(branch);
+    CHECK_MSG(at != std::string::npos, "loop()'s BOOT short-press branch was not found");
+    if (at != std::string::npos) {
+      const std::vector<std::string> rest = split_lines(loop_fn.substr(at + branch.size()));
+      std::string first;
+      for (const auto& l : rest) {
+        if (!rtrim(l).empty()) { first = rtrim(l); break; }
+      }
+      CHECK_MSG(first == "      canary::net::provisioning_gate::open(g_provisioning_gate, millis());",
+                "the BOOT short press does not open the gate through the header: " + first);
+    }
+  }
+  size_t gate_sweeps = 0, claim_sweeps = 0;
+  for (const auto& l : lines) {
+    if (has(l, "provisioning_gate::expire(")) ++gate_sweeps;
+    if (has(l, "claim_ticket::expire(")) ++claim_sweeps;
+  }
+  CHECK_MSG(gate_sweeps == 1 && claim_sweeps == 1, "the sweeps are loop()'s, once each");
 
   const std::string qr_fn = function_text(lines, "static esp_err_t handle_pairing_qr(httpd_req_t* req) {");
   CHECK(!qr_fn.empty());
@@ -2037,7 +3021,24 @@ int main() {
   test_receipt_cookie_beside_claim_is_the_claim();
   test_receipt_bare_tap_unchanged();
   test_receipt_cookie_secure_over_https_only();
-  test_receipt_wrong_claim_burns_it();
+  test_receipt_wrong_claim_leaves_it_pending();
+  test_wrong_claims_log_once_per_ten_seconds();
+  test_two_hosts_in_one_tap_are_both_refused();
+  test_sole_asker_is_served_at_once();
+  test_first_asker_after_the_tap_loses_to_a_waiting_owner();
+  test_ipv6_askers_are_two_askers();
+  test_what_counts_as_an_ask();
+  test_break_glass_leaves_nothing_to_take();
+  test_contention_does_not_carry_into_a_clean_next_tap();
+  test_the_owner_retries_after_the_other_device_stops();
+  test_a_served_retap_ends_the_contention();
+  test_a_take_lost_after_the_judgment_is_refused();
+  test_a_retap_during_a_no_tap_ask_is_kept();
+  test_a_retap_during_a_contended_close_is_kept();
+  test_unreadable_peer_is_refused_and_leaves_the_tap();
+  test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
+  test_an_expired_tap_is_burned_by_the_request_that_finds_it();
+  test_receipt_stale_tap_and_claim_do_not_revive_after_the_wrap();
   test_receipt_bearer_shapes();
   test_receipt_wrong_bearer_is_a_strike();
   test_receipt_right_bearer_clears_the_count();

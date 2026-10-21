@@ -254,8 +254,9 @@ enum DeviceError: Error, LocalizedError {
     /// because a TLS device the app cannot check is not a checked device.
     case tlsPinMissing
     /// The Canary answered 403 to a claim ticket: already spent, expired
-    /// (it lives 180 s), or not the claim it minted — a wrong guess burns
-    /// it. Final: the one-tap pairing did not happen; the device's row
+    /// (it lives 180 s), or not the claim it minted (a wrong value spends
+    /// nothing: the firmware spends a claim only on a match). Final: the
+    /// one-tap pairing did not happen; the device's row
     /// under Ready to pair on the Fleet tab is the next door.
     case claimRefused
 
@@ -644,8 +645,8 @@ actor DeviceAPI {
     /// are `init`'s: a public host is refused; an https host with no
     /// normalizable pin is refused (`.tlsPinMissing`), never trusted; http
     /// dials the shared session, https the one pinned to the fingerprint.
-    /// 403 is `.claimRefused` (spent, expired, or a wrong claim — the
-    /// firmware burns it either way). 8 s: the claim lives 180 s and the
+    /// 403 is `.claimRefused` (spent, expired or replaced — the firmware
+    /// spends it only on a match). 8 s: the claim lives 180 s and the
     /// sheet may dial twice.
     /// - session: tests only — a caller-supplied session skips pinning.
     static func fetchReceipt(claimURL url: URL, tlsFingerprint: String?,

@@ -400,7 +400,8 @@ static_assert(sizeof(g_ap_password) >= canary::net::AP_PASSWORD_LEN + 1,
               "g_ap_password must hold the cv- key and its NUL");
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
-// handle_boot_button(); the network lib takes it — from the receipt handler
+// handle_boot_button(), which also sweeps a stamp past its TTL every pass
+// (expire(), sweep F347); the network lib takes it — from the receipt handler
 // or from a home-LAN page load, whichever asks first — through the hooks
 // registered in setup(). The State is this file's because the BOOT button is.
 static canary::net::provisioning_gate::State g_prov_gate = {0};
@@ -2965,6 +2966,14 @@ void loop() {
 static void handle_boot_button() {
   static uint32_t boot_btn_start = 0;
   static bool boot_btn_was_pressed = false;
+  // Sweep the BOOT tap every pass (sweep F347): unsigned subtraction ages its
+  // stamp correctly only while it is younger than 2^32 ms, so a tap nobody
+  // took would read as fresh again 49.7 days later and hand one LAN page
+  // load or receipt fetch the credential with no press. expire() clears a
+  // stamp past its TTL with a compare-and-swap of the value it read, so a
+  // fresh tap is never cleared; this task is the one that opens the gate
+  // (below), so the sweep never sees a stamp newer than its clock read.
+  canary::net::provisioning_gate::expire(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
 
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
 

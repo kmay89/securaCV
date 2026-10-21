@@ -2,25 +2,38 @@
 // receipt, and the rule that decides whether a served page may carry the
 // bearer credential.
 //
-// Pure: no Arduino, no WiFi, no httpd. The canary tree's main.cpp owns one
-// State, opens it from the BOOT-button handler, and the network lib takes or
-// peeks it from the receipt handler and the page handlers. The canary-wap
-// sketch keeps its own inline copy of the same two operations
-// (canary_wap.ino, g_provisioning_gate_opened_at); this header pins the
-// contract both must honor, host-tested in tests_host/test_provisioning_gate.cpp:
+// Pure: no Arduino, no WiFi, no httpd. Both firmware trees own one State.
+// The canary tree's main.cpp opens it from the BOOT-button handler, and the
+// network lib takes or peeks it from the receipt handler and the page
+// handlers. The canary-wap sketch stages this header byte-identical
+// (firmware/scripts/check_improv_sync.sh); its g_provisioning_gate is this
+// State (sweep F342; it used to keep an inline copy of open and take). Each
+// tree sweeps its State every loop pass with expire() (sweep F347): the
+// WAP's loop() and the canary tree's handle_boot_button(). The contract both
+// honor, host-tested in tests_host/test_provisioning_gate.cpp:
 //
-//   * one tap admits exactly ONE consumer. take() is a single atomic exchange,
-//     so two tasks racing for the same tap (the httpd receipt handler and, on
-//     the WAP, the BLE OTA break-glass hook) cannot both be admitted;
+//   * one tap admits exactly ONE consumer. take() is a single atomic exchange
+//     and take_exact() a single compare-and-swap of the stamp its caller
+//     judged, so two tasks racing for the same tap (the httpd receipt handler
+//     and, on the WAP, the BLE OTA break-glass hook) cannot both be admitted;
+//   * on the WAP, the receipt's tap goes to ONE asker: tap_arbitrate() serves
+//     it only to the sole address that asked for the receipt without a
+//     credential from TAP_LOOKBACK_MS before the tap onward, and a second
+//     address in that window closes the tap (the WAP answers 409
+//     tap_contended). The flagship's receipt and page loads still take the
+//     tap for the first asker (the ledger's F354);
 //   * the gate self-closes after ttl_ms even if nobody fetches the receipt;
 //   * a millis() of exactly 0 is stored as 1, because 0 means "closed";
-//   * uint32 wraparound is handled by unsigned subtraction (now - opened).
+//   * unsigned subtraction (now - opened) ages a stamp correctly only while
+//     it is younger than 2^32 ms (49.7 days): a tap nobody took would read
+//     as fresh again once millis() came back round to it. So the owner of
+//     the State calls expire() every loop pass, on the task that opens it,
+//     and no stamp gets older than its TTL plus one pass (sweep F347).
 //
-// The sketch also stages this header byte-identical
-// (firmware/scripts/check_improv_sync.sh) and reads every request's peer
-// through its socket address mapping (peer_key_from_addr(),
-// ipv4_host_order_from_addr(), below), so both trees map a peer's address
-// through one function.
+// The sketch also reads every request's peer through this header's socket
+// address mapping (peer_key_from_addr(), ipv4_host_order_from_addr(),
+// below), so both trees map a peer's address through one function, and the
+// tap's asker and the per-address bearer lockout's bucket are one read.
 //
 // page_token_policy() is the second half: the dashboard (/) and the setup
 // wizard (/setup) are served with the bearer token injected into the HTML so
@@ -49,6 +62,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace canary {
 namespace net {
@@ -90,6 +104,48 @@ inline bool take(State& s, uint32_t now_ms, uint32_t ttl_ms) {
 // Explicit close (factory reset, receipt served through another path).
 inline void close(State& s) {
   __atomic_store_n(&s.opened_at_ms, 0u, __ATOMIC_RELEASE);
+}
+
+// The raw stamp: the millis() the tap landed at, 0 = closed. No TTL is
+// applied and nothing is consumed: the caller judges the stamp
+// (tap_arbitrate() below) and then takes exactly that one (take_exact()).
+// Never a grant by itself.
+inline uint32_t peek(const State& s) {
+  return __atomic_load_n(&s.opened_at_ms, __ATOMIC_ACQUIRE);
+}
+
+// Consume exactly the stamp `seen` a caller peeked and judged: one
+// compare-and-swap of `seen` to 0. False for 0, and false when the stamp
+// moved since the peek (a re-tap, the BLE OTA break-glass take, another
+// request's take, the expiry sweep expire()), so a stamp nobody judged is
+// never consumed in its place and two takers of one stamp cannot both win.
+inline bool take_exact(State& s, uint32_t seen) {
+  if (seen == 0) return false;
+  uint32_t expect = seen;
+  return __atomic_compare_exchange_n(&s.opened_at_ms, &expect, 0u, false,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+// The sweep's step on a stamp `seen` its caller read (peek()): clear it when
+// it is `ttl_ms` old or older, with one compare-and-swap of `seen`
+// (take_exact()), so a fresh re-tap stored since the read is never cleared.
+// True when it cleared one. The seam a test drives with a stamp it read
+// before a re-tap; expire() is this with the stamp it reads now.
+inline bool expire_seen(State& s, uint32_t seen, uint32_t now_ms, uint32_t ttl_ms) {
+  if (seen == 0 || (uint32_t)(now_ms - seen) < ttl_ms) return false;
+  return take_exact(s, seen);
+}
+
+// The sweep (sweep F347): clear a stamp that is `ttl_ms` old or older, with
+// one compare-and-swap of the stamp it read (expire_seen()), so a fresh
+// re-tap that lands between the read and the swap is never cleared. True
+// when it cleared one. Its owner calls it every loop pass, ON THE TASK THAT
+// OPENS the State (on both trees, the loop task's BOOT handler): a
+// `now_ms` read before another task's open() would see that newer stamp as
+// 2^32 ms old. With the sweep, no stamp outlives its TTL by more than one
+// pass, so none can age into the wrap of millis() and read as fresh again.
+inline bool expire(State& s, uint32_t now_ms, uint32_t ttl_ms) {
+  return expire_seen(s, peek(s), now_ms, ttl_ms);
 }
 
 // ── Page-token policy ───────────────────────────────────────────────────────
@@ -193,7 +249,8 @@ inline ReceiptVerdict receipt_decide(bool foreign_host, BearerOk bearer_ok,
 // setup door once the join it asked for succeeded, presented as
 // ?claim=<hex>. `take_claim` is the firmware's claim_ticket::take hook —
 // called at most once, only when the Host passed and no bearer did, and
-// spending the claim whatever it answers (a wrong guess burns it). A claim
+// spending the claim only on a match (a wrong value spends nothing; an
+// expired claim is burned; sweep F342). A claim
 // that serves leaves the BOOT tap unspent, so the owner's own page load
 // still finds it; a spent or absent claim falls through to the tap exactly
 // as before, so every caller the three-grant overload admitted is admitted
@@ -298,6 +355,157 @@ inline bool peer_key_from_addr(AddrFamily family, const uint8_t* bytes,
     return false;
   }
   return true;
+}
+
+// A peer key as text for the serial console: a.b.c.d for an IPv4-mapped key
+// (::ffff:a.b.c.d), else its eight 16-bit groups in hex joined by ':' (no
+// :: shortening). Writes at most PEER_KEY_TEXT_CAP bytes, NUL included, and
+// returns the characters written; 0, and an empty string when `cap` allows
+// one, when `out` cannot hold the longest form or `key` is null.
+inline constexpr size_t PEER_KEY_TEXT_CAP = 40;   // 39 characters and the NUL
+
+inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t cap) {
+  if (!out || cap == 0) return 0;
+  out[0] = '\0';
+  if (!key || cap < PEER_KEY_TEXT_CAP) return 0;
+  static const char hex[] = "0123456789abcdef";
+  size_t n = 0;
+  bool mapped = key[10] == 0xFF && key[11] == 0xFF;
+  for (size_t i = 0; i < 10; ++i) mapped = mapped && key[i] == 0;
+  if (mapped) {
+    for (size_t i = 12; i < PEER_KEY_LEN; ++i) {
+      const unsigned v = key[i];
+      if (v >= 100) out[n++] = (char)('0' + v / 100);
+      if (v >= 10) out[n++] = (char)('0' + (v / 10) % 10);
+      out[n++] = (char)('0' + v % 10);
+      if (i + 1 < PEER_KEY_LEN) out[n++] = '.';
+    }
+  } else {
+    for (size_t i = 0; i < PEER_KEY_LEN; ++i) {
+      out[n++] = hex[(key[i] >> 4) & 0x0F];
+      out[n++] = hex[key[i] & 0x0F];
+      if ((i & 1) && i + 1 < PEER_KEY_LEN) out[n++] = ':';
+    }
+  }
+  out[n] = '\0';
+  return n;
+}
+
+// ── The BOOT tap's one asker (the WAP's receipt; sweep F342) ───────────────
+//
+// A tap identifies nobody: before this, the WAP handed it to whichever
+// request asked first, so any host on the network that polled
+// GET /api/provisioning-receipt won the owner's next tap and was handed the
+// token, the SoftAP password and the TLS pin (and /api/logs, readable by any
+// session, says when the tap lands). The WAP has no screen, so the one
+// signal it has is who else asks. tap_arbitrate() remembers the last two
+// DISTINCT addresses that asked for the receipt without a credential (the
+// caller asks it only for a request the bearer and the claim did not
+// serve), before a tap as well as after it, and serves the tap only to the
+// sole address seen from `lookback_ms` before the tap onward. A second
+// address in that window closes the tap. After that, an ask is answered
+// CONTENDED while the closed tap's TTL runs AND an address other than the
+// asker asked within `lookback_ms` of it: the answer ends when its cause
+// ends, so a page that waits `lookback_ms` after the other device stopped
+// and asks again is answered NO_TAP and keeps asking for the owner's next
+// tap (an earlier version answered CONTENDED for the whole TTL, and a page
+// that followed its own "wait 10 seconds" copy stopped again before the
+// press). Any ask that finds no other address asking ends it, for every
+// asker: a page that comes back while a host still polls hears NO_TAP,
+// and its next tap is judged on the lookback like any other, so it is
+// closed again. A served tap ends it too. A sole asker is served at once:
+// there is no settle delay.
+//
+// Why two entries answer the question exactly: `recent` is the address of
+// the latest ask, and `prior.last_ms` is the time of the latest ask by any
+// OTHER address (an ask by `recent` refreshes its time; an ask by anyone
+// else pushes `recent` down to `prior`, and `recent`'s time was the latest
+// ask overall, so it is the latest by an address other than the new one).
+// So "did any other address ask since lookback_ms before the tap?" is one
+// comparison against `prior`.
+//
+// The dashboard's sign-in and the companion's recovery-kit save poll from
+// before the tap, so the owner's client is on record when the tap lands: a
+// host that polls the route, that times the tap from the logs, or that
+// delays the owner's next poll gets CONTENDED, never the receipt. What it
+// cannot see: a tap no client of the owner's was asking for (an accidental
+// tap, a page or curl started after it, a bare re-tap after a 409) still
+// goes to the first asker, a poller included, which is why the WAP's 409
+// says to start the request first and keep it asking, then press BOOT;
+// hosts behind one address are one asker; a host that keeps the one web
+// server busy for longer than the lookback before the tap can hide the
+// owner's earlier ask; and a host that asks at least once every
+// `lookback_ms` (polling included) makes every tap the owner's client is
+// already asking for refuse, loudly.
+//
+// The record ages on 32-bit millis() and is never swept: after a silence of
+// 2^32 ms (49.7 days) a stale entry's age wraps and can read as recent, which
+// can only make a tap CONTENDED (it fails closed), never serve one. ONE task
+// touches a TapArbiter (on the WAP, the httpd task's receipt handler), so it
+// takes no atomics; the gate's stamp it judges is read with peek() and then
+// taken with take_exact(), never re-read.
+inline constexpr uint32_t TAP_LOOKBACK_MS = 10000;   // five of the dashboard's 2 s polls
+
+struct TapAsker {
+  bool has;
+  uint8_t key[PEER_KEY_LEN];
+  uint32_t last_ms;   // millis() of this address's latest ask
+};
+
+struct TapArbiter {
+  TapAsker recent;          // the address of the latest ask
+  TapAsker prior;           // the latest ask by any other address
+  uint32_t contended_tap;   // the stamp of a tap closed by contention, 0 = none
+};
+
+enum class TapVerdict : uint8_t {
+  NO_TAP,      // no fresh tap to take: the caller refuses (403)
+  CONTENDED,   // a second address asked inside the window: 409, the tap closed
+  TAKE,        // the sole asker: take_exact() the judged stamp and serve
+};
+
+// Judge one credential-less ask from `peer` against the tap stamp
+// `stamp_seen` (peek(); 0 = closed) at `now_ms`. The ask is recorded first,
+// whatever the answer, so asks made before a tap count.
+inline TapVerdict tap_arbitrate(TapArbiter& a, uint32_t stamp_seen,
+                                const uint8_t peer[PEER_KEY_LEN], uint32_t now_ms,
+                                uint32_t ttl_ms, uint32_t lookback_ms = TAP_LOOKBACK_MS) {
+  if (a.recent.has && memcmp(a.recent.key, peer, PEER_KEY_LEN) == 0) {
+    a.recent.last_ms = now_ms;
+  } else {
+    a.prior = a.recent;
+    a.recent.has = true;
+    memcpy(a.recent.key, peer, PEER_KEY_LEN);
+    a.recent.last_ms = now_ms;
+  }
+  const bool fresh = stamp_seen != 0 && (uint32_t)(now_ms - stamp_seen) < ttl_ms;
+  if (a.contended_tap != 0) {
+    // `prior` is the latest ask by an address other than this one.
+    const bool other_asking =
+        a.prior.has && (uint32_t)(now_ms - a.prior.last_ms) <= lookback_ms;
+    if ((uint32_t)(now_ms - a.contended_tap) >= ttl_ms || !other_asking) {
+      a.contended_tap = 0;   // the closed tap's window has run, or the other
+                             // address has gone quiet: judge afresh
+    } else if (!(fresh && stamp_seen != a.contended_tap)) {
+      return TapVerdict::CONTENDED;   // inside it, and no new tap: still closed
+    }
+  }
+  if (!fresh) return TapVerdict::NO_TAP;
+  // Another address asked at or after (tap - lookback_ms): its ask is no
+  // older than the tap's age plus the lookback (summed wide, so no TTL and
+  // lookback can wrap the bound).
+  if (a.prior.has &&
+      (uint64_t)(uint32_t)(now_ms - a.prior.last_ms) <=
+          (uint64_t)(uint32_t)(now_ms - stamp_seen) + lookback_ms) {
+    a.contended_tap = stamp_seen;
+    return TapVerdict::CONTENDED;
+  }
+  // Served: no earlier contention outlives a tap that went to one asker, so
+  // the asks after it are NO_TAP, never "the tap was closed". (The rule
+  // above already cleared any: a TAKE means no other address asked since
+  // lookback_ms before this tap, so none within lookback_ms of now.)
+  a.contended_tap = 0;
+  return TapVerdict::TAKE;
 }
 
 // True only when `peer` is an IPv4 address inside the SoftAP's IPv4 subnet.

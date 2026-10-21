@@ -23,12 +23,18 @@ set -euo pipefail
 #                     succeeded and spends on the home LAN for the pairing
 #                     receipt (the bearer token never rides Bluetooth). Its
 #                     TTL, hex shape and take-once rule are the contract the
-#                     iOS app's claim step is written against. Host-tested by
+#                     iOS app's claim step is written against; loop() sweeps
+#                     it with expire() every pass (sweep F347). Host-tested by
 #                     firmware/tests_host/test_claim_ticket.cpp.
-#   provisioning_gate.h — the socket address mapping the sketch reads a
-#                     request's peer through (peer_key_from_addr(),
+#   provisioning_gate.h — the BOOT tap's gate, which the sketch's
+#                     g_provisioning_gate is (its State; take(), take_exact(),
+#                     the one-asker tap_arbitrate(), sweep F342; expire(), the
+#                     sweep loop() runs every pass, sweep F347), and the socket
+#                     address mapping the sketch reads a request's peer
+#                     through (peer_key_from_addr(),
 #                     ipv4_host_order_from_addr()), the same functions the
-#                     canary tree's securacv_network uses. Host-tested by
+#                     canary tree's securacv_network uses (that tree's State
+#                     is its main.cpp's). Host-tested by
 #                     firmware/tests_host/test_provisioning_gate.cpp.
 #   auth_backoff.h  — the bearer lockout, one backoff per source address
 #                     (sweep F343): 8 tracked addresses and a shared overflow,

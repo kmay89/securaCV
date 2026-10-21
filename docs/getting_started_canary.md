@@ -783,8 +783,10 @@ The all-rounder Canary (`firmware/canary`) repeats both in its
 `[SETUP] Setup network up` line whenever the setup network comes up, a
 home Wi-Fi outage included. A WAP repeats them in its `[WIFI] AP started`
 line at boot, and its serial command `w` prints both at any time. A short
-BOOT press prints neither: it opens the provisioning gate, which lets the
-dashboard hand over the recovery kit for 30 seconds.
+BOOT press prints neither: it opens the provisioning gate for 30 seconds,
+which hands the recovery kit to the one page already asking for it, so
+click **Use BOOT Tap Once** on the dashboard first and press when the page
+says to.
 
 Either flasher's done card shows the same pair after a flash, and a
 recovery kit saved from the dashboard carries the key as `ap_password`

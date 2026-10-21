@@ -3134,11 +3134,11 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      raw_in(INO, 'muted ? "true" : "false", persisted ? "true" : "false");',
             'muted ? "yes" : "no", persisted ? "true" : "false");')),
     ("the receipt gate's answer gets 128 bytes and an off-by-one length test",
-     both(raw_in(INO, "    char body[256];\n    int n = snprintf(body, sizeof(body),",
+     both(raw_in(INO, "    char body[320];\n    int n = snprintf(body, sizeof(body),",
                  "    char body[128];\n    int n = snprintf(body, sizeof(body),"),
           raw_in(INO, "if (n < 0 || (size_t)n >= sizeof(body)) {", "if (n < 0 || (size_t)n > sizeof(body)) {"))),
     ("the receipt gate's answer gets 128 bytes and a length test that does not refuse",
-     both(raw_in(INO, "    char body[256];\n    int n = snprintf(body, sizeof(body),",
+     both(raw_in(INO, "    char body[320];\n    int n = snprintf(body, sizeof(body),",
                  "    char body[128];\n    int n = snprintf(body, sizeof(body),"),
           raw_in(INO, "      return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,\n"
                       "                                 \"Failed to build provisioning gate response\");",

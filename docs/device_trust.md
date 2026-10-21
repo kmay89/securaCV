@@ -319,8 +319,8 @@ only near the device holds a string that opens nothing from the street. The
 receipt route decides in a fixed order — on the flagship a foreign `Host`
 is refused first (the WAP asks no Host question on this route today), then
 a valid bearer serves, then the claim, then an unspent BOOT tap
-(`provisioning_gate::receipt_decide`) — a wrong claim is burned, an expired
-one too, and a claim that serves leaves the BOOT tap unspent for the
+(`provisioning_gate::receipt_decide`) — a wrong claim spends nothing, an
+expired one is burned, and a claim that serves leaves the BOOT tap unspent for the
 owner's own page load. What the phone pins afterwards (the key from
 `/api/status`, the `tls_cert_fp` from the receipt) is the same as from any
 other pairing path.

@@ -202,7 +202,7 @@ extern "C" {
 #include "bluetooth_channel.h"
 #include "ble_improv.h"          // the Bluetooth setup door (Improv Wi-Fi), FULL profile
 #include "claim_ticket.h"        // the claim a phone reads over that door and spends on the LAN
-#include "provisioning_gate.h"   // pure, host-tested: a request's peer key and its IPv4 (staged; F343)
+#include "provisioning_gate.h"   // pure, host-tested: the BOOT-tap gate, its one asker, a request's peer key (staged)
 #include "bluetooth_api.h"
 #include "ble_console.h"
 #include "ble_log_export.h"
@@ -924,30 +924,26 @@ static inline bool tls_after_setup() {
 #endif
 }
 
-// Provisioning gate (physical BOOT button). Stores the millis() at which
-// the press landed; 0 means closed. provisioning_gate_is_open() applies
-// the TTL so the gate auto-closes after PROVISIONING_GATE_TTL_MS even if
-// the receipt is never fetched. The variable is touched from the main
-// loop task (button handler) and the HTTP server task (receipt handler),
-// so access goes through __atomic_*_n to match the pattern used for
-// other cross-task counters (see csi_integration.cpp g_outbound_bytes).
-static uint32_t g_provisioning_gate_opened_at = 0;
+// Provisioning gate (physical BOOT button): provisioning_gate.h's State, the
+// staged copy of firmware/common/network/provisioning_gate.h (sweep F342;
+// this used to be an inline copy of the header's open and take). It stores
+// the millis() at which the short press landed; 0 means closed, and the
+// header's take() and tap_arbitrate() apply the TTL, so the gate closes
+// itself after PROVISIONING_GATE_TTL_MS even if the receipt is never
+// fetched, and loop() sweeps a stamp past it every pass (expire(), sweep
+// F347), so none ages into the wrap of millis(). Opened and swept from the
+// loop task (the button handler, loop()) and taken from the httpd task (the
+// receipt) and the NimBLE host task (BLE OTA break-glass), so every access
+// is the header's __atomic builtins.
+static canary::net::provisioning_gate::State g_provisioning_gate = {0};
 
-static inline bool provisioning_gate_is_open() {
-  uint32_t opened = __atomic_load_n(&g_provisioning_gate_opened_at, __ATOMIC_RELAXED);
-  if (opened == 0) return false;
-  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
-}
-
-// Consume the gate in ONE atomic step. Two consumers race for it — the
-// HTTPS receipt handler (httpd task) and the BLE OTA break-glass hook
-// (NimBLE host task) — and a load followed by a separate store would let one
-// BOOT tap be spent twice. exchange() hands the open timestamp to exactly
-// one caller; the other reads 0 and is refused.
+// Consume the gate in ONE atomic step, for the BLE OTA break-glass hook
+// (NimBLE host task): the header's take(), one exchange, so it and the
+// receipt (httpd task, provisioning_gate_take_for(), a compare-and-swap of
+// the stamp it judged) cannot both spend one BOOT tap. The receipt does not
+// call this: its tap goes to one asker.
 static inline bool provisioning_gate_take() {
-  uint32_t opened = __atomic_exchange_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_ACQ_REL);
-  if (opened == 0) return false;
-  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
+  return canary::net::provisioning_gate::take(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
 }
 
 // The claim ticket the Bluetooth setup door mints (claim_ticket.h, a staged
@@ -956,9 +952,17 @@ static inline bool provisioning_gate_take() {
 // succeeded, read once by the link that asked, and spent by one
 // GET /api/provisioning-receipt?claim=<hex> on the home LAN — the third
 // grant of that route, between the bearer and the BOOT tap. The bearer
-// token never rides Bluetooth. Minted (loop task) and taken (httpd task)
-// through the header's own atomics; never read in place.
+// token never rides Bluetooth. Minted and swept (loop task: loop() burns a
+// claim past its TTL every pass, sweep F347) and taken (httpd task) through
+// the header's own atomics; never read in place. Spent only by a match
+// (sweep F342): a wrong ?claim= changes nothing.
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+
+// millis() (claim_ticket::stamp()ed, so never 0 once set) of the last
+// "setup-door claim did not match" health line: one line per 10 s at most,
+// so a host that keeps sending wrong claims cannot fill the health log.
+// 0 = none yet. httpd task only (the receipt handler).
+static uint32_t g_claim_refusal_logged_ms = 0;
 
 // The setup door's spent first-boot window, carried across SOFTWARE resets.
 // "Re-armed by a power cycle" means a power cycle: a never-provisioned unit
@@ -8770,8 +8774,10 @@ static uint32_t request_local_ipv4(httpd_req_t* req) {
 // dual-stack listener both cores open, an IPv4 client reads as
 // ::ffff:a.b.c.d; without the AF_INET6 branch every request would read as
 // unknown. False when the socket cannot say. The bearer lockout's source,
-// auth_request_source() below, is read through it. The same fd works under
-// esp_https_server, whose sessions sit on the httpd socket.
+// auth_request_source() below, and the BOOT tap's asker
+// (provisioning_gate_take_for(), sweep F342) are both read through it, so
+// the tap's asker and the lockout's bucket are one read. The same fd works
+// under esp_https_server, whose sessions sit on the httpd socket.
 static bool request_peer_key(httpd_req_t* req, uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {
   const int fd = httpd_req_to_sockfd(req);
   if (fd < 0) return false;
@@ -8808,6 +8814,59 @@ uint32_t auth_request_source(httpd_req_t* req) {
   if (!request_peer_key(req, key)) return 0;
   return canary::net::provisioning_gate::ipv4_host_order_from_addr(
       canary::net::provisioning_gate::AddrFamily::IPV6, key);
+}
+
+// The BOOT tap's one asker (sweep F342): provisioning_gate.h's two-entry
+// record of the last two distinct addresses that asked for the receipt
+// without a credential. httpd task only: the receipt is registered on one
+// server at a time, and the one httpd task runs its handlers one by one.
+static canary::net::provisioning_gate::TapArbiter g_tap_arbiter = {};
+
+// The receipt's BOOT-tap step: true when this request takes the tap. A tap
+// goes to ONE asker (provisioning_gate::tap_arbitrate()): served only when
+// the request's peer (request_peer_key(), the socket, never a header) is
+// the sole address that asked from TAP_LOOKBACK_MS before the tap onward.
+// A second address in that window closes the tap, and an asker gets
+// `*verdict` CONTENDED (the handler's 409 tap_contended) while an address
+// other than it asked within TAP_LOOKBACK_MS, up to the end of the closed
+// tap's TTL: any ask that finds no other address asking ends it, so under a
+// host that keeps polling, the poller's own asks end it TAP_LOOKBACK_MS
+// after the owner's page stopped. The stamp is peeked once, judged, and
+// every swap after that (TAKE, the CONTENDED close, the NO_TAP burn) is a
+// take_exact() of that one stamp, so a re-tap or the BLE OTA break-glass
+// take between the two is never consumed unjudged. A socket that cannot
+// say is refused with the tap left for the next asker: the arbiter is
+// never skipped. An expired stamp a request finds is burned, as the old
+// take() burned it.
+static bool provisioning_gate_take_for(httpd_req_t* req, canary::net::provisioning_gate::TapVerdict* verdict) {
+  namespace pg = canary::net::provisioning_gate;
+  *verdict = pg::TapVerdict::NO_TAP;
+  uint8_t key[pg::PEER_KEY_LEN];
+  if (!request_peer_key(req, key)) return false;
+  const uint32_t seen = pg::peek(g_provisioning_gate);
+  *verdict = pg::tap_arbitrate(g_tap_arbiter, seen, key, millis(), PROVISIONING_GATE_TTL_MS);
+  if (*verdict == pg::TapVerdict::TAKE) {
+    if (pg::take_exact(g_provisioning_gate, seen)) return true;
+    *verdict = pg::TapVerdict::NO_TAP;   // another consumer took it since the peek
+    return false;
+  }
+  if (*verdict == pg::TapVerdict::CONTENDED) {
+    // The ask that found the contention closes the tap; only the request
+    // whose swap wins logs, so one closed tap is one line. The health log
+    // (readable by any session) names no address; the serial console names
+    // both.
+    if (seen != 0 && seen == g_tap_arbiter.contended_tap && pg::take_exact(g_provisioning_gate, seen)) {
+      char a[pg::PEER_KEY_TEXT_CAP];
+      char b[pg::PEER_KEY_TEXT_CAP];
+      pg::peer_key_text(g_tap_arbiter.recent.key, a, sizeof(a));
+      pg::peer_key_text(g_tap_arbiter.prior.key, b, sizeof(b));
+      Serial.printf("[AUTH] BOOT tap closed: two addresses asked for the receipt (%s and %s)\n", a, b);
+      log_health(SCV_LOG_WARNING, SCV_CAT_AUTH, "BOOT tap closed: two devices asked for the receipt", nullptr);
+    }
+    return false;
+  }
+  if (seen != 0) pg::take_exact(g_provisioning_gate, seen);   // NO_TAP: the stamp is expired
+  return false;
 }
 
 // What receipt_authority.h decides from, read where the device keeps it:
@@ -8891,17 +8950,24 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 
   // The grants, in order — the contract is provisioning_gate.h's four-grant
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
-  // (firmware/common/network; the sketch keeps the inline copy by
-  // convention). The WAP's actual order here: a valid bearer (the header,
-  // never the session cookie, under the api_auth lockout) serves (the claim
-  // and the tap left alone);
-  // else a claim the request presented is
-  // SPENT, match or not (a guesser gets one guess per join), and serves on
-  // a match, the tap left unspent for the owner's own page load; else the
-  // BOOT tap, exactly as before. The contract's first question, a foreign
-  // Host, is the flagship's (securacv_network's host guard answers it in
-  // front of this route there); the WAP sketch has no Host guard on this
-  // route and does not ask it.
+  // (firmware/common/network, staged in the sketch; the handler spells the
+  // order out because its tap step is the WAP's own). The WAP's actual
+  // order here: a valid bearer (the header, never the session cookie, under
+  // the api_auth lockout) serves (the claim and the tap left alone); else a
+  // claim the request presented is spent on a match only, and serves, the
+  // tap left unspent for the owner's own page load (a wrong, short or
+  // truncated claim changes nothing, sweep F342); else the BOOT tap, served
+  // to the sole address asking for it (provisioning_gate_take_for(): a
+  // second address that asked in the ten seconds before the tap or during
+  // it closes the tap, 409 tap_contended, sweep F342). The contract's first
+  // question, a foreign Host, is the flagship's (securacv_network's host
+  // guard answers it in front of this route there); the WAP sketch has no
+  // Host guard on this route and does not ask it yet. When it does (the
+  // ledger's F344), that question is the first statement after
+  // g_health.http_requests++ above: a request whose Host cannot name the
+  // device is refused there, before the bearer is read and before the tap
+  // arbiter records it as an asker, so it can never be served and never
+  // contends the owner's tap.
 
   // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
   //    the bearer: a real `Authorization: Bearer <token>` header,
@@ -8924,16 +8990,19 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    backoff a guesser armed, is still served by the claim or a BOOT tap,
   //    and the address they serve has its backoff cleared (sweep F341,
   //    after step 3).
-  //    (The lockout is all this decides. Any host on the network can still
-  //    spend a pending claim with one wrong ?claim=, or take an open tap by
-  //    asking first; both predate F289 and are the ledger's.)
+  //    (The lockout is all this decides. Who gets the tap is step 3's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
-  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
-  //    take against the ticket the loop task minted, on this task.
+  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one take
+  //    against the ticket the loop task minted, on this task. A claim is
+  //    spent only by a match (claim_ticket::take(): load, constant-time
+  //    compare, one compare-and-swap of the word it loaded; sweep F342); a
+  //    wrong, short or truncated one changes nothing, so a stray or hostile
+  //    ?claim= neither ends the phone's pairing (its app treats a 403 as
+  //    final) nor releases the first-boot reboot hold under it.
   bool claim_served = false;
   {
     char qs[128];
@@ -8944,38 +9013,75 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       got = httpd_query_key_value(qs, "claim", presented, sizeof(presented));
     }
     // Presented at all — even one too long for the buffer (truncated: it can
-    // never match) — is presented: the take spends the claim either way.
+    // never match) — is presented, and compared: a value that does not
+    // match spends nothing.
     if (got == ESP_OK || got == ESP_ERR_HTTPD_RESULT_TRUNC) {
       presented[sizeof(presented) - 1] = '\0';
       claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());
       secure_zero(presented, sizeof(presented));
       secure_zero(qs, sizeof(qs));
-      if (!claim_served) {
+      if (!claim_served &&
+          (g_claim_refusal_logged_ms == 0 ||
+           (uint32_t)(millis() - g_claim_refusal_logged_ms) >= 10000)) {
+        g_claim_refusal_logged_ms = canary::net::claim_ticket::stamp(millis());
         log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
-                   "Provisioning receipt refused: setup-door claim did not match (claim spent)", nullptr);
+                   "Provisioning receipt refused: setup-door claim did not match", nullptr);
       }
     }
   }
 
-  // 3. No valid token, no good claim — consume the physical gate (one
-  //    atomic step; the BLE OTA break-glass hook competes for the same tap
-  //    from another task)
-  if (!claim_served && !provisioning_gate_take()) {
+  // 3. No valid token, no good claim — the physical gate, for ONE asker
+  //    (sweep F342): provisioning_gate_take_for() records this request's
+  //    peer, judges the tap (tap_arbitrate()) and takes exactly the stamp
+  //    it judged (one compare-and-swap; the BLE OTA break-glass hook
+  //    competes for the same tap from another task). Before, the first
+  //    request from any host on the network inside the tap's 30 s took it:
+  //    a host polling this route won the owner's next tap.
+  canary::net::provisioning_gate::TapVerdict tap = canary::net::provisioning_gate::TapVerdict::NO_TAP;
+  if (!claim_served && !provisioning_gate_take_for(req, &tap)) {
     // A bearer the backoff kept from being compared gets the lockout's own
     // answer (429, Retry-After), not "press BOOT": a page holding the right
-    // token keeps it (secureFetch drops a token on 403) and retries.
+    // token keeps it (secureFetch drops a token on 403) and retries. It
+    // comes before the 409: a held page retries its token, not the tap.
     if (bearer_held) {
       api_auth_send_lockout(req);
       return ESP_OK;
     }
+    // A second address asked for the receipt in the ten seconds before the
+    // tap or during it: the tap is closed and nothing is handed out. An
+    // asker hears so while an address other than it asked in the last ten
+    // seconds (up to the closed tap's 30 s), the owner's page included, so
+    // it can say another device asked. The first ask that finds no other
+    // address asking ends it and is judged afresh (with no new tap, the
+    // 403): ten seconds after the other address stops, or, under a host
+    // that keeps polling, ten seconds after the owner's page stopped (the
+    // poller's own ask), when the owner's retry hears 403 and its next tap
+    // is closed again. No cookie, no secret. The hint never advises a bare
+    // re-tap: a tap no client of the owner's is asking for goes to the
+    // first asker, and the device sends this answer only when another
+    // address is asking. The body is a literal here (the receipt suite cuts
+    // this handler, not the file's constants).
+    if (tap == canary::net::provisioning_gate::TapVerdict::CONTENDED) {
+      httpd_resp_set_status(req, "409 Conflict");
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+      return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit's token as a bearer, or read the token from the USB serial console.\"}");
+    }
     // Derive the advertised TTL from the constant so the 403 contract
-    // and the gate behavior can never drift apart.
+    // and the gate behavior can never drift apart. The words give the order
+    // the arbiter protects (sweep F342's second review): the client asks
+    // first and the press comes second. A tap no client of the owner's is
+    // already asking for goes to the first asker, and a host that watches
+    // /api/logs for "Provisioning gate opened" is that asker, so the old
+    // "short tap, then poll within 30 seconds" led a curl user or a client
+    // into the one case the arbiter cannot protect. The fields are the old
+    // ones (the dashboard and the Vision SPA read gate_ttl_seconds).
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
-    char body[256];
+    char body[320];
     int n = snprintf(body, sizeof(body),
       "{\"error\":\"physical_confirmation_required\","
-      "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
-      "\"button\":\"BOOT (short tap, then poll within %lu seconds)\","
+      "\"hint\":\"Start asking for the receipt first, then short-tap BOOT on the device: the tap goes to the one address asking.\","
+      "\"button\":\"BOOT (ask first, then a short tap; the tap is held %lu seconds)\","
       "\"gate_ttl_seconds\":%lu}",
       ttl_s, ttl_s);
     if (n < 0 || (size_t)n >= sizeof(body)) {
@@ -8995,17 +9101,19 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // 60 s of 429. The strike its header may have cost above stays the rule
   // (one accounting for every route). Only this address's own slot is freed,
   // never the shared overflow (auth_backoff.h). The tap-and-claim refusal
-  // returned above, so a request refused before a tap or a claim is taken
-  // clears nothing (check_route_security.py's BACKOFF_CLEARS holds this call
-  // here, once). send_provisioning_receipt() below can still refuse (503
+  // returned above (its 403, 429, 409 and 500 alike), so a request refused
+  // before a tap or a claim is taken clears nothing
+  // (check_route_security.py's BACKOFF_CLEARS holds this call here, once).
+  // send_provisioning_receipt() below can still refuse (503
   // no_address, 500 out_of_memory, 503 answer_changed) after the clear; the
   // tap or the claim is spent by then, and a send that worked would have
   // handed this address the token.
   auth_record_success(req);
 
-  // The claim matched, or the gate was open (and is now closed) — serve the
-  // receipt with the same session cookie either way: the phone that
-  // provisioned over the door is as present as the hand on the BOOT button.
+  // The claim matched, or this request was the tap's one asker (the gate is
+  // now closed) — serve the receipt with the same session cookie either
+  // way: the phone that provisioned over the door is as present as the hand
+  // on the BOOT button.
   // The cookie's attributes are handle_ui's (session_cookie_header()):
   // Secure when this answer goes out over HTTPS, and not on the first-boot
   // SoftAP's plain-HTTP setup, where the recovery-kit save mints it.
@@ -13594,6 +13702,19 @@ void loop() {
   // USB evidence drive: apply deferred host events (eject -> verify/install)
   usb_evidence_drive::poll();
 
+  // Sweep the BOOT tap and the setup-door claim (sweep F347). Each ages by
+  // unsigned subtraction on 32-bit millis(), which is right only while a
+  // stamp is younger than 2^32 ms: a tap nobody took would serve the receipt
+  // again 49.7 days later with no press, and a claim read but never spent
+  // would read as pending again. expire() clears a stamp past its TTL with a
+  // compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  // never cleared; no stamp outlives its TTL by more than one pass, so
+  // millis() never wraps back over one. Both are opened and minted on this
+  // task (the BOOT handler below, ble_improv::tick), so neither sweep can
+  // see a stamp newer than its own clock read.
+  canary::net::provisioning_gate::expire(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
+  canary::net::claim_ticket::expire(g_improv_claim, millis());
+
   // Check boot button:
   //   Short press (<2s)  = open provisioning gate
   //   Medium hold (2-3s) = print device info
@@ -13661,12 +13782,10 @@ void loop() {
       }
     } else if (duration >= BOOT_SHORT_PRESS_MS) {
       // Short press: open provisioning gate. Stamp the press time so the
-      // gate can self-close after PROVISIONING_GATE_TTL_MS. Sentinel-1
-      // guard handles the exceedingly rare case where millis() is 0.
-      uint32_t now_ms = millis();
-      __atomic_store_n(&g_provisioning_gate_opened_at,
-                       (now_ms == 0) ? 1 : now_ms,
-                       __ATOMIC_RELAXED);
+      // gate can self-close after PROVISIONING_GATE_TTL_MS. The header's
+      // open() stores a millis() of 0 as 1 (0 is "closed"), with a release
+      // store.
+      canary::net::provisioning_gate::open(g_provisioning_gate, millis());
       Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");

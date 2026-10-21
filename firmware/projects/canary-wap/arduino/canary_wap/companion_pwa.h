@@ -467,13 +467,17 @@ footer a{color:var(--accent);text-decoration:none}
            which /api/provisioning-receipt serves the full receipt JSON
            (device id, keys, AP password) and issues a session cookie. The
            cookie is what unlocks the optional Home Assistant block below —
-           /api/mqtt/* accepts session-cookie auth. No new endpoints. -->
+           /api/mqtt/* accepts session-cookie auth. No new endpoints. Save
+           comes FIRST and the press second (sweep F342): the device hands
+           a tap only to the one address that asked from 10 s before it
+           onward, so the page asks from the click and is on record when
+           the press lands. -->
       <div id="wiz-recovery-block" style="display:none;margin-top:.85rem">
         <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Save your recovery kit</h3>
         <p class="wiz-sub" style="margin:0 0 .6rem">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</p>
         <ol class="intro" style="margin:0 0 .6rem;padding-left:1.2rem;line-height:1.65">
-          <li>Short-press the <strong>BOOT</strong> button on your Canary.</li>
-          <li>Within 30 seconds, tap <strong>Save my recovery kit</strong> below.</li>
+          <li>Tap <strong>Save my recovery kit</strong> below.</li>
+          <li>When the note below says to, short-press the <strong>BOOT</strong> button on your Canary (within 30 seconds).</li>
         </ol>
         <div class="err" id="wiz-recovery-err" role="alert"></div>
         <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
@@ -1828,11 +1832,19 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   $w('wiz-another-open').addEventListener('click', showFinishLinks);
 
   // ── Recovery kit + optional Home Assistant (close-out chain) ──────────
-  // Recovery uses the BOOT-tap provisioning gate: 403 means the gate is
-  // closed (no tap, or the 30s window lapsed) — that's guidance, not an
-  // error state. A successful fetch downloads the receipt JSON and issues
-  // the session cookie that the MQTT endpoints accept, which is why the
-  // Home Assistant block is only revealed after a save.
+  // Recovery uses the BOOT-tap provisioning gate. Save asks first and keeps
+  // asking every 2 s for up to 30 s while the owner presses BOOT (sweep
+  // F342: the device hands a tap only to the one address that asked from
+  // 10 s before it onward, so the page must already be asking). 403 means
+  // the gate is still closed (no press yet), so the page asks again; 409
+  // means another device asked during the same press and the device gave
+  // out nothing; the old order (press first, then Save) is served on the
+  // first ask. The banner says to press only once the device has answered
+  // an ask (sweep F342's fourth review): a press the first ask has not
+  // reached yet is one no page of the owner's is asking for. A successful
+  // fetch downloads the receipt JSON and issues the session cookie that the
+  // MQTT endpoints accept, which is why the Home Assistant block is only
+  // revealed after a save.
   function showMultiBlock() {
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display       = 'none';
@@ -1843,25 +1855,52 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   $w('wiz-recovery-save').addEventListener('click', async () => {
     const err  = $w('wiz-recovery-err');
     const save = $w('wiz-recovery-save');
-    err.textContent = '';
+    // The banner is .err (display:none until .show): a line it is handed is
+    // shown, an empty one hides it; `note` is the calm variant, for the
+    // instruction rather than a failure. (Before sweep F342 this handler set
+    // the text and never .show, so its guidance was never on screen.)
+    const say = (msg, note) => {
+      err.textContent = msg;
+      err.classList.toggle('note', !!note);
+      err.classList.toggle('show', !!msg);
+    };
+    say("Asking your Canary first. Don't press BOOT yet.", true);
     save.disabled = true;
+    const POLL_INTERVAL_MS = 2000;
+    const POLL_TICKS = 16;   // 16 asks, 2 s apart: at 0, 2, ..., 30 s, so a press up to 30 s after Save is asked for
     try {
-      const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
-      if (r.status === 403) {
-        err.textContent = 'Press the BOOT button on your Canary first, then tap Save again within 30 seconds.';
+      for (let i = 0; i < POLL_TICKS; i++) {
+        if (i > 0) await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
+        const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (r.status === 403) {   // no press yet: ask again, and now say to press
+          if (i === 0) say('Now short-press BOOT on your Canary.', true);
+          continue;
+        }
+        if (r.status === 409) {
+          // The retry names the tap on Save before the press: Save asks
+          // first, and a press no page of the owner's is asking for goes to
+          // the first asker, the other device if it is still asking.
+          say("Another device on your network asked for this Canary's keys at the same time, so it said no. " +
+              'Close any other Canary pages and wait 10 seconds, then tap Save again, ' +
+              'and short-press BOOT only when this note says to. ' +
+              'You can also save it later from the dashboard.');
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        // The same builder the dashboard's BOOT-tap sign-in saves with
+        // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
+        if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
+        say('');
+        $w('wiz-recovery-done').style.display = 'block';
+        save.style.display = 'none';
+        $w('wiz-recovery-skip').textContent = 'Continue';
+        $w('wiz-ha-block').style.display = 'block';
+        requestAnimationFrame(() => focusActiveStepHeading());
         return;
       }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      // The same builder the dashboard's BOOT-tap sign-in saves with
-      // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
-      if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
-      $w('wiz-recovery-done').style.display = 'block';
-      save.style.display = 'none';
-      $w('wiz-recovery-skip').textContent = 'Continue';
-      $w('wiz-ha-block').style.display = 'block';
-      requestAnimationFrame(() => focusActiveStepHeading());
+      say("Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
     } catch (e) {
-      err.textContent = 'Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again, or save it later from the dashboard.';
+      say('Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again, or save it later from the dashboard.');
     } finally {
       save.disabled = false;
     }
@@ -1891,7 +1930,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         body: JSON.stringify(body),
       });
       if (cfg.status === 401) {
-        err.textContent = 'This needs the recovery-kit step first — go back, press BOOT, and save the kit.';
+        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT.';
         return;
       }
       if (!cfg.ok) {

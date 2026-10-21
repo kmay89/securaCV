@@ -81,7 +81,8 @@ inline bool is_active() { return s_active; }
 // connect, token refresh) calls touch() so the countdown restarts from the
 // most recent sign of life. touch() runs on the HTTP server task while
 // check_timeout() reads from the main loop task, so the stamp goes through
-// atomic builtins (same pattern as g_provisioning_gate_opened_at).
+// atomic builtins (same pattern as g_provisioning_gate, provisioning_gate.h's
+// State).
 inline void touch() {
   if (s_active) {
     __atomic_store_n(&s_started_ms, millis(), __ATOMIC_RELEASE);
