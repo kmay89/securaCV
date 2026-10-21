@@ -596,8 +596,10 @@ clean: clean-receipt-grant
 # with the server it arrived on) and stand-ins for the wizard flag, the
 # pair-token and session stores, the landing page and the gzip writer. The
 # cookie is Secure exactly when its answer leaves over the HTTPS server, never
-# on a plain-HTTP boot (the first-boot SoftAP setup); the reader takes the
-# cookie NAMED cv_session, never "xcv_session=" or a value holding it. It also
+# on a plain-HTTP boot (the first-boot SoftAP setup), and named
+# __Host-cv_session there, cv_session otherwise (sweep F337); the reader takes
+# the cookie NAMED __Host-cv_session first, else the one NAMED cv_session,
+# never "xcv_session=" or a value holding it. It also
 # reads the sketch's text (its path is passed in): the attributes are spelled
 # once, and both Set-Cookie sites send that spelling. After setup a Host that
 # cannot name the device gets the fixed 403 on '/', the ?cv_pair exchange,

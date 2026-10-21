@@ -3776,10 +3776,11 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
   return strcmp(name, "canary.local") == 0 || strcmp(name, "192.168.4.1") == 0;
 }
 
-// The cv_session cookie's Set-Cookie value, written into `out` (`cap`
+// The session cookie's Set-Cookie value, written into `out` (`cap`
 // bytes): the one spelling of its attributes for both places that mint a
 // session (handle_ui's ?cv_pair exchange and the receipt's BOOT-tap or
-// setup-door grant). False, and nothing to send, if it does not fit.
+// setup-door grant). False, and nothing to send, if it does not fit (the
+// longest, the HTTPS one, is 140 bytes and the NUL; both callers pass 160).
 //   - 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
 //   - HttpOnly: no JS can read the cookie (mitigates XSS exfil).
 //   - SameSite=Strict: cross-origin requests can't carry it (CSRF).
@@ -3794,17 +3795,39 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
 //     a build without esp_https_server.h never starts one. On a plain-HTTP
 //     answer (the first-boot SoftAP setup, which runs HTTP-only so captive
 //     sheets render, or a unit whose HTTPS start failed) Secure is left off:
-//     a browser drops a Secure cookie an http page sets. (The other way
-//     round has an edge: a browser still holding a Secure cv_session from
-//     an HTTPS visit refuses a same-name cookie from an http page, so a unit
-//     that comes back HTTP-only signs that browser in again only once the
-//     old cookie's 24 h are up, or its site data is cleared.)
+//     a browser drops a Secure cookie an http page sets.
+//   - The name follows the transport too (sweep F337): __Host-cv_session
+//     over HTTPS, cv_session over plain HTTP. A browser holding a Secure
+//     cookie refuses a same-name cookie from an http page, so one name for
+//     both would leave a browser that used https://canary.local unable to
+//     sign in over http at the same name: a second unit set up at
+//     canary.local or 192.168.4.1 (every WAP claims canary.local and every
+//     SoftAP is 192.168.4.1), the same unit after a factory reset, or one
+//     whose HTTPS start failed, until the old cookie's 24 h ran out (the
+//     wizard's Home Assistant step answering 401 meanwhile). With two names
+//     the two never meet. And in current browsers only an https answer from
+//     this host, Secure, Path=/ and with no Domain, can set the __Host- name,
+//     so a cv_session planted over http cannot shadow the HTTPS cookie.
+//     That is integrity, not availability: an on-path host can still push
+//     the Cookie header past the reader's 512-byte ceiling and sign the
+//     browser out. csi_integration.cpp's read_session_cookie_hex() reads
+//     both names, the __Host- one first.
+//   - Header budget: a browser that met both transports at one host sends
+//     both cookies over HTTPS (about 77 more bytes), against
+//     esp_http_server's CONFIG_HTTPD_MAX_REQ_HDR_LEN of 1024, so keep the
+//     cookie set this device mints small.
+//   - No Strict-Transport-Security header: a browser ignores it from a
+//     self-signed certificate (RFC 6797 s8.1) and never records it for an
+//     IP literal (s8.1.1), and one that did honor it would be shut out of a
+//     unit that falls back to plain HTTP (docs/security/THREAT_MODEL.md).
+//   - No stock build serves HTTPS yet (sweep F15: the certificate generator
+//     compiles out on every pinned core), so the HTTPS branch is preparatory.
 static bool session_cookie_header(httpd_req_t* req, const char* session_hex,
                                   char* out, size_t cap) {
   const bool tls = g_https_server != nullptr && req->handle == g_https_server;
   const int n = snprintf(out, cap,
-      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-      session_hex, tls ? "; Secure" : "");
+      "%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+      tls ? "__Host-cv_session" : "cv_session", session_hex, tls ? "; Secure" : "");
   return n > 0 && (size_t)n < cap;
 }
 
@@ -3820,7 +3843,8 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // pair token, its ?cv_pair mints no session and leaves the owner's token
   // unspent, and a live cookie sent under that name is refused too. Then
   // three branches:
-  //   1. cv_session cookie present and valid → serve the dashboard HTML
+  //   1. session cookie present and valid (__Host-cv_session, else
+  //      cv_session: read_session_cookie_hex()) → serve the dashboard HTML
   //      as-is. The page's in-page fetches authenticate via the cookie
   //      (HttpOnly + SameSite=Strict, sent automatically by browsers),
   //      so no token ever appears in HTML source for an on-AP attacker
@@ -3890,7 +3914,8 @@ static esp_err_t handle_ui(httpd_req_t* req) {
         && csi_integration::pair_token_consume(pair_hex)) {
       char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
       char cookie_hdr[160];
-      // The cookie's attributes, Secure over HTTPS: session_cookie_header().
+      // The cookie's name and attributes, __Host-cv_session and Secure over
+      // HTTPS: session_cookie_header().
       if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
           session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
         httpd_resp_set_status(req, "302 Found");
@@ -9199,8 +9224,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   // now closed) — serve the receipt with the same session cookie either
   // way: the phone that provisioned over the door is as present as the hand
   // on the BOOT button.
-  // The cookie's attributes are handle_ui's (session_cookie_header()):
-  // Secure when this answer goes out over HTTPS, and not on the first-boot
+  // The cookie's name and attributes are handle_ui's
+  // (session_cookie_header()): __Host-cv_session and Secure when this answer
+  // goes out over HTTPS, and cv_session without Secure on the first-boot
   // SoftAP's plain-HTTP setup, where the recovery-kit save mints it.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   char cookie_hdr[160];

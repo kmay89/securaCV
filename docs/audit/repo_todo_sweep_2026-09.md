@@ -567,6 +567,28 @@ so — see D2 below.)
   interface. The plain `http`/`securacv` services keep advertising 80 (it
   307-redirects) for a client that cannot do TLS. Host-tested
   (`test_tls_policy`), canary `[env:full]` compiles. Not bench-verified (U1).
+  *Correction (2026-10-19, F337/F344):* the on-device certificate has never
+  been generated on either tree. Both generators are gated on
+  `__has_include("mbedtls/x509write_crt.h")` (`canary_wap.ino`:88;
+  `securacv_network.cpp`:110 through `SECURACV_HAS_TLS_CERTGEN`), a header
+  mbedTLS has never shipped: its write API is declared in
+  `mbedtls/x509_crt.h`, behind `MBEDTLS_X509_CRT_WRITE_C`. Checked on
+  arduino-esp32 2.0.17 and on PlatformIO's framework-arduinoespressif32
+  3.3.8 and its libs (both ship `esp_config.h` defining
+  `MBEDTLS_X509_CRT_WRITE_C`, and declare `mbedtls_x509write_crt_der` in
+  `x509_crt.h`; neither has `x509write_crt.h`). The only writer of the stored certificate
+  (`tls_store_to_nvs()` on the WAP, `tls_store_der_to_nvs()` on the
+  flagship) is called only inside that block, and no in-tree tool writes
+  those NVS keys. So no stock unit of either tree stores or serves a
+  certificate or hands out a `tls_cert_fp` pin: the WAP serves plain HTTP
+  after setup, and the flagship's `FEATURE_HTTPS` builds serve HTTP only and
+  say so in `tls_mode_reason` ("no stored certificate and this core cannot
+  generate one"). "Landed for the canary tree's dev builds in #1704" holds
+  for the compile, not for a device. The fix is to test `mbedtls/x509_crt.h`
+  and `MBEDTLS_X509_CRT_WRITE_C` (or take option (c)). It turns HTTPS on for
+  every such unit, changes the pin the apps trust and the mDNS `tls` advert,
+  and needs Track D, so it is not done here. F337's cookie name and F344's
+  Host rule are written for both transports.
 - [ ] **F62 [code+decision] Consume the mDNS TLS advert in the desktop
   clients.** Found by the #1757 review: the canary now advertises `tls` /
   `secure_port` over mDNS (F15), but no in-repo discovery client reads them
@@ -1121,6 +1143,12 @@ so — see D2 below.)
   gates; then add the key, the app's LAN BOOT-tap path and their tests.
   Related: F62, the same trust question for the flagship's `tls`/`secure_port`
   advert in the desktop clients. Found by the 2026-10 cleanup's iOS package.
+  Note (2026-10-19, F337): `g_tls_cert_fp_hex` stays empty on every stock
+  WAP, and the receipt, the pairing QR and the door's claim send no
+  `tls_cert_fp` pin (`""` in the receipt and the claim), because no
+  certificate is stored, so `g_tls_enabled` and `tls_after_setup()` are
+  false. So there is no fingerprint to advertise until F15's certgen works.
+  This item waits on F15.
 - [x] **F257 [code] A WAP set up through the Bluetooth door is never offered
   its recovery kit.** canary-wap offers `canary-recovery-kit.json` only in the
   `/companion` wizard's close-out (`companion_pwa.h`), which the
@@ -1690,7 +1718,7 @@ so — see D2 below.)
   serves. Decide whether `setup()` should stop, or serve only a diagnostic,
   after a failed provisioning. From code; not probed. Found by the F289
   follow-up's review (#1832).
-- [ ] **F337 [decision] canary-wap over HTTPS: the session cookie's name, and
+- [x] **F337 [decision] canary-wap over HTTPS: the session cookie's name, and
   no HSTS.** (1) Since F326 the cookie is `Secure` over HTTPS, and a browser
   that holds a `Secure` `cv_session` refuses a same-name cookie an `http:`
   page sets (RFC 6265bis, "Leave Secure Cookies Alone"). So if a unit that
@@ -1710,6 +1738,79 @@ so — see D2 below.)
   be out of reach of a browser that saw it. Pin it in
   `test_session_cookie.cpp` and a U1 row. From code; not run in a browser.
   Found by the F289 follow-up and the superseded F289 port's review (#1832).
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security):*
+  Over HTTPS the session cookie is `__Host-cv_session` (`Secure`, `Path=/`,
+  no `Domain`); on plain HTTP it stays `cv_session`.
+  `read_session_cookie_hex()` reads each by its whole name, the `__Host-` one
+  first. A `__Host-` cookie that is present but malformed reads nothing
+  rather than falling back (pinned). The fallback to plain `cv_session` on
+  HTTPS is safe only while sessions carry no per-session state, and the
+  reader's comment says so.
+  In current browsers this gives the HTTPS cookie integrity (a `cv_session`
+  planted over http cannot shadow it), but not availability: an on-path
+  host can still overflow the 512-byte Cookie ceiling.
+  It removes the sign-in loop, and the wizard's Home Assistant 401, when a
+  browser that used https://canary.local meets a unit over plain HTTP: a
+  second unit set up at canary.local or 192.168.4.1, a factory reset, or an
+  HTTPS fallback.
+  The branch does not run today. The certgen guard on both trees tests a
+  header mbedTLS never ships, and the only certificate writer sits inside
+  that guard, so no stock unit serves HTTPS. That finding is written into
+  F15 (it corrects F15's "landed in #1704" for both trees), with a note on
+  F256; no new item and no new number.
+  Corrections to this entry: the "migration for live sessions" was not
+  needed, because sessions are RAM-only and die on the update's reboot. The
+  "sibling origin with a wider scope" does not apply to `.local` or IP
+  hosts.
+  HSTS declined: browsers ignore it on a self-signed certificate (RFC 6797
+  s8.1) and on IP literals (s8.1.1), and it would strand a fallback unit for
+  a browser that trusted the certificate.
+  *Done (2026-10-21, #<PR>):* the second commit of the PR that carries F344.
+  - `session_cookie_header()` in `canary_wap.ino` writes
+    `"%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s"` with
+    `tls ? "__Host-cv_session" : "cv_session", session_hex,
+    tls ? "; Secure" : ""` (`tls` is still "this answer leaves over the
+    HTTPS server"); the longest value is 140 bytes and the NUL, inside both
+    callers' 160. Its comment says why the name follows the transport, that
+    it buys integrity and not availability, the header budget (both cookies
+    are about 77 more bytes against esp_http_server's 1024), why no HSTS,
+    and that no stock build serves HTTPS yet (F15).
+  - `read_session_cookie_hex()` in `csi_integration.cpp` keeps its signature
+    and its 64-hex and terminator rules; a local `value_of()` applies the
+    whole-name rule to `__Host-cv_session=`, then to `cv_session=`. Its
+    comment and the store's doc block name both cookies, the stale-`__Host-`
+    case, and the rule that elevating one session over another must first
+    bind the name to the transport. `csi_integration.h`'s
+    `session_validate_cookie()` doc names both. No migration code, no
+    `Strict-Transport-Security` header, no cut-signature change.
+  - THREAT_MODEL's "TLS is an owner opt-in" and its flagship HTTPS clause,
+    Scenario 2's HTTPS clause, principle 7 and the two certificate rows of
+    the crypto table are corrected; SECURITY_MODEL's transport paragraph,
+    its threat-actor row and its crypto row say no stock Canary serves HTTPS
+    today; FEATURES.md's canary-wap HTTPS note gains its sentence (prose
+    only, no cell); the sketch README, PENTEST_SCOPE and `magic_pairing.md`
+    name both cookies.
+  Host-tested: `test_session_cookie.cpp` (745 checks): the HTTPS exchange's
+  `Set-Cookie` is `__Host-cv_session=…; Secure`, that name=value sent back
+  reaches the dashboard (beside a stale plain cookie too), the plain-HTTP
+  boot's is `cv_session`; the reader takes the `__Host-` cookie alone, in
+  front of or behind a plain one, refuses a malformed one without falling
+  back, still takes plain `cv_session` alone, and never `x__Host-cv_session`,
+  `__host-cv_session` or a value holding the name; the sketch's text pins
+  the format string, its arguments and no HSTS. The sketch before this
+  commit fails 17 of them (the HTTPS cookie was `cv_session`, the prefixed
+  name read nothing, and a plain cookie beside it was read instead).
+  `test_receipt_grant.cpp` (3821 checks) anchors the HTTPS tap's and claim's
+  cookie at `__Host-cv_session=` (the bridge stub's `find()` matches inside
+  the prefixed name, so only these rows tell the two apart); the sketch
+  before fails both. `wizard_logic.test.js`'s writer regex fails against
+  the old writer, and the old regex fails against the new one. The ESP32
+  compile is CI's; not run in a browser or on a device. U1: the F337
+  section in `hardware_verification_checklist.md` (a plain-HTTP row that
+  runs now, and an HTTPS row blocked until a WAP serves HTTPS, F15); the
+  F289 rows written for `https://` say to run over `http://` until then.
 - [ ] **F338 [code+decision] The flagship's route check has no secret-answer
   rule.** `firmware/canary/scripts/check_route_security.py` holds the
   Host-first order and names every reader of `auth_get_token()` as an emitter

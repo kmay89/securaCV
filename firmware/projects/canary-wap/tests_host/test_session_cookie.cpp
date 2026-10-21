@@ -20,7 +20,11 @@
 // each, the session validated through the REAL reader), the landing page and
 // the gzip page writer. What it pins:
 //   - the ?cv_pair exchange over the HTTPS server: 302 to /, and the cookie
-//     with every attribute it had plus "; Secure" (before: no Secure);
+//     with every attribute it had plus "; Secure" (before: no Secure), named
+//     __Host-cv_session (sweep F337; before: cv_session, so a browser that
+//     held it refused the same name from an http page at the same host), and
+//     that name=value sent back reaches the dashboard, beside a stale plain
+//     cookie too;
 //   - the same exchange on a plain-HTTP boot (no HTTPS server, the
 //     first-boot SoftAP setup's case), and on a request that reached the
 //     port-80 server while HTTPS is up: the same cookie, no Secure;
@@ -31,11 +35,17 @@
 //     ';' with spaces or tabs between), exactly 64 hex characters ended by
 //     ';', ' ' or the end; never one whose name only ends in cv_session, nor
 //     a value that holds it, and such a cookie in front no longer hides the
-//     real one (before: read as the session; the real one behind it lost);
+//     real one (before: read as the session; the real one behind it lost).
+//     And the cookie named __Host-cv_session by the same rules, read FIRST
+//     wherever it sits; when it is present but malformed nothing is read
+//     and the plain one is not taken instead (sweep F337; before: the
+//     prefixed name was never read, and a plain cookie beside it was);
 //   - handle_ui's dashboard branch through that reader: "xcv_session=<the
 //     live session>" gets the landing page, not the dashboard;
 //   - the sketch's text: the cookie's attributes are spelled once, in
-//     session_cookie_header(), and both Set-Cookie sites send its output;
+//     session_cookie_header(), whose name argument follows the transport,
+//     both Set-Cookie sites send its output, and no Strict-Transport-Security
+//     header is sent;
 //   - the Host question (sweep F344): request_host_names_device(),
 //     send_foreign_host_page() and request_host_is_setup_name() are cut with
 //     handle_ui, and so are handle_legacy_ui() (/admin, /settings) and
@@ -311,12 +321,15 @@ httpd_req_t pair_exchange(httpd_handle_t server, const char* host = "canary-7916
   return r;
 }
 
+// The cookie's name follows the answer's transport too (sweep F337):
+// __Host-cv_session with Secure over HTTPS, cv_session without it otherwise.
 void check_exchange_cookie(const httpd_req_t& r, bool secure) {
   CHECK(r.status == "302 Found");
   CHECK(header(r, "Location") == "/");
   CHECK(header_count(r, "Set-Cookie") == 1);
   CHECK(csi_integration::g_sessions_issued == 1);
-  const std::string want = "cv_session=" + csi_integration::g_live_session + kAttrs +
+  const std::string want = std::string(secure ? "__Host-cv_session=" : "cv_session=") +
+                           csi_integration::g_live_session + kAttrs +
                            (secure ? "; Secure" : "");
   CHECK_MSG(header(r, "Set-Cookie") == want,
             "Set-Cookie was '" + header(r, "Set-Cookie") + "', want '" + want + "'");
@@ -348,6 +361,50 @@ void test_exchange_on_port_80_beside_https_is_not_secure() {
   https_up();
   const httpd_req_t r = pair_exchange(g_http_server);
   check_exchange_cookie(r, /*secure=*/false);
+}
+
+// The HTTPS exchange's cookie carries the __Host- name, and that cookie
+// sent back (name=value, as a browser sends it) signs the browser into the
+// dashboard; the plain-HTTP boot's does the same under cv_session (sweep
+// F337). Before, the HTTPS cookie was named cv_session, and the reader did
+// not read the prefixed name back.
+void test_https_name_is_host_prefixed_and_round_trips() {
+  for (const bool tls : {true, false}) {
+    const std::string why = tls ? "over HTTPS" : "on a plain-HTTP boot";
+    reset();
+    if (tls) https_up();
+    const httpd_handle_t server = tls ? g_https_server : g_http_server;
+    const httpd_req_t r = pair_exchange(server);
+    const std::string set = header(r, "Set-Cookie");
+    const std::string name = tls ? "__Host-cv_session=" : "cv_session=";
+    CHECK_MSG(set.compare(0, name.size(), name) == 0,
+              why + ": Set-Cookie was '" + set + "', want it to start '" + name + "'");
+    // What the browser sends back: the cookie's name=value, no attributes.
+    const std::string sent = set.substr(0, set.find(';'));
+    CHECK(sent == name + csi_integration::g_live_session);
+    httpd_req_t back;
+    back.handle = server;
+    back.req_hdrs["Host"] = "canary-7916.local";
+    back.req_hdrs["Cookie"] = "theme=dark; " + sent;
+    CHECK(handle_ui(&back) == ESP_OK);
+    CHECK_MSG(g_dashboards == 1 && back.resp == "<dashboard>",
+              why + ": the cookie sent back did not reach the dashboard (" + back.status + ")");
+    CHECK(csi_integration::g_landings == 0);
+    // Beside a stale plain cookie from another unit at the same name, the
+    // HTTPS cookie still signs in: it is read first.
+    if (tls) {
+      reset();
+      https_up();
+      const httpd_req_t again = pair_exchange(g_https_server);
+      const std::string fresh = header(again, "Set-Cookie");
+      httpd_req_t both;
+      both.handle = g_https_server;
+      both.req_hdrs["Host"] = "canary.local";
+      both.req_hdrs["Cookie"] = "cv_session=" + std::string(64, 'e') + "; " + fresh.substr(0, fresh.find(';'));
+      CHECK(handle_ui(&both) == ESP_OK);
+      CHECK_MSG(g_dashboards == 1, "the HTTPS cookie behind a stale plain one did not reach the dashboard");
+    }
+  }
 }
 
 void test_exchange_without_pair_token_mints_nothing() {
@@ -650,6 +707,42 @@ void test_reader_shape_rules_unchanged() {
   CHECK(read_of(std::string(400, 'z') + "; cv_session=" + kLive) == kLive);
 }
 
+// Both names (sweep F337): __Host-cv_session (set over HTTPS) is read
+// first, wherever it sits in the header, and when it is present but
+// malformed nothing is read; plain cv_session is read when it is the only
+// one. Before, the reader knew one name: the prefixed cookie alone read
+// nothing, and a plain cookie in front of it was read instead.
+void test_reader_takes_both_names_the_host_prefixed_first() {
+  CHECK_MSG(read_of("__Host-cv_session=" + kLive) == kLive,
+            "the __Host- cookie alone read " + read_of("__Host-cv_session=" + kLive));
+  CHECK_MSG(read_of("cv_session=" + kOther + "; __Host-cv_session=" + kLive) == kLive,
+            "a plain cookie in front of the __Host- one: read " +
+                read_of("cv_session=" + kOther + "; __Host-cv_session=" + kLive));
+  CHECK_MSG(read_of("__Host-cv_session=" + kLive + "; cv_session=" + kOther) == kLive,
+            "the __Host- cookie in front of a plain one: read " +
+                read_of("__Host-cv_session=" + kLive + "; cv_session=" + kOther));
+  CHECK(read_of("theme=dark; __Host-cv_session=" + kLive + "; lang=en") == kLive);
+  CHECK(read_of("theme=dark;\t__Host-cv_session=" + kLive) == kLive);
+  // A present but malformed __Host- cookie reads nothing; the plain one
+  // behind or in front of it is not taken instead.
+  CHECK_MSG(read_of("__Host-cv_session=" + kLive.substr(0, 10) + "; cv_session=" + kOther) == "<none>",
+            "a malformed __Host- cookie fell back to the plain one");
+  CHECK_MSG(read_of("cv_session=" + kOther + "; __Host-cv_session=" + kLive + "g") == "<none>",
+            "a malformed __Host- cookie behind a plain one fell back to it");
+  CHECK(read_of("__Host-cv_session=; cv_session=" + kOther) == "<none>");
+  // The first cookie with the __Host- name is the one read.
+  CHECK(read_of("__Host-cv_session=" + kOther + "; __Host-cv_session=" + kLive) == kOther);
+  // Plain cv_session alone is still read, before or after other cookies.
+  CHECK(read_of("cv_session=" + kOther) == kOther);
+  CHECK(read_of("theme=dark; cv_session=" + kOther) == kOther);
+  // Never a longer name, another case, or a value holding the name.
+  CHECK_MSG(read_of("x__Host-cv_session=" + kLive) == "<none>", "x__Host-cv_session was read as the session");
+  CHECK_MSG(read_of("__host-cv_session=" + kLive) == "<none>", "__host-cv_session (lower case) was read as the session");
+  CHECK_MSG(read_of("foo=__Host-cv_session=" + kLive) == "<none>", "a value holding __Host-cv_session= was read");
+  CHECK_MSG(read_of("x__Host-cv_session=" + kOther + "; cv_session=" + kLive) == kLive,
+            "a lookalike of the __Host- name hid the plain cookie");
+}
+
 void test_dashboard_branch_reads_the_whole_name() {
   // A live session, presented under a longer name: the landing page, not the
   // dashboard (before: the dashboard).
@@ -697,10 +790,18 @@ std::string fn_body(const std::string& src, const std::string& sig) {
 void test_sketch_text() {
   const std::string ino = read_file(CANARY_WAP_INO);
   CHECK(!ino.empty());
-  // The attributes are spelled once, in the writer.
-  CHECK(count_of(ino, "\"cv_session=%s;") == 1);
+  // The attributes are spelled once, in the writer, and the name follows
+  // the transport (sweep F337): __Host-cv_session over HTTPS, else
+  // cv_session. No other format string in the sketch names the cookie.
+  CHECK(count_of(ino, "\"%s=%s; HttpOnly;") == 1);
+  CHECK_MSG(count_of(ino, "\"cv_session=%s;") == 0, "a format string spells the cookie's name again");
   const std::string writer = fn_body(ino, "static bool session_cookie_header(");
-  CHECK(writer.find("\"cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s\"") != std::string::npos);
+  CHECK(writer.find("\"%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s\"") != std::string::npos);
+  CHECK_MSG(writer.find("tls ? \"__Host-cv_session\" : \"cv_session\", session_hex, tls ? \"; Secure\" : \"\"") != std::string::npos,
+            "session_cookie_header() does not name the cookie by its transport");
+  // No Strict-Transport-Security header is sent (THREAT_MODEL: declined).
+  CHECK_MSG(ino.find("\"Strict-Transport-Security\"") == std::string::npos,
+            "the sketch sends a Strict-Transport-Security header");
   CHECK(writer.find("req->handle == g_https_server") != std::string::npos);
   // Both Set-Cookie sites send the writer's output, and there are only two.
   CHECK(count_of(ino, "\"Set-Cookie\"") == 2);
@@ -968,6 +1069,7 @@ int main() {
   test_exchange_over_https_is_secure();
   test_exchange_on_plain_http_boot_is_not_secure();
   test_exchange_on_port_80_beside_https_is_not_secure();
+  test_https_name_is_host_prefixed_and_round_trips();
   test_exchange_without_pair_token_mints_nothing();
   test_first_boot_setup_flow_unchanged();
   test_setup_name_is_exact();
@@ -979,6 +1081,7 @@ int main() {
   test_reader_never_takes_a_longer_name_or_a_value();
   test_reader_finds_the_real_cookie_behind_a_lookalike();
   test_reader_shape_rules_unchanged();
+  test_reader_takes_both_names_the_host_prefixed_first();
   test_dashboard_branch_reads_the_whole_name();
   test_sketch_text();
   test_session_lives_24_hours_at_any_uptime();

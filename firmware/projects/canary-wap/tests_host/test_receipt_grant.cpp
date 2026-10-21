@@ -38,9 +38,10 @@
 //     cookie alone refused on the next request;
 //   - on a cookie beside a claim: the receipt as the claim, the tap unspent;
 //   - a bare request on an open tap: the receipt and a Set-Cookie, as before;
-//     the cookie Secure when the answer leaves over the HTTPS server (the tap
-//     and the claim alike), never on a plain-HTTP boot, where the first-boot
-//     SoftAP setup's recovery-kit save mints it (sweep F289's residual; the
+//     the cookie Secure and named __Host-cv_session when the answer leaves
+//     over the HTTPS server (the tap and the claim alike; the name is sweep
+//     F337's), never on a plain-HTTP boot, where the first-boot SoftAP
+//     setup's recovery-kit save mints cv_session (sweep F289's residual; the
 //     writer, session_cookie_header(), is cut with the handlers, and
 //     test_session_cookie.cpp drives handle_ui's mint);
 //   - a wrong claim is refused and spends nothing (sweep F342; before, it
@@ -697,7 +698,11 @@ void test_receipt_bare_tap_unchanged() {
 }
 
 // The receipt's session cookie: Secure exactly when this answer leaves over
-// the HTTPS server (sweep F289's residual). Before, it never was.
+// the HTTPS server (sweep F289's residual). Before, it never was. And named
+// by the same transport (sweep F337): __Host-cv_session over HTTPS,
+// cv_session over plain HTTP. The name checks are anchored at the start:
+// the cookie bridge above matches find("cv_session=" + live), which also
+// matches inside the prefixed name, so only these rows tell the two apart.
 void test_receipt_cookie_secure_over_https_only() {
   const std::string attrs = "; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400";
   // The first-boot SoftAP setup runs HTTP-only (no HTTPS server): the
@@ -724,6 +729,7 @@ void test_receipt_cookie_secure_over_https_only() {
   CHECK_MSG(tls.size() > 8 && tls.find(attrs + "; Secure") != std::string::npos &&
                 tls.compare(tls.size() - 8, 8, "; Secure") == 0,
             "the HTTPS tap's cookie was '" + tls + "'");
+  CHECK_MSG(tls.find("__Host-cv_session=") == 0, "the HTTPS tap's cookie was '" + tls + "', not __Host-cv_session");
   // The setup-door claim over it: the same cookie.
   reset_device();
   g_https_server = &g_https_server_obj;
@@ -733,6 +739,8 @@ void test_receipt_cookie_secure_over_https_only() {
   CHECK(receipt(claim) == 1);
   CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::SETUP_DOOR_CLAIM);
   CHECK(header(claim.r, "Set-Cookie").find(attrs + "; Secure") != std::string::npos);
+  CHECK_MSG(header(claim.r, "Set-Cookie").find("__Host-cv_session=") == 0,
+            "the HTTPS claim's cookie was '" + header(claim.r, "Set-Cookie") + "', not __Host-cv_session");
   // HTTPS up, but this answer on the plain server: no Secure.
   reset_device();
   g_https_server = &g_https_server_obj;
@@ -740,6 +748,7 @@ void test_receipt_cookie_secure_over_https_only() {
   Req port80;
   CHECK(receipt(port80) == 1);
   CHECK(header(port80.r, "Set-Cookie").find("Secure") == std::string::npos);
+  CHECK(header(port80.r, "Set-Cookie").find("cv_session=") == 0);
   // A refusal over HTTPS sets no cookie at all.
   reset_device();
   g_https_server = &g_https_server_obj;

@@ -2769,16 +2769,23 @@ alone, and beside a wrong bearer, refused on both routes; a bearer, the
 BOOT tap and the setup-door claim served); the compile is CI's; not run on
 a device. Owner: U1. The broker-move step: `move_needs_password()` in
 `csi_mqtt.cpp`, host-tested in `tests_host/test_mqtt_reinit.cpp` (the REAL
-handler; every refusal test fails with the gate reverted).
+handler; every refusal test fails with the gate reverted). The rows below
+are written for `https://`, which no stock WAP serves (F15): until one
+does, run them at `http://canary-<suffix>.local` with `curl -s` in place of
+`curl -sk`. The cookie is then `cv_session`; over HTTPS it is
+`__Host-cv_session` (F337), and the device reads either name, so the curl
+lines' `Cookie: cv_session=<hex>` works on both.
 
 - [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
     on the home network with no session for it (a private window), `curl`,
     the API token from a recovery kit.
   - Repro: open `https://canary-<suffix>.local/` and follow **Open
-    dashboard** (the `?cv_pair=` link): the dashboard loads on the
-    `cv_session` cookie. From the browser's developer tools (Application,
-    Cookies) copy the cookie's value `<hex>`. Then: `curl -sk -o /dev/null
+    dashboard** (the `?cv_pair=` link): the dashboard loads on the session
+    cookie, `__Host-cv_session` over HTTPS and `cv_session` over plain HTTP
+    (F337). From the browser's developer tools (Application, Cookies) copy
+    the cookie's value `<hex>` (the reader takes either name, so the curl
+    lines below send it as `cv_session`). Then: `curl -sk -o /dev/null
     -w '%{http_code}\n' -H "Cookie: cv_session=<hex>"
     https://canary-<suffix>.local/api/provisioning-receipt`; the same with
     `.../api/pairing-qr`; the same two with `-H "Authorization: Bearer
@@ -2869,6 +2876,10 @@ backoff's clear outside `api_auth.h` to the receipt, after its refusal
 is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
+  - Blocked until a WAP serves HTTPS (F15): no stock unit stores a
+    certificate, so the two HTTPS answers cannot be read yet. The
+    first-boot SoftAP step and the two `xcv_session` curls run now, over
+    `http://canary-<suffix>.local` with `curl -s`.
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
     up, a second unit (or this one after a factory reset) at its first-boot
     SoftAP setup, a browser with developer tools, `curl`.
@@ -2883,10 +2894,11 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     xcv_session=<hex>" https://canary-<suffix>.local/api/status` with a live
     session's `<hex>`, and the same with `-H "Cookie: xcv_session=0;
     cv_session=<hex>"`.
-  - Expected: both HTTPS answers carry `cv_session=<64 hex>; HttpOnly;
-    SameSite=Strict; Path=/; Max-Age=86400; Secure` and the browser marks
-    the cookie Secure; the first-boot SoftAP answer carries the same
-    attributes without `Secure` and the browser keeps the cookie (the setup
+  - Expected: both HTTPS answers carry `__Host-cv_session=<64 hex>;
+    HttpOnly; SameSite=Strict; Path=/; Max-Age=86400; Secure` (the name is
+    F337's) and the browser marks the cookie Secure; the first-boot SoftAP
+    answer carries `cv_session=<64 hex>` with the same attributes without
+    `Secure` and the browser keeps the cookie (the setup
     page's optional Home Assistant step, which rides it, then saves); the `xcv_session` curl is `401` (a
     longer name is not this cookie) and the one with both cookies is `200`.
     Before this change no answer carried `Secure`, and `xcv_session=<hex>`
@@ -3083,6 +3095,46 @@ and `handle_provisioning_receipt()` in `canary_wap.ino`, over the staged
     - `http://canary.local` and `http://192.168.4.1` (and `http://CANARY.LOCAL`) open the wizard;
     - `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/` returns the static instruction page (`200`, no `Location`), and `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/api/wifi/pair-token` answers `404 {"ok":false}`.
   - Artifact: `docs/audit/repro/F344/`.
+
+## canary-wap: the session cookie's name follows the transport (F337) — on-device verification
+
+Host-tested (`tests_host/test_session_cookie.cpp`: the HTTPS exchange's
+`__Host-cv_session`, the plain-HTTP boot's `cv_session`, each sent back to
+the dashboard, and the reader's two names, the `__Host-` one first;
+`tests_host/test_receipt_grant.cpp`: the receipt's HTTPS tap and claim;
+`wizard_logic.test.js`: the writer's text); the compile is CI's. Not run in
+a browser or on a device. Whether Safari and Chrome store a `__Host-`
+`Secure` cookie from a clicked-through self-signed origin, and whether a
+browser holding both cookies stays under esp_http_server's 1024-byte
+request-header limit, are open until a WAP serves HTTPS. The first row
+runs now, over plain HTTP; the second is blocked until a WAP serves HTTPS
+(F15: no stock unit stores a certificate). Code: `session_cookie_header()`
+in `canary_wap.ino`, `read_session_cookie_hex()` in `csi_integration.cpp`.
+Owner: U1.
+
+- [ ] **canary-wap: over plain HTTP the cookie stays `cv_session`, and the device reads `__Host-cv_session` first (F337)**
+  - Setup: a stock unit on this firmware, set up and joined to the home Wi-Fi; a laptop with `curl` on the same network. `curl` sends whatever `Cookie` header it is given, so it can present the `__Host-` name over plain HTTP, which a browser never does.
+  - Repro and expected:
+    1. Take a token from a real landing (`curl -s http://<STA address>/ | grep -o 'cv_pair=[0-9a-f]*' | head -1`), then `curl -si 'http://<STA address>/?cv_pair=<token>'`: `302` to `/` with one `Set-Cookie: cv_session=<64 hex>; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`, with no `Secure` and no `__Host-` name. Call its value `<hex>`.
+    2. `curl -s -o /dev/null -w '%{http_code}\n' -H "Cookie: __Host-cv_session=<hex>" http://<STA address>/api/status` answers `200`, and so does `-H "Cookie: cv_session=<hex>"`.
+    3. `-H "Cookie: cv_session=<hex>; __Host-cv_session=<hex>"` answers `200`.
+    4. `-H "Cookie: __Host-cv_session=0; cv_session=<hex>"` (a malformed `__Host-` cookie in front of a good plain one) and `-H "Cookie: __Host-cv_session=<64 hex no session holds>; cv_session=<hex>"` both answer `401`: the `__Host-` cookie is the one read, and the plain one behind it is not tried.
+    5. `-H "Cookie: x__Host-cv_session=<hex>"` and `-H "Cookie: __host-cv_session=<hex>"` answer `401`.
+  - Artifact: `docs/audit/repro/F337/plain-http/`.
+
+- [ ] **canary-wap: the HTTPS session cookie is `__Host-cv_session` (F337) — blocked until a WAP serves HTTPS (F15)**
+  - Setup: unit 1 serving `https://canary.local`; unit 2, or the same unit factory-reset; desktop Chrome and Safari; `curl`.
+  - Repro:
+    1. Use unit 1 at `https://canary.local`: follow **Open dashboard**.
+    2. Within 24 h, set up unit 2 at `http://canary.local` (factory-reset variant: the same unit at `http://192.168.4.1`).
+    3. Save the recovery kit, then run the Home Assistant step.
+    4. Holding both cookies, load the dashboard over HTTPS in desktop Chrome and Safari.
+    5. Read the headers of both HTTPS mint answers with `curl -sk -D - -o /dev/null` (a GET; the routes answer no HEAD): `'https://canary.local/?cv_pair=<token>'`, and `https://canary.local/api/provisioning-receipt` inside a BOOT tap's window.
+  - Expected:
+    - the kit save's `cv_session` is stored and the Home Assistant save succeeds; before, it answered "This needs the recovery-kit step first";
+    - the dashboard over HTTPS answers `200`, not `431`;
+    - both mint answers show `__Host-cv_session=<64 hex>; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400; Secure`.
+  - Artifact: `docs/audit/repro/F337/https/`.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 

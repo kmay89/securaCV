@@ -398,6 +398,37 @@
   up in the IDF 4.4 headers too, not only in the current docs.
 - **Date learned:** 2026-09
 
+### A feature test that names a header no core ships is a feature that never runs
+- **What happened:** Both trees' on-device TLS certificate generator (the
+  WAP's, and the flagship's `FEATURE_HTTPS` builds', backlog F15, #1704) is
+  gated on `__has_include("mbedtls/x509write_crt.h")`. mbedTLS has never
+  shipped that header: its certificate-writing API is declared in
+  `mbedtls/x509_crt.h`, behind `MBEDTLS_X509_CRT_WRITE_C`, which both
+  pinned cores define (arduino-esp32 2.0.17; PlatformIO's
+  framework-arduinoespressif32 3.3.8 and its libs). So the generator, and
+  the only code that stores a certificate, compile out on every unit; every
+  CI leg is green, and the ledger, THREAT_MODEL, SECURITY_MODEL and
+  FEATURES.md said HTTPS had landed. No stock unit of either tree has ever
+  served HTTPS or handed out a `tls_cert_fp` pin. Found while deciding
+  F337 and F344, which both depend on whether HTTPS runs.
+- **Root cause:** `__has_include` is false, not an error, for a name that
+  does not exist, so a misspelled or imagined header turns a feature off
+  silently everywhere, and the fallback branch (here: "no certificate, HTTP
+  only", logged on serial and in `tls_mode_reason`) looks like a designed
+  posture. "CI-compiled" was read as "landed", though a compile proves only
+  that both branches parse.
+- **Fix:** Docs corrected (F15's dated correction, the security docs,
+  FEATURES.md). The guard itself is not changed yet: testing
+  `mbedtls/x509_crt.h` and `MBEDTLS_X509_CRT_WRITE_C` turns HTTPS on for
+  every such unit and changes the pin the apps trust, so it waits for the
+  bench (F15).
+- **Rule:** A feature test that guards a whole feature must be shown true on
+  at least one pinned core before the feature is called landed: find the
+  header in that core's tree, or read the build's own log line for the
+  branch it took. A green compile with the feature compiled out is not
+  evidence for the feature.
+- **Date learned:** 2026-10
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense
@@ -629,6 +660,35 @@
   (the pages and the setup names) and `test_receipt_grant.cpp` (the receipt's
   Host row); `firmware/scripts/check_improv_sync.sh` holds the staged copy
   byte-identical to the canonical header.
+
+### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
+- **What happened:** Since #1832 the WAP's session cookie carries `Secure`
+  over HTTPS and not over plain HTTP, under one name, `cv_session`. A browser
+  that holds a `Secure` cookie refuses a same-name cookie from an http page
+  (RFC 6265bis, "Leave Secure Cookies Alone"), and every WAP claims
+  `canary.local` while every SoftAP is `192.168.4.1`. So once HTTPS runs, a
+  browser that used one unit at `https://canary.local` and then sets up a
+  second (or the same one after a factory reset, or one whose HTTPS start
+  failed) over plain HTTP drops every session cookie the plain page sets,
+  and the wizard's Home Assistant step answers 401, until the old cookie's
+  24 h run out. No stock unit serves HTTPS yet (F15), so no owner has hit
+  it; F337 lands before HTTPS does.
+- **Root cause:** A cookie's name is shared across both schemes at one host,
+  and the `Secure` attribute does not make two cookies of one name.
+- **Fix:** Over HTTPS the cookie is `__Host-cv_session`, which in current
+  browsers only an https answer with `Path=/` and no `Domain` can set, so an
+  http page can neither block it nor shadow it; over plain HTTP it stays
+  `cv_session`. The reader takes the `__Host-` one first and does not fall
+  back when it is malformed. That fallback to the plain name on an HTTPS
+  request is safe only while every session buys the same thing.
+- **Rule:** When one origin name serves both schemes, give the HTTPS cookie
+  a `__Host-` name of its own. And before one session can do more than
+  another, read only the `__Host-` name over HTTPS.
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the HTTPS exchange's name and its round trip, the reader's two names),
+  `test_receipt_grant.cpp` (the receipt's HTTPS cookie) and
+  `wizard_logic.test.js` (the writer's text).
+- **Date learned:** 2026-10
 
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into

@@ -456,9 +456,12 @@ window the session can open (it mints the wizard's pair token over
 (`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
 ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
 toward the same per-address lockout as the admin routes (F343), and the
-session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever
-it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
-cookie would be dropped); host-tested, the ESP32 compile is CI's, not
+session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` and
+named `__Host-cv_session` whenever it is set over HTTPS (the first-boot
+setup runs plain HTTP, where a `Secure` cookie would be dropped, and sets
+`cv_session`; two names, F337, so that once a WAP serves HTTPS a browser
+holding its cookie can still sign in to a unit it meets over plain HTTP at
+canary.local); host-tested, the ESP32 compile is CI's, not
 bench-tested. The WAP's lockout is per source address. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or taps BOOT, which clears its address
@@ -511,7 +514,12 @@ there, except the connectivity probes phones and laptops send, and a build,
 core or certificate step that cannot do TLS serves plain HTTP and says why in
 `/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
 `usb-onboard` inherit the flag from `dev` and no workflow builds them; none
-of the four has run on hardware. The flagship's release images (`release`,
+of the four has run on hardware. And no stock unit of either tree serves
+HTTPS today: the on-device certificate generator compiles out on every
+pinned core (its guard tests `mbedtls/x509write_crt.h`, a header mbedTLS
+never ships) and nothing else stores a certificate, so the WAP serves plain
+HTTP after setup and the flagship's HTTPS builds serve plain HTTP and say
+why in `tls_mode_reason` (F15). The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
@@ -676,7 +684,7 @@ could use against the kernel; the receipt names the credential that asked
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
 | **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and SNTP from every product without GPS. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup (neither Canary serves it on any stock unit today, F15), the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -690,7 +698,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup — neither Canary serves it on any stock unit today, F15; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
 | Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 

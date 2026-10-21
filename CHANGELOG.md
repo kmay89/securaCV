@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap answers its pages, the receipt and the setup mints only to a Host that names it (sweep F344)
+### canary-wap answers its pages, the receipt and the setup mints only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337)
 
 - **A DNS-rebinding page gets no session, no pair token and no receipt from
   a WAP (sweep F344).** After setup the WAP read no `Host` header: its
@@ -44,6 +44,40 @@
   match the two names exactly, in any case and with any port; every other
   name still gets the static "open canary.local" page and no token.
   Host-tested; not run on a device.
+- **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
+  `cv_session` over plain HTTP (sweep F337).** A browser that holds a
+  `Secure` cookie refuses a same-name cookie from an http page, so with one
+  name a browser that had used one WAP at `https://canary.local` could not
+  sign in to a second unit it set up at `http://canary.local` or
+  `http://192.168.4.1` (every WAP claims `canary.local`), to the same unit
+  after a factory reset, or to a unit whose HTTPS start failed, until the
+  old cookie's 24 hours ran out; the wizard's Home Assistant step answered
+  "This needs the recovery-kit step first" meanwhile. The two names never
+  meet. The device reads `__Host-cv_session` first and a malformed one reads
+  nothing; plain `cv_session` is still read. In current browsers only an
+  https answer from the device can set the `__Host-` name, so a cookie
+  planted over http cannot shadow it (integrity, not availability: an
+  on-path host can still sign a browser out by overflowing its Cookie
+  header). No `Strict-Transport-Security`: browsers ignore it from a
+  self-signed certificate and for an IP address, and it would shut a
+  browser out of a unit that falls back to HTTP. Sessions live in RAM, so
+  the update's reboot ends them: tap **Open dashboard** once, as after any
+  reboot. On a stock unit nothing else changes today, because no stock WAP
+  serves HTTPS (below). Host-tested (`test_session_cookie.cpp`,
+  `test_receipt_grant.cpp`, `wizard_logic.test.js`); not run in a browser
+  or on a device.
+- **Neither firmware tree's stock build serves HTTPS today (F15
+  corrected).** The on-device certificate generator on the WAP and on the
+  flagship's `FEATURE_HTTPS` builds is gated on `mbedtls/x509write_crt.h`, a
+  header mbedTLS has never shipped (its certificate-writing API is in
+  `mbedtls/x509_crt.h`; checked on arduino-esp32 2.0.17 and PlatformIO's
+  framework-arduinoespressif32 3.3.8), and nothing else stores a
+  certificate. So every WAP serves plain HTTP after setup and hands out no
+  `tls_cert_fp` pin, and the flagship's HTTPS builds serve HTTP and say why in
+  `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL and FEATURES.md no longer
+  say otherwise. The generator itself is not changed here: fixing its guard
+  turns HTTPS on for every such unit and changes the pin the apps trust,
+  which needs the bench (F15 stays open).
 
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
