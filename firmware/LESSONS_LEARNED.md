@@ -547,10 +547,10 @@
   error in its own lookup sets aside. What the firmware can promise is
   narrower: it never writes over a key IDF still reports as stored. Know
   what the layer under you does on a refusal before you promise what
-  survives it, and which answers it can
-  give at all: IDF's blob-size lookup, once the open succeeded, answers
-  only found, not found or a bad handle, so a test's other answers are ones
-  the load refuses for not knowing them, not ones a device sends today. The
+  survives it, and which answers it can give at all: IDF's blob-size
+  lookup, once the open succeeded, answers only found, not found or a bad
+  handle, so a test's other answers are ones the load refuses for not
+  knowing them, not ones a device sends today. The
   way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean
   install on the canary-wap, whose BOOT hold keeps the identity. A read's
   count is part of its answer; a buffer the read refused, filled or not, is

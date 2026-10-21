@@ -302,12 +302,11 @@ static void test_a_good_stored_key_loads_unchanged() {
 //
 // Preferences::getBytes() answers 0, and here the buffer is as it was.
 // Before, the load answered true over the zeroed buffer, and the boot ran on
-// the all-zero key. Now it is Refused, the boot stops, and this firmware
-// writes nothing, so a fault that leaves the entry in place (Read::Fails: a
-// flash read error while IDF copies the data, say) leaves the key for the
-// next boot that can read it. (IDF
-// itself erases an entry whose data CRC fails, inside that read; this fake
-// does not model that.)
+// the all-zero key. Now it is Refused, the boot stops, and the load and its
+// caller write nothing, so a fault that leaves the entry in place
+// (Read::Fails: a flash read error while IDF copies the data, say) leaves
+// the key for the next boot that can read it. (IDF itself erases an entry
+// whose data CRC fails, inside that read; this fake does not model that.)
 static void test_a_failed_read_after_the_length_check_is_refused() {
   fresh_world();
   store(good_key());

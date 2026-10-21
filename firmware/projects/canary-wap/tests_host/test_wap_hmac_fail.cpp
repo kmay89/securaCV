@@ -35,11 +35,13 @@
 //     hmac over the same labels, MAC and encoder rule); false and the whole
 //     token buffer zeroed when any of its three HMACs fails at any step;
 //   - the two mints refuse a null or zero-length buffer before any HMAC
-//     runs, and derive_api_token() refuses and wipes a buffer shorter than
-//     the 35-character token and its NUL before any HMAC runs, so a 1-, 2-,
-//     3-, 34- or 35-byte window inside a guarded array is refused with no
-//     byte written past it and a 36-byte one mints the known token (no
-//     caller passes a short one); format_api_token_string() writes nothing
+//     runs (each null call in a child process, so a write through the
+//     pointer is a failed check, not a crash of the suite), and
+//     derive_api_token() refuses and wipes a buffer shorter than the
+//     35-character token and its NUL before any HMAC runs, so a 1-, 2-, 3-,
+//     34- or 35-byte window inside a guarded array is refused with no byte
+//     written past it and a 36-byte one mints the known token (no caller
+//     passes a short one); format_api_token_string() writes nothing
 //     past the length it is given, from 0 to 40 bytes;
 //   - resolve_ap_password(): after a failed provisioning (g_device.initialized
 //     false, what provision_device() leaves when a mint refuses) both builds
@@ -487,24 +489,63 @@ static void api_token_refuses_any_failed_hmac() {
   }
 }
 
+// Runs `fn` in a child process and answers how the child ended: "exit N"
+// with fn()'s answer as N, or "signal N" when it died on one. A call that
+// may write through a null pointer runs here, so a write the code under test
+// should never make is a failed check, not a crash that ends the suite and
+// hides every check after it.
+template <typename Fn>
+static std::string in_child(Fn fn) {
+  std::fflush(nullptr);
+  const pid_t child = fork();
+  if (child == 0) _exit(fn());
+  int status = 0;
+  std::string how = "fork failed";
+  if (child > 0 && waitpid(child, &status, 0) == child) {
+    how = WIFSIGNALED(status) ? "signal " + std::to_string(WTERMSIG(status))
+                              : "exit " + std::to_string(WEXITSTATUS(status));
+  }
+  return how;
+}
+
+// What a mint did with a null buffer, as a child's exit code: bit 0 set when
+// it answered true, bit 1 when an HMAC ran.
+template <typename Mint>
+static int null_buffer_answer(Mint mint) {
+  seam::arm(seam::Step::None);
+  const bool ok = mint();
+  return (ok ? 1 : 0) | (seam::g_lookups != 0 ? 2 : 0);
+}
+
 // The two mints' own guards: a null or zero-length buffer is refused before
 // any HMAC runs, and a token buffer too short for the 35-character token and
 // its NUL is refused and wiped before any HMAC runs (no caller passes one:
-// the buffers are g_device's, 36 and 16 bytes).
+// the buffers are g_device's, 36 and 16 bytes). The null-buffer calls run in
+// a child (in_child()), so a guard deleted from either mint fails a check
+// here instead of crashing the suite on the write through the null pointer.
 static void mints_refuse_a_buffer_they_cannot_fill() {
   uint8_t k[32];
   key_0x01(k);
   char tok[36];
+  const std::string tok_null =
+      in_child([&] { return null_buffer_answer([&] { return derive_api_token(k, nullptr, 36); }); });
+  CHECK_MSG(tok_null == "exit 0" || tok_null == "exit 2",
+            "derive_api_token(): a null buffer was not refused (" + tok_null + ")");
+  CHECK_MSG(tok_null == "exit 0" || tok_null == "exit 1",
+            "derive_api_token(): an HMAC ran for a null buffer, or the call did not return (" +
+                tok_null + ")");
   seam::arm(seam::Step::None);
-  CHECK_MSG(!derive_api_token(k, nullptr, sizeof(tok)), "derive_api_token(): a null buffer");
-  CHECK_MSG(seam::g_lookups == 0, "derive_api_token(): an HMAC ran for a null buffer");
   std::memset(tok, 'Z', sizeof(tok));
   CHECK_MSG(!derive_api_token(k, tok, 0), "derive_api_token(): a zero-length buffer");
   CHECK_MSG(seam::g_lookups == 0, "derive_api_token(): an HMAC ran for a zero-length buffer");
   CHECK_MSG(tok[0] == 'Z', "derive_api_token(): wrote into a zero-length buffer");
 
   char pw[16];
-  CHECK_MSG(!derive_ap_password(k, nullptr, sizeof(pw)), "derive_ap_password(): a null buffer");
+  const std::string pw_null =
+      in_child([&] { return null_buffer_answer([&] { return derive_ap_password(k, nullptr, 16); }); });
+  CHECK_MSG(pw_null == "exit 0",
+            "derive_ap_password(): a null buffer was not refused before any HMAC ran (" + pw_null +
+                ")");
   std::memset(pw, 'Z', sizeof(pw));
   CHECK_MSG(!derive_ap_password(k, pw, 0), "derive_ap_password(): a zero-length buffer");
   CHECK_MSG(pw[0] == 'Z', "derive_ap_password(): wrote into a zero-length buffer");
@@ -599,18 +640,10 @@ static void the_token_formatter_stays_in_its_window() {
     const std::string want = len < 4 ? "" : token.substr(0, len - 1);
     CHECK_MSG(w.text() == want, what + ": " + w.text());
   }
-  std::fflush(nullptr);
-  const pid_t child = fork();
-  if (child == 0) {
+  const std::string how = in_child([&] {
     format_api_token_string(in, sizeof(in), nullptr, 4);
-    _exit(0);
-  }
-  int status = 0;
-  std::string how = "fork failed";
-  if (child > 0 && waitpid(child, &status, 0) == child) {
-    how = WIFSIGNALED(status) ? "signal " + std::to_string(WTERMSIG(status))
-                              : "exit " + std::to_string(WEXITSTATUS(status));
-  }
+    return 0;
+  });
   CHECK_MSG(how == "exit 0",
             "format_api_token_string(): a null output did not return (" + how + ")");
 }

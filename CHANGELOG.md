@@ -38,49 +38,52 @@
   All of it is today's behavior, not a decision (read from IDF v4.4.7,
   v5.5.1 and v5.5.4's source; not run on a device); what holds throughout is
   that the firmware never writes over a key IDF still reports as stored. The
-  opt-in image's at-rest policy refusal no longer
-  generates a key before the store refuses it. A working unit loads the
-  same key as before; a first boot generates one as before, and no longer
-  logs Preferences' `nvs_get_blob len fail: privkey NOT_FOUND` for the key
-  read (an error-level line). **Host-tested** (new
+  opt-in image's at-rest policy refusal no longer generates a key before the
+  store refuses it. A working unit loads the same key as before; a first
+  boot generates one as before, and no longer logs Preferences'
+  `nvs_get_blob len fail: privkey NOT_FOUND` for the key read (an
+  error-level line). **Host-tested** (new
   `firmware/tests_host/test_nvs_load_key.cpp`: the load, its probe, the
   store and the caller, cut out of the firmware, over a fake NVS that can
   fail the open, the length lookup, the session or the read, and built again
-  as the opt-in image; against the old code, adapted only so that it builds,
-  it fails 187 of its 710 checks and the opt-in build 12 of 76); the
-  PlatformIO compile is CI's; not run on a device.
+  as the opt-in image; against the old code, adapted to build and to keep
+  its shape, as the sweep's F360 entry lists, it fails 187 of its 710 checks
+  and the opt-in build 12 of 76); the PlatformIO compile is CI's; not run on
+  a device.
 - **The canary-wap's key load takes the same rule, and its boot halts on a
   key it cannot read (sweep F360).** Its `nvs_load_key()` had both faults.
   A read that failed after the length check, before IDF copied anything,
   let provisioning go on with the zeroed key, so a release unit raised its
   setup network under the published `cv-3jByJ6rHdhM2` and signed records
   with a key anyone holds; a failed open or length lookup replaced the
-  identity. Now only IDF's "not found" makes a new key, and a key IDF
-  reports as stored that the unit cannot read stops the boot before
-  anything signs, with no key generated and nothing written to the identity
-  key or the chain state (on a crash reset the safe-mode check has written
-  its own counters by then), and with `[!!] PROVISIONING
-  FAILED - the identity key could not be used (see the identity key line
-  above) - HALTING` on the serial console. What a later boot finds is as on
-  the flagship's `env:full` (the WAP builds on core 3.3.8): after a fault in
-  the read that left the entry in place, the key; after an entry whose data
-  checksum failed, which IDF erased, a new identity on the next boot. A key
-  whose index entry or data chunk failed IDF's header check, or a flash read
-  error in IDF's own lookup of it, makes a new identity that same boot. The
+  identity. Now only IDF's "not found" makes a new key. A key IDF reports
+  as stored that the unit cannot use (a read that fails or comes back
+  short, a key that is not 32 bytes, a key of 32 zero bytes), or an NVS that
+  cannot say whether one is stored, stops the boot before anything signs,
+  with no key generated and nothing written to the identity key or the
+  chain state (on a crash reset the safe-mode check has written its own
+  counters by then), and with `[!!] PROVISIONING FAILED - the identity key
+  could not be used (see the identity key line above) - HALTING` on the
+  serial console. What a later boot finds is as on the flagship's `env:full`
+  (the WAP builds on core 3.3.8): after a fault in the read that left the
+  entry in place, the key; after an entry whose data checksum failed, which
+  IDF erased, a new identity on the next boot. A key whose index entry or
+  data chunk failed IDF's header check, or a flash read error in IDF's own
+  lookup of it, makes a new identity that same boot. The
   WAP's BOOT hold keeps the identity (it has no wipe stage), so a clean
   install in either flasher is its only way to a new identity on purpose,
   halted or not. It halts, where other provisioning failures go on (sweep
   F336), because from there the boot record and the mesh would use the
   zeroed key and the chain would restart at seq 0 over the stored one. A
-  working unit and a first boot are unchanged. **Host-tested** (the
-  first-boot suite,
+  working unit and a first boot are unchanged.
+  **Host-tested** (the first-boot suite,
   `firmware/projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`, now
   runs the load, its probe, the store and the caller over a fake NVS that
   can fail the length lookup, the session or the read, and a key store that
   fails, and pins the halt and its line; against the old load and key
-  block, adapted only so that they build, 9 of its 21 test functions fail,
-  each at its first failed check); the ESP32 compile is CI's; not run on a
-  device.
+  block, adapted to build and to keep the old code's shape, as the sweep's
+  F360 entry lists, 9 of its 21 test functions fail, each at its first
+  failed check); the ESP32 compile is CI's; not run on a device.
 
 ### canary-wap refuses a failed HMAC instead of minting a key, a token or a backup from stack bytes (sweep F359, #1840)
 
@@ -120,9 +123,9 @@
   mint, 884 checks in all; against the mint and its formatter as they
   stood before the review's buffer fix, 20 of them fail, 19 in the two new
   buffer-window tests (the formatter's null-output case among them, run in
-  a child process so a crash is a failed check); with the mints in their
-  old place, ahead of the chain load, 189 of the provisioning runs' checks
-  fail;
+  a child process so a crash is a failed check, as both mints' null-buffer
+  calls now are); with the mints in their old place, ahead of the chain
+  load, 189 of the provisioning runs' checks fail;
   `firmware/tests_host/test_ap_password.cpp`'s parity with the flagship over
   256 keys still holds); the ESP32 compile is CI's; not run on a device.
 

@@ -60,8 +60,9 @@
 // establish_identity_key() (provision_device()'s key block, cut verbatim)
 // generates only on Absent; on Refused it sets g_device.key_refused,
 // generates and writes nothing, and setup() halts on it (pinned below).
-// Against the old load and the old key block, adapted only so that they
-// build, the key cases fail.
+// Against the old load and the old key block, adapted to build and to keep
+// the old code's shape (the sweep's F360 entry lists each change), the key
+// cases fail.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run
 
