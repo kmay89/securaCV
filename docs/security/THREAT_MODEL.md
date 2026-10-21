@@ -449,7 +449,15 @@ stated, bounded to coarse claims, and revocable.
   no) is stated in [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
 - **Secure tier: PARTIAL PASS.** Secure boot prevents firmware replacement;
   flash encryption prevents data extraction without device cooperation.
-- Factory reset destroys all data (user can trigger before seizure) — both tiers.
+- A factory reset before the seizure does not destroy the data, on either
+  tier. The canary-wap's 10 s BOOT hold clears the saved Wi-Fi, the broker
+  login and the device name, and keeps the identity key, the chain state,
+  the witness records and the health log on SD, and the API token; no hold
+  sheds its key (a clean install, a full erase in either flasher, is its way
+  to a new identity). The `firmware/canary` flagship's 10 s hold keeps the
+  identity key and the chain state too; only its further stage, BOOT held
+  on to 30 s, sheds them, by clearing its NVS namespace. Neither hold erases
+  the SD card.
 
 **LIMITATION:** A sufficiently resourced adversary with physical access
 can potentially bypass ESP32 secure boot (active area of research).

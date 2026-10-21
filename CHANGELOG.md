@@ -49,15 +49,19 @@
   `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
-  instruction a WAP page or answer gives: the `403`'s hint and button (its
-  button said "short tap, then poll within 30 seconds", and its hint "Press
+  instruction for the receipt's tap a WAP page or answer gives: the
+  `403`'s hint and button (its button said "short tap, then poll within 30 seconds", and its hint "Press
   the BOOT button on the device to reveal the provisioning receipt."), both
   pages' new `409` text (it names the click, or the tap on Save, before the
   press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
   Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
   above"), and the text of the companion's Home Assistant step (that step's
-  banner is not shown yet; the ledger's F342 entry notes it). The getting
-  started guide's sentence and the Lab's BOOT card said a short press lets
+  banner is not shown yet; the ledger's F342 entry notes it). The
+  companion's BLE OTA line for a v1 manifest ("short-tap BOOT within 30 s
+  before Start") stays press-first: that tap is the break-glass, which no
+  receipt client is asking for, so a device on the network whose ask for
+  the receipt is judged between the tap and Start takes or closes it. The
+  getting started guide's sentence and the Lab's BOOT card said a short press lets
   the dashboard hand over the recovery kit for 30 seconds; they now say the
   press hands it to the one page already asking, so click **Use BOOT Tap
   Once** first. Both pages say to press only once the device has answered
@@ -103,7 +107,10 @@
   the setup door's window as Forget Wi-Fi does, on a unit that had
   credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
   said the USB serial console is disabled in production, and release
-  images enable it.
+  images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
+  reset destroys all data, and it now says what each device's hold keeps
+  (the WAP's keeps the identity key, the chain, the SD records and the
+  token; only the flagship's 30 s stage sheds the key).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 

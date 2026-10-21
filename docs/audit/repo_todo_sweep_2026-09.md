@@ -2382,6 +2382,53 @@ so — see D2 below.)
       companion's gzip is 48,370 bytes, 47,381 before; the dashboard's is
       64,938, unchanged); `gen_wap.py` leaves `wap.json` unchanged and
       `gen_csp.py --check` passes. Host-tested; not run on a device.
+  - Final review fixes (same PR). No behavior changes in the firmware.
+    - `THREAT_MODEL.md` Scenario 4 (a seized device) said a factory reset
+      the owner triggers first destroys all data, on both tiers; the holds
+      #1816 added keep the identity key. It now says what each hold keeps:
+      the WAP's 10 s hold keeps the identity key, the chain, the witness
+      records and health log on SD and the token, and no hold sheds its
+      key; the flagship's 10 s hold keeps the key and the chain, and only
+      its 30 s stage clears them (its NVS namespace); neither erases the
+      SD card.
+    - Three places still gave the receipt's take of the tap as
+      `provisioning_gate_take()` or its one exchange: the BLE break-glass
+      comment in `canary_wap.ino`, `magic_pairing.md` 3.7's row 4 and the
+      receipt suite's header. They now say the receipt's take is
+      `provisioning_gate_take_for()` (`take_exact()`, a compare-and-swap of
+      the judged stamp) and break-glass's is `take()`'s exchange; the
+      comment adds that break-glass is press-first, so a device on the
+      network whose ask is judged between the tap and the BEGIN takes or
+      closes that tap. "Every instruction a WAP page or answer gives puts
+      the ask first" (CHANGELOG, `magic_pairing.md`) is now scoped to the
+      receipt's tap, and both name the companion's BLE OTA line for a v1
+      manifest ("short-tap BOOT within 30 s before Start") as press-first
+      by design. `LESSONS_LEARNED.md`'s fourth-review bullet now says the
+      pages press-prompt once the device has answered one of their asks
+      with `403`. The iPhone app's `PairView.swift` "No recovery kit?" line
+      said "(a short BOOT tap lets you in)" for the WAP's own page; it now
+      says "(Use BOOT Tap Once there lets you in)", the page's button,
+      which gives the order itself.
+    - The two suites pinned bytes 3 and 15 of the arbiter's key one by one
+      and no other (byte 3 by an IPv6 pair, byte 15 by the IPv4 rows' two
+      addresses), so "the arbiter tells IPv6 askers apart by all 16 bytes"
+      above was true of the code but not held by the rows: a compare of
+      bytes 1-15, or of byte 3 and bytes 8-15, passed both suites, and so
+      did a compare that left out any one of the other 14 bytes. Both IPv6
+      rows now add, for each of the 16 bytes, two
+      peers that differ in that byte alone (2001:db8:0:1::5 and that
+      address with the byte's low bit flipped). Every one of those 18
+      mutants now fails both suites (the two above 3 and 21 checks in
+      `test_provisioning_gate.cpp`, 14 and 98 of the receipt suite's), and
+      the last-four-bytes and IPv4-map compares now fail 42 and 54 there
+      and 182 and 252 receipt checks.
+    - The kit save's check in the fetch's `catch` had no row: removing it
+      passed every row, and it is the only thing that stops the loop's end
+      from writing its closing line ("Didn't see a press") on the hidden
+      step when the step is left while the sixteenth ask is out. A row now leaves the step at
+      that ask; it fails with the check removed.
+    - Counts now: `test_receipt_grant.cpp` 6266 checks;
+      `recovery_kit.test.js` 60 tests. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

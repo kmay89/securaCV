@@ -50,7 +50,7 @@
 //     its banner is on screen whenever it holds a line;
 //   * the companion's save belongs to the step on screen (#1842's Codex
 //     review): Do this later or Run again while it runs aborts the ask out
-//     and asks nothing more, and nothing is saved or shown after, a save
+//     (the sixteenth too) and asks nothing more, and nothing is saved or shown after, a save
 //     tapped once the step is back is its own, and every function that
 //     hides the step stops the save first; a fetch that rejects (a Wi-Fi
 //     blip) is followed by more asks until the sixteen are spent, a later
@@ -1077,6 +1077,18 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.deepEqual(now, left);
     assert.ok(win.els['wiz-step-5-result'].classList.contains('hidden'), 'Run again hid the result pane');
     assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later while the last ask is out ends the save with no line on the hidden step', async () => {
+    // The sixteenth ask is the one no wait follows: once its abort rejects
+    // the fetch, only the check in the fetch's catch stops the loop's end
+    // ("Didn't see a press") from writing on the banner stopKitSave() put
+    // away. At an earlier ask the check after the next wait catches it.
+    const { win, asked, left, now } = await leaveDuring('ask', 15, 'skip', Array(16).fill(GATE_403));
+    assert.equal(asked.length, 16);
+    assert.ok(asked[15].opts.signal.aborted, 'the last ask is aborted');
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left, 'the save wrote on the page after the step was left');
     leftIdle(win);
   });
   it('a save left and started again is a new save: the first one\'s end touches nothing of it', async () => {

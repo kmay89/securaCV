@@ -16,11 +16,13 @@
 // unchanged, and the dashboard's own routes still take the cookie.
 //
 // This runs the REAL api_auth.h and the handlers cut verbatim out of
-// canary_wap.ino (handle_provisioning_receipt, handle_pairing_qr, the gate
-// they spend, provisioning_gate_take, and the cookie writer the receipt
-// sends, session_cookie_header; firmware/tests_host/
-// cut_functions.awk) over stubs/receipt_grant (a request with headers and a
-// query string, a response the test reads) and stand-ins for what else they
+// canary_wap.ino (handle_provisioning_receipt, handle_pairing_qr, the
+// receipt's one-asker take of the BOOT tap, provisioning_gate_take_for(),
+// beside the BLE OTA break-glass take of the same tap,
+// provisioning_gate_take(), and the cookie writer the receipt sends,
+// session_cookie_header; firmware/tests_host/cut_functions.awk) over
+// stubs/receipt_grant (a request with headers and a query string, a
+// response the test reads) and stand-ins for what else they
 // call: the receipt writer (recording the grant that admitted the request
 // and writing the two secrets, so a refusal is checked to carry neither), the
 // QR writer (recording its payload), the session mint, the claim ticket (the
@@ -1560,34 +1562,32 @@ void test_first_asker_after_the_tap_loses_to_a_waiting_owner() {
 
 // (c2) Row (c)'s polling owner and late host, both real IPv6 peers whose
 // keys differ only in the prefix (2001:db8::1:c0a8:114 and
-// 2001:db9::1:c0a8:114), and then two link-local peers. The per-address
-// lockout puts every IPv6 peer in one bucket (auth_request_source() is 0 for
-// each), but the tap's asker is the whole 16-byte key: an arbiter that
-// compared the last four bytes, or the IPv4 a key maps to, merged the two
-// and served the host the token. No WAP interface runs IPv6 today; this
-// holds the handler for the day one does.
+// 2001:db9::1:c0a8:114), then two link-local peers, then, for each of the
+// key's 16 bytes, two global peers that differ in that byte alone
+// (2001:db8:0:1::5 and that address with the byte's low bit flipped). The
+// per-address lockout puts every IPv6 peer in one bucket
+// (auth_request_source() is 0 for each), but the tap's asker is the whole
+// 16-byte key: an arbiter that compared the last four bytes, or the IPv4 a
+// key maps to, merged the first two pairs and served the host the token,
+// and one that leaves any one byte out merges a pair of the last sixteen.
+// Without those sixteen the suite pinned only bytes 3 and 15 one by one (15
+// is the byte the keys of kHostA and kHostB differ in): a compare of bytes
+// 1-15, or of byte 3 and bytes 8-15, passed every check. No WAP interface runs IPv6
+// today; this holds the handler for the day one does.
 void test_ipv6_askers_are_two_askers() {
   static const uint8_t kOwner6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
   static const uint8_t kHost6[16] = {0x20, 0x01, 0x0d, 0xb9, 0, 0, 0, 0, 0, 0, 0, 1, 0xc0, 0xa8, 0x01, 0x14};
   static const uint8_t kOwnerLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
   static const uint8_t kHostLink[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x00, 0xaa, 0xbb, 0xff, 0xfe, 0xcc, 0xdd, 0xee};
-  struct Pair {
-    const uint8_t (*owner)[16];
-    const uint8_t (*host)[16];
-    const char* what;
-  };
-  const Pair pairs[] = {
-      {&kOwner6, &kHost6, " (2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114)"},
-      {&kOwnerLink, &kHostLink, " (fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee)"},
-  };
-  for (const Pair& p : pairs) {
+  const auto contended = [](const uint8_t (&owner6)[16], const uint8_t (&host6)[16], const std::string& what) {
+    CHECK_MSG(std::memcmp(owner6, host6, sizeof(owner6)) != 0, "the pair is one key" + what);
     reset_device();
     const uint32_t click = stub_grant::now_ms;
     uint32_t next = click;
     for (; next < click + 21000; next += 2000) {
       stub_grant::now_ms = next;
       Req poll;
-      poll.from6(*p.owner);
+      poll.from6(owner6);
       CHECK(receipt(poll) == 0);
       check_gate_refusal(poll.r);
     }
@@ -1595,17 +1595,32 @@ void test_ipv6_askers_are_two_askers() {
     open_tap();
     stub_grant::now_ms += 100;
     Req host;
-    host.from6(*p.host);
-    CHECK_MSG(receipt(host) == 0, std::string("a second IPv6 peer was served as the owner") + p.what);
+    host.from6(host6);
+    CHECK_MSG(receipt(host) == 0, "a second IPv6 peer was served as the owner" + what);
     check_tap_contended(host.r);
-    CHECK_MSG(!carries_secret(host.r), std::string("the host's answer carries the secret") + p.what);
+    CHECK_MSG(!carries_secret(host.r), "the host's answer carries the secret" + what);
     stub_grant::now_ms = next;
     Req owner;
-    owner.from6(*p.owner);
+    owner.from6(owner6);
     CHECK(receipt(owner) == 0);
     check_tap_contended(owner.r);
-    CHECK_MSG(g_served.empty(), std::string("something was served beside a polling IPv6 owner") + p.what);
+    CHECK_MSG(g_served.empty(), "something was served beside a polling IPv6 owner" + what);
     CHECK(gate_stamp() == 0);
+  };
+  contended(kOwner6, kHost6, " (2001:db8::1:c0a8:114 and 2001:db9::1:c0a8:114)");
+  contended(kOwnerLink, kHostLink, " (fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee)");
+  // One byte at a time: the two keys differ in byte i and nowhere else.
+  static const uint8_t kBase6[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5};
+  for (size_t i = 0; i < sizeof(kBase6); i++) {
+    uint8_t other[16];
+    std::memcpy(other, kBase6, sizeof(other));
+    other[i] ^= 0x01;
+    char a[canary::net::provisioning_gate::PEER_KEY_TEXT_CAP];
+    char h[canary::net::provisioning_gate::PEER_KEY_TEXT_CAP];
+    canary::net::provisioning_gate::peer_key_text(kBase6, a, sizeof(a));
+    canary::net::provisioning_gate::peer_key_text(other, h, sizeof(h));
+    contended(kBase6, other,
+              std::string(" (") + a + " and " + h + ": byte " + std::to_string(i) + " differs, and only it)");
   }
   // One IPv6 peer alone is one asker, and is served.
   reset_device();

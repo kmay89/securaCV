@@ -1061,13 +1061,36 @@ static void a_polling_owner_stays_on_record_past_the_lookback() {
 //   - an IPv6 address whose last four bytes are the owner's IPv4 (a compare
 //     of the last four bytes merges it with the mapped owner);
 //   - two link-local addresses (every non-mapped key maps to IPv4 0, so a
-//     compare through ipv4_host_order_from_addr() merges them).
+//     compare through ipv4_host_order_from_addr() merges them);
+//   - and, for each of the key's 16 bytes, two global addresses that differ
+//     in that byte alone (2001:db8:0:1::5 and that address with the byte's
+//     low bit flipped), so a compare that leaves out any one byte merges a
+//     pair. Without them the suite pinned only bytes 3 and 15 one by one
+//     (15 is the byte the IPv4 rows' two addresses differ in): a compare of
+//     bytes 1-15, or of byte 3 and bytes 8-15, passed every row.
 // The timeline is (3b)'s: the owner polls every 2 s from 21 s before the
 // tap, and the other host asks first, 100 ms after it.
 static Peer v6(const uint8_t (&addr)[16]) {
   Peer p{};
   peer_key_from_addr(AddrFamily::IPV6, addr, p.key);
   return p;
+}
+
+static void a_second_peer_contends_a_polling_owner(const Peer& owner, const Peer& host, const char* what) {
+  CHECK(memcmp(owner.key, host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", what);
+  Bench b;
+  const uint32_t click = 700000;
+  const uint32_t T = click + 21000;
+  uint32_t t = click;
+  for (; t < T; t += 2000) {
+    CHECK(b.ask(owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", what);
+  }
+  open(b.gate, T);
+  CHECK(b.ask(host, T + 100) == TapVerdict::CONTENDED,
+        "a second IPv6 peer asking first after the tap was taken for the owner: %s", what);
+  CHECK(b.ask(owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", what);
+  CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, what);
+  CHECK(peek(b.gate) == 0, "and the tap is closed: %s", what);
 }
 
 static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
@@ -1085,21 +1108,22 @@ static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
       {kOwner, v6(kDb8Tail), "::ffff:192.168.1.20 and 2001:db8::1:c0a8:114 (the same last four bytes)"},
       {v6(kLinkOwner), v6(kLinkHost), "fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee (both map to IPv4 0)"},
   };
-  for (const Pair& p : pairs) {
-    CHECK(memcmp(p.owner.key, p.host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", p.what);
-    Bench b;
-    const uint32_t click = 700000;
-    const uint32_t T = click + 21000;
-    uint32_t t = click;
-    for (; t < T; t += 2000) {
-      CHECK(b.ask(p.owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", p.what);
-    }
-    open(b.gate, T);
-    CHECK(b.ask(p.host, T + 100) == TapVerdict::CONTENDED,
-          "a second IPv6 peer asking first after the tap was taken for the owner: %s", p.what);
-    CHECK(b.ask(p.owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", p.what);
-    CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, p.what);
-    CHECK(peek(b.gate) == 0, "and the tap is closed: %s", p.what);
+  for (const Pair& p : pairs) a_second_peer_contends_a_polling_owner(p.owner, p.host, p.what);
+  // One byte at a time: the two keys differ in byte i and nowhere else.
+  static const uint8_t kBase[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5};
+  for (size_t i = 0; i < PEER_KEY_LEN; i++) {
+    uint8_t other[16];
+    memcpy(other, kBase, sizeof(other));
+    other[i] ^= 0x01;
+    const Peer owner = v6(kBase);
+    const Peer host = v6(other);
+    char a[PEER_KEY_TEXT_CAP];
+    char h[PEER_KEY_TEXT_CAP];
+    peer_key_text(owner.key, a, sizeof(a));
+    peer_key_text(host.key, h, sizeof(h));
+    char what[128];
+    std::snprintf(what, sizeof(what), "%s and %s (byte %u differs, and only it)", a, h, (unsigned)i);
+    a_second_peer_contends_a_polling_owner(owner, host, what);
   }
   // And one IPv6 peer is one asker: the owner alone, polling from its own
   // address, is served on its first ask after the tap.

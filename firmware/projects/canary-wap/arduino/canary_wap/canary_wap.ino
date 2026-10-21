@@ -1013,11 +1013,16 @@ static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
 // OTA header, or a v2 image below the anti-rollback floor, is admitted only
 // if the owner short-tapped BOOT within the last PROVISIONING_GATE_TTL_MS —
 // the identical act that reveals the provisioning receipt. Single-use: the
-// one BEGIN it admits closes the gate, through the same atomic exchange the
-// HTTP-side receipt handler uses (provisioning_gate_take), so the two
-// consumers on their two tasks cannot both spend one tap. ble_ota.cpp
-// writes the health-log line that names what was bypassed; this only
-// records that the gate was spent on it.
+// one BEGIN it admits closes the gate through provisioning_gate_take(), the
+// header's take(), one atomic exchange. The HTTP-side receipt spends a tap
+// through provisioning_gate_take_for() instead, a compare-and-swap of the
+// stamp it judged (take_exact()), and an exchange and a compare-and-swap of
+// one word cannot both win, so the two consumers on their two tasks cannot
+// both spend one tap. This take is press-first by design (no receipt client
+// is asking), so a device on the network whose ask for the receipt is
+// judged between the tap and the BEGIN takes the tap or closes it, and the
+// BEGIN is refused. ble_ota.cpp writes the health-log line that names what
+// was bypassed; this only records that the gate was spent on it.
 static bool ble_ota_break_glass_take() {
   if (!provisioning_gate_take()) return false;
   log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,

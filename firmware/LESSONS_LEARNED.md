@@ -3165,8 +3165,8 @@
   BOOT" before their first ask had left, so a press made as the line
   appeared could land before any ask of the owner's had reached the device
   (a TLS handshake, a blip); they now say it once the device has answered
-  that ask. And a rule a proof leans on needs a behavior row of its own:
-  the two-entry record is exact only because an ask by the address on
+  one of their asks with `403`. And a rule a proof leans on needs a
+  behavior row of its own: the two-entry record is exact only because an ask by the address on
   record refreshes its time, and no row polled the way the pages do (every
   2 s, for longer than the 10 s lookback), so deleting the refresh, which
   serves a host the token under a polling owner, failed only four harness

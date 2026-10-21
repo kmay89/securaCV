@@ -119,7 +119,7 @@ struct PairView: View {
                         Text("Its own setup page saves a recovery kit (canary-recovery-kit.json) after a short BOOT tap — that file is its key.")
                     }
                     Section {
-                        Text("Or set it up again from this phone: forget its Wi-Fi on its own page (a short BOOT tap lets you in), then bring it near this phone — the card pairs it in one tap.")
+                        Text("Or set it up again from this phone: forget its Wi-Fi on its own page (Use BOOT Tap Once there lets you in), then bring it near this phone — the card pairs it in one tap.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

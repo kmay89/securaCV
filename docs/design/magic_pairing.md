@@ -434,7 +434,7 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. On the WAP it is served only to the sole address asking for it (`tap_arbitrate()`); a second address in the window closes the tap with `409 tap_contended`. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On the flagship the take is `take()`, one atomic exchange. On the WAP the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
 | — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
@@ -589,13 +589,16 @@ serve again when `millis()` comes back round to it 49.7 days later. A `429`
 for a held bearer still comes before the `409`, and the `409` clears no
 backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
 companion's recovery-kit save now asks from the Save tap, and every
-instruction a WAP page or answer gives puts the ask first (the `403`'s hint and button
-say to start asking first, then short-tap BOOT; the dashboard's timeout
+instruction for the receipt's tap a WAP page or answer gives puts the ask
+first (the `403`'s hint and button say to start asking first, then
+short-tap BOOT; the dashboard's timeout
 says to click again, then tap; both pages' `409` text says to wait 10 s,
 then click **Use BOOT Tap Once** again, or tap Save again, and only then
-press). Both pages say to press only once the device has answered one of
-their asks with `403` ("Asking the Canary first. Don't press BOOT yet."
-until then; an ask that never reached the device is asked again), so a
+press). The companion's BLE OTA line for a v1 manifest ("short-tap BOOT
+within 30 s before Start") stays press-first: that tap is the break-glass
+(below), which no receipt client is asking for. Both pages say to press
+only once the device has answered one of their asks with `403` ("Asking
+the Canary first. Don't press BOOT yet." until then; an ask that never reached the device is asked again), so a
 press that follows the page cannot land before the page's ask has reached
 the device (a TLS handshake, a blip or a busy server can hold the first ask
 back). So the owner's client is on record when the press lands:
