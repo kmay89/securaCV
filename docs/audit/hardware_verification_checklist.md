@@ -1150,11 +1150,14 @@ CI's. Owner: U1.
     new board, is host-tested only.)
   - Artifact: `docs/audit/repro/F200/wizard-left-pairing/`.
 
-## PlatformIO opera membership: a join needs a leave first, the paired heartbeat, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215) — on-device verification
+## PlatformIO opera membership: a join needs a leave first, the paired and periodic heartbeats, liveness from verified frames, the peers list from the session, the wizard's timeout read (F136, F162, F199, F215, F324) — on-device verification
 
 Code: `mesh_session.cpp` (`execute_request`'s PAIR_JOIN refusal,
-OPERA_EXISTS; the one signed `HEARTBEAT` after NOTIFY_PAIRED and on the
-first `process()` pass after a boot that bound a member),
+OPERA_EXISTS; the signed `HEARTBEAT` after NOTIFY_PAIRED and on the
+first `process()` pass after a boot that bound a member, and since F324
+every 30 s ± 3 s from `process()`, `arm_heartbeat`; each member's
+liveness from its last verified frame, `verified_seen_ms` and
+`verified_state`),
 `handle_mesh_pair_join` (409 `opera_exists`) and the peers handler
 (`mesh_api::peer_views_from_status`) in
 `firmware/canary/lib/securacv_network/src/securacv_network.cpp`, and the
@@ -1186,10 +1189,51 @@ the `[env:full]` compile is CI's; not run on a radio. Owner: U1.
     CONNECTED with a `last_seen_sec` of a few seconds (before F162:
     OFFLINE, "never", until some opera frame), and the initiator's COMPLETE
     copies stop after the joiner's heartbeat (before: 149 copies over five
-    minutes). After the reboot the initiator hears the joiner once more at
-    the joiner's first loop pass when the router is on the softAP's channel
-    1, and not when it is not (F320, open).
+    minutes). After the reboot the initiator hears the joiner at the
+    joiner's first loop pass when the router is on the softAP's channel 1,
+    and otherwise within one heartbeat interval, about 33 s, of the
+    joiner's station joining its router (F320, bounded by F324).
   - Artifact: `docs/audit/repro/F162/paired-heartbeat/`.
+- [ ] **A quiet PlatformIO opera reads its members CONNECTED, and a gone one STALE then OFFLINE (F324)**
+  - Setup: two PlatformIO canaries (`[env:full]`) paired into an opera, on
+    the same router channel, serial on both, the API tokens; a third ESP32
+    as an ESP-NOW sniffer on that channel (and, for the last step, flashed
+    to send any ESP-NOW frame from a given MAC).
+  - Repro: leave both idle 10 minutes; read `GET /api/mesh` and
+    `GET /api/mesh/peers` on each, and log the sniffer's frames from each
+    Canary's MAC. Unplug one and read the other's `/api/mesh/peers` every
+    10 s for 6 minutes. Plug it back in, let it rejoin, unplug it again,
+    and this time have the third ESP32 send a junk frame from the unplugged
+    Canary's MAC every 30 s.
+  - Expected: after the idle 10 minutes both read `state` ACTIVE,
+    `peers_online` 1, the other CONNECTED with `last_seen_sec` of 34 or
+    less. The sniffer shows one signed heartbeat from each MAC every
+    27-33 s (plus one loop pass). After each unplug the other Canary reads
+    it STALE within about 90-100 s and OFFLINE within about 5 minutes, also
+    while the third ESP32 sends junk from its MAC. Do not reboot or power
+    off the reading Canary in between: once it is back, every heartbeat the
+    member sent while it was down, and after a reboot every frame it heard
+    since its last 5-minute replay-counter save, is a frame it never heard
+    or no longer remembers, and a recorder that sends those keeps the member
+    CONNECTED about 90 s each (the threat model's documented residual, not
+    this row's). Last, on flash-encrypted boards: erase both boards' NVS
+    (so neither holds the other's key or a replay tombstone), power both
+    up, pair them within the first 4 minutes of the rebooting board's
+    uptime, and reboot it within a few seconds of the pairing confirmation,
+    once its `GET /api/mesh/peers` reads the other CONNECTED (the save
+    follows the member's first frame there; a reboot before it restores no
+    counter, the threat model's residual); its boot log reads
+    `[OK] Restored 1/1 replay counters from NVS` (the
+    first-counter save). The periodic replay save runs every 5 minutes of
+    uptime (`main.cpp`'s timer starts at boot, not at the pairing), so a
+    reboot minutes after a pairing can follow a periodic save and print the
+    same line on firmware without the first-counter save; only a pairing
+    and reboot both inside the board's first 300 s of uptime tell them
+    apart (before review round 2 that reboot restored none and printed no
+    such line). Before F324: CONNECTING, the other OFFLINE with
+    `last_seen_sec` about 600 after 10 idle minutes, and nothing on the
+    sniffer; with the spoofing ESP32, CONNECTED indefinitely.
+  - Artifact: `docs/audit/repro/F324/quiet-opera/`.
 - [ ] **The peers list is the session's, without flash encryption**
   - Setup: a PlatformIO canary in an opera, flashed without flash
     encryption.
@@ -2801,14 +2845,26 @@ follow-up (#1832) adds none of its own. Code: `session_cookie_header()` and
 `handle_provisioning_receipt()` in `canary_wap.ino`;
 `read_session_cookie_hex()` in `csi_integration.cpp`;
 `api_auth_bearer_grant()`, `api_auth_bearer_held()` and
-`api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`.
+`api_auth_send_lockout()` in `api_auth.h`; secureFetch in `web_ui.h`; and,
+for the receipt-lockout row, the `auth_record_success(req)` after the
+receipt's refusal block (F341); for the per-address row (F343),
+`request_peer_key()` and `auth_request_source()` in `canary_wap.ino` over
+`firmware/common/network/auth_backoff.h` (staged in the sketch); and, for
+the every-compare row (F339), `api_auth_check_optional()` and
+`api_auth_check_or_query()` in `api_auth.h`, `CSI_AUTH_OR_RETURN` in
+`csi_integration.cpp` and `authorized()` and `handle_config_post()` in
+`csi_mqtt.cpp`.
 Host-tested (`tests_host/test_session_cookie.cpp`: the cookie's attributes
 over HTTPS and plain HTTP, and the whole-name read;
 `tests_host/test_receipt_grant.cpp`: a wrong bearer one strike, the
-backoff's 429, the tap and the claim never held; `recovery_kit.test.js`: the
-sign-in's copy); `check_route_security.py` holds every answer that carries a
-secret to a bearer-only gate; the compile is CI's; nothing here ran on a
-device or in a browser. Owner: U1.
+backoff's 429, the tap and the claim never held and clearing only the host
+they serve (F341), one host's strikes never holding another;
+`firmware/tests_host/test_auth_backoff.cpp`: the table;
+`recovery_kit.test.js`: the sign-in's copy); `check_route_security.py`
+holds every answer that carries a secret to a bearer-only gate, and the
+backoff's clear outside `api_auth.h` to the receipt, after its refusal
+(`BACKOFF_CLEARS`, F341); the compile
+is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
@@ -2835,25 +2891,214 @@ device or in a browser. Owner: U1.
     was read as the session.
   - Artifact: `docs/audit/repro/F289/cookie-secure/`.
 
-- [ ] **A wrong bearer on the receipt is a strike; the backoff holds the bearer, never the tap**
-  - Setup: as the section above, with the API token.
-  - Repro: five times, 20 s apart (each strike doubles the backoff from 2 s,
-    so the fifth runs about 32 s), `curl -sk -o /dev/null -w
-    '%{http_code}\n' -H "Authorization: Bearer cv_wrong"
-    https://canary-<suffix>.local/api/provisioning-receipt`. Right after
-    the fifth, the same with the right token, on the receipt and on
-    `/api/pairing-qr` (`-D -` to see `Retry-After`); short-tap BOOT and,
-    still inside the backoff, the receipt with the right token again; then
-    wait out the `Retry-After` and fetch the receipt with the right token.
-  - Expected: each wrong bearer is `403` with
-    `physical_confirmation_required` (any bearer sent while a backoff runs
-    is `429` instead and is not compared); the right token inside the
-    backoff is `429` with a `Retry-After` header on the receipt and on the
-    QR; the request after the BOOT tap is `200` (the tap serves and is
-    spent, the lockout does not hold it); after the backoff the right
-    token alone is `200`. Before this change the wrong bearers on the
-    receipt armed no backoff and the right token was served inside one.
-  - Artifact: `docs/audit/repro/F289/receipt-lockout/`.
+- [ ] **A wrong bearer on the receipt is a strike; the tap and the claim clear the host they serve, never another (F341)**
+  - Setup:
+    - a canary-wap on this firmware, joined to the home Wi-Fi, over plain
+      HTTP at `http://<sta-ip>` (a stock unit serves no HTTPS:
+      `canary_wap.ino`'s `SECURACV_HAS_TLS_CERTGEN` is set only where the
+      core has `mbedtls/x509write_crt.h`, which no installed core ships);
+    - host A with `curl` and the API token, and host B with `curl`, both on
+      IPv4;
+    - the serial console open;
+    - no other device asking for the receipt during the tap (the tap has
+      one consumer: whoever asks first is served, F342).
+  - Repro:
+    1. From A, five times, 20 s apart (each strike doubles the backoff from
+       2 s, so the fifth runs about 32 s): `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://<sta-ip>/api/provisioning-receipt`.
+    2. Right after the fifth, from A: the right token on the receipt and on
+       `/api/pairing-qr`, each with `-D -`.
+    3. At once, from B, three wrong bearers on `/api/status` (not the
+       receipt), 5 s apart (B's first two backoffs are 2 s and 4 s, so each
+       is compared and counted; the third holds B 8 s).
+    4. Short-tap BOOT and, still inside A's backoff (within about 15 s of
+       step 2), A's receipt with the right token.
+    5. At once, A's right token on `/api/status`.
+    6. 10 s after B's third (B's backoff is over) and within a minute of it,
+       one more wrong bearer from B on `/api/status`.
+  - Expected:
+    - each wrong bearer is `403` (any sent while its host's backoff runs is
+      `429` and is not compared);
+    - A's right token inside the backoff is `429` with `Retry-After`, on the
+      receipt and on the QR;
+    - the request after the tap is `200` (the tap serves and is spent; the
+      lockout never holds it), and the console prints `[AUTH] Provisioning
+      receipt served. Gate closed.`;
+    - A's `/api/status` right after it is `200` without waiting out the
+      `Retry-After`, because the tap ended A's backoff;
+    - B's later wrong bearer prints `[AUTH] Failed attempt #4`: its count
+      was untouched by A's tap.
+    - Before F341, A's step 5 was `429` until A had waited out its whole
+      backoff. Before F289's follow-up, the wrong bearers on the receipt
+      armed no backoff and the right token was served inside one.
+  - Artifact: `docs/audit/repro/F341/`.
+
+- [ ] **canary-wap: one host's wrong bearers hold only that host (F343)**
+  - Setup: a canary-wap on this firmware, joined to the home Wi-Fi. A stock
+    unit serves plain HTTP after setup (`canary_wap.ino`'s
+    `SECURACV_HAS_TLS_CERTGEN` is set only where the core has
+    `mbedtls/x509write_crt.h`, which no installed core ships), so this row
+    uses `http://<sta-ip>`; an HTTPS variant waits until a WAP serves HTTPS.
+    Two hosts on the home network over IPv4, A (a laptop with `curl`) and B
+    (a second computer, or a phone with a shell), both with the API token;
+    the serial console open; no BOOT tap during the row.
+  - Repro:
+    1. From A, five times, 20 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://<sta-ip>/api/provisioning-receipt`.
+    2. Right after the fifth, from A: the right token on the receipt, with
+       `-D -`.
+    3. At once, from B: the right token on `/api/provisioning-receipt`,
+       `/api/pairing-qr` and `/api/status`.
+    4. From B: one wrong bearer on `/api/status`.
+    5. From A, after its `Retry-After`: the right token on `/api/status`.
+    6. From A: six more wrong bearers on `/api/status`, and after each one
+       the right token with `-D -` to read that backoff's `Retry-After`;
+       send the next wrong bearer once that wait is over.
+  - Expected: A's five wrong bearers are `403`; A's right token inside its
+    backoff is `429` with `Retry-After`. B's three are `200` at once, and the
+    console prints no `[AUTH] Failed attempt` line for them. B's wrong bearer
+    is `403` and holds only B. A's right token after the wait is `200`. In
+    step 6 no `Retry-After` exceeds `61` (expect `2`, `4`, `8`, `16`, `32`,
+    `60`: each probe lands a few milliseconds after its strike); the
+    firmware before this change read `64` on the sixth. If B is `429` while
+    A is held, the key fell back to one bucket: check
+    `request_peer_key()`'s dual-stack `::ffff:a.b.c.d` path.
+  - Artifact: `docs/audit/repro/F343/per-address/`.
+
+- [ ] **canary-wap: every bearer compare holds its own address (F339)**
+  - Setup: as the F343 row: a canary-wap on this firmware joined to the home
+    Wi-Fi, plain HTTP at `http://<sta-ip>` (no stock WAP serves HTTPS), hosts
+    A and B on IPv4, both with the API token, the serial console open, and
+    no BOOT tap during the row. For the link in step 2, a unit built with
+    the camera (`FEATURE_CAMERA_PEEK`, for `/api/peek/snapshot`) or the
+    sealed vault (`FEATURE_VAULT_SNAPSHOT`, for `/api/vault/download`); on a
+    unit with neither, skip that half of step 2.
+  - Repro:
+    1. From A, three wrong bearers, 10 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://<sta-ip>/api/csi/stream`.
+    2. Right after the third, from A: the right token on the same route,
+       with `-D -`; and `curl -s -D - 'http://<sta-ip>/api/vault/download?token=<right token>'`
+       (or `/api/peek/snapshot?token=<right token>`).
+    3. At once, from B: the right token on `/api/csi/stream`.
+    4. From A, after its `Retry-After`: the right token on `/api/csi/stream`.
+    5. On a unit with the link of step 2, from A: a wrong header beside the
+       right query token, `curl -s -D - -H 'Authorization: Bearer cv_wrong'
+       'http://<sta-ip>/api/vault/download?token=<right token>'` (or the
+       snapshot link).
+  - Expected: A's wrong bearers are `401`, and the console prints
+    `[AUTH] Failed attempt #1`, `#2` and `#3`. Inside A's backoff, A's right
+    bearer and A's right `?token=` are `429` with `Retry-After`. B is `200`
+    at once, and A's right token after the wait is `200`. Step 5 is `401`
+    and the console prints `[AUTH] Failed attempt #1`: beside a header the
+    query token is not compared, so one strike buys one guess. Before this
+    change A's guesses armed nothing (no console line, and step 2's bearer
+    was `200`), the `?token=` read no lockout at all
+    (`/api/vault/download` answered its own `400`, no `name=`, never
+    `429`), and step 5 was served (the vault's `400`, the snapshot's `200`).
+  - Artifact: `docs/audit/repro/F339/`.
+
+## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
+
+Code: `AuthManager::check()` and `AuthManager::grant()` in
+`firmware/canary/lib/securacv_auth/src/securacv_auth.cpp`, on
+`firmware/common/network/auth_backoff.h` (the WAP's table, read by path),
+reached through `auth_gate()` and `bearer_present_and_valid()` in
+`securacv_network.cpp`, which pass `request_peer_ipv4()` (the socket peer),
+and the two BOOT-tap paths there that call `auth_handed_token()` with it
+(the receipt's `SERVE_TAP` and `page_token_inject()`'s tap, F341);
+the dashboard's `api()`, `dropRefusedToken()` and `saveRecoveryKit()` in
+`securacv_webui.cpp`. The `api()` helper sends no `Authorization` header
+when the page carries no token, and drops a token the device refuses.
+Host-tested (`firmware/tests_host/test_securacv_auth.cpp`, over the
+real `securacv_auth.cpp` and `auth_backoff.h`: a request with no header is a
+`401` and no strike, a malformed or wrong one is a strike against its own
+address only, the receipt's grant is accounted and never compares a held
+bearer, the 61 s ceiling, the wrap; the receipt and the page-token decision
+cut from `securacv_network.cpp` and run, a tap clearing only the address it
+serves; text pins over `securacv_network.cpp`;
+`firmware/tests_host/test_canary_dashboard_gates.test.js`: the page's
+`api()` and its two pollers dropping a refused token and keeping one a `429`
+or the Host guard answered);
+the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
+
+- [ ] **Flagship: the dashboard tab arms no lockout, one host's wrong bearers hold only that host, a BOOT tap clears the host it serves, and the page drops a refused token (F340, F341)**
+  - Setup: a `firmware/canary` unit on this firmware, set up and joined to
+    the home Wi-Fi, over plain HTTP (the release images serve no HTTPS, and
+    the HTTPS builds' certificate generator is compiled only where the core
+    has `mbedtls/x509write_crt.h`, `securacv_network.cpp`'s `__has_include`,
+    a header no installed core ships: mbedTLS declares its certificate
+    writer in `x509_crt.h`); host A, a laptop with a browser and its
+    developer tools, and `curl`; host B, the iPhone app or a second computer
+    with `curl` and the API token; both on IPv4; one dashboard tab only (two
+    tabs reach the device-wide request limit by themselves, F351); no BOOT
+    tap before step 5.
+  - Repro:
+    1. On A, open `http://canary.local/` (or the unit's IP) without a BOOT
+       tap, so the page carries no token, and leave the Status panel open
+       for 5 minutes. Meanwhile, from B every 5 s: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H "Authorization: Bearer <token>"
+       http://canary.local/api/status`.
+    2. From A, five times, 20 s apart: `curl -s -o /dev/null -w
+       '%{http_code}\n' -H 'Authorization: Bearer cv_wrong'
+       http://canary.local/api/provisioning-receipt`.
+    3. Right after the fifth, from A: the right token on `/api/status` and on
+       `/api/provisioning-receipt`, each with `-D -`. Then, at once, from B:
+       the right token on both.
+    4. From A, after the `Retry-After` step 3 named: the right token on
+       `/api/status`.
+    5. Repeat step 2 from A. Then, inside the backoff it arms (about 32 s),
+       short-tap BOOT and reload A's dashboard tab; at once, from A, the
+       right token on `/api/status` with `-D -`.
+    6. Close A's dashboard tab, or navigate it away from the unit: since
+       step 5 it holds the right token, and each of its polls (every 2 s) is
+       a right bearer that clears A's count, so this step's strikes would
+       each be a first one and never arm the long backoff. Then repeat
+       step 2 from A, and inside the backoff it arms (about 32 s), short-tap
+       BOOT and fetch `/api/provisioning-receipt` from A with the right
+       token; at once, from A, the right token on `/api/status`.
+    7. On A, open `http://canary.local/` again without a tap, paste
+       `cv_wrong` into the unlock banner, press **Unlock**, and watch the
+       Network panel for a minute.
+  - Expected: for step 1's 5 minutes B's polls are `200` (before part 1 of
+    this change nearly all of them were `429`: the host suite's replay of
+    this cadence, run over the code before it, refuses all 60 calls of its
+    first 5 minutes and 119 of 120 over ten), and A's own calls in its
+    Network panel are `401`, never `429`. A's wrong bearers on the receipt
+    are `403` `physical_confirmation_required`, each one a strike. In step 3
+    A's right token is `429` with a `Retry-After` of at most `61` on
+    `/api/status`, and `403` `physical_confirmation_required` on the receipt
+    (the page's "tap BOOT": a held bearer is not compared and reads as none);
+    B is `200` on both. While A's backoff runs, A's open tab is `429` too:
+    the address is held, whatever it sends. A's right token in step 4 is
+    `200`. Before part 2,
+    A's wrong bearers on the receipt armed nothing, so A's right token in
+    step 3 was `200`, and a wrong bearer on `/api/status` held B too. If B is
+    ever `429` because of A, the peer read fell back to one bucket: check
+    `request_peer_ipv4()`'s dual-stack `::ffff:a.b.c.d` path. In step 5 the
+    reloaded page carries the token (no unlock banner), the console prints
+    `[AUTH] page token handed to one page load on a BOOT tap. Gate closed.`,
+    and A's `/api/status` right after it is `200` without waiting out the
+    `Retry-After`: the tap ended A's backoff. In step 6 the receipt is `200`
+    (a held bearer reads as none, so the tap serves it), and A's
+    `/api/status` right after it is `200` too. Before F341, A's call after
+    the tap was `429` until the backoff ran out. In step 7 the first call
+    that carries `cv_wrong` is `403` `{"error":"forbidden"}`, and the
+    other calls the unlock sent with it (up to three: `unlockWithToken()`
+    fires `/api/status` and `/api/wifi/status` at once, and `/api/chirp` and
+    `/api/bluetooth` when their tabs were turned away) are `429`, since
+    each reads the 2 s backoff the first one armed; the banner comes back
+    reading "The Canary refused that token.", and every call after it
+    carries no `Authorization` header: `429` until that one strike's 2 s
+    backoff has run, then `401`, never `429` again. Before this change the page kept
+    the token and sent it on every poll, a strike each time A's backoff
+    ended, so A's calls stayed `429` until the page was reloaded.
+  - Artifact: `docs/audit/repro/F340/` (step 5:
+    `docs/audit/repro/F341/flagship-page/`; step 6:
+    `docs/audit/repro/F341/flagship-receipt/`; step 7:
+    `docs/audit/repro/F340/refused-token/`).
 
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 

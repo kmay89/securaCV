@@ -324,6 +324,37 @@ that means the device, can spend your tap before you do. The decisions
 `receipt_decide`, and `host_guard.h` beside them) are host-tested, the handler glue is compiled by
 CI, and none of it is bench-tested yet.
 
+The flagship's bearer lockout is the WAP's table,
+`firmware/common/network/auth_backoff.h`, keyed by the request's socket peer
+(`request_peer_ipv4()`, never a header) (sweep F340). Every bearer it
+compares is accounted: the API routes through `auth_check()`, and the
+provisioning receipt and the page-token decision through the grant
+`auth_bearer_grant()`. A malformed or wrong bearer is a strike against its
+address. While that address's backoff runs, its API calls are refused `429`
+with `Retry-After`, and its bearer on the receipt is not compared and reads
+as none, so the receipt goes on to the BOOT tap: served if one is open,
+else its `403`, which the page reads as "tap BOOT". A request with no
+`Authorization` header is no strike, so a dashboard tab loaded without the
+token, which polls with no header, arms nothing. A BOOT tap that hands an
+address the token, on the receipt or on the page load it unlocks, ends that
+address's backoff as a right bearer would (sweep F341). The dashboard
+drops a token the device refuses and shows its unlock banner again, so a
+mistyped paste is dropped at its first refusal instead of being sent on
+every poll. A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or taps BOOT, which clears its address
+(F341). A host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
+or hold BOOT 10 s. The flagship has no Bluetooth lane that changes its
+Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Clients behind
+one address share a backoff. It does not close a deliberate
+denial from the LAN: the device-wide request limit (120 requests a minute
+across the rate-limited routes) is still one per device, so two open Status
+tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
+purge stay open. Host-tested on the real `securacv_auth.cpp`; not
+bench-tested.
+
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a
 24-hour session cookie that signs that browser into the dashboard. That
@@ -347,10 +378,45 @@ window the session can open (it mints the wizard's pair token over
 `GET /api/pair/token`), but only for a code in front of the camera
 (`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
 ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
-toward the same lockout as the admin routes, and the session cookie itself
-is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever it is set over HTTPS
-(the first-boot setup runs plain HTTP, where a `Secure` cookie would be
-dropped); host-tested, the ESP32 compile is CI's, not bench-tested. The
+toward the same per-address lockout as the admin routes (F343), and the
+session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever
+it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
+cookie would be dropped); host-tested, the ESP32 compile is CI's, not
+bench-tested. The WAP's lockout is per source address. A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or taps BOOT, which clears its address
+(F341). A host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
+or hold BOOT 10 s. A wrong bearer on the receipt is a strike even when the
+setup-door claim or the BOOT tap then serves it, and the claim or the tap
+that serves ends that address's backoff, as a right bearer would (sweep
+F341). The key is the request's socket peer address, never a
+header, and clients behind one address share a backoff. It does not close a
+deliberate denial from the LAN: a landing session can still reboot the unit
+(`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's
+connection purge and a cross-site `?token=` image that holds the visiting
+browser's own address stay open
+([`magic_pairing.md`](../design/magic_pairing.md) §3.7). The reboot also
+empties the table, kept in RAM, and so resets the guess budget: about 30
+guesses a minute between reboots from any number of addresses, and more for
+a guesser that reboots the unit every few seconds (about 100 a minute if it
+is back on the LAN 10 s later; `THREAT_MODEL.md` scenario 10). The token's
+entropy stays the bound. Host-tested; not run on a device. Every bearer
+compare on the WAP counts toward that per-address lockout, and none is
+compared while its address is held (sweep
+F339): the receipt and the pairing QR; the admin routes; the CSI routes, the
+MQTT bridge's routes and its broker move; the QR scan's admin fallback; and
+the camera's and the vault's `?token=` links, which until F339 never read
+the lockout at all (a right `?token=` was served inside a backoff and
+cleared it). A held address gets `429` with `Retry-After` on the CSI and MQTT
+routes and those links; the QR scan's status and stop keep their `403`. The
+route check (`check_route_security.py`) fails any file of the sketch but
+`api_auth.h` that calls a raw compare, so the passkey field F346 plans for
+`GET /api/bluetooth` can only compare through the same grant. The pair token's
+compares stay outside it on purpose: the landing page hands that token to
+any caller, and the CSI dashboard and `/companion` ride it or the cookie and
+send no bearer. Host-tested; not run on a device. The
 displays treat the LAN as their trust boundary by design — no bearer
 credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller

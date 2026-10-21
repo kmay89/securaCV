@@ -392,6 +392,41 @@ bool has_opera_secret();
 
 constexpr uint64_t COUNTER_RESERVE_BLOCK = 1024;
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * PERIODIC HEARTBEAT  (F324)
+ *
+ * While the session runs, process() sends the empty signed HEARTBEAT
+ * (registry 16) to every bound member once per HEARTBEAT_INTERVAL_MS, the
+ * deadline drawn afresh after every heartbeat within +/- HEARTBEAT_JITTER_MS
+ * of it, so two members' timers do not lock into step. Every heartbeat
+ * re-arms it, the paired and boot ones (F162) included. A member reads
+ * STALE after PEER_STALE_AFTER_MS with no verified frame, so one lost
+ * heartbeat must not be enough: the assert below holds two of the longest
+ * intervals short of it. Each one spends an outbound counter (one
+ * reservation per COUNTER_RESERVE_BLOCK heartbeats, about 2.8 a day), and
+ * nothing is signed with no member bound.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+constexpr uint32_t HEARTBEAT_INTERVAL_MS = 30000;
+constexpr uint32_t HEARTBEAT_JITTER_MS   = 3000;
+static_assert(2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS) < mesh_transport::PEER_STALE_AFTER_MS,
+              "one lost heartbeat must not read STALE");
+static_assert(HEARTBEAT_JITTER_MS < HEARTBEAT_INTERVAL_MS, "the jittered deadline stays ahead");
+static_assert(HEARTBEAT_JITTER_MS > 0, "a fixed deadline lets two members' timers lock into step");
+
+/* How long after a member's first counter is saved the session saves it once
+ * more (set_first_counter_handler, F324), and how long it waits again after
+ * that second save fails: two of the longest heartbeat
+ * intervals. After the first save the member sends its next heartbeat
+ * within one of them and the one after within two (plus one of its
+ * main-loop passes per interval), so its own frames have reached this
+ * device by then unless two in a row were lost, or one was when both of its
+ * draws came out within a pass of their longest. Below PEER_STALE_AFTER_MS
+ * by the first assert above, and so well inside main.cpp's 5-minute replay
+ * save. test_mesh_session pins 66 s, the number the docs give, and times
+ * one lost heartbeat against it from the two constants above. */
+constexpr uint32_t FIRST_COUNTER_RESAVE_MS = 2u * (HEARTBEAT_INTERVAL_MS + HEARTBEAT_JITTER_MS);
+
 typedef bool (*counter_reserve_fn)(uint64_t high_water);
 
 void     set_counter_reserve_handler(counter_reserve_fn fn);
@@ -587,11 +622,17 @@ size_t trusted_peer_count();
  *     rotation that forgets it, clear_trusted_peers() — leaves the transport
  *     table with it.
  * online_peer_count(): trusted peers heard from their binding (PeerLink
- * mac_known, above) whose binding is in the transport table in the ACTIVE
- * window — a peer bound at boot that has not been heard this boot is NOT
- * online, even though its fresh transport entry starts ACTIVE, and neither
- * is one re-bound and not yet heard at the new address. GET /api/mesh uses
- * it.
+ * mac_known, above) whose binding is in the transport table and whose last
+ * fully verified frame (signature, opera_id and counter checks passed)
+ * arrived from that binding less than PEER_STALE_AFTER_MS ago on the
+ * transport clock (mesh_transport::clock_ms) — a peer bound at boot that
+ * has not been heard this boot is NOT online, even though its fresh
+ * transport entry starts ACTIVE, and neither is one re-bound and not yet
+ * heard at the new address. Since F324 the transport's own entry state is
+ * not read: any frame from the address refreshes it before the session
+ * verifies anything, and ESP-NOW does not authenticate a source, so a
+ * radio copying a quiet member's address held it online with junk. GET
+ * /api/mesh uses it.
  * Threading: bind_peer_mac is main-loop only (it mutates both tables);
  * online_peer_count only reads, like get_peer_links(), on the main loop
  * too (the status routes read it from the published view, F161).
@@ -677,9 +718,62 @@ size_t get_replay_counters(uint8_t (*out_fps)[mesh_crypto::FINGERPRINT_LEN],
 /* Restore a counter from NVS, after the trusted peers are registered. A
  * trusted fingerprint's last_counter is raised to it; any other
  * fingerprint becomes (or raises) a tombstone. Returns true if a counter
- * or tombstone was raised or created. */
+ * or tombstone was raised or created. A non-zero counter for a trusted
+ * fingerprint also marks that member's counter saved (first_counter_fn
+ * below); a saved 0 does not, as no frame carries counter 0: it is what
+ * get_replay_counters() writes for a member registered and not yet heard. */
 bool   restore_replay_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
                               uint64_t counter);
+
+/* A member's first counter (F324). Runs on the process() task. Returns true
+ * when the replay counters were persisted; two true returns per
+ * registration at most:
+ *   1. from the receive path, on the member's first frame that passes every
+ *      check (its binding, the signature, the opera_id, the counter) since
+ *      it was registered with no saved counter: a member just paired, one
+ *      re-paired from its replay tombstone, or one the boot restore brought
+ *      back no counter for (none saved, or a saved 0). On false the counter
+ *      stays unsaved, and the member's next frame that passes every check
+ *      runs it again (until #1839's review a failed save was marked done);
+ *   2. from process(), FIRST_COUNTER_RESAVE_MS after the true return of
+ *      (1), if the member's counter has moved since (a deadline that finds
+ *      it unmoved disarms with no call). On false it runs again
+ *      FIRST_COUNTER_RESAVE_MS after that pass, and so on until it returns
+ *      true: a refused save is never dropped, since the counter it was to
+ *      save has moved past (1)'s by definition.
+ * No false return is retried on the next pass, so a handler that always
+ * fails runs at most once per verified frame of the member and once per
+ * FIRST_COUNTER_RESAVE_MS. (main.cpp's returns false on every call on a
+ * board without flash encryption, which writes no replay counter at all; a
+ * retry there takes a snapshot of the counters and writes nothing.)
+ * The integration layer persists the replay counters here (main.cpp's
+ * persist_replay_counters) rather than at the next 5-minute save, so a
+ * reboot in between does not make the frames the member signed under the
+ * opera before the pairing fresh again: since F324 a member heartbeats its
+ * other members every 30 s, and each of those frames would otherwise verify
+ * after such a reboot and stamp the member live.
+ * (1) saves the counter of the first frame that verifies, which need not be
+ * the member's newest. A radio copying the member's address can deliver one
+ * of the member's older genuine frames before the member's own first frame
+ * lands (after a pairing, from the bind to that frame is milliseconds
+ * normally, up to about one heartbeat interval when the first COMPLETE or
+ * the paired heartbeat is lost, which a jammer can force; after a boot that
+ * restored no counter for the member, it is until the member's next
+ * heartbeat is heard, longer while this device's station has not joined its
+ * router, F320), and (1) then saves that older counter. (2) saves the
+ * member's own newer one, so what stays open is a reboot before (1) returns
+ * true (after a false return, until the member's next verified frame or a
+ * 5-minute save that lands first: no pass retries (1)), which finds nothing
+ * newer saved for the member (after a first pairing, no counter at all), a
+ * reboot before (2) returns true, or every frame of the member's own kept
+ * from this device until (2) (a jammer, or a station not yet on its
+ * router's channel), after which the 5-minute save is the next to catch
+ * up. Past the two saves that land, no frame adds
+ * one. A boot that restored a non-zero counter for the member runs neither,
+ * so it costs no write. The handler must not change the trusted table. */
+typedef bool (*first_counter_fn)(const uint8_t sender_fp[mesh_crypto::FINGERPRINT_LEN]);
+
+void set_first_counter_handler(first_counter_fn fn);
 
 /* Beacon-event receiver callback. `sender_fp` lets the handler
  * correlate events with the Scout that sent them (each paired Scout
@@ -1110,12 +1204,12 @@ void abandon_request();
  * GET /api/mesh and /api/mesh/peers run on the httpd task, and what they
  * show (the enable switch, the opera's id and name, the pairing state, code,
  * number, outcome and reason, the member table and each member's liveness
- * from the transport table) is the main loop's, written by process(), the
- * receive path it runs and the REST requests it executes. Until F161 the
- * handlers read it in place, without a lock: each 32-bit value whole, but
- * one body could mix two passes (a pairing number with the outcome of a
- * pairing started between the reads, a name read mid-rename, a member's MAC
- * half rewritten). canary-wap's routes had the same gap (F110).
+ * from its last fully verified frame, F324) is the main loop's, written by
+ * process(), the receive path it runs and the REST requests it executes.
+ * Until F161 the handlers read it in place, without a lock: each 32-bit
+ * value whole, but one body could mix two passes (a pairing number with the
+ * outcome of a pairing started between the reads, a name read mid-rename, a
+ * member's MAC half rewritten). canary-wap's routes had the same gap (F110).
  *
  * Now the main loop builds a whole StatusView and publishes it
  * (loop_snapshot.h's Value<T>, the header canary-wap's routes read through
@@ -1152,8 +1246,13 @@ struct MemberView {
   /* Verified TAMPER_ALERT frames from it since it was registered (F11). */
   uint32_t alerts_received;
   /* Heard from its binding this boot (get_peer_links' mac_known) and that
-   * address is in the transport table: the three fields below are the
-   * table's entry. False: the peer list shows it OFFLINE, "never". */
+   * address is in the transport table: the three fields below are this
+   * member's last fully verified frame (F324): its age as a state (ACTIVE,
+   * STALE past PEER_STALE_AFTER_MS, OFFLINE past PEER_OFFLINE_AFTER_MS),
+   * its RSSI and its arrival time. A frame that fails verification or the
+   * counter check refreshes none of them; until F324 they were the
+   * transport entry's, which any frame from the address refreshed. False:
+   * the peer list shows it OFFLINE, "never". */
   bool                      live;
   mesh_transport::PeerState link_state;
   int8_t                    rssi_dbm;

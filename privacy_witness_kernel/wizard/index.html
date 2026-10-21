@@ -1302,9 +1302,10 @@ function meshPairingSeq(answer) {
 // neither. A PlatformIO Canary reads ACTIVE only once it has heard a member
 // this boot. Until F162 a new member sent nothing until it had an opera frame
 // to send, so a finished pairing there could read CONNECTING for good; since
-// F162 each side sends one heartbeat as it pairs, so only a lost one leaves
-// it reading CONNECTING. A Canary that reports no number (from before F133,
-// or a canary-wap) is read the old way: done once its state is ACTIVE.
+// F162 each side sends one heartbeat as it pairs, and since F324 a member
+// heartbeats every 30 s, so a lost one leaves it reading CONNECTING for at
+// most about half a minute. A Canary that reports no number (from before
+// F133, or a canary-wap) is read the old way: done once its state is ACTIVE.
 function meshSideVerdict(body, seq) {
   const reports = Number.isInteger(body.pairing_seq) && typeof body.pairing_result === "string";
   if (!reports || seq === null) return { kind: "legacy", done: body.state === "ACTIVE" };

@@ -133,8 +133,9 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * The two routes whose answer carries a credential — GET
  * /api/provisioning-receipt (the token, the SoftAP password, the TLS pin)
  * and GET /api/pairing-qr (the token and the pin) — never take it; their
- * bearer grant is the Authorization header alone, under the one lockout
- * (api_auth.h's api_auth_bearer_grant / api_auth_check_bearer).
+ * bearer grant is the Authorization header alone, under every admin route's
+ * per-address lockout (api_auth.h's api_auth_bearer_grant /
+ * api_auth_check_bearer).
  */
 bool session_validate_cookie(httpd_req_t* req);
 

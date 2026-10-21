@@ -61,6 +61,7 @@
 
 #include "csi_event_egress.h"
 #include "csi_integration.h"
+#include "api_auth.h"        // the bearer lockout's one table (g_auth_table, sweep F343)
 #include "device_signature.h"
 #include "json_strict.h"     // GET /api/mqtt/config parses under JSON.parse's rules (sweep F227)
 #include "mqtt_transport_logic.h"  // ca_pem_looks_valid(): the shape the CA test cuts past
@@ -340,6 +341,13 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char*, int) {
 // the bearer-only cases turn it off).
 bool g_session_cookie_valid = true;
 
+// The bearer lockout's source (api_auth.h declares it; canary_wap.ino
+// defines it from the request's socket peer, sweep F343). Every binary that
+// compiles the real api_auth.h defines it: here the one peer every request
+// comes from, which a test may set.
+uint32_t g_peer = 0;
+uint32_t auth_request_source(httpd_req_t*) { return g_peer; }
+
 namespace csi_integration {
 bool session_validate_cookie(httpd_req_t*) { return g_session_cookie_valid; }
 void add_outbound_bytes(uint32_t) {}
@@ -474,6 +482,8 @@ void power_cycle() {
   fake::during_publish = nullptr;
   csi_mqtt::set_api_token_provider(nullptr);   // no bearer to present (F289 tests register one)
   g_session_cookie_valid = true;
+  g_auth_table = {};                           // a reboot clears the RAM lockout (sweep F343)
+  g_peer = 0;
   (void)csi_mqtt::request_reinit();
   loop_pass();
   run_tasks();
@@ -2329,31 +2339,182 @@ void test_a_stored_snapshot_sees_a_rewrite_of_the_same_row() {
   std::printf("PASS a_stored_snapshot_sees_a_rewrite_of_the_same_row\n");
 }
 
+// The bearer lockout as the MQTT routes read it (sweep F339): g_peer's own
+// count, and whether g_peer is held, now.
+unsigned strikes_now() {
+  return canary::net::auth_backoff::failures_of(g_auth_table, g_peer, millis());
+}
+bool held_now() { return canary::net::auth_backoff::locked(g_auth_table, g_peer, millis()); }
+// How many times the handler read the Authorization header's value: one per
+// bearer compare.
+int bearer_reads(const Http& h) {
+  const auto it = h.req.hdr_value_reads.find("Authorization");
+  return it == h.req.hdr_value_reads.end() ? 0 : it->second;
+}
+std::string retry_after(const Http& h) {
+  const auto it = h.req.resp_hdrs.find("Retry-After");
+  return it == h.req.resp_hdrs.end() ? "" : it->second;
+}
+
 // A wrong bearer beside the cookie is not a bearer: the session's refusal.
-// (By api_auth.h's construction nothing is recorded against the lockout —
-// api_auth_bearer_valid() never touches it — but the lockout is the
-// header's own static and nothing here holds it.) Without the cookie it is
-// the 401 it always was — the rule sits behind authorized(), not in front
-// of it.
+// Since sweep F339 the bearer is compared under its address's lockout
+// (api_auth_bearer_grant()): the first wrong one is one strike for that
+// address (before: none, api_auth_bearer_valid() recorded nothing), and the
+// ones after it, inside the backoff it armed, are not compared; the cookie
+// still carries the save to the move gate's 403. Without the cookie, inside
+// that backoff, the bearer is the 429 (before: the 401) — the rule sits
+// behind the route's own gate, not in front of it. After a reboot, which
+// clears the RAM table, a wrong one without the cookie is the 401 again.
 void test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer() {
   boot_with_password();
   const Stored was = stored();
-  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcdeX"), was);
-  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcde"), was);
+  const Http first = bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcdeX");
+  expect_refused(first, was);
+  CHECK(bearer_reads(first) == 1);
+  if (strikes_now() != 1) std::printf("FAIL a wrong bearer beside the cookie left %u strikes\n", strikes_now());
+  CHECK(strikes_now() == 1);
+  CHECK(held_now());
+  const Http second = bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcde");
+  expect_refused(second, was);
+  CHECK(bearer_reads(second) == 0);   // held: not compared
   expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}", ""), was);
   g_wire.hdrs["Authorization"] = std::string("Basic ") + kToken;   // another scheme
   expect_refused(session_post("{\"host\":\"10.0.0.66\"}"), was);
-  // No token registered: no header can be a bearer.
+  CHECK(strikes_now() == 1);
+  // No token registered: no header can be a bearer, and none is compared.
   csi_mqtt::set_api_token_provider(nullptr);
-  expect_refused(bearer_post("{\"host\":\"10.0.0.66\"}"), was);
+  const Http untokened = bearer_post("{\"host\":\"10.0.0.66\"}");
+  expect_refused(untokened, was);
+  CHECK(bearer_reads(untokened) == 0);
+  CHECK(strikes_now() == 1);
   csi_mqtt::set_api_token_provider(test_token);
+  // Without the cookie, inside the backoff: the lockout's 429, nothing saved.
   g_session_cookie_valid = false;
-  const Http bare = bearer_post("{\"host\":\"10.0.0.66\"}", "wrong");
-  CHECK(bare.req.status == "401 Unauthorized" && stored() == was);
+  CHECK(held_now());
+  const Http held = bearer_post("{\"host\":\"10.0.0.66\"}", "wrong");
+  if (held.req.status != "429 Too Many Requests") {
+    std::printf("FAIL a held bearer without the cookie answered %s\n", held.req.status.c_str());
+  }
+  CHECK(held.req.status == "429 Too Many Requests" && stored() == was);
+  CHECK(!retry_after(held).empty());
+  CHECK(held.req.resp.find("\"error\":\"too_many_requests\"") != std::string::npos);
   CHECK(fake::count("init") == 0 && fake::clients.size() == 1);
+  CHECK(strikes_now() == 1);
+  // After a reboot the table is empty: the wrong bearer is the 401, a strike.
+  boot_with_password();
+  g_session_cookie_valid = false;
+  const Stored rebooted = stored();
+  const Http bare = bearer_post("{\"host\":\"10.0.0.66\"}", "wrong");
+  CHECK(bare.req.status == "401 Unauthorized" && stored() == rebooted);
+  CHECK(bare.req.resp_hdrs.count("WWW-Authenticate") == 1);
+  CHECK(fake::count("init") == 0 && fake::clients.size() == 1);
+  CHECK(strikes_now() == 1);
   g_session_cookie_valid = true;
   power_cycle();
   std::printf("PASS a_wrong_bearer_beside_the_cookie_is_not_a_bearer\n");
+}
+
+// POST /api/mqtt/config compares its bearer once per request (sweep F339):
+// the bearer, then the cookie, with the move gate handed that one answer.
+// Before, authorized() compared it (silently) and the move gate compared it
+// again (silently), so a right bearer without the cookie was read twice, a
+// wrong one beside the cookie was no strike, and a held address's right
+// bearer moved the broker.
+void test_the_move_gate_compares_once() {
+  // The cookie and a wrong bearer: one compare, one strike, the 403.
+  boot_with_password();
+  const Stored was = stored();
+  const Http wrong = bearer_post("{\"host\":\"10.0.0.66\"}", "f289-bearer-0123456789abcdef0123456789abcdeX");
+  expect_refused(wrong, was);
+  CHECK(bearer_reads(wrong) == 1);
+  CHECK(strikes_now() == 1);
+  // No cookie and a right bearer moving the broker: served, one compare, no
+  // strike.
+  boot_with_password();
+  g_session_cookie_valid = false;
+  const Http right = bearer_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0}");
+  expect_saved(right, "mqtt://10.0.0.66:1883", kStoredPass);
+  if (bearer_reads(right) != 1) std::printf("FAIL the move gate read the bearer %d times\n", bearer_reads(right));
+  CHECK(bearer_reads(right) == 1);
+  CHECK(strikes_now() == 0);
+  // No cookie and a right bearer from a held address: the 429, not compared,
+  // nothing saved, no re-init.
+  boot_with_password();
+  g_session_cookie_valid = false;
+  const Stored before = stored();
+  canary::net::auth_backoff::record_failure(g_auth_table, g_peer, millis());   // an earlier wrong one
+  const Http held = bearer_post("{\"host\":\"10.0.0.66\"}");
+  if (held.req.status != "429 Too Many Requests") {
+    std::printf("FAIL a held address's right bearer answered %s\n", held.req.status.c_str());
+  }
+  CHECK(held.req.status == "429 Too Many Requests");
+  CHECK(retry_after(held) == "3");   // 2000 ms left
+  CHECK(held.req.resp == "{\"error\":\"too_many_requests\",\"retry_after_s\":3}");
+  CHECK(bearer_reads(held) == 0);
+  CHECK(held.delays == 0);
+  CHECK(stored() == before);
+  reinit_turns();
+  CHECK(fake::count("init") == 0 && fake::clients.size() == 1 && fake::clients[0]->alive);
+  CHECK(strikes_now() == 1);
+  // Another address's right bearer is served meanwhile.
+  g_peer = 0xC0A80115;
+  expect_saved(bearer_post("{\"host\":\"10.0.0.66\",\"tls_mode\":0}"), "mqtt://10.0.0.66:1883", kStoredPass);
+  g_session_cookie_valid = true;
+  power_cycle();
+  std::printf("PASS the_move_gate_compares_once\n");
+}
+
+// GET /api/mqtt/config and POST /api/mqtt/test answer a held bearer 429
+// (sweep F339; before, authorized() compared it silently, so a wrong one was
+// no strike and the right one was served inside a backoff). The cookie still
+// serves the dashboard inside the backoff, and another address is never held.
+void test_the_mqtt_routes_answer_a_held_bearer_429() {
+  boot_with_password();
+  g_session_cookie_valid = false;
+  g_wire.hdrs["Authorization"] = "Bearer wrong";
+  const Http wrong = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(wrong.req.status == "401 Unauthorized");
+  CHECK(wrong.req.resp_hdrs.count("WWW-Authenticate") == 1);
+  if (strikes_now() != 1) std::printf("FAIL a wrong bearer on GET /api/mqtt/config left %u strikes\n", strikes_now());
+  CHECK(strikes_now() == 1);
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + kToken;
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  if (get.req.status != "429 Too Many Requests") {
+    std::printf("FAIL a held bearer on GET /api/mqtt/config answered %s\n", get.req.status.c_str());
+  }
+  CHECK(get.req.status == "429 Too Many Requests");
+  CHECK(get.req.resp.find("password_set") == std::string::npos);
+  CHECK(get.req.resp.find(kStoredPass) == std::string::npos);
+  CHECK(!retry_after(get).empty());
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + kToken;
+  const Http test = http(csi_mqtt::handle_test, "", /*turn_at=*/1);
+  CHECK(test.req.status == "429 Too Many Requests");
+  CHECK(test.delays == 0);
+  CHECK(fake::count("init") == 0 && fake::clients.size() == 1);
+  CHECK(strikes_now() == 1);
+  // The cookie serves the dashboard's GET inside the backoff, no compare.
+  g_session_cookie_valid = true;
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + kToken;
+  const Http cookie = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(cookie.req.status == "200 OK");
+  CHECK(bearer_reads(cookie) == 0);
+  // Another address's right bearer is served.
+  g_session_cookie_valid = false;
+  const uint32_t a = g_peer;
+  g_peer = 0xC0A80115;
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + kToken;
+  const Http b = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(b.req.status == "200 OK");
+  // Once its backoff has run out, A's right bearer is served and clears A.
+  g_peer = a;
+  stub_mqtt::now_ms += canary::net::auth_backoff::BASE_MS + 1;
+  g_wire.hdrs["Authorization"] = std::string("Bearer ") + kToken;
+  const Http later = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(later.req.status == "200 OK");
+  CHECK(strikes_now() == 0);
+  g_session_cookie_valid = true;
+  power_cycle();
+  std::printf("PASS the_mqtt_routes_answer_a_held_bearer_429\n");
 }
 
 // ── A save and a re-init at the same time (sweep F289, the review) ───────
@@ -2742,6 +2903,8 @@ const Test kTests[] = {
     {"two_writers_never_interleave", test_two_writers_never_interleave},
     {"a_wrong_bearer_beside_the_cookie_is_not_a_bearer",
      test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer},
+    {"the_move_gate_compares_once", test_the_move_gate_compares_once},
+    {"the_mqtt_routes_answer_a_held_bearer_429", test_the_mqtt_routes_answer_a_held_bearer_429},
 };
 
 }  // namespace reinit

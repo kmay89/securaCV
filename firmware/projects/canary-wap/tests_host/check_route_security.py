@@ -44,12 +44,28 @@ to a fixed point, every function that calls one). What it reads:
     for the rest of the save stays: the dashboard's.
   - Each bearer gate is defined once, in its BEARER_GATES home, and names no
     any-session gate.
+  - Every bearer compare is accounted (sweep F339): the raw compares
+    (RAW_COMPARES: api_auth_bearer_valid(), constant_time_compare()) are
+    called only in RAW_COMPARE_HOME, api_auth.h, under its accounted grants.
+    Any other sketch file that names one, outside a comment or a string,
+    fails, by file and line. There is no allowlist: a route that compares a
+    bearer goes through api_auth_bearer_grant(), api_auth_check_bearer() or a
+    gate built on them, so a wrong one is a strike against its address.
   - The modules' own copies of the token (csi_integration's g_api_token,
     csi_mqtt's provider, each register_routes module's auth_token_storage()):
     named only by the functions and macros MODULE_TOKEN_COPIES lets keep it,
     and in csi_mqtt's handlers only read into a local that is handed to a
-    gate, or tested against nullptr, and nothing else. Every module
-    canary_wap.ino hands the token to has an entry.
+    gate, as `gate(req, tok)` or `gate(req, tok, &held)` (the grant's held
+    out-parameter, sweep F339), or tested against nullptr, and nothing else.
+    Every module canary_wap.ino hands the token to has an entry.
+  - The backoff's clear (sweep F341): auth_record_success() frees an
+    address's lockout slot, and so does auth_backoff.h's record_success()
+    it wraps. Outside api_auth.h (where the right bearer frees it) and the
+    staged auth_backoff.h (which defines it) only BACKOFF_CLEARS may call
+    either, each once, at the top level of its body after its OTHER_GRANTS
+    refusal: a request that refusal answers (no tap, no claim taken) clears
+    nothing. And the table itself (g_auth_table) is named in api_auth.h
+    only, so no file writes or clears it directly.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -59,7 +75,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and twenty-five plants that each fail it.
+run: a clean sketch that passes and thirty-eight plants that each fail it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -80,8 +96,10 @@ AUTH_MARKERS = (
     "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
                                   # pairing QR, whose answer carries the token)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
-    "api_auth_check_optional(",   # silent variant (caller enforces)
-    "api_auth_bearer_valid(",     # silent Bearer-only variant (F289)
+    "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
+                                  # sent (caller enforces)
+    "api_auth_bearer_valid(",     # the raw compare: only api_auth.h calls it
+                                  # (RAW_COMPARES, sweep F339)
     "api_auth_bearer_grant(",     # the same under the lockout, nothing sent
                                   # (F289: the receipt's first grant; the tap
                                   # and the claim are the handler's own)
@@ -160,10 +178,16 @@ SELF_GATING_HANDLERS = {
 # the one file that defines it: a second definition by the same name (a
 # module's own api_auth_bearer_valid over the cookie) would stand in unseen.
 BEARER_GATES = {
-    "api_auth_bearer_valid": "api_auth.h",  # silent, records nothing
+    "api_auth_bearer_valid": "api_auth.h",  # the raw compare; only api_auth.h calls it (RAW_COMPARES)
     "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
     "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
 }
+# The raw compares (sweep F339): each compares a presented token against the
+# device's with no lockout, so outside api_auth.h a call of one is a token
+# oracle that costs nothing. api_auth.h's accounted grants are their only
+# callers; raw_compare_problems() holds that, with no allowlist.
+RAW_COMPARES = ("api_auth_bearer_valid", "constant_time_compare")
+RAW_COMPARE_HOME = "api_auth.h"
 # The gates a landing-page caller passes: the cv_session cookie, every gate
 # that takes it or a Bearer header, and the pair token the landing hands to
 # any caller that loads it (send_pair_landing, at any time, not only during
@@ -175,7 +199,7 @@ ANY_SESSION_GATES = (
     "cv_session_validate",      # the cookie (api_auth.h's weak hook)
     "session_validate_cookie",  # csi_integration's cookie check
     "api_auth_check",           # cookie OR Bearer
-    "api_auth_check_optional",  # its silent variant
+    "api_auth_check_optional",  # its variant that sends nothing
     "api_auth_check_or_query",  # + ?token= for <img> tags
     "CSI_AUTH_OR_RETURN",       # csi_integration's macro
     "authorized",               # csi_mqtt's cookie OR Bearer
@@ -232,6 +256,27 @@ OTHER_GRANTS = {
                    "claim_served = canary::net::claim_ticket::take("),
     },
 }
+
+# The handlers that may free an address's lockout slot outside api_auth.h
+# (sweep F341): the receipt, once its BOOT tap or setup-door claim has handed
+# the asker the token. backoff_clear_problems() holds each to one
+# auth_record_success() call, at the top level of its body, after its
+# OTHER_GRANTS refusal.
+BACKOFF_CLEARS = ("handle_provisioning_receipt",)
+# The clears it counts: api_auth.h's wrapper and auth_backoff.h's own
+# record_success(), however qualified (review of F341: a direct
+# canary::net::auth_backoff::record_success() passed the rule).
+BACKOFF_CLEAR_CALL = re.compile(r"\b(auth_record_success|record_success)\s*\(")
+# Where a clear is the mechanism itself, not a route: api_auth.h (the right
+# bearer frees its address) and the staged auth_backoff.h, which defines
+# record_success() and calls it from grant() (check_improv_sync.sh holds it
+# byte-identical to firmware/common/network/auth_backoff.h).
+BACKOFF_CLEAR_HOMES = (RAW_COMPARE_HOME, "auth_backoff.h")
+# The lockout table every file shares (api_auth.h's inline g_auth_table):
+# named in AUTH_TABLE_HOME only, so a route cannot free a backoff by writing
+# the table (`g_auth_table = {}`) or by handing it to auth_backoff.h itself.
+AUTH_TABLE = re.compile(r"\bg_auth_table\b")
+AUTH_TABLE_HOME = "api_auth.h"
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -1000,8 +1045,9 @@ def broker_gate_problems(sources: dict, handlers: set, any_session: set,
 def module_token_problems(sources: dict, any_session: set, copies: dict) -> list:
     """Each module's copy of the token is named only where `copies` says:
     kept by its getter, setter and gate, declared once, or read into a local
-    that only a gate is handed. Every module the sketch hands the token to
-    has an entry."""
+    that only a gate is handed (`gate(req, tok)`, or `gate(req, tok, &held)`
+    with the grant's held out-parameter). Every module the sketch hands the
+    token to has an entry."""
     problems = []
     for ns in sorted(set(_TOKEN_HANDED.findall(_blank(sources.get("canary_wap.ino", ""))))):
         homes = [f for f, t in sources.items() if re.search(r"\bnamespace\s+" + ns + r"\s*\{", t)]
@@ -1052,7 +1098,9 @@ def module_token_problems(sources: dict, any_session: set, copies: dict) -> list
                     continue  # a null test (#1835's bearer: tok != nullptr && ...) hands nothing on
                 head = body[:u.start()]
                 call = re.search(r"\b(?:" + gates + r")\s*\(\s*\w+\s*,\s*$", head)
-                if call is None or not re.match(r"\s*\)", body[u.end():]):
+                # The token argument, then `)` or the grant's held
+                # out-parameter, `, &<identifier>)` (sweep F339).
+                if call is None or not re.match(r"\s*(?:,\s*&\s*[A-Za-z_]\w*\s*)?\)", body[u.end():]):
                     problems.append(f"{fname}:{_line(blanked, b + u.start())}: {name}() uses `{tok}`, "
                                     f"its copy of the token, other than as a gate's token argument "
                                     f"or in a null test")
@@ -1062,6 +1110,95 @@ def module_token_problems(sources: dict, any_session: set, copies: dict) -> list
         for name in sorted((set(entry["keep"]) | set(entry["read"])) - named):
             problems.append(f"MODULE_TOKEN_COPIES lets {fname}'s {name}() name the token's copy, "
                             f"and it names none")
+    return problems
+
+
+def raw_compare_problems(sources: dict) -> list:
+    """Every bearer compare is accounted (sweep F339): outside
+    RAW_COMPARE_HOME, no sketch file names a RAW_COMPARES function followed by
+    `(`, in its code (comments and string contents blanked). No allowlist:
+    each hit is a problem, named by file and line."""
+    problems = []
+    call = re.compile(r"\b(" + "|".join(map(re.escape, RAW_COMPARES)) + r")\s*\(")
+    for fname, text in sorted(sources.items()):
+        if fname == RAW_COMPARE_HOME:
+            continue
+        blanked = _blank(text)
+        for m in call.finditer(blanked):
+            problems.append(f"{fname}:{_line(blanked, m.start())}: calls {m.group(1)}(), the raw "
+                            f"compare, which records no strike: outside {RAW_COMPARE_HOME} a bearer "
+                            f"is compared through api_auth_bearer_grant(), api_auth_check_bearer() "
+                            f"or a gate built on them, under its address's lockout")
+    return problems
+
+
+def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> list:
+    """The backoff's clear (sweep F341): outside BACKOFF_CLEAR_HOMES, a call of
+    auth_record_success() or of auth_backoff.h's record_success()
+    (BACKOFF_CLEAR_CALL; comments and string contents blanked) stands only
+    in canary_wap.ino's `homes`, once each, at the top level of the body and
+    after the handler's OTHER_GRANTS refusal (the `if` whose whole condition
+    is that refusal and whose branch returns). So a request the refusal
+    answers, handed no credential, clears nothing, and no other route can
+    free an address's backoff without a right bearer (auth_table_problems()
+    holds the table itself to api_auth.h)."""
+    grants = OTHER_GRANTS if grants is None else grants
+    problems, seen = [], {}
+    for fname, text in sorted(sources.items()):
+        if fname in BACKOFF_CLEAR_HOMES:
+            continue
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        for m in BACKOFF_CLEAR_CALL.finditer(blanked):
+            inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
+            name = inner[0][1] if inner else None
+            where = f"{fname}:{_line(blanked, m.start())}"
+            if fname != "canary_wap.ino" or name not in homes:
+                problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
+                                f"calls {m.group(1)}(), which frees an address's backoff: "
+                                f"outside {RAW_COMPARE_HOME} only {', '.join(homes)} may, after "
+                                f"its tap-and-claim refusal (BACKOFF_CLEARS)")
+                continue
+            seen.setdefault(name, []).append((m.start(), inner[0][2], inner[0][3], where))
+    ino = _blank(sources.get("canary_wap.ino", ""))
+    for h in homes:
+        sites = seen.get(h, [])
+        if len(sites) != 1:
+            problems.append(f"{h}() clears the backoff {len(sites)} times; BACKOFF_CLEARS "
+                            f"holds it to once, after its tap-and-claim refusal")
+            continue
+        at, b, e, where = sites[0]
+        code, rel = ino[b:e], at - b
+        refusal = grants.get(h, {}).get("refusal")
+        ends = [bspan[1] for pos, cond, _c, bspan, returns in _ifs(code)
+                if refusal and returns and _depth(code, pos) == 0
+                and _squash(cond) == _squash(refusal)]
+        why = ("it has no such refusal" if not ends
+               else "the clear comes before the refusal" if rel < min(ends)
+               else "the clear is inside a branch" if _depth(code, rel) != 0
+               else None)
+        if why:
+            problems.append(f"{where}: {h}() clears the backoff other than at the top level "
+                            f"after its refusal `if ({refusal}) {{ ... return ...; }}` ({why}): "
+                            f"a request handed no credential must clear nothing")
+    return problems
+
+
+def auth_table_problems(sources: dict) -> list:
+    """The lockout table (review of F341): outside AUTH_TABLE_HOME no sketch
+    file names g_auth_table in its code (comments and string contents
+    blanked). Every read and write of it goes through api_auth.h's
+    functions, so a route cannot free a backoff by assigning the table or by
+    handing it to auth_backoff.h's record_success() itself. No allowlist."""
+    problems = []
+    for fname, text in sorted(sources.items()):
+        if fname == AUTH_TABLE_HOME:
+            continue
+        blanked = _blank(text)
+        for m in AUTH_TABLE.finditer(blanked):
+            problems.append(f"{fname}:{_line(blanked, m.start())}: names g_auth_table, the lockout "
+                            f"table: outside {AUTH_TABLE_HOME} it is read and written only through "
+                            f"api_auth.h's functions")
     return problems
 
 
@@ -1113,7 +1250,7 @@ _FIX_API_AUTH = (
     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
     "  return t && header_matches(req, t);\n"
     "}\n"
-    "static bool api_auth_bearer_grant(httpd_req_t* req, const char* t) {\n"
+    "static bool api_auth_bearer_grant(httpd_req_t* req, const char* t, bool* held = nullptr) {\n"
     "  if (auth_is_locked_out()) return false;\n"
     "  return api_auth_bearer_valid(req, t);\n"
     "}\n"
@@ -1141,6 +1278,7 @@ _FIX_INO = (
     "  if (!claimed && !gate_take()) {\n"
     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
     "  }\n"
+    "  auth_record_success(req);\n"
     "  send_kit(req);\n"
     "  return ESP_OK;\n"
     "}\n"
@@ -1170,8 +1308,8 @@ _FIX_CSI = (
 _FIX_MQTT = (
     "const char* (*s_api_token_provider)() = nullptr;\n"
     "void set_api_token_provider(const char* (*fn)()) { s_api_token_provider = fn; }\n"
-    "static bool authorized(httpd_req_t* req, const char* t) {\n"
-    "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t);\n"
+    "static bool authorized(httpd_req_t* req, const char* t, bool* held = nullptr) {\n"
+    "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t, held);\n"
     "}\n"
     "bool write_row(const Config& cfg) { return prefs.putString(\"p\", cfg.pass) > 0; }\n"
     "static bool move_needs_password(const Config& before, const Config& after, bool typed,\n"
@@ -1182,14 +1320,16 @@ _FIX_MQTT = (
     "}\n"
     "esp_err_t handle_config_get(httpd_req_t* req) {\n"
     "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
-    "  if (!authorized(req, tok)) return ESP_OK;\n"
+    "  bool held = false;\n"
+    "  if (!authorized(req, tok, &held)) return ESP_OK;\n"
     "  Config c;\n"
     "  return httpd_resp_sendstr(req, c.pass[0] ? \"set\" : \"none\");\n"
     "}\n"
     "esp_err_t handle_config_post(httpd_req_t* req) {\n"
     "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
-    "  if (!authorized(req, tok)) return ESP_OK;\n"
-    "  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);\n"
+    "  bool held = false;\n"
+    "  const bool bearer = tok != nullptr && api_auth_bearer_grant(req, tok, &held);\n"
+    "  if (!bearer && !csi_integration::session_validate_cookie(req)) return ESP_OK;\n"
     "  Config c;\n"
     "  const Config before = c;\n"
     "  if (typed) strncpy(c.pass, buf, 128);\n"
@@ -1199,6 +1339,17 @@ _FIX_MQTT = (
     "  }\n"
     "  if (!write_row(c)) return ESP_OK;\n"
     "  return ESP_OK;\n"
+    "}\n"
+)
+# A module route that compares the bearer for a field of its answer, as F346's
+# GET /api/bluetooth passkey does: through the accounted grant.
+_FIX_BT = (
+    "namespace bluetooth_api {\n"
+    "esp_err_t handle_bluetooth_status(httpd_req_t* req) {\n"
+    "  const char* tok = auth_token_storage();\n"
+    "  const bool digits = tok != nullptr && api_auth_bearer_grant(req, tok);\n"
+    "  return httpd_resp_sendstr(req, digits ? \"{\\\"pin\\\":1}\" : \"{}\");\n"
+    "}\n"
     "}\n"
 )
 _FIX_TABLES = {
@@ -1267,11 +1418,11 @@ _FIX_PLANTS = (
      "  if (cv_session_validate(req)) return true;\n  if (auth_is_locked_out()) return false;\n",
      "api_auth_bearer_grant() names cv_session_validate"),
     ("the move gate's bearer taking a session", "csi_mqtt.cpp",
-     "&& api_auth_bearer_valid(req, tok);", "&& authorized(req, tok);",
+     "&& api_auth_bearer_grant(req, tok, &held);", "&& authorized(req, tok);",
      "a bearer that names authorized"),
     ("the move gate's bearer also taking the cookie", "csi_mqtt.cpp",
-     "&& api_auth_bearer_valid(req, tok);",
-     "&& (api_auth_bearer_valid(req, tok) || authorized(req, tok));",
+     "&& api_auth_bearer_grant(req, tok, &held);",
+     "&& (api_auth_bearer_grant(req, tok, &held) || authorized(req, tok));",
      "a bearer that names authorized"),
     ("the move gate also letting a session through", "csi_mqtt.cpp",
      "if (move_needs_password(before, c, typed, bearer)) {",
@@ -1297,14 +1448,69 @@ _FIX_PLANTS = (
      "  return httpd_resp_sendstr(req, \"{}\");", "  return httpd_resp_sendstr(req, g_api_token);",
      "handle_csi_status() names its module's copy"),
     ("a module handler answering the token it read for its gate", "csi_mqtt.cpp",
-     "  if (!authorized(req, tok)) return ESP_OK;\n  Config c;\n  return",
-     "  if (!authorized(req, tok)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
+     "  if (!authorized(req, tok, &held)) return ESP_OK;\n  Config c;\n  return",
+     "  if (!authorized(req, tok, &held)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
      "  Config c;\n  return", "other than as a gate's token argument"),
     ("a module handler reading the token it tests for null", "csi_mqtt.cpp",
-     "tok != nullptr && api_auth_bearer_valid(req, tok);",
-     "tok[0] != '\\0' && api_auth_bearer_valid(req, tok);", "or in a null test"),
+     "tok != nullptr && api_auth_bearer_grant(req, tok, &held);",
+     "tok[0] != '\\0' && api_auth_bearer_grant(req, tok, &held);", "or in a null test"),
+    ("a module handler handing its token on past a gate's held out-parameter", "csi_mqtt.cpp",
+     "authorized(req, tok, &held)", "authorized(req, tok, held_of(tok))",
+     "other than as a gate's token argument"),
+    # The token used once, as the token argument: only the tail after it,
+    # not `, &<identifier>)`, is wrong, so only the reader's tail rule fails it.
+    ("a gate's held argument that is not `&<identifier>`", "csi_mqtt.cpp",
+     "authorized(req, tok, &held)", "authorized(req, tok, held_ptr())",
+     "other than as a gate's token argument"),
+    # Every bearer compare accounted (sweep F339): the raw compares outside
+    # api_auth.h, with no allowlist.
+    ("the move gate's bearer through the raw compare", "csi_mqtt.cpp",
+     "&& api_auth_bearer_grant(req, tok, &held);", "&& api_auth_bearer_valid(req, tok);",
+     "calls api_auth_bearer_valid(), the raw compare"),
+    ("a module's answer field through the raw compare (F346's passkey)", "bluetooth_api.h",
+     "api_auth_bearer_grant(req, tok);", "api_auth_bearer_valid(req, tok);",
+     "bluetooth_api.h:4: calls api_auth_bearer_valid(), the raw compare"),
+    ("a module's own constant_time_compare() of a token", "csi_integration.cpp", "",
+     "static bool same(const char* a, const char* b) { return constant_time_compare(a, b, 32); }\n",
+     "calls constant_time_compare(), the raw compare"),
     ("the module's copy named outside every function", "csi_integration.cpp",
      "bool init(", "const char* g_leak = g_api_token;\nbool init(", "outside every function"),
+    # The backoff's clear (sweep F341): once, after the tap-and-claim refusal.
+    ("the backoff cleared inside the tap's refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "    auth_record_success(req);\n  }\n  send_kit(req);", "other than at the top level"),
+    # One plant for each of the three conditions alone (review of F341): the
+    # plant above trips the first two at once.
+    ("the backoff cleared at the top level above the refusal", "canary_wap.ino",
+     "  if (!claimed && !gate_take()) {\n    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
+     "  }\n  auth_record_success(req);\n",
+     "  auth_record_success(req);\n  if (!claimed && !gate_take()) {\n"
+     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n  }\n",
+     "the clear comes before the refusal"),
+    ("the backoff cleared inside a branch after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  if (claimed) {\n    auth_record_success(req);\n  }\n  send_kit(req);",
+     "the clear is inside a branch"),
+    ("the backoff cleared twice after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  auth_record_success(req);\n  auth_record_success(req);\n  send_kit(req);",
+     "handle_kit() clears the backoff 2 times"),
+    # The clear spelled without the wrapper, and the table written directly.
+    ("a route calling auth_backoff.h's record_success() itself", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  canary::net::auth_backoff::record_success(backoff_table(), auth_request_source(req));\n"
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls record_success()"),
+    ("a route clearing the lockout table", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");", "  g_auth_table = {};\n  return httpd_resp_sendstr(req, \"{}\");",
+     "names g_auth_table, the lockout table"),
+    ("a second route clearing the backoff", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  auth_record_success(req);\n  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls auth_record_success()"),
+    ("a module clearing the backoff", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n", "  CSI_AUTH_OR_RETURN(req);\n  auth_record_success(req);\n",
+     "csi_integration.cpp:11: handle_csi_status() calls auth_record_success()"),
     ("the token handed to a module whose copy is not listed", "canary_wap.ino",
      "  csi_integration::init(server, g_device.api_token_str);\n",
      "  csi_integration::init(server, g_device.api_token_str);\n"
@@ -1315,22 +1521,42 @@ _FIX_PLANTS = (
 
 def _fixture_sources() -> dict:
     return {"api_auth.h": _FIX_API_AUTH, "canary_wap.ino": _FIX_INO,
-            "csi_integration.cpp": _FIX_CSI, "csi_mqtt.cpp": _FIX_MQTT}
+            "csi_integration.cpp": _FIX_CSI, "csi_mqtt.cpp": _FIX_MQTT,
+            "bluetooth_api.h": _FIX_BT}
+
+
+def _fixture_problems(sources: dict) -> list:
+    """The rules the fixtures exercise: the secret rule, the raw compare rule
+    and the backoff's clear, as main() runs them over the tree."""
+    return (answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+            + raw_compare_problems(sources)
+            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"])
+            + auth_table_problems(sources))
 
 
 def _assert_secret_rules() -> None:
-    """Each plant fails the secret rule for its reason; the clean fixture
-    passes it. Runs every time, before the tree."""
-    clean = answer_gate_rule_problems(_fixture_sources(), _FIX_HANDLERS, **_FIX_TABLES)
+    """Each plant fails the secret rule, the raw compare rule or the
+    backoff's clear for its reason; the clean fixture passes all three. Runs
+    every time, before the tree."""
+    clean = _fixture_problems(_fixture_sources())
     assert clean == [], "the secret rule's clean fixture fails: " + "; ".join(clean)
     for what, fname, old, new, word in _FIX_PLANTS:
         sources = _fixture_sources()
         assert old in sources[fname], f"fixture plant {what!r}: its text is not in {fname}"
         sources[fname] = sources[fname].replace(old, new, 1) if old else sources[fname] + new
-        got = answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+        got = _fixture_problems(sources)
         assert any(word in p for p in got), (
             f"the secret rule passed a plant ({what}): expected a problem naming {word!r}, "
             f"got {got!r}")
+    # The raw compare rule reads code: a comment (stripped, as main() strips
+    # every source) or a string that names a raw compare is no call of it.
+    quiet = {"x.cpp": strip_comments('// api_auth_bearer_valid(req, t)\n'
+                                     'const char* s = "constant_time_compare(a, b, 3)";\n'
+                                     '/* constant_time_compare( */\n')}
+    assert raw_compare_problems(quiet) == [], (
+        "the raw compare rule read a comment or a string as a call: "
+        + "; ".join(raw_compare_problems(quiet)))
+    assert len(_FIX_PLANTS) == 38, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1423,6 +1649,9 @@ def main() -> int:
                             f"on the public allowlist")
 
     failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
+    failures += raw_compare_problems(secret_sources)
+    failures += backoff_clear_problems(secret_sources)
+    failures += auth_table_problems(secret_sources)
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

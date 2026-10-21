@@ -233,7 +233,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Camera init fail | Continue all other witnessing |
 | GPS no fix | Record events without location |
 | Chain verify fail | Create tamper event, alert user, keep recording |
-| Auth failure | Lock out with exponential backoff |
+| Auth failure | Lock out the failing source address with exponential backoff, per address on the kernel and on both Canary firmwares (the WAP and the flagship run one table, `firmware/common/network/auth_backoff.h`: at most 60 s per address, and a shared overflow slot bounds the addresses beyond its 8-address table; a host's wrong bearers hold only that host's address, F343, F340). On the Canaries a request with no credential is no strike (the kernel counts a missing token as one, `src/api/mod.rs`), and a BOOT tap (or the WAP's setup-door claim) that hands an address the token clears that address's own slot, never the shared overflow (F341) |
 | TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
 | Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
@@ -522,7 +522,25 @@ Future: randomized SSID rotation with owner-only discovery.
 
 **Result:** Token comparison uses constant-time function (volatile XOR
 accumulator). Response time is independent of how many characters match.
-Additionally, exponential backoff limits brute-force attempts.
+Additionally, exponential backoff limits brute-force attempts. On the
+kernel and on both Canary firmwares it is per source address; on the
+Canaries (the WAP and the flagship share `auth_backoff.h`) at most nine
+backoffs run at once (8 tracked addresses and a shared overflow), so a host
+with many addresses gets about 30 guesses a minute between reboots. The
+table lives in RAM, and on the WAP any landing session can reboot the unit
+(`POST /api/reboot`, `POST /api/safe-mode/retry`), which empties it: a
+guesser that reboots the WAP after every few seconds of guessing gets about
+37 a minute if the unit is back on the LAN 45 s later, about 100 at 10 s,
+about 155 at 5 s (modeled over `auth_backoff.h` in
+`firmware/tests_host/test_auth_backoff.cpp`; the WAP's boot time is not
+measured; [`magic_pairing.md`](../design/magic_pairing.md) §3.7). The
+flagship's reboot needs the bearer. On both, the token's entropy is the
+bound across addresses (F343, F340): about 184 bits for a
+WAP token derived since its 64-byte encoder (32 random characters of a
+54-character alphabet); about 155 on average for the flagship's, whose
+encoder takes 32 HMAC bytes, so about 27 of its characters are random and
+the rest a fixed top-up; and about 116 on average for a WAP token kept in
+NVS from the first, 24-byte encoder.
 
 **PASS if:** Auth timing is constant regardless of input.
 
@@ -962,7 +980,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     pairs, so the joiner's ends the initiator's copies within one pass; they
     run on only while the first COMPLETE is lost (until the joiner opens a
     copy and its heartbeat follows) or when that heartbeat cannot reach the
-    initiator (F320), and their whole window only then.
+    initiator (F320). Since F324 the joiner heartbeats every 30 s ± 3 s, so
+    a lost paired heartbeat costs about one more interval of copies (about
+    15 copies of two frames), not the whole window; the window runs out
+    only against a joiner that sends nothing in it.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or
@@ -978,8 +999,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   code before its fix and by mutation; an interop probe in scratch ran the pairing library
   against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
   CI's; not bench-verified.
-- **PlatformIO membership: a join needs a leave, a member says it paired,
-  the peers list is the session's (F136, F162, F199; host-tested only).**
+- **PlatformIO membership: a join needs a leave, a member says it paired
+  and keeps saying so, the peers list is the session's (F136, F162, F199,
+  F324; host-tested only).**
   - *A join on a Canary already in an opera is refused (F136).*
     `pair/join` with an opera held answers `409 opera_exists` before a
     pairing number is taken or any member, key or secret is touched; until
@@ -989,21 +1011,208 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     pair with a second member of the opera it holds, so a changed radio
     address is Leave then Join (F319). canary-wap's join is unchanged
     (F318).
-  - *A member announces itself once (F162).* One signed `HEARTBEAT`
-    (registry 16, empty payload) to bound members only, right after
-    NOTIFY_PAIRED and once on the first pass after a boot that bound a
-    member; never to a pairing partner that is not a member, and never on
-    a timer (a recurring heartbeat would be a new periodic RF pattern;
-    whether to add one is the maintainer's open call, F324). A receiver handles it as any verified opera frame; it
-    discloses nothing an opera frame does not.
+  - *A member announces itself, and keeps doing so (F162, F324).* One
+    signed `HEARTBEAT` (registry 16, empty payload) to bound members only,
+    right after NOTIFY_PAIRED and once on the first pass after a boot that
+    bound a member (F162), and since F324 every 30 s ± 3 s while the
+    session runs with an opera, every heartbeat re-arming the deadline;
+    never to a pairing partner that is not a member, and nothing signed or
+    counter spent with no member bound. A receiver handles it as any
+    verified opera frame; it discloses nothing an opera frame does not
+    (the opera id, the sender's fingerprint, a counter, an uptime stamp),
+    and all of that is already on the air in every opera frame.
+    - *Accepted: a periodic radio emission.* A member's MAC is now on the
+      air every interval, which marks a device as a Canary in an opera to
+      anyone listening on its channel. That adds little to the RF pattern
+      of the only build with the mesh: `[env:full]` already broadcasts the
+      BLE status beacon continuously, and no released image builds the
+      mesh. The owner who wants no periodic frame turns the mesh off
+      (`POST /api/mesh/enable` with `false`): a stopped session sends
+      nothing and drops its deadline.
+    - *Liveness counts verified frames only (F324).* A member's peer row
+      (`state`, `last_seen_sec`, `rssi`) and `peers_online` come from its
+      last frame that passed the signature, opera and counter checks
+      (`verified_seen_ms`), as on canary-wap. Until F324 they were the
+      transport entry's, which any frame from the address refreshed before
+      verification, and ESP-NOW does not authenticate a source: a 3-byte
+      junk frame and a replay from a quiet member's MAC once a minute held
+      it `CONNECTED` and `peers_online` 1 for ten minutes (host-probed). A
+      heartbeat alone would have made that easy to aim (the member's MAC on
+      the air every 30 s), so an intruder who pulled a Canary could have
+      held it `CONNECTED` with a spare ESP32. Now junk, a forgery (a
+      flipped signature byte, or a frame signed under another opera) and a
+      replay of a frame the receiver has heard refresh nothing
+      (host-tested), and a member that is gone reads `STALE` within about
+      90-100 s and `OFFLINE` within about 5 minutes while that is all a
+      radio copying its address sends.
+      An age past 2^31 ms is held there, so a member gone longer than the
+      32-bit clock can count does not read `CONNECTED` again when it wraps.
+    - *Not covered: a frame the receiver did not hear.* The counter check
+      is a high-water mark, so any genuine frame of the member's that the
+      receiver did not hear verifies whenever it arrives from the member's
+      own address, and refreshes its liveness: a recorder that sends such
+      frames one under every 90 s holds a member that is gone `CONNECTED`
+      about 90 s per frame, and then it reads `STALE` and `OFFLINE`. There
+      is no fixed bound, after a reboot or otherwise: the hold is the size
+      of the recorder's stock, and a radio near the member comes to hold
+      one three ways, and a fourth, after a pairing, is narrowed but not
+      closed (the last below):
+      - *Frames the member sent while the receiver was not listening.* A
+        member heartbeats each bound member's address every interval
+        whether or not that member is there (spec §7.1), so every heartbeat
+        it sends while the receiver is off, booting, out of range or on
+        another channel (the softAP's channel 1 before its station rejoins
+        its router, F320) is one the receiver never heard, and a passive
+        recorder near the member keeps it with no jamming. They build up at
+        one per about 30 s the receiver is away, and relayed they hold a
+        gone member `CONNECTED` about three times as long as the receiver
+        was away (2.6 to 3.3 times by the jitter's range; one hour down
+        held it about 2.9 hours in the host test). Before F324 a member sent
+        nothing on a timer, so a downtime left no frames to keep. A breaker
+        trip on the receiver's circuit or a slow router rejoin leaves a
+        small stock with no intent at all; an intruder who unplugs the
+        receiver, pulls the member and plugs the receiver back in builds a
+        large one.
+      - *After a receiver reboot, every frame it heard since its last
+        5-minute replay-counter save* is fresh again (spec §8.3; the F116
+        bullet above says the same of canary-wap's own save): at most 12
+        heartbeats one save interval holds at the shortest spacing (more if
+        the member sent other frames in it), about 18 minutes, on top of
+        what the member sent while the receiver was down. A receiver that
+        reboots more often than every 5 minutes never advances its saved
+        counter, so the same stock serves on every boot. A save before the
+        deliberate restarts would narrow this to unclean ones (a power cut,
+        a crash); it is not made.
+      - *A jammer's stock.* A jammer that keeps the member's frames from the
+        receiver and sends them late holds it `CONNECTED` for as long as its
+        stock lasts, after the member is gone too, with no `STALE` between;
+        a jammer that only blocks leaves it `STALE` within about 90 s.
+      - *Narrowed, not closed: after a pairing, every frame the member
+        signed under the opera before it.* The new receiver never heard any
+        of them, and held no saved counter for the member until its first
+        frame there. A receiver paired on the bench and unplugged within 5
+        minutes to be mounted restored no counter for the member, and every
+        frame the member had signed (since F324, one heartbeat to each other
+        member every 30 s) held a gone member `CONNECTED` again: 240
+        recorded frames, 356 minutes (host-probed). Now the counter of the
+        member's first frame that verifies there is persisted at once
+        (mesh_session's first-counter handler, main.cpp
+        `on_mesh_first_counter`; also after a re-pair from the member's
+        replay tombstone, and after a boot that restored no counter for it,
+        a saved 0 included, since a save before the member is heard writes
+        it at 0 and no frame carries 0), and once more
+        `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has moved. A save that
+        fails (NVS refused the write) is tried again rather than taken as
+        done: the first on the member's next frame that verifies, the
+        second 66 s after the pass that failed. The Codex review of #1839
+        found both taken as done, so a failed first save waited for the
+        second (or, with the counter unmoved by then, for the 5-minute
+        save) and a failed second save for the 5-minute save. The first
+        frame that verifies need not be the member's newest: the counter
+        check is a high-water mark, so any older genuine frame of the
+        member's passes too, and a radio copying the member's address can
+        land one while the receiver holds the member registered and unheard.
+        That window runs until the member's own first frame lands: after a
+        pairing, milliseconds normally, up to about one heartbeat interval
+        (33 s) when the first COMPLETE or the paired heartbeat is lost,
+        which a jammer can force; after a boot that restored no counter for
+        the member, until the receiver hears the member's next heartbeat,
+        which also waits for the receiver's station to join its router (the
+        softAP's channel 1 until then, F320). The first save then holds the
+        older counter, and the member's own frames raise it in RAM only. The
+        second save holds the member's own counter unless every frame of the
+        member's own was kept from the receiver through those 66 s: lost,
+        jammed, or, after a boot, unheard by a station that had not yet
+        joined its router. So what stays open is three reboots. One before the
+        member's first frame lands (or, when NVS refused that save, before
+        its retry on the member's next frame, or a 5-minute save, lands)
+        finds nothing newer saved for it (after a first pairing, no counter
+        at all), so everything it signed before is fresh again, and nothing
+        need be landed at the pairing (host-tested: 132 of 132 relayed frames read
+        `CONNECTED`; with that save refused and the reboot before its
+        retry, 133 of 133); after a pairing that window is the one above,
+        milliseconds unless the first COMPLETE or the paired heartbeat was
+        lost or NVS refused the first save, which holds it open until a
+        retry lands: on the member's next verified frame, normally its next
+        heartbeat 27 to 33 s later, about 33 s more for each refused write.
+        No pass retries it, so when the member's own frames are kept from
+        the receiver after the refusal (lost, or jammed), it stays open
+        until the member's next verified frame or the next 5-minute save
+        that lands (main.cpp saves the counters every 300 s), as every
+        pairing's did before F324 (host-tested: 290 s of passes with the
+        member quiet ran no retry, and a reboot then read 133 of 133
+        `CONNECTED`; with a 5-minute save landed before it, none).
+        One before a save of the member's newer counter lands (the second
+        save, 66 s after the first, and, when NVS refused it, 66 s after each
+        refused try; or a 5-minute save, when one lands first), and, when the
+        member's own frames were kept out through the 66 s, one before the
+        next 5-minute save,
+        restore the older counter, and everything the member signed after
+        it is fresh again (host-tested: a reboot before the second save let
+        132 relayed frames hold a gone member `CONNECTED` at every read;
+        after it, at none, also when one heartbeat of the member's own was
+        lost and when the millis() clock wrapped between the two saves; a
+        refused second save leaves the older counter saved until its retry
+        lands 66 s later). Those two take a recording of the
+        member's earlier frames, a radio copying its address at the pairing
+        or the boot, and that reboot.
+      One frame the receiver hears from the member itself makes every older
+      one a replay. Nothing on the receive side tells a late frame from a
+      fresh one: the signed header carries the sender's own clock, which no
+      receiver checks, and closing this needs a freshness check against
+      that clock or a wire change. Host-tested
+      (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its
+      reboot, jammer and downtime legs,
+      `test_a_members_first_counter_is_saved_at_once`,
+      `test_an_older_first_frame_is_saved_over_once_more`,
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`); not run
+      on a device.
+    - *The replay window of a missed frame, bounded conditionally.* A frame
+      of a member's that the receiver missed stays dispatchable from a radio
+      copying the member's own address (spec §8.3) only until the receiver
+      hears the member's next frame: on a working link its next heartbeat,
+      about 33 s or less. A jammer that keeps the member's frames from the
+      receiver keeps it open; if it also sends them late, the member reads
+      `CONNECTED` throughout (the bullet above). Not a flat 33 s bound.
+    - *Cost, from code.* One Ed25519 signature per interval per sender, and
+      at most 8 heartbeat verifies per interval per receiver (one per bound
+      member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
+      counter per heartbeat (a reservation write per 1024, about 2.8 a
+      day); the 5-minute replay-counter save now writes counters that move,
+      and a member's first counter adds at most two saves that land per
+      registration (a pairing, or a boot that restored no counter for the
+      member): its first frame's, and one 66 s later if the counter moved;
+      past those two no frame adds another; these writes happen only on
+      flash-encrypted boards. A save that fails is tried again on the
+      member's next verified frame, or for the second save 66 s later,
+      never on the next pass. On a board without flash encryption every
+      replay-counter save is refused before any write, so the first-counter
+      save is tried on each of the member's verified frames and writes
+      nothing: a counter snapshot per frame (the session's half host-tested,
+      with a handler that fails on every call:
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`). On a
+      flash-encrypted board whose NVS keeps refusing, each verified frame
+      of a member whose first save has not landed is one refused write
+      attempt (`Preferences::begin` and `putBytes` of the replay blob) on
+      top of the verify the frame already cost: normally one a heartbeat,
+      but a radio copying the member's address with a recording of the
+      member's frames this receiver has not heard sets the pace, as fast
+      as the main loop verifies what the transport queues (8 frames at a
+      time), bounded by the frames in the recording, since each verifies
+      once. It needs a board whose NVS already refuses the write; whether
+      a refused write wears flash was not checked on hardware. The
+      transport's 100-frame-a-second storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
     session holds, and reads no NVS on the HTTP task; a stored key the
     session does not hold is not a member anything hears, so the rows
     always agree with `peers_total`.
   Pinned by host tests in `test_mesh_session` and `test_mesh_pairing`, by
-  `check_canary_mesh_status.py` and the handlers' wiring test; the canary
-  build is CI's; not bench-verified (the F136, F162, F199 and F215 section
+  `check_canary_mesh_status.py` and the handlers' wiring tests (the
+  first-counter save's in `scripts/tests/test_canary_mesh_first_counter_wiring.py`);
+  the canary build is CI's; not bench-verified (the F136, F162, F199, F215 and F324 section
   of `docs/audit/hardware_verification_checklist.md`).
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the

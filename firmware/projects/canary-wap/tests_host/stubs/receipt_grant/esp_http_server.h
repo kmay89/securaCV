@@ -1,7 +1,7 @@
 /* Host stand-in for esp_http_server.h (the receipt-grant harness,
  * test_receipt_grant.cpp, sweep F289, and the session-cookie one,
- * test_session_cookie.cpp): a request is the server it arrived on, its
- * headers and its query string, a response is what the handler set and
+ * test_session_cookie.cpp): a request is the server it arrived on, the peer
+ * it came from, its headers and its query string, a response is what the handler set and
  * sent, both inspectable by the test. The query readers answer as IDF's do: no query is
  * ESP_ERR_NOT_FOUND, one that does not fit is ESP_ERR_HTTPD_RESULT_TRUNC with
  * the truncated text copied (httpd_query_key_value copies what fits and
@@ -50,6 +50,13 @@ struct httpd_req {
    * session cookie is Secure only on an answer from the HTTPS server
    * (canary_wap.ino session_cookie_header(); test_session_cookie.cpp). */
   httpd_handle_t handle = nullptr;
+  /* The socket's peer, as the sketch's request_peer_key() reads it
+   * (getpeername into provisioning_gate.h's 16-byte key; sweep F343): an
+   * IPv4 client of the dual-stack listener is ::ffff:a.b.c.d. By default
+   * ::ffff:192.168.1.20; peer_ok = false is a socket that cannot say. The
+   * suites' request_peer_key() (peer_source.h) reads these. */
+  uint8_t peer[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 20};
+  bool peer_ok = true;
   std::map<std::string, std::string> req_hdrs;   /* "Authorization", "Cookie" */
   std::string query;                             /* after the '?'; "" = none */
   std::string status = "200 OK";

@@ -1012,6 +1012,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         page over the Canary's own Wi-Fi (that unlock only exists while the
         Canary's network is broadcasting), or paste the token from your recovery kit.
       </div>
+      <div class="card-subtitle" id="lanTokenRefused" style="display:none;margin-top:0.35rem;color:var(--warning);">
+        The Canary refused that token. Check it against your recovery kit and paste it again.
+      </div>
       <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap;">
         <input type="text" class="form-input" id="lanTokenInput" placeholder="cv_… token from canary-recovery-kit.json" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" style="flex:1;min-width:12rem;">
         <button class="btn btn-primary" onclick="unlockWithToken()">Unlock</button>
@@ -2838,12 +2841,37 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const b = document.getElementById('lanLockBanner');
       if (b) b.style.display = tokenIsMissing() ? '' : 'none';
     }
+    // The token a request sent, or null when it sent none.
+    function sentToken() { return tokenIsMissing() ? null : CV_TOKEN; }
+    // A token the device refused is dropped, and the banner asks for it
+    // again (sweep F340). Kept, every poll sent it once more: a strike each
+    // time its address's backoff ended, so a mistyped paste held that
+    // address (this computer's other tabs and its curl too) at 429 until the
+    // page was reloaded. The WAP's secureFetch drops a refused token the
+    // same way. securacv_auth refuses a token it read with a 401 (malformed)
+    // or 403 {"error":"forbidden"} (wrong). A 403 {"error":"host"} never
+    // read it and a 429 compared nothing, so both keep it, and so does an
+    // answer to a token the banner has since replaced.
+    function dropRefusedToken(sent, status, text) {
+      if (!sent || CV_TOKEN !== sent) return;
+      let wrong = status === 401;
+      if (status === 403) {
+        try { wrong = JSON.parse(text).error === 'forbidden'; } catch (e) { wrong = false; }
+      }
+      if (!wrong) return;
+      CV_TOKEN = '';
+      const n = document.getElementById('lanTokenRefused');
+      if (n) n.style.display = '';
+      refreshLockBanner();
+    }
     function unlockWithToken() {
       const el = document.getElementById('lanTokenInput');
       const v = (el.value || '').trim();
       if (!v) return;
       CV_TOKEN = v;
       el.value = '';
+      const n = document.getElementById('lanTokenRefused');
+      if (n) n.style.display = 'none';
       refreshLockBanner();
       refreshStatus();
       loadWifiStatus();
@@ -2884,8 +2912,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // API calls
     async function api(endpoint, method = 'GET', body = null) {
       const opts = { method, headers: {} };
-      if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') {
-        opts.headers['Authorization'] = 'Bearer ' + CV_TOKEN;
+      const sent = sentToken();
+      if (sent) {
+        opts.headers['Authorization'] = 'Bearer ' + sent;
       }
       if (body) {
         opts.headers['Content-Type'] = 'application/json';
@@ -2894,6 +2923,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       try {
         const res = await fetch(API_BASE + endpoint, opts);
         const text = await res.text();
+        dropRefusedToken(sent, res.status, text);
         try {
           return JSON.parse(text);
         } catch (parseErr) {
@@ -4248,9 +4278,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function viRefreshThumb() {
       try {
         const hdrs = {};
-        if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') hdrs['Authorization'] = 'Bearer ' + CV_TOKEN;
+        const sent = sentToken();
+        if (sent) hdrs['Authorization'] = 'Bearer ' + sent;
         const res = await fetch(API_BASE + '/api/vision/thumbnail', { headers: hdrs });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) dropRefusedToken(sent, res.status, await res.text());
+          return;
+        }
         const buf = new Uint8Array(await res.arrayBuffer());
         const c = document.getElementById('viThumb');
         if (!c || buf.length !== 1200) return;
@@ -4987,11 +5021,15 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       try {
         const opts = { headers: {} };
-        if (CV_TOKEN && CV_TOKEN.charAt(0) !== '_') {
-          opts.headers['Authorization'] = 'Bearer ' + CV_TOKEN;
+        const sent = sentToken();
+        if (sent) {
+          opts.headers['Authorization'] = 'Bearer ' + sent;
         }
         const res = await fetch(API_BASE + '/api/peek/snapshot?t=' + Date.now(), opts);
-        if (!res.ok) throw new Error(res.status);
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) dropRefusedToken(sent, res.status, await res.text());
+          throw new Error(res.status);
+        }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         hero.innerHTML = '<img src="' + url + '" alt="Latest snapshot" onload="URL.revokeObjectURL(this.src)" onerror="URL.revokeObjectURL(this.src)">' +
