@@ -2040,9 +2040,10 @@ so — see D2 below.)
     browser) are one asker;
   - a host that keeps the WAP's one web server busy for more than ten seconds
     before the tap can hide the owner's client;
-  - a host polling without pause makes every tap the owner's client is
-    already asking for refuse, loudly (a bare re-tap with no client of the
-    owner's asking is the first residual, and goes to the poller).
+  - a host that asks for the receipt at least once every ten seconds
+    (polling included) makes every tap the owner's client is already asking
+    for refuse, loudly (a bare re-tap with no client of the owner's asking
+    is the first residual, and goes to that host).
   In that last case the owner's ways out are the recovery kit's token, the
   USB serial console (the receipt prints at every boot), and holding BOOT
   10 s, then setting up again from the iPhone through the setup door: the
@@ -2083,9 +2084,10 @@ so — see D2 below.)
     the arbiter records it as an asker) and that PR adds it, with its own
     row (a foreign-Host ask during a tap does not contend). The contention
     copy on the dashboard names the ways out that do not go through the
-    token box (try again with only one device asking, the iPhone app pairing
-    from the recovery kit, the USB console's token, the 10 s hold and a fresh
-    iPhone setup): on a page the landing session signed in,
+    token box (wait 10 s, then click **Use BOOT Tap Once** again and only
+    then tap, which serves once only one device is asking; the iPhone app
+    pairing from the recovery kit; the USB console's token; the 10 s hold
+    and a fresh iPhone setup): on a page the landing session signed in,
     `connectWithToken()` still takes the cookie's word for a pasted token.
     The owner-authority PR (F334, F335, F346) revisits this copy once that
     box checks the token itself (`credentials: 'omit'`).
@@ -2204,6 +2206,69 @@ so — see D2 below.)
       fails one; `test_provisioning_gate` fails 2 checks on the
       `key[11]`-only mutant, and `test_claim_ticket` fails 1 with the skew
       at 100000 ms. Host-tested; not run on a device.
+  - Fourth review fixes (same PR). No firmware behavior changes; the two
+    pages' copy and the order in which they show it change.
+    - The `409` text named no order. Both pages said "Close any other
+      Canary pages, wait 10 seconds, and try again", the one line the owner
+      reads while another device is asking. The page stops asking on the
+      `409`, and ten seconds later the arbiter has forgotten it, so an
+      owner who read "try again" as "press BOOT again" made the bare re-tap
+      a host still polling wins (the review's row: served once, the secret
+      in the answer). Now the dashboard says "wait 10 seconds, then click
+      Use BOOT Tap Once again, and only then short-tap BOOT."; its Settings
+      save says to click Save my recovery kit again and, when the sign-in
+      opens (its next `403` opens it), click Use BOOT Tap Once there and
+      only then tap; the companion says to tap Save again and press only
+      when its note says to; `docs/FAQ.md` says the same. The page still
+      stops on the `409` (the review's other option, asking on through it,
+      was not taken: the copy is what the owner follows either way).
+    - The press instruction came before the page's first ask had reached
+      the device. The dashboard set "Now short-tap BOOT" and the companion
+      "Now short-press BOOT on your Canary." before their first fetch, so a
+      press made as the line appeared could land before the ask (a TLS
+      handshake, a blip the dashboard swallows, a busy server), with a host
+      watching `/api/logs` its only asker. Now both say "Asking … first.
+      Don't press BOOT yet." until the device has answered an ask with
+      `403`, and the press line after it; a dashboard the device never
+      answers ends "The Canary didn't answer…", not "Didn't see a tap". The
+      sign-in card and the companion's step say to press when the line or
+      the note says to.
+    - No behavior row held the refresh that keeps a polling owner on
+      record (an ask by the address already in `recent` refreshes its
+      time, which the two-entry proof rests on): every owner-before-tap row
+      asked once or interleaved with the other address, and deleting the
+      refresh failed only four harness probes. Rows now poll at the pages'
+      cadence, every 2 s from 21 s and 29 s before the tap, longer than the
+      lookback, with a host asking first 100 ms after it:
+      `a_polling_owner_stays_on_record_past_the_lookback` in
+      `test_provisioning_gate.cpp` and row (c) of `test_receipt_grant.cpp`.
+      The four probes' message now names the refresh too.
+    - Docs: the release-gating tap rows in
+      `hardware_verification_checklist.md` sent the operator to `/`, which
+      serves the landing page or the headline dashboard and has no **Use
+      BOOT Tap Once**. They now open `/settings` in a private window (no
+      `cv_session`), the second row in a fresh one (the first row's sign-in
+      set the cookie), and A's `curl` loop starts once B prints `403` again
+      (started earlier, A's own asks keep the `409` going and the `403`
+      hint is never checked); `magic_pairing.md`'s bench line names the URL
+      too. The poller residual is stated at the code's bar wherever it
+      appeared (a host asking at least once every 10 s, not only one
+      polling without pause), and `SECURITY_MODEL.md` closes its list of
+      where the token is handed out before the tap's rule.
+      `openipc_architecture_learnings.md` said the serial console is
+      disabled in production; it now says release images enable it.
+    - Not changed, recorded: an iPhone claim fetch whose stale claim falls
+      through to a contended tap gets `409`, which `DeviceAPI.fetchReceipt`
+      does not name, so the app shows its generic "collecting its pairing
+      key failed: Device error 409" ending; it needs a stale claim and a
+      contended tap at once, and the outcome is final as a `403` is. The
+      companion's Home Assistant banner (`#wiz-ha-err`) is still never
+      shown, as noted above.
+    - Counts now: `test_receipt_grant.cpp` 3180 checks, of which the
+      no-refresh mutant fails 32 (the four probes among them);
+      `test_provisioning_gate` fails 8 on it; `recovery_kit.test.js` 48
+      tests, the pages before these fixes failing 6. Host-tested; not run
+      on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

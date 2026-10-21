@@ -1309,6 +1309,16 @@ void disarm_millis_hook() { stub_grant::millis_hook = nullptr; }
 // call returns a clock one millisecond further on, and the arbiter records
 // the ask at the time it read. The request is an ask with the tap closed
 // (403), so it stands for the owner's click before the tap.
+// The probe's message when the arbiter's record of a hooked ask is not the
+// hook's time. The hooked ask comes from the address tap_step_clock_call()
+// already put on record, so the record moves only if an ask by that address
+// refreshes its time: a failure here is the harness missing the clock read,
+// or tap_arbitrate() no longer refreshing a repeat asker, which is the
+// refresh that keeps a polling owner on record (row (c) holds its effect).
+const std::string kHookMissed =
+    "the hook did not run at the tap step's clock read, or a repeat ask by the address on record "
+    "no longer refreshes its time";
+
 unsigned tap_step_clock_call() {
   const uint32_t base = stub_grant::now_ms;
   arm_millis_hook([base](unsigned i) { return base + 1 + i; });
@@ -1350,7 +1360,7 @@ void test_a_take_lost_after_the_judgment_is_refused() {
   disarm_millis_hook();
   check_gate_refusal(a.r);
   CHECK(ran);
-  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read");
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed);
   CHECK(g_served.empty());
   CHECK(gate_stamp() == 0);
   // A re-tap stored between the judgment and the take: the request is
@@ -1372,7 +1382,7 @@ void test_a_take_lost_after_the_judgment_is_refused() {
   CHECK_MSG(receipt(a1) == 0, "served on a stamp nobody judged");
   disarm_millis_hook();
   check_gate_refusal(a1.r);
-  CHECK_MSG(g_tap_arbiter.recent.last_ms == at2, "the hook did not run at the tap step's clock read");
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at2, kHookMissed);
   CHECK(g_served.empty());
   CHECK_MSG(gate_stamp() == retap && retap != first, "the re-tap was consumed unjudged");
   stub_grant::now_ms += 100;
@@ -1419,7 +1429,7 @@ void test_a_retap_during_a_no_tap_ask_is_kept() {
     disarm_millis_hook();
     check_gate_refusal(a.r);
     CHECK(ran);
-    CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read" + why);
+    CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed + why);
     CHECK_MSG(gate_stamp() == retap, "the re-tap was cleared by a NO_TAP ask" + why);
     CHECK(g_served.empty());
     stub_grant::now_ms += 100;
@@ -1466,7 +1476,7 @@ void test_a_retap_during_a_contended_close_is_kept() {
   disarm_millis_hook();
   check_tap_contended(a.r);
   CHECK(ran);
-  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read");
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, kHookMissed);
   CHECK_MSG(g_tap_arbiter.contended_tap == first, "the ask did not close the tap it judged");
   CHECK_MSG(gate_stamp() == retap && retap != first, "the contended close cleared a re-tap nobody judged");
   CHECK(g_served.empty());
@@ -1496,7 +1506,13 @@ void test_sole_asker_is_served_at_once() {
 }
 
 // (c) A host that waits for the tap and asks first after it (it timed the
-// tap from /api/logs, say) loses to an owner who asked before it.
+// tap from /api/logs, say) loses to an owner who asked before it. First one
+// ask 2 s before the tap; then the owner's pages as they really ask, every
+// 2 s from the click: Use BOOT Tap Once clicked 21 s before the tap, the
+// companion's Save 29 s before it, both longer than the 10 s lookback. Each
+// ask by the address already on record refreshes its time, so the owner's
+// last poll (1 s before the tap) is what the host's ask is judged against;
+// an arbiter that kept the owner's first ask time served the host.
 void test_first_asker_after_the_tap_loses_to_a_waiting_owner() {
   reset_device();
   Req a_before;
@@ -1513,6 +1529,33 @@ void test_first_asker_after_the_tap_loses_to_a_waiting_owner() {
   CHECK(receipt(a) == 0);
   check_tap_contended(a.r);
   CHECK(g_served.empty());
+  const uint32_t leads[] = {21000, 29000};   // ms from the click to the tap
+  for (const uint32_t lead : leads) {
+    const std::string why = " (the click " + std::to_string(lead) + " ms before the tap)";
+    reset_device();
+    const uint32_t click = stub_grant::now_ms;
+    uint32_t next = click;
+    for (; next < click + lead; next += 2000) {
+      stub_grant::now_ms = next;
+      Req poll;
+      CHECK(receipt(poll) == 0);
+      check_gate_refusal(poll.r);
+    }
+    stub_grant::now_ms = click + lead;
+    open_tap();
+    stub_grant::now_ms += 100;
+    Req host;
+    host.from(192, 168, 1, 21);
+    CHECK_MSG(receipt(host) == 0, "the host asking first after the tap took it from a polling owner" + why);
+    check_tap_contended(host.r);
+    CHECK_MSG(!carries_secret(host.r), "the host's answer carries the secret" + why);
+    stub_grant::now_ms = next;
+    Req owner;
+    CHECK(receipt(owner) == 0);
+    check_tap_contended(owner.r);
+    CHECK_MSG(g_served.empty(), "something was served beside a polling owner" + why);
+    CHECK(gate_stamp() == 0);
+  }
 }
 
 // (d) What counts as an ask: a request the bearer and the claim did not

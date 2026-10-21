@@ -591,8 +591,13 @@ backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
 companion's recovery-kit save now asks from the Save tap, and every line
 the owner or a client reads gives that order (the `403`'s hint and button
 say to start asking first, then short-tap BOOT; the dashboard's timeout
-says to click again, then tap), so the owner's client is on record when
-the press lands:
+says to click again, then tap; both pages' `409` text says to wait 10 s,
+then click **Use BOOT Tap Once** again, or tap Save again, and only then
+press). Both pages say to press only once the device has answered their
+first ask ("Asking the Canary first. Don't press BOOT yet." until then), so
+a press that follows the page cannot land before the page's ask has
+reached the device (a TLS handshake, a blip or a busy server can hold the
+first ask back). So the owner's client is on record when the press lands:
 a host that polls the route, one that watches `/api/logs` for the tap, or
 one that delays the owner's next poll is refused loudly instead of handed
 the token, the SoftAP password and the pin. The serial console names both
@@ -608,9 +613,10 @@ What stays open, and is the ledger's, not a claim of this design:
   browser) are one asker.
 - A host that keeps the WAP's one web server busy for more than 10 s before
   the tap can hide the owner's earlier ask.
-- A host polling without pause makes every tap the owner's client is
-  already asking for refuse, loudly (a bare re-tap with no client of the
-  owner's asking is the first residual, and goes to the poller). The
+- A host that asks for the receipt at least once every 10 s (polling
+  included) makes every tap the owner's client is already asking for
+  refuse, loudly (a bare re-tap with no client of the owner's asking is the
+  first residual, and goes to that host). The
   owner's ways out: the recovery kit's token (the iPhone app pairs from the kit);
   the USB serial console, which prints the receipt with the token at every
   boot; or hold BOOT 10 s, then set the Canary up again from the iPhone
@@ -1041,10 +1047,12 @@ cannot speak to.
       serves; a claim after 180 s is `403`; the BOOT tap is still unspent
       after a claim served.
 - [ ] With a second host polling `GET /api/provisioning-receipt` over plain
-      HTTP, **Use BOOT Tap Once** and a short tap: both get `409
-      tap_contended`, nothing is served, and the dashboard says another
-      device asked; with the second host stopped for 10 s, the same sign-in
-      is served within about 2 s of the tap (F342; the rows in
+      HTTP, open `http://canary-<suffix>.local/settings` in a private
+      window (no `cv_session` cookie), choose **Use BOOT Tap Once** and
+      short-tap BOOT when the page says to: both get `409 tap_contended`,
+      nothing is served, and the dashboard says another device asked; with
+      the second host stopped for 10 s, a second click of the same button
+      and a tap are served within about 2 s of the tap (F342; the rows in
       `hardware_verification_checklist.md`).
 - [ ] With the WAP joined to the home Wi-Fi, a `cv_session` cookie the
       landing page's **Open dashboard** link minted is `403` on

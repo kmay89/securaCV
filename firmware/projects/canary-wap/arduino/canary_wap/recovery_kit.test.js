@@ -234,6 +234,7 @@ function dashboard(answers, routes = {}) {
       }
       statusAtAsk.push(win.els.authStatus.textContent);
       const a = queue[Math.min(polls++, queue.length - 1)];
+      if (a.blip) throw new TypeError('Failed to fetch');   // the ask never reached the device
       return { status: a.status, ok: a.status >= 200 && a.status < 300,
                json: async () => JSON.parse(a.body), text: async () => a.body };
     },
@@ -263,6 +264,24 @@ const GATE_403 = { status: 403, body: '{"error":"physical_confirmation_required"
 // (canary_wap.ino handle_provisioning_receipt, sweep F342).
 const TAP_409 = { status: 409, body: '{"error":"tap_contended","hint":"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit\'s token as a bearer, or read the token from the USB serial console."}' };
 const CONTENDED = /^Another device on your network asked for this Canary's keys at the same time, so it said no\./;
+// A request that never reached the device (a network blip, a TLS handshake
+// that failed): fetch rejects.
+const BLIP = { blip: true };
+// The retry each page's 409 names (sweep F342's fourth review): the click
+// that asks first, then the press. The sign-in's own button, and the
+// Settings save, whose next 403 opens the sign-in.
+const SIGN_IN_RETRY = 'wait 10 seconds, then click Use BOOT Tap Once again, and only then short-tap BOOT.';
+const SETTINGS_RETRY = 'wait 10 seconds, then click Save my recovery kit again; when the sign-in opens, ' +
+                       'click Use BOOT Tap Once there, and only then short-tap BOOT.';
+// The click comes before the press in `text`, and no line in it re-tries
+// without naming the click.
+function clickBeforePress(text, click) {
+  const c = text.indexOf(click);
+  const p = text.indexOf('short-tap BOOT');
+  assert.ok(c >= 0, 'the retry names no "' + click + '": ' + text);
+  assert.ok(p > c, 'the press comes before the click: ' + text);
+  assert.doesNotMatch(text, /try again/i, 'a bare "try again" reads as "press BOOT again"');
+}
 
 describe('one builder, two pages', () => {
   it('web_ui.h and companion_pwa.h carry the same RECOVERY_KIT lines', () => {
@@ -445,14 +464,40 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const card = read(UI).match(
       /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>\s*<p[^>]*>\s*([^<]*?)\s*<\/p>/);
     assert.ok(card, 'the instruction under Use BOOT Tap Once was not found');
-    assert.equal(card[1], 'Click the button, then short-tap BOOT on the Canary within 60 seconds.');
+    assert.equal(card[1], 'Click the button, then short-tap BOOT on the Canary when the line below says to, within 60 seconds.');
     assert.ok(card[1].indexOf('Click') < card[1].indexOf('short-tap BOOT'), 'the click comes before the press');
-    // While the page asks (the click made), the line says to press now.
-    const { statusAtAsk } = await dashboardTap([GATE_403, { status: 200, body: RECEIPT }]);
-    assert.equal(statusAtAsk[0], 'Now short-tap BOOT on the device. Listening for 60 seconds.');
-    assert.ok(statusAtAsk.length >= 2 && statusAtAsk.slice(1).every((t) => /^Listening for BOOT tap/.test(t)),
-              'the countdown follows the first ask');
+    // The first ask leaves with "don't press yet"; once the device has
+    // answered it (403), the line says to press now, with the countdown.
+    const { statusAtAsk } = await dashboardTap([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(statusAtAsk[0], "Asking the Canary first. Don't press BOOT yet.");
+    assert.equal(statusAtAsk[1], 'Now short-tap BOOT on the device. Listening for BOOT tap — 58s left ' +
+                                 '(device holds the press for 30s).');
+    assert.ok(statusAtAsk.length === 3 && statusAtAsk.slice(1).every((t) => /^Now short-tap BOOT on the device\. Listening for BOOT tap — \d+s left/.test(t)),
+              'the press line and its countdown follow the first answer');
     assert.ok(statusAtAsk.every((t) => !/click/i.test(t)), 'no line asks for a click after the press');
+  });
+
+  it("the line says to press only once the device has answered an ask (sweep F342's fourth review)", async () => {
+    // The tap goes to an address that is already asking, and the page's
+    // first ask can still be on its way when the line appears (a TLS
+    // handshake, a blip the page swallows, a busy server). A press made as
+    // the old line appeared ("Now short-tap BOOT", set before the first
+    // fetch) could land before any ask of the page's had reached the
+    // device, and a host watching /api/logs for the tap was then its only
+    // asker. Two asks that never reached the device, then the device's 403.
+    const { statusAtAsk } = await dashboardTap([BLIP, BLIP, GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(statusAtAsk.length, 5);
+    for (const t of statusAtAsk.slice(0, 3)) {
+      assert.match(t, /^Asking the Canary first\. Don't press BOOT yet/, 'before the device answered: ' + t);
+      assert.doesNotMatch(t, /Now short-tap/);
+    }
+    assert.match(statusAtAsk[3], /^Now short-tap BOOT on the device\./, 'after its first answer');
+    // A device that never answers never told the owner to press, so the
+    // page does not say it missed a tap.
+    const { win } = await dashboardTap([BLIP]);
+    assert.equal(win.els.authStatus.textContent,
+                 "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.");
+    assert.doesNotMatch(read(UI), /'Now short-tap BOOT on the device\. Listening for 60 seconds\.'/);
   });
 
   it('an answer that is not a receipt offers nothing', async () => {
@@ -484,7 +529,8 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
   it('after a 409, a second click asks first and is served on the next tap (the bench retry)', async () => {
     // The device's 409 ends ten seconds after the other device's last ask
     // (sweep F342's review), so the click the copy prescribes ("wait 10
-    // seconds, and try again") hears 403 first and keeps listening.
+    // seconds, then click Use BOOT Tap Once again, and only then short-tap
+    // BOOT") hears 403 first and keeps listening.
     const d = dashboard([GATE_403, TAP_409]);
     await d.api.requestFromDevice();
     assert.match(d.win.els.authStatus.textContent, CONTENDED);
@@ -497,12 +543,33 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.doesNotMatch(d.win.els.authStatus.textContent, CONTENDED);
   });
 
+  it("the contention copy names the click before the press (sweep F342's fourth review)", async () => {
+    // The page stops asking on the 409, and the device's 409 comes only
+    // while another address is asking. Ten seconds after the page stopped,
+    // a bare re-tap goes to the first asker, which is that address if it is
+    // still asking: the token, the network password and the TLS pin. The
+    // copy used to say "wait 10 seconds, and try again", which an owner can
+    // read as "press BOOT again".
+    const { win } = await dashboardTap([GATE_403, TAP_409]);
+    const text = win.els.authStatus.textContent;
+    assert.match(text, CONTENDED);
+    assert.ok(text.includes('Close any other Canary pages and ' + SIGN_IN_RETRY), text);
+    clickBeforePress(text, 'click Use BOOT Tap Once');
+    // The Settings save: its next Save opens the sign-in, whose button asks first.
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    const st = d.win.els.settingsKitErr.textContent;
+    assert.ok(st.includes('Close any other Canary pages and ' + SETTINGS_RETRY), st);
+    clickBeforePress(st, 'click Use BOOT Tap Once');
+    assert.ok(st.indexOf('click Save my recovery kit again') < st.indexOf('click Use BOOT Tap Once'));
+    assert.doesNotMatch(read(UI), /wait 10 seconds, and try again/);
+  });
+
   it("the contention copy names ways out that do not go through the token box", () => {
     const d = dashboard([GATE_403]);
     const fn = uiFunction(read(UI), 'tapContendedText');
-    const text = vm.runInNewContext(fn + '\n;tapContendedText()', {});
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
     assert.match(text, CONTENDED);
-    assert.match(text, /wait 10 seconds, and try again/);
     assert.match(text, /recovery kit/);
     assert.match(text, /USB console/);
     assert.match(text, /hold BOOT for 10 seconds/);
@@ -577,6 +644,22 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in was never shown over it');
     assert.equal(d.win.els.authStatus.textContent, '');
     assert.equal(d.win.els.settingsKitDone.style.display, 'none');
+  });
+
+  it("after a 409, the retry the copy names: a second Save opens the sign-in, and it is served on the next tap", async () => {
+    // Ten seconds on, the device's 409 has ended and the second Save hears
+    // 403: secureFetch opens the sign-in, and Use BOOT Tap Once asks first.
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.match(d.win.els.settingsKitErr.textContent, CONTENDED);
+    d.more([GATE_403]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in is open');
+    assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL);
+    d.more([GATE_403, { status: 200, body: RECEIPT }]);
+    await d.api.requestFromDevice();
+    assert.equal(d.api.token(), FIELDS.token, 'signed in on the next tap');
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'block', 'and the kit is offered');
   });
 
   it('a second save after a failure clears the failure', async () => {
@@ -778,10 +861,14 @@ describe("the wizard's close-out saves through the same builder", () => {
   it('the instruction is on screen while it asks, in the calm style', async () => {
     const src = read(PWA);
     assert.match(src, /say\('Now short-press BOOT on your Canary\.', true\);/);
-    const { win, banners } = await wizardSave([GATE_403, TAP_409]);
-    // While Save asks, the instruction is shown, in the calm (note) style.
-    assert.equal(banners.length, 2);
-    for (const b of banners) {
+    const { win, banners } = await wizardSave([GATE_403, GATE_403, TAP_409]);
+    // While Save asks, the banner is shown, in the calm (note) style: "don't
+    // press yet" as the first ask leaves, the press once the device has
+    // answered it (sweep F342's fourth review: a press the first ask has
+    // not reached is one no page of the owner's is asking for).
+    assert.equal(banners.length, 3);
+    assert.deepEqual(banners[0], { text: "Asking your Canary first. Don't press BOOT yet.", show: true, note: true });
+    for (const b of banners.slice(1)) {
       assert.deepEqual(b, { text: 'Now short-press BOOT on your Canary.', show: true, note: true });
     }
     // After the 409 the banner holds the contention copy, shown, not calm.
@@ -793,7 +880,10 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(asked.length, 2, 'the asking stops at the 409');
     assert.equal(win.saved.length, 0);
     assert.match(win.els['wiz-recovery-err'].textContent, CONTENDED);
-    assert.match(win.els['wiz-recovery-err'].textContent, /wait 10 seconds, and tap Save again/);
+    const text = win.els['wiz-recovery-err'].textContent;
+    assert.ok(text.includes('Close any other Canary pages and wait 10 seconds, then tap Save again, ' +
+                            'and short-press BOOT only when this note says to.'), text);
+    assert.ok(text.indexOf('tap Save again') < text.indexOf('short-press BOOT'), 'the tap on Save comes before the press');
     assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
     assert.equal(win.els['wiz-ha-block'].style.display, 'none');
   });
@@ -815,7 +905,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     const block = src.match(/<div id="wiz-recovery-block"[^>]*>([\s\S]*?)\n {6}<\/div>\n/)[1];
     const steps = [...block.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
     assert.deepEqual(steps, ['Tap <strong>Save my recovery kit</strong> below.',
-                             'Within 30 seconds, short-press the <strong>BOOT</strong> button on your Canary.']);
+                             'When the note below says to, short-press the <strong>BOOT</strong> button on your Canary (within 30 seconds).']);
   });
   it('an answer that is not 200, 403 or 409 (a 503 after the tap was spent) ends the save with its status', async () => {
     // The receipt can refuse after it has spent the tap (503 no_address, 500

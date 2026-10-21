@@ -434,8 +434,9 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // says to start the request first and keep it asking, then press BOOT;
 // hosts behind one address are one asker; a host that keeps the one web
 // server busy for longer than the lookback before the tap can hide the
-// owner's earlier ask; and a host that polls without pause makes every tap
-// the owner's client is already asking for refuse, loudly.
+// owner's earlier ask; and a host that asks at least once every
+// `lookback_ms` (polling included) makes every tap the owner's client is
+// already asking for refuse, loudly.
 //
 // The record ages on 32-bit millis() and is never swept: after a silence of
 // 2^32 ms (49.7 days) a stale entry's age wraps and can read as recent, which

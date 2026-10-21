@@ -995,6 +995,40 @@ static void an_attacker_asking_first_loses_to_an_owner_who_asked_before() {
   CHECK(c.served == 0, "nothing served");
 }
 
+// (3b) The owner's client as it really asks: Use BOOT Tap Once polls every
+// 2 s for up to 60 s from the click, the companion's Save every 2 s for up
+// to 30 s, so the press can land long after the first ask. Each ask by the
+// address already on record refreshes its time, which is what keeps a
+// polling owner inside the lookback: here the owner polls alone for 20 s
+// (and 28 s), longer than TAP_LOOKBACK_MS, the tap lands 1 s after its last
+// poll, and a host that times the tap from /api/logs asks first, 100 ms
+// after it. The host is CONTENDED, the owner's next poll too, and nothing is
+// served. An arbiter that kept the owner's FIRST ask time (no refresh) saw
+// an owner silent for 21 s and served the host the token.
+static void a_polling_owner_stays_on_record_past_the_lookback() {
+  const uint32_t leads[] = {21000, 29000};   // the dashboard's click 21 s before the tap, the companion's 29 s
+  for (const uint32_t lead : leads) {
+    Bench b;
+    const uint32_t click = 900000;
+    const uint32_t T = click + lead;
+    uint32_t t = click;
+    for (; t < T; t += 2000) {
+      CHECK(b.ask(kOwner, t) == TapVerdict::NO_TAP, "the owner's poll at click+%u, before the tap",
+            (unsigned)(t - click));
+    }
+    CHECK(T - (t - 2000) == 1000, "the tap lands 1 s after the owner's last poll");
+    CHECK(T - click > TAP_LOOKBACK_MS, "the first ask is older than the lookback");
+    open(b.gate, T);
+    CHECK(b.ask(kOther, T + 100) == TapVerdict::CONTENDED,
+          "a host asking first, 100 ms after the tap, %u ms after the click: CONTENDED (an ask by the "
+          "address on record no longer refreshes its time?)", (unsigned)lead);
+    CHECK(b.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED");
+    CHECK(b.served == 0, "nothing served, got %d", b.served);
+    CHECK(b.closed_by == 1, "the tap closed once, by the host's ask (%d)", b.closed_by);
+    CHECK(peek(b.gate) == 0, "and stays closed");
+  }
+}
+
 // (4) An address that stopped asking more than the lookback before the tap
 // does not contend; at the lookback exactly, it does.
 static void an_address_silent_past_the_lookback_does_not_contend() {
@@ -1062,7 +1096,8 @@ static void a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not() {
 // (6b) The 409 ends when its cause ends: once the other address has been
 // quiet for the lookback, an ask inside the closed tap's 30 s is NO_TAP (the
 // page keeps asking) and the owner's next tap serves it. This is the flow the
-// pages' "wait 10 seconds, and try again" prescribes. Before, every ask was
+// pages' "wait 10 seconds, then click Use BOOT Tap Once again, and only then
+// short-tap BOOT" prescribes. Before, every ask was
 // CONTENDED until the closed tap's TTL had run, so a retry 10 to 30 s after
 // the tap stopped on its first answer, before the press.
 static void the_409_ends_when_the_other_address_goes_quiet() {
@@ -1298,6 +1333,7 @@ int main() {
   a_poller_and_the_owner_across_one_tap_are_both_refused();
   a_sole_owner_is_served_on_its_first_ask_after_the_tap();
   an_attacker_asking_first_loses_to_an_owner_who_asked_before();
+  a_polling_owner_stays_on_record_past_the_lookback();
   an_address_silent_past_the_lookback_does_not_contend();
   a_lone_poller_is_served_the_residual();
   a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();

@@ -2976,22 +2976,22 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
 
 - [ ] **A second asker closes the tap.**
   - On laptop B, run `while :; do curl -s -o /dev/null -w '%{http_code}\n' http://<STA address>/api/provisioning-receipt; sleep 0.2; done`.
-  - On laptop A, open the dashboard at `http://canary-<suffix>.local/`, choose **Use BOOT Tap Once**, and short-tap BOOT.
+  - On laptop A, open `http://canary-<suffix>.local/settings` in a private window (no `cv_session` cookie; `/` serves the landing page or the headline dashboard, neither of which has the button), choose **Use BOOT Tap Once**, and short-tap BOOT once the line says "Now short-tap BOOT…" (before the device answers, it says "Asking the Canary first. Don't press BOOT yet.").
   - Expect:
     - within about 2 s, A shows "Another device on your network asked…" and holds no token;
     - B prints `403`s, then `409`s (until about 10 s after A's page stopped asking, then `403`s again), and never `200`;
     - `/api/logs` has one "BOOT tap closed: two devices asked for the receipt" line, with no addresses;
     - the serial console names both addresses.
-  - With B still running, run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A and short-tap BOOT: A prints `403` bodies whose `hint` and `button` say to start asking first, then short-tap BOOT (never "short tap, then poll"), then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
-  - Stop B, wait 10 s, and sign in on A again (within 30 s of the last tap, too): the page says "Listening for BOOT tap", not "Another device…", and A is signed in within about 2 s of the tap.
+  - With B still running, once B prints `403` again (A's page has been quiet for 10 s; started earlier, A's own asks keep B's `409`s going and A's first answer is `409` too), run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A, and short-tap BOOT after its first `403`: A prints `403` bodies whose `hint` and `button` say to start asking first, then short-tap BOOT (never "short tap, then poll"), then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
+  - Stop B, wait 10 s, and do what A's page says (within 30 s of the last tap, too): click **Use BOOT Tap Once** again, and short-tap BOOT only when the line says so. The line says "Now short-tap BOOT…", not "Another device…", and A is signed in within about 2 s of the tap.
 - [ ] **A sole asker is served at once.**
-  - With laptop A alone, at `http://canary-<suffix>.local/`: **Use BOOT Tap Once**, and do not tap. After 60 s the page says "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
-  - Do as it says: **Use BOOT Tap Once**, then short-tap BOOT. A is signed in within about 2 s of the tap.
+  - With laptop A alone, in a fresh private window (the sign-in that ended the row above set the `cv_session` cookie, and a page that resumes it never shows the button) at `http://canary-<suffix>.local/settings`: **Use BOOT Tap Once**, and do not tap. After 60 s the page says "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+  - Do as it says: **Use BOOT Tap Once**, then short-tap BOOT once the line says "Now short-tap BOOT…". A is signed in within about 2 s of the tap.
   - Short-tap BOOT and within 30 s run `curl -s http://canary-<suffix>.local/api/provisioning-receipt` from A: `200`. Repeat at `http://<STA address>/api/provisioning-receipt`: `200`.
 - [ ] **The first-boot recovery kit.**
   - Factory-reset (hold BOOT 10 s) and walk the companion to the recovery step at `http://canary.local` or `http://192.168.4.1`.
-  - Tap **Save my recovery kit**, then short-press BOOT: the kit downloads, and "Now short-press BOOT on your Canary." was on screen while it waited.
-  - Repeat with B's loop running against the WAP's home-network address (`http://<STA address>`): the companion shows "Another device on your network asked…", and Save works again once B has been stopped for 10 s.
+  - Tap **Save my recovery kit**: the note says "Asking your Canary first. Don't press BOOT yet.", then "Now short-press BOOT on your Canary."; short-press BOOT then, and the kit downloads.
+  - Repeat with B's loop running against the WAP's home-network address (`http://<STA address>`): the companion shows "Another device on your network asked…" and says to tap Save again before pressing; once B has been stopped for 10 s, tap Save again, press when the note says to, and the kit downloads.
 - [ ] **A wrong claim spends nothing, and the 10 s hold is a way out under a poller.**
   - With B's loop running, hold BOOT 10 s, release, and set the Canary up again from the iPhone through the Bluetooth setup door. During the pairing B also sends `curl -s 'http://<STA address>/api/provisioning-receipt?claim=00000000000000000000000000000000'` every second.
   - Expect: the iPhone ends paired; B gets `403` every time; `/api/logs` shows at most one "setup-door claim did not match" line per 10 s; the serial console's boot receipt shows the same token as before the hold.

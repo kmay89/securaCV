@@ -362,18 +362,22 @@ session is proof of being on the LAN and nothing more: the WAP's bearer
 token itself (with the SoftAP password and the TLS pin) is handed out only
 in the provisioning receipt — to a caller that already presents the token
 as a bearer, to a phone spending the setup door's claim, or for thirty
-seconds after a short BOOT tap to the one address asking for it: when a
+seconds after a short BOOT tap — and also in the pairing QR an operator
+fetches with the token, or on the serial console.
+
+Since sweep F342 the tap goes to the one address asking for it: when a
 second address asked for the receipt in the ten seconds before the tap or
 during it, the tap is closed and an asker gets `409 tap_contended` while an
 address other than it asked in the last ten seconds, up to the closed tap's
 thirty seconds. So the `409` ends ten seconds after the other device stops;
 if that device keeps polling, its own asks end it ten seconds after the
 owner's page stopped, the owner's retry hears `403`, and the next tap is
-closed with `409` again (the poller case below). The `409` tells the client to start
-its request first and keep it asking, then press BOOT; the `403`, the
-dashboard and the companion give that order too (sweep F342;
-host-tested, not bench-tested) — in the pairing QR an operator fetches with
-the token, or on the serial console. The setup door's claim is spent only by
+closed with `409` again (the poller case below). The `409` tells the client
+to start its request first and keep it asking, then press BOOT; the `403`,
+the dashboard and the companion give that order too, their `409` text
+included (the click, or the tap on Save, before the press), and both pages
+say to press only once the device has answered their first ask
+(host-tested, not bench-tested). The setup door's claim is spent only by
 a match, so a wrong `?claim=` from a host on the network no longer ends the
 phone's pairing (F342). The tap's asker is the request's socket peer
 (`request_peer_key()`, the same read the per-address lockout keys on, F343),
@@ -383,13 +387,15 @@ after it, a tap pressed per a recipe or an older page that says to press
 first, BLE OTA break-glass) still goes to the first asker; hosts behind
 one address (a NAT, an ARP spoofer, a page in the owner's own browser) are
 one asker; a host that keeps the WAP's one web server busy for more than
-ten seconds before the tap can hide the owner's client; and a host polling
-without pause makes every tap the owner's client is already asking for
-refuse, loudly (a bare re-tap with no client of the owner's asking is the
-first case, and goes to the poller). Then the recovery kit's token,
-the USB serial console (the receipt prints at every boot) and holding BOOT
-10 s, then setting up again from the iPhone through the setup door, are the
-ways in. Until sweep F289 the session cookie
+ten seconds before the tap can hide the owner's client; and a host that
+asks for the receipt at least once every ten seconds (polling included)
+makes every tap the owner's client is already asking for refuse, loudly (a
+bare re-tap with no client of the owner's asking is the first case, and
+goes to that host). Then the recovery kit's token, the USB serial console
+(the receipt prints at every boot) and holding BOOT 10 s, then setting up
+again from the iPhone through the setup door, are the ways in.
+
+Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could
 read the token with no tap; both routes now take the `Authorization:
 Bearer` header alone (host-tested, not bench-tested). Since sweep F289's

@@ -39,8 +39,10 @@
   another device asked instead of "Didn't see a tap" or "HTTP 409". The
   `409` ends once an ask finds no address other than the asker asking in
   the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
-  after the other device stops, so the pages' "wait 10 seconds, and try
-  again" works: the new click asks first and the next tap serves it. If the
+  after the other device stops, so the pages' retry works: "wait 10
+  seconds, then click Use BOOT Tap Once again, and only then short-tap
+  BOOT" (the companion: tap Save again, and press when its note says to)
+  asks first, and the next tap serves it. If the
   other device keeps polling, its own asks end the `409` 10 s after the
   owner's page stopped: the owner's retry hears `403` and keeps asking, and
   the next tap is closed with `409` again (the poller residual below). The
@@ -48,15 +50,23 @@
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
   other line the owner or a client reads: the `403`'s hint and button
-  (they said "short tap, then poll within 30 seconds"), the dashboard's
-  timeout line ("Didn't see a tap. Click Use BOOT Tap Once again, then
-  short-tap BOOT."; it said "Press BOOT and click above"), and the
-  companion's Home Assistant step. The dashboard's copy
+  (they said "short tap, then poll within 30 seconds"), both pages' `409`
+  text (it said "wait 10 seconds, and try again", which reads as "press
+  BOOT again", and a bare re-tap after the wait goes to the other device
+  if it is still asking), the dashboard's timeout line ("Didn't see a tap.
+  Click Use BOOT Tap Once again, then short-tap BOOT."; it said "Press
+  BOOT and click above"), and the text of the companion's Home Assistant
+  step (that step's banner is not shown yet; the ledger's F342 entry notes
+  it). Both pages say to press only once the device has answered their
+  first ask ("Asking the Canary first. Don't press BOOT yet." until then),
+  so a press made as the instruction appears cannot land before the
+  page's ask has reached the device. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
   name and keeps the token. The
   first-boot companion's recovery-kit save now asks first and waits up to
   30 s for the press, its last ask 30 s after Save ("Tap Save my recovery
-  kit, then short-press BOOT"; the old order still works), and its message
+  kit", then short-press BOOT when its note says to; the old order still
+  works), and its message
   banner is now on screen (the handler set its text but never showed it).
   A sole asker is served at once, as before. The asker is the socket peer
   (`request_peer_key()`, the read the per-address lockout already keys on),
@@ -65,15 +75,17 @@
   client of the owner's was asking for (a page or `curl` started after it,
   or a tap pressed per an older page that says to press first, included)
   still goes to the first asker; hosts
-  behind one address are one asker; a host polling without pause makes every
-  tap the owner's client is already asking for refuse, and then the
+  behind one address are one asker; a host that asks for the receipt at
+  least once every 10 s (polling included) makes every tap the owner's
+  client is already asking for refuse, and then the
   recovery kit's token, the USB serial console and the 10 s BOOT hold
   followed by a fresh iPhone setup are the ways in. The docs that said
   otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
-  credentials); `THREAT_MODEL.md` said the USB serial console is disabled
-  in production, and release images enable it.
+  credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
+  said the USB serial console is disabled in production, and release
+  images enable it.
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 

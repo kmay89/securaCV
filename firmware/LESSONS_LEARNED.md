@@ -2899,9 +2899,11 @@
   their first `409` and say "wait 10 seconds, and try again", so following
   the copy stopped the retry again before the press; and the device's own
   hint said to tap BOOT again, which under a host still polling hands the
-  bare re-tap to that host. Now the `409` ends 10 s after the other
-  address's last ask and on a served re-tap, and the hint sends the client
-  in first. Two test gaps closed with it: a seam result the code must honor
+  bare re-tap to that host. Now the `409` ends once an ask finds no address
+  other than the asker asking in the last 10 s (10 s after the other device
+  stops; under a host that keeps polling, 10 s after the owner's page
+  stopped, and the next tap is closed again) and on a served re-tap, and
+  the hint sends the client in first. Two test gaps closed with it: a seam result the code must honor
   (`take_exact()`'s false after a TAKE verdict) needs a row that makes it
   false at that exact point (the receipt harness's `millis()` hook acts on
   the tap step's clock read, and a calibration call finds which read that
@@ -2923,6 +2925,23 @@
   every word up to 2^31 ms ahead, which served a claim left unswept for
   24.8 days; it is now under a one-second skew, and every other age past
   the TTL is burned.
+- **Found in the fourth review, same PR:** a retry line has to name its
+  first step, not just say "try again". Both pages' `409` text said "wait
+  10 seconds, and try again", the one line the owner reads while another
+  device is asking; an owner who reads it as "press BOOT again" makes, ten
+  seconds after the page stopped, exactly the bare re-tap a host still
+  polling wins (the page is no longer on record). It now says to click
+  **Use BOOT Tap Once** again (or tap Save again) and only then press. The
+  order holds in time as well as in words: the pages showed "Now short-tap
+  BOOT" before their first ask had left, so a press made as the line
+  appeared could land before any ask of the owner's had reached the device
+  (a TLS handshake, a blip); they now say it once the device has answered
+  that ask. And a rule a proof leans on needs a behavior row of its own:
+  the two-entry record is exact only because an ask by the address on
+  record refreshes its time, and no row polled the way the pages do (every
+  2 s, for longer than the 10 s lookback), so deleting the refresh, which
+  serves a host the token under a polling owner, failed only four harness
+  probes. Rows in both suites now poll at the pages' cadence.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

@@ -477,7 +477,7 @@ footer a{color:var(--accent);text-decoration:none}
         <p class="wiz-sub" style="margin:0 0 .6rem">One small file proves this Canary is yours: its name, its keys, and the password for its own network. Keep it somewhere safe &mdash; you'll want it if you ever change phones or routers.</p>
         <ol class="intro" style="margin:0 0 .6rem;padding-left:1.2rem;line-height:1.65">
           <li>Tap <strong>Save my recovery kit</strong> below.</li>
-          <li>Within 30 seconds, short-press the <strong>BOOT</strong> button on your Canary.</li>
+          <li>When the note below says to, short-press the <strong>BOOT</strong> button on your Canary (within 30 seconds).</li>
         </ol>
         <div class="err" id="wiz-recovery-err" role="alert"></div>
         <p class="wiz-sub" id="wiz-recovery-done" style="display:none;margin:0 0 .6rem">✓ Saved to your downloads as <strong>canary-recovery-kit.json</strong>. You can save it again any time from the dashboard: Settings, Device, Recovery kit.</p>
@@ -1839,9 +1839,12 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // the gate is still closed (no press yet), so the page asks again; 409
   // means another device asked during the same press and the device gave
   // out nothing; the old order (press first, then Save) is served on the
-  // first ask. A successful fetch downloads the receipt JSON and issues the
-  // session cookie that the MQTT endpoints accept, which is why the Home
-  // Assistant block is only revealed after a save.
+  // first ask. The banner says to press only once the device has answered
+  // an ask (sweep F342's fourth review): a press the first ask has not
+  // reached yet is one no page of the owner's is asking for. A successful
+  // fetch downloads the receipt JSON and issues the session cookie that the
+  // MQTT endpoints accept, which is why the Home Assistant block is only
+  // revealed after a save.
   function showMultiBlock() {
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display       = 'none';
@@ -1861,7 +1864,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
       err.classList.toggle('note', !!note);
       err.classList.toggle('show', !!msg);
     };
-    say('Now short-press BOOT on your Canary.', true);
+    say("Asking your Canary first. Don't press BOOT yet.", true);
     save.disabled = true;
     const POLL_INTERVAL_MS = 2000;
     const POLL_TICKS = 16;   // 16 asks, 2 s apart: at 0, 2, ..., 30 s, so a press up to 30 s after Save is asked for
@@ -1869,10 +1872,17 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
       for (let i = 0; i < POLL_TICKS; i++) {
         if (i > 0) await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
         const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
-        if (r.status === 403) continue;   // no press yet: ask again
+        if (r.status === 403) {   // no press yet: ask again, and now say to press
+          if (i === 0) say('Now short-press BOOT on your Canary.', true);
+          continue;
+        }
         if (r.status === 409) {
+          // The retry names the tap on Save before the press: Save asks
+          // first, and a press no page of the owner's is asking for goes to
+          // the first asker, the other device if it is still asking.
           say("Another device on your network asked for this Canary's keys at the same time, so it said no. " +
-              'Close any other Canary pages, wait 10 seconds, and tap Save again. ' +
+              'Close any other Canary pages and wait 10 seconds, then tap Save again, ' +
+              'and short-press BOOT only when this note says to. ' +
               'You can also save it later from the dashboard.');
           return;
         }
