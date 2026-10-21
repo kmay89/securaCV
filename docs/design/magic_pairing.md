@@ -523,15 +523,27 @@ untracked address while the shared overflow slot runs, and a tap does not
 clear that. On the WAP, then change Wi-Fi from the iPhone's bonded
 Bluetooth lane to a network that host is not on (the overflow's backoff
 then ends at most 60 s after that host's last strike), or wait until it
-stops. The lane gets the owner out unless that host is also in radio range
-and bonded to the WAP itself: any landing session can pair a Bluetooth
-peer, since it can turn pairing on and read the passkey from
-`GET /api/bluetooth` (F346), and a bonded peer can write the lane's
-credentials as the owner's phone can. It can join the WAP back to a network
-that host is on, or spend the lane's ten writes an hour
-(`ble_provision.cpp`: one count for every peer, charged before a write's
-contents are checked), so the owner's write is refused until the hour's
-window ends. The 10 s BOOT hold is no way out from under that host: it
+stops. The lane gets the owner out only while that host leaves it alone,
+and taking it away needs no radio. Any landing session (F346: the landing
+page mints one for any host on the network, and `api_auth_check()` takes
+its cookie before the bearer and its lockout) can turn the WAP's Bluetooth
+off (`POST /api/bluetooth/disable`), a saved setting that restarts and the
+10 s hold keep, under which every Bluetooth link is dropped; or delete
+every bond, the owner's phone's included (`DELETE /api/bluetooth/paired/all`),
+so the phone must pair again before the lane takes its write (CREDS is
+`WRITE_ENC | WRITE_AUTHEN`). A host that keeps striking can do either again
+at will. A host also in radio range can besides bond a peer of its own (the
+peer starts the pairing, and the session reads the passkey from
+`GET /api/bluetooth` and confirms it) and write the lane's credentials as
+the owner's phone can: join the WAP back to a network that host is on, or
+keep the owner's write refused for as long as it keeps writing
+(`ble_provision.cpp`: one write in 5 s and ten an hour from every peer
+together, and a refused write costs the writer nothing). The owner's own
+landing session reaches the same routes, and `POST /api/wifi/connect`,
+under the lockout too: from a browser on the network the owner can turn
+Bluetooth back on, which that host can turn off again, or change the WAP's
+Wi-Fi to a network that host is not on with no Bluetooth at all. The 10 s
+BOOT hold is no way out from under that host: it
 empties the table (it is in RAM, and the release restarts the unit), as any restart
 does, but once the unit is set up on the same network again, the host's
 next strikes from nine addresses hold every untracked address again, the
@@ -663,7 +675,12 @@ What stays open, and is the ledger's, not a claim of this design:
   before the tap's rule is asked) and keep the token, which the hold kept
   and nothing rotates today. So the hold is for a host known to be on the
   network only, with the phone ready before BOOT is released, and the phone
-  ends paired unless something in radio range reached the door first.
+  ends paired unless something in radio range reached the door first, or a
+  landing session turned the WAP's Bluetooth off before the hold, which any
+  host on the network can (F346): the setting is saved and the hold keeps
+  it, and every link is dropped while it is off, so no phone reaches the
+  door. That is a denial, not a takeover; the kit's token and the console
+  still work.
 - A dual-stack browser would count as two askers if the WAP's station
   interface ever enabled IPv6 (it does not today).
 - The flagship's tap, on its receipt and on the page load it unlocks, still

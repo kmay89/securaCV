@@ -2497,10 +2497,9 @@ so — see D2 below.)
       now say so for both trees:
       on the WAP the way out is the bonded Bluetooth lane to a network that
       host is not on (no hold, no reopened setup door; the lane's own
-      caveat, a host also in radio range that bonds through a landing
-      session, is #1843's first review's, below), or waiting; on the
-      flagship, waiting, or the hold followed by a setup onto a network
-      that host is not on. F343's entry has the amendment.
+      caveat is in #1843's first and second reviews' bullets, below), or
+      waiting; on the flagship, waiting, or the hold followed by a setup
+      onto a network that host is not on. F343's entry has the amendment.
     - No row held that a served tap keeps the askers on record
       (`SECURITY_MODEL.md`: "a served tap clears only the contention, not
       the addresses"): clearing both entries at a TAKE passed every suite,
@@ -2536,14 +2535,21 @@ so — see D2 below.)
       F343 and F340 part 2 notes and `esp32s3_firmware_full_audit_2026-07.md`'s
       F343 note offered the 10 s hold, and a bare BOOT tap, as ways out from
       under a host striking from nine or more addresses, and so did three
-      places in the CHANGELOG's F343 section. Each now carries a dated
+      places in the CHANGELOG's F343 section. Each now carries an
       amendment naming #1843 with the rule F343's posture states.
+      (Corrected by #1843's second review: this said "a dated amendment",
+      and the CHANGELOG's three carry no date; they now point to its F342
+      section for the ways out, as the second round's bullet below says.)
     - The bonded Bluetooth lane was offered as the clean way out with no
       caveat. A host on the network that is also in radio range can bond
       through a landing session (F346) and then join the WAP back to a
       network it is on, or spend the lane's ten writes an hour so the
       owner's is refused. Every place that names the lane as the way out
       now says so (F343's posture has the amendment, and F346 the note).
+      (Corrected by #1843's second review: radio range is no bound, since
+      any landing session can take the lane away with no radio, and three
+      CHANGELOG amendments named the lane with no caveat; the second
+      round's bullet below.)
     - `stopKitSave()`'s `if (!ctl) return;` had no row. Every row tapped
       Save first, so with the guard deleted all 61 tests passed, while
       every pane change with no save running threw (`null.abort()`): the
@@ -2594,6 +2600,54 @@ so — see D2 below.)
       48,621 bytes, 48,370 before; the dashboard's 64,941, 64,938 before);
       `gen_wap.py` leaves `wap.json` unchanged and `gen_csp.py --check`
       passes. Host-tested; not run on a device.
+  - Follow-up review fixes, second round (#1843). No firmware code changes:
+    a row and a harness option in `recovery_kit.test.js`, one iPhone app
+    string, and docs.
+    - The lane's caveat bounded the host by radio range ("unless that host
+      is also in radio range and bonded to the WAP"), and any landing
+      session can take the lane away with no radio: `POST
+      /api/bluetooth/disable` turns the WAP's Bluetooth off, a saved
+      setting that restarts and the 10 s hold keep, under which every link
+      is dropped, and `DELETE /api/bluetooth/paired/all` deletes the
+      phone's bond with the rest (F343's fourth amendment has the code).
+      `SECURITY_MODEL.md`, `magic_pairing.md` §3.7, the CHANGELOG's F342
+      section, the two audit files' amendments, F346's note and
+      `LESSONS_LEARNED.md` now say so, and that the owner's own landing
+      session reaches the same routes and `POST /api/wifi/connect`, so the
+      owner's browser can move the WAP too. The same saved Bluetooth-off
+      makes the hold's setup door a denial for a host only on the network
+      (no phone reaches the door; the kit and the console still work), and
+      the tap paragraph in `SECURITY_MODEL.md`, `THREAT_MODEL.md`'s receipt
+      row and `magic_pairing.md` §3.7 now say that too. A peer that keeps
+      writing keeps the owner's write refused for as long as it writes,
+      not until the hour's window ends: a refused write is not charged.
+    - The CHANGELOG's three F343-section amendments named the lane as the
+      way out with no caveat; each now points to the F342 section for the
+      ways out and their caveats. The first round's bullet said each
+      amendment was dated, and the CHANGELOG's are not; corrected in place.
+    - `THREAT_MODEL.md` Scenario 4 said the WAP's hold clears the saved
+      Wi-Fi and the broker login. It removes them from NVS
+      (`wifi_clear_credentials()`, `csi_mqtt::config_clear()`), which only
+      marks each entry erased, so on the default tier the home network's
+      password and the broker's stay readable in flash until NVS reuses
+      the page, or a full erase; the scenario says so, and that removing
+      the paired phones forgets their bonds the same way. The CHANGELOG's
+      F342 section says so too.
+    - The check after the companion's body read was held only by the
+      source pin "the handler builds no download of its own": the
+      harness's body read always rejected once the save was aborted. The
+      harness now takes a `drained` answer, whose read resolves after the
+      abort (a browser errors the body stream on abort only while it is
+      still readable), and a row leaves the step during that read; with
+      the check deleted it fails, and so does the pin.
+    - Nits: `THREAT_MODEL.md`'s Bluetooth pairing row says the confirm of
+      the six digits is the owner's or any landing session's (F346);
+      `PairView.swift`'s recovery-kit footer says to start the save on the
+      page, then short-tap BOOT when the page says to; `LESSONS_LEARNED.md`'s
+      first-review bullet says the misses were outside the diff's hunks
+      (`CHANGELOG.md` was in the diff).
+    - Counts now: `recovery_kit.test.js` 64 tests, the sketch's
+      `*.test.js` 190. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2717,6 +2771,38 @@ so — see D2 below.)
   contents are checked) so the owner's write is refused until the hour's
   window ends. The sentence the docs use now gives the lane that caveat,
   naming F346, whose decision is where it closes. From code; not probed.
+  *Amended a fourth time 2026-10-21 (#1843's second review):* radio range
+  is no bound on who can take the lane away, and the denial is not an
+  hour's. Any landing session can, from anywhere on the network: `POST
+  /api/bluetooth/disable` turns the WAP's Bluetooth off and saves it
+  (`bluetooth_channel.cpp`'s `disable()`, `NVS_KEY_BT_ENABLED`), a boot
+  loads that setting and turns Bluetooth on only when it says on, and
+  `factory_reset_by_hold()` does not touch it, so restarts and the 10 s
+  hold keep it; while it is off `apply_connect()` drops every link,
+  whatever service it came for (`test_bluetooth_commands_wap.cpp`'s
+  `a_link_while_bluetooth_is_off_is_refused` and
+  `full_profile_off_refuses_every_link`), so the phone cannot reach
+  CREDS. `DELETE /api/bluetooth/paired/all` deletes every bond, the owner's
+  phone's included, and CREDS takes a write only on an authenticated
+  link, so the phone must pair again. Every `/api/bluetooth` route is
+  behind `bt_auth_gated`, which calls `api_auth_check()`. A host also in
+  radio range can besides bond a peer of its own, and needs no pairing
+  mode for it: a pairing the peer starts reaches the confirm with no
+  `pair/start` and no `allow_pairing` check (`apply_confirm_passkey()`,
+  `confirm_pairing()`), and the passkey is on `GET /api/bluetooth` and in
+  the health log. Its writes keep the owner's refused for as long as it
+  keeps writing, not until an hour ends: a write the cooldown or the cap
+  refuses returns before it is charged (`CredsCb::onWrite()`), so a writer
+  that keeps at it takes the first slot after every 5 s cooldown and the
+  first of every new hour. The owner's own landing session reaches the
+  same routes, and `POST /api/wifi/connect` (`wifi_change_authorize()`
+  takes the session through `api_auth_check()` under the lockout), so the
+  owner can turn Bluetooth back on or move the WAP from a browser. The
+  same saved Bluetooth-off reaches the poller's last way out (F342's): a
+  host only on the network can turn it off before the hold, and then no
+  phone reaches the setup door the hold reopens, a denial in which the
+  kit's token and the console still work. The sentence the docs use now
+  says so. From code; not probed.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
@@ -2820,6 +2906,15 @@ so — see D2 below.)
   the way out F343's posture names from under a host striking from nine or
   more addresses, and spend that lane's ten writes an hour, so the decision
   bears on that way out too. From code; not probed.
+  *(2026-10-21, #1843's second review:)* a session needs no peer in range
+  to take that way out away: `POST /api/bluetooth/disable` turns
+  Bluetooth off, a saved setting that restarts and the 10 s hold keep,
+  under which every link is dropped, and `DELETE /api/bluetooth/paired/all`
+  deletes the owner's phone's bond with the rest, both behind
+  `bt_auth_gated` (`api_auth_check()`, which takes the cookie). A peer that
+  keeps writing keeps the lane refused for as long as it writes, since a
+  refused write is not charged. So the decision bears on those routes too.
+  From code; not probed.
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,

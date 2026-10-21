@@ -161,9 +161,12 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   addresses the hold is no way out: it empties the table, as any restart does, but once the
   unit is set up on the same network again that host's next strikes hold every untracked
   address again. The way out is the bonded Bluetooth lane to a network that host is not on,
-  unless that host is also in radio range and bonded to the WAP (a landing session can pair a
-  Bluetooth peer, F346), or waiting until it stops; `magic_pairing.md` §3.7 has the whole
-  posture.) Clients behind one address share a backoff, and a
+  or waiting until it stops. The lane holds only while that host leaves it alone, and taking
+  it away needs no radio: any landing session (F346) can turn the WAP's Bluetooth off, a saved
+  setting that restarts and the 10 s hold keep, or delete the phone's bond, and a host also in
+  radio range can besides bond a peer of its own and write the lane itself. The owner's own
+  landing session can move the WAP too (`POST /api/wifi/connect`). `magic_pairing.md` §3.7
+  has the whole posture.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
   connection purge; `magic_pairing.md` §3.7). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*

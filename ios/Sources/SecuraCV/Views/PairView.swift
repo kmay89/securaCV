@@ -23,8 +23,8 @@
 // It now says what is actually true of the device in front of you, and offers
 // an action only where one exists. For a WAP that joined but never paired
 // (the one-tap claim was refused, or expired), the real paths are two: its
-// recovery kit — the receipt its own setup page saves after a short BOOT
-// tap — opened from Files or pasted, a kit of this device moved onto the
+// recovery kit — the receipt its own page saves once a save started there
+// is asking and BOOT is then short-tapped — opened from Files or pasted, a kit of this device moved onto the
 // address the WAP answers at now, whatever address it named (the setup
 // network's, or a `.local` name from before the WAP was named;
 // ProvisioningReceipt.rebased; the certificate pin is the kit's own); or a
@@ -118,7 +118,7 @@ struct PairView: View {
                     } header: {
                         Text("Add it with its recovery kit")
                     } footer: {
-                        Text("Its own setup page saves a recovery kit (canary-recovery-kit.json) after a short BOOT tap — that file is its key.")
+                        Text("Its own page saves a recovery kit (canary-recovery-kit.json): start the save there (Save my recovery kit, or Use BOOT Tap Once), then short-tap BOOT when the page says to. That file is its key.")
                     }
                     Section {
                         Text("Or set it up again from this phone: forget its Wi-Fi on its own page (Use BOOT Tap Once there lets you in), then bring it near this phone — the card pairs it in one tap. For half an hour after that, Bluetooth setup goes to the first phone or computer nearby that connects, so have this phone ready first.")

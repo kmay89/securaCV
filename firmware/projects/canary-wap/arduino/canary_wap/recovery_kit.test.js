@@ -862,7 +862,10 @@ describe("the wizard's close-out saves through the same builder", () => {
   // (showFinishLinks()), page.back() puts the step on screen again (as Run
   // again's next result does) and taps Save, and page.ui() reads every
   // element and every save. As a browser's, fetch rejects an ask whose
-  // signal was aborted while it was out, and a body read too. It settles
+  // signal was aborted while it was out, and a body read too, unless the
+  // answer is `drained`: its body was already read off the stream, which a
+  // browser errors on abort only while the stream is still readable, so
+  // that read resolves after the abort. It settles
   // once every save tapped has. wizardPage() is the same step with Save not
   // yet tapped: page.save() taps it, and settled() waits for every save.
   function wizardSave(answers, on = {}) {
@@ -921,7 +924,7 @@ describe("the wizard's close-out saves through the same builder", () => {
           status: answer.status, ok: answer.status === 200,
           text: async () => {
             if (on.body) on.body(n, page);
-            if (opts && opts.signal && opts.signal.aborted) throw aborted();
+            if (!answer.drained && opts && opts.signal && opts.signal.aborted) throw aborted();
             return answer.body;
           },
         };
@@ -1099,6 +1102,18 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(asked.length, 2);
     assert.equal(win.saved.length, 0, 'the receipt read as the step was left is not downloaded');
     assert.deepEqual(now, left, 'no "Could not fetch" either');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('a receipt whose read resolves after the step was left is not saved (#1843)', async () => {
+    // The row above ends in the outer catch, since its read rejects on the
+    // abort. A body already drained off the stream resolves anyway, and
+    // only the check right after the read stands between it and a download
+    // nobody asked for and the Home Assistant step coming back.
+    const { win, asked, left, now } = await leaveDuring('body', 1, 'skip', [GATE_403, { ...SERVED, drained: true }]);
+    assert.equal(asked.length, 2);
+    assert.equal(win.saved.length, 0, 'the receipt read after the step was left is not downloaded');
+    assert.deepEqual(now, left, 'the save wrote on the page after the step was left');
     assert.equal(win.els['wiz-ha-block'].style.display, 'none');
     leftIdle(win);
   });

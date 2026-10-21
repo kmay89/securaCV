@@ -3218,25 +3218,39 @@
   arm the overflow, while the claim that pairs the phone frees only the
   phone's own slot. The way out is the one that takes away the attacker's
   reach (a network that host is not on), which on the WAP the bonded
-  Bluetooth lane gives with no hold, while that host holds no bond of its
-  own (the next bullet). Run the attack again from the state
+  Bluetooth lane gives with no hold, while that host leaves the lane alone
+  (the next two bullets). Run the attack again from the state
   the remedy leaves before listing it. And a sentence in the security model
   needs a row of its own even when it reads as obvious: "a served tap
   clears only the contention, not the addresses" had none, and clearing
   both at a TAKE, which hands a host that asks first after the owner's next
   tap the token, passed every suite.
 - **Found in #1843's first review:** a search for the advice has to run
-  over the whole tree, not over the files the diff already touches. The
+  over the whole tree, not over the hunks the diff already touches. The
   second round's own bullet says a search for "hold BOOT 10 s" finds both
-  lists; run over the tree it also found three audit notes in two files and
-  three CHANGELOG passages still offering the hold, none of them in the
-  diff. And a way out has to be judged against everything else the attacker can
+  lists; run over the tree it also found three audit notes in two files the
+  diff did not touch, and three CHANGELOG passages its hunks never reached,
+  all still offering the hold. And a way out has to be judged against everything else the attacker can
   reach: the bonded lane takes away the striking host's network reach, but
   a host also in radio range can bond through the landing session the
   network gives it, and then use the lane itself. A guard that every row
   passes without needs a row from the state it guards: every companion row
   tapped Save first, so the stop's `if (!ctl) return;` was never reached
   with no save running, the state most pane changes are made in.
+- **Found in #1843's second review:** judge a remedy against every route
+  the attacker's session reaches that touches the remedy, not only the
+  routes of the attack you have in mind. The first review judged the lane
+  against pairing and bounded the host by radio range; the same landing
+  session turns the WAP's Bluetooth off, a saved setting the 10 s hold
+  keeps, or deletes the phone's bond, from anywhere on the network. List
+  the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
+  it would change), and a denial's length by what the attacker pays: a
+  refused write the lane does not charge keeps the owner's refused for as
+  long as the writer keeps at it, not for the hour the cap names. And a
+  security doc's "clears" has to say where the bytes go: the seizure
+  scenario said the WAP's hold clears the saved Wi-Fi and the broker login,
+  which it removes from NVS, leaving their bytes in flash, as the same
+  paragraph already said of the flagship's key.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
