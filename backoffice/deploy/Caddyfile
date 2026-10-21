@@ -1,0 +1,10 @@
+# Automatic TLS. Change the host to BACKOFFICE_BASE_URL's host.
+ops.securacv.com {
+	encode gzip
+	reverse_proxy backoffice:8787
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+}

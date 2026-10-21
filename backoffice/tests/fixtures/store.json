@@ -1,0 +1,14 @@
+{
+  "mode": "preview",
+  "shipping_flat": 8,
+  "fulfillment": { "ship_from": {} },
+  "groups": [
+    { "id": "Kits", "products": [
+      { "id": "wap-kit", "name": "Canary WAP Kit", "price": 69, "radio": true, "ship": { "oz": 5, "box": "small" }, "cogs": { "devices": { "canary-wap": 1 }, "extra_usd": 9 } },
+      { "id": "vision-kit", "name": "Canary Vision Kit", "price": 119, "radio": true, "ship": { "oz": 6, "box": "small" }, "cogs": { "devices": { "canary-vision": 1 }, "extra_usd": 17 } }
+    ] },
+    { "id": "Printed enclosure sets", "products": [
+      { "id": "wap-parts", "name": "WAP Enclosure Set", "price": 15, "radio": false, "ship": { "oz": 3, "box": "mailer" }, "cogs": { "devices": {}, "extra_usd": 6.5 } }
+    ] }
+  ]
+}
