@@ -1,0 +1,27 @@
+# systemd unit for a bare VPS (no Docker). Install:
+#   sudo useradd -r -m -d /srv/backoffice backoffice
+#   sudo -u backoffice git clone … /srv/backoffice/securaCV
+#   sudo cp /srv/backoffice/securaCV/backoffice/deploy/backoffice.service /etc/systemd/system/
+#   sudo cp …/.env /srv/backoffice/.env && sudo chmod 600 /srv/backoffice/.env
+#   sudo systemctl enable --now backoffice
+[Unit]
+Description=SecuraCV backoffice (orders, support, mail, books, status)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=backoffice
+WorkingDirectory=/srv/backoffice/securaCV/backoffice
+EnvironmentFile=/srv/backoffice/.env
+Environment=BACKOFFICE_DATA_DIR=/srv/backoffice/data
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning bin/backoffice.mjs serve
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/backoffice/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

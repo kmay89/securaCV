@@ -1,0 +1,15 @@
+{
+  "name": "securacv-backoffice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The self-hosted business backend for Errer Labs / SecuraCV — orders, support, mail, inventory, warranty, books, status — one SQLite file, zero dependencies.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "bin": { "backoffice": "./bin/backoffice.mjs" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning bin/backoffice.mjs serve",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.mjs",
+    "cli": "node --disable-warning=ExperimentalWarning bin/backoffice.mjs"
+  },
+  "dependencies": {}
+}
