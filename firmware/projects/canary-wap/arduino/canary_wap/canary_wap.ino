@@ -8678,13 +8678,17 @@ static canary::net::provisioning_gate::TapArbiter g_tap_arbiter = {};
 // the request's peer (request_peer_key(), the socket, never a header) is
 // the sole address that asked from TAP_LOOKBACK_MS before the tap onward.
 // A second address in that window closes the tap, and an asker gets
-// `*verdict` CONTENDED (the handler's 409 tap_contended) while another
-// address keeps asking, up to the end of the closed tap's TTL. The stamp is
-// peeked, judged and then taken exactly
-// (take_exact()), so a re-tap or the BLE OTA break-glass take between the
-// two is never consumed unjudged. A socket that cannot say is refused with
-// the tap left for the next asker: the arbiter is never skipped. An expired
-// stamp a request finds is burned, as the old take() burned it.
+// `*verdict` CONTENDED (the handler's 409 tap_contended) while an address
+// other than it asked within TAP_LOOKBACK_MS, up to the end of the closed
+// tap's TTL: any ask that finds no other address asking ends it, so under a
+// host that keeps polling, the poller's own asks end it TAP_LOOKBACK_MS
+// after the owner's page stopped. The stamp is peeked once, judged, and
+// every swap after that (TAKE, the CONTENDED close, the NO_TAP burn) is a
+// take_exact() of that one stamp, so a re-tap or the BLE OTA break-glass
+// take between the two is never consumed unjudged. A socket that cannot
+// say is refused with the tap left for the next asker: the arbiter is
+// never skipped. An expired stamp a request finds is burned, as the old
+// take() burned it.
 static bool provisioning_gate_take_for(httpd_req_t* req, canary::net::provisioning_gate::TapVerdict* verdict) {
   namespace pg = canary::net::provisioning_gate;
   *verdict = pg::TapVerdict::NO_TAP;
@@ -8896,10 +8900,14 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     }
     // A second address asked for the receipt in the ten seconds before the
     // tap or during it: the tap is closed and nothing is handed out. An
-    // asker hears so while the other address keeps asking (up to the closed
-    // tap's 30 s), the owner's page included, so it can say another device
-    // asked; ten seconds after the other address stops, the route answers
-    // its 403 again. No cookie, no secret. The hint never advises a bare
+    // asker hears so while an address other than it asked in the last ten
+    // seconds (up to the closed tap's 30 s), the owner's page included, so
+    // it can say another device asked. The first ask that finds no other
+    // address asking ends it and is judged afresh (with no new tap, the
+    // 403): ten seconds after the other address stops, or, under a host
+    // that keeps polling, ten seconds after the owner's page stopped (the
+    // poller's own ask), when the owner's retry hears 403 and its next tap
+    // is closed again. No cookie, no secret. The hint never advises a bare
     // re-tap: a tap no client of the owner's is asking for goes to the
     // first asker, and the device sends this answer only when another
     // address is asking. The body is a literal here (the receipt suite cuts

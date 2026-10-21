@@ -364,9 +364,12 @@ in the provisioning receipt — to a caller that already presents the token
 as a bearer, to a phone spending the setup door's claim, or for thirty
 seconds after a short BOOT tap to the one address asking for it: when a
 second address asked for the receipt in the ten seconds before the tap or
-during it, the tap is closed and both get `409 tap_contended` while the
-other keeps asking (up to the closed tap's thirty seconds; it ends ten
-seconds after the other's last ask), and the `409` tells the client to start
+during it, the tap is closed and an asker gets `409 tap_contended` while an
+address other than it asked in the last ten seconds, up to the closed tap's
+thirty seconds. So the `409` ends ten seconds after the other device stops;
+if that device keeps polling, its own asks end it ten seconds after the
+owner's page stopped, the owner's retry hears `403`, and the next tap is
+closed with `409` again (the poller case below). The `409` tells the client to start
 its request first and keep it asking, then press BOOT; the `403`, the
 dashboard and the companion give that order too (sweep F342;
 host-tested, not bench-tested) — in the pairing QR an operator fetches with

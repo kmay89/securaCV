@@ -37,10 +37,14 @@
   device asking in that window closes the tap with `409 tap_contended`, and
   the dashboard's **Use BOOT Tap Once** and Settings recovery-kit save say
   another device asked instead of "Didn't see a tap" or "HTTP 409". The
-  `409` lasts while the other device keeps asking (up to the closed tap's
-  30 s) and ends 10 s after its last ask, so the pages' "wait 10 seconds,
-  and try again" works: the new click asks first and the next tap serves
-  it. The `409`'s own hint says to start the request first and keep it
+  `409` ends once an ask finds no address other than the asker asking in
+  the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
+  after the other device stops, so the pages' "wait 10 seconds, and try
+  again" works: the new click asks first and the next tap serves it. If the
+  other device keeps polling, its own asks end the `409` 10 s after the
+  owner's page stopped: the owner's retry hears `403` and keeps asking, and
+  the next tap is closed with `409` again (the poller residual below). The
+  `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
   other line the owner or a client reads: the `403`'s hint and button
@@ -64,7 +68,12 @@
   behind one address are one asker; a host polling without pause makes every
   tap the owner's client is already asking for refuse, and then the
   recovery kit's token, the USB serial console and the 10 s BOOT hold
-  followed by a fresh iPhone setup are the ways in.
+  followed by a fresh iPhone setup are the ways in. The docs that said
+  otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
+  the setup door's window as Forget Wi-Fi does, on a unit that had
+  credentials); `THREAT_MODEL.md` said the USB serial console is disabled
+  in production, and release images enable it.
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 

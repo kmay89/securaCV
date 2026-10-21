@@ -1430,6 +1430,54 @@ void test_a_retap_during_a_no_tap_ask_is_kept() {
   }
 }
 
+// The CONTENDED step closes the tap with a compare-and-swap of the stamp it
+// peeked and judged (take_exact(seen)), never by reading the gate again: a
+// re-tap the loop task's BOOT handler stores while this request sits between
+// its peek() and its close is a new tap, judged on the next ask like any
+// other. Here B asks 5 s before the tap and A first asks 8 s after it, so
+// A's ask closes the tap (409); the re-tap lands between A's peek() and
+// A's close. The re-tap is kept, and A's next ask is served: B last asked
+// 13 s before the re-tap, outside its lookback. A close that re-read the
+// gate (`take_exact(g, peek(g))`, an expire() of whatever it holds) cleared
+// the owner's fresh press unjudged, and A's next ask heard 403.
+void test_a_retap_during_a_contended_close_is_kept() {
+  reset_device();
+  const unsigned k = tap_step_clock_call();
+  stub_grant::now_ms += 20000;
+  Req b0;
+  b0.from(192, 168, 1, 21);
+  CHECK(receipt(b0) == 0);
+  check_gate_refusal(b0.r);
+  stub_grant::now_ms += 5000;
+  open_tap();
+  const uint32_t first = gate_stamp();
+  stub_grant::now_ms += 8000;
+  const uint32_t retap = stub_grant::now_ms + 2;
+  const uint32_t at = stub_grant::now_ms + 3;
+  bool ran = false;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k) return stub_grant::now_ms;
+    ran = true;
+    canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+    return at;
+  });
+  Req a;
+  CHECK_MSG(receipt(a) == 0, "an ask that found the tap contended was served");
+  disarm_millis_hook();
+  check_tap_contended(a.r);
+  CHECK(ran);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read");
+  CHECK_MSG(g_tap_arbiter.contended_tap == first, "the ask did not close the tap it judged");
+  CHECK_MSG(gate_stamp() == retap && retap != first, "the contended close cleared a re-tap nobody judged");
+  CHECK(g_served.empty());
+  CHECK_MSG(tap_closed_lines() == 0, "a close that lost its swap logged a closed tap");
+  stub_grant::now_ms += 100;
+  Req a2;
+  CHECK_MSG(receipt(a2) == 1, "the re-tap kept through the contended close did not serve the next ask");
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(gate_stamp() == 0);
+}
+
 // (b) A sole asker is served at once: no settle delay, the cookie with it.
 void test_sole_asker_is_served_at_once() {
   reset_device();
@@ -2607,6 +2655,13 @@ std::string enclosing(const std::vector<std::string>& lines, size_t at) {
 }
 
 bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
+// How many times `needle` occurs in `s` (non-overlapping).
+size_t count_of(const std::string& s, const char* needle) {
+  const size_t n = std::strlen(needle);
+  size_t c = 0;
+  for (size_t at = s.find(needle); n && at != std::string::npos; at = s.find(needle, at + n)) ++c;
+  return c;
+}
 // `word` in `s` as a whole identifier: no identifier character on either side
 // ("returned" and "return_ms" are not `return`).
 bool has_word(const std::string& s, const char* word) {
@@ -2725,6 +2780,18 @@ void test_sketch_text() {
   CHECK_MSG(has_line(take_for, "  if (seen != 0) pg::take_exact(g_provisioning_gate, seen);"),
             "the NO_TAP step does not burn exactly the stamp it peeked");
   CHECK_MSG(!has(take_for, "close("), "provisioning_gate_take_for() closes the gate outright");
+  // The stamp is read once: every swap is of the stamp the arbiter judged,
+  // never of one read again after it (a re-peek, or an expire() of whatever
+  // the gate holds, clears a re-tap nobody judged;
+  // test_a_retap_during_a_contended_close_is_kept drives the CONTENDED race).
+  CHECK_MSG(count_of(take_for, "peek(") == 1, "provisioning_gate_take_for() reads the stamp more than once");
+  CHECK_MSG(!has(take_for, "expire("), "provisioning_gate_take_for() sweeps a stamp it did not judge");
+  CHECK_MSG(count_of(take_for, "take_exact(") == 3 &&
+                count_of(take_for, "pg::take_exact(g_provisioning_gate, seen)") == 3,
+            "a swap in provisioning_gate_take_for() is not of the judged stamp");
+  CHECK_MSG(has_line(take_for,
+                     "    if (seen != 0 && seen == g_tap_arbiter.contended_tap && pg::take_exact(g_provisioning_gate, seen)) {"),
+            "the CONTENDED step does not close exactly the stamp it judged");
   const std::string ble = function_text(lines, "static bool ble_ota_break_glass_take() {");
   CHECK(!ble.empty());
   CHECK(has(ble, "provisioning_gate_take()"));
@@ -2859,6 +2926,7 @@ int main() {
   test_a_served_retap_ends_the_contention();
   test_a_take_lost_after_the_judgment_is_refused();
   test_a_retap_during_a_no_tap_ask_is_kept();
+  test_a_retap_during_a_contended_close_is_kept();
   test_unreadable_peer_is_refused_and_leaves_the_tap();
   test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
   test_an_expired_tap_is_burned_by_the_request_that_finds_it();

@@ -206,6 +206,15 @@ static void a_mint_after_the_takers_clock_is_compared_not_burned() {
   mint(z, kRaw, 20000);
   CHECK(!take(z, kHex, 20000 - AHEAD_SKEW_MS), "a word a whole skew ahead is refused, its own hex too");
   CHECK(z.minted_at_ms == 0 && hex_is_zero(z), "and burned");
+  // The skew is a second, not whatever the constant says: the rows above
+  // follow AHEAD_SKEW_MS, so this one is literal. A word 1.5 s ahead of the
+  // taker's clock is past any preemption and is refused and burned; a skew
+  // grown toward half the clock would compare it, and serve an unswept
+  // claim's own hex weeks after the mint.
+  Ticket s{};
+  mint(s, kRaw, 20000);
+  CHECK(!take(s, kHex, 18500), "a word 1500 ms ahead is refused, its own hex too");
+  CHECK(s.minted_at_ms == 0 && hex_is_zero(s), "and burned");
 }
 
 static void millis_zero_is_a_real_mint() {

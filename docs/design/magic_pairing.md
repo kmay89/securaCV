@@ -68,11 +68,17 @@ sentence from `improv_core.h`:
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
 The WAP has **no tap door in this version**: its BOOT button keeps the
-sketch's own gestures (a short press opens the 30 s receipt gate; a 2 s hold
-prints the identity on serial), and **no button gesture factory-resets a WAP
-today**. A WAP's door is the first-boot window alone; the owner's way to
-re-arm it is **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`),
-which clears the credentials and the carried window record together.
+sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold
+prints the identity on serial, and a **10 s hold factory-resets the WAP**
+(`factory_reset_by_hold()`): it clears the saved Wi-Fi networks, the broker
+row, the device name and the first-boot flag, keeps the identity key and the
+API token derived from it, and restarts into first-boot setup when BOOT is
+released. A WAP's door is the first-boot window alone. The owner re-arms it
+with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
+10 s hold: both clear the credentials through `wifi_clear_credentials()`,
+which on a unit that had credentials also zeroes the carried window record,
+so the door gets a fresh 30 minutes (after the hold, from the restart on
+release).
 
 ### 2.2 What a stranger in radio range can and cannot do
 
@@ -560,10 +566,14 @@ bearer and the claim did not serve: a wrong bearer and a wrong claim count),
 including asks made **before** the tap, and serves the tap only to the sole
 address seen from 10 s before the tap onward. A second address in that
 window closes the tap, and nothing is handed out. An asker then gets `409
-tap_contended` while another address keeps asking, up to the closed tap's
-30 s: the answer ends 10 s after the other address's last ask (and when a
-re-tap is served), so a page that waits 10 s after the other device stops
-and asks again hears `403`, keeps asking, and its next tap serves it. The
+tap_contended` while an address other than it asked within the last 10 s,
+up to the closed tap's 30 s: the answer ends once an ask finds no other
+address asking (and when a re-tap is served), so a page that waits 10 s
+after the other device stops and asks again hears `403`, keeps asking, and
+its next tap serves it. If the other device keeps polling, its own asks end
+the `409` 10 s after the owner's page stopped: the owner's retry hears
+`403` too, keeps asking, and its next tap is closed with `409` again (the
+poller residual below). The
 `409`'s hint says to start the request first and keep it asking, then
 press BOOT; it never advises a bare re-tap, which no client of the owner's
 would be asking for. A sole asker is served at once,
@@ -693,7 +703,7 @@ portal).
 | Stack | NimBLE-Arduino 2.x (core 3.x) | NimBLE-Arduino 1.4.x (core 2.x) | the pairing channel's NimBLE server | — | — |
 | Flag | `FEATURE_IMPROV` in `include/canary/config.h` (default 1; `-DFEATURE_IMPROV=0` compiles it out) | same | `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE` in `build_config.h` (FULL; 0 in DEV and MINIMAL) | — | — |
 | First-boot window | 30 min (`IMPROV_FIRST_BOOT_WINDOW_MS`) | 30 min | 30 min | — | — |
-| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi re-arms the window) | — | — |
+| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi or the 10 s BOOT hold re-arms the window) | — | — |
 | Window across a software restart | the glue's RTC record (`improv_ble.cpp`) | same | the sketch's RTC record (`provisioning_logic::door_window_record_valid`); door activity restarts the first-boot wizard's 15-minute idle timer | — | — |
 | Network list (`GET_WIFI_NETWORKS`) | ✅ the glue's own scan | ✅ same | ✅ the sketch's scan cache — the wizard's picker's list, under one lock | — | — |
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
@@ -728,8 +738,8 @@ handshake); the heap guard keeps the last word. The first-boot window rides
 across the wizard's 15-minute idle restart in RTC-noinit memory
 (`g_improv_window_*`, honored only when `esp_reset_reason()` is not a
 power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset —
-`door_window_record_valid`, host-tested; zeroed by Forget Wi-Fi on a unit
-that had credentials), and every command, join and claim at
+`door_window_record_valid`, host-tested; zeroed by Forget Wi-Fi and by the
+10 s BOOT hold on a unit that had credentials), and every command, join and claim at
 the door is a sign of life for that wizard timer (`setup_wizard::touch`), so
 the restart cannot land mid-provisioning. `GET_WIFI_NETWORKS` streams the
 sketch's scan cache — the same list the wizard's `GET /api/wifi/scan` serves,

@@ -207,6 +207,9 @@ function dashboard(answers, routes = {}) {
   ].join('\n');
   const win = fakeWindow(DASH_IDS, src);
   const asked = [];
+  // The sign-in's status line as each receipt ask leaves (what the owner
+  // reads while the page is asking), kept apart from `asked`.
+  const statusAtAsk = [];
   let queue = answers.slice();
   let polls = 0;
   const calls = { start: 0 };
@@ -229,6 +232,7 @@ function dashboard(answers, routes = {}) {
       if (url !== '/api/provisioning-receipt') {
         return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' };
       }
+      statusAtAsk.push(win.els.authStatus.textContent);
       const a = queue[Math.min(polls++, queue.length - 1)];
       return { status: a.status, ok: a.status >= 200 && a.status < 300,
                json: async () => JSON.parse(a.body), text: async () => a.body };
@@ -240,7 +244,7 @@ function dashboard(answers, routes = {}) {
   ctx.window = ctx;   // the page's global object is its window
   const api = vm.runInNewContext(code, ctx, { filename: 'web_ui.recovery_kit.js' });
   const more = (next) => { queue = next.slice(); polls = 0; };
-  return { api, win, asked, calls, ctx, more };
+  return { api, win, asked, statusAtAsk, calls, ctx, more };
 }
 
 async function dashboardTap(answers) {
@@ -432,6 +436,23 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.ok(text.indexOf('Click') >= 0 && text.indexOf('Click') < text.indexOf('short-tap BOOT'),
               'the click comes before the press');
     assert.doesNotMatch(read(UI), /Press BOOT and click/);
+  });
+
+  it('the sign-in card and the listening line put the click before BOOT too', async () => {
+    // The card's standing instruction is the first thing the owner reads,
+    // and press-first is the one order the device cannot protect: a tap no
+    // page of the owner's was asking for goes to the first asker.
+    const card = read(UI).match(
+      /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>\s*<p[^>]*>\s*([^<]*?)\s*<\/p>/);
+    assert.ok(card, 'the instruction under Use BOOT Tap Once was not found');
+    assert.equal(card[1], 'Click the button, then short-tap BOOT on the Canary within 60 seconds.');
+    assert.ok(card[1].indexOf('Click') < card[1].indexOf('short-tap BOOT'), 'the click comes before the press');
+    // While the page asks (the click made), the line says to press now.
+    const { statusAtAsk } = await dashboardTap([GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(statusAtAsk[0], 'Now short-tap BOOT on the device. Listening for 60 seconds.');
+    assert.ok(statusAtAsk.length >= 2 && statusAtAsk.slice(1).every((t) => /^Listening for BOOT tap/.test(t)),
+              'the countdown follows the first ask');
+    assert.ok(statusAtAsk.every((t) => !/click/i.test(t)), 'no line asks for a click after the press');
   });
 
   it('an answer that is not a receipt offers nothing', async () => {
@@ -701,10 +722,14 @@ describe("the wizard's close-out saves through the same builder", () => {
     const ids = ['wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done', 'wiz-recovery-skip', 'wiz-ha-block'];
     const win = fakeWindow(ids);
     const asked = [];
+    // The banner as each ask leaves: what the owner sees while Save asks.
+    const banners = [];
     const ctx = {
       $w: (id) => win.els[id],
       fetch: async (url, opts) => {
         const answer = queue[Math.min(asked.length, queue.length - 1)];
+        const err = win.els['wiz-recovery-err'];
+        banners.push({ text: err.textContent, show: err.classList.contains('show'), note: err.classList.contains('note') });
         asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled });
         return { status: answer.status, ok: answer.status === 200, text: async () => answer.body };
       },
@@ -716,7 +741,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     ctx.setTimeout = (fn, ms) => { win.timers.push(ms); fn(); };
     const code = kitBlock(src, 'companion_pwa.h') + '\n;(' + m[1] + ')';
     const handler = vm.runInNewContext(code, ctx, { filename: 'wizard.recovery_save.js' });
-    return handler().then(() => ({ win, asked }));
+    return handler().then(() => ({ win, asked, banners }));
   }
   it('a served receipt is saved by RecoveryKit.save, exactly as served', async () => {
     const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
@@ -753,7 +778,12 @@ describe("the wizard's close-out saves through the same builder", () => {
   it('the instruction is on screen while it asks, in the calm style', async () => {
     const src = read(PWA);
     assert.match(src, /say\('Now short-press BOOT on your Canary\.', true\);/);
-    const { win } = await wizardSave([GATE_403, TAP_409]);
+    const { win, banners } = await wizardSave([GATE_403, TAP_409]);
+    // While Save asks, the instruction is shown, in the calm (note) style.
+    assert.equal(banners.length, 2);
+    for (const b of banners) {
+      assert.deepEqual(b, { text: 'Now short-press BOOT on your Canary.', show: true, note: true });
+    }
     // After the 409 the banner holds the contention copy, shown, not calm.
     assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'the banner is on screen');
     assert.equal(win.els['wiz-recovery-err'].classList.contains('note'), false);

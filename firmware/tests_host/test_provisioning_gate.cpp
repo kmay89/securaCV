@@ -1088,6 +1088,31 @@ static void the_409_ends_when_the_other_address_goes_quiet() {
   CHECK(r.ask(kOwner, T + 14000) == TapVerdict::NO_TAP, "nor its second");
   open(r.gate, T + 15000);
   CHECK(r.ask(kOwner, T + 16000) == TapVerdict::TAKE, "and the next tap serves the owner");
+  // The other side of the same rule: the 409 ends once an ask finds no
+  // address other than the asker asking in the lookback, whoever asks. With
+  // B still polling every 200 ms, B's own asks end it 10 s after the owner's
+  // page stopped, so the owner's retry hears NO_TAP (403), not CONTENDED,
+  // although B never stopped; the page keeps asking, and the next tap is
+  // closed again (the poller residual). Nothing is served either way.
+  Bench p;
+  p.ask(kOwner, T - 1000);
+  open(p.gate, T);
+  TapVerdict owner_retry = TapVerdict::TAKE, owner_poll = TapVerdict::TAKE, owner_after_tap = TapVerdict::TAKE;
+  for (uint32_t t = T + 100; t <= T + 20100; t += 100) {
+    if (t == T + 15000) open(p.gate, t);
+    if (t == T + 1000) CHECK(p.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner hears the 409 (the page stops)");
+    if (t == T + 12000) owner_retry = p.ask(kOwner, t);
+    if (t == T + 14000) owner_poll = p.ask(kOwner, t);
+    if (t == T + 16000) owner_after_tap = p.ask(kOwner, t);
+    if ((t - T) % 200 == 100) {
+      CHECK(p.ask(kOther, t) != TapVerdict::TAKE, "the poller was served at %u", (unsigned)t);
+    }
+  }
+  CHECK(owner_retry == TapVerdict::NO_TAP, "the owner's retry, B still polling: NO_TAP, not CONTENDED");
+  CHECK(owner_poll == TapVerdict::NO_TAP, "and its next poll");
+  CHECK(owner_after_tap == TapVerdict::CONTENDED, "the next tap, B still polling, is closed again");
+  CHECK(p.served == 0, "nothing served under the poller, got %d", p.served);
+  CHECK(p.closed_by == 2, "both taps closed (%d)", p.closed_by);
   CHECK(r.served == 1, "once");
   // B's own asks hear the 409 while the owner keeps asking, and NO_TAP once
   // the owner has been quiet for the lookback.
@@ -1219,6 +1244,10 @@ static void a_peer_key_prints_as_ipv4_or_eight_groups() {
   const uint8_t ff00[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0x00, 192, 168, 1, 20};
   CHECK(peer_key_text(ff00, out, sizeof(out)) == 39, "ff 00 at bytes 10-11: 39 characters");
   CHECK(std::strcmp(out, "0000:0000:0000:0000:0000:ff00:c0a8:0114") == 0, "ff 00 at bytes 10-11: %s", out);
+  // And 00 ff there (::ff:c0a8:114): byte 10 is held as well as byte 11.
+  const uint8_t ff_low[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0xff, 192, 168, 1, 20};
+  CHECK(peer_key_text(ff_low, out, sizeof(out)) == 39, "00 ff at bytes 10-11: 39 characters");
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0000:00ff:c0a8:0114") == 0, "00 ff at bytes 10-11: %s", out);
   char small[PEER_KEY_TEXT_CAP - 1];
   small[0] = 'x';
   CHECK(peer_key_text(kOwner.key, small, sizeof(small)) == 0 && small[0] == '\0',

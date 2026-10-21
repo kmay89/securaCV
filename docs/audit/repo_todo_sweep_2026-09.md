@@ -2014,9 +2014,13 @@ so — see D2 below.)
   distinct addresses that asked `GET /api/provisioning-receipt` without a
   bearer or a matching claim, before or after the tap. It serves the tap only
   to the sole address seen from ten seconds before the tap onward; a second
-  address closes the tap, and an asker gets `409 tap_contended` while another
-  address keeps asking (up to the closed tap's 30 s; it ends ten seconds
-  after the other's last ask). The dashboard's **Use BOOT Tap Once** and now the
+  address closes the tap, and an asker gets `409 tap_contended` for the rest
+  of the closed tap's 30 s. (Amended by the review, below: an asker gets
+  the `409` only while an address other than it asked within the last ten
+  seconds, so it ends ten seconds after the other device stops; under a host
+  that keeps polling, the poller's own asks end it ten seconds after the
+  owner's page stopped, the owner's retry hears `403`, and the next tap is
+  closed again.) The dashboard's **Use BOOT Tap Once** and now the
   companion's recovery-kit save start asking before the tap, so a host that
   polls the route, one that watches `/api/logs` for the tap, or one that
   delays the owner's next poll is refused loudly instead of handed the token,
@@ -2047,7 +2051,8 @@ so — see D2 below.)
   gated it.
   Corrections to this item: the phone does not "then need the BOOT tap"; the
   iPhone app has no tap flow and ends "on the Wi-Fi, not paired".
-  *Done (2026-10-20, #<PR>):* in two commits of the PR that carries F347.
+  *Done (2026-10-20, #<PR>):* in two commits of the PR that carries F347,
+  with three review commits.
   - The claim: `spend_if_match()` and `wipe_hex()` in
     `firmware/common/network/claim_ticket.h` (staged copy cp'd), `take()` on
     them; the receipt's refusal line drops "(claim spent)" and is written
@@ -2057,7 +2062,8 @@ so — see D2 below.)
     `provisioning_gate_take_for()` and `g_tap_arbiter` in `canary_wap.ino`;
     the receipt's refusal `!claim_served && !provisioning_gate_take_for(req,
     &tap)` (`check_route_security.py`'s `OTHER_GRANTS`), the `429` before the
-    inline `409 tap_contended` literal, the existing `403` unchanged, and
+    inline `409 tap_contended` literal, the existing `403`'s fields
+    unchanged (its words change in the second review, below), and
     F341's `auth_record_success(req)` still right after that refusal block
     (the `409` clears nothing). BLE OTA break-glass keeps the immediate
     `provisioning_gate_take()`. A request that finds an expired stamp burns
@@ -2160,6 +2166,44 @@ so — see D2 below.)
     fails 2), `recovery_kit.test.js` 44 tests (the pages before fail 3; the
     `503` row fails on a save that keeps asking). Host-tested; not run on a
     device.
+  - Third review fixes (same PR). Tests and docs only; no firmware
+    behavior changes (the sketch's edits are comments). The rows added,
+    all but the second where a mutant survived:
+    - The CONTENDED close is a compare-and-swap of the judged stamp. A
+      re-tap the BOOT handler stores between an ask's `peek()` and its
+      close is kept, and serves the asker's next ask. A close that re-read
+      the gate (`take_exact(g, peek(g))`, or an `expire()` of whatever it
+      holds) cleared that re-tap unjudged. The sketch is pinned to one
+      `peek()`, no `expire()`, and three swaps of `seen` in
+      `provisioning_gate_take_for()`.
+    - Under a host that keeps polling, the owner's retry hears `NO_TAP`
+      once the poller's asks find the owner quiet for ten seconds, and the
+      next tap is closed again (`test_provisioning_gate.cpp`; the rule
+      the docs now state).
+    - `peer_key_text()` prints a zero prefix with 00 ff at bytes 10-11 in
+      eight groups.
+    - A claim word 1500 ms ahead of the taker's clock is refused and
+      burned, its own hex included. This literal row holds
+      `AHEAD_SKEW_MS` to at most 1500 ms; the edge rows follow the
+      constant.
+    - The companion's banner is shown, in the calm style, while Save asks.
+    - The sign-in card's standing instruction and the listening line put
+      the click before BOOT.
+    - Docs: `magic_pairing.md` §2.1 and the WAP README said no button
+      gesture factory-resets a WAP. The 10 s hold does
+      (`factory_reset_by_hold()`, #1816). It clears the credentials through
+      `wifi_clear_credentials()`, so on a unit that had credentials it
+      re-arms the door's window as Forget Wi-Fi does. `THREAT_MODEL.md`'s
+      "USB Serial: Disabled in production" row now states what ships:
+      release images enable the USB console, which prints the receipt with
+      the token at every boot. The `409`'s rule is now stated from both
+      sides wherever it appeared, in the docs and in the sketch's comments.
+    - Counts now: `test_receipt_grant.cpp` 2788 checks, and both
+      re-reading mutants of the CONTENDED close fail 7 of them;
+      `recovery_kit.test.js` 45 tests, and each of the four copy mutants
+      fails one; `test_provisioning_gate` fails 2 checks on the
+      `key[11]`-only mutant, and `test_claim_ticket` fails 1 with the skew
+      at 100000 ms. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
