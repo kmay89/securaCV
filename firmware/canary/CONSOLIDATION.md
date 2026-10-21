@@ -236,9 +236,10 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   must keep refusing it. Until then the flagship's route check
   (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
   `Set-Cookie`, any request header but `Authorization` (the auth lib) and
-  `Host`, and a URL query outside the witness log's paging, and it pins
-  `page_token_inject`'s four inputs whole, so a session cannot be added by
-  widening one of them.
+  `Host`, a URL query outside the witness log's paging and a read of a
+  request's raw path (`->uri`, which keeps its query) outside its four
+  readers, and it pins `page_token_inject`'s four inputs whole, so a session
+  cannot be added by widening one of them.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

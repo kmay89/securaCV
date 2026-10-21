@@ -72,65 +72,99 @@ every other gate), and the premise the last one stands on:
     canary-wap checker's F328 rule, ported to what this tree has). The
     three credentials are the bearer token, the SoftAP password and the TLS
     pin — public in every TLS handshake, held because the apps trust it as
-    the pin. Each is read where SECRET_READS spells it (its store, its
-    accessor, its deriver) and carried up the call graph to the route
-    handlers, the carry stopping at a device-side use and at a comparer.
-    Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
-    emitter carrying exactly what TOKEN_EMITTERS says, a comparer reading
-    only the token, a device-side use whose reading statements are exactly
-    its SECRET_LOCAL_USES row (statement pins, keyed by file and qualified
-    function; a mint's statement runs through its refusal, so the pin on
-    main.cpp's `derive_ap_password(device.privkey, ...)` holds the call, its
-    refusal and the halt), or a SECRET_ANSWERS handler; outside every
-    function only OUTSIDE_FUNCTION_LINES may name one. Every registered
-    handler that carries one is a SECRET_ANSWERS row with exactly what it
-    carries and its grant: 'bearer' (`if (!auth_gate(req)) return ESP_OK;`
-    at its own top level, before every answer site), 'receipt'
-    (receipt_decide handed exactly RECEIPT_GRANTS, every answer under a
-    SERVE_* test, rule 6 holding the dispatch) or 'page' (only through
-    send_html_with_token(..., page_token_inject(req)) or another page
-    handler; a public route may carry only this way). The glue every grant
-    runs through is pinned whole (GLUE_DEFS: host_is_foreign, auth_gate,
-    bearer_present_and_valid, from_ap_subnet, page_token_inject with its four
-    inputs and F341's auth_handed_token on the tap that served,
-    provisioning_gate_take, the hook setter, main.cpp's take hook, and the
-    lockout glue F340 and F341 left: AuthManager::check, grant, compare and
-    handedToken and the auth_check, auth_bearer_grant and auth_handed_token
-    wrappers). The gate primitives are called only where the census says
-    (GATE_CALL_SITES: every auth_gate call is the whole refusal statement,
-    auth_handed_token runs on the receipt only under a served verdict, only
-    the three wrappers reach the AuthManager, constantTimeCompare runs only
-    in compare), and every AUTH_MARKERS and PRE_HOST_STEPS name is a census
+    the pin. Each is read where SECRET_READS spells it (its stores: the
+    token's buffer and its NVS record, the SoftAP password's two buffers and
+    the Wi-Fi driver's AP config; its accessor; its deriver) and carried up
+    the call graph to the route handlers, the carry stopping at a
+    device-side use and at a comparer. Every reader is named: an accessor in
+    its home (SECRET_ACCESSORS), an emitter in its home carrying exactly what
+    TOKEN_EMITTERS says, its reading statements pinned (EMITTER_STATEMENTS),
+    a comparer reading only the token, a device-side use whose reading
+    statements are exactly its SECRET_LOCAL_USES row (statement pins, keyed
+    by file and qualified function), or a SECRET_ANSWERS handler; outside
+    every function only OUTSIDE_FUNCTION_LINES may name one. A mint's
+    statement runs through its refusal and carries where it sits, so the pin
+    on main.cpp's `derive_ap_password(device.privkey, ...)` holds the call,
+    its refusal and the halt, at setup()'s own level with no block or
+    preprocessor conditional around it and no `goto` before it (`#if 0` or
+    `if (false) {` around it compiles the key out and raises the SoftAP
+    open), and the token's
+    `derive_api_token(privkey, ...)` is held inside its `if (!loaded) {`.
+    Every registered handler that carries one is a SECRET_ANSWERS row with
+    exactly what it carries and its grant: 'bearer' (`if (!auth_gate(req))
+    return ESP_OK;` at its own top level, before every answer site),
+    'receipt' (receipt_decide handed exactly RECEIPT_GRANTS, every answer
+    under a SERVE_* test, check_host_first's check_receipt_dispatch holding
+    the dispatch) or 'page' (only through send_html_with_token(...,
+    page_token_inject(req)) or another page handler; a public route may
+    carry only this way). No handler's own body names the private key. A
+    function defined twice (an `#if` body and its `#else` one) is every one
+    of its bodies: their reads and calls are its own, and each body is held
+    to its row and its grant. Pinned whole (GLUE_DEFS, each defined exactly
+    once under ROOTS, in its file, so a second body or a shadow in another
+    lib fails): the glue every grant runs through (host_is_foreign,
+    auth_gate, bearer_present_and_valid, from_ap_subnet, page_token_inject
+    with its four inputs and F341's auth_handed_token on the tap that
+    served, provisioning_gate_take, the hook setter, main.cpp's take hook,
+    and the lockout glue F340 and F341 left: AuthManager::check, grant,
+    compare, handedToken and constantTimeCompare and the auth_check,
+    auth_bearer_grant and auth_handed_token wrappers), the three accessors,
+    the token's deriver, and the SoftAP password's way to the radio
+    (announce_setup_network, apply_ap_security). The gate primitives are
+    called only where the census says and defined only where it says
+    (GATE_CALL_SITES): every auth_gate call is the whole refusal statement,
+    at its handler's own top level, under no block or conditional, with
+    nothing able to leave before it but the rate limit's refusal;
+    auth_handed_token runs on the receipt only under a served verdict; the
+    AuthManager's one instance (s_auth) is reached only by
+    auth_get_instance(), and that only by the three wrappers;
+    constantTimeCompare runs only in compare; the receipt is sent only from
+    its route; the boot hands auth_load_or_derive g_device.privkey, with its
+    refusal; and every WiFi.softAP() is begin()'s or raiseAp()'s statement,
+    with its key. Every AUTH_MARKERS and PRE_HOST_STEPS name is a census
     row, so a deleted gate's name cannot linger in either list;
   * the premise the last rule stands on, checked (no_session_problems): the
     flagship has no session. No cookie is read or set, the request headers
     read are `Authorization` (the auth lib) and `Host` (the network lib)
-    only, a response header's name is a literal and never `Set-Cookie`, and
-    a URL query is read only by the witness log's paging. A cookie, a
-    session header, a query credential or a lockout keyed on a request
-    header fails here, pointing at canary-wap's any-session class
-    (ANY_SESSION_GATES, F328): CONSOLIDATION.md's Phase 6 cv_session port
-    must bring that rule with it.
+    only, by literal name, a response header's name is a literal and never
+    `Set-Cookie`, a URL query is read only by the witness log's paging, and
+    a request's raw path (`->uri`, which keeps its query) only where
+    URI_READERS says. A cookie, a session header, a query credential or a
+    lockout keyed on a request header fails here, pointing at canary-wap's
+    any-session class (ANY_SESSION_GATES, F328): CONSOLIDATION.md's Phase 6
+    cv_session port must bring that rule with it.
 
 (The lambda clause of the first rule is why a receipt_decide(...) whose
 verdict nobody reads fails it, although its bearer and tap lambdas return
 the gates' answers.)
 
 The parser names what it reads: one head parser (function_defs) names a
-constructor for its class, its initializer list included, and a member as
-`Class::name`; a lambda names no function, so what it calls is its
-enclosing function's.
+constructor for its class, its initializer list included, a member as
+`Class::name`, and a function whose head ends in `const`, `noexcept`,
+`override` or `final`; a lambda names no function, so what it calls is its
+enclosing function's. A census name outside every parsed function counts as
+a declaration only after a type, never after `return` (a namespace-scope
+lambda's body is code). The route-gate and Host-first rules, too, read every
+definition of a handler.
 
 What a text check cannot see, stated so nobody leans on it: names are
-matched by spelling, so a copy of a credential under another name, or a
-value passed on as a parameter (begin()'s ap_password, the
-announce_setup_network() it prints through), is not followed; a call by
-bare name reaches every definition of that name (Preferences' begin()
-reaches ScvNetworkManager::begin), which errs toward failing; the shared
-firmware/common/network/auth_backoff.h is outside ROOTS and its arithmetic
-is test_auth_backoff.cpp's; and a pinned body or statement means an edit to
-that glue updates its row in the same review (the failure prints the row as
-it now is, so the update is mechanical).
+matched by spelling, so a copy of a credential under another name is not
+followed, and neither is a value passed on as a parameter (begin()'s
+ap_password and announce_setup_network()'s pass are held by pins on the
+statements and the bodies that handle them instead); a call by bare name
+reaches every definition of that name (Preferences' begin() reaches
+ScvNetworkManager::begin), which errs toward failing; the private key is not
+carried (it is read across the tree to sign and derive): only a handler's
+own body naming it fails, not a helper that answers it; a statement before a
+gated route's refusal that does the route's work itself, without leaving,
+is not seen; an early `return` before a mint is not refused (the rest of
+its function goes with it, setup()'s start of the network among it), though
+a `goto` before one is; a non-mint device-side statement is held without
+its blocks and conditionals (compiling one out removes a use, it adds
+none); the shared firmware/common/network/auth_backoff.h is outside ROOTS
+and its arithmetic is test_auth_backoff.cpp's; and a pinned body or
+statement means an edit to that glue updates its row in the same review
+(the failure prints the row as it now is, so the update is mechanical).
 
 Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
 step "Check canary (PIO) route security", beside the WAP's audit):
@@ -200,14 +234,19 @@ PUBLIC_ALLOWLIST = {
     # Two registrations share GET /*: the main table's captive wildcard
     # fallback (registered LAST: 302 → /setup while setup is active, else
     # 404), and, with FEATURE_HTTPS, the port-80 server's handle_https_redirect,
-    # which POST /* is too. That one answers a plain_http_exempt path as the
-    # captive probe does (the setup page through page_token_inject, the
-    # page grant), and everything else a 307 to https:// (F15). Its
-    # SECRET_ANSWERS row ('page') holds that.
+    # which POST /* is too. That server starts only once HTTPS is up
+    # (startRedirectServer, after httpd_ssl_start), so a plain_http_exempt
+    # path it hands to handle_captive_probe gets the probe's plain body or,
+    # off the TLS server, the TLS hint (send_tls_captive_hint), never the
+    # page token. Everything else is a 307 to https:// (F15), or a 500 when
+    # the target would not fit. Its SECRET_ANSWERS row ('page') holds it to
+    # the page grant because its text reaches send_html_with_token through
+    # the probe.
     ("GET", "/*"): "captive wildcard fallback (302/404) / port-80 https redirect: "
-                   "a probe path answers as the probe (the page grant), else 307",
-    ("POST", "/*"): "FEATURE_HTTPS port-80 server: a probe path answers as the probe "
-                    "(the page grant), else 307 to https:// (F15)",
+                   "a probe path gets the probe's plain answer or the TLS hint, else 307 "
+                   "(500 on an oversize target)",
+    ("POST", "/*"): "FEATURE_HTTPS port-80 server: a probe path gets the probe's plain answer "
+                    "or the TLS hint, else 307 to https:// (F15; 500 on an oversize target)",
 }
 
 # Handlers that gate internally in ways the marker scan cannot attribute to
@@ -319,26 +358,33 @@ def blank_string_contents(text: str) -> str:
     return "".join(out)
 
 
-def function_body(source: str, name: str):
-    """Return the brace-matched body of `esp_err_t <name>(...)` if present.
+def function_bodies(source: str, name: str) -> list:
+    """Every brace-matched `esp_err_t <name>(...) {...}` in `source`, in
+    order: a handler defined twice (an `#if` body and its `#else` one) is two
+    bodies, and every rule that reads a handler reads both.
 
-    Brace matching runs over a string-blanked view; the returned slice comes
+    Brace matching runs over a string-blanked view; the returned slices come
     from the real `source` (blanking is length-preserving) so the marker
     scan sees the true handler text.
     """
     blanked = blank_string_contents(source)
-    m = re.search(
-        r"esp_err_t\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", blanked)
-    if not m:
-        return None
-    depth, i = 1, m.end()
-    while i < len(blanked) and depth:
-        if blanked[i] == "{":
-            depth += 1
-        elif blanked[i] == "}":
-            depth -= 1
-        i += 1
-    return source[m.start():i]
+    out = []
+    for m in re.finditer(r"esp_err_t\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", blanked):
+        depth, i = 1, m.end()
+        while i < len(blanked) and depth:
+            if blanked[i] == "{":
+                depth += 1
+            elif blanked[i] == "}":
+                depth -= 1
+            i += 1
+        out.append(source[m.start():i])
+    return out
+
+
+def function_body(source: str, name: str):
+    """The first of function_bodies(source, name), or None."""
+    bodies = function_bodies(source, name)
+    return bodies[0] if bodies else None
 
 
 def parse_routes(fname: str, text: str):
@@ -400,11 +446,27 @@ def _name_pattern(name: str) -> str:
     return r"\b" + r"\s*::\s*".join(map(re.escape, name.split("::"))) + r"\s*\("
 
 
+# What may stand between a definition's parameter list and its body: a
+# member's `const`, and `noexcept`, `override`, `final` (a helper written
+# `static void f(uint32_t s) noexcept { ... }` is a function like any other,
+# not code outside every function).
+_HEAD_SUFFIX = re.compile(r"(?:\s*\b(?:const|noexcept|override|final)\b)*\s*")
+
+
+def _body_open(blanked: str, i: int) -> int:
+    """The offset of the `{` that opens a definition's body, when the text
+    just past a parameter list's `)` at `i` (after any _HEAD_SUFFIX) is one,
+    else -1 (a call)."""
+    j = _HEAD_SUFFIX.match(blanked, i).end()
+    return j if j < len(blanked) and blanked[j] == "{" else -1
+
+
 def definition_spans(text: str, name: str) -> list:
     """[(start, end)] of every brace-matched DEFINITION of function `name`
     (any return type, member or free; `Class::name` for one member only). A
     call is `name(...)` followed by `;` or `)`; only a definition is followed
-    by `{`. The span starts at the name (its qualifier, for a qualified one)."""
+    by `{` (after a member's `const` or a `noexcept`). The span starts at the
+    name (its qualifier, for a qualified one)."""
     if name.split("::")[-1] not in text:
         return []
     blanked = blank_string_contents(text)
@@ -417,10 +479,8 @@ def definition_spans(text: str, name: str) -> list:
             elif blanked[i] == ")":
                 depth -= 1
             i += 1
-        j = i
-        while j < len(blanked) and blanked[j] in " \t\n":
-            j += 1
-        if j < len(blanked) and blanked[j] == "{":
+        j = _body_open(blanked, i)
+        if j >= 0:
             depth, k = 1, j + 1
             while k < len(blanked) and depth:
                 if blanked[k] == "{":
@@ -460,10 +520,7 @@ def call_args(text: str, name: str):
                 cuts.append(i + 1)
             i += 1
         close = i - 1
-        j = i
-        while j < len(blanked) and blanked[j] in " \t\n":
-            j += 1
-        if j < len(blanked) and blanked[j] == "{":
+        if _body_open(blanked, i) >= 0:
             continue  # the definition, not a call
         bounds = cuts + [close + 1]
         args = [text[bounds[k]:bounds[k + 1] - 1].strip()
@@ -713,38 +770,58 @@ TOKEN_COMPARERS = {
 
 # The three credentials, by the spellings this tree reads them with (over
 # comment-stripped, string-blanked text): each store, its accessor and its
-# deriver. The TLS pin is public (every TLS handshake shows the certificate
-# it hashes); it is held because the apps trust it as the pin.
+# deriver. The bearer token lives in s_bearer and in its NVS record
+# (NVS_KEY_TOKEN, defined in include/canary_config.h); the SoftAP password in
+# the network manager's buffer, main.cpp's, and the Wi-Fi driver's AP config
+# (`<wifi_config_t>.ap.password`, read back by esp_wifi_get_config). The TLS
+# pin is public (every TLS handshake shows the certificate it hashes); it is
+# held because the apps trust it as the pin.
 SECRET_READS = {
-    "token": re.compile(r"\bauth_get_token\s*\(|\bs_bearer\b|\bderive_api_token\s*\("),
+    "token": re.compile(r"\bauth_get_token\s*\(|\bs_bearer\b|\bderive_api_token\s*\("
+                        r"|\bNVS_KEY_TOKEN\b"),
     "ap": re.compile(r"\bgetApPassword\s*\(|\bm_ap_password\b|\bg_ap_password\b"
-                     r"|\bderive_ap_password\s*\("),
+                     r"|\bderive_ap_password\s*\(|\bap\s*\.\s*password\b"),
     "pin": re.compile(r"\bgetTlsCertFp\s*\(|\bm_tls_cert_fp_hex\b"),
 }
 SECRET_NAMES = {"token": "the bearer token", "ap": "the SoftAP password",
                 "pin": "the TLS pin"}
+# The device's private key, which every credential above derives from (the
+# token and the SoftAP password are HMACs of it). It is read across the tree
+# to sign and to derive, so it is not carried; a registered route handler's
+# own body never names it (_answer_problems).
+_PRIVATE_KEY = re.compile(r"\bprivkey\b")
 # The file suffixes the tables key rows by (a file is named by its path's
 # tail, so a fixture's file and the tree's match alike).
 _NET = "securacv_network.cpp"
+_NET_H = "securacv_network.h"
 _AUTH = "securacv_auth.cpp"
+_CRYPTO = "securacv_crypto.cpp"
+_WITNESS = "securacv_witness.cpp"
 _MAIN = "src/main.cpp"
 
 # The accessors and the derivers under ROOTS: reading the store (or making
 # the value) is their job, so their own body is not a reader; a call of one
 # is a read by its caller (SECRET_READS spells each call). Each is defined
 # once, in its home file: a second definition by the same name elsewhere is
-# a reader like any other. derive_ap_password lives outside ROOTS
+# a reader like any other. Each body is pinned whole too (GLUE_DEFS), so a
+# sink added inside an accessor, or a deriver keyed on anything but the
+# private key, fails. derive_ap_password lives outside ROOTS
 # (firmware/common/network/ap_password.h, host-tested by test_ap_password.cpp).
 SECRET_ACCESSORS = {
     "auth_get_token": (_AUTH, "token"),
-    "derive_api_token": ("securacv_crypto.cpp", "token"),
-    "getApPassword": ("securacv_network.h", "ap"),
-    "getTlsCertFp": ("securacv_network.h", "pin"),
+    "derive_api_token": (_CRYPTO, "token"),
+    "getApPassword": (_NET_H, "ap"),
+    "getTlsCertFp": (_NET_H, "pin"),
 }
 # The mints: a statement that calls one in an if condition is the whole if,
 # its branch included, so a statement pin holds the call, its refusal and
 # what the refusal does (the F350 review: a pin on the argument alone would
-# pass a deleted call, a discarded result or a dropped halt).
+# pass a deleted call, a discarded result or a dropped halt). A mint's pin
+# also holds where it sits: the header of every block around it (none for
+# setup()'s, `if (!loaded) {` for the token's) and every preprocessor
+# conditional open around it in its function, folded in front as
+# `[within ...]`, so a mint moved under `if (false) {` or `#if 0` (the call
+# compiled out, the key left "" and the SoftAP raised open) fails too.
 SECRET_MINTS = ("derive_api_token", "derive_ap_password")
 
 # The declarations outside every function that name a credential, as
@@ -775,10 +852,13 @@ OUTSIDE_FUNCTION_LINES = (
 # row is (reason, every statement of the function that reads a credential,
 # whitespace folded, literals intact, in order). A statement runs from just
 # after the nearest `;`, `{` or `}` at its block's level to the first `;`
-# or `{` at that level (a mint's, SECRET_MINTS, through its branch). The
-# carry up the call graph stops here. A new statement that reads a
-# credential (a serial, BLE or MQTT sink), an edited one, or a dropped one
-# fails until the row says it, and the failure prints the row as it now is.
+# or `{` at that level (a mint's, SECRET_MINTS, through its branch and with
+# the blocks and conditionals around it). The carry up the call graph stops
+# here. A new statement that reads a credential (a serial, BLE or MQTT sink),
+# an edited one, or a dropped one fails until the row says it, and the
+# failure prints the row as it now is. A function defined twice (an `#if`
+# body and its `#else` one) is held body by body, so a stub that reads
+# nothing fails as a row it no longer has.
 SECRET_LOCAL_USES = {
     (_NET, "ScvNetworkManager::ScvNetworkManager"): (
         "the constructor clears both buffers",
@@ -821,33 +901,61 @@ SECRET_LOCAL_USES = {
             'Serial.printf("║ Password : %-45s ║\\n", g_ap_password);',
             'snprintf(fp_short, sizeof(fp_short), "%.16s...", network.getTlsCertFp());',
         )),
+    (_NET, "apply_ap_security"): (
+        "measures the passphrase the driver holds for the SoftAP (WPA2 or the WPA2/WPA3 "
+        "transition, ap_security_policy.h); the read-back is zeroed after",
+        (
+            "pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));",
+        )),
     (_AUTH, "auth_load_or_derive"): (
         "loads the bearer token from NVS or derives it from the private key (the whole mint "
-        "statement, its refusal included) into the auth lib's own buffer, and persists it",
+        "statement, its refusal included, inside `if (!loaded)`) into the auth lib's own "
+        "buffer, and persists it",
         (
+            "size_t tlen = nvs.getBytesLength(NVS_KEY_TOKEN);",
             "if (tlen > 0 && tlen < sizeof(s_bearer)) {",
             "size_t got = nvs.getBytes(NVS_KEY_TOKEN, s_bearer, tlen);",
             "s_bearer[tlen] = '\\0';",
             'loaded = (strncmp(s_bearer, "cv_", 3) == 0 && strlen(s_bearer) >= 35);',
             "s_bearer[0] = '\\0';",
-            "if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) { s_bearer[0] = "
-            "'\\0'; return false; }",
+            "[within if (!loaded) {] if (!derive_api_token(privkey, s_bearer, "
+            "sizeof(s_bearer))) { s_bearer[0] = '\\0'; return false; }",
             "size_t wrote = nvs.putBytes(NVS_KEY_TOKEN, s_bearer, strlen(s_bearer));",
             "return s_bearer[0] != '\\0';",
         )),
 }
 
+# The emitters' reading statements (TOKEN_EMITTERS), pinned the way a
+# device-side use's are: keyed by the emitter's home file, each emitter
+# defined exactly once under ROOTS, there. The carry still runs through an
+# emitter (its callers answer what it carries); this holds what it does with
+# a credential besides putting it in the answer, so a serial or MQTT line
+# added inside the receipt's builder fails, as it would in raiseAp().
+EMITTER_STATEMENTS = {
+    (_NET, "send_provisioning_receipt"): (
+        'doc["token"] = auth_get_token();',
+        'doc["ap_password"] = net.getApPassword();',
+        'doc["tls_cert_fp"] = net.isTlsEnabled() ? net.getTlsCertFp() : "";',
+    ),
+    (_NET, "send_html_with_token"): (
+        'const char* token = (verdict == PageToken::INJECT) ? auth_get_token() : "";',
+    ),
+}
+
 # The route handlers whose answer carries a credential: exactly what it
 # carries, and its grant.
 #   bearer  — `if (!auth_gate(req)) return ESP_OK;` at the handler's own top
-#             level, before every answer site.
-#   receipt — receipt_decide handed exactly RECEIPT_GRANTS; rule 6 holds the
-#             dispatch (a send only under a SERVE_* test, then the Host
-#             refusal), and every answer site sits under a SERVE_* test.
-#   page    — every answer site is send_html_with_token(...) (rule 3 holds
-#             its verdict to page_token_inject(req)) or a call of another
-#             page-grant handler. A PUBLIC_ALLOWLIST route may carry only
-#             with this grant.
+#             level, before every answer site (and the census holds that
+#             refusal outside every block and conditional, with nothing but a
+#             rate-limit refusal able to leave before it).
+#   receipt — receipt_decide handed exactly RECEIPT_GRANTS; check_host_first's
+#             check_receipt_dispatch holds the dispatch (a send only under a
+#             SERVE_* test, then the Host refusal), and every answer site
+#             sits under a SERVE_* test.
+#   page    — every answer site is send_html_with_token(...) (whose verdict
+#             check_page_token_wiring holds to page_token_inject(req)) or a
+#             call of another page-grant handler. A PUBLIC_ALLOWLIST route may
+#             carry only with this grant.
 SECRET_ANSWERS = {
     "handle_provisioning_receipt": ("token ap pin", "receipt"),
     "handle_status": ("pin", "bearer"),
@@ -863,14 +971,18 @@ BEARER_REFUSAL = "if (!auth_gate(req)) return ESP_OK;"
 
 # ── The bearer-only answers: the grant glue, pinned whole ────────────────────
 
-# Every piece of glue a grant runs through, keyed by (file suffix, qualified
-# function): what its body guarantees, and the body itself from the name to
-# the closing brace, comment-stripped and whitespace folded. No host test
-# reaches this glue (the decisions it calls are host-tested; the auth lib's
-# arithmetic is auth_backoff.h's, test_auth_backoff.cpp's), so the body is
-# pinned: an edit to it is an edit to its row in the same review, and the
-# failure prints the body as it now is. host_is_foreign was the first row
-# (HOST_IS_FOREIGN_DEF).
+# Every piece of glue a grant runs through, and the credentials' accessors,
+# the token's mint and the SoftAP password's way to the radio, keyed by (file
+# suffix, qualified function): what its body guarantees, and the body itself
+# from the name to the closing brace, comment-stripped and whitespace folded
+# (a preprocessor line inside it included). No host test reaches this glue
+# (the decisions it calls are host-tested; the auth lib's arithmetic is
+# auth_backoff.h's, test_auth_backoff.cpp's), so the body is pinned: an edit
+# to it is an edit to its row in the same review, and the failure prints the
+# body as it now is. Each row's function is defined exactly once under ROOTS,
+# in its file: a second definition of the name anywhere (an `#else` body, or
+# a shadow in another lib that its callers there would reach) fails.
+# host_is_foreign was the first row (HOST_IS_FOREIGN_DEF).
 _PAGE_GRANTS = (
     "SECURITY_MODEL.md's four unlocks, and only them: first-boot setup, a real bearer "
     "(auth_bearer_grant through bearer_present_and_valid), a SoftAP peer (from_ap_subnet) "
@@ -1008,6 +1120,73 @@ GLUE_DEFS = {
     (_AUTH, "auth_handed_token"): (
         "a one-line delegation to the instance's handedToken",
         "auth_handed_token(uint32_t source) { auth_get_instance().handedToken(source); }"),
+    (_AUTH, "AuthManager::constantTimeCompare"): (
+        "the compare every bearer goes through: every byte visited through volatile, no early "
+        "exit (a memcmp answers the same and leaks the matching prefix's length in time)",
+        "AuthManager::constantTimeCompare(const void* a, const void* b, size_t len) { const "
+        "volatile uint8_t* pa = static_cast<const volatile uint8_t*>(a); const volatile "
+        "uint8_t* pb = static_cast<const volatile uint8_t*>(b); volatile uint8_t diff = 0; for "
+        "(size_t i = 0; i < len; i++) { diff |= pa[i] ^ pb[i]; } return diff == 0; }"),
+    # The accessors (SECRET_ACCESSORS): each returns its store and does
+    # nothing else, so a sink added inside one fails (the reader rule names
+    # the accessor, not its statements).
+    (_AUTH, "auth_get_token"): (
+        "the token's accessor: its store returned, nothing else",
+        "auth_get_token() { return s_bearer; }"),
+    (_NET_H, "getApPassword"): (
+        "the SoftAP password's accessor: its store returned, nothing else",
+        "getApPassword() const { return m_ap_password; }"),
+    (_NET_H, "getTlsCertFp"): (
+        "the TLS pin's accessor: its store returned, nothing else",
+        "getTlsCertFp() const { return m_tls_cert_fp_hex; }"),
+    # The token's mint: keyed by the private key it is handed (its caller,
+    # witness_provision_device, is held to g_device.privkey by the census).
+    # The flagship's copy has no host test (tests_host stubs it), so the body
+    # is pinned.
+    (_CRYPTO, "derive_api_token"): (
+        "the token's mint: an HMAC keyed by the private key it is handed (never the public "
+        "key, the fingerprint or anything the device publishes), then the STA MAC; a failed "
+        "HMAC refuses",
+        "derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) { "
+        "if (!token_str || token_str_len < 36) return false; uint8_t token_key[32]; if "
+        '(!hmac_sha256( privkey, 32, (const uint8_t*)"securacv:token-key-derive:v1", 28, '
+        "token_key)) { return false; } uint8_t mac[6]; esp_read_mac(mac, ESP_MAC_WIFI_STA); "
+        'uint8_t token_input[27]; memcpy(token_input, "securacv:api-token:v1", 21); '
+        "memcpy(token_input + 21, mac, 6); uint8_t token_hash[32]; if (!hmac_sha256(token_key, "
+        "32, token_input, 27, token_hash)) { secure_zero(token_key, sizeof(token_key)); return "
+        "false; } format_api_token_string(token_hash, sizeof(token_hash), token_str, "
+        "token_str_len); secure_zero(token_key, sizeof(token_key)); secure_zero(token_hash, "
+        "sizeof(token_hash)); return strlen(token_str) >= 35; }"),
+    # The SoftAP password on its way to the radio, after the mint and the
+    # two raises (the census holds both WiFi.softAP statements): the line it
+    # is printed on, and the driver config it is measured from.
+    (_NET, "announce_setup_network"): (
+        "the setup-network line both flashers parse and its QR, on the serial line only (the "
+        "SoftAP password reaches it as a parameter, which the reader rule does not follow)",
+        "announce_setup_network(const char* ssid, const char* pass) { namespace ob = "
+        "canary::net::onboard; char line[256]; if (ob::announce_line(line, sizeof(line), ssid, "
+        "pass, AP_CHANNEL) > 0) Serial.println(line); if (ob::qr_line(line, sizeof(line), "
+        "ssid, pass) > 0) Serial.println(line); }"),
+    (_NET, "apply_ap_security"): (
+        "the SoftAP's security request: the read-back passphrase only measured, the WPA2/WPA3 "
+        "transition and PMF exactly as ap_security_policy.h decides (never an open or "
+        "weaker authmode), and the read-back zeroed",
+        "apply_ap_security(WiFiStatus& st) { namespace aps = canary::net::ap_security; "
+        "wifi_config_t c; memset(&c, 0, sizeof(c)); size_t pw_len = 0; if "
+        "(esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) { pw_len = strnlen((const "
+        "char*)c.ap.password, sizeof(c.ap.password)); } aps::Decision d = "
+        "aps::decide(CANARY_AP_WPA3_TRANSITION != 0, CANARY_SOFTAP_SAE_IN_BUILD != 0, pw_len); "
+        "#if CANARY_SOFTAP_SAE_IN_BUILD if (d.mode == aps::AuthMode::WPA2_WPA3_TRANSITION) { "
+        "c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK; c.ap.pairwise_cipher = "
+        "WIFI_CIPHER_TYPE_CCMP; c.ap.pmf_cfg.capable = d.pmf_capable; c.ap.pmf_cfg.required = "
+        "d.pmf_required; const bool accepted = (esp_wifi_set_config(WIFI_IF_AP, &c) == "
+        "ESP_OK); d = aps::after_driver(d, accepted); if (!accepted) { "
+        'log_health(LOG_LEVEL_WARNING, LOG_CAT_NETWORK, "WPA3 SoftAP refused by driver", '
+        '"WPA2-PSK kept"); } } #endif secure_zero(&c, sizeof(c)); strncpy(st.ap_auth, d.label, '
+        "sizeof(st.ap_auth) - 1); st.ap_auth[sizeof(st.ap_auth) - 1] = '\\0'; "
+        'st.ap_auth_reason = d.reason; Serial.printf("[WIFI] SoftAP security: %s (%s)\\n", '
+        'd.label, d.reason); log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "SoftAP security", '
+        "d.label); }"),
 }
 
 # ── The bearer-only answers: the gate primitives' call sites ─────────────────
@@ -1016,43 +1195,103 @@ GLUE_DEFS = {
 # its own definition and its declarations. Per name:
 #   callers — the (file suffix, qualified function) set that may call it,
 #             every one of which does (None: any function);
+#   home    — where it is defined, (file suffix, qualified function), or None
+#             when it is defined outside ROOTS (the shared headers, the
+#             Arduino core): every definition of the name under ROOTS (in
+#             "file", when the row has one) must be exactly that, so a second
+#             definition, or a shadow in another lib, which its callers there
+#             would reach, fails (an ident row has none: its "decl" holds it);
 #   file    — only calls in this file count (a common name: `compare`);
 #   pattern — the call's spelling, when `\bname\s*\(` is not it;
-#   whole   — every call is exactly this folded statement;
+#   whole   — every call is exactly this folded statement, or, as a dict,
+#             each caller's every call is its entry;
+#   whole_if — the statement held is the whole `if` through its braced branch
+#             (a mint's caller: the call, its refusal and what the refusal does);
+#   top     — every call sits at its function's own top level, outside every
+#             block and every preprocessor conditional opened in the function,
+#             and nothing before it in the function can leave (a `return`,
+#             `goto`, `throw` or `co_return`) but a RATE_LIMIT_REFUSAL;
 #   once    — exactly one call;
 #   served  — callers whose every call sits under a SERVE_* test of the
-#             receipt_decide verdict (rule 6's _under_serve_test);
+#             receipt_decide verdict (check_receipt_dispatch's _under_serve_test);
 #   ident   — a variable: every mention counts, and outside a function only
 #             the declarations in "decl" may name it.
 # A row whose name has no call fails, and so does a listed caller that no
 # longer calls. Every AUTH_MARKERS entry names a row, and every
 # PRE_HOST_STEPS entry a row, a TOKEN_EMITTERS key or auth_get_token.
 GATE_CALL_SITES = {
-    "auth_gate": {"callers": None, "whole": BEARER_REFUSAL},
-    "auth_check": {"callers": {(_NET, "auth_gate")}},
-    "auth_bearer_grant": {"callers": {(_NET, "bearer_present_and_valid")}},
+    # The 62 gated routes' refusal: whole, at the handler's own top level,
+    # never under a block or a conditional (`if (!from_ap_subnet(req)) {...}`,
+    # `#if 0`), with nothing before it able to leave but the rate limit.
+    "auth_gate": {"callers": None, "whole": BEARER_REFUSAL, "top": True,
+                  "home": (_NET, "auth_gate")},
+    "auth_check": {"callers": {(_NET, "auth_gate")}, "home": (_AUTH, "auth_check")},
+    "auth_bearer_grant": {"callers": {(_NET, "bearer_present_and_valid")},
+                          "home": (_AUTH, "auth_bearer_grant")},
     "auth_handed_token": {"callers": {(_NET, "page_token_inject"),
                                       (_NET, "handle_provisioning_receipt")},
-                          "served": {(_NET, "handle_provisioning_receipt")}},
+                          "served": {(_NET, "handle_provisioning_receipt")},
+                          "home": (_AUTH, "auth_handed_token")},
+    # The AuthManager: its one instance, s_auth, is reached only through
+    # auth_get_instance(), and that only from the three wrappers, so no
+    # other code reaches check, grant, handedToken or reset.
     "auth_get_instance": {"callers": {(_AUTH, "auth_check"), (_AUTH, "auth_bearer_grant"),
-                                      (_AUTH, "auth_handed_token")}},
+                                      (_AUTH, "auth_handed_token")},
+                          "home": (_AUTH, "auth_get_instance")},
+    "s_auth": {"callers": {(_AUTH, "auth_get_instance")}, "ident": True,
+               "decl": ("static AuthManager s_auth;",)},
     "compare": {"callers": {(_AUTH, "AuthManager::check"), (_AUTH, "AuthManager::grant")},
-                "file": _AUTH, "pattern": r"(?<![\w.])compare\s*\("},
-    "constantTimeCompare": {"callers": {(_AUTH, "AuthManager::compare")}},
+                "file": _AUTH, "pattern": r"(?<![\w.])compare\s*\(",
+                "home": (_AUTH, "AuthManager::compare")},
+    "constantTimeCompare": {"callers": {(_AUTH, "AuthManager::compare")},
+                            "home": (_AUTH, "AuthManager::constantTimeCompare")},
     "bearer_present_and_valid": {"callers": {(_NET, "page_token_inject"),
-                                             (_NET, "handle_provisioning_receipt")}},
+                                             (_NET, "handle_provisioning_receipt")},
+                                 "home": (_NET, "bearer_present_and_valid")},
     "provisioning_gate_take": {"callers": {(_NET, "page_token_inject"),
-                                           (_NET, "handle_provisioning_receipt")}},
-    "receipt_decide": {"callers": {(_NET, "handle_provisioning_receipt")}},
-    "page_token_decide": {"callers": {(_NET, "page_token_inject")}},
+                                           (_NET, "handle_provisioning_receipt")},
+                               "home": (_NET, "provisioning_gate_take")},
+    "receipt_decide": {"callers": {(_NET, "handle_provisioning_receipt")}, "home": None},
+    "page_token_decide": {"callers": {(_NET, "page_token_inject")}, "home": None},
+    # The receipt's emitter: sent only from the receipt route, whose
+    # dispatch check_receipt_dispatch holds (an `#else` body of another
+    # handler calling it fails here, whatever that handler's grant).
+    "send_provisioning_receipt": {"callers": {(_NET, "handle_provisioning_receipt")},
+                                  "home": (_NET, "send_provisioning_receipt")},
     "network_set_provisioning_gate_hooks": {
         "callers": {(_MAIN, "setup")}, "once": True,
         "whole": "network_set_provisioning_gate_hooks(prov_gate_take_hook, "
-                 "prov_gate_is_open_hook);"},
+                 "prov_gate_is_open_hook);",
+        "home": (_NET, "network_set_provisioning_gate_hooks")},
     "s_gate_take": {"callers": {(_NET, "network_set_provisioning_gate_hooks"),
                                 (_NET, "provisioning_gate_take"), (_NET, "handle_status")},
                     "ident": True, "decl": ("static network_gate_fn_t s_gate_take = nullptr;",)},
+    # The token's mint input: the boot hands the auth lib the private key,
+    # with its refusal (derive_api_token's body is GLUE_DEFS').
+    "auth_load_or_derive": {
+        "callers": {(_WITNESS, "witness_provision_device")}, "once": True, "whole_if": True,
+        "whole": "if (!auth_load_or_derive(g_device.privkey)) { "
+                 'Serial.println("[!!] Bearer credential provisioning failed"); return false; }',
+        "home": (_AUTH, "auth_load_or_derive")},
+    # Every SoftAP raise, with the key it raises: begin() at boot (its
+    # ap_password parameter, which main.cpp hands g_ap_password) and raiseAp()
+    # after a home-link drop. An empty or null key raises an open network.
+    "softAP": {
+        "callers": {(_NET, "ScvNetworkManager::begin"), (_NET, "ScvNetworkManager::raiseAp")},
+        "whole": {
+            (_NET, "ScvNetworkManager::begin"):
+                "bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
+                "AP_MAX_CONNECTIONS);",
+            (_NET, "ScvNetworkManager::raiseAp"):
+                "bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
+                "AP_MAX_CONNECTIONS);"},
+        "home": None},
 }
+# The one statement a `top` census call may follow out of its function: the
+# rate limit's refusal, its second argument (when it has one) a literal or a
+# plain local, never a call.
+RATE_LIMIT_REFUSAL = re.compile(
+    r"if \(!rate_limit_check\(req(?:, (?:true|false|[A-Za-z_]\w*))?\)\) return ESP_OK;")
 # receipt_decide's grants after the Host, folded: the bearer, then the tap.
 RECEIPT_GRANTS = ("[req]() { return bearer_present_and_valid(req); }",
                   "[]() { return provisioning_gate_take(); }")
@@ -1066,6 +1305,17 @@ REQUEST_HEADERS = {_AUTH: ("Authorization",), _NET: ("Host",)}
 URL_QUERY_READERS = {(_NET, "handle_witness")}
 _URL_QUERY = re.compile(r"\b(httpd_req_get_url_query_len|httpd_req_get_url_query_str"
                         r"|httpd_query_key_value)\s*\(")
+# The functions that may read a request's raw path (`->uri`, which keeps the
+# query, so a `?token=` or `?cv_session=` parsed from it is a query
+# credential the URL-query rule above would not see), and why.
+URI_READERS = {
+    (_NET, "handle_captive_probe"): "matches the probe's path (probe_path_is)",
+    (_NET, "handle_https_redirect"): "the port-80 exemption and the 307's https:// target",
+    (_NET, "handle_log_ack"): "the record seq in POST /api/logs/<seq>/ack, behind auth_gate",
+    (_NET, "register_route"): "a route table entry's own path (httpd_uri_t), for the "
+                              "full-table log line; no request",
+}
+_URI_READ = re.compile(r"->\s*uri\b")
 _NO_SESSION = ("the flagship has no session today. A cookie, a session header or a query "
                "credential is canary-wap's any-session class (ANY_SESSION_GATES, F328): "
                "CONSOLIDATION.md Phase 6's cv_session port must bring that rule with it")
@@ -1079,7 +1329,8 @@ PRE_HOST_STEPS = ("bearer_present_and_valid(", "auth_bearer_grant(", "auth_check
 _KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "sizeof", "defined"}
 
 
-_FUNC_HEAD = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const\s*)?\{")
+_FUNC_HEAD = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)"
+                        r"(?:\s*\b(?:const|noexcept|override|final)\b)*\s*\{")
 # A constructor's parameter list closing, then its initializer list's `:`
 # (not a `::`).
 _INIT_COLON = re.compile(r"\)\s*:(?!:)")
@@ -1472,33 +1723,32 @@ def check_host_first(sources: dict, require_defs: bool = True) -> list:
         if (method, uri, base) in seen or uri is None:
             continue
         seen.add((method, uri, base))
-        bodies = [b for b in (function_body(t, base) for t in sources.values()) if b]
-        if not bodies:
-            continue  # main() already names a missing handler
-        body = bodies[0]
-        if (method, uri) in PUBLIC_ALLOWLIST:
-            steps = steps_before(body, len(body),
-                                 tuple(st for st in PRE_HOST_STEPS if st != "send_html_with_token("))
-            if steps:
-                failures.append(f"{method} {uri}: public handler {handler} reaches "
-                                f"{', '.join(steps)} — a public route may hand out the "
-                                f"token only through send_html_with_token(..., "
-                                f"page_token_inject(req))")
-            continue
-        via_gate = first_deciding_marker(body, "auth_gate(")
-        via_host = first_host_decision(body)
-        covered = [i for i in (via_gate, via_host) if i >= 0]
-        if not covered:
-            failures.append(f"{method} {uri}: handler {handler} ({fname}) never asks the "
-                            f"Host — run auth_gate, or decide host_is_foreign(req) before "
-                            f"the bearer, the tap and the token (the receipt route's shape)")
-            continue
-        late = steps_before(body, min(covered))
-        if late:
-            failures.append(f"{method} {uri}: handler {handler} ({fname}) runs "
-                            f"{', '.join(late)} before the Host check — a foreign Host "
-                            f"must be refused before the bearer is read or the tap is "
-                            f"spent")
+        # Every definition: an `#else` body is a body like the first.
+        for body in (b for t in sources.values() for b in function_bodies(t, base)):
+            if (method, uri) in PUBLIC_ALLOWLIST:
+                steps = steps_before(body, len(body), tuple(
+                    st for st in PRE_HOST_STEPS if st != "send_html_with_token("))
+                if steps:
+                    failures.append(f"{method} {uri}: public handler {handler} reaches "
+                                    f"{', '.join(steps)} — a public route may hand out the "
+                                    f"token only through send_html_with_token(..., "
+                                    f"page_token_inject(req))")
+                continue
+            via_gate = first_deciding_marker(body, "auth_gate(")
+            via_host = first_host_decision(body)
+            covered = [i for i in (via_gate, via_host) if i >= 0]
+            if not covered:
+                failures.append(f"{method} {uri}: handler {handler} ({fname}) never asks the "
+                                f"Host — run auth_gate, or decide host_is_foreign(req) before "
+                                f"the bearer, the tap and the token (the receipt route's "
+                                f"shape)")
+                continue
+            late = steps_before(body, min(covered))
+            if late:
+                failures.append(f"{method} {uri}: handler {handler} ({fname}) runs "
+                                f"{', '.join(late)} before the Host check — a foreign Host "
+                                f"must be refused before the bearer is read or the tap is "
+                                f"spent")
 
     # 3. The page path: page_token_inject asks the Host before any grant and
     #    before the tap, and hands that verdict to page_token_decide.
@@ -1621,6 +1871,10 @@ def _line_of(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
 
 
+def _times(n: int) -> str:
+    return {0: "0 times", 1: "once", 2: "twice"}.get(n, f"{n} times")
+
+
 def _innermost(defs, pos: int):
     """The innermost function_defs() entry whose span holds `pos`, or None."""
     best = None
@@ -1690,15 +1944,18 @@ def _outside_statement(text: str, blanked: str, pos: int):
 
 
 def _function_index(sources: dict):
-    """({(fname, qualified name): def}, {bare name: [keys]}) over every
-    function_defs() definition (the first, when a file defines one twice)."""
+    """({(fname, qualified name): (def, ...)}, {bare name: [keys]}) over every
+    function_defs() definition. A file that defines one name twice (an `#if`
+    body and its `#else` one) keeps both: the reads and calls of every body
+    are the function's, and every rule that holds a body holds each."""
     defs, by_name = {}, {}
     for fname, text in sorted(sources.items()):
         for d in function_defs(text):
             key = (fname, d[0])
             if key not in defs:
-                defs[key] = d
+                defs[key] = ()
                 by_name.setdefault(d[0].split("::")[-1], []).append(key)
+            defs[key] += (d,)
     return defs, by_name
 
 
@@ -1707,12 +1964,13 @@ _ANY_CALL = re.compile(r"(?<![\w~])([A-Za-z_]\w*)\s*\(")
 
 def _reads_in(sources: dict, defs: dict, reads_tbl: dict):
     """({key: {kind: [pos]}}, {key: {called bare names}}, [(fname, pos, kind)]
-    for each read outside every function). A call by bare name is any
-    `name(`: free, member (`net.begin(`) or qualified (`ns::name(`)."""
+    for each read outside every function), over every body of every key. A
+    call by bare name is any `name(`: free, member (`net.begin(`) or
+    qualified (`ns::name(`)."""
     reads, calls, outside = {}, {}, []
     per_file = {}
-    for key, d in defs.items():
-        per_file.setdefault(key[0], []).append(d)
+    for key, ds in defs.items():
+        per_file.setdefault(key[0], []).extend(ds)
     for fname, text in sorted(sources.items()):
         blanked = blank_string_contents(text)
         fdefs = per_file.get(fname, [])
@@ -1748,10 +2006,46 @@ def _carry_map(defs, by_name, reads, calls, stops) -> dict:
     return carried
 
 
+_COND_OPEN = re.compile(r"#\s*if(?:n?def)?\b")
+_COND_ALT = re.compile(r"#\s*(?:elif|else)\b")
+_COND_CLOSE = re.compile(r"#\s*endif\b")
+
+
+def _context(text: str, blanked: str, lo: int, start: int) -> list:
+    """Where the statement at `start` sits in the function whose code starts
+    at `lo`: the folded header of every brace block open there but the body's
+    own, outermost first (`if (!loaded) {`, `if (false) {`, a lambda's), then
+    every preprocessor conditional opened in the function and still open
+    there (`#if 0`, `#ifndef X`; an `#elif` or `#else` is added to its `#if`).
+    [] for a statement at the body's own level with no conditional open."""
+    opens = []
+    for k in range(lo, start):
+        if blanked[k] == "{":
+            opens.append(k)
+        elif blanked[k] == "}" and opens:
+            opens.pop()
+    out = []
+    for b in opens[1:]:
+        s, _e, _lv = _statement_at(blanked, lo, b + 1, b)
+        out.append(_fold(text[s:b + 1]))
+    conds = []
+    for line, bline in zip(text[lo:start].split("\n"), blanked[lo:start].split("\n")):
+        code = bline.strip()
+        if _COND_OPEN.match(code):
+            conds.append(_fold(line))
+        elif _COND_ALT.match(code) and conds:
+            conds[-1] += " ... " + _fold(line)
+        elif _COND_CLOSE.match(code) and conds:
+            conds.pop()
+    return out + conds
+
+
 def _statements(sources, key, d, positions, T) -> list:
-    """[(start, end, folded, kinds)] for the statements of function `d`
-    holding the reads at `positions`, in order, one per statement (a mint's
-    statement through its branch, SECRET_MINTS)."""
+    """[(start, end, folded, kinds)] for the statements of function body `d`
+    holding the reads at `positions`, in order, one per statement. A mint's
+    statement (SECRET_MINTS) runs through its branch, and where it sits
+    (_context, and a `goto` before it in its function, which can jump past
+    it) is folded in front of it: `[within if (!loaded) {] if (...`."""
     text = sources[key[0]]
     blanked = blank_string_contents(text)
     mint = (re.compile(r"\b(?:" + "|".join(map(re.escape, T["mints"])) + r")\s*\(")
@@ -1761,11 +2055,58 @@ def _statements(sources, key, d, positions, T) -> list:
         if any(a <= pos < b for a, b, _f, _k in out):
             continue
         start, end, _level = _statement_at(blanked, d[3], d[4], pos)
+        folded = None
         if mint and mint.search(blanked, start, end):
             start, end, _level = _statement_at(blanked, d[3], d[4], pos, whole_if=True)
+            around = _context(text, blanked, d[3], start)
+            if re.search(r"\bgoto\b", blanked[d[3]:start]):
+                around.append("after a goto")
+            if around:
+                folded = "[within " + " > ".join(around) + "] " + _fold(text[start:end])
         kinds = {k for k, rx in T["reads"].items() if rx.search(blanked, start, end)}
-        out.append((start, end, _fold(text[start:end]), kinds))
+        out.append((start, end, folded or _fold(text[start:end]), kinds))
     return out
+
+
+def _positions(reads: dict, key, d) -> list:
+    """The read offsets of `key` that fall in body `d`."""
+    return [p for ps in reads.get(key, {}).values() for p in ps if d[3] <= p < d[4]]
+
+
+def _pin_problems(sources, T, key, d, positions, want, table) -> list:
+    """Body `d` of a pinned function: its statements that read a credential
+    are exactly `want`, its `table` row, in order."""
+    fname, qual = key
+    text = sources[fname]
+    got = _statements(sources, key, d, positions, T)
+    folds = tuple(f for _a, _b, f, _k in got)
+    if folds == tuple(want):
+        return []
+    problems = []
+    for start, _end, stmt, kinds in got:
+        if stmt not in want:
+            problems.append(f"{fname}:{_line_of(text, start)}: {qual}() reads {_kinds(kinds)} "
+                            f"in a statement not in its {table} row: {stmt!r}")
+    for stmt in want:
+        if stmt not in folds:
+            problems.append(f"{fname}: {qual}()'s {table} row holds {stmt!r}, which it no "
+                            f"longer has (a deleted call, a discarded result, a dropped "
+                            f"refusal, or a mint moved under a block or a conditional, fails "
+                            f"here)")
+    problems.append(f"{fname}:{_line_of(text, d[1])}: {qual}()'s statements that read a "
+                    f"credential are not its {table} row. If the change is meant, update the "
+                    f"row in the same review. Now: {folds!r}")
+    return problems
+
+
+def _home_problems(defs: dict, name: str, home: str, table: str) -> list:
+    """`name` is defined exactly once under ROOTS, in its `home` file."""
+    found = sorted(f for (f, q), ds in defs.items() if q.split("::")[-1] == name for _d in ds)
+    if len(found) == 1 and _in_file(found[0], home):
+        return []
+    where = ", ".join(found) or "no file the check reads"
+    return [f"{table}: {name}() is defined in {where}; it is defined once, in {home} — remove "
+            f"or fix the row"]
 
 
 def _answer_sites(code: str, reads_tbl: dict, carriers: set, self_name: str) -> list:
@@ -1781,23 +2122,32 @@ def _answer_sites(code: str, reads_tbl: dict, carriers: set, self_name: str) -> 
 
 def _reader_problems(sources, T, defs, reads, carried, outside, handlers) -> list:
     """(c) Every function that reads a credential is named: an accessor in
-    its home, an emitter with exactly its carries, a comparer reading only
-    the token, a local use (its statements: _local_use_problems) or a
-    SECRET_ANSWERS handler (_answer_problems). Outside every function only
+    its home, an emitter in its home with exactly its carries and its reading
+    statements (EMITTER_STATEMENTS), a comparer reading only the token, a
+    local use (its statements: _local_use_problems) or a SECRET_ANSWERS
+    handler (_answer_problems). Outside every function only
     OUTSIDE_FUNCTION_LINES may name one."""
     problems = []
     accessors = T["accessors"]
     for name, (home, _kind) in sorted(accessors.items()):
-        homes = sorted({f for f, q in defs if q.split("::")[-1] == name})
-        if not homes or any(not _in_file(f, home) for f in homes):
-            where = ", ".join(homes) or "no file the check reads"
-            problems.append(f"SECRET_ACCESSORS: {name}() is defined in {where}; an accessor is "
-                            f"defined once, in {home} — remove or fix the row")
+        problems.extend(_home_problems(defs, name, home, "SECRET_ACCESSORS"))
+    rows = T["emitter_stmts"]
+    for name in sorted(T["emitters"]):
+        homes = [f for f, q in rows if q == name]
+        if len(homes) != 1:
+            problems.append(f"TOKEN_EMITTERS names {name}(), which has {len(homes)} "
+                            f"EMITTER_STATEMENTS rows; it takes one, keyed by its home file")
+        else:
+            problems.extend(_home_problems(defs, name, homes[0], "EMITTER_STATEMENTS"))
+    for f, q in sorted(rows):
+        if q not in T["emitters"]:
+            problems.append(f"EMITTER_STATEMENTS names {q}() ({f}), which is no TOKEN_EMITTERS "
+                            f"key — remove or fix the row")
     for key in sorted(reads):
         fname, qual = key
         got = set(reads[key])
         bare = qual.split("::")[-1]
-        line = _line_of(sources[fname], defs[key][1])
+        line = _line_of(sources[fname], defs[key][0][1])
         if bare in accessors and _in_file(fname, accessors[bare][0]):
             if got - {accessors[bare][1]}:
                 problems.append(f"{fname}:{line}: accessor {qual}() reads {_kinds(got)}; it is "
@@ -1808,6 +2158,11 @@ def _reader_problems(sources, T, defs, reads, carried, outside, handlers) -> lis
                 problems.append(f"{fname}:{line}: emitter {qual}() carries "
                                 f"{_kinds(carried[key])}; its TOKEN_EMITTERS entry says "
                                 f"{_kinds(want)}")
+            row = next((stmts for (f, q), stmts in rows.items()
+                        if q == qual and _in_file(fname, f)), None)
+            for d in (defs[key] if row is not None else ()):
+                problems.extend(_pin_problems(sources, T, key, d, _positions(reads, key, d), row,
+                                              "EMITTER_STATEMENTS"))
         elif bare in T["comparers"]:
             if got != {"token"}:
                 problems.append(f"{fname}:{line}: comparer {qual}() reads {_kinds(got)}; a "
@@ -1849,8 +2204,8 @@ def _reader_problems(sources, T, defs, reads, carried, outside, handlers) -> lis
 
 def _local_use_problems(sources, T, defs, reads, handlers) -> list:
     """Each SECRET_LOCAL_USES row: defined where it says, reading a
-    credential, not a route handler, and its reading statements exactly the
-    row's."""
+    credential, not a route handler, and the reading statements of every
+    body of it exactly the row's."""
     problems = []
     for (suffix, qual), (_why, want) in sorted(T["local"].items()):
         keys = [k for k in defs if _in_file(k[0], suffix) and k[1] == qual]
@@ -1860,7 +2215,6 @@ def _local_use_problems(sources, T, defs, reads, handlers) -> list:
             continue
         for key in keys:
             fname = key[0]
-            text = sources[fname]
             if qual.split("::")[-1] in handlers:
                 problems.append(f"{fname}: {qual}() is a route handler, so it answers: not a "
                                 f"SECRET_LOCAL_USES entry")
@@ -1868,24 +2222,9 @@ def _local_use_problems(sources, T, defs, reads, handlers) -> list:
                 problems.append(f"SECRET_LOCAL_USES names {qual}() in {suffix}, which reads no "
                                 f"credential — remove it")
                 continue
-            got = _statements(sources, key, defs[key],
-                              [p for ps in reads[key].values() for p in ps], T)
-            folds = tuple(f for _a, _b, f, _k in got)
-            if folds == tuple(want):
-                continue
-            for start, _end, stmt, kinds in got:
-                if stmt not in want:
-                    problems.append(f"{fname}:{_line_of(text, start)}: {qual}() reads "
-                                    f"{_kinds(kinds)} in a statement not in its "
-                                    f"SECRET_LOCAL_USES row: {stmt!r}")
-            for stmt in want:
-                if stmt not in folds:
-                    problems.append(f"{fname}: {qual}()'s SECRET_LOCAL_USES row holds {stmt!r}, "
-                                    f"which it no longer has (a deleted call, a discarded "
-                                    f"result or a dropped refusal fails here)")
-            problems.append(f"{fname}: {qual}()'s statements that read a credential are not "
-                            f"its SECRET_LOCAL_USES row. If the change is meant, update the "
-                            f"row in the same review. Now: {folds!r}")
+            for d in defs[key]:
+                problems.extend(_pin_problems(sources, T, key, d, _positions(reads, key, d),
+                                              want, "SECRET_LOCAL_USES"))
     return problems
 
 
@@ -1901,7 +2240,8 @@ def _refusal_end(code: str, blanked: str, lo: int, hi: int) -> int:
 
 def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -> list:
     """(d) Every registered handler that carries a credential is a
-    SECRET_ANSWERS row with exactly that set, and (e) its grant holds."""
+    SECRET_ANSWERS row with exactly that set, and (e) its grant holds, in
+    every body of it. A handler's own body never names the private key."""
     problems = []
     handlers = {h.split("::")[-1] for _u, _m, h, _f in routes}
     public = {h.split("::")[-1] for u, m, h, _f in routes if (m, u) in T["public"]}
@@ -1914,7 +2254,20 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
                 got |= carried[key]
         return got
 
+    def bodies(h):
+        for key in by_name.get(h, ()):
+            if key[1] == h and key not in stops:
+                text = sources[key[0]]
+                for d in defs[key]:
+                    yield key[0], text, blank_string_contents(text), d
+
     for h in sorted(handlers):
+        for fname, text, blanked, d in bodies(h):
+            m = _PRIVATE_KEY.search(blanked, d[3], d[4])
+            if m:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: route handler {h}() "
+                                f"names the private key (privkey), which the token and the "
+                                f"SoftAP password are derived from: no route answers it")
         got = carries(h)
         if not got or h in T["answers"]:
             continue
@@ -1942,13 +2295,7 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
             problems.append(f"{h}() is a PUBLIC_ALLOWLIST route handler with the {grant!r} "
                             f"grant: a public route may carry a credential only through the "
                             f"page path")
-        for key in by_name.get(h, ()):
-            fname, qual = key
-            if key in stops or qual != h:
-                continue
-            text = sources[fname]
-            blanked = blank_string_contents(text)
-            d = defs[key]
+        for fname, text, blanked, d in bodies(h):
             code = blanked[d[3]:d[4]]
             sites = _answer_sites(code, T["reads"], carriers, h)
 
@@ -1989,15 +2336,18 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
 
 
 def glue_def_problems(sources: dict, glue: dict) -> list:
-    """Every GLUE_DEFS row: its function defined once in its file, its body
-    exactly the row's."""
+    """Every GLUE_DEFS row: its function defined exactly once under ROOTS, in
+    its file (a second definition anywhere, or a shadow in another lib,
+    fails), its body exactly the row's."""
     problems = []
     for (suffix, qual), (why, want) in sorted(glue.items()):
-        found = [(f, sp) for f, t in sorted(sources.items()) if _in_file(f, suffix)
-                 for sp in definition_spans(t, qual)]
-        if len(found) != 1:
-            problems.append(f"GLUE_DEFS pins {qual}() in {suffix}, which defines it "
-                            f"{len(found)} times — remove or fix the row")
+        found = [(f, sp) for f, t in sorted(sources.items()) for sp in definition_spans(t, qual)]
+        if len(found) != 1 or not _in_file(found[0][0], suffix):
+            where = ", ".join(f for f, _sp in found) or "nowhere"
+            problems.append(f"GLUE_DEFS pins {qual}() in {suffix}, which ROOTS defines "
+                            f"{_times(len(found))} ({where}): pinned glue is defined once, in "
+                            f"its file (a second body, or a shadow its callers there would "
+                            f"reach, is not the pinned one) — remove or fix the row")
             continue
         fname, (a, b) = found[0]
         got = _fold(sources[fname][a:b])
@@ -2007,9 +2357,58 @@ def glue_def_problems(sources: dict, glue: dict) -> list:
     return problems
 
 
+# A census name mentioned outside every function after one of these words is
+# a statement in a body the head parser did not read (a namespace-scope
+# lambda's `return ...`), never a declaration.
+_STATEMENT_WORD = re.compile(r"\b(?:return|throw|co_return|case|else|do|new|delete)\s*$")
+
+
+def _census_home_problems(name: str, row: dict, defs_of: dict) -> list:
+    """A census primitive is defined exactly where its row's home says."""
+    if "home" not in row:
+        return [f"GATE_CALL_SITES row {name} names no home: say where it is defined (None: "
+                f"outside ROOTS)"]
+    home = row["home"]
+    found = sorted((f, d[0]) for f, ds in defs_of.items()
+                   if not row.get("file") or _in_file(f, row["file"])
+                   for d in ds if d[0].split("::")[-1] == name)
+    if home is None and not found:
+        return []
+    if (home is not None and len(found) == 1 and _in_file(found[0][0], home[0])
+            and found[0][1] == home[1]):
+        return []
+    where = ", ".join(f"{q} ({f})" for f, q in found) or "nowhere"
+    want = ("outside ROOTS only" if home is None else f"once, as {home[1]} in {home[0]}")
+    return [f"GATE_CALL_SITES row {name}: ROOTS defines it {_times(len(found))} ({where}); it is "
+            f"defined {want} (a second definition, or a shadow in another lib, is the "
+            f"primitive its callers there reach)"]
+
+
+def _top_problems(text: str, blanked: str, d, start: int, level: int, where: str,
+                  name: str) -> list:
+    """A `top` census call: at its function's own level, outside every block
+    and preprocessor conditional opened in it, with nothing before it in the
+    function able to leave but RATE_LIMIT_REFUSAL."""
+    problems = []
+    around = _context(text, blanked, d[3], start)
+    if level != 1 or around:
+        problems.append(f"{where}: {d[0]} calls {name} other than at its own top level "
+                        f"(within {' > '.join(around)}): the refusal runs on every request, "
+                        f"never under a block or a conditional")
+    for x in re.finditer(r"\b(?:return|goto|throw|co_return)\b", blanked[d[3]:start]):
+        s, e, lv = _statement_at(blanked, d[3], d[4], d[3] + x.start())
+        stmt = _fold(text[s:e])
+        if lv != 1 or not RATE_LIMIT_REFUSAL.fullmatch(stmt):
+            problems.append(f"{where}: {d[0]} can leave before its {name} call: {stmt!r} — "
+                            f"only the rate limit's refusal may come first (an early return "
+                            f"or a goto skips the gate)")
+    return problems
+
+
 def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) -> list:
     """GATE_CALL_SITES: every call of a gate primitive is where its row says;
-    every AUTH_MARKERS and PRE_HOST_STEPS name is a row."""
+    every primitive is defined where its row says; every AUTH_MARKERS and
+    PRE_HOST_STEPS name is a row."""
     problems = []
     for marker in markers:
         if marker.rstrip("(") not in census:
@@ -2026,6 +2425,8 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
         rx = re.compile(row.get("pattern") or
                         (r"\b" + re.escape(name) + (r"\b" if row.get("ident") else r"\s*\(")))
         callers = row.get("callers")
+        if not row.get("ident"):
+            problems.extend(_census_home_problems(name, row, defs_of))
         seen, count = set(), 0
         for fname, text in sorted(sources.items()):
             if row.get("file") and not _in_file(fname, row["file"]):
@@ -2038,11 +2439,13 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                 line = _line_of(text, m.start())
                 if d is None or m.start() < d[3]:
                     stmt = _outside_statement(text, blanked, m.start())[2]
+                    before = blanked[max(0, m.start() - 40):m.start()]
                     if row.get("ident"):
                         if stmt not in row.get("decl", ()):
                             problems.append(f"{fname}:{line}: {name} named outside every "
                                             f"function other than in its declaration: {stmt!r}")
-                    elif not re.search(r"[\w*&>]\s*$", blanked[max(0, m.start() - 40):m.start()]):
+                    elif (not re.search(r"[\w*&>]\s*$", before)
+                          or _STATEMENT_WORD.search(before)):
                         problems.append(f"{fname}:{line}: {name}() called outside every "
                                         f"function: {stmt!r}")
                     continue
@@ -2055,12 +2458,18 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                                     f"called only where the census says")
                     continue
                 seen.add(key)
-                if row.get("whole"):
-                    start, end, _lv = _statement_at(blanked, d[3], d[4], m.start())
-                    if _fold(text[start:end]) != row["whole"]:
-                        problems.append(f"{fname}:{line}: {d[0]} calls {name} other than as "
-                                        f"the whole statement `{row['whole']}`: "
-                                        f"{_fold(text[start:end])!r}")
+                whole = row.get("whole")
+                if isinstance(whole, dict):
+                    whole = whole.get(key)
+                start, end, lv = _statement_at(blanked, d[3], d[4], m.start(),
+                                               whole_if=bool(row.get("whole_if")))
+                if whole and _fold(text[start:end]) != whole:
+                    problems.append(f"{fname}:{line}: {d[0]} calls {name} other than as "
+                                    f"the whole statement `{whole}`: "
+                                    f"{_fold(text[start:end])!r}")
+                if row.get("top"):
+                    problems.extend(_top_problems(text, blanked, d, start, lv,
+                                                  f"{fname}:{line}", name))
                 if key in row.get("served", ()):
                     code = blanked[d[3]:d[4]]
                     bind = _RECEIPT_BIND.search(code)
@@ -2080,10 +2489,12 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
     return problems
 
 
-def no_session_problems(sources: dict, headers: dict, queries: set) -> list:
+def no_session_problems(sources: dict, headers: dict, queries: set, uri_readers) -> list:
     """The premise: no cookie, request headers only REQUEST_HEADERS', no
-    `Set-Cookie`, a URL query only in URL_QUERY_READERS."""
+    `Set-Cookie`, a URL query only in URL_QUERY_READERS, a request's raw path
+    only in URI_READERS, and every row of those two still a reader."""
     problems = []
+    used = set()
     for fname, text in sorted(sources.items()):
         blanked = blank_string_contents(text)
         defs = function_defs(text)
@@ -2109,13 +2520,25 @@ def no_session_problems(sources: dict, headers: dict, queries: set) -> list:
                 problems.append(f"{fname}:{_line_of(text, off)}: sets the response header "
                                 f"{hdr!r} (a header name is a literal, never Set-Cookie) — "
                                 f"{_NO_SESSION}")
-        for m in _URL_QUERY.finditer(blanked):
-            d = _innermost(defs, m.start())
-            if d is None or not any(_in_file(fname, f) and q == d[0] for f, q in queries):
-                who = d[0] if d else "code outside every function"
-                problems.append(f"{fname}:{_line_of(text, m.start())}: {who} reads the URL "
-                                f"query ({m.group(1)}), outside URL_QUERY_READERS — "
-                                f"{_NO_SESSION}")
+        for rx, allow, what, table in (
+                (_URL_QUERY, queries, "the URL query", "URL_QUERY_READERS"),
+                (_URI_READ, uri_readers, "a request's raw path (->uri, which keeps its query)",
+                 "URI_READERS")):
+            for m in rx.finditer(blanked):
+                d = _innermost(defs, m.start())
+                row = next(((f, q) for f, q in allow if d and _in_file(fname, f) and q == d[0]),
+                           None)
+                used.add((table, row))
+                if row is None:
+                    who = d[0] if d else "code outside every function"
+                    how = f" ({m.group(1)})" if m.groups() else ""
+                    problems.append(f"{fname}:{_line_of(text, m.start())}: {who} reads "
+                                    f"{what}{how}, outside {table} — {_NO_SESSION}")
+    for allow, table in ((queries, "URL_QUERY_READERS"), (uri_readers, "URI_READERS")):
+        for f, q in sorted(allow):
+            if (table, (f, q)) not in used:
+                problems.append(f"{table} names {q} ({f}), which no longer reads it — remove "
+                                f"or fix the row")
     return problems
 
 
@@ -2124,18 +2547,19 @@ def check_bearer_only_answers(sources: dict, tables=None) -> list:
     flagship's own gates (see the module docstring). `tables` overrides the
     module tables by name (the self-test's fixtures pass their own)."""
     T = {"reads": SECRET_READS, "accessors": SECRET_ACCESSORS, "mints": SECRET_MINTS,
-         "emitters": TOKEN_EMITTERS, "comparers": TOKEN_COMPARERS,
-         "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
+         "emitters": TOKEN_EMITTERS, "emitter_stmts": EMITTER_STATEMENTS,
+         "comparers": TOKEN_COMPARERS, "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
          "outside": OUTSIDE_FUNCTION_LINES, "glue": GLUE_DEFS, "census": GATE_CALL_SITES,
          "receipt": RECEIPT_GRANTS, "headers": REQUEST_HEADERS, "queries": URL_QUERY_READERS,
-         "public": PUBLIC_ALLOWLIST, "markers": AUTH_MARKERS, "steps": PRE_HOST_STEPS}
+         "uri": URI_READERS, "public": PUBLIC_ALLOWLIST, "markers": AUTH_MARKERS,
+         "steps": PRE_HOST_STEPS}
     T.update(tables or {})
     routes = []
     for fname, text in sorted(sources.items()):
         routes.extend(parse_routes(fname, text))
     handlers = {h.split("::")[-1] for _u, _m, h, _f in routes}
     defs, by_name = _function_index(sources)
-    # (a) the reads and the calls, per (file, qualified function).
+    # (a) the reads and the calls, per (file, qualified function), every body.
     reads, calls, outside = _reads_in(sources, defs, T["reads"])
     # (b) the carry, stopping at the local uses and the comparers.
     stops = {k for k in defs
@@ -2149,7 +2573,7 @@ def check_bearer_only_answers(sources: dict, tables=None) -> list:
             + glue_def_problems(sources, T["glue"])
             + gate_census_problems(sources, T["census"], T["markers"], T["steps"],
                                    T["emitters"])
-            + no_session_problems(sources, T["headers"], T["queries"]))
+            + no_session_problems(sources, T["headers"], T["queries"], T["uri"]))
 
 
 def check_registration_sites(sources: dict) -> list:
@@ -2353,6 +2777,27 @@ def _assert_parser_robust() -> None:
     assert check_route_budgets({"fx": table}) == [], check_route_budgets({"fx": table})
     over = table.replace("kRouteTableSlots = 3;", "kRouteTableSlots = 2;")
     assert any("with the mesh" in f for f in check_route_budgets({"fx": over})), over
+
+    # 5b. A handler defined twice (an #if body and its #else one) is read
+    #     body by body: the #else body without its gate fails both rules.
+    twice = ('httpd_uri_t w = { .uri = "/api/w", .method = HTTP_POST, .handler = handle_w };\n'
+             "#if FEATURE_X\nstatic esp_err_t handle_w(httpd_req_t* req) {\n"
+             "  if (!auth_gate(req)) return ESP_OK;\n  return apply(req);\n}\n#else\n"
+             "static esp_err_t handle_w(httpd_req_t* req) {\n  return apply(req);\n}\n#endif\n")
+    got = check_route_gates({"fx": twice}, parse_routes("fx", twice))[0]
+    assert any("(one of its 2 definitions) has NO credential gate" in f for f in got), got
+    got = check_host_first({"fx": twice}, require_defs=False)
+    assert any("handle_w (fx) never asks the Host" in f for f in got), got
+    both = twice.replace("{\n  return apply(req);",
+                         "{\n  if (!auth_gate(req)) return ESP_OK;\n  return apply(req);")
+    assert check_route_gates({"fx": both}, parse_routes("fx", both))[0] == []
+    assert check_host_first({"fx": both}, require_defs=False) == []
+    for second, why in (("  (void)auth_gate(req);\n  return apply(req);", "ignores its result"),
+                        ("  return apply(req);\n  if (!auth_gate(req)) return ESP_OK;",
+                         "returns unconditionally before its first credential gate")):
+        late = twice.replace("{\n  return apply(req);", "{\n" + second)
+        got = check_route_gates({"fx": late}, parse_routes("fx", late))[0]
+        assert any("(one of its 2 definitions)" in f and why in f for f in got), (second, got)
 
     # 6. The Host first on the receipt: the shapes the rule refuses (each a
     #    review mutation that the Host-first rule alone passed), and the fixed
@@ -2604,6 +3049,7 @@ _FIX_NET_H = "fx/lib/securacv_network.h"
 _FIX_NET = "fx/lib/securacv_network.cpp"
 _FIX_MAIN = "fx/src/main.cpp"
 _FIX_OTHER = "fx/lib/securacv_other.cpp"
+_FIX_WITNESS = "fx/lib/securacv_witness.cpp"
 _FIX_FILES = {
     _FIX_AUTH: (
         "static AuthManager s_auth;\n"
@@ -2661,10 +3107,18 @@ _FIX_FILES = {
         "  auth_get_instance().handedToken(source);\n}\n"
         "static char s_bearer[36];\n"
         "bool auth_load_or_derive(const uint8_t privkey[32]) {\n"
-        "  if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) {\n"
-        "    s_bearer[0] = '\\0';\n    return false;\n  }\n"
+        "  bool loaded = false;\n"
+        "  if (!loaded) {\n"
+        "    if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) {\n"
+        "      s_bearer[0] = '\\0';\n      return false;\n    }\n  }\n"
         "  return true;\n}\n"
         "const char* auth_get_token() {\n  return s_bearer;\n}\n"),
+    _FIX_WITNESS: (
+        "bool witness_provision_device() {\n"
+        "  if (!auth_load_or_derive(g_device.privkey)) {\n"
+        "    Serial.println(\"[!!] Bearer credential provisioning failed\");\n"
+        "    return false;\n  }\n"
+        "  return true;\n}\n"),
     _FIX_CRYPTO: (
         "bool derive_api_token(const uint8_t privkey[32], char* token_str,\n"
         "                      size_t token_str_len) {\n"
@@ -2709,11 +3163,28 @@ _FIX_FILES = {
         "  if (!token || token[0] == '\\0') return false;\n"
         "  return auth_bearer_grant(req, token, request_peer_ipv4(req)) ==\n"
         "         AuthManager::BearerResult::OK;\n}\n"
-        "bool ScvNetworkManager::begin(const char* ap_password) {\n"
+        "static void announce_setup_network(const char* ssid, const char* pass) {\n"
+        "  char line[256];\n"
+        "  if (announce_line(line, sizeof(line), ssid, pass) > 0) Serial.println(line);\n}\n"
+        "static void apply_ap_security(WiFiStatus& st) {\n"
+        "  wifi_config_t c;\n  size_t pw_len = 0;\n"
+        "  if (esp_wifi_get_config(WIFI_IF_AP, &c) == ESP_OK) {\n"
+        "    pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));\n  }\n"
+        "  if (transition_allowed(pw_len)) {\n"
+        "    c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;\n"
+        "    esp_wifi_set_config(WIFI_IF_AP, &c);\n  }\n"
+        "  secure_zero(&c, sizeof(c));\n}\n"
+        "bool ScvNetworkManager::begin(const char* ap_ssid, const char* ap_password) {\n"
         "  strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);\n"
-        "  return true;\n}\n"
+        "  bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
+        "AP_MAX_CONNECTIONS);\n"
+        "  apply_ap_security(m_status);\n"
+        "  return ap_ok;\n}\n"
         "void ScvNetworkManager::raiseAp() {\n"
-        "  WiFi.softAP(m_ap_ssid, m_ap_password);\n"
+        "  bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
+        "AP_MAX_CONNECTIONS);\n"
+        "  if (!ap_ok) return;\n"
+        "  apply_ap_security(m_status);\n"
         "  announce_setup_network(m_ap_ssid, m_ap_password);\n}\n"
         "void ScvNetworkManager::idle() {\n  delay(1);\n}\n"
         "static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,\n"
@@ -2808,6 +3279,10 @@ _FIX_FILES = {
         "#endif\n"
         "}\n"),
 }
+_FIX_MINT_SRC = ("  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
+                 "sizeof(g_ap_password))) {\n"
+                 "    Serial.println(\"[!!] Setup network key derivation failed - HALTING\");\n"
+                 "    while (true) { delay(1000); }\n  }\n")
 _FIX_MINT = ("if (!canary::net::derive_ap_password(device.privkey, g_ap_password, "
              "sizeof(g_ap_password))) { Serial.println(\"[!!] Setup network key derivation "
              "failed - HALTING\"); while (true) { delay(1000); } }")
@@ -2817,7 +3292,11 @@ _FIX_GLUE = ((_NET, "host_is_foreign"), (_NET, "auth_gate"), (_NET, "bearer_pres
              (_MAIN, "prov_gate_take_hook"), (_AUTH, "AuthManager::check"),
              (_AUTH, "AuthManager::grant"), (_AUTH, "AuthManager::compare"),
              (_AUTH, "AuthManager::handedToken"), (_AUTH, "auth_check"),
-             (_AUTH, "auth_bearer_grant"), (_AUTH, "auth_handed_token"))
+             (_AUTH, "auth_bearer_grant"), (_AUTH, "auth_handed_token"),
+             (_AUTH, "AuthManager::constantTimeCompare"), (_AUTH, "auth_get_token"),
+             (_NET_H, "getApPassword"), (_NET_H, "getTlsCertFp"),
+             (_CRYPTO, "derive_api_token"), (_NET, "announce_setup_network"),
+             (_NET, "apply_ap_security"))
 _FIX_TABLES = {
     "local": {
         (_NET, "ScvNetworkManager::begin"): (
@@ -2825,15 +3304,19 @@ _FIX_TABLES = {
             ("strncpy(m_ap_password, ap_password, sizeof(m_ap_password) - 1);",)),
         (_NET, "ScvNetworkManager::raiseAp"): (
             "raises the SoftAP",
-            ("WiFi.softAP(m_ap_ssid, m_ap_password);",
+            ("bool ap_ok = WiFi.softAP(m_ap_ssid, m_ap_password, AP_CHANNEL, false, "
+             "AP_MAX_CONNECTIONS);",
              "announce_setup_network(m_ap_ssid, m_ap_password);")),
+        (_NET, "apply_ap_security"): (
+            "measures the driver's passphrase",
+            ("pw_len = strnlen((const char*)c.ap.password, sizeof(c.ap.password));",)),
         (_MAIN, "setup"): (
             "mints the SoftAP password, prints it",
             (_FIX_MINT, "Serial.printf(\"Password: %s\\n\", g_ap_password);")),
         (_AUTH, "auth_load_or_derive"): (
             "mints the token",
-            ("if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) { "
-             "s_bearer[0] = '\\0'; return false; }",)),
+            ("[within if (!loaded) {] if (!derive_api_token(privkey, s_bearer, "
+             "sizeof(s_bearer))) { s_bearer[0] = '\\0'; return false; }",)),
     },
     "answers": {"handle_provisioning_receipt": ("token ap pin", "receipt"),
                 "handle_status": ("pin", "bearer"),
@@ -2843,6 +3326,14 @@ _FIX_TABLES = {
                 (_AUTH, "static char s_bearer[36];"),
                 (_MAIN, "static char g_ap_password[16];")),
     "public": {("GET", "/"): "the page", ("GET", "/api/fleet"): "the roll-call"},
+    "emitter_stmts": {
+        (_NET, "send_provisioning_receipt"): ('doc["token"] = auth_get_token();',
+                                              'doc["ap_password"] = net.getApPassword();',
+                                              'doc["tls_cert_fp"] = net.getTlsCertFp();'),
+        (_NET, "send_html_with_token"): (
+            'const char* token = (verdict == PageToken::INJECT) ? auth_get_token() : "";',),
+    },
+    "uri": {},
 }
 
 
@@ -3093,7 +3584,7 @@ _FIX_PLANTS = (
      "    while (true) { delay(1000); }\n  }\n", "",
      ("setup()'s SECRET_LOCAL_USES row holds",)),
     ("mint: the token's refusal dropped", _FIX_AUTH,
-     "    s_bearer[0] = '\\0';\n    return false;\n", "    s_bearer[0] = '\\0';\n",
+     "      s_bearer[0] = '\\0';\n      return false;\n", "      s_bearer[0] = '\\0';\n",
      ("auth_load_or_derive()'s SECRET_LOCAL_USES row holds",)),
     # The roll-call calls a `begin(` (the tree's does, through Preferences);
     # ScvNetworkManager::begin's local-use row is keyed by its file and
@@ -3151,6 +3642,217 @@ _FIX_PLANTS = (
      "static network_gate_fn_t s_gate_take = nullptr;\n",
      "static network_gate_fn_t s_gate_take = prov_gate_is_open_hook;\n",
      ("s_gate_take named outside every function other than in its declaration",)),
+    # Round-1 review: where a mint sits. Each compiles the derivation out
+    # (the key stays "", and the SoftAP rises open) with its text intact.
+    ("mint: the SoftAP key's mint under #if 0", _FIX_MAIN, _FIX_MINT_SRC,
+     "#if 0\n" + _FIX_MINT_SRC + "#endif\n",
+     ("setup()'s SECRET_LOCAL_USES row holds", "[within #if 0] if (!canary::net::")),
+    ("mint: the SoftAP key's mint under #ifndef", _FIX_MAIN, _FIX_MINT_SRC,
+     "#ifndef CANARY_DEV_OPEN_AP\n" + _FIX_MINT_SRC + "#endif\n",
+     ("[within #ifndef CANARY_DEV_OPEN_AP]",)),
+    ("mint: the SoftAP key's mint under if (false)", _FIX_MAIN, _FIX_MINT_SRC,
+     "  if (false) {\n" + _FIX_MINT_SRC + "  }\n",
+     ("setup()'s SECRET_LOCAL_USES row holds", "[within if (false) {]")),
+    ("mint: a goto past the SoftAP key's mint", _FIX_MAIN, _FIX_MINT_SRC,
+     "  if (dev_open) goto keyed;\n" + _FIX_MINT_SRC + "keyed:\n",
+     ("setup()'s SECRET_LOCAL_USES row holds", "[within after a goto]")),
+    ("mint: the token's mint under #if 0 inside its block", _FIX_AUTH,
+     "    if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) {\n",
+     "#if 0\n    if (!derive_api_token(privkey, s_bearer, sizeof(s_bearer))) {\n",
+     ("auth_load_or_derive()'s SECRET_LOCAL_USES row holds", "[within if (!loaded) { > #if 0]")),
+    # The token's mint input, where the key enters and inside the deriver.
+    ("the boot hands the token's mint the public key", _FIX_WITNESS,
+     "auth_load_or_derive(g_device.privkey)", "auth_load_or_derive(g_device.pubkey)",
+     ("witness_provision_device calls auth_load_or_derive other than as the whole statement",)),
+    ("the boot drops the token mint's refusal", _FIX_WITNESS,
+     "    return false;\n  }\n", "  }\n",
+     ("witness_provision_device calls auth_load_or_derive other than as the whole statement",)),
+    ("the token's deriver keyed on the public key", _FIX_CRYPTO,
+     "hmac_into(privkey,", "hmac_into(witness_get_device().pubkey,",
+     ("derive_api_token changed",)),
+    # Every SoftAP raise, with its key.
+    ("begin() raises the SoftAP open", _FIX_NET,
+     "WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL", "WiFi.softAP(ap_ssid, nullptr, AP_CHANNEL",
+     ("ScvNetworkManager::begin calls softAP other than as the whole statement",)),
+    ("a third SoftAP raise", _FIX_NET, "void ScvNetworkManager::idle() {\n",
+     "void ScvNetworkManager::idle() {\n  WiFi.softAP(m_ap_ssid, \"\");\n",
+     ("softAP called from ScvNetworkManager::idle",)),
+    ("the security request asks for an open SoftAP", _FIX_NET,
+     "c.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;", "c.ap.authmode = WIFI_AUTH_OPEN;",
+     ("apply_ap_security changed",)),
+    # The refusal's place (W1/W2 nested, an early exit, a conditional).
+    ("W1 nested: Wi-Fi connect's refusal only outside setup", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!setup_is_active()) {\n    if (!auth_gate(req)) return ESP_OK;\n  }\n",
+     ("handle_wifi_connect calls auth_gate other than at its own top level "
+      "(within if (!setup_is_active()) {)",)),
+    ("W2 nested: Wi-Fi connect's refusal only off the SoftAP", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!from_ap_subnet(req)) {\n    if (!auth_gate(req)) return ESP_OK;\n  }\n",
+     ("handle_wifi_connect calls auth_gate other than at its own top level",)),
+    ("Wi-Fi connect's refusal under #if", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "#if !CANARY_DEV_OPEN\n  if (!auth_gate(req)) return ESP_OK;\n#endif\n",
+     ("(within #if !CANARY_DEV_OPEN)",)),
+    ("Wi-Fi connect applied before its refusal", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (from_ap_subnet(req)) return wifi_connect_apply(req);\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     ("handle_wifi_connect can leave before its auth_gate call: 'if (from_ap_subnet(req)) "
+      "return wifi_connect_apply(req);'",)),
+    ("a goto past Wi-Fi connect's refusal", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (setup_is_active()) goto gated;\n  if (!auth_gate(req)) return ESP_OK;\ngated:\n",
+     ("handle_wifi_connect can leave before its auth_gate call",)),
+    ("a rate limit whose argument does the work", _FIX_NET,
+     "  if (!rate_limit_check(req)) return ESP_OK;\n  if (!auth_gate(req)) return ESP_OK;\n",
+     "  if (!rate_limit_check(req, wifi_connect_apply(req))) return ESP_OK;\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     ("handle_status can leave before its auth_gate call",)),
+    ("the status refusal nested (the bearer grant's own top level)", _FIX_NET,
+     "  if (!auth_gate(req)) return ESP_OK;\n  ScvNetworkManager& net",
+     "  if (!setup_is_active()) {\n    if (!auth_gate(req)) return ESP_OK;\n  }\n"
+     "  ScvNetworkManager& net",
+     ("handle_status() answers the TLS pin with no `if (!auth_gate(req)) return ESP_OK;` at "
+      "its own top level", "handle_status calls auth_gate other than at its own top level")),
+    # The two stores the reads missed.
+    ("the roll-call answers the token's NVS record", _FIX_NET,
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     "  char tb[40] = {0};\n  nvs.getBytes(NVS_KEY_TOKEN, tb, sizeof(tb) - 1);\n"
+     "  httpd_resp_set_hdr(req, \"X-Diag\", tb);\n"
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     ("public route handler handle_fleet() answers the bearer token",)),
+    ("the roll-call answers the driver's SoftAP passphrase", _FIX_NET,
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     "  wifi_config_t c;\n  esp_wifi_get_config(WIFI_IF_AP, &c);\n"
+     "  httpd_resp_set_hdr(req, \"X-Diag\", (const char*)c.ap.password);\n"
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     (_PUBLIC_AP,)),
+    # A sink inside an accessor, an emitter or the setup-network line.
+    ("the token's accessor prints it", _FIX_AUTH,
+     "const char* auth_get_token() {\n  return s_bearer;\n}\n",
+     "const char* auth_get_token() {\n  Serial.printf(\"[AUTH] bearer %s\\n\", s_bearer);\n"
+     "  return s_bearer;\n}\n",
+     ("auth_get_token changed",)),
+    ("the SoftAP password's accessor publishes it", _FIX_NET_H,
+     "const char* getApPassword() const { return m_ap_password; }",
+     "const char* getApPassword() const { mqtt_publish_state(\"ap\", m_ap_password); "
+     "return m_ap_password; }",
+     ("getApPassword changed",)),
+    ("the SoftAP password's accessor copies it out", _FIX_NET_H,
+     "const char* getApPassword() const { return m_ap_password; }",
+     "const char* getApPassword() const { strncpy(g_ap_copy, m_ap_password, 64); "
+     "return m_ap_password; }",
+     ("getApPassword changed",)),
+    ("the receipt's builder prints the token", _FIX_NET,
+     "  doc[\"token\"] = auth_get_token();\n",
+     "  doc[\"token\"] = auth_get_token();\n"
+     "  Serial.printf(\"[RCPT] token %s\\n\", auth_get_token());\n",
+     ("send_provisioning_receipt() reads the bearer token in a statement not in its "
+      "EMITTER_STATEMENTS row",)),
+    ("the setup-network line publishes the SoftAP password", _FIX_NET,
+     "  if (announce_line(line, sizeof(line), ssid, pass) > 0) Serial.println(line);\n",
+     "  if (announce_line(line, sizeof(line), ssid, pass) > 0) Serial.println(line);\n"
+     "  mqtt_publish_state(\"ap\", pass);\n",
+     ("announce_setup_network changed",)),
+    # A handler defined twice: the #else body is read like the first.
+    ("the roll-call's #else body sends the receipt", _FIX_NET,
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n",
+     "#if !FEATURE_FLEET_RECEIPT\nstatic esp_err_t handle_fleet(httpd_req_t* req) {\n"
+     "  return httpd_resp_sendstr(req, fleet_body());\n}\n#else\n"
+     "static esp_err_t handle_fleet(httpd_req_t* req) {\n"
+     "  if (host_is_foreign(req)) { send_host_refusal(req); return ESP_OK; }\n"
+     "  return send_provisioning_receipt(req);\n}\n#endif\n"
+     "static esp_err_t handle_fleet_old(httpd_req_t* req) {\n",
+     ("public route handler handle_fleet() answers the bearer token",
+      "send_provisioning_receipt called from handle_fleet")),
+    ("a device-side use's second body, a stub that reads nothing", _FIX_MAIN, "",
+     "#if !FEATURE_WIFI_AP_KEY\nvoid setup() {\n  delay(1);\n}\n#endif\n",
+     ("setup()'s SECRET_LOCAL_USES row holds",)),
+    ("/api/status's second body answers before its refusal", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n",
+     "static esp_err_t handle_status(httpd_req_t* req) {\n"
+     "  doc[\"tls_cert_fp\"] = network_get_instance().getTlsCertFp();\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n  return send_doc(req, doc);\n}\n"
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n",
+     ("handle_status() reaches a credential (getTlsCertFp) before its refusal",)),
+    ("an emitter defined twice", _FIX_OTHER, "",
+     "static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,\n"
+     "                                      PageToken verdict) {\n"
+     "  return send_page(req, html, \"\");\n}\n",
+     ("EMITTER_STATEMENTS: send_html_with_token() is defined in fx/lib/securacv_network.cpp, "
+      "fx/lib/securacv_other.cpp",)),
+    # A primitive or pinned glue defined twice, or shadowed in another lib.
+    ("host_is_foreign shadowed in another lib", _FIX_OTHER, "",
+     "static bool host_is_foreign(httpd_req_t* req) {\n  (void)req;\n  return false;\n}\n",
+     ("GLUE_DEFS pins host_is_foreign() in securacv_network.cpp, which ROOTS defines twice",)),
+    ("auth_gate shadowed in another lib, gating a route there", _FIX_OTHER, "",
+     "static bool auth_gate(httpd_req_t* req) {\n  (void)req;\n  return true;\n}\n"
+     "esp_err_t handle_zdiag(httpd_req_t* req) {\n  if (!auth_gate(req)) return ESP_OK;\n"
+     "  return httpd_resp_sendstr(req, \"{}\");\n}\n",
+     ("GATE_CALL_SITES row auth_gate: ROOTS defines it twice",
+      "GLUE_DEFS pins auth_gate() in securacv_network.cpp, which ROOTS defines twice")),
+    ("pinned glue defined twice in its own file", _FIX_NET,
+     "static bool bearer_present_and_valid(httpd_req_t* req) {\n",
+     "static bool provisioning_gate_take() { return true; }\n"
+     "static bool bearer_present_and_valid(httpd_req_t* req) {\n",
+     ("GLUE_DEFS pins provisioning_gate_take() in securacv_network.cpp, which ROOTS defines "
+      "twice",)),
+    ("a shared decision shadowed under ROOTS", _FIX_NET, "",
+     "static ReceiptVerdict receipt_decide(bool f, Fn b, Fn t) {\n"
+     "  return ReceiptVerdict::SERVE_TAP;\n}\n",
+     ("GATE_CALL_SITES row receipt_decide: ROOTS defines it once",)),
+    # The AuthManager reached by a fourth function.
+    ("a new auth-lib function reaches s_auth", _FIX_AUTH, "",
+     "void auth_clear_source(uint32_t source) {\n  s_auth.handedToken(source);\n}\n",
+     ("s_auth called from auth_clear_source",)),
+    ("the lockout table reset from a new function", _FIX_AUTH, "",
+     "void auth_forget_all() { s_auth.reset(); }\n",
+     ("s_auth called from auth_forget_all",)),
+    ("a namespace-scope lambda reaches the instance", _FIX_NET, "",
+     "static auto clear_backoff = [](uint32_t s) { return "
+     "auth_get_instance().handedToken(s); };\n",
+     ("auth_get_instance() called outside every function",)),
+    ("a noexcept helper reaches the instance", _FIX_NET, "",
+     "static void clear_backoff(uint32_t s) noexcept { return "
+     "auth_get_instance().handedToken(s); }\n",
+     ("auth_get_instance called from clear_backoff",)),
+    ("a noexcept helper clears the backoff", _FIX_NET, "",
+     "static void clear_backoff(uint32_t s) noexcept { return auth_handed_token(s); }\n",
+     ("auth_handed_token called from clear_backoff",)),
+    ("the constant-time compare made a memcmp", _FIX_AUTH,
+     "  volatile uint8_t diff = 0;\n  for (size_t i = 0; i < len; i++) diff |= pa[i] ^ pb[i];\n"
+     "  return diff == 0;\n",
+     "  (void)pa;\n  (void)pb;\n  return memcmp(a, b, len) == 0;\n",
+     ("AuthManager::constantTimeCompare changed",)),
+    # The private key, and the request's raw path.
+    ("the roll-call answers the private key", _FIX_NET,
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     "  char pk[65];\n  hex_to_str(pk, witness_get_device().privkey, 32);\n"
+     "  httpd_resp_set_hdr(req, \"X-Diag\", pk);\n"
+     "  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n",
+     ("route handler handle_fleet() names the private key",)),
+    ("a query credential parsed from the raw path", _FIX_NET,
+     "  prefs.begin(\"fleet\", true);\n",
+     "  prefs.begin(\"fleet\", true);\n"
+     "  if (strstr(req->uri, \"cv_session=\")) return send_doc(req, doc);\n",
+     ("handle_fleet reads a request's raw path (->uri, which keeps its query), outside "
+      "URI_READERS",)),
+    ("a request header named by a variable", _FIX_NET,
+     "  prefs.begin(\"fleet\", true);\n",
+     "  prefs.begin(\"fleet\", true);\n  char c[64];\n"
+     "  httpd_req_get_hdr_value_str(req, kCookie, c, sizeof(c));\n",
+     ("reads the request header 'kCookie'",)),
 )
 
 
@@ -3193,7 +3895,7 @@ _FIX_TABLE_PLANTS = (
      ("handle_status() is a route handler, so it answers",)),
     ("a GLUE_DEFS row whose function is gone",
      _with("glue", lambda g: dict(g) | {(_NET, "gone_glue"): ("x", "y")}),
-     ("GLUE_DEFS pins gone_glue() in securacv_network.cpp, which defines it 0 times",)),
+     ("GLUE_DEFS pins gone_glue() in securacv_network.cpp, which ROOTS defines 0 times",)),
     ("a census row with no call",
      _with("census", lambda c: dict(c or GATE_CALL_SITES) | {"gone_gate": {"callers": None}}),
      ("GATE_CALL_SITES row gone_gate has no call",)),
@@ -3207,7 +3909,22 @@ _FIX_TABLE_PLANTS = (
      ("OUTSIDE_FUNCTION_LINES holds 'char m_gone[1];'",)),
     ("an emitter row reading nothing",
      _with("emitters", lambda e: dict(e or TOKEN_EMITTERS) | {"send_gone": ("token", "x")}),
-     ("TOKEN_EMITTERS names send_gone(), which reads no credential",)),
+     ("TOKEN_EMITTERS names send_gone(), which reads no credential",
+      "TOKEN_EMITTERS names send_gone(), which has 0 EMITTER_STATEMENTS rows")),
+    ("an EMITTER_STATEMENTS row naming no emitter",
+     _with("emitter_stmts", lambda e: dict(e) | {(_NET, "send_gone"): ()}),
+     ("EMITTER_STATEMENTS names send_gone() (securacv_network.cpp), which is no TOKEN_EMITTERS "
+      "key",)),
+    ("a census row with no home",
+     _with("census", lambda c: dict(c or GATE_CALL_SITES) | {"auth_check": {
+         "callers": {(_NET, "auth_gate")}}}),
+     ("GATE_CALL_SITES row auth_check names no home",)),
+    ("a URI_READERS row naming no reader",
+     _with("uri", lambda u: dict(u) | {(_NET, "handle_ui"): "x"}),
+     ("URI_READERS names handle_ui (securacv_network.cpp), which no longer reads it",)),
+    ("a URL_QUERY_READERS row naming no reader",
+     _with("queries", lambda q: set(q or URL_QUERY_READERS) | {(_NET, "handle_ui")}),
+     ("URL_QUERY_READERS names handle_ui (securacv_network.cpp), which no longer reads it",)),
 )
 
 
@@ -3222,10 +3939,16 @@ def _assert_answer_gate_rule() -> None:
     heads = ("Foo::Foo() : a_(0), b_(0) { x = auth_get_token(); }\n"
              "R A::grant(int s) { return g([&]() { return compare(s); }); }\n"
              "B::B() : m_t{}, n_(f(1)) { y(); }\nC::~C() { z(); }\n"
-             "ns::Type D::get() const { return 1; }\nint free_fn(int a) { return a ? f(a) : 0; }\n")
+             "ns::Type D::get() const { return 1; }\nint free_fn(int a) { return a ? f(a) : 0; }\n"
+             "static void h(uint32_t s) noexcept { return k(s); }\n"
+             "int E::f() const override { return 2; }\n")
     spans = function_spans(heads)
     assert [n for n, _s, _e in spans] == ["Foo::Foo", "A::grant", "B::B", "C::~C", "D::get",
-                                          "free_fn"], spans
+                                          "free_fn", "h", "E::f"], spans
+    # (a `noexcept` helper is a function, not code outside every function, and
+    # definition_spans finds a member's `const` definition.)
+    assert definition_span(heads, "h") and definition_span(heads, "E::f")
+    assert definition_span("const char* g() const { return m_x; }\n", "g") == (12, 37)
     for needle, owner in (("auth_get_token", "Foo::Foo"), ("compare(", "A::grant"),
                           ("y()", "B::B"), ("f(1)", "B::B")):
         assert enclosing_function(spans, heads.find(needle))[0] == owner, (needle, spans)
@@ -3252,6 +3975,49 @@ def _assert_answer_gate_rule() -> None:
         missing = [w for w in words if not any(w in p for p in got)]
         assert not missing, (f"the bearer-only answer rule passed a table plant ({what}): "
                              f"expected problems naming {missing!r}, got {got!r}")
+
+
+def check_route_gates(sources: dict, routes: list) -> tuple:
+    """(failures, matched allowlist keys): every registered route is on the
+    PUBLIC allowlist or its handler, every definition of it (an `#if` body
+    and its `#else` one alike), reaches a credential gate whose answer
+    decides, before any unconditional return."""
+    failures, matched_allowlist = [], set()
+    for uri, method, handler, fname in routes:
+        if uri is None:
+            failures.append(f"{method} <non-literal uri> → {handler} ({fname}): "
+                            f"the parser cannot resolve this .uri; use a string "
+                            f"literal or the probe-array loop form")
+            continue
+        key = (method, uri)
+        if key in PUBLIC_ALLOWLIST:
+            matched_allowlist.add(key)
+            continue
+        base = handler.split("::")[-1]
+        if base in SELF_GATING_HANDLERS:
+            continue
+        bodies = [b for t in sources.values() for b in function_bodies(t, base)]
+        if not bodies:
+            failures.append(f"{method} {uri}: handler {handler} not found "
+                            f"(registered in {fname})")
+            continue
+        present = all(any(marker in body for marker in AUTH_MARKERS) for body in bodies)
+        decides = all(any(marker_decides(body, marker) for marker in AUTH_MARKERS)
+                      for body in bodies)
+        guarded = all(gate_guards(body) for body in bodies)
+        twice = f" (one of its {len(bodies)} definitions)" if len(bodies) > 1 else ""
+        if not present:
+            failures.append(f"{method} {uri}: handler {handler} ({fname}){twice} has NO "
+                            f"credential gate and is not on the public allowlist")
+        elif not decides:
+            failures.append(f"{method} {uri}: handler {handler} ({fname}){twice} calls a "
+                            f"credential gate but ignores its result — use it in an "
+                            f"if (...) condition or a return expression")
+        elif not guarded:
+            failures.append(f"{method} {uri}: handler {handler} ({fname}){twice} returns "
+                            f"unconditionally before its first credential gate — the "
+                            f"gate is unreachable")
+    return failures, matched_allowlist
 
 
 def main() -> int:
@@ -3281,40 +4047,8 @@ def main() -> int:
               f"parser regression?")
         return 1
 
-    matched_allowlist = set()
-    for uri, method, handler, fname in routes:
-        if uri is None:
-            failures.append(f"{method} <non-literal uri> → {handler} ({fname}): "
-                            f"the parser cannot resolve this .uri; use a string "
-                            f"literal or the probe-array loop form")
-            continue
-        key = (method, uri)
-        if key in PUBLIC_ALLOWLIST:
-            matched_allowlist.add(key)
-            continue
-        base = handler.split("::")[-1]
-        if base in SELF_GATING_HANDLERS:
-            continue
-        bodies = [b for b in (function_body(t, base) for t in sources.values()) if b]
-        if not bodies:
-            failures.append(f"{method} {uri}: handler {handler} not found "
-                            f"(registered in {fname})")
-            continue
-        present = any(marker in body for body in bodies for marker in AUTH_MARKERS)
-        decides = any(marker_decides(body, marker)
-                      for body in bodies for marker in AUTH_MARKERS)
-        guarded = any(gate_guards(body) for body in bodies)
-        if not present:
-            failures.append(f"{method} {uri}: handler {handler} ({fname}) has NO "
-                            f"credential gate and is not on the public allowlist")
-        elif not decides:
-            failures.append(f"{method} {uri}: handler {handler} ({fname}) calls a "
-                            f"credential gate but ignores its result — use it in an "
-                            f"if (...) condition or a return expression")
-        elif not guarded:
-            failures.append(f"{method} {uri}: handler {handler} ({fname}) returns "
-                            f"unconditionally before its first credential gate — the "
-                            f"gate is unreachable")
+    gate_failures, matched_allowlist = check_route_gates(sources, routes)
+    failures.extend(gate_failures)
 
     failures.extend(check_page_token_wiring(sources))
     failures.extend(check_host_first(sources))

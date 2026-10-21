@@ -23,39 +23,68 @@
     handing `receipt_decide` anything but its bearer and tap lambdas or
     answering outside a `SERVE_*` test, a page answering other than through
     `send_html_with_token(..., page_token_inject(req))`;
-  - an edit to the glue a grant runs through, pinned whole (15 bodies:
+  - an edit to the glue a grant runs through, pinned whole (22 bodies:
     `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet`,
     `page_token_inject`'s four inputs and F341's clear, the tap's take and
-    its hooks, `host_is_foreign`, and the lockout's `AuthManager::check`,
-    `grant`, `compare`, `handedToken` and their wrappers), so a session or a
-    peek cannot be added by widening one input;
-  - a gate primitive called where its census row does not say (an
-    `auth_gate` call that is not the whole refusal, as in
-    `!from_ap_subnet(req) && !auth_gate(req)` on `POST /api/wifi/connect`;
-    `auth_handed_token` outside a served tap; anything but the three
-    wrappers reaching the AuthManager), and an `AUTH_MARKERS` or
-    `PRE_HOST_STEPS` name that is no census row, such as a stale
-    `auth_check_optional(`;
-  - a device-side statement that reads a credential and is not in its
-    function's row (a serial, BLE or MQTT sink in `setup()` or `raiseAp()`),
-    with `setup()`'s mint pinned as the whole statement: the
+    its hooks, `host_is_foreign`, the lockout's `AuthManager::check`,
+    `grant`, `compare`, `handedToken`, `constantTimeCompare` and their
+    wrappers, the three accessors, the token's deriver
+    `derive_api_token`, and the SoftAP password's way to the radio,
+    `announce_setup_network()` and `apply_ap_security()`), so a session or
+    a peek cannot be added by widening one input, a sink cannot be added
+    inside an accessor, and the token cannot be keyed on the public key;
+    each is defined exactly once under ROOTS, in its file, so a second
+    `#else` body or a shadow in another lib fails;
+  - a gate primitive called, or defined, where its census row does not say:
+    an `auth_gate` call that is not the whole refusal at its handler's own
+    top level (`!from_ap_subnet(req) && !auth_gate(req)` on
+    `POST /api/wifi/connect`, the same refusal nested under
+    `if (!from_ap_subnet(req)) {` or `#if`, or an early `return` or `goto`
+    before it); `auth_handed_token` outside a served tap; anything but
+    `auth_get_instance()` reaching the AuthManager's one instance `s_auth`,
+    or anything but the three wrappers calling that, which a namespace-scope
+    lambda or a `noexcept` helper no longer slips past; the receipt sent
+    from any route but its own; a `WiFi.softAP()` other than `begin()`'s and
+    `raiseAp()`'s, each with its key (an open boot-time raise was green);
+    the boot handing `auth_load_or_derive` anything but `g_device.privkey`;
+    and an `AUTH_MARKERS` or `PRE_HOST_STEPS` name that is no census row,
+    such as a stale `auth_check_optional(`;
+  - a device-side or emitter statement that reads a credential and is not
+    in its function's row (a serial, BLE or MQTT sink in `setup()`,
+    `raiseAp()` or the receipt's builder), with each mint pinned as the
+    whole statement and where it sits: `setup()`'s
     `derive_ap_password(device.privkey, ...)` call, its refusal and its halt
-    (the F350 review), so a public-key argument, a discarded result, a
-    dropped halt or a deleted call fails;
+    (the F350 review), at `setup()`'s own level with no block, preprocessor
+    conditional or `goto` before it, so a public-key argument, a discarded
+    result, a dropped halt, a deleted call, or the call compiled out under
+    `#if 0` or `if (false) {`, fails;
+  - a function defined twice (an `#if` body and its `#else` one): every body
+    is read, so a public route's `#else` body that sends the receipt fails,
+    in this rule and in the route-gate and Host-first rules;
+  - a route handler naming the private key, and a read of the token's NVS
+    record or the Wi-Fi driver's copy of the SoftAP passphrase outside the
+    functions that hold them;
   - the no-session premise: a cookie read, a `Set-Cookie`, a request header
-    other than `Authorization` in the auth lib and `Host`, and a URL query
-    outside the witness log's paging, each pointing at canary-wap's
-    any-session class (F328), which CONSOLIDATION.md's Phase 6 `cv_session`
-    port must bring with it.
-  The head parser names a constructor for its class (it named
-  `ScvNetworkManager`'s body after its last initializer, `m_peers_last_browse_ms`)
-  and a member as `Class::name`. 73 planted fixtures each fail for their
+    other than `Authorization` in the auth lib and `Host`, a header named by
+    a variable, a URL query outside the witness log's paging, and a
+    request's raw path (`->uri`, which keeps its query) outside its four
+    readers, each pointing at canary-wap's any-session class (F328), which
+    CONSOLIDATION.md's Phase 6 `cv_session` port must bring with it.
+  The PR's first review found 31 edits of these kinds that its first
+  version passed; each now fails, with a planted fixture. The head parser
+  names a constructor for its class (it named `ScvNetworkManager`'s body
+  after its last initializer, `m_peers_last_browse_ms`), a member as
+  `Class::name`, and a function whose head ends in `noexcept`, `override`,
+  `final` or a member's `const`. 119 planted fixtures each fail for their
   named reason before the tree is read; the tree passes with its 83
-  registrations in about 3 s, and CodeQL 2.27.2's python-code-scanning
+  registrations in about 4 s, and CodeQL 2.27.2's python-code-scanning
   suite, run locally, reports nothing on the script (its clear-text-logging
-  query included). A static text check: names are matched by spelling,
-  and an edit to pinned glue or a pinned statement updates its row in the
-  same review (the failure prints the row as it now is).
+  query included). A static text check: names are matched by
+  spelling, the private key is not followed through a helper, a statement
+  before a gated route's refusal that does the route's work without
+  leaving is not seen, and an edit to pinned glue or a pinned statement
+  updates its row in the same review (the failure prints the row as it now
+  is).
 
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
