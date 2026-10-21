@@ -34,10 +34,15 @@
 #include "hardware_state.h"
 #include <mbedtls/md.h>
 
-// Forward declaration — defined in canary_wap.ino
-static void hmac_sha256(const uint8_t* key, size_t key_len,
-                        const uint8_t* data, size_t data_len,
-                        uint8_t out[32]);
+// Forward declaration — defined in canary_wap.ino. True when the HMAC ran;
+// on a failure `out` is zeroed (sweep F359), so a caller that used it anyway
+// would key or compare against 32 zero bytes. Every caller checks it. This is
+// the first declaration the sketch's compiler reads, so [[nodiscard]] lives
+// here: a line-start attribute on the .ino's definition would hide that
+// function head from the sketch's source guards, which read heads at column 0.
+[[nodiscard]] static bool hmac_sha256(const uint8_t* key, size_t key_len,
+                                      const uint8_t* data, size_t data_len,
+                                      uint8_t out[32]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // FEATURE GATE
@@ -265,9 +270,15 @@ inline bool backup_chain(const uint8_t* chain_head, uint32_t seq,
   // Chain head hash (32 bytes)
   memcpy(buf + 12, chain_head, 32);
 
-  // HMAC-SHA256 of payload bytes 0..43, keyed by device private key
+  // HMAC-SHA256 of payload bytes 0..43, keyed by device private key. A
+  // failed HMAC writes no backup (sweep F359): its zeroed output would
+  // overwrite the last good backup with one no restore accepts.
   uint8_t hmac[32];
-  hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, hmac);
+  if (!hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, hmac)) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
+               "Chain backup: HMAC failed", nullptr);
+    return false;
+  }
   memcpy(buf + BACKUP_PAYLOAD, hmac, 32);
 
   // Ensure /CHAIN directory exists.
@@ -337,8 +348,14 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
     return false;
   }
   {
+    // A failed HMAC refuses (sweep F359): compared anyway, its zeroed output
+    // would accept a backup whose HMAC field is 32 zero bytes.
     uint8_t calc_hmac[32];
-    hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac);
+    if (!hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac)) {
+      log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
+                 "Chain restore: HMAC compute failed", nullptr);
+      return false;
+    }
     if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
       log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
                  "Chain restore: HMAC mismatch (tampered?)", nullptr);

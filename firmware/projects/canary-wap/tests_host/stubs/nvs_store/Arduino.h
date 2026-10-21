@@ -3,7 +3,9 @@
  * timeout line (the stub keeps the last line and counts them), and the
  * String that Preferences::getString() returns. The FreeRTOS mutex comes
  * from firmware/tests_host/stubs/nvs_manager, the fake the canary's
- * NvsManager suite runs on. */
+ * NvsManager suite runs on. Serial.println, and `all` (every call's text,
+ * in order), are for the sketch's key read and its caller under
+ * test_wap_first_boot_nvs.cpp (sweep F360). */
 #ifndef STUB_NVS_STORE_ARDUINO_H
 #define STUB_NVS_STORE_ARDUINO_H
 
@@ -11,19 +13,28 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <string>
 
 struct HostSerial {
   int lines = 0;
   char last[192] = {0};
+  std::string all;
   int printf(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     const int n = vsnprintf(last, sizeof(last), fmt, ap);
     va_end(ap);
     lines++;
+    all += last;
     return n;
+  }
+  int println(const char* s = "") {
+    snprintf(last, sizeof(last), "%s\n", s);
+    lines++;
+    all += last;
+    return (int)strlen(last);
   }
 };
 inline HostSerial Serial;

@@ -468,7 +468,21 @@
   tag letting a zero-tag frame through; both take the checked form now, and
   nothing in `fleet_key.h` calls the unchecked one. `[[nodiscard]]` on the
   derivation is a compiler warning on the device (the flagship builds
-  without `-Werror`), not a guard.
+  without `-Werror`), not a guard. The WAP had the same fault in its own
+  helper (sweep F359): `canary_wap.ino`'s `hmac_sha256()` checked none of
+  mbedTLS's answers, so a failed step left its output as the caller's
+  stack bytes, under the SoftAP key, the API token (stored in NVS for
+  every later boot) and the chain backup's HMAC. It now answers `bool` and
+  zeroes its output on a failure, and every caller refuses: provisioning
+  fails, the backup is not written. A zeroed output is only safe if every
+  reader refuses it, so a compare against it (the backup restore) must
+  refuse too, or a field of zeros passes. And a refusal is only as safe as
+  what runs after it: the WAP's `setup()` goes on after a failed
+  provisioning (sweep F336), and its two mints came ahead of the chain
+  state's load, so a refused mint, which before could not happen, left the
+  boot record and `loop()` signing under the stored key from seq 1 on a
+  head of zeros, a branch the next persist wrote over the stored chain.
+  The mints now come after the load.
 - **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
   device and OpenSSL on the host, and the first failure suite failed only
   OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
@@ -480,7 +494,80 @@
   `test_ap_password_hmac_fail.cpp` and `test_fleet_key_hmac_fail.cpp` run
   over a failing primitive (`tests_host/hmac_fail_seam.h`), each built over
   the OpenSSL branch and, with `-DARDUINO` over `tests_host/stubs/mbedtls_md`,
-  over the mbedTLS one.
+  over the mbedTLS one. For the WAP,
+  `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` fails each
+  mbedTLS step under the sketch's own helper and its callers, cut out of
+  the sketch, fails a call anywhere in the sketch that drops the helper's
+  result, and runs `provision_device()` over a refused mint, holding the
+  chain state it leaves to the stored one.
+
+### A key that could not be read is not a key that is absent
+- **What happened:** The flagship's `nvs_load_key()` checked the stored
+  private key's length, then read it with `Preferences::getBytes()` and
+  discarded the count it answered. A read that fails before IDF copies
+  anything into the buffer leaves it as it was, so such an error between the
+  two reads ran the boot on the zeroed `DeviceIdentity` key: an Ed25519
+  signing key anyone holds, whose setup-network key is the published known
+  answer `cv-3jByJ6rHdhM2`, and from which, on a unit with no stored token,
+  the API token is derived too. And the load answered one `false` for
+  everything else: `witness_provision_device()` read it as "no key",
+  generated a keypair and stored it over the old one, so a failed open or
+  length lookup, or a stored key of the wrong length, replaced the unit's
+  identity whenever the write after it landed (sweep F360, found by F350's
+  review). The canary-wap's `nvs_load_key()` had both faults too: a read
+  that failed after the length check, before IDF copied anything, took a
+  release unit through provisioning on the zeroed key, so its SoftAP came
+  up under `cv-3jByJ6rHdhM2` and records were signed with it.
+- **Root cause:** Preferences cannot tell "nothing stored" from "NVS
+  failed": its `begin()` fails alike on a namespace never created and on a
+  fault, and `getBytesLength()` answers 0 alike for a missing key and a
+  failed lookup. The load inherited that one answer and handed it on.
+- **Fix:** `nvs_load_key()` answers `KeyLoad::Loaded`, `Absent` or
+  `Refused`, and zeroes the buffer on any but `Loaded`. Only IDF's own
+  `ESP_ERR_NVS_NOT_FOUND`, asked through `nvs_open()` / `nvs_get_blob()`
+  as `common/health/boot_guard.h` asks it, is `Absent`; the read must answer
+  all 32 bytes, and a key of 32 zero bytes is refused.
+  `establish_identity_key()` generates only on `Absent`, and on `Refused`
+  provisioning stops, so `setup()` halts with no key generated and nothing
+  written to the key or the chain state.
+  The canary-wap takes the same load and the same `establish_identity_key()`
+  shape; its `setup()` goes on after other provisioning failures, so it
+  halts on this one by name (`g_device.key_refused`), before the boot
+  record, the mesh or the chain can use the zeroed key.
+- **Rule:** A load that can fail answers three ways, and only "not there"
+  may lead to a fresh secret. Never fall back to a new secret over a stored
+  one: a refused read halts, and the firmware writes nothing over the
+  stored value. That keeps it for the next boot only when the fault left
+  the entry in place. IDF itself erases an entry whose data CRC fails, in
+  the read it refuses, and on IDF 5.5 the next boot's NVS init erases the
+  orphaned index, so that boot, finding no key, makes a new one; and IDF
+  answers "not found", so the boot makes a new key at once, for an index
+  entry whose header fails its check (erased before the key is read), for a
+  data chunk whose header fails it on IDF 5.5, and for a page a flash read
+  error in its own lookup sets aside. What the firmware can promise is
+  narrower: it never writes over a key IDF still reports as stored. Know
+  what the layer under you does on a refusal before you promise what
+  survives it, and which answers it can give at all: IDF's blob-size
+  lookup, once the open succeeded, answers only found, not found or a bad
+  handle, so a test's other answers are ones the load refuses for not
+  knowing them, not ones a device sends today. The
+  way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean
+  install on the canary-wap, whose BOOT hold keeps the identity. A read's
+  count is part of its answer; a buffer the read refused, filled or not, is
+  zeroed before anything sees it. And a refusal that does not halt is only
+  as safe as whatever runs after it: before choosing "return false and go
+  on", read what the boot does next with the buffer the refusal left.
+- **Regression check:** `firmware/tests_host/test_nvs_load_key.cpp` runs
+  the load, its IDF probe, the store and `establish_identity_key()`, cut
+  verbatim out of the firmware, over a fake NVS that Preferences and IDF
+  read alike and that fails the open, the length lookup, the session or the
+  read; built again as the opt-in image. It also holds
+  `witness_provision_device()` to stopping on the refusal before it derives
+  anything, `setup()` to its halt, and `NVS_KEY_PRIV` to one owner. For the
+  canary-wap, `projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`
+  runs the sketch's load, probe, store and `establish_identity_key()` over
+  its first-boot fake NVS, which fails the length lookup, the session or the
+  read, and pins `setup()`'s halt.
 
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only

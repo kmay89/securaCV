@@ -145,11 +145,16 @@ host tests assert they do, on real radio.
       `[!!] identity key not loaded: flash encryption required by this
       build but not active` (the load is refused before NVS is read, so it
       prints whether or not a default image had already stored a key), then
-      `[!!] identity key not stored: ...` with the same reason, then
-      `Device provisioning failed`; NVS never gains a new `privkey` entry and
-      an existing one is left as it was.
-    - opt-in image, FE-on board: provisioning ALSO halts, the same two
-      lines with the reason `encrypted NVS required by this build but NVS
+      `[!!] Identity key not used: no new key is made in its place,
+      provisioning cannot continue (see the identity key line above)`
+      (also printed whether or not a key is stored), then
+      `Device provisioning failed - HALTING`. No keypair is generated (no
+      `Generating new keypair` line; since sweep F360 the refusal is not
+      read as "no key stored", so the `[!!] identity key not stored: ...`
+      line this row used to expect no longer prints); NVS never gains a new
+      `privkey` entry and an existing one is left as it was.
+    - opt-in image, FE-on board: provisioning ALSO halts, the same lines
+      with the reason `encrypted NVS required by this build but NVS
       encryption is not active (flash encryption alone does not cover NVS)`.
       Under `framework = arduino` the opt-in image refuses on every board —
       that is the policy, not a fault.
@@ -164,7 +169,9 @@ host tests assert they do, on real radio.
       reading is a FAIL (the disable powered down / reset the ADC under the
       power monitor).
   - Policy under test: `firmware/common/identity/key_at_rest.h`
-    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`).
+    (host-tested by `firmware/tests_host/test_key_at_rest.cpp`); the load
+    and its caller's halt by `firmware/tests_host/test_nvs_load_key.cpp`,
+    whose second build is the opt-in image.
   - Artifact: `docs/audit/repro/K1/`.
 
 - [ ] **K2 — chain head survives a power cut between record and persist**
@@ -2504,7 +2511,9 @@ Code: `firmware/projects/canary-wap/arduino/canary_wap/setup_wizard.h`
 (`load_nvs_state()`): each read-only open of `securacv` that can come before
 `provision_device()`'s key store creates the namespace asks IDF's
 `nvs_open()` first (`csi_module_settings_nvs::begin_read_only()` /
-`probe_namespace()`). Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
+`probe_namespace()`; the key read through its own `stored_key_length()`
+since F360, which asks `nvs_get_blob()` for the key's length too).
+Host-tested (`tests_host/test_wap_first_boot_nvs.cpp`,
 whose `stubs/first_boot` NVS counts the error line Arduino-ESP32's
 `Preferences::begin()` logs for a namespace that is not there, with source
 pins holding `setup()`'s order); that IDF's `nvs_open()` answers

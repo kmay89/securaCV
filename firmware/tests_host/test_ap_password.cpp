@@ -55,12 +55,14 @@ static int g_failures = 0;
 // build/ap_password_wap.inc holds the sketch's UNAMBIGUOUS_ALPHABET and
 // UNAMBIGUOUS_LEN lines, its secure_zero() and its derive_ap_password(), each
 // under a #line naming canary_wap.ino. The sketch's hmac_sha256() calls
-// mbedTLS; this stand-in is the same HMAC-SHA256 over OpenSSL.
+// mbedTLS and answers whether it ran (sweep F359); this stand-in is the same
+// HMAC-SHA256 over OpenSSL, with the same answer. The sketch's refusal of a
+// failed HMAC is projects/canary-wap/tests_host/test_wap_hmac_fail.cpp's.
 namespace wap {
-static void hmac_sha256(const uint8_t* key, size_t key_len,
+static bool hmac_sha256(const uint8_t* key, size_t key_len,
                         const uint8_t* data, size_t data_len,
                         uint8_t out[32]) {
-  canary::net::fleet_key::hmac_sha256(key, key_len, data, data_len, out);
+  return canary::net::fleet_key::hmac_sha256_checked(key, key_len, data, data_len, out);
 }
 #include "ap_password_wap.inc"
 }  // namespace wap
@@ -111,7 +113,7 @@ static std::string derive(const uint8_t (&k)[32]) {
 static std::string derive_wap(const uint8_t (&k)[32]) {
   char out[16];
   std::memset(out, 'Z', sizeof(out));
-  wap::derive_ap_password(k, out, sizeof(out));
+  if (!wap::derive_ap_password(k, out, sizeof(out))) return "<refused>";
   return std::string(out);
 }
 
