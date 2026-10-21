@@ -237,11 +237,14 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
   `Set-Cookie`, any request header but `Authorization` (the auth lib) and
   `Host`, a URL query outside the witness log's paging and a read of a
-  request's raw path (`->uri` or `(*req).uri`, which keeps its query)
-  outside its four readers, and it pins `page_token_inject` and its four
-  inputs whole (the setup input at its source: the setup lib's state and
-  the functions that set and clear it), so a session cannot be added by
-  widening one of them.
+  request's raw path (`->uri`, or `.uri` through any reference to the
+  request, which keeps its query) outside its four readers, and it pins
+  `page_token_inject` and its four inputs whole (the setup input at its
+  source: the setup lib's state, the stored flag first boot is read from and
+  the functions that set and clear them; the SoftAP input with the interface
+  helpers it reads through; the tap with the handler whose press opens it),
+  so a session cannot be added by widening one of them in that glue or by a
+  macro of a name it calls.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

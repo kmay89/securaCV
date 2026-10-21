@@ -18,28 +18,48 @@
     what it carries (a public `/api/fleet` answering the SoftAP password,
     directly, through a helper or through a function or member pointer;
     `/api/status` answering it beside the pin), and any function that reads
-    one without being named (a helper printing the SoftAP password);
+    one without being named (a helper printing the SoftAP password), in any
+    file under the tree's `lib/` and `src/`, read as the compiler reads it:
+    an `.inc` or `.hpp` of code is read, a file of any other kind but a
+    library manifest fails, a raw string literal is one literal (a reader
+    after the web UI's HTML is code), a backslash-newline is spliced (a name
+    split across two lines by one is that name) and a digraph is the token it
+    spells (`%:define`, `<% %>`); and a header in `firmware/canary/include`
+    or `firmware/common` naming a credential or anything else the check
+    holds under the tree (a helper there returning `auth_get_token()`, or
+    opening the BOOT tap on `g_prov_gate`, called from a route), but the NVS
+    key names where `canary_config.h` defines them and `reset_scope_keys.h`
+    lists them, and `ap_password.h`'s deriver;
   - an answer outside its grant: `/api/status` answering before
     `if (!auth_gate(req)) return ESP_OK;` at its own top level, the receipt
     handing `receipt_decide` anything but its bearer and tap lambdas or
     answering outside a `SERVE_*` test, a page answering other than through
-    `send_html_with_token(..., page_token_inject(req))`;
-  - an edit to the glue a grant runs through, pinned whole (30 bodies:
-    `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet`,
+    `send_html_with_token(..., page_token_inject(req))` (the emitter itself
+    named only by the three page handlers, so a function pointer or a
+    reference to it handed `PageToken::INJECT` fails); and a statement of an
+    answering handler's own that reads a credential and is not its row, so
+    the receipt cannot also publish the token over MQTT or print the SoftAP
+    password under its served verdict;
+  - an edit to the glue a grant runs through, pinned whole (38 bodies:
+    `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet` and its
+    helpers `netif_ip4`, `be_word_host_order` and `sockaddr_ip4_host_order`,
     `page_token_inject` and F341's clear, the tap's take and its hooks,
-    `host_is_foreign`, the lockout's `auth_get_instance`,
-    `AuthManager::check`, `grant`, `compare`, `handedToken`,
-    `constantTimeCompare` and their wrappers, the three accessors, the
-    token's deriver `derive_api_token` and its `hmac_sha256` and
-    `format_api_token_string`, the SoftAP password's way to the radio,
-    `announce_setup_network()` and `apply_ap_security()`, and
+    `host_is_foreign`, the lockout's `auth_get_instance`, its source key
+    `request_peer_ipv4`, `AuthManager::check`, `grant`, `compare`,
+    `handedToken`, `constantTimeCompare` and their wrappers, the three
+    accessors, the token's deriver `derive_api_token` and its `hmac_sha256`
+    and `format_api_token_string`, the SoftAP password's way to the radio,
+    `announce_setup_network()` and `apply_ap_security()`,
     `page_token_inject`'s setup input at its source, the setup lib's
     `setup_init`, `setup_is_first_boot`, `setup_is_active`,
-    `setup_mark_complete` and `setup_check_timeout`), so a session or a
-    peek cannot be added by widening any of `page_token_inject`'s four
-    inputs, a sink cannot be added inside an accessor, and the token cannot
-    be keyed on the public key; each is defined exactly once under ROOTS,
-    in its file, so a second `#else` body or a shadow in another lib fails,
+    `setup_mark_complete` and `setup_check_timeout`, the BOOT tap at its
+    source, `handle_boot_button()` whole with its press, and the port-80
+    path, `handle_captive_probe` and `handle_https_redirect`), so none of
+    `page_token_inject`'s four inputs can be widened in the glue, in the
+    helpers it reads them through, or by a macro of a name they call; a
+    sink cannot be added inside an accessor, and the token cannot be keyed
+    on the public key; each is defined exactly once under ROOTS, in its
+    file, so a second `#else` body or a shadow in another lib fails,
     written with a trailing return type or not;
   - a gate primitive mentioned, or defined, where its census row does not say
     (a call, a function pointer or an address taken alike): an `auth_gate`
@@ -47,27 +67,42 @@
     body that holds it (`!from_ap_subnet(req) && !auth_gate(req)` on `POST
     /api/wifi/connect`, the same refusal nested under `if
     (!from_ap_subnet(req)) {` or `#if`, a head split across `#if` / `#else`,
-    or an early `return`, `goto`, `throw` or ESP-IDF `ESP_RETURN_ON_*` /
-    `ESP_GOTO_ON_*` macro before it); `auth_handed_token` outside a served
-    tap; anything but `auth_get_instance()` reaching the AuthManager's one
-    instance `s_auth`, or anything but the three wrappers reaching that, which
-    a namespace-scope lambda, a `noexcept` or trailing-return helper, or a
-    namespace-scope `&auth_get_instance()` no longer slips past; the receipt
-    sent from any route but its own; a `WiFi.softAP()` other than `begin()`'s
-    and `raiseAp()`'s, each with its key, `begin()` started by anything but
-    `setup()`'s one call with `g_ap_password` (a second start handed `""`,
-    through any reference to the manager, `this->` or a member's bare call, or
-    the unused `network_init()` called), the driver's config written by
-    anything but `apply_ap_security()` and the STA's PMF request (an
+    or an early `return`, `goto`, `throw`, `co_return` or ESP-IDF
+    `ESP_RETURN_ON_*` / `ESP_GOTO_ON_*` macro before it);
+    `auth_handed_token` outside a served tap; anything but
+    `auth_get_instance()` reaching the AuthManager's one instance `s_auth`,
+    or anything but the three wrappers reaching that, which a namespace-scope
+    lambda, a `noexcept` or trailing-return helper, a namespace-scope
+    `&auth_get_instance()` or a `this` the constructor saved no longer slips
+    past; the receipt sent from any route but its own; the TLS key's loader
+    or writer, or the private key's loader, called anywhere but where it is
+    today, and the private key's NVS record named outside its three
+    functions; a `WiFi.softAP()` other than `begin()`'s and `raiseAp()`'s,
+    each with its key, and the radio's mode set anywhere but `begin()`,
+    `dropAp()` and `raiseAp()`, each statement where it sits (`WiFi.mode`,
+    `enableAP`, `softAPConfig` or `esp_wifi_set_mode` bring the SoftAP up on
+    the open config `dropAp()` leaves, and so does
+    `WiFiGenericClass::mode()`, a static); `begin()` started by anything but
+    `setup()`'s one call with `g_ap_password` (a second start handed `""`
+    through `this->`, `(*this).`, a member's bare call, the unused
+    `network_init()`, the instance `s_network`, a cast, or a reference or
+    pointer to the manager under another name, typed, `auto` or
+    `decltype`, direct-, brace- or copy-initialized, captured by a lambda,
+    returned by a function or handed to one); `WiFi` named other than with a
+    member after it; the driver's config written by anything but
+    `apply_ap_security()` and the STA's PMF request (an
     `esp_wifi_set_config(WIFI_IF_AP, ...)` set to open), or Arduino 3.x's
-    `WiFi.AP.create()`; the BOOT tap opened anywhere but
-    `handle_boot_button()`'s short press, where it sits, or `g_prov_gate`
-    named, written or initialized anywhere else; the setup state written
-    outside the setup lib's pinned functions, or the setup timeout's call
-    dropped from `loop()`; the token's alphabet narrowed; the boot handing
-    `auth_load_or_derive` anything but `g_device.privkey`; and an
-    `AUTH_MARKERS` name that is no census row, or a `PRE_HOST_STEPS` name that
-    is no row, emitter or `auth_get_token`, such as a stale
+    `WiFi.AP` class named at all; the BOOT tap opened anywhere but
+    `handle_boot_button()`'s short press, where it sits, a press made by
+    anything but the button's GPIO, or `g_prov_gate` (or the peek hook's
+    copy) named, written or initialized anywhere else; the setup state, or
+    the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
+    outside the setup lib's pinned functions, the credentials reset that
+    clears that flag run by anything but the BOOT hold, or the setup
+    timeout's call dropped from `loop()`; the token's alphabet narrowed; the
+    boot handing `auth_load_or_derive` anything but `g_device.privkey`; and
+    an `AUTH_MARKERS` name that is no census row, or a `PRE_HOST_STEPS` name
+    that is no row, emitter or `auth_get_token`, such as a stale
     `auth_check_optional(`;
   - a device-side or emitter statement that reads a credential and is not
     in its function's row, in order (a serial, BLE or MQTT sink in
@@ -81,29 +116,49 @@
     preprocessor conditional around it and no `goto` before it, so a
     public-key argument, a discarded result, a dropped halt, a deleted call,
     the call compiled out under `#if 0` or `if (false) {`, or moved below
-    the network's start, fails;
-  - a `#define` under ROOTS, or a `-D` flag in `platformio.ini` and the
-    files its `extra_configs` names, that names a pinned or census
+    the network's start, fails; and each mint after the statement that
+    establishes the key it reads (`setup()`'s `witness_provision_device()`
+    refusal, `witness_provision_device()`'s `establish_identity_key()`), so
+    a mint moved above it, which would key the SoftAP password or the bearer
+    on an all-zero private key, the same on every Canary, fails;
+  - a `#define` under ROOTS or in the headers it includes from outside it
+    (`firmware/canary/include`, `firmware/common`), or a `-D` flag in
+    `platformio.ini` and the files its `extra_configs` names (on its own line
+    or under it, a missing one named), that names a pinned or census
     function, a device-side use, an accessor, a mint, an emitter, a
-    comparer, a credential's spelling or the private key
-    (`#define auth_gate(r) (true)` after the gate's definition ungated all
-    62 routes and left every pin intact);
+    comparer, a credential's spelling or the private key, or is named for a
+    function a pinned body or statement calls (`#define auth_gate(r) (true)`
+    after the gate's definition ungated all 62 routes and left every pin
+    intact; `#define take(s, n, t) is_open(s, n, t)` would turn the take
+    hook into a peek); `canary_config.h`'s NVS key names are the one
+    exception. No macro or flag may be a C++ keyword (`#define false true`
+    makes every `return false;` after it a `return true;`); under the tree, a
+    macro named for anything else a pinned text reads, a value such as
+    `PROVISIONING_GATE_TTL_MS` or `BOOT_SHORT_PRESS_MS` included, is the
+    `ROOTS_DEFINES` row it is today and is never `#undef`'d; and
+    `SETUP_TIMEOUT_MS` is held to its value;
   - a function defined twice (an `#if` body and its `#else` one): every body
     is read, whatever its head (`static int`, `IRAM_ATTR`, `noexcept`, a
     trailing return type), so a public route's `#else` body that sends the
     receipt, or an ungated `#else` body of a gated route, fails, in this
     rule and in the route-gate and Host-first rules;
-  - a route handler naming the private key, and a read of the token's NVS
+  - a route handler naming the private key, a read of the token's NVS
     record, the Wi-Fi driver's copy of the SoftAP passphrase (its read-back
     included) or the TLS key's NVS record outside the functions that hold
-    them;
+    them, and a string literal under ROOTS that is the token's, the TLS
+    key's, the first-boot flag's or the private key's NVS key (`"api_token"`
+    read or written by a public route);
+  - a route registered in a form no rule reads (an `httpd_uri_t` assigned
+    field by field, a cast `.method`, a lambda `.handler`, the registration
+    call taken as a pointer), and `register_route()` registering anything but
+    the route it is handed;
   - the no-session premise: a cookie read, a `Set-Cookie`, a request header
     other than `Authorization` in the auth lib and `Host`, a header named by
     a variable, a URL query outside the witness log's paging, and a
-    request's raw path (`->uri` or `(*req).uri`, which keeps its query)
-    outside its four readers, each pointing at canary-wap's any-session
-    class (F328), which CONSOLIDATION.md's Phase 6 `cv_session` port must
-    bring with it.
+    request's raw path (`->uri`, or `.uri` through any reference to the
+    request, which keeps its query) outside its four readers, each pointing
+    at canary-wap's any-session class (F328), which CONSOLIDATION.md's Phase
+    6 `cv_session` port must bring with it.
 
   The PR's first review found 31 edits of these kinds that its first version
   passed. Its second review found more that the second version passed (an open
@@ -112,21 +167,48 @@
   lockout; a `#define` of a gate; the setup unlock widened at its source; the
   BOOT tap opened elsewhere; an `#else` body under another head; a split head;
   ESP-IDF's early-exit macros), 46 edits in all with those this repair added
-  beside them, and one property no plant held (a pinned row's order). Each now
-  fails, with a planted fixture. The head parser names a constructor for its
-  class (it named `ScvNetworkManager`'s body after its last initializer,
-  `m_peers_last_browse_ms`), a member as `Class::name`, and a function whose
-  head ends in `noexcept`, `override`, `final`, a member's `const` or a
-  trailing return type. 167 planted fixtures each fail for their named reason
-  before the tree is read, and they refuse each of 36 mutants of the check
-  that undo one of the second review's fixes or weaken a branch it found
-  unheld; the tree passes with its 83 registrations in about 7 s, and CodeQL
-  2.27.2's python-code-scanning suite, run locally, reports nothing on the
-  script (its clear-text-logging query included). A static text check: names
-  are matched by spelling (a reference to the network manager through a
-  template parameter or a `decltype` is not `begin()`'s census, and every
-  other one must be named `net` or `network`), values are not checked (a
-  `memset` of the private key before a mint passes), the private key is not
+  beside them, and one property no plant held (a pinned row's order). Its
+  third review found 55 more that the third version passed (53 passed the
+  check as F340 left it too): a macro of a name the glue calls, or a `#define`
+  in a header outside ROOTS; the receipt sending the token to MQTT or the
+  serial line under its served tap (the two that check refused: the new reader
+  rule had exempted every answering handler); the SoftAP raised open by a mode
+  switch or by a second `begin()` through a spelling the census did not read;
+  a mint moved ahead of its key; an NVS record read or written by its literal
+  key; the first-boot flag cleared or the credentials reset run from a public
+  route; `from_ap_subnet`'s interface helper reading the other interface; code
+  after a raw literal, or in an `.inc` file; the page's emitter or the TLS
+  key's loader reached another way; the BOOT press faked; the AuthManager's
+  `this` saved; the peek hook writing the tap's stamp; `SETUP_TIMEOUT_MS`
+  widened; and five round-2 branches no plant held. Its repair found 21 more
+  of those kinds and fixed them beside the review's: a `take` macro in a
+  `firmware/common` header, `WiFi.softAPConfig()`, `"api_" "token"`, the
+  private key's NVS record, the TLS key's writer, a member returning `*this`,
+  a `decltype` alias, `WiFi` under another name; and a name split by a
+  backslash-newline (a reader, a `#define`), a digraph `%:define` or a `<% ;
+  ... %>` block read at its function's own level (a refusal or a mint inside
+  one), `#define false true`, the tap's TTL or the BOOT press threshold
+  shadowed under the tree, a header outside it returning `auth_get_token()` or
+  opening the tap, `WiFiGenericClass::mode()`, a route registered through a
+  pointer to `register_route`, and the wrapper registering a route of its own.
+  Each now fails, with a planted fixture. The head parser names a constructor
+  for its class (it named `ScvNetworkManager`'s body after its last
+  initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
+  function whose head ends in `noexcept`, `override`, `final`, a member's
+  `const` or a trailing return type. 241 planted fixtures (221 source, 20
+  table), with the self-test's lexer, flag-file, header, file-kind, route-form
+  and raw-literal cases, each fail for their named reason before the tree is
+  read; they refuse each of the 60 mutants of the check that undo one of the
+  third review's fixes, weaken a branch it found unheld, or undo one of its
+  repair's own. The tree passes with its 83 registrations in about 12 s. A
+  static text check: names are matched by spelling (the network manager's are
+  the exception: a reference to it under another name fails, however
+  declared), values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow
+  under the tree of a value the glue reads (a `memset` of the private key
+  before a mint passes, and so does a header's own value), the headers outside
+  the tree are read for their `#define` lines and the names the check holds,
+  not followed as code, an NVS record is not followed under a key built at run
+  time or through a walk of the whole namespace, the private key is not
   followed through a helper, a statement before a gated route's refusal that
   does the route's work without leaving is not seen, and an edit to pinned
   glue or a pinned statement updates its row in the same review (the failure
