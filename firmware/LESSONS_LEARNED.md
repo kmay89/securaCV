@@ -644,7 +644,10 @@
   page a session (which reads the live camera), and the provisioning
   receipt's BOOT tap and setup-door claim served any Host. It now stages the
   same header and asks it on every place that mints a session or a pair
-  token or starts a sign-in, and first on the receipt. It takes no SoftAP
+  token for a caller holding no credential, or starts a sign-in, and first
+  on the receipt (`GET /api/pair/token` mints behind the cookie or the
+  bearer, which a rebinding page holds neither of, and asks no Host). It
+  takes no SoftAP
   exemption: its captive DNS answers every name with the device too, so an
   exemption keyed on the interface would hand the rebinding path to anything
   on the SoftAP, and its wizard runs at two fixed names that pass anyway. Its
@@ -654,12 +657,18 @@
   authorizes the Wi-Fi join.
 - **Rule:** A name test is an equality on the parsed authority (trimmed, the
   port dropped, lowercased: `host_authority_name()`), never a substring of
-  the raw header. And an exemption that is safe on one product is not safe
-  by default on another: check what answers DNS there before copying it.
+  the raw header, and a header cut to its buffer is no answer at all (a
+  108-byte rebinding name cut to 95 bytes ends in `.local`). And an
+  exemption that is safe on one product is not safe by default on another:
+  check what answers DNS there before copying it. A rule that rests on
+  "every mint asks first" needs a guard that lists the mints, or the next
+  page that hands out the landing passes every check.
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
-  (the pages and the setup names) and `test_receipt_grant.cpp` (the receipt's
-  Host row); `firmware/scripts/check_improv_sync.sh` holds the staged copy
-  byte-identical to the canonical header.
+  (the pages and the setup names, an oversize Host) and
+  `test_receipt_grant.cpp` (the receipt's Host row);
+  `projects/canary-wap/tests_host/check_route_security.py`'s `MINT_SITES`
+  (every mint, after its gate); `firmware/scripts/check_improv_sync.sh`
+  holds the staged copy byte-identical to the canonical header.
 
 ### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
 - **What happened:** Since #1832 the WAP's session cookie carries `Secure`

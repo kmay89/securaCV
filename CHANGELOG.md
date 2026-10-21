@@ -12,9 +12,10 @@
   header no pinned core ships, F15), so a page on another site whose name is
   re-pointed at the WAP's address could load those as its own origin: a
   session that reads the live camera and the vault download, a pair token
-  that authorizes `/api/wifi/connect` (the owner-authority PR, F334, removes
-  that road after setup), and around a BOOT tap or the post-join setup
-  window, the bearer token and the SoftAP password. The WAP now stages the
+  that authorizes `/api/wifi/connect` (still open to a host that names the
+  device until the owner-authority PR, F334, removes it after setup), and
+  around a BOOT tap or the post-join setup window, the bearer token and the
+  SoftAP password. The WAP now stages the
   shared `firmware/common/network/host_guard.h` that the flagship and the
   display already use (byte-identical, held by `check_improv_sync.sh`).
   After setup, `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion`
@@ -33,8 +34,15 @@
   another suffix (`canary-x.fritz.box`, `.localdomain`, `.home`), a name with
   a trailing dot, a public split-horizon name, and a reverse proxy that
   forwards a public Host; use the `.local` name, the IP or the bare router
-  name. Host-tested (`test_session_cookie.cpp`, `test_receipt_grant.cpp`);
-  not run against a browser or on a device.
+  name. A Host too long for the device's 96-byte buffer is refused, never
+  read cut short. The route check now lists every place that mints a
+  session or a pair token (`MINT_SITES` in `check_route_security.py`), each
+  after its gate, so a new page that hands out the landing fails it. Not
+  covered here: `/api/wifi`, `/api/wifi/scan` and `/api/fleet` answer with
+  `Access-Control-Allow-Origin: *`, so any web page can read them at the
+  device's address, rebinding or not, and the other public routes ask no
+  Host (F357, a decision still open). Host-tested (`test_session_cookie.cpp`,
+  `test_receipt_grant.cpp`); not run against a browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
   (sweep F344).** `/`'s setup branch and the wizard token's re-issue
   (`/api/wifi/pair-token`) tested the Host by substring, so a name that
@@ -74,8 +82,10 @@
   framework-arduinoespressif32 3.3.8), and nothing else stores a
   certificate. So every WAP serves plain HTTP after setup and hands out no
   `tls_cert_fp` pin, and the flagship's HTTPS builds serve HTTP and say why in
-  `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL and FEATURES.md no longer
-  say otherwise. The generator itself is not changed here: fixing its guard
+  `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL, FEATURES.md, the WAP's
+  READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`, the captive
+  portal test plan and the bench checklist no longer say otherwise; the
+  FAQ's recovery-kit steps and the README's first-boot step use `http://`. The generator itself is not changed here: fixing its guard
   turns HTTPS on for every such unit and changes the pin the apps trust,
   which needs the bench (F15 stays open).
 

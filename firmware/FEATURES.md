@@ -205,16 +205,17 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > decision, the API's field judgment and the wizard are host-tested; no
 > bench pass against a TLS broker.
 
-> **canary-wap HTTPS cell:** ⚠️ because it is a runtime opt-in, not the
-> build's posture — compile-gated on `esp_https_server.h`, enabled after
-> setup when the device certificate loads (`init_tls_cert()`), HTTP-only
-> during first-boot setup by design and again when the HTTPS server fails
-> to start (`[HTTPS] Server start FAILED — falling back to HTTP`, logged).
-> The pairing receipt and QR carry the certificate fingerprint the iPhone
-> app pins. No stock build of either tree generates the certificate today:
-> the generator's guard tests a header mbedTLS never ships (F15). So this
-> cell, and the canary (PIO) TLS cell, describe code that compiles and does
-> not run on a device.
+> **canary-wap HTTPS cell:** ⚠️ because it is a runtime state, not the
+> build's posture — compile-gated on `esp_https_server.h`, turned on by
+> itself after setup when the device certificate loads (`init_tls_cert()`),
+> HTTP-only during first-boot setup by design and again when the HTTPS
+> server fails to start (`[HTTPS] Server start FAILED — falling back to
+> HTTP`, logged). Once a certificate is stored, the pairing receipt and QR
+> carry its fingerprint, which the iPhone app pins. No stock build of either
+> tree generates the certificate today: the generator's guard tests a header
+> mbedTLS never ships (F15), so a stock WAP serves plain HTTP after setup
+> and its `tls_cert_fp` is empty. So this cell, and the canary (PIO) TLS
+> cell, describe code that compiles and does not run on a device.
 
 ---
 

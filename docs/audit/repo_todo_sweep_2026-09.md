@@ -2626,11 +2626,18 @@ so — see D2 below.)
   Refused names, which the docs list: router FQDNs under other suffixes
   (`.fritz.box`, `.localdomain`, `.home`), trailing-dot names, public
   split-horizon names, and public-Host reverse proxies; owners use the
-  `.local` name, the IP or the bare router name. Residuals: blind requests at
-  the IP from a cross-site page (they spend no claim, close the tap from
-  another address rather than take it, can still use up an open tap from the
-  owner's own browser, and can churn pair tokens); the public allowlist routes
-  answering any Host (F357); widening the shared suffix list (F356).
+  `.local` name, the IP or the bare router name. Residuals: requests at the
+  IP from a cross-site page, which cannot read what the landing, the
+  exchange, the pages or the receipt serve (none sends a CORS header with
+  it; the receipt's `500` and `503` error codes do, and carry nothing
+  else), but
+  spend no claim, close the tap from another address rather than take it,
+  can still use up an open tap from the owner's own browser, and can churn
+  pair tokens; `/api/wifi`, `/api/wifi/scan` and `/api/fleet`, which answer
+  with `Access-Control-Allow-Origin: *` and so are readable by any page at
+  the IP, rebinding or not, and the other public routes, which a rebinding
+  page can read (F357, restated by this PR's review); widening the shared
+  suffix list (F356).
   *Done (2026-10-21, #<PR>):* the first commit of the PR that carries F337.
   - `firmware/projects/canary-wap/arduino/canary_wap/host_guard.h` is a
     byte-identical copy of the canonical header, held by a `PAIRS` line and
@@ -2655,9 +2662,12 @@ so — see D2 below.)
     `handle_wifi_pair_token`, `/admin` and `/companion` say so (202
     registrations, green).
   - One more owner effect, from the decision's risks: the captive DNS runs
-    for the SoftAP's whole life, so after setup a captive mini-browser on
-    the SoftAP that loads a foreign root (`/` under the probe's own name)
-    gets the `403` sentence instead of the landing page. The probe paths
+    for the SoftAP's whole life, so after setup, while the SoftAP is up (the
+    home link down, when the WAP raises it again, or a standalone unit; a
+    joined unit drops it 120 s after the join, `AP_DROP_GRACE_MS`), a
+    captive mini-browser on the SoftAP that loads a foreign root (`/` under
+    the probe's own name) gets the `403` sentence instead of the landing
+    page. The probe paths
     themselves are still answered by `handle_captive_probe`, and the
     phone's browser at `192.168.4.1` or `canary.local` gets the landing
     (the U1 row checks the iOS and Android sheets).
@@ -2690,6 +2700,36 @@ so — see D2 below.)
   against a browser, a rebinding resolver or a device (U1: the F344 row in
   `hardware_verification_checklist.md`, over plain HTTP). Filed: F356 and
   F357.
+  *Review (2026-10-21, #<PR>):*
+  - No row sent a Host too long for the 96-byte buffer, so a
+    `request_host_names_device()` that took the truncated header (or a
+    24-byte buffer) passed both suites. Both now send a 108-byte rebinding
+    name whose first 95 bytes end in `.local` (refused on `/`, `/?cv_pair=`,
+    a live cookie, `/admin`, `/settings`, `/companion` and the receipt) and
+    serve three long names a household uses (a 39-character label with a
+    port, a full IPv6 literal with a port, a 95-byte `.local` name). The
+    truncation mutant fails 29 of 813 and 37 of 3924 checks, the 24-byte
+    one 9 and 9; the sketch passes all.
+  - `check_route_security.py` gains the mint rule (`MINT_SITES`):
+    `session_issue()`, `pair_token_issue()` and `send_pair_landing()` are
+    called only from `handle_ui()`, the receipt, the wizard token's
+    re-issue, `/api/pair/token` and the landing itself, each after its gate
+    (the Host row, the exact setup names, or the cookie-or-bearer macro),
+    with eight fixture plants. Before, a `/tune` that handed out the landing
+    passed every check and suite. `GET /api/pair/token` mints with no Host
+    question, behind the cookie or the bearer, which a rebinding page holds
+    neither of; the comment above `request_host_names_device()` and the docs
+    no longer say every mint asks the Host.
+  - F357 restated: `/api/wifi`, `/api/wifi/scan` and `/api/fleet` send
+    `Access-Control-Allow-Origin: *`, so any page reads them at the IP, and
+    the Host question cannot close that.
+  - The WAP README and `docs/ble_protocol.md` said the receipt asks no Host
+    question, and the HTTPS sentences F337 left in `device_trust.md`, the
+    WAP READMEs, `FEATURES.md`, `docs/FAQ.md`,
+    `docs/manual_test_plan_captive_portal.md`, `magic_pairing.md` and the
+    checklist's F255 intro now say a stock WAP serves plain HTTP (F15). The
+    U1 row's SoftAP step names its precondition (the home link down, or a
+    standalone unit).
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's
@@ -3021,17 +3061,44 @@ so — see D2 below.)
   `.fritz.box`, for all three products, with rows in
   `firmware/tests_host/test_host_guard.cpp` and the staged copies cp'd. From
   code; not probed. Filed by F344, 2026-10-21.
-- [ ] **F357 [decision] canary-wap: the public allowlist routes answer any
-  Host.** After F344 the places that mint a session or a pair token, or start
-  a sign-in, refuse a Host that cannot name the device, but `GET /api/wifi`
-  (the station SSID and IP, the SoftAP's name and clients), `/api/wifi/scan`
-  (nearby networks), `/api/selftest` and `/api/device-info` stay on the
-  route check's public allowlist and answer any Host, so on a plain-HTTP
-  unit (every stock unit after setup, F15) a DNS-rebinding page can read
-  them. Decide whether they ask the Host question too (the wizard reaches
-  them at `canary.local` or `192.168.4.1`, which pass, and after setup the
-  dashboard at the device's own names) or stay public by any name. From
-  code; not probed. Filed by F344, 2026-10-21.
+- [ ] **F357 [decision] canary-wap: any web page can read `/api/wifi`,
+  `/api/wifi/scan` and `/api/fleet` at the device's address, and a
+  DNS-rebinding page can read the other public routes.** `http_send_json()`
+  (`canary_wap.ino`) sends `Access-Control-Allow-Origin: *` on every JSON
+  answer, and three routes on the route check's public allowlist answer
+  through it with no credential: `GET /api/wifi` (the home network's SSID,
+  the station IP, the SoftAP's name and its client count), `GET
+  /api/wifi/scan` (nearby networks; a request can also start a scan, which
+  stalls the SoftAP) and `GET /api/fleet` (coarse presence, whose wildcard
+  is a documented contract: `tvos/discovery/DISCOVERY.md` says a single
+  Canary is readable from any page on the LAN). So any page a household
+  member opens over plain `http` can `fetch('http://<the WAP's IP>/api/wifi')`
+  and read the answer, with no rebinding: a simple GET needs no preflight,
+  Firefox and Safari do not gate a public page's requests to a private
+  address, and current Chrome asks the user for local-network access first.
+  The Host question cannot close that read, because the IP literal and the
+  `.local` name both name the device. The other public routes send no CORS
+  header on their answers (`/api/selftest`, `/api/device-info`,
+  `/api/help-qr`, `/enroll`, `/api/device/enroll`, `/admin`, `/settings`,
+  `/companion` and their assets, `/sense`'s redirect, the captive probes;
+  `/api/device-info`'s `500` and `503` go through `http_send_error()` and so
+  carry the wildcard, with an error code only), so only a DNS-rebinding
+  page reads them; since F344 the pages among them refuse a foreign Host
+  after setup, and the API routes do not ask. Decide: (1) drop the wildcard
+  from `http_send_json()` and keep it only where a contract needs it
+  (`/api/fleet` and its `OPTIONS`; the wizard and the dashboard read
+  `/api/wifi` and `/api/wifi/scan` same-origin, and the apps send no
+  `Origin`), or answer a cross-site `Origin` on `/api/fleet` with less, as
+  the display does (`glass_web.cpp`); and (2) whether the public API routes
+  ask the Host question too, which closes the rebinding read (the wizard
+  reaches them at `canary.local` or `192.168.4.1`, which pass). The routes
+  behind a credential that also send the wildcard leak nothing to another
+  site: a cross-site fetch carries no `SameSite=Strict` cookie and no
+  bearer, and a browser refuses a credentialed answer under `*`. The
+  exposure predates F344. From code; not run in a browser. Filed by F344,
+  2026-10-21; restated the same day by its review, which found the
+  wildcard: the first text said only a rebinding page could read these
+  routes, and offered the Host question as the remedy.
 - [x] **F359 [code] canary-wap: `hmac_sha256()` discards mbedTLS's return
   codes.** The sketch's static `hmac_sha256()` (`canary_wap.ino`) calls
   `mbedtls_md_hmac_starts()`, `_update()` and `_finish()` and checks none of

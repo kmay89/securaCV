@@ -52,13 +52,16 @@
 //     handle_companion_html() (/companion), over the sketch's staged
 //     host_guard.h. After setup, a Host that cannot name this device (a
 //     rebinding page's evil.example, a name that only contains canary.local,
-//     a router name under another suffix, a trailing dot, no Host) gets the
+//     a router name under another suffix, a trailing dot, no Host, and a
+//     108-byte rebinding name too long for the 96-byte Host buffer whose
+//     first 95 bytes end in ".local") gets the
 //     fixed text/plain 403 on '/', '/?cv_pair=', /admin, /settings and
 //     /companion: no landing, no pair token, no session, the owner's token
 //     left unspent, and a live cookie under that name refused too (before:
 //     each was served, and the exchange minted a session). Every name a
 //     household uses (the .local name, any IP with or without a port, the
-//     bare router name, .lan, .internal, .home.arpa) still lands and
+//     bare router name, .lan, .internal, .home.arpa; a 39-character label, a
+//     full IPv6 literal, the longest Host the buffer holds) still lands and
 //     exchanges. With setup active, the wizard redirect and its token answer
 //     exactly canary.local or 192.168.4.1, any port, any case (before: any
 //     Host that contained one of them, and not CANARY.LOCAL); every other
@@ -505,9 +508,28 @@ void check_foreign_host_page(const httpd_req_t& r, const std::string& why) {
   CHECK_MSG(r.sends == 1, why + ": sent " + std::to_string(r.sends) + " times");
 }
 
-// A DNS-rebinding page's names, and a request with no Host at all.
+// A rebinding name too long for the sketch's 96-byte Host buffer: 108 bytes,
+// labels of 60 and 28 under evil.example (a name public DNS can mint), whose
+// first 95 bytes end in ".local". Cut to the buffer it would read as a .local
+// name, so only request_host_names_device()'s refusal of a truncated header
+// keeps it foreign (review of F344: no row sent one, and a helper that took
+// the truncated buffer passed both suites).
+#define OVERSIZE_REBINDING_HOST                                    \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa." \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaa.local.evil.example"
+static_assert(sizeof(OVERSIZE_REBINDING_HOST) - 1 == 108, "the oversize row is 108 bytes");
+// The longest Host the buffer holds (95 bytes and the NUL), a .local name:
+// served, so a shrunk buffer refuses a name the household uses.
+#define LONGEST_HELD_HOST                                                   \
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."      \
+  "ccccccccccccccccccccccccc.local"
+static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 bytes");
+
+// A DNS-rebinding page's names (one too long for the buffer), and a request
+// with no Host at all.
 const char* const kForeignHosts[] = {"evil.example", "evil.example:80", "canary.local.evil.example",
-                                     "canary-7916.local.evil.example", "192.168.1.50.nip.io", nullptr};
+                                     "canary-7916.local.evil.example", "192.168.1.50.nip.io",
+                                     OVERSIZE_REBINDING_HOST, nullptr};
 std::string host_label(const char* host) { return host ? std::string("Host ") + host : std::string("no Host"); }
 
 void test_foreign_host_gets_no_pair_token_and_no_session() {
@@ -558,11 +580,19 @@ void test_foreign_host_gets_no_pair_token_and_no_session() {
 }
 
 // Every name a household reaches its device by still lands, and its
-// exchange sets exactly one cookie.
+// exchange sets exactly one cookie: the long ones too (a 39-character mDNS
+// label, mdns_hostname's whole char[40], with a port; a full global IPv6
+// literal with a port; the longest Host the 96-byte buffer holds).
 void test_every_name_the_household_uses_still_lands() {
+  // The oversize row is foreign only through the buffer: its first 95 bytes
+  // ARE a name host_guard.h accepts, so the row above tests the cut.
+  CHECK(canary::net::host_names_this_device(std::string(OVERSIZE_REBINDING_HOST, 95).c_str()));
+  CHECK(canary::net::host_names_this_device(LONGEST_HELD_HOST));
   for (const char* host : {"canary-7916.local", "canary-7916.local:443", "canary.local", "CANARY-7916.LOCAL",
                            "192.168.1.50", "192.168.1.50:80", "192.168.4.1", "[fe80::1]", "[fe80::1]:443",
-                           "canary-7916", "canary-7916.lan", "canary-7916.home.arpa", "canary-7916.internal"}) {
+                           "canary-7916", "canary-7916.lan", "canary-7916.home.arpa", "canary-7916.internal",
+                           "canary-0123456789abcdef0123456789abcdef.local:443",
+                           "[2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff]:443", LONGEST_HELD_HOST}) {
     const std::string why = std::string("Host ") + host;
     reset();
     httpd_req_t landing;

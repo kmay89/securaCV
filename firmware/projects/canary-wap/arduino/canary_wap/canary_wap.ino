@@ -3723,20 +3723,27 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // mint (a .local, .lan, .internal or .home.arpa name, or a single label the
 // LAN resolver answers). A DNS-rebinding page (http://evil.example whose name
 // is re-pointed at this device's LAN address) arrives under its own name and
-// fails. A missing Host, or one too long for the buffer, is foreign.
+// fails. A missing Host, or one too long for the buffer, is foreign: a
+// truncated header is never read as a name (a 108-byte rebinding name cut to
+// 95 bytes can end in ".local").
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
 // would hand the rebinding path back to anything on the SoftAP, and the
 // WAP's wizard runs only at canary.local or 192.168.4.1, which both pass.
 //
-// Asked first by every place that mints a session or a pair token, or starts
-// a sign-in: handle_ui after setup (the landing, its pair token and the
-// ?cv_pair exchange), /admin, /settings and /companion after setup, and the
-// provisioning receipt in every mode. A rebinding page then holds no cookie
-// for its own name, so every cookie gate refuses it unchanged. Asked before
-// the response starts: esp_http_server purges the request headers on the
-// first send.
+// Asked first by every place that mints a session or a pair token for a
+// caller holding no credential, or starts a sign-in: handle_ui after setup
+// (the landing, its pair token and the ?cv_pair exchange), /admin, /settings
+// and /companion after setup, and the provisioning receipt in every mode.
+// (GET /api/pair/token, csi_integration's handle_pair_token, mints one behind
+// the cookie or the bearer, which a rebinding page holds neither of, and asks
+// no Host; the setup branch and the wizard token's re-issue ask the narrower
+// request_host_is_setup_name().) check_route_security.py's MINT_SITES holds
+// every mint to those places, each after its gate. A rebinding page then
+// holds no cookie for its own name, so every cookie gate refuses it
+// unchanged. Asked before the response starts: esp_http_server purges the
+// request headers on the first send.
 static bool request_host_names_device(httpd_req_t* req) {
   char host[96];
   if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;

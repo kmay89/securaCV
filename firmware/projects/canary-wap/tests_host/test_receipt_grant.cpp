@@ -79,7 +79,9 @@
 //   - the Host first (sweep F344): request_host_names_device(), cut with
 //     the handlers over the sketch's staged host_guard.h, is the receipt's
 //     first statement. A Host that cannot name this device (evil.example, a
-//     name that only contains canary.local, no Host at all) gets 403
+//     name that only contains canary.local, a 108-byte rebinding name too
+//     long for the 96-byte Host buffer whose first 95 bytes end in ".local",
+//     no Host at all) gets 403
 //     {"error":"host"}, no cookie, no secret: the tap stays open, a claim
 //     presented right or wrong stays pending, no bearer is compared and no
 //     strike recorded, a held address hears the Host refusal and keeps its
@@ -87,7 +89,8 @@
 //     another address is served the tap, not 409 (before: the tap, the claim
 //     and the bearer served it, and a wrong bearer was a strike). The
 //     device's names (.local, an IP with or without a port, the bare label,
-//     .lan) are served. Every request here carries Host canary-7916.local
+//     .lan; a 39-character label, a full IPv6 literal, the longest Host the
+//     buffer holds) are served. Every request here carries Host canary-7916.local
 //     unless a row names another;
 //   - the tap and the claim do not come back when millis() wraps (sweep
 //     F347; before, a tap nobody took served the receipt again 49.7 days
@@ -1845,8 +1848,25 @@ void check_host_refusal(const httpd_req_t& r, const std::string& why) {
 // receipt's caller like any other: the tap and the claim served it (the
 // token, the SoftAP password), a wrong bearer was a strike, and an ask
 // before the tap contended the owner's.
+// A rebinding name too long for the 96-byte Host buffer (108 bytes, labels
+// of 60 and 28 under evil.example) whose first 95 bytes end in ".local": cut
+// to the buffer it would read as a .local name, so only
+// request_host_names_device()'s refusal of a truncated header keeps it
+// foreign (review of F344: no row sent one before).
+#define OVERSIZE_REBINDING_HOST                                    \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa." \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaa.local.evil.example"
+static_assert(sizeof(OVERSIZE_REBINDING_HOST) - 1 == 108, "the oversize row is 108 bytes");
+// The longest Host the buffer holds (95 bytes and the NUL), a .local name.
+#define LONGEST_HELD_HOST                                                   \
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."      \
+  "ccccccccccccccccccccccccc.local"
+static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 bytes");
+
 void test_receipt_foreign_host_is_refused_first() {
-  for (const char* host : {"evil.example", "canary.local.evil.example", (const char*)nullptr}) {
+  CHECK(canary::net::host_names_this_device(std::string(OVERSIZE_REBINDING_HOST, 95).c_str()));
+  for (const char* host : {"evil.example", "canary.local.evil.example", OVERSIZE_REBINDING_HOST,
+                           (const char*)nullptr}) {
     const std::string why = host ? std::string("Host ") + host : std::string("no Host");
     // An open tap: refused, and the tap stays open. The owner then asks
     // from another address under the device's name and is served.
@@ -1912,8 +1932,13 @@ void test_receipt_foreign_host_is_refused_first() {
     CHECK(strikes(kHostA) == 3 && held(kHostA));
   }
   // The device's names, as the dashboard, the companion and the apps reach
-  // it: served by the tap.
-  for (const char* host : {"canary-7916.local", "192.168.1.50", "192.168.4.1:80", "canary-7916", "canary-7916.lan"}) {
+  // it: served by the tap. The long ones too (a 39-character mDNS label,
+  // mdns_hostname's whole char[40], with a port; a full global IPv6 literal
+  // with a port; the longest Host the buffer holds), so a shrunk buffer
+  // refuses a name the household uses.
+  for (const char* host : {"canary-7916.local", "192.168.1.50", "192.168.4.1:80", "canary-7916", "canary-7916.lan",
+                           "canary-0123456789abcdef0123456789abcdef.local:443",
+                           "[2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff]:443", LONGEST_HELD_HOST}) {
     reset_device();
     open_tap();
     Req q;

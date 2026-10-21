@@ -888,8 +888,10 @@ the Fleet tab, which takes its recovery kit or a fresh setup. The kit is
 the receipt the WAP's own pages save: the setup wizard's close-out after a
 BOOT tap, and since #1802 its dashboard (F257), so a WAP set up through
 this door, which never runs the wizard's close-out, has a kit to save. On
-the dashboard (`https://canary-<suffix>.local/settings` once set up; port
-80 redirects there) a browser that is signed out chooses **Use BOOT Tap
+the dashboard (`http://canary-<suffix>.local/settings` once set up on a
+stock unit, which serves plain HTTP, F15; on a unit with a stored
+certificate `https://`, and port 80 redirects there) a browser that is
+signed out chooses **Use BOOT Tap
 Once**, and the tap that signs it in offers **Save my recovery kit** in the
 wizard's words; one signed in with its token saves it from **Settings**,
 **Device**, **Recovery kit** without a tap, while one signed in only by a
@@ -1116,7 +1118,9 @@ cannot speak to.
       bearer re-sync over the home network names the `.local` name; and
       `http://canary-<suffix>.local/settings` answers `301` to
       `https://canary-<suffix>.local/settings`, before and after the AP
-      drops.
+      drops. On a stock unit, which serves plain HTTP (F15), run it at
+      `http://` and expect `base_url` at `http://canary-<suffix>.local` and
+      no `301`; the `https` half waits for a WAP that serves HTTPS.
 - [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**,
       and a signed-in dashboard saves it from **Settings**, **Device**,
       **Recovery kit**; the saved `canary-recovery-kit.json` is the

@@ -2686,13 +2686,16 @@ SoftAP dropped; `recovery_kit.test.js`: the dashboard's sign-in and
 Settings save run against a fake device); the compile is CI's; not run on
 a device. Owner: U1.
 
-An installed WAP serves its dashboard and API over https on 443 from the
-first boot after setup (a self-signed certificate; the browser warns once,
-and the receipt's `tls_cert_fp` is that certificate's SHA-256), and port
-80 answers everything but the captive probes and `/api/fleet` with a 301
-to https. The rows below use https; on an http-only build (or one whose
-`/api/status` `tls_mode_reason` says TLS is off) use http and expect no
-301.
+Once a certificate is stored, an installed WAP serves its dashboard and
+API over https on 443 from the first boot after setup (a self-signed
+certificate; the browser warns once, and the receipt's `tls_cert_fp` is
+that certificate's SHA-256), and port 80 answers everything but the
+captive probes and `/api/fleet` with a 301 to https. No stock build stores
+one today (F15: the on-device generator compiles out on every pinned core),
+so a stock WAP serves plain HTTP after setup, its receipt's `tls_cert_fp`
+is empty, and its serial log says "TLS unavailable — running in HTTP-ONLY
+mode" at boot. The rows below use https; on such a unit use http and expect
+no 301.
 
 - [ ] **A receipt fetched over the home network names the `.local` name; port 80's redirect does too**
   - Setup: a canary-wap on this firmware, joined to the home Wi-Fi, a laptop
@@ -3089,7 +3092,7 @@ and `handle_provisioning_receipt()` in `canary_wap.ino`, over the staged
     4. `curl -si -H 'Host: evil.example' --compressed http://<STA address>/settings` and `…/companion` answer the `403` sentence; with the device's own address they answer the pages.
     5. Start `while :; do curl -s http://canary-<suffix>.local/api/provisioning-receipt; echo; sleep 2; done` (the owner's ask), short-tap BOOT after its first `403`, and right after the tap send `curl -si -H 'Host: evil.example' http://<STA address>/api/provisioning-receipt` from a second laptop: that answers `403` with the body exactly `{"error":"host"}`, and the owner's loop is served the receipt at its next ask, not `409 tap_contended`. `/api/logs` has no "BOOT tap closed" line.
   - Setup window: factory-reset (hold BOOT 10 s), run the wizard at `http://canary.local` until the Wi-Fi join succeeds, and within 120 s of the join send the two `evil.example` requests above to `http://<STA address>/` and, with BOOT tapped, to `/api/provisioning-receipt`: both answer `403` as above, and the wizard's own recovery-kit step at `canary.local` still succeeds.
-  - The SoftAP after setup (its captive DNS runs for the AP's whole life): join `SecuraCV-XXXX` from an iPhone and an Android phone. A captive sheet that opens shows the probe's answer or the `403` sentence, never a blank page; the phone's browser at `http://192.168.4.1/` and `http://canary.local/` gets the landing page.
+  - The SoftAP after setup (its captive DNS runs for the AP's whole life): a joined unit drops `SecuraCV-XXXX` 120 s after the join (`AP_DROP_GRACE_MS`) and raises it again only when the home link is lost, so first turn the home router's Wi-Fi off and wait for `SecuraCV-XXXX` to reappear, or use a unit in standalone (AP-only) mode. Then join `SecuraCV-XXXX` from an iPhone and an Android phone. A captive sheet that opens shows the probe's answer or the `403` sentence, never a blank page; the phone's browser at `http://192.168.4.1/` and `http://canary.local/` gets the landing page.
   - First boot, on a fresh unit:
     - the iOS and Android captive sheets still show the static "open canary.local" instruction page;
     - `http://canary.local` and `http://192.168.4.1` (and `http://CANARY.LOCAL`) open the wizard;
