@@ -60,6 +60,15 @@
 //     with the tap left for the next asker; a held bearer still gets its
 //     429 under contention; the 409 clears no backoff; an expired tap is
 //     burned by the request that finds it;
+//   - the tap and the claim do not come back when millis() wraps (sweep
+//     F347; before, a tap nobody took served the receipt again 49.7 days
+//     after the press, and a claim read but never spent took it with its
+//     old hex): loop()'s two sweeps, run here as the sketch's loop() spells
+//     them (each statement only when the sketch's loop() holds it, so a
+//     sketch without the sweep runs none), clear both past their TTLs, and
+//     2^32 ms + 1 s after them a bare request and the old ?claim= are both
+//     the 403; loop() holds both sweeps at its top level, after
+//     handle_serial_commands();
 //   - the receipt's bearer is under every admin route's lockout (F289's
 //     follow-up; before, its compare recorded nothing, so the receipt was
 //     the one route where guessing the token cost nothing): a wrong or
@@ -2320,6 +2329,74 @@ std::string enclosing(const std::vector<std::string>& lines, size_t at) {
 
 bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
 
+// ── loop()'s sweep (sweep F347) ──────────────────────────────────────────────
+// The two statements loop() runs every pass, spelled once: the harness runs
+// them and the text check below pins the sketch to the same spelling.
+#define LOOP_SWEEP_GATE \
+  canary::net::provisioning_gate::expire(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS)
+#define LOOP_SWEEP_CLAIM canary::net::claim_ticket::expire(g_improv_claim, millis())
+#define RG_STR(x) #x
+#define RG_XSTR(x) RG_STR(x)
+const std::string kLoopSweepGate = std::string("  ") + RG_XSTR(LOOP_SWEEP_GATE) + ";";
+const std::string kLoopSweepClaim = std::string("  ") + RG_XSTR(LOOP_SWEEP_CLAIM) + ";";
+
+// The sketch's loop(), comments stripped, as cut_functions.awk would cut it.
+const std::string& sketch_loop() {
+  static const std::string text = function_text(split_lines(strip_comments(read_file(CANARY_WAP_INO))),
+                                                "void loop() {");
+  return text;
+}
+// A line of `fn` that is exactly `stmt` (its two-space indent included: a
+// statement at loop()'s top level, not inside a branch).
+bool has_line(const std::string& fn, const std::string& stmt) {
+  for (const auto& l : split_lines(fn)) if (rtrim(l) == stmt) return true;
+  return false;
+}
+
+// One pass of loop()'s sweep, as the sketch runs it: each statement runs
+// only when the sketch's loop() holds it, so a sketch without the sweep (the
+// code before F347) runs none, and the row below sees what that device did.
+void loop_sweep_pass() {
+  if (has_line(sketch_loop(), kLoopSweepGate)) LOOP_SWEEP_GATE;
+  if (has_line(sketch_loop(), kLoopSweepClaim)) LOOP_SWEEP_CLAIM;
+}
+
+// A tap nobody took and a claim read but never spent, 2^32 ms later (sweep
+// F347). Before: millis() came back round to both stamps, the bare request
+// was served the receipt as BOOT_TAP with no press, and the old hex took it
+// as SETUP_DOOR_CLAIM.
+void test_receipt_stale_tap_and_claim_do_not_revive_after_the_wrap() {
+  reset_device();
+  CHECK(!sketch_loop().empty());
+  const uint32_t t0 = millis();
+  open_tap();
+  mint_claim();
+  const std::string old_hex = g_improv_claim.hex;
+  CHECK(tap_open() && claim_pending());
+  // loop() passes inside the TTLs leave both alone.
+  stub_grant::now_ms = t0 + PROVISIONING_GATE_TTL_MS - 1;
+  loop_sweep_pass();
+  CHECK_MSG(gate_stamp() != 0 && claim_pending(), "a sweep inside the TTLs cleared a fresh stamp");
+  // Past both TTLs, the next pass sweeps both. Nothing asked meanwhile.
+  stub_grant::now_ms = t0 + canary::net::claim_ticket::TTL_MS + 1;
+  loop_sweep_pass();
+  CHECK_MSG(gate_stamp() == 0, "loop() left a tap past its TTL");
+  CHECK_MSG(__atomic_load_n(&g_improv_claim.minted_at_ms, __ATOMIC_ACQUIRE) == 0,
+            "loop() left a claim past its TTL");
+  // millis() comes back round: 2^32 ms + 1 s after the tap and the mint.
+  stub_grant::now_ms = (uint32_t)((uint64_t)t0 + (1ull << 32) + 1000);
+  CHECK(stub_grant::now_ms == t0 + 1000);
+  Req bare;
+  CHECK_MSG(receipt(bare) == 0, "a tap nobody took served the receipt 2^32 ms after the press");
+  check_gate_refusal(bare.r);
+  Req claim;
+  claim.query("claim=" + old_hex);
+  CHECK_MSG(receipt(claim) == 0, "a claim read but never spent took the receipt 2^32 ms after the mint");
+  check_gate_refusal(claim.r);
+  CHECK(g_served.empty());
+  CHECK(g_improv_claim_spent_at_ms == 0);
+}
+
 void test_sketch_text() {
   const std::string raw = read_file(CANARY_WAP_INO);
   CHECK_MSG(!raw.empty(), std::string("could not read ") + CANARY_WAP_INO);
@@ -2363,6 +2440,25 @@ void test_sketch_text() {
     if (has(l, "static canary::net::provisioning_gate::State g_provisioning_gate")) ++gate_decls;
   }
   CHECK(gate_decls == 1);
+
+  // loop() sweeps the tap and the claim every pass (sweep F347): both
+  // statements at its top level, after handle_serial_commands();.
+  const std::string loop_fn = sketch_loop();
+  CHECK(!loop_fn.empty());
+  const size_t serial_at = loop_fn.find("\n  handle_serial_commands();\n");
+  const size_t gate_at = loop_fn.find("\n" + kLoopSweepGate + "\n");
+  const size_t claim_at = loop_fn.find("\n" + kLoopSweepClaim + "\n");
+  CHECK(serial_at != std::string::npos);
+  CHECK_MSG(gate_at != std::string::npos, "loop() does not sweep the BOOT tap: " + kLoopSweepGate);
+  CHECK_MSG(claim_at != std::string::npos, "loop() does not sweep the setup-door claim: " + kLoopSweepClaim);
+  CHECK(serial_at != std::string::npos && gate_at != std::string::npos && serial_at < gate_at);
+  CHECK(serial_at != std::string::npos && claim_at != std::string::npos && serial_at < claim_at);
+  size_t gate_sweeps = 0, claim_sweeps = 0;
+  for (const auto& l : lines) {
+    if (has(l, "provisioning_gate::expire(")) ++gate_sweeps;
+    if (has(l, "claim_ticket::expire(")) ++claim_sweeps;
+  }
+  CHECK_MSG(gate_sweeps == 1 && claim_sweeps == 1, "the sweeps are loop()'s, once each");
 
   const std::string qr_fn = function_text(lines, "static esp_err_t handle_pairing_qr(httpd_req_t* req) {");
   CHECK(!qr_fn.empty());
@@ -2435,6 +2531,7 @@ int main() {
   test_unreadable_peer_is_refused_and_leaves_the_tap();
   test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
   test_an_expired_tap_is_burned_by_the_request_that_finds_it();
+  test_receipt_stale_tap_and_claim_do_not_revive_after_the_wrap();
   test_receipt_bearer_shapes();
   test_receipt_wrong_bearer_is_a_strike();
   test_receipt_right_bearer_clears_the_count();

@@ -914,9 +914,11 @@ static inline bool tls_after_setup() {
 // the millis() at which the short press landed; 0 means closed, and the
 // header's take() and tap_arbitrate() apply the TTL, so the gate closes
 // itself after PROVISIONING_GATE_TTL_MS even if the receipt is never
-// fetched. Opened from the loop task (the button handler) and taken from
-// the httpd task (the receipt) and the NimBLE host task (BLE OTA
-// break-glass), so every access is the header's __atomic builtins.
+// fetched, and loop() sweeps a stamp past it every pass (expire(), sweep
+// F347), so none ages into the wrap of millis(). Opened and swept from the
+// loop task (the button handler, loop()) and taken from the httpd task (the
+// receipt) and the NimBLE host task (BLE OTA break-glass), so every access
+// is the header's __atomic builtins.
 static canary::net::provisioning_gate::State g_provisioning_gate = {0};
 
 // Consume the gate in ONE atomic step, for the BLE OTA break-glass hook
@@ -934,9 +936,10 @@ static inline bool provisioning_gate_take() {
 // succeeded, read once by the link that asked, and spent by one
 // GET /api/provisioning-receipt?claim=<hex> on the home LAN — the third
 // grant of that route, between the bearer and the BOOT tap. The bearer
-// token never rides Bluetooth. Minted (loop task) and taken (httpd task)
-// through the header's own atomics; never read in place. Spent only by a
-// match (sweep F342): a wrong ?claim= changes nothing.
+// token never rides Bluetooth. Minted and swept (loop task: loop() burns a
+// claim past its TTL every pass, sweep F347) and taken (httpd task) through
+// the header's own atomics; never read in place. Spent only by a match
+// (sweep F342): a wrong ?claim= changes nothing.
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
 
 // millis() (claim_ticket::stamp()ed, so never 0 once set) of the last
@@ -13451,6 +13454,19 @@ void loop() {
 
   // USB evidence drive: apply deferred host events (eject -> verify/install)
   usb_evidence_drive::poll();
+
+  // Sweep the BOOT tap and the setup-door claim (sweep F347). Each ages by
+  // unsigned subtraction on 32-bit millis(), which is right only while a
+  // stamp is younger than 2^32 ms: a tap nobody took would serve the receipt
+  // again 49.7 days later with no press, and a claim read but never spent
+  // would read as pending again. expire() clears a stamp past its TTL with a
+  // compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  // never cleared; no stamp outlives its TTL by more than one pass, so
+  // millis() never wraps back over one. Both are opened and minted on this
+  // task (the BOOT handler below, ble_improv::tick), so neither sweep can
+  // see a stamp newer than its own clock read.
+  canary::net::provisioning_gate::expire(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
+  canary::net::claim_ticket::expire(g_improv_claim, millis());
 
   // Check boot button:
   //   Short press (<2s)  = open provisioning gate

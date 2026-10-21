@@ -2966,9 +2966,12 @@ section above) in the same session; it proves the same read. Code:
 `provisioning_gate_take_for()`, `request_peer_key()` and
 `handle_provisioning_receipt()` in `canary_wap.ino`;
 `firmware/common/network/provisioning_gate.h` (`tap_arbitrate()`,
-`take_exact()`) and `claim_ticket.h` (`spend_if_match()`), both staged in the
-sketch; `requestFromDevice()` and `saveRecoveryKitFromSettings()` in
-`web_ui.h`; the recovery-kit save in `companion_pwa.h`. Owner: U1.
+`take_exact()`, `expire()`) and `claim_ticket.h` (`spend_if_match()`,
+`expire()`), both staged in the sketch, and swept by `loop()` every pass;
+the session and pair-token slots' seconds clock (`uptime_s()`) in
+`csi_integration.cpp`; `requestFromDevice()` and
+`saveRecoveryKitFromSettings()` in `web_ui.h`; the recovery-kit save in
+`companion_pwa.h`. Owner: U1.
 
 - [ ] **A second asker closes the tap.**
   - On laptop B, run `while :; do curl -s -o /dev/null -w '%{http_code}\n' http://<STA address>/api/provisioning-receipt; sleep 0.2; done`.

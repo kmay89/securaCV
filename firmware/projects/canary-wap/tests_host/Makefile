@@ -593,13 +593,23 @@ clean: clean-receipt-grant
 # cookie NAMED cv_session, never "xcv_session=" or a value holding it. It also
 # reads the sketch's text (its path is passed in): the attributes are spelled
 # once, and both Set-Cookie sites send that spelling. The receipt's own mint
-# site is driven in test_receipt_grant.cpp.
+# site is driven in test_receipt_grant.cpp. And the two token stores' clock
+# (sweep F347): the slot functions (pick_slot_for_issuance(), find_slot(),
+# pick_session_slot_for_issuance(), find_valid_session() and their ct_eq())
+# cut verbatim out of csi_integration.cpp into a namespace the harness opens
+# for them, over one 64-bit test clock (millis() is its low 32 bits, the
+# harness's uptime_s() its whole seconds), so a session ends at 24 h and a
+# pair token at 10 minutes and neither is valid again 2^32 ms after issue
+# (before: both were, on millis()), and eviction picks an expired slot, else
+# the oldest; and csi_integration.cpp's text (its path is passed in): both
+# slots carry issued_s, stamped from uptime_s() over esp_timer_get_time().
 SCOOKIE_BIN     = test_session_cookie
 SCOOKIE_SRC     = test_session_cookie.cpp
 SCOOKIE_UI_INC  = test_session_cookie_ui.inc
 SCOOKIE_CSI_INC = test_session_cookie_csi.inc
+SCOOKIE_SLOTS_INC = test_session_cookie_slots.inc
 SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
-CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC)
 
 $(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
 	awk -v 'sigs=static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {' \
@@ -609,18 +619,24 @@ $(SCOOKIE_CSI_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
 	awk -v 'sigs=bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {' \
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
 
-$(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+$(SCOOKIE_SLOTS_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
+	awk -v 'sigs=PairSlot* pick_slot_for_issuance() {|PairSlot* find_slot(const uint8_t* token) {|SessionSlot* pick_session_slot_for_issuance() {|bool find_valid_session(const uint8_t* token) {|bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {' \
+	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
+
+$(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC) $(SRC_DIR)/csi_integration.cpp arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
 	$(CXX) $(CXXFLAGS) -Werror \
 	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
 	  -DSESSION_COOKIE_UI_INC='"$(SCOOKIE_UI_INC)"' \
 	  -DSESSION_COOKIE_CSI_INC='"$(SCOOKIE_CSI_INC)"' \
+	  -DSESSION_COOKIE_SLOTS_INC='"$(SCOOKIE_SLOTS_INC)"' \
+	  -DCSI_INTEGRATION_CPP='"$(abspath $(SRC_DIR))/csi_integration.cpp"' \
 	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(SCOOKIE_SRC)
 
 .PHONY: run-session-cookie clean-session-cookie
 run-session-cookie: $(SCOOKIE_BIN)
 	$(call run_marked,$(SCOOKIE_BIN))
 clean-session-cookie:
-	rm -f $(SCOOKIE_BIN) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+	rm -f $(SCOOKIE_BIN) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC)
 
 run: run-session-cookie
 clean: clean-session-cookie

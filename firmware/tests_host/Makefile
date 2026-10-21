@@ -178,11 +178,18 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # and the WAP's BOOT tap goes to one asker (sweep F342): peek() and
 # take_exact() take only the stamp that was judged, and tap_arbitrate(), on a
 # 32-bit test clock, refuses a poller and the owner across one tap, serves a
-# sole owner who asked before it, and fails closed across a 49.7-day silence.
+# sole owner who asked before it, and fails closed across a 49.7-day silence;
+# and the sweep (sweep F347): expire() clears a stamp at its TTL and never a
+# fresher one, so a tap nobody took cannot read as fresh again when millis()
+# comes back round to it (an unswept one does, which is why both trees sweep
+# every loop pass). It also reads the canary tree's main.cpp (its path is
+# passed in): handle_boot_button(), called from loop() every pass, sweeps
+# g_prov_gate as its first statement.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
 # sketch stages the header byte-identical (check_improv_sync.sh) and its
 # gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
+PROVGATE_MAIN = ../canary/src/main.cpp
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
 # Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
@@ -205,7 +212,10 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # spelling, single use on a match (a mismatch spends nothing, sweep F342;
 # the spend is one compare-and-swap of the word the taker loaded, so a
 # spend whose word moved is refused), the TTL (an expired claim is burned),
-# millis()==0 and the wrap, constant-time compare over the whole string.
+# millis()==0, a fresh claim across the wrap, the sweep that keeps a stamp
+# from aging into the wrap (expire(), sweep F347: a swept claim stays spent
+# when millis() comes back round, an unswept one reads pending again), and
+# the constant-time compare over the whole string.
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
 
@@ -1028,8 +1038,8 @@ $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
-$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -o $@ test_provisioning_gate.cpp
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' -o $@ test_provisioning_gate.cpp
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp

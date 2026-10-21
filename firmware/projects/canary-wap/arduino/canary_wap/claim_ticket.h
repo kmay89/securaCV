@@ -29,7 +29,11 @@
  * It used to exchange the word to 0 before comparing, so any ?claim= from a
  * host on the network spent the phone's claim: 128 random bits cannot be
  * guessed in the TTL, so burning on a guess bounded nothing and handed that
- * host a one-request denial. An expired claim is still burned.
+ * host a one-request denial. An expired claim is still burned. And the
+ * owner sweeps it every loop pass with expire() on the task that mints it
+ * (sweep F347): unsigned subtraction ages the minted-at word correctly only
+ * below 2^32 ms, so a claim read but never spent would read as pending
+ * again 49.7 days later; swept, none outlives its TTL by more than a pass.
  *
  * Consumed by the canary-wap sketch (and, in a follow-up, the flagship's
  * securacv_network); the WAP keeps a staged byte-identical copy next to its
@@ -65,10 +69,26 @@ inline uint32_t stamp(uint32_t now_ms) { return now_ms == 0 ? 1u : now_ms; }
 
 /// The hex zeroed through a volatile pointer, so the compiler cannot drop
 /// the stores. Leaves minted_at_ms alone: the caller has already cleared it
-/// (wipe()) or won the compare-and-swap that did (spend_if_match()).
+/// (wipe()) or won the compare-and-swap that did (clear_if_unchanged()).
 inline void wipe_hex(Ticket& t) {
   volatile char* b = t.hex;
   for (size_t i = 0; i < sizeof(t.hex); ++i) b[i] = 0;
+}
+
+/// Clear the claim minted at `seen` (a minted-at word the caller loaded):
+/// one compare-and-swap of `seen` to 0, and the hex wiped only when that
+/// swap won. False, and nothing touched, when the word moved since the load
+/// (a re-mint, another taker, a sweep) or `seen` is 0. The one spend that
+/// spend_if_match() and expire() both make.
+inline bool clear_if_unchanged(Ticket& t, uint32_t seen) {
+  if (seen == 0) return false;
+  uint32_t expect = seen;
+  if (!__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
+  wipe_hex(t);
+  return true;
 }
 
 inline void wipe(Ticket& t) {
@@ -136,21 +156,11 @@ inline bool spend_if_match(Ticket& t, uint32_t seen, const char* presented,
                            uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
   if (seen == 0) return false;
   if ((uint32_t)(now_ms - seen) >= ttl_ms) {
-    uint32_t expect = seen;
-    if (__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
-                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-      wipe_hex(t);
-    }
+    clear_if_unchanged(t, seen);   // burned; a re-mint since the load is left
     return false;
   }
   if (!hex_equal(t.hex, presented)) return false;
-  uint32_t expect = seen;
-  if (!__atomic_compare_exchange_n(&t.minted_at_ms, &expect, 0u, false,
-                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-    return false;
-  }
-  wipe_hex(t);
-  return true;
+  return clear_if_unchanged(t, seen);
 }
 
 /// Spend the claim, on a match only (sweep F342): a match serves the
@@ -162,6 +172,19 @@ inline bool spend_if_match(Ticket& t, uint32_t seen, const char* presented,
 inline bool take(Ticket& t, const char* presented, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
   return spend_if_match(t, __atomic_load_n(&t.minted_at_ms, __ATOMIC_ACQUIRE), presented,
                         now_ms, ttl_ms);
+}
+
+/// The sweep (sweep F347): burn a claim that is `ttl_ms` old or older, with
+/// one compare-and-swap of the minted-at word it read (clear_if_unchanged()),
+/// so a fresh re-mint is never cleared. True when it burned one. Its owner
+/// calls it every loop pass, ON THE TASK THAT MINTS (the WAP's loop task): a
+/// `now_ms` read before another task's mint() would see that newer word as
+/// 2^32 ms old. With the sweep, no claim outlives its TTL by more than one
+/// pass, so none can age into the wrap of millis() and read as pending again.
+inline bool expire(Ticket& t, uint32_t now_ms, uint32_t ttl_ms = TTL_MS) {
+  const uint32_t minted = __atomic_load_n(&t.minted_at_ms, __ATOMIC_ACQUIRE);
+  if (minted == 0 || (uint32_t)(now_ms - minted) < ttl_ms) return false;
+  return clear_if_unchanged(t, minted);
 }
 
 }  // namespace claim_ticket

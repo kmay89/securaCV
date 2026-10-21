@@ -2253,7 +2253,7 @@ so — see D2 below.)
   needs nobody to read the code to it. Decide whether these codes take a
   bearer or stay posture. From code; not probed. Found by the superseded F289
   port, filed by #1832.
-- [ ] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
+- [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,
   `claim_ticket.h`'s `take()` and `pending()` compare `(uint32_t)(now_ms -
@@ -2269,6 +2269,82 @@ so — see D2 below.)
   stamp read past its TTL, with wrap cases in `test_receipt_grant.cpp` and
   `test_session_cookie.cpp`. From code; not probed. Found by the superseded
   F289 port's reviews, filed by #1832.
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security): fixed, with no change to any wire or record format.*
+  The gate and the claim keep their 32-bit atomic stamps and are swept every
+  loop pass. `provisioning_gate::expire()` and `claim_ticket::expire()` clear
+  a stamp past its TTL with a compare-and-swap of the value they read, so a
+  fresh re-tap or re-mint is never cleared. The WAP's `loop()` calls both,
+  and the flagship's `handle_boot_button()` calls the gate's. No stamp
+  outlives its TTL by more than one loop pass, so none can age into a wrap.
+  The WAP now stages `provisioning_gate.h` byte-identical instead of keeping
+  an inline copy of the gate. `check_improv_sync.sh` is now the one script
+  for every `firmware/common/network` header the sketch stages, with its
+  names derived from `PAIRS` (`host_guard.h` and `auth_backoff.h` join it
+  with one line each).
+  The WAP's session and pair-token slots, written only by the httpd task,
+  age on `uint32_t issued_s` from `esp_timer_get_time()`: a 136-year wrap,
+  the same slot size, and a single-word read for the QR scanner task.
+  64-bit atomics for the two stamps were rejected: on the ESP32-S3 they rely
+  on ESP-IDF's emulated `__atomic_*_8`, unused in this tree, and would need a
+  bench.
+  Scope corrections to this item:
+  - the claim revival needed a claim that was read but not spent, from a
+    door window outside first-boot setup (the door withdraws an unread claim
+    at its TTL, and first-boot setup reboots);
+  - the flagship's `g_prov_gate` aged the same way through the shared
+    header;
+  - the tap's opening is visible to any session in `/api/logs`, which is how
+    a host on the network could have timed the wrap.
+  Host-tested (`test_provisioning_gate`, `test_claim_ticket`,
+  `test_receipt_grant`, `test_session_cookie`); the 49.7-day wraps cannot be
+  bench-tested.
+  *Done (2026-10-20, #<PR>):* in the third commit of the PR that carries
+  F342.
+  - The sweeps: `expire()` in `firmware/common/network/provisioning_gate.h`
+    (a `peek()` and a `take_exact()` of the stamp it read) and in
+    `claim_ticket.h` (the compare-and-swap is `clear_if_unchanged()`, which
+    `spend_if_match()` now shares; the hex is wiped only when the swap
+    won), both staged copies cp'd. The WAP's `loop()` runs both at its top
+    level, right after `usb_evidence_drive::poll()`; the flagship's
+    `handle_boot_button()`, called from `loop()` every pass, runs the gate's
+    as its first statement. Each runs on the task that opens or mints its
+    stamp, which the headers now state as the caller's rule: a clock read
+    before another task's open would see the newer stamp as 2^32 ms old.
+  - The slot clock: `csi_integration.cpp`'s `uptime_s()` (whole seconds of
+    `esp_timer_get_time()`), `PAIR_TTL_S` and `SESSION_TTL_S`; both slots
+    carry `uint32_t issued_s`, and the four slot functions and the two
+    issuers read nothing else. A token can now end up to 1 s early.
+  - Already in place, so not redone: step B1 was on main from #1838
+    (`provisioning_gate.h` staged, `check_improv_sync.sh`'s names derived
+    from `PAIRS`, the `firmware.yml` step renamed); step B2 (the sketch's
+    gate as the header's `State`) is F342's tap commit, which needed it
+    first. So this commit lands after that one, not between F342's two, and
+    each of the three commits passes on its own. This commit updates the
+    script's comment entries for the two headers.
+  - What the later PRs add: F344 stages `host_guard.h` with one `PAIRS`
+    line and one comment entry (the script's reframe is done). F337 and
+    F344 edit `csi_integration.cpp`'s session-store block and
+    `test_session_cookie.cpp` (and its Makefile block); they merge this
+    commit's clock paragraph and `SCOOKIE_SLOTS_INC` cut by hand. Nothing in
+    F347 waits on them.
+  Host-tested: `firmware/tests_host/test_provisioning_gate.cpp` (the sweep's
+  TTL edge, a swept tap closed 2^32 ms later where an unswept one reads open
+  and is taken, a re-tap kept, and a text check that `main.cpp`'s
+  `handle_boot_button()` sweeps first; the old header does not compile them,
+  9 errors, and with the new header the old `main.cpp` fails the text
+  check), `test_claim_ticket.cpp` (the swept claim's word and hex zeroed and
+  its old hex refused 2^32 ms later, where the unswept twin serves; the old
+  header: 9 compile errors), the WAP's `test_receipt_grant.cpp` (2151
+  checks; the sketch before this commit fails 21: `loop()` has no sweep, so
+  2^32 ms + 1 s after an untaken tap a bare request was served the receipt
+  and the old `?claim=` took it too) and `test_session_cookie.cpp` (165
+  checks over a new cut of the four slot functions; the store before this
+  commit fails 24: a session and a pair token valid again 2^32 ms + 5 s
+  after issue, eviction keeping a 49.7-day-old slot, and the text checks).
+  The ESP32 compile and the flagship's PlatformIO compile are CI's; not run
+  on a device, and the wraps cannot be (U1's F342/F347 section says so).
 - [ ] **F348 [decision] The WAP's route check holds the broker gate's shape,
   not its condition.** F328's broker half requires #1835's
   `move_needs_password()` as the whole condition of a top-level returning

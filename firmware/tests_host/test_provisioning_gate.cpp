@@ -45,13 +45,28 @@
 //     residual); a clean re-tap after contention serves and a re-tap inside
 //     the lookback does not; the same address never contends with itself;
 //     the record fails closed across a 49.7-day silence; and a peer key
-//     prints as a.b.c.d or as eight hex groups.
+//     prints as a.b.c.d or as eight hex groups;
+//   * the sweep (sweep F347): expire() clears a stamp at its TTL and never
+//     one a millisecond younger, never a stamp re-opened since it was read,
+//     and a swept tap stays closed when millis() comes back round to it
+//     2^32 ms later, where an unswept one reads open again (the
+//     characterization row: why the sweep exists); and the canary tree's
+//     handle_boot_button() (firmware/canary/src/main.cpp, its path passed in
+//     as CANARY_MAIN_CPP) sweeps g_prov_gate as its first statement, from
+//     loop() on every pass.
 
 #include "../common/network/provisioning_gate.h"
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <functional>
+#include <iterator>
+#include <string>
+
+#ifndef CANARY_MAIN_CPP
+#error "CANARY_MAIN_CPP must name firmware/canary/src/main.cpp (the Makefile passes it)"
+#endif
 
 using namespace canary::net::provisioning_gate;
 
@@ -126,6 +141,153 @@ static void explicit_close() {
   close(s);
   CHECK(!is_open(s, 100, kTtl), "close() shuts the gate");
   CHECK(!take(s, 100, kTtl), "close() leaves nothing to take");
+}
+
+// ── the sweep (sweep F347) ──────────────────────────────────────────────────
+
+static const uint64_t kWrap = 1ull << 32;   // 2^32 ms: 49.7 days of millis()
+
+static void expire_clears_at_the_ttl_and_never_a_fresh_stamp() {
+  State s{0};
+  CHECK(!expire(s, 1000, kTtl), "a closed gate: nothing to sweep");
+  open(s, 1000);
+  CHECK(!expire(s, 1000, kTtl), "a tap this millisecond is not swept");
+  CHECK(!expire(s, 1000 + kTtl - 1, kTtl), "one ms before the TTL: not swept");
+  CHECK(peek(s) == 1000, "and the stamp is kept, got %u", (unsigned)peek(s));
+  CHECK(is_open(s, 1000 + kTtl - 1, kTtl), "still open");
+  CHECK(expire(s, 1000 + kTtl, kTtl), "at the TTL: swept");
+  CHECK(peek(s) == 0, "the gate is closed, got %u", (unsigned)peek(s));
+  CHECK(!expire(s, 1000 + kTtl, kTtl), "a second sweep finds nothing");
+  // Across the wrap: a tap stamped just before millis() wraps is swept on
+  // its age, not on the raw numbers.
+  State w{0};
+  const uint32_t near_wrap = 0xFFFFF000u;
+  open(w, near_wrap);
+  CHECK(!expire(w, near_wrap + kTtl - 1, kTtl), "across the wrap, one ms before the TTL: kept");
+  CHECK(expire(w, near_wrap + kTtl, kTtl), "and swept at the TTL");
+}
+
+static void a_swept_tap_does_not_revive_after_the_wrap() {
+  // The owner's loop sweeps every pass: the tap nobody took is cleared at
+  // its TTL, and millis() coming back round 2^32 ms after the tap finds
+  // nothing to serve.
+  State s{0};
+  open(s, 1000);
+  CHECK(expire(s, 1000 + kTtl, kTtl), "the loop's sweep at the TTL clears it");
+  const uint32_t later = (uint32_t)(1000 + kWrap + 5000);
+  CHECK(later == 6000, "test premise: 2^32 ms + 5 s after the tap reads 6000, got %u", (unsigned)later);
+  CHECK(!is_open(s, later, kTtl), "a swept tap is closed when millis() comes back round");
+  CHECK(!take(s, later, kTtl), "and gives nothing to take");
+  uint8_t key[PEER_KEY_LEN] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 20};
+  TapArbiter a{};
+  CHECK(tap_arbitrate(a, peek(s), key, later, kTtl) == TapVerdict::NO_TAP,
+        "the receipt's arbiter sees no tap either");
+}
+
+// Characterization: why the sweep exists. A stamp nobody took and nobody
+// swept reads open again once millis() comes back round to it, and take()
+// hands it out: the receipt for 30 s with no press.
+static void an_unswept_tap_reads_open_after_the_wrap() {
+  State s{0};
+  open(s, 1000);
+  CHECK(!is_open(s, 1000 + kTtl, kTtl), "closed at the TTL by the clock alone");
+  const uint32_t later = (uint32_t)(1000 + kWrap + 5000);
+  CHECK(is_open(s, later, kTtl), "unswept, it reads open 2^32 ms + 5 s after the tap");
+  CHECK(take(s, later, kTtl), "and take() hands it out");
+}
+
+static void expire_leaves_a_stamp_reopened_since_it_was_read() {
+  // A single-thread property of the compare-and-swap: a sweep holding an
+  // old stamp cannot clear the newer one a re-tap stored (the cross-task
+  // race is the compare-and-swap's; take_exact()'s rows above exercise it).
+  State s{0};
+  open(s, 1000);
+  const uint32_t seen = peek(s);
+  open(s, 1000 + kTtl + 50);   // the owner taps again
+  CHECK(!take_exact(s, seen), "the old stamp's swap fails (expire()'s step)");
+  CHECK(!expire(s, 1000 + kTtl + 60, kTtl), "a sweep now sees the fresh tap and keeps it");
+  CHECK(peek(s) == 1000 + kTtl + 50, "the re-tap's stamp is kept");
+  CHECK(is_open(s, 1000 + kTtl + 60, kTtl), "and the gate is open for it");
+}
+
+// ── the canary tree's sweep (firmware/canary/src/main.cpp) ──────────────────
+
+static std::string read_text(const char* path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// C and C++ comments out, string and character literals honored, newlines
+// kept (check_route_security.py's strip_comments, in C++).
+static std::string strip_comments(const std::string& t) {
+  std::string out;
+  enum { CODE, LINE, BLOCK, STR, CHR } st = CODE;
+  for (size_t i = 0; i < t.size(); ++i) {
+    const char c = t[i];
+    const char n = i + 1 < t.size() ? t[i + 1] : '\0';
+    switch (st) {
+      case CODE:
+        if (c == '/' && n == '/') { st = LINE; ++i; }
+        else if (c == '/' && n == '*') { st = BLOCK; ++i; }
+        else { out += c; if (c == '"') st = STR; else if (c == '\'') st = CHR; }
+        break;
+      case LINE:
+        if (c == '\n') { out += c; st = CODE; }
+        break;
+      case BLOCK:
+        if (c == '*' && n == '/') { st = CODE; ++i; }
+        else out += (c == '\n') ? '\n' : ' ';
+        break;
+      case STR:
+      case CHR:
+        out += c;
+        if (c == '\\' && i + 1 < t.size()) out += t[++i];
+        else if ((st == STR && c == '"') || (st == CHR && c == '\'')) st = CODE;
+        break;
+    }
+  }
+  return out;
+}
+
+// The text of the function whose definition line starts with `sig`, to the
+// first line that is exactly "}"; empty unless that line starts the file or
+// follows a newline exactly once.
+static std::string fn_body(const std::string& src, const std::string& sig) {
+  const std::string at_line = "\n" + sig;
+  const size_t at = src.find(at_line);
+  if (at == std::string::npos || src.find(at_line, at + 1) != std::string::npos) return "";
+  const size_t end = src.find("\n}\n", at);
+  return end == std::string::npos ? "" : src.substr(at + 1, end - at);
+}
+
+static void the_flagship_sweeps_its_tap_every_pass() {
+  const std::string src = strip_comments(read_text(CANARY_MAIN_CPP));
+  CHECK(!src.empty(), "could not read %s", CANARY_MAIN_CPP);
+  const std::string boot = fn_body(src, "static void handle_boot_button() {");
+  CHECK(!boot.empty(), "handle_boot_button()'s definition not found once");
+  const std::string sweep =
+      "canary::net::provisioning_gate::expire(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);";
+  const size_t at = boot.find(sweep);
+  CHECK(at != std::string::npos, "handle_boot_button() does not sweep g_prov_gate");
+  // Its first statement after the two statics: nothing can return before it.
+  const std::string head =
+      "static void handle_boot_button() {\n"
+      "  static uint32_t boot_btn_start = 0;\n"
+      "  static bool boot_btn_was_pressed = false;\n";
+  CHECK(boot.compare(0, head.size(), head) == 0, "handle_boot_button() no longer opens with its two statics");
+  if (at != std::string::npos && boot.compare(0, head.size(), head) == 0) {
+    std::string between = boot.substr(head.size(), at - head.size());
+    bool blank = true;
+    for (char c : between) blank = blank && (c == ' ' || c == '\n' || c == '\t');
+    CHECK(blank, "the sweep is not handle_boot_button()'s first statement: '%s'", between.c_str());
+  }
+  CHECK(boot.find("provisioning_gate::open(g_prov_gate, millis())") != std::string::npos,
+        "the sweep sits in the handler that opens the gate (the same task)");
+  // And loop() calls the handler on every pass.
+  const std::string loop = fn_body(src, "void loop() {");
+  CHECK(!loop.empty(), "loop()'s definition not found once");
+  CHECK(loop.find("\n  handle_boot_button();\n") != std::string::npos,
+        "loop() does not call handle_boot_button() at its top level");
 }
 
 // ── page-token policy truth table ───────────────────────────────────────────
@@ -948,6 +1110,11 @@ int main() {
   millis_zero_is_a_real_tap();
   uint32_wraparound_is_not_expiry();
   explicit_close();
+  expire_clears_at_the_ttl_and_never_a_fresh_stamp();
+  a_swept_tap_does_not_revive_after_the_wrap();
+  an_unswept_tap_reads_open_after_the_wrap();
+  expire_leaves_a_stamp_reopened_since_it_was_read();
+  the_flagship_sweeps_its_tap_every_pass();
   lan_with_no_grant_withholds();
   every_single_grant_injects();
   reason_pointer_is_optional();

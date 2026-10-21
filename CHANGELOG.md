@@ -47,6 +47,24 @@
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 
+- **canary-wap and canary: the BOOT tap and the setup-door claim are swept
+  every loop pass, and the WAP's sessions and pair tokens age on seconds
+  since boot, so none comes back to life when `millis()` wraps after 49.7
+  days of uptime (F347).** Each aged by unsigned subtraction on 32-bit
+  `millis()`, which is right only below 2^32 ms: a tap nobody took served
+  the receipt again 49.7 days later with no press, a claim read but never
+  spent took it with its old value, and a session or pair token not reused
+  since it expired was valid again for another 24 hours or 10 minutes. `provisioning_gate::expire()` and `claim_ticket::expire()` clear
+  a stamp past its TTL with a compare-and-swap of the value they read (a
+  fresh tap or claim is never cleared); the WAP's `loop()` runs both every
+  pass and the flagship's `handle_boot_button()` runs the gate's. The WAP's
+  session and pair-token slots now stamp whole seconds from
+  `esp_timer_get_time()` (a 136-year wrap; a token can end up to 1 s
+  early). No wire or record format changes. Host-tested
+  (`test_provisioning_gate.cpp`, `test_claim_ticket.cpp`,
+  `test_receipt_grant.cpp`, `test_session_cookie.cpp`); the wraps cannot be
+  bench-tested, and nothing here ran on a device.
+
 ### Firmware: per-address bearer backoff shared by both firmware trees, every WAP bearer compare accounted, the flagship receipt's strike and a tap that clears its asker (F343, F339, F340, F341)
 
 - **The flagship's dashboard tab no longer holds the owner's app at `429`,

@@ -7,8 +7,10 @@
 // network lib takes or peeks it from the receipt handler and the page
 // handlers. The canary-wap sketch stages this header byte-identical
 // (firmware/scripts/check_improv_sync.sh); its g_provisioning_gate is this
-// State (sweep F342; it used to keep an inline copy of open and take). The
-// contract both honor, host-tested in tests_host/test_provisioning_gate.cpp:
+// State (sweep F342; it used to keep an inline copy of open and take). Each
+// tree sweeps its State every loop pass with expire() (sweep F347): the
+// WAP's loop() and the canary tree's handle_boot_button(). The contract both
+// honor, host-tested in tests_host/test_provisioning_gate.cpp:
 //
 //   * one tap admits exactly ONE consumer. take() is a single atomic exchange
 //     and take_exact() a single compare-and-swap of the stamp its caller
@@ -22,7 +24,11 @@
 //     tap for the first asker (the ledger's F354);
 //   * the gate self-closes after ttl_ms even if nobody fetches the receipt;
 //   * a millis() of exactly 0 is stored as 1, because 0 means "closed";
-//   * uint32 wraparound is handled by unsigned subtraction (now - opened).
+//   * unsigned subtraction (now - opened) ages a stamp correctly only while
+//     it is younger than 2^32 ms (49.7 days): a tap nobody took would read
+//     as fresh again once millis() came back round to it. So the owner of
+//     the State calls expire() every loop pass, on the task that opens it,
+//     and no stamp gets older than its TTL plus one pass (sweep F347).
 //
 // The sketch also reads every request's peer through this header's socket
 // address mapping (peer_key_from_addr(), ipv4_host_order_from_addr(),
@@ -111,13 +117,27 @@ inline uint32_t peek(const State& s) {
 // Consume exactly the stamp `seen` a caller peeked and judged: one
 // compare-and-swap of `seen` to 0. False for 0, and false when the stamp
 // moved since the peek (a re-tap, the BLE OTA break-glass take, another
-// request's take, an expiry sweep), so a stamp nobody judged is never
-// consumed in its place and two takers of one stamp cannot both win.
+// request's take, the expiry sweep expire()), so a stamp nobody judged is
+// never consumed in its place and two takers of one stamp cannot both win.
 inline bool take_exact(State& s, uint32_t seen) {
   if (seen == 0) return false;
   uint32_t expect = seen;
   return __atomic_compare_exchange_n(&s.opened_at_ms, &expect, 0u, false,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+// The sweep (sweep F347): clear a stamp that is `ttl_ms` old or older, with
+// one compare-and-swap of the stamp it read (take_exact()), so a fresh
+// re-tap that lands between the read and the swap is never cleared. True
+// when it cleared one. Its owner calls it every loop pass, ON THE TASK THAT
+// OPENS the State (on both trees, the loop task's BOOT handler): a
+// `now_ms` read before another task's open() would see that newer stamp as
+// 2^32 ms old. With the sweep, no stamp outlives its TTL by more than one
+// pass, so none can age into the wrap of millis() and read as fresh again.
+inline bool expire(State& s, uint32_t now_ms, uint32_t ttl_ms) {
+  const uint32_t opened = peek(s);
+  if (opened == 0 || (uint32_t)(now_ms - opened) < ttl_ms) return false;
+  return take_exact(s, opened);
 }
 
 // ── Page-token policy ───────────────────────────────────────────────────────

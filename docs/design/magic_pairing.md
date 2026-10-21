@@ -320,7 +320,11 @@ once the AP drops). The rules, from `claim_ticket.h`:
   away dies on its own."
 - Minting touches the loop task; taking touches the httpd task; the
   minted-at word goes through the `__atomic` builtins exactly as
-  `provisioning_gate.h`'s `State` does.
+  `provisioning_gate.h`'s `State` does. The loop task also sweeps it every
+  pass (`claim_ticket::expire()`, sweep F347): a claim past its TTL is
+  burned with a compare-and-swap of the word read, so a claim read and never
+  spent cannot read as pending again when the 32-bit `millis()` comes back
+  round to it 49.7 days later.
 
 ### 3.6 The hub hand-off (Sense, Vision)
 
@@ -563,10 +567,13 @@ per-address lockout keys on. A socket that cannot say is refused `403` and
 the tap is left for the next asker. The stamp is peeked, judged and then
 taken with one compare-and-swap of the stamp that was judged
 (`take_exact()`), so a re-tap or a BLE OTA break-glass take in between is
-never consumed unjudged. A `429` for a held bearer still comes before the
-`409`, and the `409` clears no backoff. The dashboard's **Use BOOT Tap
-Once** polls from the click, and the companion's recovery-kit save now asks
-from the Save tap, so the owner's client is on record when the press lands:
+never consumed unjudged. Both trees sweep the tap every loop pass
+(`provisioning_gate::expire()`, sweep F347), so a tap nobody took cannot
+serve again when `millis()` comes back round to it 49.7 days later. A `429`
+for a held bearer still comes before the `409`, and the `409` clears no
+backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
+companion's recovery-kit save now asks from the Save tap, so the owner's
+client is on record when the press lands:
 a host that polls the route, one that watches `/api/logs` for the tap, or
 one that delays the owner's next poll is refused loudly instead of handed
 the token, the SoftAP password and the pin. The serial console names both

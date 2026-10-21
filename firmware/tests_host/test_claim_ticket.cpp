@@ -15,6 +15,11 @@
 //   * an expired claim is refused and burned, a wrong value against it too;
 //     millis()==0 is a real mint;
 //   * the 49-day wrap of millis() does not expire a fresh claim;
+//   * the sweep (sweep F347): expire() burns a claim at its TTL (the word
+//     cleared and the hex zeroed) and never one a millisecond younger or one
+//     re-minted since it was read, and a swept claim stays spent when
+//     millis() comes back round to it 2^32 ms later, where an unswept twin
+//     reads pending again (why the WAP's loop() sweeps every pass);
 //   * the compare runs over the whole string whatever the first wrong
 //     character, and accepts the phone's upper-case spelling;
 //   * a presented string of the wrong length is refused.
@@ -191,6 +196,56 @@ static void a_fresh_mint_replaces_an_outstanding_claim() {
   CHECK(pending(t, 2500), "and the new one stays pending after that wrong value");
 }
 
+static bool hex_is_zero(const Ticket& t) {
+  for (size_t i = 0; i < sizeof(t.hex); ++i) {
+    if (t.hex[i] != 0) return false;
+  }
+  return true;
+}
+
+static void a_swept_claim_does_not_revive_after_the_wrap() {
+  const uint64_t wrap = 1ull << 32;   // 2^32 ms: 49.7 days of millis()
+  Ticket t{};
+  CHECK(!expire(t, 1000), "nothing minted: nothing to sweep");
+  mint(t, kRaw, 1000);
+  CHECK(!expire(t, 1000), "a fresh claim is not swept");
+  CHECK(!expire(t, 1000 + TTL_MS - 1), "one ms before the TTL: not swept");
+  CHECK(pending(t, 1000 + TTL_MS - 1) && std::strcmp(t.hex, kHex) == 0, "and kept whole");
+  CHECK(expire(t, 1000 + TTL_MS), "at the TTL: swept");
+  CHECK(t.minted_at_ms == 0, "the word cleared, got %u", (unsigned)t.minted_at_ms);
+  CHECK(hex_is_zero(t), "and the hex zeroed");
+  CHECK(!expire(t, 1000 + TTL_MS), "a second sweep finds nothing");
+  const uint32_t later = (uint32_t)(1000 + wrap + 5000);
+  CHECK(later == 6000, "test premise: 2^32 ms + 5 s after the mint reads 6000, got %u", (unsigned)later);
+  CHECK(!pending(t, later), "a swept claim is not pending when millis() comes back round");
+  CHECK(!take(t, kHex, later), "and its old hex takes nothing");
+  // The unswept twin: why the sweep exists. Read over the door and never
+  // spent, it is pending again 2^32 ms after the mint, and its hex serves.
+  Ticket twin{};
+  mint(twin, kRaw, 1000);
+  CHECK(!pending(twin, 1000 + TTL_MS), "the twin expires at the TTL by the clock alone");
+  CHECK(pending(twin, later), "unswept, it reads pending again 2^32 ms + 5 s after the mint");
+  CHECK(take(twin, kHex, later), "and its old hex serves");
+  // A sweep holding an old word never burns a claim minted since: the
+  // compare-and-swap of the word it read fails, and the fresh claim stays.
+  Ticket u{};
+  mint(u, kRaw, 1000);
+  const uint32_t seen = __atomic_load_n(&u.minted_at_ms, __ATOMIC_ACQUIRE);
+  uint8_t other[RAW_LEN];
+  for (size_t i = 0; i < RAW_LEN; ++i) other[i] = (uint8_t)(0xA0 + i);
+  mint(u, other, 1000 + TTL_MS + 50);
+  CHECK(!clear_if_unchanged(u, seen), "the old word's swap fails (expire()'s step)");
+  CHECK(!expire(u, 1000 + TTL_MS + 60), "a sweep now sees the fresh claim and keeps it");
+  CHECK(pending(u, 1000 + TTL_MS + 60) && !hex_is_zero(u), "the re-mint is pending, its hex whole");
+  // Across the wrap: a claim minted just before millis() wraps is swept on
+  // its age.
+  Ticket w{};
+  const uint32_t near_wrap = 0xFFFFF000u;
+  mint(w, kRaw, near_wrap);
+  CHECK(!expire(w, near_wrap + TTL_MS - 1), "across the wrap, one ms before the TTL: kept");
+  CHECK(expire(w, near_wrap + TTL_MS), "and swept at the TTL");
+}
+
 static void wipe_leaves_nothing() {
   Ticket t{};
   mint(t, kRaw, 1000);
@@ -209,6 +264,7 @@ int main() {
   wrap_is_not_expiry();
   the_compare_accepts_upper_case_and_refuses_other_lengths();
   a_fresh_mint_replaces_an_outstanding_claim();
+  a_swept_claim_does_not_revive_after_the_wrap();
   wipe_leaves_nothing();
 
   if (g_failures) {

@@ -2894,6 +2894,49 @@
   a device (U1).
 - **Date learned:** 2026-10
 
+### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
+- **What happened:** the BOOT tap's gate, the setup-door claim and the WAP's
+  session and pair-token slots each stored a 32-bit `millis()` stamp and
+  aged it by unsigned subtraction, `(uint32_t)(now - stamp) < ttl`. That is
+  "wrap-safe" only while the stamp is younger than 2^32 ms. A tap nobody
+  took (the next credential-less receipt request would have spent it, but
+  none came) read as fresh again 49.7 days later and served the receipt for
+  30 s with no press, on the WAP and through the shared header on the
+  flagship; a claim read and never spent read as pending again; a session
+  slot not reused since it expired took its old cookie for another 24 h.
+  `/api/logs` says when a tap lands, so a host on the network could time it.
+- **Root cause:** "unsigned subtraction handles the wrap" was written into
+  the gate's own contract, and it is half true. It handles a clock that
+  wraps between the stamp and the read; it cannot handle a stamp left in
+  place for a whole cycle, because after 2^32 ms the difference is small
+  again. Clearing a stamp when it is read past its TTL does not help either:
+  a stamp nobody reads for 49.7 days is first read when it already looks
+  fresh.
+- **Fix:** each word gets the fix its threading allows. The gate and the
+  claim are shared across tasks as 32-bit atomics, so they keep them and are
+  swept every loop pass: `expire()` clears a stamp past its TTL with a
+  compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  never cleared, and no stamp outlives its TTL by more than one pass. The
+  sweep runs on the task that opens or mints, or a clock read before another
+  task's open would see the newer stamp as 2^32 ms old. The slots have one
+  writer, so they move to a wider clock: whole seconds of
+  `esp_timer_get_time()` in a `uint32_t`, a 136-year wrap at the same slot
+  size, one aligned word for the QR scanner task to read. Rules: a TTL check
+  on a 32-bit clock needs an owner that clears the stamp at its TTL, or a
+  clock wide enough that the stamp cannot outlive it; and a contract line
+  that says "wrap-safe" should say for how long.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` and
+  `test_claim_ticket.cpp` (a swept stamp stays closed 2^32 ms later, the
+  unswept twin reads open and is taken, a re-tap or re-mint is kept; the
+  flagship's `handle_boot_button()` sweeps first), the WAP's
+  `test_receipt_grant.cpp` (`loop()`'s two sweeps, run as the sketch spells
+  them, then 2^32 ms + 1 s later a bare request and the old `?claim=` are
+  both `403`; before, both were served) and `test_session_cookie.cpp` (the
+  slot functions cut from `csi_integration.cpp`: a session and a pair token
+  end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
+  Host-tested; the wraps cannot be bench-tested.
+- **Date learned:** 2026-10
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg
