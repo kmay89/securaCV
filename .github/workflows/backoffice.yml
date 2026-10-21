@@ -41,3 +41,30 @@ jobs:
         run: |
           node --disable-warning=ExperimentalWarning bin/backoffice.mjs setup --password 'ci-only-password-1' | grep -q otpauth
           node --disable-warning=ExperimentalWarning bin/backoffice.mjs snapshot | grep -q '"orders"'
+
+  browser:
+    name: the admin in a real browser (Playwright Chromium)
+    runs-on: ubuntu-24.04   # same image as the suite (CI.md R11)
+    timeout-minutes: 15
+    defaults:
+      run: { working-directory: backoffice }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with: { node-version: "22" }
+      # Weekly key, the canary-local.yml pattern: playwright is installed
+      # unpinned, so the cached browser never drifts more than a week behind it.
+      - name: Weekly browser-cache stamp
+        id: week
+        run: echo "stamp=$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.week.outputs.stamp }}
+      - name: Install Playwright Chromium (not a dependency of the app — the browser test only)
+        run: |
+          npm i --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: The browser test (skipping is a failure here)
+        env: { BACKOFFICE_BROWSER: require }
+        run: node --disable-warning=ExperimentalWarning --test tests/browser.test.mjs

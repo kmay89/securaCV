@@ -156,7 +156,28 @@ tests/                  node --test; fakes for SMTP, IMAP, Stripe signatures, pr
 deploy/                 Dockerfile, docker-compose.yml, Caddyfile, systemd unit, website-forms.html
 ```
 
-`npm test` runs everything with no network and no credentials.
+## Testing it, now and over time
+
+Four layers, cheapest first; the first three run on every push to
+`backoffice/` (`.github/workflows/backoffice.yml`), so a change that breaks
+the business logic, the HTTP surface or a form cannot merge.
+
+| Layer | What it proves | Run it |
+|---|---|---|
+| Unit + module tests | every rule in every module: books balance, SKUs resolve, consent is enforced, TOTP matches RFC 6238, mail threads, probes raise and resolve. Fakes stand in for SMTP, IMAP, Stripe and GitHub, so no network, no credentials | `npm test` (under a second) |
+| End-to-end over HTTP | the server as a client sees it: login + CSRF, public forms, a signed Stripe webhook creating an order, the bearer API driving it to shipped, unsubscribe, invoice links | part of `npm test` (`tests/server.test.mjs`) |
+| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
+| You, on the demo | anything the tests did not think of | `backoffice demo` → `serve` → click around |
+
+The pattern for adding coverage: a bug found by hand becomes an assertion
+in the layer that *should* have caught it. The logout button missing its
+CSRF token was invisible to the HTTP layer and is now a browser assertion;
+the canned reply that could not be sent without typing was found by the
+browser test's first run.
+
+Day to day, the two commands that matter are `npm test` before a push and
+`backoffice demo` + `serve` when a change touches a page. Nothing here
+needs a Stripe account, a mailbox or a domain until you deploy for real.
 
 ## The API, for an operator who is a program
 

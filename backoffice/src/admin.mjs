@@ -17,7 +17,7 @@ import { listProbes, upsertProbe, deleteProbe, runDueProbes, uptime, listInciden
 import { listExceptions, resolve as resolveException } from './modules/exceptions.mjs';
 import { createApiToken, revokeApiToken } from './auth.mjs';
 import { backup, listBackups } from './modules/backup.mjs';
-import { outboxStats } from './modules/mail.mjs';
+import { outboxStats, fill } from './modules/mail.mjs';
 import { jobRuns, runJob, JOBS } from './jobs.mjs';
 import { join } from 'node:path';
 
@@ -108,13 +108,18 @@ ${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to
     const body = `<p>${statusPill(t.status)} ${statusPill(t.priority)} ${statusPill(t.kind)} · ${t.email ? link(`/contacts?q=${encodeURIComponent(t.email)}`, t.email) : 'no email'} · opened ${dt(t.created_at)} · first response ${dt(t.first_response_at)} · thread token <code>[${e(t.number)} ${e(t.thread_token)}]</code></p>
 ${orders.length ? `<p>Orders: ${orders.map(o => link(`/orders/${o.id}`, `${o.number} (${o.status})`)).join(', ')}</p>` : ''}
 ${msgs}
-${form(`/tickets/${t.id}/reply`, c.csrf, `${canned.length ? field('canned', 'Start from a canned reply', { options: [['', '—'], ...canned.map(r => [r.slug, r.title])] }) : ''}${field('body', 'Reply (plain text; goes out from the support address)', { type: 'textarea', required: true })}<label><input type="checkbox" name="close" value="1" style="width:auto"> close after sending</label>`, { submit: 'Send reply' })}
+${form(`/tickets/${t.id}/reply`, c.csrf, `${canned.length ? field('canned', 'Start from a canned reply', { options: [['', '—'], ...canned.map(r => [r.slug, r.title])] }) : ''}${field('body', 'Reply (plain text; goes out from the support address — leave empty to send the canned reply as is)', { type: 'textarea' })}<label><input type="checkbox" name="close" value="1" style="width:auto"> close after sending</label>`, { submit: 'Send reply' })}
 <p>${TSTATUS.map(s => `<form method="post" action="/tickets/${t.id}/status" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="status" value="${s}"><button class="quiet">${s}</button></form>`).join(' ')}</p>
 ${form(`/tickets/${t.id}/update`, c.csrf, `<div class="row">${field('kind', 'Kind', { options: KINDS, value: t.kind })}${field('priority', 'Priority', { options: ['low', 'normal', 'high', 'urgent'], value: t.priority })}${field('labels', 'Labels', { value: t.labels })}</div>`, { submit: 'Update' })}
 ${form(`/tickets/${t.id}/note`, c.csrf, field('body', 'Internal note', { type: 'textarea', rows: 3 }), { submit: 'Add note' })}`;
     page(c, `${t.number} · ${t.subject}`, body);
   });
-  router.post('/tickets/:id/reply', (c) => { let body = c.body.body || ''; if (c.body.canned && !body.trim()) body = db.get('SELECT body FROM canned_replies WHERE slug = ?', c.body.canned)?.body || ''; reply(db, c.params.id, body, { cfg, actor: 'web', close: !!c.body.close }); back(c, `/tickets/${c.params.id}`, 'reply queued'); });
+  router.post('/tickets/:id/reply', (c) => {
+    let body = c.body.body || '';
+    if (c.body.canned && !body.trim()) { const t = ticketById(db, c.params.id); body = fill(db.get('SELECT body FROM canned_replies WHERE slug = ?', c.body.canned)?.body || '', { name: t?.contact_name || 'there', number: t?.number || '' }); }
+    if (!body.trim()) throw new HttpError(400, 'the reply is empty — write one or pick a canned reply');
+    reply(db, c.params.id, body, { cfg, actor: 'web', close: !!c.body.close }); back(c, `/tickets/${c.params.id}`, 'reply queued');
+  });
   router.post('/tickets/:id/status', (c) => { setStatus(db, c.params.id, c.body.status); back(c, `/tickets/${c.params.id}`, `now ${c.body.status}`); });
   router.post('/tickets/:id/update', (c) => { updateTicket(db, c.params.id, c.body); back(c, `/tickets/${c.params.id}`, 'updated'); });
   router.post('/tickets/:id/note', async (c) => { const { addMessage } = await import('./modules/support.mjs'); addMessage(db, Number(c.params.id), { direction: 'note', body: c.body.body || '' }); back(c, `/tickets/${c.params.id}`, 'note added'); });
