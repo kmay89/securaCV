@@ -2053,7 +2053,7 @@ so — see D2 below.)
   a token-free way out once F345 has gated it.
   Corrections to this item: the phone does not "then need the BOOT tap"; the
   iPhone app has no tap flow and ends "on the Wi-Fi, not paired".
-  *Done (2026-10-20, #<PR>):* in two commits of the PR that carries F347,
+  *Done (2026-10-20, #1842):* in two commits of the PR that carries F347,
   and the review commits each bullet below names.
   - The claim: `spend_if_match()` and `wipe_hex()` in
     `firmware/common/network/claim_ticket.h` (staged copy cp'd), `take()` on
@@ -2546,7 +2546,7 @@ so — see D2 below.)
   Host-tested (`test_provisioning_gate`, `test_claim_ticket`,
   `test_receipt_grant`, `test_session_cookie`); the 49.7-day wraps cannot be
   bench-tested.
-  *Done (2026-10-20, #<PR>):* in the third commit of the PR that carries
+  *Done (2026-10-20, #1842):* in the third commit of the PR that carries
   F342.
   - The sweeps: `expire()` in `firmware/common/network/provisioning_gate.h`
     (a `peek()` and a `take_exact()` of the stamp it read) and in

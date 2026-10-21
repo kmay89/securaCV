@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
   F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0

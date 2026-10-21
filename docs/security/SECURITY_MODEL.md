@@ -381,7 +381,17 @@ say to press only once the device has answered their first ask
 a match, so a wrong `?claim=` from a host on the network no longer ends the
 phone's pairing (F342). The tap's asker is the request's socket peer
 (`request_peer_key()`, the same read the per-address lockout keys on, F343),
-never a header. What the tap rule cannot see: a tap no client of the
+never a header. To judge the tap, the WAP keeps the last two distinct
+addresses that asked for the receipt and were not served by a bearer or the
+claim, as 16-byte socket-peer keys (an IPv4 client as `::ffff:a.b.c.d`), each
+with the time of its latest ask. That record is in RAM only: nothing writes
+it to NVS or a file, a restart empties it, and otherwise an address stays
+until two other addresses have asked after its latest ask (no timer ages it
+out, and a served tap clears only the contention, not the addresses). No
+route serves it, and the health log (what `/api/logs` serves) names neither
+address; the one place an address goes is the serial console line printed
+when contention closes a tap, which names both. What the tap rule cannot
+see: a tap no client of the
 owner's was already asking for (an accidental tap, a page or `curl` started
 after it, a tap pressed per a recipe or an older page that says to press
 first, BLE OTA break-glass) still goes to the first asker; hosts behind
